@@ -1,0 +1,4 @@
+func main() {
+    x int = 10
+    set x = "hello"
+}

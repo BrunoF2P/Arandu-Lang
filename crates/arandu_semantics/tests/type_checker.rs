@@ -29,24 +29,42 @@ fn assert_diagnostic_golden(name: &str) {
     let resolution = resolve(&program);
     let result = type_check(resolution, &program);
 
+    let rel_filepath = source_path
+        .strip_prefix(&root)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .replace('\\', "/");
+
     let actual = result
         .diagnostics
         .iter()
         .filter(|d| format!("{}", d.code).starts_with('T'))
-        .map(ToString::to_string)
+        .map(|d| format!("{}\n", d.format_for_cli(&rel_filepath)))
         .collect::<Vec<_>>()
         .join("");
 
-    let actual_lines: Vec<&str> = actual.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
-    let expected_lines: Vec<&str> = expected.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    let actual_lines: Vec<&str> = actual
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    let update_golden = std::env::var("UPDATE_GOLDEN").is_ok();
+    if update_golden {
+        fs::write(&expected_path, actual).unwrap();
+    } else {
+        let expected_lines: Vec<&str> = expected
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect();
 
-    assert_eq!(
-        actual_lines,
-        expected_lines,
-        "Mismatch in golden diagnostic test output.\nActual:\n{}\nExpected:\n{}",
-        actual,
-        expected
-    );
+        assert_eq!(
+            actual_lines, expected_lines,
+            "Mismatch in golden diagnostic test output.\nActual:\n{}\nExpected:\n{}",
+            actual, expected
+        );
+    }
 }
 
 macro_rules! assert_type_errors {
@@ -174,7 +192,7 @@ fn test_multi_binding_destructuring() {
         ",
         []
     );
-    
+
     // Also verify mismatch is correctly identified on assignment to wrong type
     assert_type_errors!(
         "
@@ -251,7 +269,7 @@ fn test_expr_types_population() {
     let program = parse(source).expect("Failed to parse");
     let resolution = resolve(&program);
     let result = type_check(resolution, &program);
-    
+
     // Check that expr_types contains populated expression types
     assert!(!result.type_info.expr_types.is_empty());
 }
@@ -465,3 +483,140 @@ fn test_nullability_and_safe_access() {
     );
 }
 
+#[test]
+fn test_official_ok_suite() {
+    let root = workspace_root();
+    let ok_dir = root.join("tests").join("type_checker").join("ok");
+    assert!(ok_dir.exists(), "ok directory does not exist");
+
+    let mut paths = Vec::new();
+    for entry in fs::read_dir(ok_dir).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) == Some("aru") {
+            paths.push(path);
+        }
+    }
+    paths.sort();
+
+    for path in paths {
+        let source = fs::read_to_string(&path).unwrap();
+        let program = parse(&source)
+            .unwrap_or_else(|err| panic!("failed to parse {}: {:?}", path.display(), err));
+        let resolution = resolve(&program);
+        let result = type_check(resolution, &program);
+
+        let errors: Vec<String> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == arandu_semantics::Severity::Error)
+            .map(|d| format!("{}", d))
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "File {} failed typecheck with errors:\n{}",
+            path.display(),
+            errors.join("\n")
+        );
+    }
+}
+
+#[test]
+fn test_official_invalid_suite() {
+    let root = workspace_root();
+    let invalid_dir = root.join("tests").join("type_checker").join("invalid");
+    assert!(invalid_dir.exists(), "invalid directory does not exist");
+
+    let mut aru_files = std::collections::HashSet::new();
+    let mut diag_files = std::collections::HashSet::new();
+
+    for entry in fs::read_dir(&invalid_dir).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap()
+            .to_string();
+        if path.extension().and_then(|s| s.to_str()) == Some("aru") {
+            aru_files.insert(name);
+        } else if path.extension().and_then(|s| s.to_str()) == Some("diag") {
+            diag_files.insert(name);
+        }
+    }
+
+    // Check for orphans
+    for name in &aru_files {
+        assert!(
+            diag_files.contains(name),
+            "Orphan file: tests/type_checker/invalid/{}.aru has no corresponding .diag file",
+            name
+        );
+    }
+    for name in &diag_files {
+        assert!(
+            aru_files.contains(name),
+            "Orphan file: tests/type_checker/invalid/{}.diag has no corresponding .aru file",
+            name
+        );
+    }
+
+    let mut sorted_names: Vec<String> = aru_files.into_iter().collect();
+    sorted_names.sort();
+
+    for name in sorted_names {
+        let path = invalid_dir.join(format!("{}.aru", name));
+        let diag_path = invalid_dir.join(format!("{}.diag", name));
+        let source = fs::read_to_string(&path).unwrap();
+
+        // Standardize relative filepath format with forward slashes:
+        let rel_filepath = path
+            .strip_prefix(&root)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .replace('\\', "/");
+
+        let mut actual = String::new();
+        match parse(&source) {
+            Ok(program) => {
+                let resolution = resolve(&program);
+                let result = type_check(resolution, &program);
+                for diagnostic in &result.diagnostics {
+                    actual.push_str(&diagnostic.format_for_cli(&rel_filepath));
+                    actual.push('\n');
+                }
+            }
+            Err(err) => {
+                actual.push_str(&err.format_for_cli(&rel_filepath));
+                actual.push('\n');
+            }
+        }
+
+        let update_golden = std::env::var("UPDATE_GOLDEN").is_ok();
+        if update_golden {
+            fs::write(&diag_path, &actual).unwrap();
+        } else {
+            let expected = fs::read_to_string(&diag_path).unwrap();
+            let actual_lines: Vec<&str> = actual
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .collect();
+            let expected_lines: Vec<&str> = expected
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .collect();
+
+            assert_eq!(
+                actual_lines,
+                expected_lines,
+                "Mismatch in golden diagnostic test for {}.\nActual:\n{}\nExpected:\n{}",
+                path.display(),
+                actual,
+                expected
+            );
+        }
+    }
+}

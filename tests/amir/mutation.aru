@@ -1,0 +1,11 @@
+struct Point {
+    x int
+    y int
+}
+
+func mutation_test() int {
+    p Point = Point { x: 10, y: 20 }
+    set p.x = 30
+    set p.y = 40
+    return p.x + p.y
+}

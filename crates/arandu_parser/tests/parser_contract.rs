@@ -272,8 +272,9 @@ fn variable_declaration_lookahead() {
 
 #[test]
 fn where_on_new_line() {
-    let _program = parse("module test\nfunc identity<T>(value T) T\nwhere T: Display {\n    return value\n}")
-        .expect("parser should accept where on a new line");
+    let _program =
+        parse("module test\nfunc identity<T>(value T) T\nwhere T: Display {\n    return value\n}")
+            .expect("parser should accept where on a new line");
 }
 
 #[test]
@@ -281,4 +282,3 @@ fn from_on_new_line() {
     let _program = parse("module test\nimport {\n  Button\n}\nfrom ui\n")
         .expect("parser should accept from on a new line");
 }
-

@@ -156,7 +156,11 @@ impl Resolver {
             TopLevelDecl::Enum(decl) => {
                 self.define(scope, &decl.name, SymbolKind::Enum, decl.span);
                 for variant in &decl.variants {
-                    if let Ok(symbol) = self.symbols.define_associated_member(&decl.name, &variant.name, variant.span) {
+                    if let Ok(symbol) = self.symbols.define_associated_member(
+                        &decl.name,
+                        &variant.name,
+                        variant.span,
+                    ) {
                         self.resolved.define(variant.span, symbol);
                     }
                 }
@@ -169,6 +173,7 @@ impl Resolver {
                     self.define(scope, &member.name, SymbolKind::ExternFunc, member.span);
                 }
             }
+            TopLevelDecl::Error(_) => {}
         }
     }
 
@@ -186,6 +191,7 @@ impl Resolver {
                     self.resolve_signature(scope, member);
                 }
             }
+            TopLevelDecl::Error(_) => {}
         }
     }
 
@@ -389,6 +395,7 @@ impl Resolver {
                 self.resolve_defer_body(scope, body);
             }
             Stmt::Unsafe { block, .. } => self.resolve_block_child(scope, block),
+            Stmt::Error(_) => {}
         }
     }
 
@@ -611,7 +618,8 @@ impl Resolver {
             | Expr::Float { .. }
             | Expr::Bool { .. }
             | Expr::Char { .. }
-            | Expr::Nil { .. } => {}
+            | Expr::Nil { .. }
+            | Expr::Error(_) => {}
         }
     }
 
@@ -755,21 +763,19 @@ impl Resolver {
         let Some(root) = name.path.first() else {
             return false;
         };
-        if name.path.len() > 1
-            && self.symbols.lookup_module(scope, root).is_some()
-        {
+        if name.path.len() > 1 && self.symbols.lookup_module(scope, root).is_some() {
             let member = &name.path[1];
-                if let Some(symbol) = self.symbols.lookup_module_member(root, member) {
-                    self.resolved.type_ref(name.span, symbol);
-                    return true;
-                } else {
-                    self.diagnostics.push(Diagnostic::error(
-                        DiagCode::N009UndefinedNamespaceMember,
-                        format!("namespace member '{root}.{member}' is not declared"),
-                        name.span,
-                    ));
-                    return false;
-                }
+            if let Some(symbol) = self.symbols.lookup_module_member(root, member) {
+                self.resolved.type_ref(name.span, symbol);
+                return true;
+            } else {
+                self.diagnostics.push(Diagnostic::error(
+                    DiagCode::N009UndefinedNamespaceMember,
+                    format!("namespace member '{root}.{member}' is not declared"),
+                    name.span,
+                ));
+                return false;
+            }
         }
         if let Some(symbol) = self.symbols.lookup_type(scope, root) {
             self.resolved.type_ref(name.span, symbol);
@@ -899,10 +905,14 @@ impl Resolver {
         name: &str,
         candidates: impl IntoIterator<Item = &'a crate::Symbol>,
     ) -> Option<String> {
+        let max_distance = if name.len() <= 4 { 2 } else { 3 };
+
         candidates
             .into_iter()
-            .min_by_key(|symbol| levenshtein(name, &symbol.name))
-            .map(|symbol| symbol.name.clone())
+            .map(|symbol| (symbol, strsim::levenshtein(name, &symbol.name)))
+            .filter(|(_, dist)| *dist <= max_distance)
+            .min_by_key(|(_, dist)| *dist)
+            .map(|(symbol, _)| symbol.name.clone())
     }
 }
 
@@ -910,24 +920,7 @@ fn is_type_case(name: &str) -> bool {
     name.chars().next().is_some_and(char::is_uppercase)
 }
 
-fn levenshtein(left: &str, right: &str) -> usize {
-    let right_len = right.chars().count();
-    let mut previous: Vec<usize> = (0..=right_len).collect();
-    let mut current = vec![0; right_len + 1];
 
-    for (i, left_char) in left.chars().enumerate() {
-        current[0] = i + 1;
-        for (j, right_char) in right.chars().enumerate() {
-            let cost = usize::from(left_char != right_char);
-            current[j + 1] = (previous[j + 1] + 1)
-                .min(current[j] + 1)
-                .min(previous[j] + cost);
-        }
-        std::mem::swap(&mut previous, &mut current);
-    }
-
-    previous[right_len]
-}
 
 #[allow(dead_code)]
 fn _keep_ops_exhaustive(_: UnaryOp, _: BinaryOp) {}

@@ -60,6 +60,7 @@ pub enum TopLevelDecl {
     Enum(EnumDecl),
     Interface(InterfaceDecl),
     Extern(ExternDecl),
+    Error(Span),
 }
 
 impl TopLevelDecl {
@@ -72,6 +73,7 @@ impl TopLevelDecl {
             TopLevelDecl::Enum(decl) => decl.span,
             TopLevelDecl::Interface(decl) => decl.span,
             TopLevelDecl::Extern(decl) => decl.span,
+            TopLevelDecl::Error(span) => *span,
         }
     }
 }

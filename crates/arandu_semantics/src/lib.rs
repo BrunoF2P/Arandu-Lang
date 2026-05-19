@@ -1,9 +1,19 @@
+#![allow(clippy::result_large_err)]
+
+pub mod amir;
+mod cfg;
 mod diagnostics;
+pub mod hir;
+pub mod literal_pool;
+pub mod ops;
 pub mod passes;
+pub use ops::{BinaryOp, SetOp, UnaryOp};
 mod resolved;
 mod symbol_table;
 
 pub use diagnostics::{DiagCode, Diagnostic, Label, Severity};
+pub use passes::lower_amir::lower_to_amir;
+pub use passes::lower_hir::lower_to_hir;
 pub use passes::name_resolution::resolve;
 pub use passes::type_checker::{TypeCheckResult, TypeInfo, type_check};
 pub use resolved::{DocCommentMap, NodeKey, ResolvedNames};

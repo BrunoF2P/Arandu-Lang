@@ -1,0 +1,6 @@
+module tests.recovery.lexer.invalid_char
+
+func main() {
+    score = §;
+    ratio = 3.14;
+}

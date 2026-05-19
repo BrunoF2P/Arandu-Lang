@@ -1,5 +1,7 @@
 use std::fmt;
 
+use crate::LexErrorCode;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
     pub file_id: usize,
@@ -178,6 +180,7 @@ pub enum TokenKind {
     RangeExclusive,
     Ellipsis,
     Eof,
+    Error(LexErrorCode),
 }
 
 impl fmt::Display for TokenKind {
@@ -195,6 +198,7 @@ impl fmt::Display for TokenKind {
             TokenKind::StringEscape(value) => write!(f, "STRING_ESCAPE({value})"),
             TokenKind::RawString(value) => write!(f, "RAW_STRING({value})"),
             TokenKind::Char(value) => write!(f, "CHAR({value})"),
+            TokenKind::Error(code) => write!(f, "ERROR({:?})", code),
             other => f.write_str(other.name()),
         }
     }
@@ -329,6 +333,7 @@ impl TokenKind {
             TokenKind::RangeExclusive => "RANGE_EXCLUSIVE",
             TokenKind::Ellipsis => "ELLIPSIS",
             TokenKind::Eof => "EOF",
+            TokenKind::Error(_) => "ERROR",
         }
     }
 

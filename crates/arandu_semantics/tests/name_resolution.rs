@@ -43,17 +43,39 @@ fn assert_diagnostic_golden(name: &str) {
     let expected = fs::read_to_string(&expected_path)
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", expected_path.display()));
     let result = resolve_source(&source);
+    let rel_filepath = source_path
+        .strip_prefix(&root)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .replace('\\', "/");
+
     let actual = result
         .diagnostics
         .iter()
-        .map(ToString::to_string)
+        .map(|d| format!("{}\n", d.format_for_cli(&rel_filepath)))
         .collect::<Vec<_>>()
         .join("");
 
-    for line in expected.lines().filter(|line| !line.trim().is_empty()) {
-        assert!(
-            actual.contains(line),
-            "expected diagnostic output to contain {line:?}\nactual:\n{actual}"
+    let update_golden = std::env::var("UPDATE_GOLDEN").is_ok();
+    if update_golden {
+        fs::write(&expected_path, &actual).unwrap();
+    } else {
+        let actual_lines: Vec<&str> = actual
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect();
+        let expected_lines: Vec<&str> = expected
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect();
+
+        assert_eq!(
+            actual_lines, expected_lines,
+            "Mismatch in golden diagnostic test output.\nActual:\n{}\nExpected:\n{}",
+            actual, expected
         );
     }
 }
@@ -286,20 +308,20 @@ fn reports_undefined_value_with_suggestion() {
 module tests.suggest
 
 func main() {
-    formatar = 1
-    value = frobnicate
+    user = 1
+    value = usre
 }
 "#,
     );
 
     assert_eq!(codes(&result), vec![DiagCode::N001UndefinedValue]);
     let diagnostic = &result.diagnostics[0];
-    assert!(diagnostic.message.contains("frobnicate"));
+    assert!(diagnostic.message.contains("usre"));
     assert!(
         diagnostic
             .hints
             .iter()
-            .any(|hint| hint.contains("formatar")),
+            .any(|hint| hint.contains("user")),
         "{diagnostic:#?}"
     );
 }

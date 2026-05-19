@@ -1,0 +1,6 @@
+Program
+  Func add(x: int, y: int) -> int
+    Return
+      Binary(+): int
+        LocalRef(x): int
+        LocalRef(y): int

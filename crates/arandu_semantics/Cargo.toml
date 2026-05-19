@@ -6,6 +6,9 @@ edition = "2024"
 [dependencies]
 arandu_lexer = { path = "../arandu_lexer" }
 arandu_parser = { path = "../arandu_parser" }
+arandu_diagnostics = { path = "../arandu_diagnostics" }
+smallvec = "1.14"
+strsim = "0.11.1"
 
 [lib]
 path = "src/lib.rs"

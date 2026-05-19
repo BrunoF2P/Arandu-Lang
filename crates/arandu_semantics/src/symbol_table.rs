@@ -123,19 +123,18 @@ impl SymbolTable {
     pub fn define(
         &mut self,
         scope: ScopeId,
-        name: impl Into<String>,
+        name: &str,
         kind: SymbolKind,
         span: Span,
     ) -> Result<SymbolId, SymbolId> {
-        let name = name.into();
-        if let Some(existing) = self.find_in_scope(scope, &name) {
+        if let Some(existing) = self.find_in_scope(scope, name) {
             return Err(existing);
         }
 
         let id = SymbolId(u32::try_from(self.symbols.len()).expect("symbol count overflow"));
         self.symbols.push(Symbol {
             id,
-            name,
+            name: name.to_string(),
             kind,
             span,
             scope,
@@ -203,7 +202,7 @@ impl SymbolTable {
     ) -> Result<SymbolId, SymbolId> {
         let id = self.define(
             self.global_scope(),
-            format!("{module}.{member}"),
+            &format!("{module}.{member}"),
             SymbolKind::NamespaceMember,
             span,
         )?;
@@ -235,7 +234,7 @@ impl SymbolTable {
     ) -> Result<SymbolId, SymbolId> {
         let id = self.define(
             self.global_scope(),
-            format!("{ty}.{member}"),
+            &format!("{ty}.{member}"),
             SymbolKind::AssociatedFunc,
             span,
         )?;

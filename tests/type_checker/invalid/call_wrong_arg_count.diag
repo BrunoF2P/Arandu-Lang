@@ -1,0 +1,2 @@
+T012: expected 2 arguments, found 1
+  --> tests/type_checker/invalid/call_wrong_arg_count.aru:6:5

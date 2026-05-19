@@ -1,0 +1,6 @@
+module tests.recovery.parser.missing_rparen
+
+func main() {
+    x = (1 + 2;
+    y = 5;
+}

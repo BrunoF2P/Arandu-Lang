@@ -1,0 +1,9 @@
+Func add(a: int, b: int) -> int
+  locals:
+    _0: int // return
+    _1: int // a
+    _2: int // b
+
+  bb0:
+    _0 = add _1, _2
+    return

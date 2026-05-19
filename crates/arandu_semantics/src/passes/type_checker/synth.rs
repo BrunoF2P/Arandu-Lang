@@ -1,4 +1,4 @@
-use arandu_parser::{BinaryOp, Expr, UnaryOp, Pattern};
+use arandu_parser::{BinaryOp, Expr, Pattern, UnaryOp};
 
 use super::TypeChecker;
 use super::constraints::ConstraintOrigin;
@@ -40,23 +40,27 @@ fn synth_expr_inner(checker: &mut TypeChecker, expr: &Expr) -> ArType {
             }
             ArType::Error
         }
-        Expr::TypePath { span, type_name, member } => {
+        Expr::TypePath {
+            span,
+            type_name,
+            member,
+        } => {
             let type_key = crate::NodeKey::from(type_name.span);
             if let Some(enum_symbol_id) = checker.resolved.type_refs.get(&type_key) {
-                let variant_symbol_opt = checker.symbols.lookup_associated_member(
-                    &type_name.path.join("."),
-                    member,
-                );
-                if let Some(variant_symbol_id) = variant_symbol_opt {
-                    if let Some((_, shape)) = checker.type_info.enum_variants.get(&variant_symbol_id) {
-                        let enum_ty = ArType::Named(*enum_symbol_id, vec![]);
-                        match shape {
-                            super::EnumPayloadShape::Unit => {
-                                return enum_ty;
-                            }
-                            super::EnumPayloadShape::Tuple(tys) => {
-                                return ArType::Func(tys.clone(), Box::new(enum_ty));
-                            }
+                let variant_symbol_opt = checker
+                    .symbols
+                    .lookup_associated_member(&type_name.path.join("."), member);
+                if let Some(variant_symbol_id) = variant_symbol_opt
+                    && let Some((_, shape)) =
+                        checker.type_info.enum_variants.get(&variant_symbol_id)
+                {
+                    let enum_ty = ArType::Named(*enum_symbol_id, vec![]);
+                    match shape {
+                        super::EnumPayloadShape::Unit => {
+                            return enum_ty;
+                        }
+                        super::EnumPayloadShape::Tuple(tys) => {
+                            return ArType::Func(tys.clone(), Box::new(enum_ty));
                         }
                     }
                 }
@@ -88,8 +92,20 @@ fn synth_expr_inner(checker: &mut TypeChecker, expr: &Expr) -> ArType {
             // For now, generics return error since we lack full generic instantiation
             ArType::Error
         }
-        Expr::Field { span, base, field } => resolve_field(checker, base, field, *span, false),
-        Expr::SafeField { span, base, field } => resolve_field(checker, base, field, *span, true),
+        Expr::Field { span, base, field } => {
+            if let Some(ty) = resolve_namespace_member_type(checker, *span) {
+                ty
+            } else {
+                resolve_field(checker, base, field, *span, false)
+            }
+        }
+        Expr::SafeField { span, base, field } => {
+            if let Some(ty) = resolve_namespace_member_type(checker, *span) {
+                ty
+            } else {
+                resolve_field(checker, base, field, *span, true)
+            }
+        }
         Expr::Index {
             span: _,
             base,
@@ -184,18 +200,17 @@ fn synth_expr_inner(checker: &mut TypeChecker, expr: &Expr) -> ArType {
                 other => {
                     checker.diagnostics.push(crate::Diagnostic::error(
                         crate::DiagCode::T003IncompatibleCallArg,
-                        format!("cannot call non-function type '{}'", other.display(&checker.symbols)),
+                        format!(
+                            "cannot call non-function type '{}'",
+                            other.display(&checker.symbols)
+                        ),
                         *span,
                     ));
                     ArType::Error
                 }
             }
         }
-        Expr::StructLiteral {
-            span,
-            ty,
-            fields,
-        } => {
+        Expr::StructLiteral { span, ty, fields } => {
             let struct_ty = super::types::lower_type_expr(
                 ty,
                 &checker.symbols,
@@ -207,7 +222,10 @@ fn synth_expr_inner(checker: &mut TypeChecker, expr: &Expr) -> ArType {
                 if has_struct_def {
                     for field in fields {
                         let field_val_ty = synth_expr(checker, &field.value);
-                        let defined_field_ty = checker.type_info.struct_fields.get(symbol_id)
+                        let defined_field_ty = checker
+                            .type_info
+                            .struct_fields
+                            .get(symbol_id)
                             .and_then(|df| df.get(&field.name).cloned());
                         if let Some(defined_field_ty) = defined_field_ty {
                             if !super::types::unify(&defined_field_ty, &field_val_ty) {
@@ -456,7 +474,21 @@ fn synth_expr_inner(checker: &mut TypeChecker, expr: &Expr) -> ArType {
                 _ => ArType::Error,
             }
         }
+        Expr::Error(_) => ArType::Error,
     }
+}
+
+fn resolve_namespace_member_type(checker: &TypeChecker, span: arandu_lexer::Span) -> Option<ArType> {
+    let key = crate::NodeKey::from(span);
+    if let Some(symbol_id) = checker.resolved.value_refs.get(&key) {
+        if let Some(ty) = checker.ctx.lookup(*symbol_id) {
+            return Some(ty.clone());
+        }
+        if let Some(ty) = checker.type_info.decl_types.get(symbol_id) {
+            return Some(ty.clone());
+        }
+    }
+    None
 }
 
 fn resolve_field(
@@ -479,7 +511,11 @@ fn resolve_field(
     if was_nullable && !safe {
         checker.diagnostics.push(crate::Diagnostic::error(
             crate::DiagCode::T006NotNullable,
-            format!("cannot access field '{}' on nullable type '{}'", field, base_ty.display(&checker.symbols)),
+            format!(
+                "cannot access field '{}' on nullable type '{}'",
+                field,
+                base_ty.display(&checker.symbols)
+            ),
             field_span,
         ));
         return ArType::Error;
@@ -535,16 +571,17 @@ fn resolve_index(checker: &mut TypeChecker, base: &Expr, index: &Expr, safe: boo
     if was_nullable && !safe {
         checker.diagnostics.push(crate::Diagnostic::error(
             crate::DiagCode::T006NotNullable,
-            format!("cannot index nullable type '{}'", base_ty.display(&checker.symbols)),
+            format!(
+                "cannot index nullable type '{}'",
+                base_ty.display(&checker.symbols)
+            ),
             index.span(),
         ));
         return ArType::Error;
     }
 
     let elem_ty = match &actual_base_ty {
-        ArType::Array(_, inner) | ArType::Slice(inner) => {
-            inner.as_ref().clone()
-        }
+        ArType::Array(_, inner) | ArType::Slice(inner) => inner.as_ref().clone(),
         _ => {
             checker.add_constraint(
                 actual_base_ty.clone(),
@@ -585,7 +622,10 @@ pub fn check_pattern(checker: &mut TypeChecker, pattern: &Pattern, value_ty: &Ar
             let key = crate::NodeKey::from(*span);
             if let Some(symbol_id) = checker.resolved.definitions.get(&key) {
                 checker.ctx.bind(*symbol_id, value_ty.clone());
-                checker.type_info.decl_types.insert(*symbol_id, value_ty.clone());
+                checker
+                    .type_info
+                    .decl_types
+                    .insert(*symbol_id, value_ty.clone());
             }
         }
         Pattern::Literal { expr, .. } => {
@@ -621,19 +661,26 @@ pub fn check_pattern(checker: &mut TypeChecker, pattern: &Pattern, value_ty: &Ar
                     );
                 }
 
-                let variant_symbol_opt = checker.symbols.lookup_associated_member(
-                    &type_name.path.join("."),
-                    variant,
-                );
+                let variant_symbol_opt = checker
+                    .symbols
+                    .lookup_associated_member(&type_name.path.join("."), variant);
                 if let Some(variant_symbol_id) = variant_symbol_opt {
-                    let shape_opt = checker.type_info.enum_variants.get(&variant_symbol_id).cloned();
+                    let shape_opt = checker
+                        .type_info
+                        .enum_variants
+                        .get(&variant_symbol_id)
+                        .cloned();
                     if let Some((_, shape)) = shape_opt {
                         match shape {
                             super::EnumPayloadShape::Unit => {
                                 if !payload.is_empty() {
                                     checker.diagnostics.push(crate::Diagnostic::error(
                                         crate::DiagCode::T012WrongArgCount,
-                                        format!("enum variant '{}' expects 0 payload items, found {}", variant, payload.len()),
+                                        format!(
+                                            "enum variant '{}' expects 0 payload items, found {}",
+                                            variant,
+                                            payload.len()
+                                        ),
                                         *span,
                                     ));
                                 }
@@ -642,12 +689,18 @@ pub fn check_pattern(checker: &mut TypeChecker, pattern: &Pattern, value_ty: &Ar
                                 if tys.len() != payload.len() {
                                     checker.diagnostics.push(crate::Diagnostic::error(
                                         crate::DiagCode::T012WrongArgCount,
-                                        format!("enum variant '{}' expects {} payload items, found {}", variant, tys.len(), payload.len()),
+                                        format!(
+                                            "enum variant '{}' expects {} payload items, found {}",
+                                            variant,
+                                            tys.len(),
+                                            payload.len()
+                                        ),
                                         *span,
                                     ));
                                 }
                                 for (i, pat) in payload.iter().enumerate() {
-                                    let expected_pat_ty = tys.get(i).cloned().unwrap_or(ArType::Error);
+                                    let expected_pat_ty =
+                                        tys.get(i).cloned().unwrap_or(ArType::Error);
                                     check_pattern(checker, pat, &expected_pat_ty);
                                 }
                             }
@@ -656,7 +709,11 @@ pub fn check_pattern(checker: &mut TypeChecker, pattern: &Pattern, value_ty: &Ar
                 } else {
                     checker.diagnostics.push(crate::Diagnostic::error(
                         crate::DiagCode::T018UndefinedField,
-                        format!("variant '{}' is not defined on enum '{}'", variant, type_name.path.join(".")),
+                        format!(
+                            "variant '{}' is not defined on enum '{}'",
+                            variant,
+                            type_name.path.join(".")
+                        ),
                         *span,
                     ));
                 }
@@ -671,14 +728,22 @@ pub fn check_pattern(checker: &mut TypeChecker, pattern: &Pattern, value_ty: &Ar
                 let enum_name = &checker.symbols.get(*enum_symbol_id).name.clone();
                 let variant_symbol_opt = checker.symbols.lookup_associated_member(enum_name, name);
                 if let Some(variant_symbol_id) = variant_symbol_opt {
-                    let shape_opt = checker.type_info.enum_variants.get(&variant_symbol_id).cloned();
+                    let shape_opt = checker
+                        .type_info
+                        .enum_variants
+                        .get(&variant_symbol_id)
+                        .cloned();
                     if let Some((_, shape)) = shape_opt {
                         match shape {
                             super::EnumPayloadShape::Unit => {
                                 if !payload.is_empty() {
                                     checker.diagnostics.push(crate::Diagnostic::error(
                                         crate::DiagCode::T012WrongArgCount,
-                                        format!("enum variant '{}' expects 0 payload items, found {}", name, payload.len()),
+                                        format!(
+                                            "enum variant '{}' expects 0 payload items, found {}",
+                                            name,
+                                            payload.len()
+                                        ),
                                         *span,
                                     ));
                                 }
@@ -687,12 +752,18 @@ pub fn check_pattern(checker: &mut TypeChecker, pattern: &Pattern, value_ty: &Ar
                                 if tys.len() != payload.len() {
                                     checker.diagnostics.push(crate::Diagnostic::error(
                                         crate::DiagCode::T012WrongArgCount,
-                                        format!("enum variant '{}' expects {} payload items, found {}", name, tys.len(), payload.len()),
+                                        format!(
+                                            "enum variant '{}' expects {} payload items, found {}",
+                                            name,
+                                            tys.len(),
+                                            payload.len()
+                                        ),
                                         *span,
                                     ));
                                 }
                                 for (i, pat) in payload.iter().enumerate() {
-                                    let expected_pat_ty = tys.get(i).cloned().unwrap_or(ArType::Error);
+                                    let expected_pat_ty =
+                                        tys.get(i).cloned().unwrap_or(ArType::Error);
                                     check_pattern(checker, pat, &expected_pat_ty);
                                 }
                             }
@@ -708,7 +779,10 @@ pub fn check_pattern(checker: &mut TypeChecker, pattern: &Pattern, value_ty: &Ar
             } else {
                 checker.diagnostics.push(crate::Diagnostic::error(
                     crate::DiagCode::T002IncompatibleAssignment,
-                    format!("cannot match type tuple pattern against non-enum type '{}'", value_ty.display(&checker.symbols)),
+                    format!(
+                        "cannot match type tuple pattern against non-enum type '{}'",
+                        value_ty.display(&checker.symbols)
+                    ),
                     *span,
                 ));
             }
@@ -722,12 +796,19 @@ pub fn check_pattern(checker: &mut TypeChecker, pattern: &Pattern, value_ty: &Ar
             } else {
                 checker.diagnostics.push(crate::Diagnostic::error(
                     crate::DiagCode::T002IncompatibleAssignment,
-                    format!("cannot match tuple pattern against non-tuple type '{}'", value_ty.display(&checker.symbols)),
+                    format!(
+                        "cannot match tuple pattern against non-tuple type '{}'",
+                        value_ty.display(&checker.symbols)
+                    ),
                     pattern.span(),
                 ));
             }
         }
-        Pattern::Struct { type_name, fields, span: _ } => {
+        Pattern::Struct {
+            type_name,
+            fields,
+            span: _,
+        } => {
             let type_key = crate::NodeKey::from(type_name.span);
             if let Some(struct_symbol_id) = checker.resolved.type_refs.get(&type_key).copied() {
                 let expected_struct_ty = ArType::Named(struct_symbol_id, vec![]);
@@ -742,29 +823,45 @@ pub fn check_pattern(checker: &mut TypeChecker, pattern: &Pattern, value_ty: &Ar
                     );
                 }
                 for field in fields {
-                    let field_ty_opt = checker.type_info.struct_fields.get(&struct_symbol_id)
+                    let field_ty_opt = checker
+                        .type_info
+                        .struct_fields
+                        .get(&struct_symbol_id)
                         .and_then(|df| df.get(&field.name).cloned());
                     if let Some(field_ty) = field_ty_opt {
                         if let Some(pat) = &field.pattern {
                             check_pattern(checker, pat, &field_ty);
                         } else {
                             let key = crate::NodeKey::from(field.span);
-                            if let Some(symbol_id) = checker.resolved.definitions.get(&key).copied() {
+                            if let Some(symbol_id) = checker.resolved.definitions.get(&key).copied()
+                            {
                                 checker.ctx.bind(symbol_id, field_ty.clone());
-                                checker.type_info.decl_types.insert(symbol_id, field_ty.clone());
+                                checker
+                                    .type_info
+                                    .decl_types
+                                    .insert(symbol_id, field_ty.clone());
                             }
                         }
                     } else {
                         checker.diagnostics.push(crate::Diagnostic::error(
                             crate::DiagCode::T018UndefinedField,
-                            format!("field '{}' is not defined on struct '{}'", field.name, type_name.path.join(".")),
+                            format!(
+                                "field '{}' is not defined on struct '{}'",
+                                field.name,
+                                type_name.path.join(".")
+                            ),
                             field.span,
                         ));
                     }
                 }
             }
         }
-        Pattern::Range { start, end, span: _, .. } => {
+        Pattern::Range {
+            start,
+            end,
+            span: _,
+            ..
+        } => {
             let start_ty = synth_expr(checker, start);
             let end_ty = synth_expr(checker, end);
             if !super::types::unify(value_ty, &start_ty) {

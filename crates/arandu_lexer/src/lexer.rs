@@ -13,6 +13,7 @@ pub struct Lexer<'a> {
     col: usize,
     tokens: Vec<Token>,
     prev_significant: Option<TokenKind>,
+    diagnostics: Vec<LexError>,
 }
 
 impl<'a> Lexer<'a> {
@@ -24,68 +25,89 @@ impl<'a> Lexer<'a> {
             col: 1,
             tokens: Vec::new(),
             prev_significant: None,
+            diagnostics: Vec::new(),
         }
     }
 
-    pub fn lex(mut self) -> Result<Vec<Token>, LexError> {
+    pub fn lex(self) -> Result<Vec<Token>, LexError> {
+        let lexed = self.lex_recovering();
+        if let Some(err) = lexed.diagnostics.into_iter().next() {
+            Err(err)
+        } else {
+            Ok(lexed.tokens)
+        }
+    }
+
+    pub fn lex_recovering(mut self) -> crate::Lexed {
         while !self.is_at_end() {
-            if self.consume_space_or_newline()? {
-                continue;
-            }
+            let start_mark = self.mark();
+            let result = self.lex_next_token();
 
-            if self.starts_with("///") {
-                self.lex_line_doc_comment();
-                continue;
+            if let Err(err) = result {
+                let code = err.code;
+                let span = err.span;
+                self.diagnostics.push(err);
+                self.push_token(TokenKind::Error(code), "", span, false);
+                if self.pos == start_mark.0 {
+                    self.bump();
+                }
             }
-            if self.starts_with("/**") {
-                self.lex_block_doc_comment()?;
-                continue;
-            }
-            if self.starts_with("//") {
-                self.skip_line_comment();
-                continue;
-            }
-            if self.starts_with("/*") {
-                self.skip_block_comment()?;
-                continue;
-            }
-
-            if self.starts_with("r\"\"\"") {
-                self.lex_raw_multiline_string()?;
-                continue;
-            }
-            if self.starts_with("r\"") {
-                self.lex_raw_string()?;
-                continue;
-            }
-            if self.starts_with("\"\"\"") {
-                self.lex_multiline_string()?;
-                continue;
-            }
-            if self.peek() == Some('"') {
-                self.lex_string(false)?;
-                continue;
-            }
-            if self.peek() == Some('\'') {
-                self.lex_char()?;
-                continue;
-            }
-            if self.peek().is_some_and(|ch| ch.is_ascii_digit()) {
-                self.lex_number()?;
-                continue;
-            }
-            if self.peek().is_some_and(is_ident_start) {
-                self.lex_ident_or_keyword();
-                continue;
-            }
-
-            self.lex_operator_or_punctuation()?;
         }
 
         self.insert_semicolon_if_needed();
         let span = self.current_span();
         self.push_token(TokenKind::Eof, "", span, false);
-        Ok(self.tokens)
+        
+        crate::Lexed {
+            tokens: self.tokens,
+            diagnostics: self.diagnostics,
+        }
+    }
+
+    fn lex_next_token(&mut self) -> Result<(), LexError> {
+        if self.consume_space_or_newline()? {
+            return Ok(());
+        }
+
+        if self.starts_with("///") {
+            self.lex_line_doc_comment();
+            return Ok(());
+        }
+        if self.starts_with("/**") {
+            return self.lex_block_doc_comment();
+        }
+        if self.starts_with("//") {
+            self.skip_line_comment();
+            return Ok(());
+        }
+        if self.starts_with("/*") {
+            return self.skip_block_comment();
+        }
+
+        if self.starts_with("r\"\"\"") {
+            return self.lex_raw_multiline_string();
+        }
+        if self.starts_with("r\"") {
+            return self.lex_raw_string();
+        }
+        if self.starts_with("\"\"\"") {
+            return self.lex_multiline_string();
+        }
+        if self.peek() == Some('"') {
+            return self.lex_string(false);
+        }
+        if self.peek() == Some('\'') {
+            return self.lex_char();
+        }
+        if self.peek().is_some_and(|ch| ch.is_ascii_digit()) {
+            return self.lex_number();
+        }
+        if self.peek().is_some_and(is_ident_start) {
+            self.lex_ident_or_keyword();
+            return Ok(());
+        }
+
+        self.lex_operator_or_punctuation()
     }
 
     fn consume_space_or_newline(&mut self) -> Result<bool, LexError> {

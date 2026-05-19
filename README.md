@@ -14,15 +14,17 @@ Implemented:
 - Parser crate with AST debug output for the current parser slice.
 - Parser golden tests for declarations, generics, extern, match, interpolation, places, and expressions.
 - Semantics crate with v0.2 name resolution, hierarchical symbol tables, namespace imports, prelude members, doc comment mapping, diagnostics, and CLI `check`.
-- Type checker skeleton with primitive types, assignments, returns, fields, indexing, and basic diagnostics.
+- Type checker (experimental) with primitive types, assignments, returns, fields, indexing, and basic diagnostics.
+- AHIR lowering and pretty-printing with golden tests (`tests/hir/`).
+- AMIR lowering v0.1 (experimental) with CFG, locals, basic expressions, and golden tests (`tests/amir/`).
 
 Not implemented yet:
 
-- Complete type checker
-- Generics instantiation
+- Complete type checker (generics instantiation, full constraint solving)
 - Full stdlib/module loading
-- Memory checker.
-- Backend.
+- AMIR match/defer/try/catch/safe-access lowering (explicitly unsupported in v0.1)
+- Memory checker / ownership model
+- Backend
 
 ## Style Guide
 
@@ -74,10 +76,30 @@ Print the parser AST debug output:
 cargo run -p arandu_cli -- parse examples/stable/syntax/hello.aru
 ```
 
-Run parse + name resolution:
+Run parse + name resolution + type check:
 
 ```bash
 cargo run -p arandu_cli -- check examples/stable/syntax/hello.aru
+```
+
+Print the AHIR (typed high-level IR):
+
+```bash
+cargo run -p arandu_cli -- hir examples/stable/syntax/hello.aru
+cargo run -p arandu_cli -- hir examples/stable/syntax/hello.aru --debug
+```
+
+Print the AMIR (mid-level IR / CFG):
+
+```bash
+cargo run -p arandu_cli -- amir tests/amir/add.aru
+cargo run -p arandu_cli -- amir tests/amir/add.aru --debug
+```
+
+Update golden test files (after intentional IR changes):
+
+```bash
+$env:UPDATE_GOLDEN=1; cargo test -p arandu_semantics
 ```
 
 Parser fixtures:
@@ -93,21 +115,23 @@ cargo run -p arandu_cli -- parse examples/stable/syntax/match.aru
 
 ```text
 crates/
-  arandu_lexer/   Rust lexer library
-  arandu_parser/  Rust parser library
-  arandu_semantics/ Name resolution and diagnostics
-  arandu_cli/     Debug CLI for compiler experiments
+  arandu_lexer/     Rust lexer library
+  arandu_parser/    Rust parser library
+  arandu_semantics/ Name resolution, type checking, HIR, and AMIR
+  arandu_cli/       Debug CLI for compiler experiments
 
 docs/             Language and compiler design notes
 examples/         Official stable, invalid, and draft examples
 tests/lexer/      Lexer golden fixtures
 tests/parser/     Parser golden fixtures
 tests/semantics/  Semantics diagnostic fixtures
+tests/hir/        AHIR golden fixtures (.aru → .hir)
+tests/amir/       AMIR golden fixtures (.aru → .amir)
 ```
 
 ## Next Steps
 
-1. Add filesystem module loading to name resolution.
-2. Type checker skeleton.
-3. Ownership and memory checker design.
+1. Stabilize AMIR lowering semantics (match, defer, try/catch CFG desugaring).
+2. Add AMIR invariant validation.
+3. Begin ownership/move model design.
 4. Backend planning.

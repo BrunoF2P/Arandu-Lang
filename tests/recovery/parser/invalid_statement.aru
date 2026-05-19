@@ -1,0 +1,6 @@
+module tests.recovery.parser.invalid_statement
+
+func main() {
+    val x int = 1;
+    y = 5;
+}

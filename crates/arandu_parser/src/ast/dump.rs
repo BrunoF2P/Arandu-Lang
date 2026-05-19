@@ -37,6 +37,7 @@ fn dump_top_level_decl(decl: &TopLevelDecl, out: &mut Vec<String>) {
         TopLevelDecl::Enum(decl) => dump_enum(decl, out),
         TopLevelDecl::Interface(decl) => dump_interface(decl, out),
         TopLevelDecl::Extern(decl) => dump_extern(decl, out),
+        TopLevelDecl::Error(span) => out.push(format!("  DeclError {}", dump_span(*span))),
     }
 }
 
@@ -348,6 +349,7 @@ fn dump_stmt(stmt: &Stmt, out: &mut Vec<String>, indent: usize) {
             out.push(format!("{pad}Unsafe {}", dump_span(*span)));
             dump_block_body(block, out, indent + 2);
         }
+        Stmt::Error(span) => out.push(format!("{pad}StmtError {}", dump_span(*span))),
     }
 }
 
@@ -790,6 +792,7 @@ fn dump_expr(expr: &Expr) -> String {
         Expr::Char { span, value } => format!("Char {}('{value}')", dump_span(*span)),
         Expr::InterpolatedString { span, parts } => dump_interpolated_string(*span, parts),
         Expr::Nil { span } => format!("Nil {}", dump_span(*span)),
+        Expr::Error(span) => format!("ExprError {}", dump_span(*span)),
     }
 }
 

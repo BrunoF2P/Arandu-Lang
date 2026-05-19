@@ -1,0 +1,8 @@
+struct User {
+    age int
+}
+
+func main() {
+    u User = User { age: 20 }
+    x int = u.age
+}

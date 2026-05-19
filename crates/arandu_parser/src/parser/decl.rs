@@ -88,6 +88,18 @@ impl Parser {
     }
 
     pub(super) fn parse_top_level_decl(&mut self) -> Result<TopLevelDecl, ParseError> {
+        let start = self.mark();
+        match self.try_parse_top_level_decl() {
+            Ok(decl) => Ok(decl),
+            Err(err) => {
+                self.diagnostics.push(err);
+                self.synchronize_top_level();
+                Ok(TopLevelDecl::Error(self.span_from_mark(start)))
+            }
+        }
+    }
+
+    pub(super) fn try_parse_top_level_decl(&mut self) -> Result<TopLevelDecl, ParseError> {
         self.collect_doc_comments();
         let docs = self.take_pending_docs();
         let attrs = self.parse_attributes()?;
@@ -217,6 +229,14 @@ impl Parser {
             if self.at_kind_name("RBRACE") {
                 break;
             }
+            if self.at_kind_name("EOF") {
+                self.diagnostics.push(ParseError::new(
+                    ParseErrorCode::ExpectedToken,
+                    "expected '}'",
+                    self.current(),
+                ));
+                break;
+            }
             fields.push(self.parse_field_decl(true)?);
         }
         self.expect_name("RBRACE")?;
@@ -272,6 +292,14 @@ impl Parser {
         while !self.at_kind_name("RBRACE") {
             self.skip_semicolons();
             if self.at_kind_name("RBRACE") {
+                break;
+            }
+            if self.at_kind_name("EOF") {
+                self.diagnostics.push(ParseError::new(
+                    ParseErrorCode::ExpectedToken,
+                    "expected '}'",
+                    self.current(),
+                ));
                 break;
             }
             variants.push(self.parse_enum_variant()?);
@@ -502,6 +530,14 @@ impl Parser {
         while !self.at_kind_name("RBRACE") {
             self.skip_semicolons();
             if self.at_kind_name("RBRACE") {
+                break;
+            }
+            if self.at_kind_name("EOF") {
+                self.diagnostics.push(ParseError::new(
+                    ParseErrorCode::ExpectedToken,
+                    "expected '}'",
+                    self.current(),
+                ));
                 break;
             }
             items.push(parse_item(self)?);

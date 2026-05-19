@@ -11,6 +11,14 @@ impl Parser {
             if self.at_kind_name("RBRACE") {
                 break;
             }
+            if self.at_kind_name("EOF") {
+                self.diagnostics.push(ParseError::new(
+                    ParseErrorCode::ExpectedToken,
+                    "expected '}'",
+                    self.current(),
+                ));
+                break;
+            }
             statements.push(self.parse_stmt()?);
         }
         self.expect_name("RBRACE")?;
@@ -21,6 +29,18 @@ impl Parser {
     }
 
     pub(super) fn parse_stmt(&mut self) -> Result<Stmt, ParseError> {
+        let start = self.mark();
+        match self.try_parse_stmt() {
+            Ok(stmt) => Ok(stmt),
+            Err(err) => {
+                self.diagnostics.push(err);
+                self.synchronize_stmt();
+                Ok(Stmt::Error(self.span_from_mark(start)))
+            }
+        }
+    }
+
+    pub(super) fn try_parse_stmt(&mut self) -> Result<Stmt, ParseError> {
         if self.at_kind_name("KW_RETURN") {
             return self.parse_return();
         }

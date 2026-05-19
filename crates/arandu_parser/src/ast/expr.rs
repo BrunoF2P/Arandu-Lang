@@ -99,6 +99,7 @@ pub enum Expr {
         expr: Box<Expr>,
         ty: TypeExpr,
     },
+    Error(Span),
     Group {
         span: Span,
         expr: Box<Expr>,
@@ -242,7 +243,8 @@ impl Expr {
             | Expr::Bool { span, .. }
             | Expr::Char { span, .. }
             | Expr::InterpolatedString { span, .. }
-            | Expr::Nil { span } => *span,
+            | Expr::Nil { span }
+            | Expr::Error(span) => *span,
         }
     }
 }

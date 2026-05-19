@@ -1,3 +1,2 @@
-error[N001]: value 'frobnicate' is not declared
-  --> 5:13-5:23
-hint: did you mean 'formatar'?
+N001: value 'frobnicate' is not declared
+  --> tests/semantics/undefined_value.aru:5:13

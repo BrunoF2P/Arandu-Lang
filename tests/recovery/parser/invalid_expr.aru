@@ -1,0 +1,6 @@
+module tests.recovery.parser.invalid_expr
+
+func main() {
+    x = + * y;
+    z = 10;
+}

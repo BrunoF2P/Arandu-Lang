@@ -1,0 +1,13 @@
+import io
+
+func foo() (int, bool) {
+    return 42, true
+}
+
+func main() {
+    x, y = foo()
+    
+    set x, y = foo()
+    
+    io.println(x)
+}

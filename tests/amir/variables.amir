@@ -1,0 +1,11 @@
+Func variables() -> int
+  locals:
+    _0: int // return
+    _1: int // x
+    _2: int // y
+
+  bb0:
+    _1 = 10
+    _2 = 20
+    _0 = add _1, _2
+    return

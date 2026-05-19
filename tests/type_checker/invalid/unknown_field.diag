@@ -1,0 +1,4 @@
+T018: no field 'name' on type 'User'
+  --> tests/type_checker/invalid/unknown_field.aru:7:13
+  label: 7:13-7:14 this has type 'User'
+  label: 7:13-7:19 unknown field

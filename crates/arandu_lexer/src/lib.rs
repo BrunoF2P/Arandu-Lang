@@ -10,6 +10,16 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
     Lexer::new(source).lex()
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Lexed {
+    pub tokens: Vec<Token>,
+    pub diagnostics: Vec<LexError>,
+}
+
+pub fn lex_recovering(source: &str) -> Lexed {
+    Lexer::new(source).lex_recovering()
+}
+
 pub fn lex_to_string(source: &str) -> Result<String, LexError> {
     let tokens = lex(source)?;
     Ok(tokens

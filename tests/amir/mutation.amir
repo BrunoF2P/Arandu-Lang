@@ -1,0 +1,15 @@
+Func mutation_test() -> int
+  locals:
+    _0: int // return
+    _1: Point // p
+    _2: int
+    _3: int
+
+  bb0:
+    _1 = Point { x: 10, y: 20 }
+    _1.x = 30
+    _1.y = 40
+    _2 = _1.x
+    _3 = _1.y
+    _0 = add _2, _3
+    return

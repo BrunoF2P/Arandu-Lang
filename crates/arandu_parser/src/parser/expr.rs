@@ -2,6 +2,19 @@ use super::*;
 
 impl Parser {
     pub(super) fn parse_expr(&mut self, min_bp: u8) -> Result<Expr, ParseError> {
+        let start = self.mark();
+        match self.try_parse_expr(min_bp) {
+            Ok(expr) => Ok(expr),
+            Err(err) => {
+                self.diagnostics.push(err);
+                // No synchronize_expr yet, to avoid eating too much.
+                // It just falls back to Expr::Error so parent parses can fail/recover naturally.
+                Ok(Expr::Error(self.span_from_mark(start)))
+            }
+        }
+    }
+
+    pub(super) fn try_parse_expr(&mut self, min_bp: u8) -> Result<Expr, ParseError> {
         let mut left = self.parse_prefix()?;
         loop {
             if self.at_kind_name("LT") && self.looks_like_generic_call_or_block_suffix() {

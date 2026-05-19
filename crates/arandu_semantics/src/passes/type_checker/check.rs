@@ -1,7 +1,6 @@
 use arandu_parser::{
-    Block, FuncDecl, Program, Stmt, TopLevelDecl, TypeExpr, ResultType,
-    Expr, MatchArmBody, CatchHandler, Condition, ForClause, SimpleStmt, DeferBody,
-    LambdaBody,
+    Block, CatchHandler, Condition, DeferBody, Expr, ForClause, FuncDecl, LambdaBody, MatchArmBody,
+    Program, ResultType, SimpleStmt, Stmt, TopLevelDecl, TypeExpr,
 };
 
 use super::TypeChecker;
@@ -92,12 +91,25 @@ fn validate_expr(checker: &mut TypeChecker, expr: &Expr) {
         }
         Expr::Index { base, index, .. }
         | Expr::SafeIndex { base, index, .. }
-        | Expr::NullCoalesce { left: base, right: index, .. }
-        | Expr::Binary { left: base, right: index, .. } => {
+        | Expr::NullCoalesce {
+            left: base,
+            right: index,
+            ..
+        }
+        | Expr::Binary {
+            left: base,
+            right: index,
+            ..
+        } => {
             validate_expr(checker, base);
             validate_expr(checker, index);
         }
-        Expr::Call { callee, args, trailing_block, .. } => {
+        Expr::Call {
+            callee,
+            args,
+            trailing_block,
+            ..
+        } => {
             validate_expr(checker, callee);
             for arg in args {
                 validate_expr(checker, arg);
@@ -143,7 +155,12 @@ fn validate_expr(checker: &mut TypeChecker, expr: &Expr) {
         Expr::AsyncBlock { block, .. } | Expr::UnsafeBlock { block, .. } => {
             validate_block(checker, block);
         }
-        Expr::If { condition, then_block, else_block, .. } => {
+        Expr::If {
+            condition,
+            then_block,
+            else_block,
+            ..
+        } => {
             validate_condition(checker, condition);
             validate_block(checker, then_block);
             validate_block(checker, else_block);
@@ -160,7 +177,11 @@ fn validate_expr(checker: &mut TypeChecker, expr: &Expr) {
                 }
             }
         }
-        Expr::Catch { expr: base, handler, .. } => {
+        Expr::Catch {
+            expr: base,
+            handler,
+            ..
+        } => {
             validate_expr(checker, base);
             match handler {
                 CatchHandler::Expr { expr, .. } => validate_expr(checker, expr),
@@ -187,7 +208,9 @@ fn validate_condition(checker: &mut TypeChecker, cond: &Condition) {
 
 fn validate_simple_stmt(checker: &mut TypeChecker, stmt: &SimpleStmt) {
     match stmt {
-        SimpleStmt::VarDecl { bindings, value, .. } => {
+        SimpleStmt::VarDecl {
+            bindings, value, ..
+        } => {
             for binding in bindings {
                 if let Some(ty) = &binding.ty
                     && let Some(span) = contains_any(ty)
@@ -213,7 +236,9 @@ fn validate_simple_stmt(checker: &mut TypeChecker, stmt: &SimpleStmt) {
 fn validate_block(checker: &mut TypeChecker, block: &Block) {
     for stmt in &block.statements {
         match stmt {
-            Stmt::VarDecl { bindings, value, .. } => {
+            Stmt::VarDecl {
+                bindings, value, ..
+            } => {
                 for binding in bindings {
                     if let Some(ty) = &binding.ty
                         && let Some(span) = contains_any(ty)
@@ -241,7 +266,12 @@ fn validate_block(checker: &mut TypeChecker, block: &Block) {
             Stmt::Expr { expr, .. } => {
                 validate_expr(checker, expr);
             }
-            Stmt::If { condition, then_block, else_block, .. } => {
+            Stmt::If {
+                condition,
+                then_block,
+                else_block,
+                ..
+            } => {
                 validate_condition(checker, condition);
                 validate_block(checker, then_block);
                 if let Some(block) = else_block {
@@ -253,7 +283,12 @@ fn validate_block(checker: &mut TypeChecker, block: &Block) {
                     ForClause::In { iterable, .. } => {
                         validate_expr(checker, iterable);
                     }
-                    ForClause::CStyle { init, condition, step, .. } => {
+                    ForClause::CStyle {
+                        init,
+                        condition,
+                        step,
+                        ..
+                    } => {
                         if let Some(init_stmt) = init {
                             validate_simple_stmt(checker, init_stmt);
                         }
@@ -267,19 +302,19 @@ fn validate_block(checker: &mut TypeChecker, block: &Block) {
                 }
                 validate_block(checker, body);
             }
-            Stmt::While { condition, body, .. } => {
+            Stmt::While {
+                condition, body, ..
+            } => {
                 validate_condition(checker, condition);
                 validate_block(checker, body);
             }
             Stmt::Match { expr, .. } => {
                 validate_expr(checker, expr);
             }
-            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => {
-                match body {
-                    DeferBody::Expr { expr, .. } => validate_expr(checker, expr),
-                    DeferBody::Block { block, .. } => validate_block(checker, block),
-                }
-            }
+            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => match body {
+                DeferBody::Expr { expr, .. } => validate_expr(checker, expr),
+                DeferBody::Block { block, .. } => validate_block(checker, block),
+            },
             Stmt::Unsafe { block, .. } => {
                 validate_block(checker, block);
             }
@@ -388,7 +423,13 @@ pub fn check_program(checker: &mut TypeChecker, program: &Program) {
         (
             "io",
             vec![
-                ("println", ArType::Func(vec![ArType::Primitive(Primitive::Any)], Box::new(ArType::Void))),
+                (
+                    "println",
+                    ArType::Func(
+                        vec![ArType::Primitive(Primitive::Any)],
+                        Box::new(ArType::Void),
+                    ),
+                ),
                 (
                     "create",
                     ArType::Func(
@@ -466,11 +507,21 @@ pub fn check_program(checker: &mut TypeChecker, program: &Program) {
                         _ => super::EnumPayloadShape::Unit,
                     };
                     let variant_key = crate::NodeKey::from(variant.span);
-                    if let Some(variant_symbol_id) = checker.resolved.definitions.get(&variant_key) {
-                        checker.type_info.enum_variants.insert(*variant_symbol_id, (*enum_symbol_id, shape.clone()));
+                    if let Some(variant_symbol_id) = checker.resolved.definitions.get(&variant_key)
+                    {
+                        checker
+                            .type_info
+                            .enum_variants
+                            .insert(*variant_symbol_id, (*enum_symbol_id, shape.clone()));
                     }
-                    if let Some(assoc_symbol_id) = checker.symbols.lookup_associated_member(&enum_decl.name, &variant.name) {
-                        checker.type_info.enum_variants.insert(assoc_symbol_id, (*enum_symbol_id, shape));
+                    if let Some(assoc_symbol_id) = checker
+                        .symbols
+                        .lookup_associated_member(&enum_decl.name, &variant.name)
+                    {
+                        checker
+                            .type_info
+                            .enum_variants
+                            .insert(assoc_symbol_id, (*enum_symbol_id, shape));
                     }
                 }
             }
@@ -647,7 +698,11 @@ fn synth_place(checker: &mut TypeChecker, place: &arandu_parser::Place) -> ArTyp
                 if was_nullable {
                     checker.diagnostics.push(crate::Diagnostic::error(
                         crate::DiagCode::T006NotNullable,
-                        format!("cannot access field '{}' on nullable type '{}'", name, current_ty.display(&checker.symbols)),
+                        format!(
+                            "cannot access field '{}' on nullable type '{}'",
+                            name,
+                            current_ty.display(&checker.symbols)
+                        ),
                         *span,
                     ));
                     current_ty = ArType::Error;
@@ -688,7 +743,10 @@ fn synth_place(checker: &mut TypeChecker, place: &arandu_parser::Place) -> ArTyp
                 if was_nullable {
                     checker.diagnostics.push(crate::Diagnostic::error(
                         crate::DiagCode::T006NotNullable,
-                        format!("cannot index nullable type '{}'", current_ty.display(&checker.symbols)),
+                        format!(
+                            "cannot index nullable type '{}'",
+                            current_ty.display(&checker.symbols)
+                        ),
                         *span,
                     ));
                     current_ty = ArType::Error;
@@ -747,7 +805,8 @@ pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
 
                 for (i, binding) in bindings.iter().enumerate() {
                     let binding_key = crate::NodeKey::from(binding.span);
-                    if let Some(symbol_id) = checker.resolved.definitions.get(&binding_key).copied() {
+                    if let Some(symbol_id) = checker.resolved.definitions.get(&binding_key).copied()
+                    {
                         let elem_ty = val_tys.get(i).cloned().unwrap_or(ArType::Error);
                         let mut bind_ty = elem_ty.clone();
 

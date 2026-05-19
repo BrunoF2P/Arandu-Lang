@@ -1,4 +1,4 @@
-error[T018]: no field 'z' on type 'Point'
-  --> 8:13-8:16
-label: 8:13-8:14 this has type 'Point'
-label: 8:13-8:16 unknown field
+T018: no field 'z' on type 'Point'
+  --> tests/type_checker/undefined_field.aru:8:13
+  label: 8:13-8:14 this has type 'Point'
+  label: 8:13-8:16 unknown field

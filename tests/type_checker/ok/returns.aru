@@ -1,0 +1,5 @@
+func getFloat() float {
+    return 10
+}
+
+func main() {}

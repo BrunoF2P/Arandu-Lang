@@ -34,6 +34,10 @@ pub enum DiagCode {
     T016TryInvalid,
     T017InvalidIndex,
     T018UndefinedField,
+
+    // ── Lowering (HIR / AMIR) ──────────────────────────────────────
+    L001LoweringUnresolvedSymbol,
+    L002AmirUnsupportedFeature,
 }
 
 impl DiagCode {
@@ -67,6 +71,8 @@ impl DiagCode {
             DiagCode::T016TryInvalid => "T016",
             DiagCode::T017InvalidIndex => "T017",
             DiagCode::T018UndefinedField => "T018",
+            DiagCode::L001LoweringUnresolvedSymbol => "L001",
+            DiagCode::L002AmirUnsupportedFeature => "L002",
         }
     }
 }
@@ -77,30 +83,8 @@ impl fmt::Display for DiagCode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Severity {
-    Error,
-    Warning,
-    Note,
-    Hint,
-}
-
-impl fmt::Display for Severity {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Severity::Error => f.write_str("error"),
-            Severity::Warning => f.write_str("warning"),
-            Severity::Note => f.write_str("note"),
-            Severity::Hint => f.write_str("hint"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Label {
-    pub span: Span,
-    pub message: String,
-}
+pub type Severity = arandu_diagnostics::Severity;
+pub type Label = arandu_diagnostics::Label;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
@@ -126,6 +110,18 @@ impl Diagnostic {
         }
     }
 
+    pub fn warning(code: DiagCode, message: impl Into<String>, span: Span) -> Self {
+        Self {
+            code,
+            severity: Severity::Warning,
+            message: message.into(),
+            span,
+            labels: Vec::new(),
+            notes: Vec::new(),
+            hints: Vec::new(),
+        }
+    }
+
     pub fn with_label(mut self, span: Span, message: impl Into<String>) -> Self {
         self.labels.push(Label {
             span,
@@ -143,33 +139,30 @@ impl Diagnostic {
         self.hints.push(hint.into());
         self
     }
+
+    pub fn format_for_cli(&self, filepath: &str) -> String {
+        let diag = arandu_diagnostics::Diagnostic::from(self.clone());
+        diag.format_for_cli(filepath)
+    }
+}
+
+impl From<Diagnostic> for arandu_diagnostics::Diagnostic {
+    fn from(diag: Diagnostic) -> Self {
+        arandu_diagnostics::Diagnostic {
+            code: diag.code.as_str().to_string(),
+            severity: diag.severity,
+            message: diag.message,
+            span: diag.span,
+            labels: diag.labels,
+            notes: diag.notes,
+            hints: diag.hints,
+        }
+    }
 }
 
 impl fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "{}[{}]: {}", self.severity, self.code, self.message)?;
-        writeln!(
-            f,
-            "  --> {}:{}-{}:{}",
-            self.span.start_line, self.span.start_col, self.span.end_line, self.span.end_col
-        )?;
-        for label in &self.labels {
-            writeln!(
-                f,
-                "label: {}:{}-{}:{} {}",
-                label.span.start_line,
-                label.span.start_col,
-                label.span.end_line,
-                label.span.end_col,
-                label.message
-            )?;
-        }
-        for note in &self.notes {
-            writeln!(f, "note: {note}")?;
-        }
-        for hint in &self.hints {
-            writeln!(f, "hint: {hint}")?;
-        }
-        Ok(())
+        let diag = arandu_diagnostics::Diagnostic::from(self.clone());
+        write!(f, "{diag}")
     }
 }

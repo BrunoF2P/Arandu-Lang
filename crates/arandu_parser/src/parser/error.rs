@@ -46,25 +46,39 @@ impl ParseError {
             expected: &[],
         }
     }
+    pub fn format_for_cli(&self, filepath: &str) -> String {
+        let diag = arandu_diagnostics::Diagnostic::from(self.clone());
+        diag.format_for_cli(filepath)
+    }
+}
+
+impl From<ParseError> for arandu_diagnostics::Diagnostic {
+    fn from(err: ParseError) -> Self {
+        let code_str = match err.code {
+            ParseErrorCode::Lex => "L001",
+            ParseErrorCode::ExpectedToken => "P001",
+            ParseErrorCode::ExpectedTopLevelDecl => "P002",
+            ParseErrorCode::ExpectedExpression => "P003",
+            ParseErrorCode::ExpectedType => "P004",
+            ParseErrorCode::ExpectedPlace => "P005",
+        };
+        let msg = if err.expected.is_empty() {
+            format!("{} (found {})", err.message, err.found)
+        } else {
+            format!(
+                "{} (expected {}, found {})",
+                err.message,
+                err.expected.join(" or "),
+                err.found
+            )
+        };
+        arandu_diagnostics::Diagnostic::error(code_str, msg, err.span)
+    }
 }
 
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.expected.is_empty() {
-            return write!(
-                f,
-                "{:?}: {} (found {})",
-                self.code, self.message, self.found
-            );
-        }
-        write!(
-            f,
-            "{:?}: {} (expected {}, found {})",
-            self.code,
-            self.message,
-            self.expected.join(" or "),
-            self.found
-        )
+        f.write_str(&self.format_for_cli(""))
     }
 }
 

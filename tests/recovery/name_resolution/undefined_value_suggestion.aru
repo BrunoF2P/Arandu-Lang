@@ -1,0 +1,6 @@
+module tests.recovery.name_resolution.undefined_value_suggestion
+
+func main() {
+    my_variable = 10
+    other = my_variabl
+}

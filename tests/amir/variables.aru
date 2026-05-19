@@ -1,0 +1,5 @@
+func variables() int {
+    x = 10
+    y = 20
+    return x + y
+}

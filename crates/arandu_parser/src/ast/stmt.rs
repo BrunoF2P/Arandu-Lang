@@ -70,6 +70,7 @@ pub enum Stmt {
         span: Span,
         block: Block,
     },
+    Error(Span),
 }
 
 #[derive(Debug, Clone, PartialEq)]

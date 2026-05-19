@@ -7,13 +7,57 @@ mod types;
 
 pub use error::{ParseError, ParseErrorCode};
 
-use arandu_lexer::{Span, Token, TokenKind, lex};
+use arandu_lexer::{Span, Token, TokenKind};
 
 use crate::*;
 
+#[derive(Debug, Clone)]
+pub struct ParseOutput {
+    pub program: Program,
+    pub diagnostics: Vec<ParseError>,
+}
+
 pub fn parse(source: &str) -> Result<Program, ParseError> {
-    let tokens = lex(source).map_err(ParseError::from_lex)?;
-    Parser::new(tokens).parse_program()
+    let output = parse_recovering(source);
+    if let Some(err) = output.diagnostics.into_iter().next() {
+        Err(err)
+    } else {
+        Ok(output.program)
+    }
+}
+
+pub fn parse_recovering(source: &str) -> ParseOutput {
+    let lexed = arandu_lexer::lex_recovering(source);
+    let mut parser = Parser::new(lexed.tokens);
+    let mut diagnostics: Vec<ParseError> = lexed
+        .diagnostics
+        .into_iter()
+        .map(ParseError::from_lex)
+        .collect();
+    
+    // We expect parse_program to finish without returning Err 
+    // for recoverable nodes, but if it does return Err (e.g. at EOF), we catch it.
+    let program = match parser.parse_program() {
+        Ok(prog) => prog,
+        Err(err) => {
+            parser.diagnostics.push(err);
+            // Construct a fallback program
+            Program {
+                span: Span { file_id: 0, start: 0, end: 0, start_line: 0, start_col: 0, end_line: 0, end_col: 0 },
+                module: None,
+                imports: Vec::new(),
+                decls: Vec::new(),
+                docs: Vec::new(),
+            }
+        }
+    };
+
+    diagnostics.extend(parser.diagnostics);
+    
+    ParseOutput {
+        program,
+        diagnostics,
+    }
 }
 
 pub fn parse_to_string(source: &str) -> Result<String, ParseError> {
@@ -26,6 +70,7 @@ pub struct Parser {
     allow_block_calls: bool,
     docs: Vec<DocCommentAttachment>,
     pending_docs: Vec<PendingDoc>,
+    pub(super) diagnostics: Vec<ParseError>,
 }
 
 #[derive(Debug, Clone)]
@@ -42,10 +87,11 @@ impl Parser {
             allow_block_calls: true,
             docs: Vec::new(),
             pending_docs: Vec::new(),
+            diagnostics: Vec::new(),
         }
     }
 
-    pub fn parse_program(mut self) -> Result<Program, ParseError> {
+    pub fn parse_program(&mut self) -> Result<Program, ParseError> {
         let start = self.mark();
         self.skip_semicolons();
         self.collect_doc_comments();
@@ -75,7 +121,7 @@ impl Parser {
             module,
             imports,
             decls,
-            docs: self.docs,
+            docs: std::mem::take(&mut self.docs),
         })
     }
     pub(super) fn mark(&self) -> usize {
@@ -135,7 +181,7 @@ impl Parser {
     }
 
     pub(super) fn expect_semicolon(&mut self) -> Result<(), ParseError> {
-        self.expect_name("SEMICOLON").map(|_| ())
+        self.expect_name("SEMICOLON")
     }
 
     pub(super) fn expect_ident_value(&mut self) -> Result<String, ParseError> {
@@ -207,9 +253,10 @@ impl Parser {
         }
     }
 
-    pub(super) fn expect_name(&mut self, name: &str) -> Result<Token, ParseError> {
+    pub(super) fn expect_name(&mut self, name: &str) -> Result<(), ParseError> {
         if self.at_kind_name(name) {
-            Ok(self.advance())
+            self.consume();
+            Ok(())
         } else {
             Err(ParseError::expected(
                 ParseErrorCode::ExpectedToken,
@@ -241,17 +288,56 @@ impl Parser {
         &self.tokens[self.pos - 1]
     }
 
-    pub(super) fn advance(&mut self) -> Token {
-        let token = self.tokens[self.pos].clone();
-        if self.pos + 1 < self.tokens.len() {
+    pub(super) fn consume(&mut self) -> &Token {
+        let token = &self.tokens[self.pos];
+        if self.pos < self.tokens.len() - 1 {
             self.pos += 1;
         }
         token
     }
 
-    pub(super) fn consume(&mut self) {
-        if self.pos + 1 < self.tokens.len() {
-            self.pos += 1;
+    pub(super) fn synchronize_top_level(&mut self) {
+        self.consume();
+        while !self.at_kind_name("EOF") {
+            if matches!(
+                self.current().kind,
+                TokenKind::KwFunc
+                    | TokenKind::KwStruct
+                    | TokenKind::KwEnum
+                    | TokenKind::KwInterface
+                    | TokenKind::KwExtern
+                    | TokenKind::KwType
+                    | TokenKind::KwConst
+                    | TokenKind::KwImport
+                    | TokenKind::KwModule
+            ) {
+                break;
+            }
+            self.consume();
+        }
+    }
+
+    pub(super) fn synchronize_stmt(&mut self) {
+        self.consume();
+        while !self.at_kind_name("EOF") {
+            if self.previous().kind == TokenKind::Semicolon {
+                break;
+            }
+            if matches!(
+                self.current().kind,
+                TokenKind::KwReturn
+                    | TokenKind::KwIf
+                    | TokenKind::KwFor
+                    | TokenKind::KwWhile
+                    | TokenKind::KwMatch
+                    | TokenKind::KwBreak
+                    | TokenKind::KwContinue
+                    | TokenKind::KwDefer
+                    | TokenKind::KwErrdefer
+            ) {
+                break;
+            }
+            self.consume();
         }
     }
 

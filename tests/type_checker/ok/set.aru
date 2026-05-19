@@ -1,0 +1,12 @@
+func foo() (int, bool) {
+    return 42, true
+}
+
+func main() {
+    x int = 10
+    set x = 20
+    
+    a int = 0
+    b bool = false
+    set a, b = foo()
+}

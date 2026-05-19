@@ -1,0 +1,18 @@
+Program
+  Func foo() -> (int, bool)
+    Return
+      Int(10): int
+      Bool(true): bool
+
+  Func main() -> void
+    Var a: int =
+      Int(10): int
+    Var b: float =
+      Float(3.14): float
+    Var c: bool =
+      Bool(true): bool
+    Var d: str =
+      Str(interpolated): str
+    Var (a2: int, b2: bool) =
+      Call: (int, bool)
+        Path(foo): func() (int, bool)
