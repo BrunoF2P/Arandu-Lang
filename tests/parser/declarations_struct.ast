@@ -1,0 +1,7 @@
+Program @1:1-10:2
+  Module @1:1-1:32 tests.declarationsStruct
+  Struct @3:8-6:2 public User<@3:20-3:21 T> where @3:29-3:39 T: @3:32-3:39 Display
+    Field @4:5-4:20 public name Type @4:17-4:20 str
+    Field @5:5-5:12 value Type @5:11-5:12 @5:11-5:12 T
+  Func @8:1-10:2 @8:6-8:10 User.greet(@8:17-8:31 user Type @8:22-8:31 @8:22-8:26 User<Type @8:27-8:30 str>) -> Type @8:33-8:36 str
+    Return @9:5-9:21 Field @9:12-9:21(Path @9:12-9:16(user), name)

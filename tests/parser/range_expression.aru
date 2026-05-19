@@ -1,0 +1,6 @@
+module parser.rangeExpression
+
+func main() {
+    open = 1..10
+    closed = 1..=10
+}

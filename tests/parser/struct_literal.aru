@@ -1,0 +1,5 @@
+module tests.structLiteral
+
+func main() {
+    user = User { name: "Ana", age: 30 }
+}

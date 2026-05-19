@@ -1,0 +1,4 @@
+Program @1:1-5:2
+  Module @1:1-1:23 parser.spanDump
+  Func @3:1-5:2 main() -> void
+    Var @4:5-4:22 @4:5-4:10 value = Call @4:13-4:22(Path @4:13-4:16(add), [Int @4:17-4:18(1), Int @4:20-4:21(2)])

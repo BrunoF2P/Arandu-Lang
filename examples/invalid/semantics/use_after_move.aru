@@ -1,0 +1,12 @@
+module examples.invalid.semantics.useAfterMove
+
+func consume(own text str) {
+}
+
+func main() {
+    message = "ola"
+    consume(message)
+
+    // expected: memory error; `message` was moved into `consume`.
+    again = message
+}

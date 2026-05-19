@@ -1,0 +1,10 @@
+target/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor state
+*.swp
+*.swo
+*~

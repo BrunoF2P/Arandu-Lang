@@ -1,0 +1,5 @@
+Program @1:1-6:2
+  Module @1:1-1:30 parser.rangeExpression
+  Func @3:1-6:2 main() -> void
+    Var @4:5-4:17 @4:5-4:9 open = Binary @4:12-4:17(.., Int @4:12-4:13(1), Int @4:15-4:17(10))
+    Var @5:5-5:20 @5:5-5:11 closed = Binary @5:14-5:20(..=, Int @5:14-5:15(1), Int @5:18-5:20(10))

@@ -1,0 +1,20 @@
+module examples.stable.semantics.deferErrdefer
+
+import io
+
+func writeReport(path str) Err? {
+    file, err = io.create(path)
+    if err != nil {
+        return err
+    }
+
+    defer file.close()
+    errdefer io.remove(path)
+
+    writeErr = file.write("ok")
+    if writeErr != nil {
+        return writeErr
+    }
+
+    return nil
+}

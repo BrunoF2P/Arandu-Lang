@@ -1,0 +1,5 @@
+module tests.setMissing
+
+func main() {
+    set missing = 1
+}

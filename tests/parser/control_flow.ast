@@ -1,0 +1,14 @@
+Program @1:1-22:2
+  Module @1:1-1:25 tests.controlFlow
+  Func @3:1-22:2 main(@3:11-3:22 items Slice @3:17-3:22 Type @3:19-3:22 int) -> void
+    Var @4:5-4:14 @4:5-4:10 index = Int @4:13-4:14(0)
+    While @5:5-13:6 Condition @5:11-5:21 Binary @5:11-5:21(<, Path @5:11-5:16(index), Int @5:19-5:21(10))
+      Set @6:9-6:23 @6:13-6:18 index += Int @6:22-6:23(1)
+      If @7:9-9:10 Condition @7:12-7:22 Binary @7:12-7:22(==, Path @7:12-7:17(index), Int @7:21-7:22(3))
+        Continue @8:13-8:21
+      If @10:9-12:10 Condition @10:12-10:22 Binary @10:12-10:22(==, Path @10:12-10:17(index), Int @10:21-10:22(8))
+        Break @11:13-11:18
+    For @15:5-17:6 In @15:9-15:22 item in Path @15:17-15:22(items)
+      Expr @16:9-16:25 Call @16:9-16:25(Field @16:9-16:19(Path @16:9-16:11(io), println), [Path @16:20-16:24(item)])
+    For @19:5-21:6 C @19:9-19:33 init Var @19:9-19:14 @19:9-19:10 i = Int @19:13-19:14(0); condition Binary @19:16-19:21(<, Path @19:16-19:17(i), Int @19:20-19:21(3)); step Set @19:23-19:33 @19:27-19:28 i += Int @19:32-19:33(1)
+      Expr @20:9-20:22 Call @20:9-20:22(Field @20:9-20:19(Path @20:9-20:11(io), println), [Path @20:20-20:21(i)])

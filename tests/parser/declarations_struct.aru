@@ -1,0 +1,10 @@
+module tests.declarationsStruct
+
+public struct User<T> where T: Display {
+    public name str
+    value T
+}
+
+func User.greet(user User<str>) str {
+    return user.name
+}

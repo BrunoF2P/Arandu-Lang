@@ -1,0 +1,8 @@
+module parser.invalidTrailingBlockNewline
+
+func main() {
+    app.route("/users")
+    {
+        io.println("users")
+    }
+}

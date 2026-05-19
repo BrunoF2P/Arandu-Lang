@@ -1,0 +1,9 @@
+module parser.multilineString
+
+func main() {
+    name = "Ana"
+    text = """
+Hello ${name}
+line two
+"""
+}

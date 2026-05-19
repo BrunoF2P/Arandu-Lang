@@ -1,0 +1,485 @@
+use super::*;
+
+impl Parser {
+    pub(super) fn parse_block(&mut self) -> Result<Block, ParseError> {
+        let start = self.mark();
+        self.expect_name("LBRACE")?;
+        let mut statements = Vec::new();
+        while !self.at_kind_name("RBRACE") {
+            self.skip_semicolons();
+            self.discard_doc_comments();
+            if self.at_kind_name("RBRACE") {
+                break;
+            }
+            statements.push(self.parse_stmt()?);
+        }
+        self.expect_name("RBRACE")?;
+        Ok(Block {
+            span: self.span_from_mark(start),
+            statements,
+        })
+    }
+
+    pub(super) fn parse_stmt(&mut self) -> Result<Stmt, ParseError> {
+        if self.at_kind_name("KW_RETURN") {
+            return self.parse_return();
+        }
+        if self.at_kind_name("KW_BREAK") {
+            let start = self.mark();
+            self.consume();
+            self.expect_semicolon()?;
+            return Ok(Stmt::Break {
+                span: self.span_from_mark(start),
+            });
+        }
+        if self.at_kind_name("KW_CONTINUE") {
+            let start = self.mark();
+            self.consume();
+            self.expect_semicolon()?;
+            return Ok(Stmt::Continue {
+                span: self.span_from_mark(start),
+            });
+        }
+        if self.at_kind_name("KW_FREE") {
+            return self.parse_free();
+        }
+        if self.at_kind_name("KW_IF") {
+            return self.parse_if();
+        }
+        if self.at_kind_name("KW_FOR") {
+            return self.parse_for();
+        }
+        if self.at_kind_name("KW_WHILE") {
+            return self.parse_while();
+        }
+        if self.at_kind_name("KW_DEFER") {
+            return self.parse_defer(false);
+        }
+        if self.at_kind_name("KW_ERRDEFER") {
+            return self.parse_defer(true);
+        }
+        if self.at_kind_name("KW_UNSAFE") {
+            let start = self.mark();
+            self.consume();
+            let block = self.parse_block()?;
+            return Ok(Stmt::Unsafe {
+                span: self.span_from_mark(start),
+                block,
+            });
+        }
+        if self.at_kind_name("KW_SET") {
+            return self.parse_set();
+        }
+        if self.at_kind_name("KW_MUT") || self.looks_like_var_decl() {
+            return self.parse_var_decl();
+        }
+        let start = self.mark();
+        let expr = self.parse_expr(0)?;
+        self.expect_semicolon()?;
+        Ok(match expr {
+            Expr::Match { .. } => Stmt::Match {
+                span: self.span_from_mark(start),
+                expr,
+            },
+            expr => Stmt::Expr {
+                span: self.span_from_mark(start),
+                expr: Box::new(expr),
+            },
+        })
+    }
+
+    pub(super) fn parse_var_decl(&mut self) -> Result<Stmt, ParseError> {
+        let start = self.mark();
+        let (bindings, value) = self.parse_var_decl_parts()?;
+        self.expect_semicolon()?;
+        Ok(Stmt::VarDecl {
+            span: self.span_from_mark(start),
+            bindings,
+            value,
+        })
+    }
+
+    pub(super) fn parse_var_decl_parts(&mut self) -> Result<(Vec<BindingItem>, Expr), ParseError> {
+        let mut bindings = vec![self.parse_binding_item()?];
+        while self.eat_name("COMMA") {
+            bindings.push(self.parse_binding_item()?);
+        }
+        self.expect_name("EQUAL")?;
+        let value = self.parse_expr(0)?;
+        Ok((bindings, value))
+    }
+
+    pub(super) fn parse_binding_item(&mut self) -> Result<BindingItem, ParseError> {
+        let start = self.mark();
+        let mutable = self.eat_name("KW_MUT");
+        let name = self.expect_ident_value()?;
+        let ty = if self.can_start_type() {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        Ok(BindingItem {
+            span: self.span_from_mark(start),
+            mutable,
+            name,
+            ty,
+        })
+    }
+
+    pub(super) fn parse_set(&mut self) -> Result<Stmt, ParseError> {
+        let start = self.mark();
+        let (places, op, value) = self.parse_set_parts()?;
+        self.expect_semicolon()?;
+        Ok(Stmt::Set {
+            span: self.span_from_mark(start),
+            places,
+            op,
+            value,
+        })
+    }
+
+    pub(super) fn parse_set_parts(&mut self) -> Result<(Vec<Place>, SetOp, Expr), ParseError> {
+        self.expect_name("KW_SET")?;
+        let mut places = vec![self.parse_place()?];
+        while self.eat_name("COMMA") {
+            places.push(self.parse_place()?);
+        }
+        let op = self.parse_set_op()?;
+        let value = self.parse_expr(0)?;
+        Ok((places, op, value))
+    }
+
+    pub(super) fn parse_place(&mut self) -> Result<Place, ParseError> {
+        let start = self.mark();
+        let root = match &self.current().kind {
+            TokenKind::IdentValue(name) => {
+                let name = name.clone();
+                self.consume();
+                name
+            }
+            _ => {
+                return Err(ParseError::new(
+                    ParseErrorCode::ExpectedPlace,
+                    "expected assignment target",
+                    self.current(),
+                ));
+            }
+        };
+        let mut suffixes = Vec::new();
+        loop {
+            if self.eat_name("DOT") {
+                let suffix_start = self.pos.saturating_sub(1);
+                let name = self.expect_ident_value()?;
+                suffixes.push(PlaceSuffix::Field {
+                    span: self.span_from_mark(suffix_start),
+                    name,
+                });
+            } else if self.eat_name("LBRACKET") {
+                let suffix_start = self.pos.saturating_sub(1);
+                let index = self.parse_expr(0)?;
+                self.expect_name("RBRACKET")?;
+                suffixes.push(PlaceSuffix::Index {
+                    span: self.span_from_mark(suffix_start),
+                    expr: Box::new(index),
+                });
+            } else {
+                break;
+            }
+        }
+        Ok(Place {
+            span: self.span_from_mark(start),
+            root,
+            suffixes,
+        })
+    }
+
+    pub(super) fn parse_return(&mut self) -> Result<Stmt, ParseError> {
+        let start = self.mark();
+        self.expect_name("KW_RETURN")?;
+        if self.at_kind_name("SEMICOLON") {
+            self.expect_semicolon()?;
+            return Ok(Stmt::Return {
+                span: self.span_from_mark(start),
+                values: Vec::new(),
+            });
+        }
+        let mut values = vec![self.parse_expr(0)?];
+        while self.eat_name("COMMA") {
+            values.push(self.parse_expr(0)?);
+        }
+        self.expect_semicolon()?;
+        Ok(Stmt::Return {
+            span: self.span_from_mark(start),
+            values,
+        })
+    }
+
+    pub(super) fn parse_if(&mut self) -> Result<Stmt, ParseError> {
+        let start = self.mark();
+        self.expect_name("KW_IF")?;
+        let condition = self.parse_condition()?;
+        let then_block = self.parse_block()?;
+        let else_block = if self.eat_name("KW_ELSE") {
+            if self.at_kind_name("KW_IF") {
+                let nested = self.parse_if()?;
+                Some(Block {
+                    span: self.span_from_mark(start),
+                    statements: vec![nested],
+                })
+            } else {
+                Some(self.parse_block()?)
+            }
+        } else {
+            None
+        };
+        Ok(Stmt::If {
+            span: self.span_from_mark(start),
+            condition,
+            then_block,
+            else_block,
+        })
+    }
+
+    pub(super) fn parse_condition(&mut self) -> Result<Condition, ParseError> {
+        let start = self.mark();
+        let expr = self.parse_expr_without_block_calls(0)?;
+        if self.eat_name("KW_IS") {
+            let pattern = self.parse_pattern()?;
+            Ok(Condition::Is {
+                span: self.span_from_mark(start),
+                expr: Box::new(expr),
+                pattern: Box::new(pattern),
+            })
+        } else {
+            Ok(Condition::Expr {
+                span: self.span_from_mark(start),
+                expr: Box::new(expr),
+            })
+        }
+    }
+
+    pub(super) fn parse_free(&mut self) -> Result<Stmt, ParseError> {
+        let start = self.mark();
+        self.expect_name("KW_FREE")?;
+        let value = self.parse_expr(0)?;
+        self.expect_semicolon()?;
+        Ok(Stmt::Free {
+            span: self.span_from_mark(start),
+            expr: value,
+        })
+    }
+
+    pub(super) fn parse_while(&mut self) -> Result<Stmt, ParseError> {
+        let start = self.mark();
+        self.expect_name("KW_WHILE")?;
+        let condition = self.parse_condition()?;
+        let body = self.parse_block()?;
+        Ok(Stmt::While {
+            span: self.span_from_mark(start),
+            condition,
+            body,
+        })
+    }
+
+    pub(super) fn parse_for(&mut self) -> Result<Stmt, ParseError> {
+        let start = self.mark();
+        self.expect_name("KW_FOR")?;
+        let clause = if self.looks_like_for_in_clause() {
+            let clause_start = self.mark();
+            let mut bindings = vec![self.parse_for_binding()?];
+            while self.eat_name("COMMA") {
+                bindings.push(self.parse_for_binding()?);
+            }
+            self.expect_name("KW_IN")?;
+            let iterable = self.parse_expr_without_block_calls(0)?;
+            ForClause::In {
+                span: self.span_from_mark(clause_start),
+                bindings,
+                iterable: Box::new(iterable),
+            }
+        } else {
+            let clause_start = self.mark();
+            let init = if self.at_kind_name("SEMICOLON") {
+                None
+            } else {
+                Some(self.parse_simple_stmt()?)
+            };
+            self.expect_semicolon()?;
+            let condition = if self.at_kind_name("SEMICOLON") {
+                None
+            } else {
+                Some(self.parse_expr(0)?)
+            };
+            self.expect_semicolon()?;
+            let step = if self.at_kind_name("LBRACE") {
+                None
+            } else {
+                Some(self.parse_simple_stmt_without_block_calls()?)
+            };
+            ForClause::CStyle {
+                span: self.span_from_mark(clause_start),
+                init: init.map(Box::new),
+                condition: condition.map(Box::new),
+                step: step.map(Box::new),
+            }
+        };
+        let body = self.parse_block()?;
+        Ok(Stmt::For {
+            span: self.span_from_mark(start),
+            clause: Box::new(clause),
+            body,
+        })
+    }
+
+    pub(super) fn parse_for_binding(&mut self) -> Result<ForBinding, ParseError> {
+        let start = self.mark();
+        let mutable = self.eat_name("KW_MUT");
+        let name = self.expect_ident_value()?;
+        Ok(ForBinding {
+            span: self.span_from_mark(start),
+            mutable,
+            name,
+        })
+    }
+
+    pub(super) fn parse_simple_stmt(&mut self) -> Result<SimpleStmt, ParseError> {
+        let start = self.mark();
+        if self.at_kind_name("KW_SET") {
+            let (places, op, value) = self.parse_set_parts()?;
+            return Ok(SimpleStmt::Set {
+                span: self.span_from_mark(start),
+                places,
+                op,
+                value,
+            });
+        }
+        if self.at_kind_name("KW_MUT") || self.looks_like_var_decl() {
+            let (bindings, value) = self.parse_var_decl_parts()?;
+            return Ok(SimpleStmt::VarDecl {
+                span: self.span_from_mark(start),
+                bindings,
+                value,
+            });
+        }
+        let expr = self.parse_expr(0)?;
+        Ok(SimpleStmt::Expr {
+            span: self.span_from_mark(start),
+            expr: Box::new(expr),
+        })
+    }
+
+    pub(super) fn parse_simple_stmt_without_block_calls(
+        &mut self,
+    ) -> Result<SimpleStmt, ParseError> {
+        let previous = self.allow_block_calls;
+        self.allow_block_calls = false;
+        let result = self.parse_simple_stmt();
+        self.allow_block_calls = previous;
+        result
+    }
+
+    pub(super) fn parse_defer(&mut self, is_errdefer: bool) -> Result<Stmt, ParseError> {
+        let start = self.mark();
+        if is_errdefer {
+            self.expect_name("KW_ERRDEFER")?;
+        } else {
+            self.expect_name("KW_DEFER")?;
+        }
+        let body = if self.at_kind_name("LBRACE") {
+            let block = self.parse_block()?;
+            DeferBody::Block {
+                span: block.span,
+                block,
+            }
+        } else {
+            let body_start = self.mark();
+            let expr = self.parse_expr(0)?;
+            self.expect_semicolon()?;
+            DeferBody::Expr {
+                span: self.span_from_mark(body_start),
+                expr: Box::new(expr),
+            }
+        };
+        Ok(if is_errdefer {
+            Stmt::ErrDefer {
+                span: self.span_from_mark(start),
+                body,
+            }
+        } else {
+            Stmt::Defer {
+                span: self.span_from_mark(start),
+                body,
+            }
+        })
+    }
+
+    pub(super) fn parse_set_op(&mut self) -> Result<SetOp, ParseError> {
+        let op = match self.current().kind {
+            TokenKind::Equal => SetOp::Assign,
+            TokenKind::PlusEqual => SetOp::AddAssign,
+            TokenKind::MinusEqual => SetOp::SubAssign,
+            TokenKind::StarEqual => SetOp::MulAssign,
+            TokenKind::SlashEqual => SetOp::DivAssign,
+            TokenKind::PercentEqual => SetOp::ModAssign,
+            TokenKind::AmpEqual => SetOp::BitAndAssign,
+            TokenKind::PipeEqual => SetOp::BitOrAssign,
+            TokenKind::CaretEqual => SetOp::BitXorAssign,
+            TokenKind::ShiftLeftEqual => SetOp::ShiftLeftAssign,
+            TokenKind::ShiftRightEqual => SetOp::ShiftRightAssign,
+            _ => {
+                return Err(ParseError::expected(
+                    ParseErrorCode::ExpectedToken,
+                    "expected assignment operator",
+                    self.current(),
+                    &[
+                        "=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=",
+                    ],
+                ));
+            }
+        };
+        self.consume();
+        Ok(op)
+    }
+
+    pub(super) fn looks_like_var_decl(&self) -> bool {
+        if !matches!(self.current().kind, TokenKind::IdentValue(_)) {
+            return false;
+        }
+
+        let mut index = self.pos + 1;
+        while let Some(token) = self.tokens.get(index) {
+            match token.kind {
+                TokenKind::Equal => return true,
+                TokenKind::Semicolon | TokenKind::LBrace | TokenKind::RBrace => return false,
+                _ => index += 1,
+            }
+        }
+        false
+    }
+
+    pub(super) fn looks_like_for_in_clause(&self) -> bool {
+        let mut index = self.pos;
+        loop {
+            if self
+                .tokens
+                .get(index)
+                .is_some_and(|token| matches!(token.kind, TokenKind::KwMut))
+            {
+                index += 1;
+            }
+            if !self
+                .tokens
+                .get(index)
+                .is_some_and(|token| matches!(token.kind, TokenKind::IdentValue(_)))
+            {
+                return false;
+            }
+            index += 1;
+            match self.tokens.get(index).map(|token| &token.kind) {
+                Some(TokenKind::KwIn) => return true,
+                Some(TokenKind::Comma) => index += 1,
+                _ => return false,
+            }
+        }
+    }
+}

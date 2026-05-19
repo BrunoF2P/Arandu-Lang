@@ -1,0 +1,12 @@
+module examples.draft.ui.ui
+
+import ui
+
+func App() ui.View {
+    return ui.column {
+        ui.text("Arandu")
+        ui.button("Executar") {
+            ui.emit("run")
+        }
+    }
+}

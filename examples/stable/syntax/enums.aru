@@ -1,0 +1,19 @@
+module examples.stable.syntax.enums
+
+import io
+
+enum LoadState {
+    Idle,
+    Loading,
+    Loaded(str),
+    Failed(Err),
+}
+
+func printState(state LoadState) {
+    match state {
+        LoadState.Idle => io.println("idle")
+        LoadState.Loading => io.println("loading")
+        LoadState.Loaded(value) => io.println(value)
+        LoadState.Failed(err) => io.println("error: ${err}")
+    }
+}

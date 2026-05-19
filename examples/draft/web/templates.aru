@@ -1,0 +1,10 @@
+module examples.draft.web.templates
+
+import web
+
+func renderUser(user User) web.Html {
+    return html {
+        h1 { text(user.name) }
+        p { text("idade: ${user.age}") }
+    }
+}

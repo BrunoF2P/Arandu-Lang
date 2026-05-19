@@ -1,0 +1,5 @@
+Program @1:1-12:2
+  Module @1:1-1:30 tests.ifExprAsyncBlock
+  Func @3:1-12:2 async main() -> void
+    Var @4:5-8:6 @4:5-4:11 status = IfExpr @4:14-8:6(Condition @4:17-4:19 Path @4:17-4:19(ok), Block @4:20-6:6[Expr @5:9-5:13 String @5:9-5:13("ok")], Block @6:12-8:6[Expr @7:9-7:15 String @7:9-7:15("fail")])
+    Var @9:5-11:6 @9:5-9:9 task = AsyncBlock @9:12-11:6 Block @9:18-11:6[Expr @10:9-10:22 Unary @10:9-10:22(await, Call @10:15-10:22(Path @10:15-10:20(fetch), []))]

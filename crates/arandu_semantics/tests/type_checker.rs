@@ -1,0 +1,467 @@
+use arandu_parser::parse;
+use arandu_semantics::{resolve, type_check};
+use std::{fs, path::PathBuf};
+
+fn workspace_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|path| path.parent())
+        .expect("crate should be under workspace/crates")
+        .to_path_buf()
+}
+
+fn assert_diagnostic_golden(name: &str) {
+    let root = workspace_root();
+    let source_path = root
+        .join("tests")
+        .join("type_checker")
+        .join(format!("{name}.aru"));
+    let expected_path = root
+        .join("tests")
+        .join("type_checker")
+        .join(format!("{name}.diag"));
+    let source = fs::read_to_string(&source_path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", source_path.display()));
+    let expected = fs::read_to_string(&expected_path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", expected_path.display()));
+
+    let program = parse(&source).expect("Failed to parse");
+    let resolution = resolve(&program);
+    let result = type_check(resolution, &program);
+
+    let actual = result
+        .diagnostics
+        .iter()
+        .filter(|d| format!("{}", d.code).starts_with('T'))
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("");
+
+    let actual_lines: Vec<&str> = actual.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    let expected_lines: Vec<&str> = expected.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+
+    assert_eq!(
+        actual_lines,
+        expected_lines,
+        "Mismatch in golden diagnostic test output.\nActual:\n{}\nExpected:\n{}",
+        actual,
+        expected
+    );
+}
+
+macro_rules! assert_type_errors {
+    ($source:expr, [$($code:ident),*]) => {
+        let program = parse($source).expect("Failed to parse");
+        let resolution = resolve(&program);
+        let result = type_check(resolution, &program);
+
+        let expected_codes: Vec<arandu_semantics::DiagCode> = vec![$(arandu_semantics::DiagCode::$code),*];
+        // Filter to only T-series diagnostics (type checker), ignoring N-series (name resolution)
+        let actual_codes: Vec<arandu_semantics::DiagCode> = result
+            .diagnostics
+            .iter()
+            .filter(|d| format!("{}", d.code).starts_with('T'))
+            .map(|d| d.code)
+            .collect();
+
+        if expected_codes != actual_codes {
+            println!("ALL DIAGNOSTICS: {:?}", result.diagnostics);
+        }
+
+        assert_eq!(
+            expected_codes,
+            actual_codes,
+            "Expected diagnostics {:?}, but got {:?}",
+            expected_codes,
+            actual_codes
+        );
+    };
+}
+
+#[test]
+fn test_mixed_operator_mismatch() {
+    assert_type_errors!(
+        "
+        func main() {
+            x int = 10
+            y float = 3.14
+            z int = x + y
+        }
+        ",
+        [T005OperatorNotApplicable]
+    );
+}
+
+#[test]
+fn test_implicit_widening_error() {
+    assert_type_errors!(
+        "
+        func main() {
+            a int = 10
+            b float = a
+        }
+        ",
+        [T015ImplicitWidening]
+    );
+}
+
+#[test]
+fn test_literal_absorption_ok() {
+    // Literal absorption should work without implicit widening errors
+    assert_type_errors!(
+        "
+        func main() {
+            a float = 10
+            b int = 10
+        }
+        ",
+        []
+    );
+}
+
+#[test]
+fn test_incompatible_assignment() {
+    assert_type_errors!(
+        "
+        func main() {
+            x bool = true
+            set x = 10
+        }
+        ",
+        [T002IncompatibleAssignment]
+    );
+}
+
+#[test]
+fn golden_implicit_widening() {
+    assert_diagnostic_golden("implicit_widening");
+}
+
+#[test]
+fn golden_undefined_field() {
+    assert_diagnostic_golden("undefined_field");
+}
+
+#[test]
+fn golden_invalid_index() {
+    assert_diagnostic_golden("invalid_index");
+}
+
+#[test]
+fn golden_try_invalid() {
+    assert_diagnostic_golden("try_invalid");
+}
+
+#[test]
+fn golden_struct_literal_errors() {
+    assert_diagnostic_golden("struct_literal_errors");
+}
+
+#[test]
+fn test_multi_binding_destructuring() {
+    // Verify that variables defined in multi-bindings (tuple destructuring)
+    // receive their correct individual types.
+    assert_type_errors!(
+        "
+        func foo() (int, bool) {
+            return 10, true
+        }
+        func main() {
+            a, b = foo()
+            x int = a   // Ok if destructuring works
+            y bool = b  // Ok if destructuring works
+        }
+        ",
+        []
+    );
+    
+    // Also verify mismatch is correctly identified on assignment to wrong type
+    assert_type_errors!(
+        "
+        func foo() (int, bool) {
+            return 10, true
+        }
+        func main() {
+            a, b = foo()
+            x bool = a  // Mismatch: a is int, not bool
+        }
+        ",
+        [T002IncompatibleAssignment]
+    );
+}
+
+#[test]
+fn test_multi_assignment_destructuring() {
+    // Verify that assignments with 'set' to multiple variables (multi-assignment)
+    // correctly validate types of individual tuple elements.
+    assert_type_errors!(
+        "
+        func foo() (int, bool) {
+            return 10, true
+        }
+        func main() {
+            a int = 0
+            b bool = false
+            set a, b = foo() // Ok if assignment destructuring works
+        }
+        ",
+        []
+    );
+
+    assert_type_errors!(
+        "
+        func foo() (int, bool) {
+            return 10, true
+        }
+        func main() {
+            a bool = false
+            b bool = false
+            set a, b = foo() // Mismatch: a is bool, LHS is int
+        }
+        ",
+        [T002IncompatibleAssignment]
+    );
+}
+
+#[test]
+fn test_generic_type_resolution() {
+    assert_type_errors!(
+        "
+        struct Box<T> {
+            value T
+        }
+        func get_box() Box<int> {
+            return get_box()
+        }
+        func main() {
+            b Box<int> = get_box()
+        }
+        ",
+        []
+    );
+}
+
+#[test]
+fn test_expr_types_population() {
+    let source = "
+    func main() {
+        x int = 10 + 20
+    }
+    ";
+    let program = parse(source).expect("Failed to parse");
+    let resolution = resolve(&program);
+    let result = type_check(resolution, &program);
+    
+    // Check that expr_types contains populated expression types
+    assert!(!result.type_info.expr_types.is_empty());
+}
+
+#[test]
+fn test_forward_declarations() {
+    assert_type_errors!(
+        "
+        func entry() {
+            // Forward ref to Struct and Function:
+            s MyStruct = MyStruct { val: 42 }
+            val int = getVal(s)
+        }
+
+        func getVal(s MyStruct) int {
+            return s.val
+        }
+
+        struct MyStruct {
+            val int
+        }
+        ",
+        []
+    );
+}
+
+#[test]
+fn test_byte_arithmetic() {
+    assert_type_errors!(
+        "
+        func main() {
+            a byte = 10
+            b byte = 20
+            c byte = a + b
+        }
+        ",
+        []
+    );
+}
+
+#[test]
+fn test_any_validation() {
+    // any inside local variable declaration: should fail with T014
+    assert_type_errors!(
+        "
+        func main() {
+            a any = 10
+        }
+        ",
+        [T014InvalidVariadicType]
+    );
+
+    // any inside struct field definition: should fail with T014
+    assert_type_errors!(
+        "
+        struct S {
+            a any
+        }
+        ",
+        [T014InvalidVariadicType]
+    );
+
+    // any inside normal func parameter: should fail with T014
+    assert_type_errors!(
+        "
+        func foo(x any) {}
+        ",
+        [T014InvalidVariadicType]
+    );
+
+    // any inside variadic parameter: should succeed
+    assert_type_errors!(
+        "
+        func foo(x any...) {}
+        ",
+        []
+    );
+}
+
+#[test]
+fn test_enum_variant_resolution() {
+    assert_type_errors!(
+        "
+        enum LoadState {
+            Idle,
+            Loaded(str),
+        }
+        func main() {
+            a LoadState = LoadState.Idle
+            b func(str) LoadState = LoadState.Loaded
+            c LoadState = LoadState.Loaded(\"hello\")
+        }
+        ",
+        []
+    );
+}
+
+#[test]
+fn test_match_pattern_typecheck() {
+    assert_type_errors!(
+        "
+        enum LoadState {
+            Idle,
+            Loaded(str),
+        }
+        func check_state(state LoadState) int {
+            match state {
+                LoadState.Idle => { return 0; }
+                LoadState.Loaded(s) => {
+                    val str = s
+                    return 1;
+                }
+            }
+        }
+        ",
+        []
+    );
+
+    // Test pattern type mismatch
+    assert_type_errors!(
+        "
+        enum LoadState {
+            Idle,
+            Loaded(str),
+        }
+        func check_state(state LoadState) int {
+            match state {
+                LoadState.Loaded(123) => { return 1; }
+            }
+        }
+        ",
+        [T002IncompatibleAssignment]
+    );
+}
+
+#[test]
+fn test_call_validation() {
+    // 1. Wrong argument count: T012
+    assert_type_errors!(
+        "
+        func foo(x int, y bool) {}
+        func main() {
+            foo(10)
+        }
+        ",
+        [T012WrongArgCount]
+    );
+
+    // 2. Call non-callable: T003
+    assert_type_errors!(
+        "
+        func main() {
+            x int = 10
+            x()
+        }
+        ",
+        [T003IncompatibleCallArg]
+    );
+}
+
+#[test]
+fn test_nullability_and_safe_access() {
+    // 1. Accessing field on nullable without safe operator '?.'
+    assert_type_errors!(
+        "
+        struct User {
+            age int
+        }
+        func main() {
+            u User? = nil
+            a int = u.age
+        }
+        ",
+        [T006NotNullable]
+    );
+
+    // 2. Safe access returning a nullable type
+    assert_type_errors!(
+        "
+        struct User {
+            age int
+        }
+        func main() {
+            u User? = nil
+            a int? = u?.age
+        }
+        ",
+        []
+    );
+
+    // 3. Indexing nullable without safe indexing '?[]'
+    assert_type_errors!(
+        "
+        func main() {
+            arr []int? = nil
+            x int = arr[0]
+        }
+        ",
+        [T006NotNullable]
+    );
+
+    // 4. Safe indexing returning nullable type
+    assert_type_errors!(
+        "
+        func main() {
+            arr []int? = nil
+            x int? = arr?[0]
+        }
+        ",
+        []
+    );
+}
+

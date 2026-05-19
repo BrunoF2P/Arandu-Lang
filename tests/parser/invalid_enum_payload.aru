@@ -1,0 +1,5 @@
+module tests.invalidEnumPayload
+
+enum Broken {
+    Item(str
+}

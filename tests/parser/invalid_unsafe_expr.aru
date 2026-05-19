@@ -1,0 +1,5 @@
+module tests.invalidUnsafeExpr
+
+func main() {
+    value = unsafe raw.read()
+}

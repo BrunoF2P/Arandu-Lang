@@ -1,0 +1,2 @@
+module tests.contract.imports
+import { Window as AppWindow } from ui

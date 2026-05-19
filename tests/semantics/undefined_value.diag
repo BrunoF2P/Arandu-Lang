@@ -1,0 +1,3 @@
+error[N001]: value 'frobnicate' is not declared
+  --> 5:13-5:23
+hint: did you mean 'formatar'?

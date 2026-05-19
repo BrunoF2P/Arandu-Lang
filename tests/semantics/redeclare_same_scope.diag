@@ -1,0 +1,3 @@
+error[N003]: name 'value' is already declared in this scope
+  --> 5:5-5:10
+label: 4:5-4:10 previous declaration is here

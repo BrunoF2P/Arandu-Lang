@@ -1,0 +1,7 @@
+module tests.declarationsEnum
+
+enum LoadState {
+    Idle,
+    Loaded(str),
+    Failed { message str },
+}

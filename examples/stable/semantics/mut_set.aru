@@ -1,0 +1,11 @@
+module examples.stable.semantics.mutSet
+
+import io
+
+func main() {
+    mut count int = 0
+    set count = count + 1
+    set count += 2
+
+    io.println("count=${count}")
+}

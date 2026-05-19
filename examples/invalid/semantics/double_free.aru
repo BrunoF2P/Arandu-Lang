@@ -1,0 +1,9 @@
+module examples.invalid.semantics.doubleFree
+
+func main() {
+    buffer = alloc 64
+    free buffer
+
+    // expected: memory error; `buffer` was already freed.
+    free buffer
+}

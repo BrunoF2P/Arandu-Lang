@@ -1,0 +1,12 @@
+module tests.ifExprAsyncBlock
+
+async func main() {
+    status = if ok {
+        "ok"
+    } else {
+        "fail"
+    }
+    task = async {
+        await fetch()
+    }
+}

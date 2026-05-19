@@ -1,0 +1,15 @@
+module examples.draft.ui.desktopWindow
+
+import ui
+
+func MainWindow() ui.View {
+    return ui.window(title: "Arandu Studio", width: 960, height: 640) {
+        ui.toolbar {
+            ui.button("Abrir") {
+                ui.openFile()
+            }
+        }
+
+        ui.editor(language: "arandu")
+    }
+}

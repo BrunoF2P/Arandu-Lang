@@ -1,0 +1,6 @@
+Program @1:1-9:2
+  Module @1:1-1:31 tests.functionModifiers
+  Func @3:8-5:2 public async fetch(@3:25-3:33 path Type @3:30-3:33 str) -> (Type @3:36-3:39 str, Nullable @3:41-3:45 Type @3:41-3:44 Err)
+    Return @4:5-4:21 String @4:12-4:16("ok"), Nil @4:18-4:21
+  Func @7:1-9:2 @7:6-7:10 User.greet(@7:17-7:26 user Type @7:22-7:26 @7:22-7:26 User) -> Type @7:28-7:31 str
+    Return @8:5-8:17 String @8:12-8:17("Ola")

@@ -1,0 +1,4 @@
+module tests.contract.semicolons
+func main() {
+    return 1
+}

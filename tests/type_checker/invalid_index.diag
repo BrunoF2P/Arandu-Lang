@@ -1,0 +1,3 @@
+error[T017]: type 'int' cannot be indexed
+  --> 3:13-3:14
+label: 3:13-3:14 this has type 'int', expected array or slice

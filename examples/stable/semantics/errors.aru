@@ -1,0 +1,22 @@
+module examples.stable.semantics.errors
+
+import err
+import io
+
+func readName(path str) (str, Err?) {
+    if path == "" {
+        return "", err.new("missingPath")
+    }
+
+    return "Bruno", nil
+}
+
+func main() {
+    name, err = readName("user.txt")
+    if err != nil {
+        io.println("error: ${err}")
+        return
+    }
+
+    io.println("name=${name}")
+}

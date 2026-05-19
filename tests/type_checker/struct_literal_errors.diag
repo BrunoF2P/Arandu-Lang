@@ -1,0 +1,8 @@
+error[T002]: incompatible type for field 'x': expected 'int', found 'bool'
+  --> 7:27-7:31
+label: 7:24-7:31 field 'x' has type 'int'
+label: 7:27-7:31 value has type 'bool'
+error[T018]: no field 'z' on type 'Point'
+  --> 8:36-8:41
+label: 8:16-8:21 this has type 'Point'
+label: 8:36-8:41 unknown field

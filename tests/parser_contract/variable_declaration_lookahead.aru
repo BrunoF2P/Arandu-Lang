@@ -1,0 +1,5 @@
+module tests.contract.lookahead
+func main() {
+    value = 1
+    typed int = 2
+}

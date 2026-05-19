@@ -1,0 +1,7 @@
+module parser.bareBlockCall
+
+func main() {
+    transaction {
+        save()
+    }
+}

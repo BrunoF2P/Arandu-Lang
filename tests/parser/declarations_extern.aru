@@ -1,0 +1,7 @@
+module tests.declarationsExtern
+
+@link("m")
+extern "C" {
+    func cos(value f64) f64
+    func puts(text ptr[u8]) int
+}

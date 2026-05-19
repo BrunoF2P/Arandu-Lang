@@ -1,0 +1,5 @@
+module tests.declarationsInterface
+
+interface Writer<T> {
+    func write(value T) Err?
+}

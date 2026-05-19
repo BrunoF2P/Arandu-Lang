@@ -1,0 +1,5 @@
+module parser.invalidGenericBareWithoutBlock
+
+func main() {
+    value = identity<int> value
+}

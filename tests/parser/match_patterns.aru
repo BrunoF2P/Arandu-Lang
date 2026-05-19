@@ -1,0 +1,10 @@
+module tests.matchPatterns
+
+func describe(token Token) str {
+    return match token {
+        Token.Number(value) if value > 0 => "positive"
+        Token.Number(_) => "number"
+        Token.Word(text) => "word ${text}"
+        Token.End => "end"
+    }
+}

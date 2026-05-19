@@ -1,0 +1,5 @@
+module tests.invalidSafeIndex
+
+func main() {
+    value = items?[0
+}

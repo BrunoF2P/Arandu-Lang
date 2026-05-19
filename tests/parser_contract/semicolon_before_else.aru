@@ -1,0 +1,9 @@
+module tests.contract.semicolons
+func main() {
+    if ok {
+        println("sim")
+    }
+    else {
+        println("nao")
+    }
+}

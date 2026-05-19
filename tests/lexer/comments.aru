@@ -1,0 +1,4 @@
+/// User name.
+name = "Ana" // inline comment
+/* block comment */
+age = 30

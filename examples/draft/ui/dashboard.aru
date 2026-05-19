@@ -1,0 +1,17 @@
+module examples.draft.ui.dashboard
+
+import ui
+
+func Dashboard() ui.View {
+    return ui.window(title: "Dashboard") {
+        ui.sidebar {
+            ui.button("Contratos") {
+                ui.navigate("/contratos")
+            }
+        }
+
+        ui.content {
+            ui.table(loadContracts())
+        }
+    }
+}

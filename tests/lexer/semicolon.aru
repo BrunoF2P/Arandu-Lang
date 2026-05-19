@@ -1,0 +1,22 @@
+struct User {
+    name str
+    age int
+}
+
+extern "C" {
+    func sin(value f64) f64
+}
+
+func add(a int, b int) int {
+    return a + b
+}
+
+func continued() int {
+    value = 1 +
+        2
+    call(
+        value,
+        3
+    )
+    return value
+}

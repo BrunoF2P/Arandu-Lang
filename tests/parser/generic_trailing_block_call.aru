@@ -1,0 +1,7 @@
+module parser.genericTrailingBlockCall
+
+func main() {
+    pipeline.step<User>("/users") {
+        io.println("user")
+    }
+}

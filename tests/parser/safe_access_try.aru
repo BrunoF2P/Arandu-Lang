@@ -1,0 +1,7 @@
+module tests.safeAccessTry
+
+func main() {
+    name = user?.profile?.name
+    first = users?[0]?.name
+    value = load()?
+}

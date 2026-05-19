@@ -1,0 +1,6 @@
+module tests.undefinedValue
+
+func main() {
+    formatar = 1
+    value = frobnicate
+}

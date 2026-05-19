@@ -1,0 +1,4 @@
+func main() {
+    a int = 10
+    b int = a[0]
+}

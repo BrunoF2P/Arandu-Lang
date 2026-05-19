@@ -1,0 +1,9 @@
+[package]
+name = "arandu_cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+arandu_lexer = { path = "../arandu_lexer" }
+arandu_parser = { path = "../arandu_parser" }
+arandu_semantics = { path = "../arandu_semantics" }

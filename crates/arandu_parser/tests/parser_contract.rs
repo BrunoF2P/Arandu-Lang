@@ -1,0 +1,284 @@
+use std::fs;
+use std::path::PathBuf;
+
+use arandu_parser::{ParseErrorCode, parse, parse_to_string};
+
+fn contains(outer_start: usize, outer_end: usize, inner_start: usize, inner_end: usize) -> bool {
+    outer_start <= inner_start && inner_end <= outer_end
+}
+
+fn workspace_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|path| path.parent())
+        .expect("crate should be under workspace/crates")
+        .to_path_buf()
+}
+
+fn contract_source(name: &str) -> String {
+    let source_path = workspace_root()
+        .join("tests")
+        .join("parser_contract")
+        .join(format!("{name}.aru"));
+    fs::read_to_string(&source_path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", source_path.display()))
+}
+
+fn assert_contract_ast(name: &str, expected: &str) {
+    let actual = parse_to_string(&contract_source(name)).expect("parser should succeed");
+    assert_eq!(actual.trim_end(), expected.trim_end());
+}
+
+fn assert_contract_rejects(name: &str, expected: ParseErrorCode) {
+    let err = parse(&contract_source(name)).expect_err("parser should reject source");
+    assert_eq!(err.code, expected);
+}
+
+#[test]
+fn parse_error_reports_expected_tokens_and_found_token() {
+    let err = parse("module tests.diagnostics\nfunc main( { }")
+        .expect_err("parser should reject malformed function parameter list");
+
+    assert_eq!(err.code, ParseErrorCode::ExpectedToken);
+    assert_eq!(err.found.as_ref(), "LBRACE");
+    assert!(err.expected.contains(&"value identifier"));
+    assert_eq!(err.span.start_line, 2);
+}
+
+#[test]
+fn ast_program_span_covers_source_before_eof() {
+    let program = parse("module tests.spans\nfunc main() {\n    value = add(1, 2)\n}\n")
+        .expect("parser should succeed");
+    assert_eq!(program.span.start_line, 1);
+    assert_eq!(program.span.start_col, 1);
+    assert_eq!(program.span.end_line, 4);
+    assert_eq!(program.span.end_col, 2);
+}
+
+#[test]
+fn ast_nested_expression_spans_are_contained_by_parent() {
+    let program = parse("module tests.spans\nfunc main() {\n    value = add(1 + 2, 3)\n}\n")
+        .expect("parser should succeed");
+    let func = match &program.decls[0] {
+        arandu_parser::TopLevelDecl::Func(func) => func,
+        other => panic!("expected func, got {other:?}"),
+    };
+    let stmt = &func.body.statements[0];
+    let arandu_parser::Stmt::VarDecl { value, .. } = stmt else {
+        panic!("expected var decl, got {stmt:?}");
+    };
+    let arandu_parser::Expr::Call { span, args, .. } = value else {
+        panic!("expected call, got {value:?}");
+    };
+    let arandu_parser::Expr::Binary { span: inner, .. } = &args[0] else {
+        panic!("expected binary arg, got {:?}", args[0]);
+    };
+    assert!(contains(span.start, span.end, inner.start, inner.end));
+}
+
+#[test]
+fn ast_call_with_block_span_covers_trailing_block() {
+    let program =
+        parse("module tests.spans\nfunc main() {\n    route(\"/\") {\n        ok()\n    }\n}\n")
+            .expect("parser should succeed");
+    let func = match &program.decls[0] {
+        arandu_parser::TopLevelDecl::Func(func) => func,
+        other => panic!("expected func, got {other:?}"),
+    };
+    let stmt = &func.body.statements[0];
+    let arandu_parser::Stmt::Expr { expr, .. } = stmt else {
+        panic!("expected expr stmt, got {stmt:?}");
+    };
+    let arandu_parser::Expr::Call {
+        span,
+        trailing_block,
+        ..
+    } = &**expr
+    else {
+        panic!("expected call, got {expr:?}");
+    };
+    let block = trailing_block.as_ref().expect("call should have block");
+    assert_eq!(span.end_line, block.span.end_line);
+    assert_eq!(span.end_col, block.span.end_col);
+}
+
+#[test]
+fn ast_multiline_string_span_covers_delimiters() {
+    let program = parse("module tests.spans\nfunc main() {\n    text = \"\"\"\nhello\n\"\"\"\n}\n")
+        .expect("parser should succeed");
+    let func = match &program.decls[0] {
+        arandu_parser::TopLevelDecl::Func(func) => func,
+        other => panic!("expected func, got {other:?}"),
+    };
+    let stmt = &func.body.statements[0];
+    let arandu_parser::Stmt::VarDecl { value, .. } = stmt else {
+        panic!("expected var decl, got {stmt:?}");
+    };
+    let arandu_parser::Expr::InterpolatedString { span, .. } = value else {
+        panic!("expected string, got {value:?}");
+    };
+    assert_eq!(span.start_line, 3);
+    assert_eq!(span.start_col, 12);
+    assert_eq!(span.end_line, 5);
+    assert_eq!(span.end_col, 4);
+}
+
+#[test]
+fn doc_comments_attach_to_documentable_nodes_and_preserve_order() {
+    let program = parse(
+        r#"module tests.docs
+
+/// first
+/// second
+func main() {
+    /// ignored inside block
+    value = 1
+}
+
+/// User docs
+struct User {
+    /// field docs
+    name str
+}
+
+enum Token {
+    /// word docs
+    Word(str)
+}
+
+extern "C" {
+    /// puts docs
+    func puts(text ptr[u8]) int
+}
+"#,
+    )
+    .expect("parser should accept doc comments");
+
+    assert_eq!(program.docs.len(), 6);
+    assert_eq!(program.docs[0].text, "/// first");
+    assert_eq!(program.docs[1].text, "/// second");
+    assert_eq!(program.docs[0].target_span, program.docs[1].target_span);
+    assert!(program.docs.iter().all(|doc| !doc.text.contains("ignored")));
+}
+
+#[test]
+fn module_basic() {
+    assert_contract_ast(
+        "module_basic",
+        "Program @1:1-1:28\n  Module @1:1-1:28 tests.contract.basic",
+    );
+}
+
+#[test]
+fn module_contextual_keyword() {
+    assert_contract_ast(
+        "module_contextual_keyword",
+        "Program @1:1-1:36\n  Module @1:1-1:36 examples.stable.syntax.match",
+    );
+}
+
+#[test]
+fn import_module() {
+    assert_contract_ast(
+        "import_module",
+        "Program @1:1-2:10\n  Module @1:1-1:30 tests.contract.imports\n  Import @2:1-2:10 io",
+    );
+}
+
+#[test]
+fn import_named() {
+    assert_contract_ast(
+        "import_named",
+        "Program @1:1-2:34\n  Module @1:1-1:30 tests.contract.imports\n  Import @2:1-2:34 { @2:10-2:16 Button, @2:18-2:24 Window } from ui",
+    );
+}
+
+#[test]
+fn import_alias() {
+    assert_contract_ast(
+        "import_alias",
+        "Program @1:1-2:39\n  Module @1:1-1:30 tests.contract.imports\n  Import @2:1-2:39 { @2:10-2:29 Window as AppWindow } from ui",
+    );
+}
+
+#[test]
+fn list_trailing_comma() {
+    assert_contract_ast(
+        "list_trailing_comma",
+        "Program @1:1-2:27\n  Module @1:1-1:28 tests.contract.lists\n  Import @2:1-2:27 { @2:10-2:16 Button } from ui",
+    );
+}
+
+#[test]
+fn list_empty_allowed() {
+    assert_contract_ast(
+        "list_empty_allowed",
+        "Program @1:1-2:16\n  Module @1:1-1:28 tests.contract.lists\n  Func @2:1-2:16 empty() -> void",
+    );
+}
+
+#[test]
+fn list_empty_forbidden() {
+    assert_contract_rejects("list_empty_forbidden", ParseErrorCode::ExpectedToken);
+}
+
+#[test]
+fn where_func() {
+    assert_contract_ast(
+        "where_func",
+        "Program @1:1-4:2\n  Module @1:1-1:34 tests.contract.constraints\n  Func @2:1-4:2 identity<@2:15-2:16 T>(@2:18-2:25 value Type @2:24-2:25 @2:24-2:25 T) -> Type @2:27-2:28 @2:27-2:28 T where @2:35-2:45 T: @2:38-2:45 Display\n    Return @3:5-3:17 Path @3:12-3:17(value)",
+    );
+}
+
+#[test]
+fn where_struct() {
+    assert_contract_ast(
+        "where_struct",
+        "Program @1:1-4:2\n  Module @1:1-1:34 tests.contract.constraints\n  Struct @2:1-4:2 Box<@2:12-2:13 T> where @2:21-2:31 T: @2:24-2:31 Display\n    Field @3:5-3:12 value Type @3:11-3:12 @3:11-3:12 T",
+    );
+}
+
+#[test]
+fn semicolon_before_rbrace() {
+    assert_contract_ast(
+        "semicolon_before_rbrace",
+        "Program @1:1-4:2\n  Module @1:1-1:33 tests.contract.semicolons\n  Func @2:1-4:2 main() -> void\n    Return @3:5-3:13 Int @3:12-3:13(1)",
+    );
+}
+
+#[test]
+fn semicolon_before_else() {
+    assert_contract_ast(
+        "semicolon_before_else",
+        "Program @1:1-9:2\n  Module @1:1-1:33 tests.contract.semicolons\n  Func @2:1-9:2 main() -> void\n    If @3:5-8:6 Condition @3:8-3:10 Path @3:8-3:10(ok)\n      Expr @4:9-4:23 Call @4:9-4:23(Path @4:9-4:16(println), [String @4:17-4:22(\"sim\")])\n    Else @6:10-8:6\n      Expr @7:9-7:23 Call @7:9-7:23(Path @7:9-7:16(println), [String @7:17-7:22(\"nao\")])",
+    );
+}
+
+#[test]
+fn generic_call_ambiguity() {
+    assert_contract_ast(
+        "generic_call_ambiguity",
+        "Program @1:1-5:2\n  Module @1:1-1:32 tests.contract.lookahead\n  Func @2:1-5:2 main() -> void\n    Var @3:5-3:27 @3:5-3:7 ok = Call @3:10-3:27(Generic @3:10-3:23(Path @3:10-3:18(identity), <Type @3:19-3:22 int>), [Int @3:24-3:26(42)])\n    Var @4:5-4:24 @4:5-4:12 compare = Binary @4:15-4:24(>, Binary @4:15-4:20(<, Path @4:15-4:16(a), Path @4:19-4:20(b)), Path @4:23-4:24(c))",
+    );
+}
+
+#[test]
+fn variable_declaration_lookahead() {
+    assert_contract_ast(
+        "variable_declaration_lookahead",
+        "Program @1:1-5:2\n  Module @1:1-1:32 tests.contract.lookahead\n  Func @2:1-5:2 main() -> void\n    Var @3:5-3:14 @3:5-3:10 value = Int @3:13-3:14(1)\n    Var @4:5-4:18 @4:5-4:14 typed Type @4:11-4:14 int = Int @4:17-4:18(2)",
+    );
+}
+
+#[test]
+fn where_on_new_line() {
+    let _program = parse("module test\nfunc identity<T>(value T) T\nwhere T: Display {\n    return value\n}")
+        .expect("parser should accept where on a new line");
+}
+
+#[test]
+fn from_on_new_line() {
+    let _program = parse("module test\nimport {\n  Button\n}\nfrom ui\n")
+        .expect("parser should accept from on a new line");
+}
+

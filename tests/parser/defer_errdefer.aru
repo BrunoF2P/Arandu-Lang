@@ -1,0 +1,10 @@
+module tests.deferErrdefer
+
+func write(path str) Err? {
+    file, err = io.create(path)
+    defer file.close()
+    errdefer {
+        io.remove(path)
+    }
+    return err
+}

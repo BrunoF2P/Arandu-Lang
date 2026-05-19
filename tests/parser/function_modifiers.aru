@@ -1,0 +1,9 @@
+module tests.functionModifiers
+
+public async func fetch(path str) (str, Err?) {
+    return "ok", nil
+}
+
+func User.greet(user User) str {
+    return "Ola"
+}

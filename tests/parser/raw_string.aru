@@ -1,0 +1,5 @@
+module parser.rawString
+
+func main() {
+    text = r"raw ${notInterpolated}"
+}

@@ -1,0 +1,6 @@
+Program @1:1-7:2
+  Module @1:1-1:27 tests.safeAccessTry
+  Func @3:1-7:2 main() -> void
+    Var @4:5-4:31 @4:5-4:9 name = SafeField @4:12-4:31(SafeField @4:12-4:25(Path @4:12-4:16(user), profile), name)
+    Var @5:5-5:28 @5:5-5:10 first = SafeField @5:13-5:28(SafeIndex @5:13-5:22(Path @5:13-5:18(users), Int @5:20-5:21(0)), name)
+    Var @6:5-6:20 @6:5-6:10 value = Try @6:13-6:20(Call @6:13-6:19(Path @6:13-6:17(load), []))

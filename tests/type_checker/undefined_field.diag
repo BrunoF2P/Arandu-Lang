@@ -1,0 +1,4 @@
+error[T018]: no field 'z' on type 'Point'
+  --> 8:13-8:16
+label: 8:13-8:14 this has type 'Point'
+label: 8:13-8:16 unknown field

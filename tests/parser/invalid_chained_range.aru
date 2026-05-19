@@ -1,0 +1,5 @@
+module tests.invalidChainedRange
+
+func main() {
+    value = 1..2..3
+}

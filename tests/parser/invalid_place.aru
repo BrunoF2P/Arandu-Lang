@@ -1,0 +1,5 @@
+module tests.invalidPlace
+
+func main() {
+    set 1 = value
+}

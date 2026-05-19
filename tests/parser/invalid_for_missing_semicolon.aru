@@ -1,0 +1,6 @@
+module tests.invalidForMissingSemicolon
+
+func main() {
+    for i = 0 i < 10; set i += 1 {
+    }
+}

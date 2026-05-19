@@ -1,0 +1,13 @@
+Program @1:1-21:2
+  Module @1:1-1:40 examples.stable.syntax.functions
+  Import @3:1-3:11 err
+  Import @4:1-4:10 io
+  Func @6:1-8:2 add(@6:10-6:15 a Type @6:12-6:15 int, @6:17-6:22 b Type @6:19-6:22 int) -> Type @6:24-6:27 int
+    Return @7:5-7:17 Binary @7:12-7:17(+, Path @7:12-7:13(a), Path @7:16-7:17(b))
+  Func @10:1-16:2 divide(@10:13-10:18 a Type @10:15-10:18 int, @10:20-10:25 b Type @10:22-10:25 int) -> (Type @10:28-10:31 int, Nullable @10:33-10:37 Type @10:33-10:36 Err)
+    If @11:5-13:6 Condition @11:8-11:14 Binary @11:8-11:14(==, Path @11:8-11:9(b), Int @11:13-11:14(0))
+      Return @12:9-12:44 Int @12:16-12:17(0), Call @12:19-12:44(Field @12:19-12:26(Path @12:19-12:22(err), new), [String @12:27-12:43("divisionByZero")])
+    Return @15:5-15:22 Binary @15:12-15:17(/, Path @15:12-15:13(a), Path @15:16-15:17(b)), Nil @15:19-15:22
+  Func @18:1-21:2 main() -> void
+    Var @19:5-19:24 @19:5-19:10 value = Call @19:13-19:24(Path @19:13-19:16(add), [Int @19:17-19:19(20), Int @19:21-19:23(22)])
+    Expr @20:5-20:33 Call @20:5-20:33(Field @20:5-20:15(Path @20:5-20:7(io), println), [InterpolatedString @20:16-20:32([Text @20:17-20:23("value="), Expr @20:23-20:31(Path @20:25-20:30(value))])])

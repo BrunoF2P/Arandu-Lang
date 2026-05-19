@@ -1,0 +1,10 @@
+module examples.invalid.semantics.ignoredError
+
+func openConfig(path str) (str, Err?) {
+    return "config", nil
+}
+
+func main() {
+    // expected: semantic error; returned Err? must be handled.
+    config = openConfig("app.toml")
+}

@@ -1,0 +1,4 @@
+Program @1:1-5:2
+  Module @1:1-1:24 parser.rawString
+  Func @3:1-5:2 main() -> void
+    Var @4:5-4:37 @4:5-4:9 text = String @4:12-4:37("raw ${notInterpolated}")

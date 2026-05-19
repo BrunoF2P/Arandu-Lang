@@ -1,0 +1,4 @@
+Program @1:1-5:2
+  Module @1:1-1:27 tests.structLiteral
+  Func @3:1-5:2 main() -> void
+    Var @4:5-4:41 @4:5-4:9 user = StructLiteral @4:12-4:41(Type @4:12-4:16 @4:12-4:16 User, [@4:19-4:30 name: String @4:25-4:30("Ana"), @4:32-4:39 age: Int @4:37-4:39(30)])

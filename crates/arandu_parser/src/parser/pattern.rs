@@ -1,0 +1,197 @@
+use super::*;
+
+impl Parser {
+    pub(super) fn parse_match_arm(&mut self) -> Result<MatchArm, ParseError> {
+        let start = self.mark();
+        let pattern = self.parse_pattern()?;
+        let guard = if self.eat_name("KW_IF") {
+            Some(self.parse_expr(0)?)
+        } else {
+            None
+        };
+        self.expect_name("FAT_ARROW")?;
+        let body = if self.at_kind_name("LBRACE") {
+            let block = self.parse_block()?;
+            MatchArmBody::Block {
+                span: block.span,
+                block,
+            }
+        } else {
+            let body_start = self.mark();
+            let expr = self.parse_expr(0)?;
+            if self.at_kind_name("SEMICOLON") {
+                self.expect_semicolon()?;
+            }
+            MatchArmBody::Expr {
+                span: self.span_from_mark(body_start),
+                expr: Box::new(expr),
+            }
+        };
+        Ok(MatchArm {
+            span: self.span_from_mark(start),
+            pattern,
+            guard,
+            body,
+        })
+    }
+
+    pub(super) fn parse_pattern(&mut self) -> Result<Pattern, ParseError> {
+        let start = self.mark();
+        if matches!(&self.current().kind, TokenKind::IdentValue(name) if name == "_") {
+            self.consume();
+            return Ok(Pattern::Wildcard {
+                span: self.span_from_mark(start),
+            });
+        }
+        if self.at_kind_name("LPAREN") {
+            self.consume();
+            let mut items = vec![self.parse_pattern()?];
+            self.expect_name("COMMA")?;
+            items.push(self.parse_pattern()?);
+            while self.eat_name("COMMA") {
+                if self.at_kind_name("RPAREN") {
+                    break;
+                }
+                items.push(self.parse_pattern()?);
+            }
+            self.expect_name("RPAREN")?;
+            return Ok(Pattern::Tuple {
+                span: self.span_from_mark(start),
+                items,
+            });
+        }
+        if matches!(self.current().kind, TokenKind::IdentType(_)) {
+            let type_start_span = self.current().span;
+            let name = self.expect_ident_type()?;
+            if self.eat_name("DOT") {
+                let variant = self.expect_ident_type()?;
+                let payload = if self.eat_name("LPAREN") {
+                    let payload = self.parse_pattern_list_until("RPAREN")?;
+                    self.expect_name("RPAREN")?;
+                    payload
+                } else {
+                    Vec::new()
+                };
+                return Ok(Pattern::Enum {
+                    span: self.span_from_mark(start),
+                    type_name: TypeName {
+                        span: type_start_span,
+                        path: vec![name],
+                    },
+                    variant,
+                    payload,
+                });
+            }
+            if self.eat_name("LBRACE") {
+                let mut fields = Vec::new();
+                if !self.at_kind_name("RBRACE") {
+                    loop {
+                        let field_start = self.mark();
+                        let name = self.expect_ident_value()?;
+                        let pattern = if self.eat_name("COLON") {
+                            Some(self.parse_pattern()?)
+                        } else {
+                            None
+                        };
+                        fields.push(FieldPattern {
+                            span: self.span_from_mark(field_start),
+                            name,
+                            pattern,
+                        });
+                        if !self.eat_name("COMMA") {
+                            break;
+                        }
+                        if self.at_kind_name("RBRACE") {
+                            break;
+                        }
+                    }
+                }
+                self.expect_name("RBRACE")?;
+                return Ok(Pattern::Struct {
+                    span: self.span_from_mark(start),
+                    type_name: TypeName {
+                        span: type_start_span,
+                        path: vec![name],
+                    },
+                    fields,
+                });
+            }
+            if self.eat_name("LPAREN") {
+                let payload = self.parse_pattern_list_until("RPAREN")?;
+                self.expect_name("RPAREN")?;
+                return Ok(Pattern::TypeTuple {
+                    span: self.span_from_mark(start),
+                    name,
+                    payload,
+                });
+            }
+            return Ok(Pattern::TypeTuple {
+                span: self.span_from_mark(start),
+                name,
+                payload: Vec::new(),
+            });
+        }
+        if matches!(self.current().kind, TokenKind::IdentValue(_)) {
+            let name = self.expect_ident_value()?;
+            return Ok(Pattern::Bind {
+                span: self.span_from_mark(start),
+                name,
+            });
+        }
+        let literal = self.parse_literal_pattern_expr()?;
+        if self.eat_name("RANGE_EXCLUSIVE") || self.eat_name("RANGE_INCLUSIVE") {
+            let inclusive = self.previous().kind.name() == "RANGE_INCLUSIVE";
+            let end = self.parse_literal_pattern_expr()?;
+            return Ok(Pattern::Range {
+                span: self.span_from_mark(start),
+                start: Box::new(literal),
+                inclusive,
+                end: Box::new(end),
+            });
+        }
+        Ok(Pattern::Literal {
+            span: self.span_from_mark(start),
+            expr: Box::new(literal),
+        })
+    }
+
+    pub(super) fn parse_pattern_list_until(
+        &mut self,
+        end: &str,
+    ) -> Result<Vec<Pattern>, ParseError> {
+        let mut patterns = Vec::new();
+        if self.at_kind_name(end) {
+            return Ok(patterns);
+        }
+        loop {
+            patterns.push(self.parse_pattern()?);
+            if !self.eat_name("COMMA") {
+                break;
+            }
+            if self.at_kind_name(end) {
+                break;
+            }
+        }
+        Ok(patterns)
+    }
+
+    pub(super) fn parse_literal_pattern_expr(&mut self) -> Result<Expr, ParseError> {
+        match &self.current().kind {
+            TokenKind::IntDec(_)
+            | TokenKind::IntHex(_)
+            | TokenKind::IntBin(_)
+            | TokenKind::IntOct(_)
+            | TokenKind::Float(_)
+            | TokenKind::BoolTrue
+            | TokenKind::BoolFalse
+            | TokenKind::Char(_)
+            | TokenKind::StringStart
+            | TokenKind::Nil => self.parse_prefix(),
+            _ => Err(ParseError::new(
+                ParseErrorCode::ExpectedToken,
+                "expected pattern",
+                self.current(),
+            )),
+        }
+    }
+}

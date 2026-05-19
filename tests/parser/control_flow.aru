@@ -1,0 +1,22 @@
+module tests.controlFlow
+
+func main(items []int) {
+    index = 0
+    while index < 10 {
+        set index += 1
+        if index == 3 {
+            continue
+        }
+        if index == 8 {
+            break
+        }
+    }
+
+    for item in items {
+        io.println(item)
+    }
+
+    for i = 0; i < 3; set i += 1 {
+        io.println(i)
+    }
+}

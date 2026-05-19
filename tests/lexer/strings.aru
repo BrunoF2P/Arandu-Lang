@@ -1,0 +1,10 @@
+func main() {
+    simple = "Oi"
+    escaped = "linha\n"
+    interp = "Ola, ${name}"
+    raw = r"C:\tmp\file.txt"
+    multi = """
+linha 1
+${value}
+"""
+}

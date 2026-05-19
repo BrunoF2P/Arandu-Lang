@@ -1,0 +1,8 @@
+module examples.stable.syntax.hello
+
+import io
+
+func main() {
+    name = "Bruno"
+    io.println("Ola, ${name}")
+}

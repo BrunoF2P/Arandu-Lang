@@ -1,0 +1,7 @@
+module tests.namedImport
+
+import { Button, Window as AppWindow, text as label } from ui
+
+func main() {
+    label("ok")
+}

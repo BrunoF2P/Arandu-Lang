@@ -1,0 +1,7 @@
+module parser.trailingBlockCall
+
+func main() {
+    app.route("/users") {
+        io.println("users")
+    }
+}

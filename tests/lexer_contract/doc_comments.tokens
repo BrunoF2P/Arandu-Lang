@@ -1,0 +1,13 @@
+DOC_COMMENT(/** Contract docs. */)
+DOC_COMMENT(/// User name.)
+IDENT_VALUE(name)
+EQUAL
+STRING_START
+STRING_TEXT(Ana)
+STRING_END
+SEMICOLON(inserted)
+IDENT_VALUE(age)
+EQUAL
+INT_DEC(30)
+SEMICOLON(inserted)
+EOF

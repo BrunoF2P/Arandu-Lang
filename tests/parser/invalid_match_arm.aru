@@ -1,0 +1,7 @@
+module tests.invalidMatchArm
+
+func main() {
+    match token {
+        Token.End "end"
+    }
+}

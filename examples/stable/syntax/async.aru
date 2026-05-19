@@ -1,0 +1,22 @@
+module examples.stable.syntax.async
+
+import err
+import io
+
+async func fetchText(path str) (str, Err?) {
+    if path == "" {
+        return "", err.new("emptyPath")
+    }
+
+    return "contents", nil
+}
+
+async func main() {
+    text, err = await fetchText("data.txt")
+    if err != nil {
+        io.println("error: ${err}")
+        return
+    }
+
+    io.println(text)
+}

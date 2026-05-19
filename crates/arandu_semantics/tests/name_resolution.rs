@@ -1,0 +1,437 @@
+use arandu_lexer::Span;
+use arandu_semantics::{DiagCode, SymbolKind, SymbolTable, resolve};
+use std::{fs, path::PathBuf};
+
+fn workspace_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|path| path.parent())
+        .expect("crate should be under workspace/crates")
+        .to_path_buf()
+}
+
+fn resolve_source(source: &str) -> arandu_semantics::ResolutionResult {
+    let program = arandu_parser::parse(source).expect("parser should accept fixture");
+    resolve(&program)
+}
+
+fn codes(result: &arandu_semantics::ResolutionResult) -> Vec<DiagCode> {
+    result
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect()
+}
+
+fn assert_no_diagnostics(source: &str) {
+    let result = resolve_source(source);
+    assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
+}
+
+fn assert_diagnostic_golden(name: &str) {
+    let root = workspace_root();
+    let source_path = root
+        .join("tests")
+        .join("semantics")
+        .join(format!("{name}.aru"));
+    let expected_path = root
+        .join("tests")
+        .join("semantics")
+        .join(format!("{name}.diag"));
+    let source = fs::read_to_string(&source_path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", source_path.display()));
+    let expected = fs::read_to_string(&expected_path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", expected_path.display()));
+    let result = resolve_source(&source);
+    let actual = result
+        .diagnostics
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("");
+
+    for line in expected.lines().filter(|line| !line.trim().is_empty()) {
+        assert!(
+            actual.contains(line),
+            "expected diagnostic output to contain {line:?}\nactual:\n{actual}"
+        );
+    }
+}
+
+#[test]
+fn resolves_forward_function_reference() {
+    let result = resolve_source(
+        r#"
+module tests.forward
+
+func main() {
+    value = later()
+}
+
+func later() int {
+    return 1
+}
+"#,
+    );
+
+    assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
+    assert!(
+        result
+            .symbols
+            .iter()
+            .any(|symbol| { symbol.name == "later" && matches!(symbol.kind, SymbolKind::Func) })
+    );
+}
+
+#[test]
+fn matches_undefined_value_diagnostic_golden() {
+    assert_diagnostic_golden("undefined_value");
+}
+
+#[test]
+fn matches_redeclare_same_scope_diagnostic_golden() {
+    assert_diagnostic_golden("redeclare_same_scope");
+}
+
+#[test]
+fn matches_set_missing_diagnostic_golden() {
+    assert_diagnostic_golden("set_missing");
+}
+
+#[test]
+fn resolves_params_locals_and_set_roots() {
+    let result = resolve_source(
+        r#"
+module tests.locals
+
+func add(a int, b int) int {
+    total = a + b
+    set total += 1
+    return total
+}
+"#,
+    );
+
+    assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
+    assert!(
+        result
+            .symbols
+            .iter()
+            .any(|symbol| { symbol.name == "total" && matches!(symbol.kind, SymbolKind::Local) })
+    );
+}
+
+#[test]
+fn resolves_imported_namespace_member_from_prelude() {
+    assert_no_diagnostics(
+        r#"
+module tests.import_namespace
+
+import io
+
+func main() {
+    io.println("ok")
+}
+"#,
+    );
+}
+
+#[test]
+fn reports_namespace_used_as_value() {
+    let result = resolve_source(
+        r#"
+module tests.namespace_as_value
+
+import io
+
+func main() {
+    value = io
+}
+"#,
+    );
+
+    assert_eq!(codes(&result), vec![DiagCode::N008NamespaceUsedAsValue]);
+}
+
+#[test]
+fn reports_undefined_namespace_member() {
+    let result = resolve_source(
+        r#"
+module tests.undefined_member
+
+import io
+
+func main() {
+    io.missing()
+}
+"#,
+    );
+
+    assert_eq!(codes(&result), vec![DiagCode::N009UndefinedNamespaceMember]);
+}
+
+#[test]
+fn resolves_named_import_aliases_by_identifier_casing() {
+    assert_no_diagnostics(
+        r#"
+module tests.named_imports
+
+import { Button, Window as AppWindow, text as label } from ui
+
+func render(window AppWindow) Button {
+    return label("ok")
+}
+"#,
+    );
+}
+
+#[test]
+fn resolves_type_qualified_associated_function() {
+    assert_no_diagnostics(
+        r#"
+module tests.associated
+
+struct User {
+    name str
+}
+
+func User.greet(user User) str {
+    return user.name
+}
+
+func main(user User) {
+    text = User.greet(user)
+}
+"#,
+    );
+}
+
+#[test]
+fn reports_undefined_associated_function() {
+    let result = resolve_source(
+        r#"
+module tests.associated_missing
+
+struct User {
+    name str
+}
+
+func main(user User) {
+    text = User.missing(user)
+}
+"#,
+    );
+
+    assert_eq!(
+        codes(&result),
+        vec![DiagCode::N010UndefinedAssociatedFunction]
+    );
+}
+
+#[test]
+fn reports_undefined_assignment_target_with_set_specific_hint() {
+    let result = resolve_source(
+        r#"
+module tests.set_missing
+
+func main() {
+    set missing = 1
+}
+"#,
+    );
+
+    assert_eq!(
+        codes(&result),
+        vec![DiagCode::N007UndefinedAssignmentTarget]
+    );
+    assert!(
+        result.diagnostics[0]
+            .hints
+            .iter()
+            .any(|hint| hint.contains("missing =")),
+        "{:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn resolves_type_names_in_params_and_struct_literals() {
+    let result = resolve_source(
+        r#"
+module tests.types
+
+struct User {
+    name str
+}
+
+func make(name str) User {
+    return User { name: name }
+}
+"#,
+    );
+
+    assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
+    assert!(
+        result
+            .symbols
+            .iter()
+            .any(|symbol| { symbol.name == "User" && matches!(symbol.kind, SymbolKind::Struct) })
+    );
+}
+
+#[test]
+fn reports_undefined_value_with_suggestion() {
+    let result = resolve_source(
+        r#"
+module tests.suggest
+
+func main() {
+    formatar = 1
+    value = frobnicate
+}
+"#,
+    );
+
+    assert_eq!(codes(&result), vec![DiagCode::N001UndefinedValue]);
+    let diagnostic = &result.diagnostics[0];
+    assert!(diagnostic.message.contains("frobnicate"));
+    assert!(
+        diagnostic
+            .hints
+            .iter()
+            .any(|hint| hint.contains("formatar")),
+        "{diagnostic:#?}"
+    );
+}
+
+#[test]
+fn reports_undefined_type() {
+    let result = resolve_source(
+        r#"
+module tests.undefined_type
+
+func main(value MissingType) {
+    return
+}
+"#,
+    );
+
+    assert_eq!(codes(&result), vec![DiagCode::N002UndefinedType]);
+}
+
+#[test]
+fn reports_redeclare_same_scope_but_allows_nested_shadowing() {
+    let result = resolve_source(
+        r#"
+module tests.redeclare
+
+func main() {
+    value = 1
+    if value > 0 {
+        value = 2
+    }
+    value = 3
+}
+"#,
+    );
+
+    assert_eq!(codes(&result), vec![DiagCode::N003RedefinedName]);
+}
+
+#[test]
+fn symbol_table_keeps_value_and_type_namespaces_distinguishable() {
+    let mut symbols = SymbolTable::new();
+    let scope = symbols.global_scope();
+    let span = Span::new(0, 4, 1, 1, 1, 5);
+
+    symbols
+        .define(scope, "User", SymbolKind::Struct, span)
+        .expect("type symbol should define");
+    symbols
+        .define(scope, "value", SymbolKind::Local, span)
+        .expect("value symbol should define");
+
+    assert!(symbols.lookup_type(scope, "User").is_some());
+    assert!(symbols.lookup_value(scope, "User").is_none());
+    assert!(symbols.lookup_value(scope, "value").is_some());
+    assert!(symbols.lookup_type(scope, "value").is_none());
+}
+
+#[test]
+fn resolves_match_pattern_bindings_in_arm_scope() {
+    let result = resolve_source(
+        r#"
+module tests.match_bindings
+
+enum Token {
+    Word(str)
+}
+
+func describe(token Token) str {
+    return match token {
+        Token.Word(text) => text
+    }
+}
+"#,
+    );
+
+    assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
+}
+
+#[test]
+fn resolves_match_statement_pattern_bindings_in_arm_scope() {
+    let result = resolve_source(
+        r#"
+module tests.match_statement_bindings
+
+enum Token {
+    Word(str)
+}
+
+func sink(value str) {
+    return
+}
+
+func describe(token Token) {
+    match token {
+        Token.Word(text) => sink(text)
+    }
+}
+"#,
+    );
+
+    assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
+}
+
+#[test]
+fn resolves_for_bindings_in_loop_scope() {
+    let result = resolve_source(
+        r#"
+module tests.forBindings
+
+func main(items []int) {
+    for item in items {
+        value = item
+    }
+}
+"#,
+    );
+
+    assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
+}
+
+#[test]
+fn resolves_module_qualified_type_names() {
+    let result = resolve_source(
+        r#"
+        module tests.qualifiedType
+        import myModule
+        func main() {
+            x myModule.SomeType = 0
+        }
+        "#,
+    );
+    let diagnostics = codes(&result);
+    // myModule is a module, not a type. Checking a qualified member type should report N009
+    assert_eq!(diagnostics, vec![DiagCode::N009UndefinedNamespaceMember]);
+}

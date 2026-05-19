@@ -1,0 +1,4 @@
+module tests.contract.constraints
+struct Box<T> where T: Display {
+    value T
+}

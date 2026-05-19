@@ -1,0 +1,8 @@
+module examples.invalid.semantics.setImmutable
+
+func main() {
+    name = "Bruno"
+
+    // expected: semantic error; `name` is immutable.
+    set name = "Ana"
+}

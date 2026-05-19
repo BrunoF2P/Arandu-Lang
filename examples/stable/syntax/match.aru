@@ -1,0 +1,18 @@
+module examples.stable.syntax.match
+
+import io
+
+enum Token {
+    Number(int),
+    Word(str),
+    End,
+}
+
+func describe(token Token) str {
+    return match token {
+        Token.Number(value) if value > 0 => "positive number"
+        Token.Number(_) => "number"
+        Token.Word(text) => "word ${text}"
+        Token.End => "end"
+    }
+}

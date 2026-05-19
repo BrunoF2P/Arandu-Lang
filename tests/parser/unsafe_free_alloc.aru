@@ -1,0 +1,12 @@
+module tests.unsafeFreeAlloc
+
+func main() {
+    buffer = alloc 64
+    unsafe {
+        raw.write(buffer, 1)
+    }
+    value = unsafe {
+        raw.read(buffer)
+    }
+    free buffer
+}

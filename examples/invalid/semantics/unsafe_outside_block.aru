@@ -1,0 +1,12 @@
+module examples.invalid.semantics.unsafeOutsideBlock
+
+extern "C" {
+    func rawWrite(address ptr[u8], value u8) int
+}
+
+func main() {
+    address = alloc 1
+
+    // expected: semantic error; raw pointer write requires an unsafe block.
+    rawWrite(address, 42)
+}

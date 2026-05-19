@@ -1,0 +1,15 @@
+module examples.draft.rtc.voiceRoom
+
+import rtc
+
+async func joinRoom(roomId str) Err? {
+    room = await rtc.connect(roomId)?
+
+    defer room.leave()
+
+    room.onAudio(|track| {
+        rtc.play(track)
+    })
+
+    return nil
+}
