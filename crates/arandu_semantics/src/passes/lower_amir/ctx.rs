@@ -1,13 +1,14 @@
-use super::{DeferKind, LowerCtx};
+use super::{DeferKind, LowerCtx, MoveState};
 use crate::amir::{
-    AmirBasicBlock, AmirConstant, AmirLocal, AmirTemp, AmirOperand, AmirPlace, AmirRvalue,
-    AmirStmt, AmirTerminator, BlockId, LocalId, TempId,
+    AmirBasicBlock, AmirConstant, AmirLocal, AmirOperand, AmirPlace, AmirRvalue, AmirStmt,
+    AmirTemp, AmirTerminator, BlockId, LocalId, TempId,
 };
 use crate::diagnostics::Diagnostic;
 use crate::hir::HirBlock;
 use crate::literal_pool::AmirLiteralEntry;
 use crate::passes::type_checker::types::{ArType, Primitive};
 use crate::{SymbolId, SymbolTable};
+use arandu_lexer::Span;
 
 impl LowerCtx<'_> {
     pub(crate) fn next_local_id(&self) -> LocalId {
@@ -24,10 +25,9 @@ impl LowerCtx<'_> {
 
     pub(crate) fn new_temp(&mut self, ty: ArType) -> TempId {
         let id = self.next_temp_id();
-        self.temps.push(AmirTemp {
-            id,
-            ty,
-        });
+        self.temps.push(AmirTemp { id, ty });
+        self.temp_states.push(MoveState::Available);
+        self.temp_origins.push(None);
         id
     }
 
@@ -38,6 +38,7 @@ impl LowerCtx<'_> {
             ty,
             symbol: Some(symbol),
         });
+        self.local_states.push(MoveState::Available);
         self.symbol_map.insert(symbol, id);
         id
     }
@@ -49,6 +50,7 @@ impl LowerCtx<'_> {
             ty,
             symbol: None,
         });
+        self.local_states.push(MoveState::Available);
         id
     }
 
@@ -166,8 +168,17 @@ impl LowerCtx<'_> {
         self.push_stmt(AmirStmt::Assign { lhs: temp, rhs });
     }
 
-    pub(crate) fn emit_store_place(&mut self, lhs: AmirPlace, rhs: AmirOperand) {
+    pub(crate) fn emit_store_place(
+        &mut self,
+        lhs: AmirPlace,
+        rhs: AmirOperand,
+    ) -> Result<(), Diagnostic> {
+        let rhs = self.consume_operand(rhs)?;
+        if lhs.projections.is_empty() {
+            self.local_states[lhs.local.as_usize()] = MoveState::Available;
+        }
         self.push_stmt(AmirStmt::Store { lhs, rhs });
+        Ok(())
     }
 
     pub(crate) fn load_place(
@@ -175,9 +186,44 @@ impl LowerCtx<'_> {
         place: &AmirPlace,
         ty: ArType,
         _projection_types: &[ArType],
-    ) -> AmirOperand {
+    ) -> Result<AmirOperand, Diagnostic> {
+        if place.projections.is_empty()
+            && self.local_states[place.local.as_usize()] == MoveState::Moved
+        {
+            return Err(self.move_diag(format!("use of moved local s{}", place.local.as_usize())));
+        }
         let temp = self.new_temp(ty);
         self.emit_assign_temp(temp, AmirRvalue::Load(place.clone()));
-        AmirOperand::Copy(temp)
+        if place.projections.is_empty() {
+            self.temp_origins[temp.as_usize()] = Some(place.local);
+        }
+        Ok(AmirOperand::Copy(temp))
+    }
+
+    pub(crate) fn consume_operand(&mut self, op: AmirOperand) -> Result<AmirOperand, Diagnostic> {
+        let AmirOperand::Copy(temp) = op else {
+            return Ok(op);
+        };
+        let idx = temp.as_usize();
+        if self.temp_states[idx] == MoveState::Moved {
+            return Err(self.move_diag(format!("use of moved temporary _{idx}")));
+        }
+        let ty = self.temps[idx].ty.clone();
+        if ty.is_copy_v01() {
+            return Ok(AmirOperand::Copy(temp));
+        }
+        self.temp_states[idx] = MoveState::Moved;
+        if let Some(local) = self.temp_origins[idx] {
+            self.local_states[local.as_usize()] = MoveState::Moved;
+        }
+        Ok(AmirOperand::Move(temp))
+    }
+
+    pub(crate) fn move_diag(&self, message: impl Into<String>) -> Diagnostic {
+        Diagnostic::error(
+            crate::DiagCode::L002AmirUnsupportedFeature,
+            message.into(),
+            Span::new(0, 0, 0, 0, 0, 0),
+        )
     }
 }

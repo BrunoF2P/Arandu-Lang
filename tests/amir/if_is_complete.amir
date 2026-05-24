@@ -24,7 +24,7 @@ Func test_tuple_pattern() -> int
 
   bb0:
     _1 = call fn@make_pair()
-    s0 = _1
+    s0 = move _1
     s1 = 0
     _2 = s0
     _3 = _2._0
@@ -61,7 +61,7 @@ Func test_typetuple_pattern(res: Result) -> int
     s2: int // x
 
   bb0:
-    s0 = _1
+    s0 = move _1
     s1 = 0
     _2 = s0
     _3 = discriminant(_2)

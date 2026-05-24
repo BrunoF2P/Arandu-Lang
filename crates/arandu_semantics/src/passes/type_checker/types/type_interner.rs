@@ -17,9 +17,9 @@
 //!
 //! Interning is additive and append-only; types are never removed.
 
+use crate::SymbolTable;
 use crate::newtype_index;
 use crate::passes::type_checker::types::ArType;
-use crate::SymbolTable;
 use std::collections::HashMap;
 
 newtype_index!(TypeId);
@@ -176,9 +176,14 @@ mod tests {
     fn test_all_primitives_get_unique_ids() {
         let mut interner = TypeInterner::new();
         let prims = [
-            Primitive::Int, Primitive::Uint, Primitive::Float,
-            Primitive::Bool, Primitive::Str, Primitive::Char,
-            Primitive::Byte, Primitive::Any,
+            Primitive::Int,
+            Primitive::Uint,
+            Primitive::Float,
+            Primitive::Bool,
+            Primitive::Str,
+            Primitive::Char,
+            Primitive::Byte,
+            Primitive::Any,
         ];
         let ids: Vec<TypeId> = prims
             .iter()
@@ -188,7 +193,11 @@ mod tests {
         for (i, a) in ids.iter().enumerate() {
             for (j, b) in ids.iter().enumerate() {
                 if i != j {
-                    assert_ne!(a, b, "primitives {:?} and {:?} got same TypeId", prims[i], prims[j]);
+                    assert_ne!(
+                        a, b,
+                        "primitives {:?} and {:?} got same TypeId",
+                        prims[i], prims[j]
+                    );
                 }
             }
         }

@@ -1,5 +1,7 @@
 use super::{LowerCtx, amir_unsupported};
-use crate::amir::{AmirConstant, AmirOperand, AmirRvalue, AmirStmt, AmirTerminator, TempId, AmirPlace};
+use crate::amir::{
+    AmirConstant, AmirOperand, AmirPlace, AmirRvalue, AmirStmt, AmirTerminator, TempId,
+};
 use crate::diagnostics::Diagnostic;
 use crate::literal_pool::AmirLiteralEntry;
 use crate::ops::BinaryOp;
@@ -216,16 +218,17 @@ impl LowerCtx<'_> {
                     self.load_place(&place, expr.ty.clone(), &[])
                 } else {
                     let sym = symbols.get(*symbol);
-                    match sym.kind {
+                    Ok(match sym.kind {
                         SymbolKind::Func
                         | SymbolKind::ExternFunc
                         | SymbolKind::AssociatedFunc
                         | SymbolKind::NamespaceMember => AmirOperand::FunctionRef(*symbol),
                         _ => AmirOperand::GlobalRef(*symbol),
-                    }
-                };
+                    })
+                }?;
                 if let Some(dest) = target {
-                    self.emit_assign_temp(dest, AmirRvalue::Use(op.clone()));
+                    let rhs = self.consume_operand(op.clone())?;
+                    self.emit_assign_temp(dest, AmirRvalue::Use(rhs));
                 }
                 Ok(op)
             }
@@ -237,10 +240,11 @@ impl LowerCtx<'_> {
                     };
                     self.load_place(&place, expr.ty.clone(), &[])
                 } else {
-                    AmirOperand::GlobalRef(*member_symbol)
-                };
+                    Ok(AmirOperand::GlobalRef(*member_symbol))
+                }?;
                 if let Some(dest) = target {
-                    self.emit_assign_temp(dest, AmirRvalue::Use(op.clone()));
+                    let rhs = self.consume_operand(op.clone())?;
+                    self.emit_assign_temp(dest, AmirRvalue::Use(rhs));
                 }
                 Ok(op)
             }
@@ -315,7 +319,8 @@ impl LowerCtx<'_> {
                 let callee_op = self.lower_expr(callee, None, symbols)?;
                 let mut arg_ops = Vec::new();
                 for arg in args {
-                    arg_ops.push(self.lower_expr(arg, None, symbols)?);
+                    let arg_op = self.lower_expr(arg, None, symbols)?;
+                    arg_ops.push(self.consume_operand(arg_op)?);
                 }
                 let dest = if matches!(expr.ty, ArType::Void) {
                     None

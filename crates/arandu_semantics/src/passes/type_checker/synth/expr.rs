@@ -1,5 +1,5 @@
-use arandu_parser::{BinaryOp, CatchHandler, Expr, UnaryOp};
 use arandu_lexer::Span;
+use arandu_parser::{BinaryOp, CatchHandler, Expr, UnaryOp};
 
 use super::super::TypeChecker;
 use super::super::constraints::ConstraintOrigin;
@@ -29,10 +29,7 @@ fn report_unsupported(checker: &mut TypeChecker, span: Span, feature: &str) {
 
 pub fn synth_expr(checker: &mut TypeChecker, expr: &Expr) -> ArType {
     let ty = synth_expr_inner(checker, expr);
-    checker
-        .type_info
-        .expr_types
-        .insert(crate::NodeKey::from(expr.span()), ty.clone());
+    checker.record_expr_type(crate::NodeKey::from(expr.span()), ty.clone());
     ty
 }
 
@@ -68,8 +65,8 @@ fn synth_expr_inner(checker: &mut TypeChecker, expr: &Expr) -> ArType {
                 if let Some(ty) = checker.ctx.lookup(*symbol_id) {
                     return ty.clone();
                 }
-                if let Some(ty) = checker.type_info.decl_types.get(symbol_id) {
-                    return ty.clone();
+                if let Some(ty) = checker.decl_type(*symbol_id) {
+                    return ty;
                 }
             }
             ArType::Error
@@ -132,17 +129,15 @@ fn synth_expr_inner(checker: &mut TypeChecker, expr: &Expr) -> ArType {
 
             let key = crate::NodeKey::from(*span);
             if let Some(symbol_id) = checker.resolved.value_refs.get(&key)
-                && let Some(ty) = checker.type_info.decl_types.get(symbol_id)
+                && let Some(ty) = checker.decl_type(*symbol_id)
             {
-                return ty.clone();
+                return ty;
             }
             ArType::Error
         }
-        Expr::Generic {
-            callee,
-            args,
-            span,
-        } => super::super::types::synth_generic_instantiation(checker, callee, args, *span),
+        Expr::Generic { callee, args, span } => {
+            super::super::types::synth_generic_instantiation(checker, callee, args, *span)
+        }
         Expr::Field { span, base, field } => {
             if let Some(ty) = resolve_namespace_field(checker, base, field, *span) {
                 ty
@@ -286,13 +281,7 @@ fn synth_expr_inner(checker: &mut TypeChecker, expr: &Expr) -> ArType {
                     *symbol_id,
                     generic_args,
                 )
-                .or_else(|| {
-                    checker
-                        .type_info
-                        .struct_fields
-                        .get(symbol_id)
-                        .cloned()
-                });
+                .or_else(|| checker.type_info.struct_fields.get(symbol_id).cloned());
                 if let Some(fields_def) = field_map {
                     for field in fields {
                         let field_val_ty = synth_expr(checker, &field.value);

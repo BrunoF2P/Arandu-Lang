@@ -288,10 +288,7 @@ impl<'a> Parser<'a> {
                 })
             }
             TokenKind::IdentType => self.parse_type_led_expr(),
-            TokenKind::IntDec
-            | TokenKind::IntHex
-            | TokenKind::IntBin
-            | TokenKind::IntOct => {
+            TokenKind::IntDec | TokenKind::IntHex | TokenKind::IntBin | TokenKind::IntOct => {
                 let value = self.current_text().to_string();
                 self.consume();
                 Ok(Expr::Int {

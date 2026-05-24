@@ -83,4 +83,13 @@ pub(crate) struct LowerCtx<'a> {
     loop_stack: Vec<(BlockId, BlockId, usize)>,
     literal_pool: &'a mut AmirLiteralPool,
     defer_frames: Vec<DeferFrame>,
+    temp_states: Vec<MoveState>,
+    temp_origins: Vec<Option<LocalId>>,
+    local_states: Vec<MoveState>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MoveState {
+    Available,
+    Moved,
 }

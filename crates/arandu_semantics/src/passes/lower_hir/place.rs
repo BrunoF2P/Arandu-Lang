@@ -23,7 +23,7 @@ pub(crate) fn lower_place(
             )
         })?;
 
-    let mut current_ty = if let Some(ty) = type_check.type_info.decl_types.get(&root_symbol) {
+    let mut current_ty = if let Some(ty) = type_check.type_info.decl_type(root_symbol) {
         ty.clone()
     } else {
         ArType::Error
@@ -37,6 +37,7 @@ pub(crate) fn lower_place(
                     suffixes.push(HirPlaceSuffix::Field {
                         span: *span,
                         name: name.clone(),
+                        field_symbol: None,
                         ty: ArType::Error,
                     });
                 }
@@ -65,18 +66,25 @@ pub(crate) fn lower_place(
                     },
                     _ => None,
                 };
-                let field_ty = if let Some(struct_id) = struct_id_opt
+                let (field_ty, field_symbol) = if let Some(struct_id) = struct_id_opt
                     && let Some(fields) = type_check.type_info.struct_fields.get(&struct_id)
                     && let Some(ty) = fields.get(name)
                 {
-                    ty.clone()
+                    let symbol = type_check
+                        .type_info
+                        .struct_field_symbols
+                        .get(&struct_id)
+                        .and_then(|fields| fields.get(name))
+                        .copied();
+                    (ty.clone(), symbol)
                 } else {
-                    ArType::Error
+                    (ArType::Error, None)
                 };
                 current_ty = field_ty.clone();
                 suffixes.push(HirPlaceSuffix::Field {
                     span: *span,
                     name: name.clone(),
+                    field_symbol,
                     ty: field_ty,
                 });
             }

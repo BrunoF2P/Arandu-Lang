@@ -7,10 +7,7 @@ use super::super::TypeChecker;
 use super::super::types::ArType;
 
 fn pattern_covers_all(pat: &Pattern) -> bool {
-    matches!(
-        pat,
-        Pattern::Wildcard { .. } | Pattern::Bind { .. }
-    )
+    matches!(pat, Pattern::Wildcard { .. } | Pattern::Bind { .. })
 }
 
 fn variant_short_name(enum_name: &str, symbol_name: &str) -> String {

@@ -73,8 +73,7 @@ fn expr_type_for_kind(
         }
         HirExprKind::Path { symbol } => type_check
             .type_info
-            .decl_types
-            .get(symbol)
+            .decl_type(*symbol)
             .cloned()
             .filter(|ty| !ty.is_error())
             .unwrap_or(fallback),
@@ -88,8 +87,7 @@ fn expr_type_for_kind(
             match &callee.kind {
                 HirExprKind::Path { symbol } => type_check
                     .type_info
-                    .decl_types
-                    .get(symbol)
+                    .decl_type(*symbol)
                     .and_then(|ty| match ty {
                         ArType::Func(_, ret) => Some(ret.as_ref().clone()),
                         _ => None,
@@ -108,8 +106,7 @@ pub(crate) fn lower_expr(type_check: &TypeCheckResult, expr: &Expr) -> Result<Hi
     let key = NodeKey::from(span);
     let fallback_ty = type_check
         .type_info
-        .expr_types
-        .get(&key)
+        .expr_type(key)
         .cloned()
         .unwrap_or(ArType::Error);
 
@@ -264,8 +261,7 @@ pub(crate) fn lower_expr(type_check: &TypeCheckResult, expr: &Expr) -> Result<Hi
                 let symbol = require_def_symbol(&type_check.resolved, p.span)?;
                 let p_ty = type_check
                     .type_info
-                    .decl_types
-                    .get(&symbol)
+                    .decl_type(symbol)
                     .cloned()
                     .unwrap_or(ArType::Error);
                 hir_params.push(HirLambdaParam {

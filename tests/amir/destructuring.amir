@@ -14,6 +14,6 @@ Func main() -> void
 
   bb0:
     _1 = call fn@foo()
-    s0 = _1
+    s0 = move _1
     call fn@io.println("interpolated")
     return

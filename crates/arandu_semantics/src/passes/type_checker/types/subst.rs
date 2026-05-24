@@ -38,10 +38,8 @@ pub fn substitute_type(ty: &ArType, subst: &GenericSubst) -> ArType {
             ArType::Tuple(items.iter().map(|t| substitute_type(t, subst)).collect())
         }
         ArType::Func(params, ret) => {
-            let new_params: Vec<ArType> = params
-                .iter()
-                .map(|p| substitute_type(p, subst))
-                .collect();
+            let new_params: Vec<ArType> =
+                params.iter().map(|p| substitute_type(p, subst)).collect();
             ArType::Func(new_params, Box::new(substitute_type(ret, subst)))
         }
         _ => ty.clone(),

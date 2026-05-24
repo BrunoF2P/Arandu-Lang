@@ -1,13 +1,11 @@
 use super::local::TempId;
 use super::program::{AmirFunc, AmirProgram};
 use super::stmt::{AmirStmt, AmirTerminator};
-use super::value::{
-    AmirConstant, AmirOperand, AmirPlace, AmirProjection, AmirRvalue,
-};
+use super::value::{AmirConstant, AmirOperand, AmirPlace, AmirProjection, AmirRvalue};
+use crate::SymbolTable;
 use crate::hir::ReceiverKind;
 use crate::literal_pool::{AmirLiteralEntry, AmirLiteralPool};
 use crate::ops::{BinaryOp, UnaryOp};
-use crate::SymbolTable;
 
 impl AmirProgram {
     #[must_use]
@@ -38,17 +36,21 @@ impl AmirFunc {
             .iter()
             .enumerate()
             .map(|(i, p)| {
-                let ty = self.temps
+                let ty = self
+                    .temps
                     .iter()
                     .find(|t| t.id == *p)
-                    .map_or(crate::passes::type_checker::types::ArType::Void, |t| t.ty.clone());
+                    .map_or(crate::passes::type_checker::types::ArType::Void, |t| {
+                        t.ty.clone()
+                    });
                 let prefix = self
                     .receiver
                     .as_ref()
                     .filter(|recv| recv.temp == *p)
                     .map_or("", |recv| receiver_kind_prefix(recv.kind));
                 // Corresponding local is at index i
-                let name_str = self.locals
+                let name_str = self
+                    .locals
                     .get(i)
                     .and_then(|l| l.symbol)
                     .map_or("param", |s| symbols.get(s).name.as_str());
@@ -114,8 +116,8 @@ impl AmirPlace {
         out.push_str(&format!("s{}", self.local.0));
         for proj in &self.projections {
             match proj {
-                AmirProjection::Field(name) => {
-                    out.push_str(&format!(".{name}"));
+                AmirProjection::Field(symbol) => {
+                    out.push_str(&format!(".{}", symbols.get(*symbol).name));
                 }
                 AmirProjection::Index(op) => {
                     out.push_str(&format!("[{}]", op.to_pretty_string(symbols, pool)));

@@ -78,7 +78,7 @@ Func test_safe_index(arr: []int, idx: int) -> int
     s1: int // idx
 
   bb0:
-    s0 = _1
+    s0 = move _1
     s1 = _2
     _4 = s0
     _5 = eq _4, nil

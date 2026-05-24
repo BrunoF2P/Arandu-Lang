@@ -15,7 +15,7 @@ Func test_payload(res: Result) -> int
     s2: int // x
 
   bb0:
-    s0 = _1
+    s0 = move _1
     s1 = 0
     _2 = s0
     _3 = discriminant(_2)

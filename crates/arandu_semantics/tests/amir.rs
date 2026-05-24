@@ -1,4 +1,7 @@
-use arandu_semantics::{lower_to_amir, lower_to_hir, resolve, type_check, validate_amir_program};
+use arandu_semantics::amir::{AmirProjection, AmirStmt};
+use arandu_semantics::{
+    SymbolKind, lower_to_amir, lower_to_hir, resolve, type_check, validate_amir_program,
+};
 
 #[test]
 fn test_amir_golden_files() {
@@ -74,4 +77,92 @@ fn test_amir_golden_files() {
             );
         }
     }
+}
+
+#[test]
+fn field_projection_uses_field_symbol_id() {
+    let src = r#"
+struct Point {
+    x int
+    y int
+}
+
+func main() {
+    p Point = Point { x: 1, y: 2 }
+    set p.x = 3
+}
+"#;
+    let program = arandu_parser::parse(src).expect("parse failed");
+    let resolution = resolve(&program);
+    let tc = type_check(resolution, &program);
+    let x_symbol = tc
+        .symbols
+        .iter()
+        .find(|symbol| symbol.kind == SymbolKind::Field && symbol.name == "x")
+        .map(|symbol| symbol.id)
+        .expect("missing field symbol");
+    let hir = lower_to_hir(&tc, &program).expect("HIR lowering failed");
+    let amir = lower_to_amir(&tc, &hir).expect("AMIR lowering failed");
+
+    let has_symbol_projection = amir.funcs[0].blocks.iter().any(|block| {
+        block.statements.iter().any(|stmt| match stmt {
+            AmirStmt::Store { lhs, .. } => lhs
+                .projections
+                .iter()
+                .any(|projection| matches!(projection, AmirProjection::Field(symbol) if *symbol == x_symbol)),
+            _ => false,
+        })
+    });
+    assert!(
+        has_symbol_projection,
+        "expected p.x store to use field SymbolId"
+    );
+}
+
+#[test]
+fn non_copy_local_use_after_move_fails_during_amir_lowering() {
+    let src = r#"
+struct Boxed {
+    value int
+}
+
+func main() {
+    a Boxed = Boxed { value: 1 }
+    b Boxed = a
+    c Boxed = a
+}
+"#;
+    let program = arandu_parser::parse(src).expect("parse failed");
+    let resolution = resolve(&program);
+    let tc = type_check(resolution, &program);
+    let hir = lower_to_hir(&tc, &program).expect("HIR lowering failed");
+    let diagnostics = lower_to_amir(&tc, &hir).expect_err("expected use after move diagnostic");
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("use of moved local")),
+        "expected moved local diagnostic, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn copy_local_can_be_reused_during_amir_lowering() {
+    let src = r#"
+func main() {
+    a int = 1
+    b int = a
+    c int = a
+}
+"#;
+    let program = arandu_parser::parse(src).expect("parse failed");
+    let resolution = resolve(&program);
+    let tc = type_check(resolution, &program);
+    let hir = lower_to_hir(&tc, &program).expect("HIR lowering failed");
+    let amir = lower_to_amir(&tc, &hir).expect("AMIR lowering failed");
+    let pretty = amir.pretty_print(&tc.symbols);
+    assert!(
+        !pretty.contains("move _"),
+        "copy types must not emit move operands"
+    );
 }

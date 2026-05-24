@@ -423,6 +423,33 @@ fn test_expr_types_population() {
 }
 
 #[test]
+fn test_type_info_uses_interned_type_ids() {
+    let source = "
+    func main() {
+        a int = 10
+        b int = 20
+    }
+    ";
+    let program = parse(source).expect("Failed to parse");
+    let resolution = resolve(&program);
+    let result = type_check(resolution, &program);
+
+    let mut int_ids = result
+        .type_info
+        .decl_types
+        .iter()
+        .filter_map(|(_, type_id)| {
+            let ty = result.type_info.resolve_type_id(*type_id);
+            (ty.display(&result.symbols) == "int").then_some(*type_id)
+        });
+    let first = int_ids.next().expect("expected at least one int type id");
+    assert!(
+        int_ids.any(|type_id| type_id == first),
+        "expected repeated int declarations to share a TypeId"
+    );
+}
+
+#[test]
 fn test_forward_declarations() {
     assert_type_errors!(
         "

@@ -400,7 +400,7 @@ impl<'a> Parser<'a> {
 
 pub(super) fn is_type_token(kind: &TokenKind) -> bool {
     primitive_type_name(kind).is_some()
-    || matches!(kind, TokenKind::IdentType | TokenKind::IdentValue)
+        || matches!(kind, TokenKind::IdentType | TokenKind::IdentValue)
 }
 
 pub(super) fn primitive_type_name(kind: &TokenKind) -> Option<&'static str> {

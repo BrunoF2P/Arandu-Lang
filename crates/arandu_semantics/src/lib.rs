@@ -25,8 +25,8 @@ pub use ops::{BinaryOp, SetOp, UnaryOp};
 mod resolved;
 mod symbol_table;
 
-pub use diagnostics::{DiagCode, Diagnostic, Label, Severity};
 pub use amir_validate::validate_amir_program;
+pub use diagnostics::{DiagCode, Diagnostic, Label, Severity};
 pub use passes::lower_amir::lower_to_amir;
 pub use passes::lower_hir::lower_to_hir;
 pub use passes::name_resolution::resolve;

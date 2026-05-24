@@ -1,8 +1,8 @@
 //! AMIR CFG invariant validation (CFG-1 … CFG-5 per `docs/arandu-amir-v0.1.md`).
 
+use crate::SymbolTable;
 use crate::amir::{AmirFunc, AmirProgram, AmirTerminator, BlockId};
 use crate::diagnostics::{DiagCode, Diagnostic};
-use crate::SymbolTable;
 
 /// Validate all functions in an AMIR program.
 #[must_use]
@@ -56,9 +56,7 @@ pub fn validate_amir_func(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagnos
         if i == 0 {
             continue;
         }
-        if !reachable.contains(&i)
-            && !matches!(block.terminator, AmirTerminator::Unreachable)
-        {
+        if !reachable.contains(&i) && !matches!(block.terminator, AmirTerminator::Unreachable) {
             diags.push(Diagnostic::error(
                 DiagCode::L002AmirUnsupportedFeature,
                 format!("bb{i}: not reachable from bb0 (CFG-5)"),
@@ -84,10 +82,7 @@ pub fn validate_amir_func(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagnos
         if temp.ty.is_error() {
             diags.push(Diagnostic::error(
                 DiagCode::L002AmirUnsupportedFeature,
-                format!(
-                    "temp _{} has poison type Error (TYP-1)",
-                    temp.id.as_usize()
-                ),
+                format!("temp _{} has poison type Error (TYP-1)", temp.id.as_usize()),
                 span,
             ));
         }

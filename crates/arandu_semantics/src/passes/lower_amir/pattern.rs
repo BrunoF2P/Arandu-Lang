@@ -1,5 +1,5 @@
 use super::LowerCtx;
-use crate::amir::{AmirConstant, AmirOperand, AmirRvalue, AmirPlace};
+use crate::amir::{AmirConstant, AmirOperand, AmirPlace, AmirRvalue};
 use crate::diagnostics::{DiagCode, Diagnostic};
 use crate::hir::{HirCondition, HirDecl, HirPattern};
 use crate::literal_pool::AmirLiteralEntry;
@@ -178,8 +178,7 @@ impl LowerCtx<'_> {
                 let ty = self
                     .tc
                     .type_info
-                    .decl_types
-                    .get(symbol)
+                    .decl_type(*symbol)
                     .cloned()
                     .unwrap_or(ArType::Error);
                 let local_id = self.new_local(ty, *symbol);
@@ -189,7 +188,7 @@ impl LowerCtx<'_> {
                         projections: smallvec::SmallVec::new(),
                     },
                     scrutinee,
-                );
+                )?;
                 Ok(AmirOperand::Constant(AmirConstant::Bool(true)))
             }
             HirPattern::Literal { expr: lit_expr, .. } => {
@@ -264,7 +263,7 @@ impl LowerCtx<'_> {
                                 projections: smallvec::SmallVec::new(),
                             },
                             AmirOperand::Copy(tmp_field),
-                        );
+                        )?;
                         AmirOperand::Constant(AmirConstant::Bool(true))
                     };
 

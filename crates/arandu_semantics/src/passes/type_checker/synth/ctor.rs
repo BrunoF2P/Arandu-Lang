@@ -121,7 +121,7 @@ pub(crate) fn synth_method_call(
     let method_sym = checker
         .symbols
         .lookup_associated_member(&struct_name, method)?;
-    let method_ty = checker.type_info.decl_types.get(&method_sym)?.clone();
+    let method_ty = checker.decl_type(method_sym)?;
     let (params, ret) = match &method_ty {
         ArType::Func(params, ret) => (params.clone(), ret.clone()),
         _ => return None,
@@ -180,7 +180,7 @@ pub(crate) fn synth_method_call(
     }
 
     checker.resolved.value_ref(field_span, method_sym);
-    checker.type_info.expr_types.insert(
+    checker.record_expr_type(
         crate::NodeKey::from(field_span),
         ArType::Func(params, ret.clone()),
     );

@@ -5,7 +5,7 @@ use arandu_parser::{FuncSignature, GenericParam, TypeName, WhereItem};
 
 use super::ar_type::ArType;
 use super::lower::{lower_result_type, lower_type_expr};
-use super::subst::{build_subst, substitute_type, GenericSubst};
+use super::subst::{GenericSubst, build_subst, substitute_type};
 use super::unify::unify;
 use crate::passes::type_checker::TypeChecker;
 use crate::{ScopeId, SymbolId, SymbolKind};
@@ -17,13 +17,20 @@ pub(crate) struct InterfaceInfo {
 }
 
 /// Collect interface method signatures and per-type-parameter trait constraints.
-pub(crate) fn collect_interfaces_and_constraints(checker: &mut TypeChecker, program: &arandu_parser::Program) {
+pub(crate) fn collect_interfaces_and_constraints(
+    checker: &mut TypeChecker,
+    program: &arandu_parser::Program,
+) {
     for decl in &program.decls {
         use arandu_parser::TopLevelDecl;
         match decl {
             TopLevelDecl::Interface(iface) => collect_interface(checker, iface),
             TopLevelDecl::Struct(s) => {
-                if let Some(sym) = checker.resolved.definitions.get(&crate::NodeKey::from(s.span)) {
+                if let Some(sym) = checker
+                    .resolved
+                    .definitions
+                    .get(&crate::NodeKey::from(s.span))
+                {
                     let scope = checker.symbols.get(*sym).scope;
                     collect_decl_constraints(
                         checker,
@@ -36,7 +43,11 @@ pub(crate) fn collect_interfaces_and_constraints(checker: &mut TypeChecker, prog
                 }
             }
             TopLevelDecl::Enum(e) => {
-                if let Some(sym) = checker.resolved.definitions.get(&crate::NodeKey::from(e.span)) {
+                if let Some(sym) = checker
+                    .resolved
+                    .definitions
+                    .get(&crate::NodeKey::from(e.span))
+                {
                     let scope = checker.symbols.get(*sym).scope;
                     collect_decl_constraints(
                         checker,
@@ -66,7 +77,11 @@ pub(crate) fn collect_interfaces_and_constraints(checker: &mut TypeChecker, prog
                 }
             }
             TopLevelDecl::TypeAlias(a) => {
-                if let Some(sym) = checker.resolved.definitions.get(&crate::NodeKey::from(a.span)) {
+                if let Some(sym) = checker
+                    .resolved
+                    .definitions
+                    .get(&crate::NodeKey::from(a.span))
+                {
                     let scope = checker.symbols.get(*sym).scope;
                     collect_decl_constraints(
                         checker,
@@ -93,8 +108,7 @@ fn collect_interface(checker: &mut TypeChecker, decl: &arandu_parser::InterfaceD
         return;
     };
     let iface_scope = checker.symbols.get(iface_sym).scope;
-    let type_param_symbols =
-        super::collect_generic_param_symbols(checker, &decl.generic_params);
+    let type_param_symbols = super::collect_generic_param_symbols(checker, &decl.generic_params);
     if !type_param_symbols.is_empty() {
         checker
             .type_info
@@ -108,12 +122,10 @@ fn collect_interface(checker: &mut TypeChecker, decl: &arandu_parser::InterfaceD
         methods.push((member.name.clone(), sig_ty));
     }
 
-    checker.type_info.interfaces.insert(
-        iface_sym,
-        InterfaceInfo {
-            methods,
-        },
-    );
+    checker
+        .type_info
+        .interfaces
+        .insert(iface_sym, InterfaceInfo { methods });
 
     collect_decl_constraints(
         checker,
@@ -157,7 +169,9 @@ fn collect_decl_constraints(
         Vec::new()
     };
 
-    if !param_symbols.is_empty() && let Some(decl_sym) = decl_symbol {
+    if !param_symbols.is_empty()
+        && let Some(decl_sym) = decl_symbol
+    {
         checker
             .type_info
             .generic_params
@@ -274,11 +288,7 @@ pub(crate) fn check_instantiation_constraints(
     let _ = decl_symbol;
 }
 
-fn missing_methods_note(
-    checker: &TypeChecker,
-    concrete: &ArType,
-    iface_sym: SymbolId,
-) -> String {
+fn missing_methods_note(checker: &TypeChecker, concrete: &ArType, iface_sym: SymbolId) -> String {
     let missing = missing_interface_methods(checker, concrete, iface_sym);
     if missing.is_empty() {
         "required method signatures are incompatible".to_string()
@@ -355,8 +365,10 @@ fn interface_subst_for_concrete(
 }
 
 fn lookup_method_type(checker: &TypeChecker, type_name: &str, method: &str) -> Option<ArType> {
-    let sym = checker.symbols.lookup_associated_member(type_name, method)?;
-    checker.type_info.decl_types.get(&sym).cloned()
+    let sym = checker
+        .symbols
+        .lookup_associated_member(type_name, method)?;
+    checker.decl_type(sym)
 }
 
 fn strip_receiver(ty: ArType) -> ArType {

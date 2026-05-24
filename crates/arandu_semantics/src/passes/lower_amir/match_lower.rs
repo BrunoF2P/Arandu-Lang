@@ -52,8 +52,7 @@ impl LowerCtx<'_> {
         let dest = target.unwrap_or_else(|| self.new_temp(expr_ty));
         let bb_end = self.new_block();
 
-        if let Some(plan) = self.build_match_switch_plan(value, arms, scrutinee.clone(), symbols)?
-        {
+        if let Some(plan) = self.build_match_switch_plan(value, arms, scrutinee.clone(), symbols)? {
             let disc = plan.discriminant.clone();
             self.emit_match_switch(
                 plan,
@@ -83,8 +82,7 @@ impl LowerCtx<'_> {
     ) -> Result<(), Diagnostic> {
         let scrutinee = self.lower_expr(value, None, symbols)?;
 
-        if let Some(plan) = self.build_match_switch_plan(value, arms, scrutinee.clone(), symbols)?
-        {
+        if let Some(plan) = self.build_match_switch_plan(value, arms, scrutinee.clone(), symbols)? {
             let disc = plan.discriminant.clone();
             self.emit_match_switch_stmt(
                 plan,
@@ -124,7 +122,10 @@ impl LowerCtx<'_> {
         if let ArType::Named(enum_id, _) = value_ty {
             return self.build_enum_switch_plan(enum_id, arms, scrutinee, symbols);
         }
-        if matches!(value_ty, ArType::Primitive(Primitive::Int) | ArType::IntLiteral) {
+        if matches!(
+            value_ty,
+            ArType::Primitive(Primitive::Int) | ArType::IntLiteral
+        ) {
             return self.build_int_switch_plan(arms, scrutinee, symbols);
         }
         Ok(None)
@@ -233,11 +234,7 @@ impl LowerCtx<'_> {
         ctx: MatchSwitchContext<'_>,
         dest: TempId,
     ) -> Result<(), Diagnostic> {
-        let targets: Vec<(i128, BlockId)> = plan
-            .arms
-            .iter()
-            .map(|a| (a.value, a.block))
-            .collect();
+        let targets: Vec<(i128, BlockId)> = plan.arms.iter().map(|a| (a.value, a.block)).collect();
 
         let entry_bb = self.current_block_or_error(ctx.span)?;
         let otherwise_bb = self.new_block();
@@ -282,11 +279,7 @@ impl LowerCtx<'_> {
         plan: MatchSwitchPlan,
         ctx: MatchSwitchContext<'_>,
     ) -> Result<(), Diagnostic> {
-        let targets: Vec<(i128, BlockId)> = plan
-            .arms
-            .iter()
-            .map(|a| (a.value, a.block))
-            .collect();
+        let targets: Vec<(i128, BlockId)> = plan.arms.iter().map(|a| (a.value, a.block)).collect();
         let entry_bb = self.current_block_or_error(ctx.span)?;
         let otherwise_bb = self.new_block();
 
@@ -471,9 +464,7 @@ impl LowerCtx<'_> {
         match pattern {
             HirPattern::Wildcard { .. } => Ok(ArmClass::Wildcard),
             HirPattern::Enum {
-                variant,
-                payload,
-                ..
+                variant, payload, ..
             }
             | HirPattern::TypeTuple {
                 name: variant,

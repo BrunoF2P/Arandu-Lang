@@ -1,14 +1,6 @@
-use std::{
-    env,
-    fs,
-    path::Path,
-    process,
-};
+use std::{env, fs, path::Path, process};
 
-fn print_diagnostics_and_exit(
-    diagnostics: &[arandu_semantics::Diagnostic],
-    filepath: &str,
-) -> ! {
+fn print_diagnostics_and_exit(diagnostics: &[arandu_semantics::Diagnostic], filepath: &str) -> ! {
     for diagnostic in diagnostics {
         eprintln!("{}", diagnostic.format_for_cli(filepath));
     }
@@ -16,12 +8,26 @@ fn print_diagnostics_and_exit(
     process::exit(1);
 }
 
-fn print_parse_error_and_exit(
-    err: &arandu_parser::ParseError,
-    filepath: &str,
-) -> ! {
+fn print_parse_error_and_exit(err: &arandu_parser::ParseError, filepath: &str) -> ! {
     eprintln!("{}", err.format_for_cli(filepath));
     process::exit(1);
+}
+
+fn validate_hir_and_analyze(
+    hir: &arandu_semantics::hir::HirProgram,
+    type_check: &arandu_semantics::TypeCheckResult,
+    filepath: &str,
+) {
+    if let Err(err) = hir.validate_invariants(&type_check.symbols) {
+        eprintln!("HIR invariant violation: {err}");
+        process::exit(1);
+    }
+
+    if let Err(diags) =
+        arandu_semantics::passes::monomorphize::analyze_instantiations(type_check, hir)
+    {
+        print_diagnostics_and_exit(&diags, filepath);
+    }
 }
 
 struct CheckedProgram {
@@ -29,10 +35,7 @@ struct CheckedProgram {
     type_check: arandu_semantics::TypeCheckResult,
 }
 
-fn parse_and_check(
-    source: &str,
-    filepath: &str,
-) -> CheckedProgram {
+fn parse_and_check(source: &str, filepath: &str) -> CheckedProgram {
     let program = match arandu_parser::parse(source) {
         Ok(program) => program,
         Err(err) => print_parse_error_and_exit(&err, filepath),
@@ -40,14 +43,10 @@ fn parse_and_check(
 
     let resolution = arandu_semantics::resolve(&program);
 
-    let type_check =
-        arandu_semantics::type_check(resolution, &program);
+    let type_check = arandu_semantics::type_check(resolution, &program);
 
     if !type_check.diagnostics.is_empty() {
-        print_diagnostics_and_exit(
-            &type_check.diagnostics,
-            filepath,
-        );
+        print_diagnostics_and_exit(&type_check.diagnostics, filepath);
     }
 
     CheckedProgram {
@@ -57,9 +56,7 @@ fn parse_and_check(
 }
 
 fn usage_and_exit() -> ! {
-    eprintln!(
-        "usage: arandu_cli <lex|parse|check|hir|amir> <path> [--debug]"
-    );
+    eprintln!("usage: arandu_cli <lex|parse|check|hir|amir> <path> [--debug]");
 
     process::exit(2);
 }
@@ -82,10 +79,7 @@ fn main() {
 
     let command = &args[1];
 
-    if !matches!(
-        command.as_str(),
-        "lex" | "parse" | "check" | "hir" | "amir"
-    ) {
+    if !matches!(command.as_str(), "lex" | "parse" | "check" | "hir" | "amir") {
         usage_and_exit();
     }
 
@@ -94,10 +88,7 @@ fn main() {
     let source = match fs::read_to_string(path) {
         Ok(source) => source,
         Err(err) => {
-            eprintln!(
-                "failed to read {}: {err}",
-                path.display()
-            );
+            eprintln!("failed to read {}: {err}", path.display());
 
             process::exit(1);
         }
@@ -106,125 +97,73 @@ fn main() {
     let filepath = path.to_string_lossy();
 
     match command.as_str() {
-        "lex" => {
-            match arandu_lexer::lex_to_string(&source) {
-                Ok(output) => println!("{output}"),
-                Err(err) => {
-                    eprintln!("{err}");
-                    process::exit(1);
-                }
+        "lex" => match arandu_lexer::lex_to_string(&source) {
+            Ok(output) => println!("{output}"),
+            Err(err) => {
+                eprintln!("{err}");
+                process::exit(1);
             }
-        }
+        },
 
-        "parse" => {
-            match arandu_parser::parse_to_string(&source) {
-                Ok(output) => println!("{output}"),
-                Err(err) => {
-                    eprintln!("{err}");
-                    process::exit(1);
-                }
+        "parse" => match arandu_parser::parse_to_string(&source) {
+            Ok(output) => println!("{output}"),
+            Err(err) => {
+                eprintln!("{err}");
+                process::exit(1);
             }
-        }
+        },
 
         "check" => {
-            parse_and_check(&source, &filepath);
+            let checked = parse_and_check(&source, &filepath);
+            let hir = match arandu_semantics::lower_to_hir(&checked.type_check, &checked.program) {
+                Ok(hir) => hir,
+                Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
+            };
+            validate_hir_and_analyze(&hir, &checked.type_check, &filepath);
             println!("ok");
         }
 
         "hir" => {
-            let checked =
-                parse_and_check(&source, &filepath);
+            let checked = parse_and_check(&source, &filepath);
 
-            let hir = match arandu_semantics::lower_to_hir(
-                &checked.type_check,
-                &checked.program,
-            ) {
+            let hir = match arandu_semantics::lower_to_hir(&checked.type_check, &checked.program) {
                 Ok(hir) => hir,
-                Err(diags) => {
-                    print_diagnostics_and_exit(
-                        &diags,
-                        &filepath,
-                    )
-                }
+                Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
             };
 
-            if let Err(err) =
-                hir.validate_invariants(
-                    &checked.type_check.symbols,
-                )
-            {
-                eprintln!(
-                    "HIR invariant violation: {err}"
-                );
-
-                process::exit(1);
-            }
+            validate_hir_and_analyze(&hir, &checked.type_check, &filepath);
 
             if debug {
                 println!("{hir:#?}");
             } else {
-                let ctx =
-                    arandu_semantics::hir::HirPrettyCtx {
-                        symbols: &checked.type_check.symbols,
-                        show_spans: false,
-                    };
+                let ctx = arandu_semantics::hir::HirPrettyCtx {
+                    symbols: &checked.type_check.symbols,
+                    show_spans: false,
+                };
 
                 print!("{}", hir.pretty_print(&ctx));
             }
         }
 
         "amir" => {
-            let checked =
-                parse_and_check(&source, &filepath);
+            let checked = parse_and_check(&source, &filepath);
 
-            let hir = match arandu_semantics::lower_to_hir(
-                &checked.type_check,
-                &checked.program,
-            ) {
+            let hir = match arandu_semantics::lower_to_hir(&checked.type_check, &checked.program) {
                 Ok(hir) => hir,
-                Err(diags) => {
-                    print_diagnostics_and_exit(
-                        &diags,
-                        &filepath,
-                    )
-                }
+                Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
             };
 
-            if let Err(err) =
-                hir.validate_invariants(
-                    &checked.type_check.symbols,
-                )
-            {
-                eprintln!(
-                    "HIR invariant violation: {err}"
-                );
+            validate_hir_and_analyze(&hir, &checked.type_check, &filepath);
 
-                process::exit(1);
-            }
-
-            let amir =
-                match arandu_semantics::lower_to_amir(
-                    &checked.type_check,
-                    &hir,
-                ) {
-                    Ok(amir) => amir,
-                    Err(diags) => {
-                        print_diagnostics_and_exit(
-                            &diags,
-                            &filepath,
-                        )
-                    }
-                };
+            let amir = match arandu_semantics::lower_to_amir(&checked.type_check, &hir) {
+                Ok(amir) => amir,
+                Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
+            };
 
             if debug {
                 println!("{amir:#?}");
             } else {
-                print!(
-                    "{}",
-                    amir.pretty_print(
-                        &checked.type_check.symbols
-                    )
-                );
+                print!("{}", amir.pretty_print(&checked.type_check.symbols));
             }
         }
 

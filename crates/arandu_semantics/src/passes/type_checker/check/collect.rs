@@ -7,6 +7,7 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker, program: &Program) 
     for decl in &program.decls {
         if let TopLevelDecl::Struct(struct_decl) = decl {
             let mut fields = std::collections::HashMap::new();
+            let mut field_symbols = std::collections::HashMap::new();
             for field in &struct_decl.fields {
                 let field_ty = super::super::types::lower_type_expr(
                     &field.ty,
@@ -14,20 +15,25 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker, program: &Program) 
                     checker.symbols.global_scope(),
                     &checker.resolved,
                 );
+                let field_key = crate::NodeKey::from(field.span);
+                if let Some(field_symbol) = checker.resolved.definitions.get(&field_key) {
+                    field_symbols.insert(field.name.clone(), *field_symbol);
+                }
                 fields.insert(field.name.clone(), field_ty);
             }
             let struct_key = crate::NodeKey::from(struct_decl.span);
             if let Some(symbol_id) = checker.resolved.definitions.get(&struct_key) {
                 checker.type_info.struct_fields.insert(*symbol_id, fields);
+                checker
+                    .type_info
+                    .struct_field_symbols
+                    .insert(*symbol_id, field_symbols);
                 let params = super::super::types::collect_generic_param_symbols(
                     checker,
                     &struct_decl.generic_params,
                 );
                 if !params.is_empty() {
-                    checker
-                        .type_info
-                        .generic_params
-                        .insert(*symbol_id, params);
+                    checker.type_info.generic_params.insert(*symbol_id, params);
                 }
             }
         } else if let TopLevelDecl::Enum(enum_decl) = decl {
@@ -106,18 +112,15 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker, program: &Progr
                     arandu_parser::FuncName::Method { span, .. } => *span,
                 };
                 let name_key = crate::NodeKey::from(name_span);
-                if let Some(symbol_id) = checker.resolved.definitions.get(&name_key) {
+                if let Some(symbol_id) = checker.resolved.definitions.get(&name_key).copied() {
                     let func_ty = ArType::Func(param_types, Box::new(ret_ty));
-                    checker.type_info.decl_types.insert(*symbol_id, func_ty);
+                    checker.record_decl_type(symbol_id, func_ty);
                     let params = super::super::types::collect_generic_param_symbols(
                         checker,
                         &func_decl.generic_params,
                     );
                     if !params.is_empty() {
-                        checker
-                            .type_info
-                            .generic_params
-                            .insert(*symbol_id, params);
+                        checker.type_info.generic_params.insert(symbol_id, params);
                     }
                 }
             }
@@ -146,9 +149,9 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker, program: &Progr
                     }
 
                     let name_key = crate::NodeKey::from(member.span);
-                    if let Some(symbol_id) = checker.resolved.definitions.get(&name_key) {
+                    if let Some(symbol_id) = checker.resolved.definitions.get(&name_key).copied() {
                         let func_ty = ArType::Func(param_types, Box::new(ret_ty));
-                        checker.type_info.decl_types.insert(*symbol_id, func_ty);
+                        checker.record_decl_type(symbol_id, func_ty);
                     }
                 }
             }

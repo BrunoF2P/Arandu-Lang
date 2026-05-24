@@ -34,7 +34,7 @@ impl LowerCtx<'_> {
                             projections: smallvec::SmallVec::new(),
                         },
                         val_op,
-                    );
+                    )?;
                 } else {
                     let val_op = self.lower_expr(value, None, symbols)?;
                     for (i, b) in bindings.iter().enumerate() {
@@ -53,7 +53,7 @@ impl LowerCtx<'_> {
                                 projections: smallvec::SmallVec::new(),
                             },
                             AmirOperand::Copy(temp),
-                        );
+                        )?;
                     }
                 }
             }
@@ -164,7 +164,7 @@ impl LowerCtx<'_> {
                             projections: smallvec::SmallVec::new(),
                         },
                         AmirOperand::Constant(zero_lit),
-                    );
+                    )?;
 
                     let len_local = self.new_compiler_local(ArType::Primitive(Primitive::Int));
                     let len_temp = self.new_temp(ArType::Primitive(Primitive::Int));
@@ -175,7 +175,7 @@ impl LowerCtx<'_> {
                             projections: smallvec::SmallVec::new(),
                         },
                         AmirOperand::Copy(len_temp),
-                    );
+                    )?;
 
                     let bb_cond = self.new_block();
                     let bb_body = self.new_block();
@@ -192,7 +192,7 @@ impl LowerCtx<'_> {
                         },
                         ArType::Primitive(Primitive::Int),
                         &[],
-                    );
+                    )?;
                     let len_op = self.load_place(
                         &AmirPlace {
                             local: len_local,
@@ -200,7 +200,7 @@ impl LowerCtx<'_> {
                         },
                         ArType::Primitive(Primitive::Int),
                         &[],
-                    );
+                    )?;
                     let cond_tmp = self.new_temp(ArType::Primitive(Primitive::Bool));
                     self.emit_assign_temp(
                         cond_tmp,
@@ -229,7 +229,7 @@ impl LowerCtx<'_> {
                             },
                             ArType::Primitive(Primitive::Int),
                             &[],
-                        );
+                        )?;
                         let elem_temp = self.new_temp(binding.ty.clone());
                         self.emit_assign_temp(
                             elem_temp,
@@ -244,7 +244,7 @@ impl LowerCtx<'_> {
                                 projections: smallvec::SmallVec::new(),
                             },
                             AmirOperand::Copy(elem_temp),
-                        );
+                        )?;
                     }
 
                     self.lower_block(body, symbols)?;
@@ -261,7 +261,7 @@ impl LowerCtx<'_> {
                         },
                         ArType::Primitive(Primitive::Int),
                         &[],
-                    );
+                    )?;
                     let one_lit = self.intern_literal(AmirLiteralEntry::Int("1".to_string()));
                     let next_idx = self.new_temp(ArType::Primitive(Primitive::Int));
                     self.emit_assign_temp(
@@ -278,7 +278,7 @@ impl LowerCtx<'_> {
                             projections: smallvec::SmallVec::new(),
                         },
                         AmirOperand::Copy(next_idx),
-                    );
+                    )?;
                     self.set_terminator(AmirTerminator::Goto(bb_cond));
 
                     self.current_block = Some(bb_exit);
@@ -369,7 +369,7 @@ impl LowerCtx<'_> {
                             projections: smallvec::SmallVec::new(),
                         },
                         val_op,
-                    );
+                    )?;
                 } else {
                     let val_op = self.lower_expr(value, None, symbols)?;
                     for (i, b) in bindings.iter().enumerate() {
@@ -388,7 +388,7 @@ impl LowerCtx<'_> {
                                 projections: smallvec::SmallVec::new(),
                             },
                             AmirOperand::Copy(temp),
-                        );
+                        )?;
                     }
                 }
             }
@@ -426,9 +426,15 @@ impl LowerCtx<'_> {
                     .suffixes
                     .iter()
                     .map(|s| match s {
-                        HirPlaceSuffix::Field { name, .. } => {
-                            Ok(AmirProjection::Field(name.clone()))
-                        }
+                        HirPlaceSuffix::Field {
+                            field_symbol: Some(symbol),
+                            ..
+                        } => Ok(AmirProjection::Field(*symbol)),
+                        HirPlaceSuffix::Field { span, name, .. } => Err(crate::Diagnostic::error(
+                            crate::DiagCode::L001LoweringUnresolvedSymbol,
+                            format!("cannot lower field projection `{name}`: symbol not resolved"),
+                            *span,
+                        )),
                         HirPlaceSuffix::Index { expr, .. } => {
                             Ok(AmirProjection::Index(self.lower_expr(expr, None, symbols)?))
                         }
@@ -440,7 +446,7 @@ impl LowerCtx<'_> {
                 };
 
                 if *op == SetOp::Assign {
-                    self.emit_store_place(amir_place, val_op.clone());
+                    self.emit_store_place(amir_place, val_op.clone())?;
                 } else {
                     let bin_op = match op {
                         SetOp::AddAssign => BinaryOp::Add,
@@ -455,7 +461,8 @@ impl LowerCtx<'_> {
                         SetOp::ShiftRightAssign => BinaryOp::ShiftRight,
                         _ => BinaryOp::Add,
                     };
-                    let old_val = self.load_place(&amir_place, place.ty.clone(), &projection_types);
+                    let old_val =
+                        self.load_place(&amir_place, place.ty.clone(), &projection_types)?;
                     let temp = self.new_temp(place.ty.clone());
                     self.emit_assign_temp(
                         temp,
@@ -465,7 +472,7 @@ impl LowerCtx<'_> {
                             right: val_op.clone(),
                         },
                     );
-                    self.emit_store_place(amir_place, AmirOperand::Copy(temp));
+                    self.emit_store_place(amir_place, AmirOperand::Copy(temp))?;
                 }
             }
         } else {
@@ -475,8 +482,16 @@ impl LowerCtx<'_> {
                         .suffixes
                         .iter()
                         .map(|s| match s {
-                            HirPlaceSuffix::Field { name, .. } => {
-                                Ok(AmirProjection::Field(name.clone()))
+                            HirPlaceSuffix::Field {
+                                field_symbol: Some(symbol),
+                                ..
+                            } => Ok(AmirProjection::Field(*symbol)),
+                            HirPlaceSuffix::Field { span, name, .. } => {
+                                Err(crate::Diagnostic::error(
+                                    crate::DiagCode::L001LoweringUnresolvedSymbol,
+                                    format!("cannot lower field projection `{name}`: symbol not resolved"),
+                                    *span,
+                                ))
                             }
                             HirPlaceSuffix::Index { expr, .. } => {
                                 Ok(AmirProjection::Index(self.lower_expr(expr, None, symbols)?))
@@ -497,7 +512,7 @@ impl LowerCtx<'_> {
                             field: format!("_{i}"),
                         },
                     );
-                    self.emit_store_place(amir_place, AmirOperand::Copy(temp));
+                    self.emit_store_place(amir_place, AmirOperand::Copy(temp))?;
                 }
             }
         }

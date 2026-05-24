@@ -46,7 +46,7 @@ Func test_for_in(items: []int) -> void
     s4: int // item_val
 
   bb0:
-    s0 = _1
+    s0 = move _1
     _2 = s0
     s1 = 0
     _3 = len(_2)

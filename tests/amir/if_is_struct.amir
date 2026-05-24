@@ -15,11 +15,11 @@ Func test_struct_pattern(user: User) -> int
     s2: str // name
 
   bb0:
-    s0 = _1
+    s0 = move _1
     s1 = 0
     _2 = s0
     _3 = _2.name
-    s2 = _3
+    s2 = move _3
     _4 = and true, true
     _5 = _2.age
     _6 = eq _5, 25

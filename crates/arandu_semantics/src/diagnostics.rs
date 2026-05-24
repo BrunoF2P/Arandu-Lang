@@ -45,6 +45,8 @@ pub enum DiagCode {
     T023FreeRequiresPtr,
     T024NonExhaustiveMatch,
     T025InterfaceNotSatisfied,
+    G001GenericInstantiationCycle,
+    G002GenericInstantiationLimit,
 
     // ── Ownership / Initialization ────────────────────────────────
     O008UseBeforeInit,
@@ -90,6 +92,8 @@ impl DiagCode {
             DiagCode::T023FreeRequiresPtr => "T023",
             DiagCode::T024NonExhaustiveMatch => "T024",
             DiagCode::T025InterfaceNotSatisfied => "T025",
+            DiagCode::G001GenericInstantiationCycle => "G001",
+            DiagCode::G002GenericInstantiationLimit => "G002",
             DiagCode::O008UseBeforeInit => "O008",
         }
     }

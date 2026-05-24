@@ -13,7 +13,7 @@ Func test_enum(state: LoadState) -> int
     s1: int // res
 
   bb0:
-    s0 = _1
+    s0 = move _1
     s1 = 0
     _2 = s0
     _3 = discriminant(_2)

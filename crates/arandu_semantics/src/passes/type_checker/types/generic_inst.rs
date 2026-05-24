@@ -5,9 +5,9 @@ use arandu_parser::{Expr, TypeExpr};
 use super::ar_type::ArType;
 use super::lower::lower_type_expr;
 use super::result_option::type_name_base;
-use super::subst::{build_subst, substitute_type, GenericSubst};
-use crate::passes::type_checker::TypeChecker;
+use super::subst::{GenericSubst, build_subst, substitute_type};
 use crate::SymbolId;
+use crate::passes::type_checker::TypeChecker;
 
 pub(crate) fn collect_generic_param_symbols(
     checker: &TypeChecker,
@@ -119,7 +119,10 @@ pub(crate) fn synth_generic_instantiation(
             if arg_tys.len() != 1 {
                 let diag = crate::Diagnostic::error(
                     crate::DiagCode::T012WrongArgCount,
-                    format!("Option.Some expects 1 type argument, found {}", arg_tys.len()),
+                    format!(
+                        "Option.Some expects 1 type argument, found {}",
+                        arg_tys.len()
+                    ),
                     span,
                 )
                 .with_label(callee.span(), "generic callee is here")
@@ -174,7 +177,7 @@ pub(crate) fn synth_generic_instantiation(
         return ArType::Error;
     }
 
-    let Some(template) = checker.type_info.decl_types.get(&callee_symbol).cloned() else {
+    let Some(template) = checker.decl_type(callee_symbol) else {
         return ArType::Error;
     };
 
@@ -209,14 +212,11 @@ fn resolve_generic_callee_symbol(checker: &TypeChecker, callee: &Expr) -> Option
                     .copied()
             }),
         Expr::Field { base, field, span } => {
-            let base_ty = checker
-                .type_info
-                .expr_types
-                .get(&crate::NodeKey::from(base.span()))?;
+            let base_ty = checker.expr_type(crate::NodeKey::from(base.span()))?;
             let ArType::Named(struct_id, _) = base_ty else {
                 return None;
             };
-            let struct_name = checker.symbols.get(*struct_id).name.clone();
+            let struct_name = checker.symbols.get(struct_id).name.clone();
             checker
                 .symbols
                 .lookup_associated_member(&struct_name, field)

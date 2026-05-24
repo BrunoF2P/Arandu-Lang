@@ -59,16 +59,14 @@ fn lower_stmt(type_check: &TypeCheckResult, stmt: &Stmt) -> Result<HirStmt, Diag
         } => {
             let value_ty = type_check
                 .type_info
-                .expr_types
-                .get(&NodeKey::from(value.span()))
+                .expr_type(NodeKey::from(value.span()))
                 .cloned();
             let mut hir_bindings = Vec::new();
             for (i, b) in bindings.iter().enumerate() {
                 let symbol = require_def_symbol(&type_check.resolved, b.span)?;
                 let ty = type_check
                     .type_info
-                    .decl_types
-                    .get(&symbol)
+                    .decl_type(symbol)
                     .cloned()
                     .or_else(|| {
                         value_ty.as_ref().and_then(|val_ty| match val_ty {
@@ -210,8 +208,7 @@ pub(crate) fn lower_for_clause(
                 let symbol = require_def_symbol(&type_check.resolved, b.span)?;
                 let ty = type_check
                     .type_info
-                    .decl_types
-                    .get(&symbol)
+                    .decl_type(symbol)
                     .cloned()
                     .unwrap_or(ArType::Error);
                 hir_bindings.push(HirForBinding {
@@ -262,8 +259,7 @@ pub(crate) fn lower_simple_stmt(
                 let symbol = require_def_symbol(&type_check.resolved, b.span)?;
                 let ty = type_check
                     .type_info
-                    .decl_types
-                    .get(&symbol)
+                    .decl_type(symbol)
                     .cloned()
                     .unwrap_or(ArType::Error);
                 hir_bindings.push(HirBindingItem {

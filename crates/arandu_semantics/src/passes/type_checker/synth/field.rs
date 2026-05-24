@@ -22,7 +22,7 @@ pub(crate) fn resolve_namespace_field(
     if let Some(ty) = checker.ctx.lookup(symbol_id) {
         return Some(ty.clone());
     }
-    checker.type_info.decl_types.get(&symbol_id).cloned()
+    checker.decl_type(symbol_id)
 }
 
 pub(crate) fn resolve_namespace_member_type(
@@ -34,8 +34,8 @@ pub(crate) fn resolve_namespace_member_type(
         if let Some(ty) = checker.ctx.lookup(*symbol_id) {
             return Some(ty.clone());
         }
-        if let Some(ty) = checker.type_info.decl_types.get(symbol_id) {
-            return Some(ty.clone());
+        if let Some(ty) = checker.decl_type(*symbol_id) {
+            return Some(ty);
         }
     }
     None
@@ -96,10 +96,9 @@ pub(crate) fn resolve_field(
             if let Some(method_sym) = checker
                 .symbols
                 .lookup_associated_member(&struct_name, field)
-                && let Some(ArType::Func(params, ret)) =
-                    checker.type_info.decl_types.get(&method_sym)
+                && let Some(ArType::Func(params, ret)) = checker.decl_type(method_sym)
             {
-                ArType::Func(params.clone(), ret.clone())
+                ArType::Func(params, ret)
             } else {
                 checker.add_constraint(
                     actual_base_ty.clone(),

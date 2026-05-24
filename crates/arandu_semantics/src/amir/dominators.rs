@@ -44,7 +44,7 @@ impl Dominators {
             changed = false;
             for &b in &rpo {
                 let block = &func.blocks[b.as_usize()];
-                
+
                 // Find the first predecessor that has its dominator already set
                 let mut processed_pred = None;
                 for &p in &block.predecessors {
@@ -139,10 +139,10 @@ fn intersect(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SymbolId;
     use crate::amir::block::AmirBasicBlock;
     use crate::amir::stmt::AmirTerminator;
     use crate::passes::type_checker::types::ArType;
-    use crate::SymbolId;
 
     fn make_block(id: usize, predecessors: &[usize], successors: &[usize]) -> AmirBasicBlock {
         AmirBasicBlock {
@@ -150,7 +150,10 @@ mod tests {
             statements: Vec::new(),
             terminator: AmirTerminator::Return,
             successors: successors.iter().map(|&x| BlockId::from_usize(x)).collect(),
-            predecessors: predecessors.iter().map(|&x| BlockId::from_usize(x)).collect(),
+            predecessors: predecessors
+                .iter()
+                .map(|&x| BlockId::from_usize(x))
+                .collect(),
         }
     }
 
@@ -182,11 +185,26 @@ mod tests {
         let func = make_func(blocks);
         let doms = Dominators::new(&func);
 
-        assert_eq!(doms.immediate_dominator(BlockId::from_usize(0)), Some(BlockId::from_usize(0)));
-        assert_eq!(doms.immediate_dominator(BlockId::from_usize(1)), Some(BlockId::from_usize(0)));
-        assert_eq!(doms.immediate_dominator(BlockId::from_usize(2)), Some(BlockId::from_usize(0)));
-        assert_eq!(doms.immediate_dominator(BlockId::from_usize(3)), Some(BlockId::from_usize(0)));
-        assert_eq!(doms.immediate_dominator(BlockId::from_usize(4)), Some(BlockId::from_usize(3)));
+        assert_eq!(
+            doms.immediate_dominator(BlockId::from_usize(0)),
+            Some(BlockId::from_usize(0))
+        );
+        assert_eq!(
+            doms.immediate_dominator(BlockId::from_usize(1)),
+            Some(BlockId::from_usize(0))
+        );
+        assert_eq!(
+            doms.immediate_dominator(BlockId::from_usize(2)),
+            Some(BlockId::from_usize(0))
+        );
+        assert_eq!(
+            doms.immediate_dominator(BlockId::from_usize(3)),
+            Some(BlockId::from_usize(0))
+        );
+        assert_eq!(
+            doms.immediate_dominator(BlockId::from_usize(4)),
+            Some(BlockId::from_usize(3))
+        );
 
         assert!(doms.dominates(BlockId::from_usize(0), BlockId::from_usize(3)));
         assert!(!doms.dominates(BlockId::from_usize(1), BlockId::from_usize(3)));
@@ -215,13 +233,34 @@ mod tests {
         let func = make_func(blocks);
         let doms = Dominators::new(&func);
 
-        assert_eq!(doms.immediate_dominator(BlockId::from_usize(0)), Some(BlockId::from_usize(0)));
-        assert_eq!(doms.immediate_dominator(BlockId::from_usize(1)), Some(BlockId::from_usize(0)));
-        assert_eq!(doms.immediate_dominator(BlockId::from_usize(2)), Some(BlockId::from_usize(1)));
-        assert_eq!(doms.immediate_dominator(BlockId::from_usize(3)), Some(BlockId::from_usize(2)));
-        assert_eq!(doms.immediate_dominator(BlockId::from_usize(4)), Some(BlockId::from_usize(3)));
-        assert_eq!(doms.immediate_dominator(BlockId::from_usize(5)), Some(BlockId::from_usize(1)));
-        assert_eq!(doms.immediate_dominator(BlockId::from_usize(6)), Some(BlockId::from_usize(5)));
+        assert_eq!(
+            doms.immediate_dominator(BlockId::from_usize(0)),
+            Some(BlockId::from_usize(0))
+        );
+        assert_eq!(
+            doms.immediate_dominator(BlockId::from_usize(1)),
+            Some(BlockId::from_usize(0))
+        );
+        assert_eq!(
+            doms.immediate_dominator(BlockId::from_usize(2)),
+            Some(BlockId::from_usize(1))
+        );
+        assert_eq!(
+            doms.immediate_dominator(BlockId::from_usize(3)),
+            Some(BlockId::from_usize(2))
+        );
+        assert_eq!(
+            doms.immediate_dominator(BlockId::from_usize(4)),
+            Some(BlockId::from_usize(3))
+        );
+        assert_eq!(
+            doms.immediate_dominator(BlockId::from_usize(5)),
+            Some(BlockId::from_usize(1))
+        );
+        assert_eq!(
+            doms.immediate_dominator(BlockId::from_usize(6)),
+            Some(BlockId::from_usize(5))
+        );
     }
 
     #[test]
@@ -237,8 +276,14 @@ mod tests {
         let func = make_func(blocks);
         let doms = Dominators::new(&func);
 
-        assert_eq!(doms.immediate_dominator(BlockId::from_usize(0)), Some(BlockId::from_usize(0)));
-        assert_eq!(doms.immediate_dominator(BlockId::from_usize(1)), Some(BlockId::from_usize(0)));
+        assert_eq!(
+            doms.immediate_dominator(BlockId::from_usize(0)),
+            Some(BlockId::from_usize(0))
+        );
+        assert_eq!(
+            doms.immediate_dominator(BlockId::from_usize(1)),
+            Some(BlockId::from_usize(0))
+        );
         assert_eq!(doms.immediate_dominator(BlockId::from_usize(2)), None);
         assert_eq!(doms.immediate_dominator(BlockId::from_usize(3)), None);
     }

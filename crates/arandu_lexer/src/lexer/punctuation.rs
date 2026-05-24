@@ -21,7 +21,6 @@ pub(super) fn peek_kind_from(rest: &str) -> TokenKind {
 }
 
 pub(super) fn token_kind_from_prefix(bytes: &[u8]) -> Option<(TokenKind, usize)> {
-
     match bytes {
         // 3 caracteres
         [b'<', b'<', b'=', ..] => Some((TokenKind::ShiftLeftEqual, 3)),

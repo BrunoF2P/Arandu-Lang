@@ -20,13 +20,13 @@
 //! propagating gen/kill sets per block until a fixpoint is reached. This is
 //! the same class of algorithm as the LLVM `MaybeUninitializedPlaces` analysis.
 
+use crate::SymbolTable;
 use crate::amir::block::BlockId;
 use crate::amir::local::LocalId;
 use crate::amir::program::AmirFunc;
 use crate::amir::stmt::{AmirStmt, AmirTerminator};
 use crate::amir::value::AmirRvalue;
 use crate::diagnostics::{DiagCode, Diagnostic};
-use crate::SymbolTable;
 
 use arandu_lexer::Span;
 
@@ -35,39 +35,55 @@ use std::collections::VecDeque;
 /// A bitset tracking which locals are definitely initialized.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct InitBits {
-    bits: Vec<bool>,
+    words: Vec<u64>,
+    len: usize,
 }
 
 impl InitBits {
     fn new(n: usize) -> Self {
         Self {
-            bits: vec![false; n],
+            words: vec![0; n.div_ceil(64)],
+            len: n,
         }
     }
 
     fn all_init(n: usize) -> Self {
-        Self {
-            bits: vec![true; n],
+        let mut bits = Self {
+            words: vec![u64::MAX; n.div_ceil(64)],
+            len: n,
+        };
+        bits.mask_tail();
+        bits
+    }
+
+    fn mask_tail(&mut self) {
+        let rem = self.len % 64;
+        if rem == 0 {
+            return;
+        }
+        if let Some(last) = self.words.last_mut() {
+            *last &= (1u64 << rem) - 1;
         }
     }
 
     fn set(&mut self, id: LocalId) {
         let idx = id.as_usize();
-        if idx < self.bits.len() {
-            self.bits[idx] = true;
+        if idx < self.len {
+            self.words[idx / 64] |= 1u64 << (idx % 64);
         }
     }
 
     fn get(&self, id: LocalId) -> bool {
         let idx = id.as_usize();
-        idx < self.bits.len() && self.bits[idx]
+        idx < self.len && (self.words[idx / 64] & (1u64 << (idx % 64))) != 0
     }
 
     /// Intersect: a local is initialized only if initialized in *both* sets.
     fn intersect_with(&mut self, other: &Self) {
-        for (a, b) in self.bits.iter_mut().zip(other.bits.iter()) {
-            *a = *a && *b;
+        for (a, b) in self.words.iter_mut().zip(other.words.iter()) {
+            *a &= *b;
         }
+        self.mask_tail();
     }
 }
 
@@ -75,10 +91,7 @@ impl InitBits {
 ///
 /// Returns a list of `O008` diagnostics for any load from a possibly
 /// uninitialized local.
-pub fn check_definite_init(
-    func: &AmirFunc,
-    symbols: &SymbolTable,
-) -> Vec<Diagnostic> {
+pub fn check_definite_init(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagnostic> {
     let num_locals = func.locals.len();
     let num_blocks = func.blocks.len();
 
@@ -293,6 +306,7 @@ fn emit_uninit_diag(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SymbolId;
     use crate::amir::block::AmirBasicBlock;
     use crate::amir::local::{AmirLocal, AmirTemp, TempId};
     use crate::amir::program::AmirFunc;
@@ -300,7 +314,6 @@ mod tests {
     use crate::amir::value::{AmirConstant, AmirOperand, AmirPlace, AmirRvalue};
     use crate::passes::type_checker::types::ArType;
     use crate::symbol_table::SymbolTable;
-    use crate::SymbolId;
     use smallvec::smallvec;
 
     fn make_symbol_table() -> SymbolTable {
@@ -327,6 +340,28 @@ mod tests {
             local: LocalId::from_usize(local),
             projections: smallvec![],
         }
+    }
+
+    #[test]
+    fn test_init_bits_tracks_locals_across_word_boundaries() {
+        let mut bits = InitBits::new(130);
+        bits.set(LocalId::from_usize(0));
+        bits.set(LocalId::from_usize(64));
+        bits.set(LocalId::from_usize(129));
+
+        assert!(bits.get(LocalId::from_usize(0)));
+        assert!(bits.get(LocalId::from_usize(64)));
+        assert!(bits.get(LocalId::from_usize(129)));
+        assert!(!bits.get(LocalId::from_usize(128)));
+        assert!(!bits.get(LocalId::from_usize(130)));
+
+        let mut all = InitBits::all_init(130);
+        all.intersect_with(&bits);
+        assert!(all.get(LocalId::from_usize(0)));
+        assert!(all.get(LocalId::from_usize(64)));
+        assert!(all.get(LocalId::from_usize(129)));
+        assert!(!all.get(LocalId::from_usize(128)));
+        assert!(!all.get(LocalId::from_usize(130)));
     }
 
     #[test]

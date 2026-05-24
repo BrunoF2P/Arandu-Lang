@@ -130,7 +130,10 @@ impl<'a> Lexer<'a> {
                 if remaining >= 3 && bytes[self.pos + 1] == b'/' && bytes[self.pos + 2] == b'/' {
                     self.lex_line_doc_comment();
                     return Ok(());
-                } else if remaining >= 3 && bytes[self.pos + 1] == b'*' && bytes[self.pos + 2] == b'*' {
+                } else if remaining >= 3
+                    && bytes[self.pos + 1] == b'*'
+                    && bytes[self.pos + 2] == b'*'
+                {
                     return self.lex_block_doc_comment();
                 } else if remaining >= 2 && bytes[self.pos + 1] == b'/' {
                     self.skip_line_comment();
@@ -161,7 +164,9 @@ impl<'a> Lexer<'a> {
             _ => {}
         }
 
-        if first < 128 && is_ident_start(first as char) || first >= 128 && self.peek().is_some_and(is_ident_start) {
+        if first < 128 && is_ident_start(first as char)
+            || first >= 128 && self.peek().is_some_and(is_ident_start)
+        {
             self.lex_ident_or_keyword();
             return Ok(());
         }
@@ -339,7 +344,11 @@ impl<'a> Lexer<'a> {
     fn lex_multiline_string(&mut self) -> Result<(), LexError> {
         let start = self.mark();
         self.bump_ascii(3);
-        self.push_token(TokenKind::MultilineStringStart, self.span_from(start), false);
+        self.push_token(
+            TokenKind::MultilineStringStart,
+            self.span_from(start),
+            false,
+        );
         self.lex_string_body(
             StringTerminator::TripleQuote,
             true,
@@ -717,7 +726,9 @@ impl<'a> Lexer<'a> {
         if end_pos <= start.pos {
             return;
         }
-        let span = Span::new(start.pos, end_pos, start.line, start.col, self.line, self.col);
+        let span = Span::new(
+            start.pos, end_pos, start.line, start.col, self.line, self.col,
+        );
         self.push_token(TokenKind::StringText, span, false);
     }
 
@@ -754,12 +765,7 @@ impl<'a> Lexer<'a> {
         Some(TokenKind::Eof)
     }
 
-    fn push_token(
-        &mut self,
-        kind: TokenKind,
-        span: Span,
-        inserted: bool,
-    ) {
+    fn push_token(&mut self, kind: TokenKind, span: Span, inserted: bool) {
         if !matches!(kind, TokenKind::DocComment) {
             self.prev_significant = Some(kind);
         }
@@ -775,7 +781,9 @@ impl<'a> Lexer<'a> {
     }
 
     fn span_from(&self, start: Mark) -> Span {
-        Span::new(start.pos, self.pos, start.line, start.col, self.line, self.col)
+        Span::new(
+            start.pos, self.pos, start.line, start.col, self.line, self.col,
+        )
     }
 
     fn error_from(&self, start: Mark, code: LexErrorCode, message: &'static str) -> LexError {

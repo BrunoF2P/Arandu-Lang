@@ -260,6 +260,7 @@ pub enum HirPlaceSuffix {
     Field {
         span: Span,
         name: String,
+        field_symbol: Option<SymbolId>,
         ty: ArType,
     },
     Index {

@@ -14,9 +14,7 @@ fn type_expr_is_err_slot(ty: &TypeExpr) -> bool {
 fn result_type_must_use_result_generic(result: &ResultType) -> bool {
     match result {
         ResultType::Single { ty, .. } => type_expr_is_err_slot(ty),
-        ResultType::Multi { types, .. } => {
-            types.len() == 2 && type_expr_is_err_slot(&types[1])
-        }
+        ResultType::Multi { types, .. } => types.len() == 2 && type_expr_is_err_slot(&types[1]),
     }
 }
 
@@ -273,7 +271,10 @@ impl<'a> Parser<'a> {
                 name: name.to_string(),
             });
         }
-        if matches!(self.current().kind, TokenKind::IdentValue | TokenKind::IdentType) {
+        if matches!(
+            self.current().kind,
+            TokenKind::IdentValue | TokenKind::IdentType
+        ) {
             let name = self.parse_type_name()?;
             let args = if self.at_kind_name("LT") {
                 self.parse_generic_args()?

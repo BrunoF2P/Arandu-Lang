@@ -70,7 +70,7 @@ pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
                         }
 
                         checker.ctx.bind(symbol_id, bind_ty.clone());
-                        checker.type_info.decl_types.insert(symbol_id, bind_ty);
+                        checker.record_decl_type(symbol_id, bind_ty);
                     }
                 }
             } else if let Some(binding) = bindings.first() {
@@ -87,10 +87,10 @@ pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
                             &checker.resolved,
                         );
                         if !expected.is_error() {
-                            checker
-                                .type_info
-                                .expr_types
-                                .insert(crate::NodeKey::from(value.span()), expected.clone());
+                            checker.type_info.record_expr_type(
+                                crate::NodeKey::from(value.span()),
+                                expected.clone(),
+                            );
                             bind_ty = expected;
                         }
                     }
@@ -149,7 +149,7 @@ pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
                     }
 
                     checker.ctx.bind(symbol_id, bind_ty.clone());
-                    checker.type_info.decl_types.insert(symbol_id, bind_ty);
+                    checker.record_decl_type(symbol_id, bind_ty);
                 }
             }
         }
@@ -259,10 +259,7 @@ pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
                     val_ty,
                     ConstraintOrigin::ReturnType {
                         return_span: *span,
-                        declared_span: checker
-                            .ctx
-                            .current_return_decl_span()
-                            .unwrap_or(*span),
+                        declared_span: checker.ctx.current_return_decl_span().unwrap_or(*span),
                     },
                 );
             } else if !val_ty.is_literal()
@@ -338,7 +335,7 @@ pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
                             checker.resolved.definitions.get(&binding_key).copied()
                         {
                             checker.ctx.bind(symbol_id, elem_ty.clone());
-                            checker.type_info.decl_types.insert(symbol_id, elem_ty);
+                            checker.record_decl_type(symbol_id, elem_ty);
                         }
                     }
                 }

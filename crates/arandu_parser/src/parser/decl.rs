@@ -581,7 +581,10 @@ impl<'a> Parser<'a> {
 
     pub(super) fn parse_func_name(&mut self) -> Result<FuncName, ParseError> {
         let start = self.pos;
-        if matches!(self.current().kind, TokenKind::IdentType | TokenKind::IdentValue) {
+        if matches!(
+            self.current().kind,
+            TokenKind::IdentType | TokenKind::IdentValue
+        ) {
             if let Ok(receiver) = self.parse_type_name()
                 && self.eat_name("DOT")
             {

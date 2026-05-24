@@ -1,7 +1,7 @@
-use crate::hir::ReceiverKind;
-use crate::passes::type_checker::types::ArType;
 use crate::SymbolId;
+use crate::hir::ReceiverKind;
 use crate::newtype_index;
+use crate::passes::type_checker::types::ArType;
 
 newtype_index!(LocalId);
 newtype_index!(TempId);

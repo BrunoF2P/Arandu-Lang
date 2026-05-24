@@ -17,8 +17,7 @@ pub(crate) fn lower_decl(
             let symbol = require_def_symbol(&type_check.resolved, d.span)?;
             let ty = type_check
                 .type_info
-                .decl_types
-                .get(&symbol)
+                .decl_type(symbol)
                 .cloned()
                 .unwrap_or(ArType::Error);
             Ok(HirDecl::Const(HirConst {
@@ -32,8 +31,7 @@ pub(crate) fn lower_decl(
             let symbol = require_def_symbol(&type_check.resolved, d.span)?;
             let target = type_check
                 .type_info
-                .decl_types
-                .get(&symbol)
+                .decl_type(symbol)
                 .cloned()
                 .unwrap_or(ArType::Error);
             Ok(HirDecl::TypeAlias(HirTypeAlias {
@@ -50,8 +48,7 @@ pub(crate) fn lower_decl(
             let symbol = require_def_symbol(&type_check.resolved, name_span)?;
             let decl_ty = type_check
                 .type_info
-                .decl_types
-                .get(&symbol)
+                .decl_type(symbol)
                 .cloned()
                 .unwrap_or(ArType::Error);
             let return_type = match decl_ty {
@@ -63,8 +60,7 @@ pub(crate) fn lower_decl(
                 let p_symbol = require_def_symbol(&type_check.resolved, p.span)?;
                 let p_ty = type_check
                     .type_info
-                    .decl_types
-                    .get(&p_symbol)
+                    .decl_type(p_symbol)
                     .cloned()
                     .unwrap_or(ArType::Error);
                 params.push(HirParam {
@@ -154,8 +150,7 @@ pub(crate) fn lower_decl(
                 let symbol = require_def_symbol(&type_check.resolved, m.span)?;
                 let m_ty = type_check
                     .type_info
-                    .decl_types
-                    .get(&symbol)
+                    .decl_type(symbol)
                     .cloned()
                     .unwrap_or(ArType::Error);
                 let return_type = match m_ty {
@@ -167,8 +162,7 @@ pub(crate) fn lower_decl(
                     let p_symbol = require_def_symbol(&type_check.resolved, p.span)?;
                     let p_ty = type_check
                         .type_info
-                        .decl_types
-                        .get(&p_symbol)
+                        .decl_type(p_symbol)
                         .cloned()
                         .unwrap_or(ArType::Error);
                     params.push(HirParam {

@@ -12,10 +12,7 @@ pub fn check_pattern(checker: &mut TypeChecker, pattern: &Pattern, value_ty: &Ar
             let key = crate::NodeKey::from(*span);
             if let Some(symbol_id) = checker.resolved.definitions.get(&key) {
                 checker.ctx.bind(*symbol_id, value_ty.clone());
-                checker
-                    .type_info
-                    .decl_types
-                    .insert(*symbol_id, value_ty.clone());
+                checker.record_decl_type(*symbol_id, value_ty.clone());
             }
         }
         Pattern::Literal { expr, .. } => {
@@ -226,10 +223,7 @@ pub fn check_pattern(checker: &mut TypeChecker, pattern: &Pattern, value_ty: &Ar
                             if let Some(symbol_id) = checker.resolved.definitions.get(&key).copied()
                             {
                                 checker.ctx.bind(symbol_id, field_ty.clone());
-                                checker
-                                    .type_info
-                                    .decl_types
-                                    .insert(symbol_id, field_ty.clone());
+                                checker.record_decl_type(symbol_id, field_ty.clone());
                             }
                         }
                     } else {

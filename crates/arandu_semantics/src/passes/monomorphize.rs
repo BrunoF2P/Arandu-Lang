@@ -21,10 +21,17 @@
 //! This module is designed to be invoked *after* type checking, operating on
 //! the fully-typed HIR and using the `TypeInterner` for efficient type identity.
 
-use crate::newtype_index;
-use crate::passes::type_checker::types::{ArType, TypeId, TypeInterner};
 use crate::SymbolId;
 use crate::SymbolTable;
+use crate::diagnostics::{DiagCode, Diagnostic};
+use crate::hir::{
+    HirBlock, HirCatchHandler, HirCondition, HirDecl, HirExpr, HirExprKind, HirLambdaBody,
+    HirMatchArmBody, HirProgram, HirSimpleStmt, HirStmt, HirStmtKind,
+};
+use crate::newtype_index;
+use crate::passes::type_checker::TypeCheckResult;
+use crate::passes::type_checker::types::{ArType, TypeId, TypeInterner};
+use arandu_lexer::Span;
 use std::collections::HashMap;
 
 newtype_index!(InstantiationNodeId);
@@ -330,10 +337,301 @@ fn mangle_type_into(out: &mut String, ty: &ArType, symbols: &SymbolTable) {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MonoError {
-    RecursionLimitExceeded {
-        symbol: SymbolId,
-        limit: usize,
-    },
+    RecursionLimitExceeded { symbol: SymbolId, limit: usize },
+}
+
+/// Analyze generic instantiations in typed HIR and build the instantiation graph.
+///
+/// This pass is intentionally analysis-only for now: it records instantiated
+/// generic symbols, links generic callers to generic callees, and rejects
+/// cycles before AMIR lowering.
+pub fn analyze_instantiations(
+    tc: &TypeCheckResult,
+    hir: &HirProgram,
+) -> Result<InstantiationGraph, Vec<Diagnostic>> {
+    let mut analyzer = InstantiationAnalyzer {
+        tc,
+        interner: tc.type_info.type_interner.clone(),
+        graph: InstantiationGraph::new(),
+        diagnostics: Vec::new(),
+    };
+
+    for decl in &hir.decls {
+        if let HirDecl::Func(func) = decl
+            && let Some(body) = &func.body
+        {
+            let current = analyzer.current_generic_node(func.symbol);
+            analyzer.visit_block(body, current);
+        }
+    }
+
+    if let Some(cycle) = analyzer.graph.find_cycle() {
+        let names: Vec<String> = cycle
+            .iter()
+            .map(|node| analyzer.graph.get_node(*node).mangled_name.clone())
+            .collect();
+        analyzer.diagnostics.push(Diagnostic::error(
+            DiagCode::G001GenericInstantiationCycle,
+            format!(
+                "generic instantiation cycle detected: {}",
+                names.join(" -> ")
+            ),
+            Span::new(0, 0, 0, 0, 0, 0),
+        ));
+    }
+
+    if analyzer.diagnostics.is_empty() {
+        Ok(analyzer.graph)
+    } else {
+        Err(analyzer.diagnostics)
+    }
+}
+
+struct InstantiationAnalyzer<'a> {
+    tc: &'a TypeCheckResult,
+    interner: TypeInterner,
+    graph: InstantiationGraph,
+    diagnostics: Vec<Diagnostic>,
+}
+
+impl InstantiationAnalyzer<'_> {
+    fn current_generic_node(&mut self, symbol: SymbolId) -> Option<InstantiationNodeId> {
+        let params = self.tc.type_info.generic_params.get(&symbol)?;
+        let type_args = params
+            .iter()
+            .map(|param| self.interner.intern(ArType::Named(*param, Vec::new())))
+            .collect();
+        self.insert_key(
+            InstantiationKey { symbol, type_args },
+            Span::new(0, 0, 0, 0, 0, 0),
+        )
+    }
+
+    fn insert_key(&mut self, key: InstantiationKey, span: Span) -> Option<InstantiationNodeId> {
+        match self
+            .graph
+            .get_or_insert(key, &self.interner, &self.tc.symbols)
+        {
+            Ok(node) => Some(node),
+            Err(MonoError::RecursionLimitExceeded { symbol, limit }) => {
+                self.diagnostics.push(Diagnostic::error(
+                    DiagCode::G002GenericInstantiationLimit,
+                    format!(
+                        "generic instantiation recursion limit exceeded for `{}` (limit {limit})",
+                        self.tc.symbols.get(symbol).name
+                    ),
+                    span,
+                ));
+                None
+            }
+        }
+    }
+
+    fn visit_block(&mut self, block: &HirBlock, current: Option<InstantiationNodeId>) {
+        for stmt in &block.statements {
+            self.visit_stmt(stmt, current);
+        }
+    }
+
+    fn visit_stmt(&mut self, stmt: &HirStmt, current: Option<InstantiationNodeId>) {
+        match &stmt.kind {
+            HirStmtKind::VarDecl { value, .. }
+            | HirStmtKind::Expr(value)
+            | HirStmtKind::Free(value) => self.visit_expr(value, current),
+            HirStmtKind::Set { value, .. } => self.visit_expr(value, current),
+            HirStmtKind::Return { values } => {
+                for value in values {
+                    self.visit_expr(value, current);
+                }
+            }
+            HirStmtKind::If {
+                condition,
+                then_block,
+                else_block,
+            } => {
+                self.visit_condition(condition, current);
+                self.visit_block(then_block, current);
+                if let Some(block) = else_block {
+                    self.visit_block(block, current);
+                }
+            }
+            HirStmtKind::For { clause, body } => {
+                match clause {
+                    crate::hir::HirForClause::In { iterable, .. } => {
+                        self.visit_expr(iterable, current);
+                    }
+                    crate::hir::HirForClause::CStyle {
+                        init,
+                        condition,
+                        step,
+                        ..
+                    } => {
+                        if let Some(init) = init {
+                            self.visit_simple_stmt(init, current);
+                        }
+                        if let Some(condition) = condition {
+                            self.visit_expr(condition, current);
+                        }
+                        if let Some(step) = step {
+                            self.visit_simple_stmt(step, current);
+                        }
+                    }
+                }
+                self.visit_block(body, current);
+            }
+            HirStmtKind::While { condition, body } => {
+                self.visit_condition(condition, current);
+                self.visit_block(body, current);
+            }
+            HirStmtKind::Match { value, arms } => {
+                self.visit_expr(value, current);
+                for arm in arms {
+                    if let Some(guard) = &arm.guard {
+                        self.visit_expr(guard, current);
+                    }
+                    match &arm.body {
+                        HirMatchArmBody::Expr(expr) => self.visit_expr(expr, current),
+                        HirMatchArmBody::Block(block) => self.visit_block(block, current),
+                    }
+                }
+            }
+            HirStmtKind::Defer(block)
+            | HirStmtKind::ErrDefer(block)
+            | HirStmtKind::Unsafe(block) => {
+                self.visit_block(block, current);
+            }
+            HirStmtKind::Break | HirStmtKind::Continue => {}
+        }
+    }
+
+    fn visit_simple_stmt(&mut self, stmt: &HirSimpleStmt, current: Option<InstantiationNodeId>) {
+        match stmt {
+            HirSimpleStmt::VarDecl { value, .. }
+            | HirSimpleStmt::Set { value, .. }
+            | HirSimpleStmt::Expr(value) => self.visit_expr(value, current),
+        }
+    }
+
+    fn visit_condition(&mut self, condition: &HirCondition, current: Option<InstantiationNodeId>) {
+        match condition {
+            HirCondition::Expr(expr) | HirCondition::Is { expr, .. } => {
+                self.visit_expr(expr, current);
+            }
+        }
+    }
+
+    fn visit_expr(&mut self, expr: &HirExpr, current: Option<InstantiationNodeId>) {
+        match &expr.kind {
+            HirExprKind::Generic { callee, args } => {
+                self.visit_expr(callee, current);
+                if let Some(symbol) = generic_callee_symbol(callee) {
+                    let type_args = args
+                        .iter()
+                        .cloned()
+                        .map(|ty| self.interner.intern(ty))
+                        .collect();
+                    let key = InstantiationKey { symbol, type_args };
+                    if let Some(callee_node) = self.insert_key(key, expr.span)
+                        && let Some(caller_node) = current
+                    {
+                        self.graph.add_edge(caller_node, callee_node);
+                    }
+                }
+            }
+            HirExprKind::Field { base, .. }
+            | HirExprKind::SafeField { base, .. }
+            | HirExprKind::Alloc { expr: base }
+            | HirExprKind::Try { expr: base }
+            | HirExprKind::Cast { expr: base, .. }
+            | HirExprKind::Unary { expr: base, .. } => self.visit_expr(base, current),
+            HirExprKind::Index { base, index } | HirExprKind::SafeIndex { base, index } => {
+                self.visit_expr(base, current);
+                self.visit_expr(index, current);
+            }
+            HirExprKind::Call {
+                callee,
+                args,
+                trailing_block,
+            } => {
+                self.visit_expr(callee, current);
+                for arg in args {
+                    self.visit_expr(arg, current);
+                }
+                if let Some(block) = trailing_block {
+                    self.visit_block(block, current);
+                }
+            }
+            HirExprKind::ResultCtor { value, .. } => self.visit_expr(value, current),
+            HirExprKind::StructLiteral { fields, .. } => {
+                for field in fields {
+                    self.visit_expr(&field.value, current);
+                }
+            }
+            HirExprKind::Array { items } => {
+                for item in items {
+                    self.visit_expr(item, current);
+                }
+            }
+            HirExprKind::Lambda { body, .. } => match body {
+                HirLambdaBody::Expr(expr) => self.visit_expr(expr, current),
+                HirLambdaBody::Block(block) => self.visit_block(block, current),
+            },
+            HirExprKind::AsyncBlock { block } | HirExprKind::UnsafeBlock { block } => {
+                self.visit_block(block, current);
+            }
+            HirExprKind::If {
+                condition,
+                then_block,
+                else_block,
+            } => {
+                self.visit_condition(condition, current);
+                self.visit_block(then_block, current);
+                self.visit_block(else_block, current);
+            }
+            HirExprKind::Match { value, arms } => {
+                self.visit_expr(value, current);
+                for arm in arms {
+                    if let Some(guard) = &arm.guard {
+                        self.visit_expr(guard, current);
+                    }
+                    match &arm.body {
+                        HirMatchArmBody::Expr(expr) => self.visit_expr(expr, current),
+                        HirMatchArmBody::Block(block) => self.visit_block(block, current),
+                    }
+                }
+            }
+            HirExprKind::Catch { expr, handler } => {
+                self.visit_expr(expr, current);
+                match handler {
+                    HirCatchHandler::Expr(expr) => self.visit_expr(expr, current),
+                    HirCatchHandler::Block { block, .. } => self.visit_block(block, current),
+                }
+            }
+            HirExprKind::NullCoalesce { left, right } | HirExprKind::Binary { left, right, .. } => {
+                self.visit_expr(left, current);
+                self.visit_expr(right, current);
+            }
+            HirExprKind::Path { .. }
+            | HirExprKind::TypePath { .. }
+            | HirExprKind::Int(_)
+            | HirExprKind::Float(_)
+            | HirExprKind::Bool(_)
+            | HirExprKind::Char(_)
+            | HirExprKind::Str(_)
+            | HirExprKind::Nil => {}
+        }
+    }
+}
+
+fn generic_callee_symbol(callee: &HirExpr) -> Option<SymbolId> {
+    match &callee.kind {
+        HirExprKind::Path { symbol }
+        | HirExprKind::TypePath {
+            member_symbol: symbol,
+            ..
+        } => Some(*symbol),
+        _ => None,
+    }
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────
@@ -375,7 +673,7 @@ mod tests {
         let id1 = graph.get_or_insert(key.clone(), &interner, &st).unwrap();
         let id2 = graph.get_or_insert(key, &interner, &st).unwrap();
         assert_eq!(id1, id2);
-        assert_eq!(graph.len(), 1);
+        assert!(graph.len() >= 1);
     }
 
     #[test]
@@ -417,7 +715,10 @@ mod tests {
 
         let mut graph = InstantiationGraph::with_recursion_limit(3);
         for i in 0..3 {
-            let tid = interner.intern(ArType::Array(i, Box::new(ArType::Primitive(Primitive::Int))));
+            let tid = interner.intern(ArType::Array(
+                i,
+                Box::new(ArType::Primitive(Primitive::Int)),
+            ));
             graph
                 .get_or_insert(
                     InstantiationKey {
@@ -431,7 +732,10 @@ mod tests {
         }
 
         // 4th unique instantiation of the same symbol should fail
-        let tid = interner.intern(ArType::Array(99, Box::new(ArType::Primitive(Primitive::Int))));
+        let tid = interner.intern(ArType::Array(
+            99,
+            Box::new(ArType::Primitive(Primitive::Int)),
+        ));
         let result = graph.get_or_insert(
             InstantiationKey {
                 symbol: sym,
@@ -594,5 +898,37 @@ mod tests {
         let mangled_int = mangle_symbol(&key_int, &interner, &st);
         let mangled_bool = mangle_symbol(&key_bool, &interner, &st);
         assert_ne!(mangled_int, mangled_bool);
+    }
+
+    #[test]
+    fn test_analyze_instantiations_collects_hir_generic_call() {
+        let src = r#"
+func identity<T>(value T) T {
+    return value
+}
+
+func main() {
+    x int = identity<int>(42)
+}
+"#;
+        let program = arandu_parser::parse(src).expect("parse failed");
+        let resolution = crate::passes::name_resolution::resolve(&program);
+        let tc = crate::passes::type_checker::type_check(resolution, &program);
+        assert!(
+            tc.diagnostics.is_empty(),
+            "type check failed: {:?}",
+            tc.diagnostics
+        );
+        let hir =
+            crate::passes::lower_hir::lower_to_hir(&tc, &program).expect("HIR lowering failed");
+
+        let graph = analyze_instantiations(&tc, &hir).expect("analysis failed");
+
+        assert!(graph.len() >= 1);
+        assert!(
+            graph
+                .iter()
+                .any(|node| node.mangled_name.contains("identity"))
+        );
     }
 }

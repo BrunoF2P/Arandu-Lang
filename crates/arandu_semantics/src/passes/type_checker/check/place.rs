@@ -7,8 +7,8 @@ pub(crate) fn synth_place(checker: &mut TypeChecker, place: &arandu_parser::Plac
     let mut current_ty = if let Some(symbol_id) = checker.resolved.value_refs.get(&root_key) {
         if let Some(ty) = checker.ctx.lookup(*symbol_id) {
             ty.clone()
-        } else if let Some(ty) = checker.type_info.decl_types.get(symbol_id) {
-            ty.clone()
+        } else if let Some(ty) = checker.decl_type(*symbol_id) {
+            ty
         } else {
             ArType::Error
         }
@@ -91,7 +91,9 @@ pub(crate) fn synth_place(checker: &mut TypeChecker, place: &arandu_parser::Plac
                         place.span,
                         format!("this has type '{}'", current_ty.display(&checker.symbols)),
                     )
-                    .with_hint("use safe index `?[...]` or make the value non-nullable".to_string());
+                    .with_hint(
+                        "use safe index `?[...]` or make the value non-nullable".to_string(),
+                    );
                     checker.diagnostics.push(diag);
                     current_ty = ArType::Error;
                     break;

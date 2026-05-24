@@ -1,8 +1,8 @@
 use super::block::AmirBasicBlock;
 use super::local::{AmirLocal, AmirReceiver, AmirTemp, TempId};
+use crate::SymbolId;
 use crate::literal_pool::AmirLiteralPool;
 use crate::passes::type_checker::types::ArType;
-use crate::SymbolId;
 
 #[derive(Debug)]
 pub struct AmirProgram {

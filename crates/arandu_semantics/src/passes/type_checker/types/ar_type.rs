@@ -163,4 +163,28 @@ impl ArType {
             _ => false,
         }
     }
+
+    #[must_use]
+    pub fn is_copy_v01(&self) -> bool {
+        match self {
+            ArType::Primitive(p) => {
+                p.is_numeric()
+                    || matches!(
+                        p,
+                        Primitive::Bool | Primitive::Char | Primitive::Byte | Primitive::Any
+                    )
+            }
+            ArType::IntLiteral | ArType::FloatLiteral | ArType::Ptr(_) | ArType::Nullable(_) => {
+                true
+            }
+            ArType::Error | ArType::Void | ArType::Err => true,
+            ArType::Named(_, _)
+            | ArType::Func(_, _)
+            | ArType::Slice(_)
+            | ArType::Array(_, _)
+            | ArType::Tuple(_)
+            | ArType::Result(_, _)
+            | ArType::Option(_) => false,
+        }
+    }
 }

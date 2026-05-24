@@ -1,6 +1,6 @@
-use super::LowerCtx;
+use super::{LowerCtx, MoveState};
 use crate::TypeCheckResult;
-use crate::amir::{AmirFunc, AmirTemp, AmirTerminator, TempId, AmirPlace, AmirOperand};
+use crate::amir::{AmirFunc, AmirOperand, AmirPlace, AmirTemp, AmirTerminator, TempId};
 use crate::cfg::compute_cfg_edges;
 use crate::diagnostics::Diagnostic;
 use crate::hir::{HirBlock, HirFunc, HirProgram};
@@ -26,6 +26,9 @@ pub(crate) fn lower_func(
         loop_stack: Vec::new(),
         literal_pool,
         defer_frames: Vec::new(),
+        temp_states: Vec::new(),
+        temp_origins: Vec::new(),
+        local_states: Vec::new(),
     };
 
     // Return register is TempId(0)
@@ -33,6 +36,8 @@ pub(crate) fn lower_func(
         id: TempId(0),
         ty: f.return_type.clone(),
     });
+    ctx.temp_states.push(MoveState::Available);
+    ctx.temp_origins.push(None);
 
     let mut params = Vec::new();
     let mut receiver = None;
@@ -61,7 +66,7 @@ pub(crate) fn lower_func(
                 projections: smallvec::SmallVec::new(),
             },
             AmirOperand::Copy(p_temp),
-        );
+        )?;
     }
 
     ctx.lower_block(body, &tc.symbols)?;

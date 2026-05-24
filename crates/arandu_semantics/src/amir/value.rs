@@ -1,7 +1,7 @@
 use super::local::{LocalId, TempId};
+use crate::SymbolId;
 use crate::literal_pool::LiteralId;
 use crate::ops::{BinaryOp, UnaryOp};
-use crate::SymbolId;
 use smallvec::SmallVec;
 
 #[derive(Debug, Clone)]
@@ -13,7 +13,7 @@ pub struct AmirPlace {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum AmirProjection {
-    Field(String),
+    Field(SymbolId),
     Index(AmirOperand),
 }
 
