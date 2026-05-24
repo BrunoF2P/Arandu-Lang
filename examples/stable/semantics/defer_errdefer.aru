@@ -2,10 +2,10 @@ module examples.stable.semantics.deferErrdefer
 
 import io
 
-func writeReport(path str) Err? {
+func writeReport(path str) Result<void, Err> {
     file, err = io.create(path)
     if err != nil {
-        return err
+        return Result.Err(err)
     }
 
     defer file.close()
@@ -13,7 +13,7 @@ func writeReport(path str) Err? {
 
     writeErr = file.write("ok")
     if writeErr != nil {
-        return writeErr
+        return Result.Err(writeErr)
     }
 
     return nil

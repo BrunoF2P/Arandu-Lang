@@ -1,0 +1,98 @@
+use super::LowerCtx;
+use crate::TypeCheckResult;
+use crate::amir::{AmirFunc, AmirTemp, AmirTerminator, TempId, AmirPlace, AmirOperand};
+use crate::cfg::compute_cfg_edges;
+use crate::diagnostics::Diagnostic;
+use crate::hir::{HirBlock, HirFunc, HirProgram};
+use crate::literal_pool::AmirLiteralPool;
+use std::collections::HashMap;
+
+pub(crate) fn lower_func(
+    f: &HirFunc,
+    body: &HirBlock,
+    tc: &TypeCheckResult,
+    hir: &HirProgram,
+    literal_pool: &mut AmirLiteralPool,
+) -> Result<AmirFunc, Diagnostic> {
+    let mut ctx = LowerCtx {
+        tc,
+        hir,
+        func_return_type: f.return_type.clone(),
+        locals: Vec::new(),
+        temps: Vec::new(),
+        blocks: Vec::new(),
+        current_block: None,
+        symbol_map: HashMap::new(),
+        loop_stack: Vec::new(),
+        literal_pool,
+        defer_frames: Vec::new(),
+    };
+
+    // Return register is TempId(0)
+    ctx.temps.push(AmirTemp {
+        id: TempId(0),
+        ty: f.return_type.clone(),
+    });
+
+    let mut params = Vec::new();
+    let mut receiver = None;
+
+    // Start with bb0 so we can emit parameter store instructions there
+    let bb0 = ctx.new_block();
+    ctx.current_block = Some(bb0);
+
+    for param in &f.params {
+        let p_temp = ctx.new_temp(param.ty.clone());
+        if param.is_receiver {
+            receiver = Some(crate::amir::AmirReceiver {
+                temp: p_temp,
+                kind: param
+                    .receiver_kind
+                    .unwrap_or(crate::hir::ReceiverKind::Shared),
+            });
+        }
+        params.push(p_temp);
+
+        // Copy incoming parameter SSA register value to local stack slot
+        let p_local = ctx.new_local(param.ty.clone(), param.symbol);
+        ctx.emit_store_place(
+            AmirPlace {
+                local: p_local,
+                projections: smallvec::SmallVec::new(),
+            },
+            AmirOperand::Copy(p_temp),
+        );
+    }
+
+    ctx.lower_block(body, &tc.symbols)?;
+
+    // If last block does not have a terminator, implicitly return
+    if let Some(curr) = ctx.current_block {
+        if ctx.blocks[curr.as_usize()].terminator.is_unreachable() {
+            ctx.blocks[curr.as_usize()].terminator = AmirTerminator::Return;
+        }
+    }
+
+    compute_cfg_edges(&mut ctx.blocks);
+
+    Ok(AmirFunc {
+        symbol: f.symbol,
+        return_type: f.return_type.clone(),
+        receiver,
+        params,
+        locals: ctx.locals,
+        temps: ctx.temps,
+        blocks: ctx.blocks,
+    })
+}
+
+// Extension helper to check if terminator is unreachable
+trait TerminatorExt {
+    fn is_unreachable(&self) -> bool;
+}
+
+impl TerminatorExt for AmirTerminator {
+    fn is_unreachable(&self) -> bool {
+        matches!(self, AmirTerminator::Unreachable)
+    }
+}

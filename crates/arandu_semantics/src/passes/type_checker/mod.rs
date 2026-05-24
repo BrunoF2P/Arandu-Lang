@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use arandu_parser::Program;
 
-use crate::{Diagnostic, NodeKey, ResolutionResult, ResolvedNames, SymbolId, SymbolTable};
+use crate::{Diagnostic, NodeKey, ResolutionResult, ResolvedNames, ScopeId, SymbolId, SymbolTable};
 
 pub mod check;
 pub mod constraints;
@@ -17,6 +17,7 @@ use types::ArType;
 
 // ── Entry point ─────────────────────────────────────────────────────
 
+#[must_use]
 pub fn type_check(resolution: ResolutionResult, program: &Program) -> TypeCheckResult {
     let mut checker = TypeChecker::new(
         resolution.symbols,
@@ -35,9 +36,12 @@ pub struct TypeChecker {
     pub ctx: TyCtx,
     pub type_info: TypeInfo,
     pub diagnostics: Vec<Diagnostic>,
+    /// Scope for lowering type expressions inside the current function body.
+    type_scope_id: Option<ScopeId>,
 }
 
 impl TypeChecker {
+    #[must_use]
     pub fn new(
         symbols: SymbolTable,
         resolved: ResolvedNames,
@@ -49,7 +53,15 @@ impl TypeChecker {
             ctx: TyCtx::new(),
             type_info: TypeInfo::new(),
             diagnostics,
+            type_scope_id: None,
         }
+    }
+
+    /// Scope used when lowering type expressions in the current context.
+    #[must_use]
+    pub(crate) fn type_scope(&self) -> ScopeId {
+        self.type_scope_id
+            .unwrap_or_else(|| self.symbols.global_scope())
     }
 
     /// Add a type constraint failure. Translates it immediately into a
@@ -64,6 +76,7 @@ impl TypeChecker {
         self.diagnostics.push(diag);
     }
 
+    #[must_use]
     pub fn finish(self) -> TypeCheckResult {
         TypeCheckResult {
             symbols: self.symbols,
@@ -88,15 +101,25 @@ pub struct TypeInfo {
     pub decl_types: HashMap<SymbolId, ArType>,
     pub struct_fields: HashMap<SymbolId, HashMap<String, ArType>>,
     pub enum_variants: HashMap<SymbolId, (SymbolId, EnumPayloadShape)>,
+    /// Ordered type-parameter symbols for generic decls (func, struct, …).
+    pub generic_params: HashMap<SymbolId, Vec<SymbolId>>,
+    /// Type-parameter symbol → interface symbols required (`T: Display`).
+    pub param_constraints: HashMap<SymbolId, Vec<SymbolId>>,
+    /// Interface symbol → method signatures (nominal, Go-style structural check).
+    pub(crate) interfaces: HashMap<SymbolId, types::InterfaceInfo>,
 }
 
 impl TypeInfo {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             expr_types: HashMap::new(),
             decl_types: HashMap::new(),
             struct_fields: HashMap::new(),
             enum_variants: HashMap::new(),
+            generic_params: HashMap::new(),
+            param_constraints: HashMap::new(),
+            interfaces: HashMap::new(),
         }
     }
 }

@@ -1,0 +1,9 @@
+func test_bind(x int) int {
+    res = 0
+    if x is y {
+        set res = y
+    } else {
+        set res = 20
+    }
+    return res
+}

@@ -1,10 +1,5 @@
-module tests.deferErrdefer
+import err
 
-func write(path str) Err? {
-    file, err = io.create(path)
-    defer file.close()
-    errdefer {
-        io.remove(path)
-    }
-    return err
+func write(path str) Result<void, Err> {
+    return Result.Err(err.new("fail"))
 }

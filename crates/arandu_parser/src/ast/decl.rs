@@ -37,6 +37,7 @@ pub enum ImportDecl {
 }
 
 impl ImportDecl {
+    #[must_use]
     pub fn span(&self) -> Span {
         match self {
             ImportDecl::Module { span, .. } | ImportDecl::Named { span, .. } => *span,
@@ -64,6 +65,7 @@ pub enum TopLevelDecl {
 }
 
 impl TopLevelDecl {
+    #[must_use]
     pub fn span(&self) -> Span {
         match self {
             TopLevelDecl::Const(decl) => decl.span,
@@ -235,10 +237,13 @@ pub struct Param {
     pub name: String,
     pub ty: TypeExpr,
     pub is_variadic: bool,
+    /// `true` when this parameter is the method receiver (`self`).
+    pub is_receiver: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ownership {
     Own,
     Mut,
+    Shared,
 }

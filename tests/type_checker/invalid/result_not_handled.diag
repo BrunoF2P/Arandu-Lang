@@ -1,0 +1,2 @@
+T019: Result value must be handled with `?` or `value, err = f()`
+  --> tests/type_checker/invalid/result_not_handled.aru:6:14

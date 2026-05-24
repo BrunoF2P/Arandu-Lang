@@ -4,7 +4,7 @@ use super::HirExpr;
 use crate::SymbolId;
 use arandu_lexer::Span;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum HirPattern {
     Wildcard {
@@ -13,6 +13,7 @@ pub enum HirPattern {
     Bind {
         span: Span,
         name: String,
+        symbol: SymbolId,
     },
     Literal {
         span: Span,
@@ -47,7 +48,7 @@ pub enum HirPattern {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HirFieldPattern {
     pub span: Span,
     pub name: String,

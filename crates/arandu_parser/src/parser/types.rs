@@ -1,6 +1,26 @@
-use super::*;
+use super::{
+    GenericParam, Ownership, Param, ParseError, ParseErrorCode, Parser, ResultType, TokenKind,
+    TypeExpr, TypeName, WhereItem, is_type_token, primitive_type_name,
+};
 
-impl Parser {
+fn type_expr_is_err_slot(ty: &TypeExpr) -> bool {
+    match ty {
+        TypeExpr::Nullable { inner, .. } => type_expr_is_err_slot(inner),
+        TypeExpr::Primitive { name, .. } => name == "Err",
+        _ => false,
+    }
+}
+
+fn result_type_must_use_result_generic(result: &ResultType) -> bool {
+    match result {
+        ResultType::Single { ty, .. } => type_expr_is_err_slot(ty),
+        ResultType::Multi { types, .. } => {
+            types.len() == 2 && type_expr_is_err_slot(&types[1])
+        }
+    }
+}
+
+impl<'a> Parser<'a> {
     pub(super) fn parse_generic_params(&mut self) -> Result<Vec<GenericParam>, ParseError> {
         if !self.eat_name("LT") {
             return Ok(Vec::new());
@@ -25,7 +45,7 @@ impl Parser {
 
     pub(super) fn parse_generic_args(&mut self) -> Result<Vec<TypeExpr>, ParseError> {
         self.expect_name("LT")?;
-        let args = self.parse_comma_separated_list("GT", 1, |parser| parser.parse_type())?;
+        let args = self.parse_comma_separated_list("GT", 1, super::Parser::parse_type)?;
         self.expect_name("GT")?;
         Ok(args)
     }
@@ -66,19 +86,56 @@ impl Parser {
         Ok(constraints)
     }
 
-    pub(super) fn parse_params(&mut self) -> Result<Vec<Param>, ParseError> {
+    fn parse_ownership(&mut self) -> Option<Ownership> {
+        if self.eat_name("KW_OWN") {
+            Some(Ownership::Own)
+        } else if self.eat_name("KW_MUT") {
+            Some(Ownership::Mut)
+        } else if self.eat_name("KW_SHARED") {
+            Some(Ownership::Shared)
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn parse_params(
+        &mut self,
+        method_receiver: Option<&TypeName>,
+    ) -> Result<Vec<Param>, ParseError> {
         let params = self.parse_comma_separated_list("RPAREN", 0, |parser| {
             let start = parser.mark();
             let attrs = parser.parse_attributes()?;
-            let ownership = if parser.eat_name("KW_OWN") {
-                Some(Ownership::Own)
-            } else if parser.eat_name("KW_MUT") {
-                Some(Ownership::Mut)
+            let ownership = parser.parse_ownership();
+            let name = if parser.eat_name("KW_SELF") {
+                "self".to_string()
             } else {
-                None
+                parser.expect_ident_value()?
             };
-            let name = parser.expect_ident_value()?;
-            let ty = parser.parse_type()?;
+            let is_receiver = name == "self";
+            let ty = if parser.can_start_type() {
+                parser.parse_type()?
+            } else if is_receiver {
+                let receiver = method_receiver.ok_or_else(|| {
+                    ParseError::new(
+                        ParseErrorCode::ExpectedType,
+                        "receiver parameter 'self' requires an explicit type here",
+                        parser.current(),
+                        parser.source,
+                    )
+                })?;
+                TypeExpr::Named {
+                    span: receiver.span,
+                    name: receiver.clone(),
+                    args: Vec::new(),
+                }
+            } else {
+                return Err(ParseError::new(
+                    ParseErrorCode::ExpectedType,
+                    "expected parameter type",
+                    parser.current(),
+                    parser.source,
+                ));
+            };
             let is_variadic = parser.eat_name("ELLIPSIS");
             Ok(Param {
                 span: parser.span_from_mark(start),
@@ -87,6 +144,7 @@ impl Parser {
                 name,
                 ty,
                 is_variadic,
+                is_receiver,
             })
         })?;
         Ok(params)
@@ -94,21 +152,30 @@ impl Parser {
 
     pub(super) fn parse_result_type(&mut self) -> Result<ResultType, ParseError> {
         let start = self.mark();
-        if self.eat_name("LPAREN") {
-            let types =
-                self.parse_comma_separated_list("RPAREN", 2, |parser| parser.parse_type())?;
+        let result = if self.eat_name("LPAREN") {
+            let types = self.parse_comma_separated_list("RPAREN", 2, super::Parser::parse_type)?;
             self.expect_name("RPAREN")?;
-            Ok(ResultType::Multi {
+            ResultType::Multi {
                 span: self.span_from_mark(start),
                 types,
-            })
+            }
         } else {
             let ty = self.parse_type()?;
-            Ok(ResultType::Single {
+            ResultType::Single {
                 span: self.span_from_mark(start),
                 ty,
-            })
+            }
+        };
+        if result_type_must_use_result_generic(&result) {
+            let token = self.current().clone();
+            return Err(ParseError::new(
+                ParseErrorCode::InvalidResultReturn,
+                "function result must use `Result<T, E>` syntax",
+                &token,
+                self.source,
+            ));
         }
+        Ok(result)
     }
 
     pub(super) fn parse_type(&mut self) -> Result<TypeExpr, ParseError> {
@@ -143,8 +210,8 @@ impl Parser {
                 });
             }
             let size = match &self.current().kind {
-                TokenKind::IntDec(value) => {
-                    let value = value.clone();
+                TokenKind::IntDec => {
+                    let value = self.current_text().to_string();
                     self.consume();
                     value
                 }
@@ -153,6 +220,7 @@ impl Parser {
                         ParseErrorCode::ExpectedToken,
                         "expected array size",
                         self.current(),
+                        self.source,
                     ));
                 }
             };
@@ -205,10 +273,7 @@ impl Parser {
                 name: name.to_string(),
             });
         }
-        if matches!(
-            self.current().kind,
-            TokenKind::IdentValue(_) | TokenKind::IdentType(_)
-        ) {
+        if matches!(self.current().kind, TokenKind::IdentValue | TokenKind::IdentType) {
             let name = self.parse_type_name()?;
             let args = if self.at_kind_name("LT") {
                 self.parse_generic_args()?
@@ -225,13 +290,14 @@ impl Parser {
             ParseErrorCode::ExpectedType,
             "expected type",
             self.current(),
+            self.source,
         ))
     }
 
     pub(super) fn parse_type_name(&mut self) -> Result<TypeName, ParseError> {
         let start = self.mark();
         let mut path = Vec::new();
-        while matches!(self.current().kind, TokenKind::IdentValue(_))
+        while matches!(self.current().kind, TokenKind::IdentValue)
             && self
                 .tokens
                 .get(self.pos + 1)
@@ -240,7 +306,20 @@ impl Parser {
             path.push(self.expect_ident_value()?);
             self.expect_name("DOT")?;
         }
-        path.push(self.expect_ident_type()?);
+        let last = match &self.current().kind {
+            TokenKind::IdentType => {
+                let name = self.current_text().to_string();
+                self.consume();
+                name
+            }
+            TokenKind::IdentValue if self.current_text() == "void" => {
+                let name = self.current_text().to_string();
+                self.consume();
+                name
+            }
+            _ => self.expect_ident_type()?,
+        };
+        path.push(last);
         Ok(TypeName {
             span: self.span_from_mark(start),
             path,

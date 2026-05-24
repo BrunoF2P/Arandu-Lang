@@ -64,6 +64,7 @@ pub struct FieldPattern {
 }
 
 impl Pattern {
+    #[must_use]
     pub fn span(&self) -> Span {
         match self {
             Pattern::Wildcard { span }

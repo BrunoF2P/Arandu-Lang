@@ -1,6 +1,9 @@
-use super::*;
+use super::{
+    Expr, FieldPattern, MatchArm, MatchArmBody, ParseError, ParseErrorCode, Parser, Pattern,
+    TokenKind, TypeName,
+};
 
-impl Parser {
+impl<'a> Parser<'a> {
     pub(super) fn parse_match_arm(&mut self) -> Result<MatchArm, ParseError> {
         let start = self.mark();
         let pattern = self.parse_pattern()?;
@@ -37,7 +40,7 @@ impl Parser {
 
     pub(super) fn parse_pattern(&mut self) -> Result<Pattern, ParseError> {
         let start = self.mark();
-        if matches!(&self.current().kind, TokenKind::IdentValue(name) if name == "_") {
+        if matches!(&self.current().kind, TokenKind::IdentValue) && self.current_text() == "_" {
             self.consume();
             return Ok(Pattern::Wildcard {
                 span: self.span_from_mark(start),
@@ -60,7 +63,7 @@ impl Parser {
                 items,
             });
         }
-        if matches!(self.current().kind, TokenKind::IdentType(_)) {
+        if matches!(self.current().kind, TokenKind::IdentType) {
             let type_start_span = self.current().span;
             let name = self.expect_ident_type()?;
             if self.eat_name("DOT") {
@@ -131,7 +134,7 @@ impl Parser {
                 payload: Vec::new(),
             });
         }
-        if matches!(self.current().kind, TokenKind::IdentValue(_)) {
+        if matches!(self.current().kind, TokenKind::IdentValue) {
             let name = self.expect_ident_value()?;
             return Ok(Pattern::Bind {
                 span: self.span_from_mark(start),
@@ -177,20 +180,21 @@ impl Parser {
 
     pub(super) fn parse_literal_pattern_expr(&mut self) -> Result<Expr, ParseError> {
         match &self.current().kind {
-            TokenKind::IntDec(_)
-            | TokenKind::IntHex(_)
-            | TokenKind::IntBin(_)
-            | TokenKind::IntOct(_)
-            | TokenKind::Float(_)
+            TokenKind::IntDec
+            | TokenKind::IntHex
+            | TokenKind::IntBin
+            | TokenKind::IntOct
+            | TokenKind::Float
             | TokenKind::BoolTrue
             | TokenKind::BoolFalse
-            | TokenKind::Char(_)
+            | TokenKind::Char
             | TokenKind::StringStart
             | TokenKind::Nil => self.parse_prefix(),
             _ => Err(ParseError::new(
                 ParseErrorCode::ExpectedToken,
                 "expected pattern",
                 self.current(),
+                self.source,
             )),
         }
     }

@@ -1,9 +1,5 @@
-module tests.functionModifiers
+import err
 
-public async func fetch(path str) (str, Err?) {
-    return "ok", nil
-}
-
-func User.greet(user User) str {
-    return "Ola"
+public async func fetch(path str) Result<str, Err> {
+    return Result.Ok("ok")
 }

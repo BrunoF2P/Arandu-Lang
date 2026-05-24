@@ -9,7 +9,15 @@ pub use error::{ParseError, ParseErrorCode};
 
 use arandu_lexer::{Span, Token, TokenKind};
 
-use crate::*;
+use crate::{
+    Attribute, BinaryOp, BindingItem, Block, CatchHandler, Condition, ConstDecl, DeferBody,
+    DocCommentAttachment, EnumDecl, EnumPayload, EnumVariant, Expr, ExternDecl, FieldDecl,
+    FieldInit, FieldPattern, ForBinding, ForClause, FuncDecl, FuncName, FuncSignature,
+    GenericParam, ImportDecl, ImportItem, InterfaceDecl, LambdaBody, LambdaParam, MatchArm,
+    MatchArmBody, ModuleDecl, Ownership, Param, Pattern, Place, PlaceSuffix, Program, ResultType,
+    SetOp, SimpleStmt, Stmt, StringPart, StructDecl, TopLevelDecl, TypeAliasDecl, TypeExpr,
+    TypeName, UnaryOp, Visibility, WhereItem,
+};
 
 #[derive(Debug, Clone)]
 pub struct ParseOutput {
@@ -17,7 +25,12 @@ pub struct ParseOutput {
     pub diagnostics: Vec<ParseError>,
 }
 
-pub fn parse(source: &str) -> Result<Program, ParseError> {
+/// Parses source, stopping at the first parse error.
+///
+/// # Errors
+///
+/// Returns the first [`ParseError`] if the source is invalid.
+pub fn parse<'a>(source: &'a str) -> Result<Program, ParseError> {
     let output = parse_recovering(source);
     if let Some(err) = output.diagnostics.into_iter().next() {
         Err(err)
@@ -26,16 +39,16 @@ pub fn parse(source: &str) -> Result<Program, ParseError> {
     }
 }
 
-pub fn parse_recovering(source: &str) -> ParseOutput {
+pub fn parse_recovering<'a>(source: &'a str) -> ParseOutput {
     let lexed = arandu_lexer::lex_recovering(source);
-    let mut parser = Parser::new(lexed.tokens);
+    let mut parser = Parser::new(lexed.source, lexed.tokens);
     let mut diagnostics: Vec<ParseError> = lexed
         .diagnostics
         .into_iter()
         .map(ParseError::from_lex)
         .collect();
-    
-    // We expect parse_program to finish without returning Err 
+
+    // We expect parse_program to finish without returning Err
     // for recoverable nodes, but if it does return Err (e.g. at EOF), we catch it.
     let program = match parser.parse_program() {
         Ok(prog) => prog,
@@ -43,7 +56,15 @@ pub fn parse_recovering(source: &str) -> ParseOutput {
             parser.diagnostics.push(err);
             // Construct a fallback program
             Program {
-                span: Span { file_id: 0, start: 0, end: 0, start_line: 0, start_col: 0, end_line: 0, end_col: 0 },
+                span: Span {
+                    file_id: 0,
+                    start: 0,
+                    end: 0,
+                    start_line: 0,
+                    start_col: 0,
+                    end_line: 0,
+                    end_col: 0,
+                },
                 module: None,
                 imports: Vec::new(),
                 decls: Vec::new(),
@@ -53,18 +74,24 @@ pub fn parse_recovering(source: &str) -> ParseOutput {
     };
 
     diagnostics.extend(parser.diagnostics);
-    
+
     ParseOutput {
         program,
         diagnostics,
     }
 }
 
+/// Parses source and returns an AST dump string.
+///
+/// # Errors
+///
+/// Returns the first [`ParseError`] if the source is invalid.
 pub fn parse_to_string(source: &str) -> Result<String, ParseError> {
     Ok(parse(source)?.dump())
 }
 
-pub struct Parser {
+pub struct Parser<'a> {
+    source: &'a str,
     tokens: Vec<Token>,
     pos: usize,
     allow_block_calls: bool,
@@ -79,9 +106,11 @@ pub(super) struct PendingDoc {
     text: String,
 }
 
-impl Parser {
-    pub fn new(tokens: Vec<Token>) -> Self {
+impl<'a> Parser<'a> {
+    #[must_use]
+    pub fn new(source: &'a str, tokens: Vec<Token>) -> Self {
         Self {
+            source,
             tokens,
             pos: 0,
             allow_block_calls: true,
@@ -91,6 +120,11 @@ impl Parser {
         }
     }
 
+    /// Parses a full program, collecting recoverable errors in [`Self::diagnostics`].
+    ///
+    /// # Errors
+    ///
+    /// Returns a fatal [`ParseError`] when parsing cannot continue (for example at EOF).
     pub fn parse_program(&mut self) -> Result<Program, ParseError> {
         let start = self.mark();
         self.skip_semicolons();
@@ -132,15 +166,13 @@ impl Parser {
         let start_span = self
             .tokens
             .get(start)
-            .map(|token| token.span)
-            .unwrap_or_else(|| self.current().span);
+            .map_or_else(|| self.current().span, |token| token.span);
         let end_span = if self.pos == start {
             start_span
         } else {
             self.tokens
                 .get(self.pos.saturating_sub(1))
-                .map(|token| token.span)
-                .unwrap_or(start_span)
+                .map_or(start_span, |token| token.span)
         };
         span_between(start_span, end_span)
     }
@@ -152,10 +184,10 @@ impl Parser {
     }
 
     pub(super) fn collect_doc_comments(&mut self) {
-        while let TokenKind::DocComment(text) = &self.current().kind {
+        while matches!(self.current().kind, TokenKind::DocComment) {
             self.pending_docs.push(PendingDoc {
                 span: self.current().span,
-                text: text.clone(),
+                text: self.current_text().to_string(),
             });
             self.consume();
             self.skip_semicolons();
@@ -186,8 +218,8 @@ impl Parser {
 
     pub(super) fn expect_ident_value(&mut self) -> Result<String, ParseError> {
         match &self.current().kind {
-            TokenKind::IdentValue(name) => {
-                let name = name.clone();
+            TokenKind::IdentValue => {
+                let name = self.current_text().to_string();
                 self.consume();
                 Ok(name)
             }
@@ -195,6 +227,7 @@ impl Parser {
                 ParseErrorCode::ExpectedToken,
                 "expected value identifier",
                 self.current(),
+                self.source,
                 &["value identifier"],
             )),
         }
@@ -202,8 +235,8 @@ impl Parser {
 
     pub(super) fn expect_ident_type(&mut self) -> Result<String, ParseError> {
         match &self.current().kind {
-            TokenKind::IdentType(name) => {
-                let name = name.clone();
+            TokenKind::IdentType => {
+                let name = self.current_text().to_string();
                 self.consume();
                 Ok(name)
             }
@@ -211,6 +244,7 @@ impl Parser {
                 ParseErrorCode::ExpectedToken,
                 "expected type identifier",
                 self.current(),
+                self.source,
                 &["type identifier"],
             )),
         }
@@ -218,8 +252,8 @@ impl Parser {
 
     pub(super) fn expect_name_like(&mut self) -> Result<String, ParseError> {
         match &self.current().kind {
-            TokenKind::IdentValue(name) | TokenKind::IdentType(name) => {
-                let name = name.clone();
+            TokenKind::TypeErr | TokenKind::IdentValue | TokenKind::IdentType => {
+                let name = self.current_text().to_string();
                 self.consume();
                 Ok(name)
             }
@@ -227,6 +261,7 @@ impl Parser {
                 ParseErrorCode::ExpectedToken,
                 "expected identifier",
                 self.current(),
+                self.source,
                 &["identifier"],
             )),
         }
@@ -234,13 +269,13 @@ impl Parser {
 
     pub(super) fn expect_module_segment(&mut self) -> Result<String, ParseError> {
         match &self.current().kind {
-            TokenKind::IdentValue(name) => {
-                let name = name.clone();
+            TokenKind::IdentValue => {
+                let name = self.current_text().to_string();
                 self.consume();
                 Ok(name)
             }
             kind if is_contextual_module_segment(kind) => {
-                let text = self.current().lexeme.clone();
+                let text = self.current_text().to_string();
                 self.consume();
                 Ok(text)
             }
@@ -248,6 +283,7 @@ impl Parser {
                 ParseErrorCode::ExpectedToken,
                 "expected module path segment",
                 self.current(),
+                self.source,
                 &["module path segment"],
             )),
         }
@@ -262,6 +298,7 @@ impl Parser {
                 ParseErrorCode::ExpectedToken,
                 format!("expected {name}"),
                 self.current(),
+                self.source,
                 token_expectation_names(name),
             ))
         }
@@ -282,6 +319,14 @@ impl Parser {
 
     pub(super) fn current(&self) -> &Token {
         &self.tokens[self.pos]
+    }
+
+    pub(super) fn token_text(&self, token: &Token) -> &str {
+        token.lexeme(self.source)
+    }
+
+    pub(super) fn current_text(&self) -> &str {
+        self.token_text(self.current())
     }
 
     pub(super) fn previous(&self) -> &Token {
@@ -355,7 +400,7 @@ impl Parser {
 
 pub(super) fn is_type_token(kind: &TokenKind) -> bool {
     primitive_type_name(kind).is_some()
-        || matches!(kind, TokenKind::IdentType(_) | TokenKind::IdentValue(_))
+    || matches!(kind, TokenKind::IdentType | TokenKind::IdentValue)
 }
 
 pub(super) fn primitive_type_name(kind: &TokenKind) -> Option<&'static str> {
@@ -392,12 +437,11 @@ pub(super) fn token_expectation_names(name: &str) -> &'static [&'static str] {
         "EQUAL" => &["="],
         "FAT_ARROW" => &["=>"],
         "GT" => &[">"],
-        "INTERP_END" => &["}"],
+        "INTERP_END" | "RBRACE" => &["}"],
         "LBRACE" => &["{"],
         "LBRACKET" => &["["],
         "LPAREN" => &["("],
         "LT" => &["<"],
-        "RBRACE" => &["}"],
         "RBRACKET" => &["]"],
         "RPAREN" => &[")"],
         "SEMICOLON" => &["statement terminator"],

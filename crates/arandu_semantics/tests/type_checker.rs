@@ -1,3 +1,5 @@
+#![allow(clippy::format_collect)]
+
 use arandu_parser::parse;
 use arandu_semantics::{resolve, type_check};
 use std::{fs, path::PathBuf};
@@ -41,8 +43,7 @@ fn assert_diagnostic_golden(name: &str) {
         .iter()
         .filter(|d| format!("{}", d.code).starts_with('T'))
         .map(|d| format!("{}\n", d.format_for_cli(&rel_filepath)))
-        .collect::<Vec<_>>()
-        .join("");
+        .collect::<String>();
 
     let actual_lines: Vec<&str> = actual
         .lines()
@@ -61,8 +62,7 @@ fn assert_diagnostic_golden(name: &str) {
 
         assert_eq!(
             actual_lines, expected_lines,
-            "Mismatch in golden diagnostic test output.\nActual:\n{}\nExpected:\n{}",
-            actual, expected
+            "Mismatch in golden diagnostic test output.\nActual:\n{actual}\nExpected:\n{expected}"
         );
     }
 }
@@ -120,6 +120,154 @@ fn test_implicit_widening_error() {
         }
         ",
         [T015ImplicitWidening]
+    );
+}
+
+#[test]
+fn test_result_ok() {
+    let root = workspace_root();
+    let source = fs::read_to_string(root.join("tests/type_checker/result_ok.aru")).unwrap();
+    let program = parse(&source).expect("parse");
+    let resolution = resolve(&program);
+    let result = type_check(resolution, &program);
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| !matches!(d.severity, arandu_semantics::Severity::Error)),
+        "expected no errors: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn test_result_err() {
+    let root = workspace_root();
+    let source = fs::read_to_string(root.join("tests/type_checker/result_err.aru")).unwrap();
+    let program = parse(&source).expect("parse");
+    let resolution = resolve(&program);
+    let result = type_check(resolution, &program);
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| !matches!(d.severity, arandu_semantics::Severity::Error)),
+        "expected no errors: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn test_result_propagation() {
+    let root = workspace_root();
+    let source =
+        fs::read_to_string(root.join("tests/type_checker/result_propagation.aru")).unwrap();
+    let program = parse(&source).expect("parse");
+    let resolution = resolve(&program);
+    let result = type_check(resolution, &program);
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| !matches!(d.severity, arandu_semantics::Severity::Error)),
+        "expected no errors: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn test_method_shared() {
+    let root = workspace_root();
+    let source = fs::read_to_string(root.join("tests/type_checker/method_shared.aru")).unwrap();
+    let program = parse(&source).expect("parse");
+    let resolution = resolve(&program);
+    let result = type_check(resolution, &program);
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| !matches!(d.severity, arandu_semantics::Severity::Error)),
+        "expected no errors: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn test_method_mut() {
+    let root = workspace_root();
+    let source = fs::read_to_string(root.join("tests/type_checker/method_mut.aru")).unwrap();
+    let program = parse(&source).expect("parse");
+    let resolution = resolve(&program);
+    let result = type_check(resolution, &program);
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| !matches!(d.severity, arandu_semantics::Severity::Error)),
+        "expected no errors: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn test_method_own() {
+    let root = workspace_root();
+    let source = fs::read_to_string(root.join("tests/type_checker/method_own.aru")).unwrap();
+    let program = parse(&source).expect("parse");
+    let resolution = resolve(&program);
+    let result = type_check(resolution, &program);
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| !matches!(d.severity, arandu_semantics::Severity::Error)),
+        "expected no errors: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn test_option_some() {
+    let root = workspace_root();
+    let source = fs::read_to_string(root.join("tests/type_checker/option_some.aru")).unwrap();
+    let program = parse(&source).expect("parse");
+    let resolution = resolve(&program);
+    let result = type_check(resolution, &program);
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| !matches!(d.severity, arandu_semantics::Severity::Error)),
+        "expected no errors: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn test_result_not_handled() {
+    assert_type_errors!(
+        "
+        func openConfig() Result<str, Err> {
+            return Result.Ok(\"x\")
+        }
+        func main() {
+            config = openConfig()
+        }
+        ",
+        [T019ResultNotHandled]
+    );
+}
+
+#[test]
+fn test_result_try_invalid() {
+    assert_type_errors!(
+        "
+        func main() {
+            x int = 10
+            y = x?
+        }
+        ",
+        [T016TryInvalid]
     );
 }
 
@@ -401,7 +549,7 @@ fn test_match_pattern_typecheck() {
             }
         }
         ",
-        [T002IncompatibleAssignment]
+        [T024NonExhaustiveMatch, T002IncompatibleAssignment]
     );
 }
 
@@ -510,7 +658,7 @@ fn test_official_ok_suite() {
             .diagnostics
             .iter()
             .filter(|d| d.severity == arandu_semantics::Severity::Error)
-            .map(|d| format!("{}", d))
+            .map(|d| format!("{d}"))
             .collect();
         assert!(
             errors.is_empty(),
@@ -549,15 +697,13 @@ fn test_official_invalid_suite() {
     for name in &aru_files {
         assert!(
             diag_files.contains(name),
-            "Orphan file: tests/type_checker/invalid/{}.aru has no corresponding .diag file",
-            name
+            "Orphan file: tests/type_checker/invalid/{name}.aru has no corresponding .diag file"
         );
     }
     for name in &diag_files {
         assert!(
             aru_files.contains(name),
-            "Orphan file: tests/type_checker/invalid/{}.diag has no corresponding .aru file",
-            name
+            "Orphan file: tests/type_checker/invalid/{name}.diag has no corresponding .aru file"
         );
     }
 
@@ -565,8 +711,8 @@ fn test_official_invalid_suite() {
     sorted_names.sort();
 
     for name in sorted_names {
-        let path = invalid_dir.join(format!("{}.aru", name));
-        let diag_path = invalid_dir.join(format!("{}.diag", name));
+        let path = invalid_dir.join(format!("{name}.aru"));
+        let diag_path = invalid_dir.join(format!("{name}.diag"));
         let source = fs::read_to_string(&path).unwrap();
 
         // Standardize relative filepath format with forward slashes:
@@ -619,4 +765,239 @@ fn test_official_invalid_suite() {
             );
         }
     }
+}
+
+#[test]
+fn test_break_continue_outside_loop() {
+    assert_type_errors!(
+        "
+        func main() {
+            break
+            continue
+        }
+        ",
+        [T022BreakContinueOutsideLoop, T022BreakContinueOutsideLoop]
+    );
+}
+
+#[test]
+fn test_free_requires_ptr() {
+    assert_type_errors!(
+        "
+        func main() {
+            x int = 10
+            free x
+        }
+        ",
+        [T023FreeRequiresPtr]
+    );
+}
+
+#[test]
+fn test_null_coalesce_type_mismatch() {
+    assert_type_errors!(
+        "
+        func main() {
+            a int? = nil
+            b = a ?? \"text\"
+        }
+        ",
+        [T002IncompatibleAssignment]
+    );
+}
+
+#[test]
+fn test_array_literal_element_mismatch() {
+    assert_type_errors!(
+        "
+        func main() {
+            xs = [1, 2.5, 3]
+        }
+        ",
+        [T002IncompatibleAssignment]
+    );
+}
+
+#[test]
+fn test_array_literal_element_mismatch_string() {
+    assert_type_errors!(
+        "
+        func main() {
+            xs = [1, \"dois\", 3]
+        }
+        ",
+        [T002IncompatibleAssignment]
+    );
+}
+
+#[test]
+fn test_catch_result_ok_type() {
+    let source = r#"
+        func ok() Result<int, Err> {
+            return Result.Ok(1)
+        }
+        func main() {
+            x = ok() catch 0
+        }
+    "#;
+    let program = parse(source).expect("Failed to parse");
+    let resolution = resolve(&program);
+    let result = type_check(resolution, &program);
+    let t_errors: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| format!("{}", d.code).starts_with('T'))
+        .collect();
+    assert!(
+        t_errors.is_empty(),
+        "expected no type errors for valid catch, got: {:?}",
+        t_errors
+    );
+}
+
+#[test]
+fn test_catch_requires_result() {
+    assert_type_errors!(
+        "
+        func main() {
+            x int = 1
+            y = x catch 0
+        }
+        ",
+        [T005OperatorNotApplicable]
+    );
+}
+
+#[test]
+fn test_non_exhaustive_enum_match() {
+    assert_type_errors!(
+        "
+        enum Color { Red, Green, Blue }
+        func pick(c Color) int {
+            return match c {
+                Color.Red => 1
+                Color.Green => 2
+            }
+        }
+        ",
+        [T024NonExhaustiveMatch]
+    );
+}
+
+#[test]
+fn test_generic_identity_call() {
+    assert_type_errors!(
+        "
+        func identity<T>(value T) T {
+            return value
+        }
+        func main() {
+            x int = identity<int>(42)
+        }
+        ",
+        []
+    );
+}
+
+#[test]
+fn test_generic_box_struct_literal() {
+    assert_type_errors!(
+        "
+        struct Box<T> {
+            value T
+        }
+        func main() {
+            b Box<int> = Box<int> { value: 42 }
+        }
+        ",
+        []
+    );
+}
+
+#[test]
+fn test_result_ok_generic() {
+    assert_type_errors!(
+        "
+        func ok() Result<int, Err> {
+            return Result.Ok<int>(1)
+        }
+        func main() {
+            x = ok()
+        }
+        ",
+        [T019ResultNotHandled]
+    );
+}
+
+#[test]
+fn test_generic_where_interface_ok() {
+    assert_type_errors!(
+        "
+        interface Show {
+            func show() void
+        }
+        struct Counter {
+            n int
+        }
+        func Counter.show(shared self) void {
+        }
+        func emit<T: Show>(value T) void {
+        }
+        func main() {
+            emit<Counter>(Counter { n: 1 })
+        }
+        ",
+        []
+    );
+}
+
+#[test]
+fn test_generic_where_constraint_violation() {
+    assert_type_errors!(
+        "
+        interface Show {
+            func show() void
+        }
+        struct Silent {
+            n int
+        }
+        func emit<T: Show>(value T) void {
+        }
+        func main() {
+            emit<Silent>(Silent { n: 0 })
+        }
+        ",
+        [T025InterfaceNotSatisfied]
+    );
+}
+
+#[test]
+fn test_struct_generic_param_constraint() {
+    assert_type_errors!(
+        "
+        interface Show {
+            func show() void
+        }
+        struct Box<T: Show> {
+            value T
+        }
+        struct Silent {
+            n int
+        }
+        func main() {
+            b Box<Silent> = Box<Silent> { value: Silent { n: 0 } }
+        }
+        ",
+        [T025InterfaceNotSatisfied]
+    );
+}
+
+#[test]
+fn golden_interface_not_satisfied() {
+    assert_diagnostic_golden("interface_not_satisfied");
+}
+
+#[test]
+fn golden_where_invalid_type_param() {
+    assert_diagnostic_golden("where_invalid_type_param");
 }

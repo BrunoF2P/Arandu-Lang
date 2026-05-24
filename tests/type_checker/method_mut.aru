@@ -1,0 +1,12 @@
+struct Counter {
+    value int
+}
+
+func Counter.bump(mut self) {
+    set self.value = self.value + 1
+}
+
+func main() {
+    c Counter = Counter { value: 0 }
+    c.bump()
+}

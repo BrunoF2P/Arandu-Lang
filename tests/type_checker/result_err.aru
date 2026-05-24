@@ -1,0 +1,5 @@
+import err
+
+func fail() Result<int, Err> {
+    return err.new("boom")
+}

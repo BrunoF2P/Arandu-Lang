@@ -12,12 +12,17 @@ pub struct ParseError {
 }
 
 impl ParseError {
-    pub(super) fn new(code: ParseErrorCode, message: impl Into<String>, token: &Token) -> Self {
+    pub(super) fn new(
+        code: ParseErrorCode,
+        message: impl Into<String>,
+        token: &Token,
+        source: &str,
+    ) -> Self {
         Self {
             code,
             message: message.into().into_boxed_str(),
             span: token.span,
-            found: token.kind.to_string().into_boxed_str(),
+            found: token.kind.display_with(token, source).into_boxed_str(),
             expected: &[],
         }
     }
@@ -26,13 +31,14 @@ impl ParseError {
         code: ParseErrorCode,
         message: impl Into<String>,
         token: &Token,
+        source: &str,
         expected: &'static [&'static str],
     ) -> Self {
         Self {
             code,
             message: message.into().into_boxed_str(),
             span: token.span,
-            found: token.kind.to_string().into_boxed_str(),
+            found: token.kind.display_with(token, source).into_boxed_str(),
             expected,
         }
     }
@@ -40,12 +46,13 @@ impl ParseError {
     pub(super) fn from_lex(err: arandu_lexer::LexError) -> Self {
         Self {
             code: ParseErrorCode::Lex,
-            message: err.message.into_boxed_str(),
+            message: Box::from(err.message),
             span: err.span,
             found: format!("{:?}", err.code).into_boxed_str(),
             expected: &[],
         }
     }
+    #[must_use]
     pub fn format_for_cli(&self, filepath: &str) -> String {
         let diag = arandu_diagnostics::Diagnostic::from(self.clone());
         diag.format_for_cli(filepath)
@@ -61,6 +68,7 @@ impl From<ParseError> for arandu_diagnostics::Diagnostic {
             ParseErrorCode::ExpectedExpression => "P003",
             ParseErrorCode::ExpectedType => "P004",
             ParseErrorCode::ExpectedPlace => "P005",
+            ParseErrorCode::InvalidResultReturn => "P006",
         };
         let msg = if err.expected.is_empty() {
             format!("{} (found {})", err.message, err.found)
@@ -92,4 +100,6 @@ pub enum ParseErrorCode {
     ExpectedExpression,
     ExpectedType,
     ExpectedPlace,
+    /// Tuple error-return syntax; use `Result<T, E>` instead.
+    InvalidResultReturn,
 }

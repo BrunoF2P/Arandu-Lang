@@ -1,0 +1,26 @@
+Func pick(c: Color) -> int
+  locals:
+    _0: int // return
+    _1: Color
+    _2: Color
+    _3: int
+    s0: Color // c
+
+  bb0:
+    s0 = _1
+    _2 = s0
+    _3 = discriminant(_2)
+    switchInt _3 { 0 => bb2, 1 => bb3, 2 => bb4, otherwise => bb5 }
+  bb1:
+    return
+  bb2:
+    _0 = 1
+    goto bb1
+  bb3:
+    _0 = 2
+    goto bb1
+  bb4:
+    _0 = 3
+    goto bb1
+  bb5:
+    unreachable

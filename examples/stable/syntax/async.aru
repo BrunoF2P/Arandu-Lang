@@ -3,12 +3,12 @@ module examples.stable.syntax.async
 import err
 import io
 
-async func fetchText(path str) (str, Err?) {
+async func fetchText(path str) Result<str, Err> {
     if path == "" {
-        return "", err.new("emptyPath")
+        return Result.Err(err.new("emptyPath"))
     }
 
-    return "contents", nil
+    return Result.Ok("contents")
 }
 
 async func main() {

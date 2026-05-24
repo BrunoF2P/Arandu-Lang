@@ -72,7 +72,7 @@ Normal comments:
 
 - `// text\n` is skipped.
 - `/* text */` is skipped.
-- Block comments do not nest in v0.1.
+- Block comments nest (e.g. `/* outer /* inner */ */`).
 
 Doc comments:
 
@@ -739,8 +739,8 @@ KW_RETURN IDENT_VALUE(value) SEMICOLON(inserted) EOF
 
 ## Known v0.1 Decisions
 
-- No nested block comments.
-- No Unicode identifiers; identifiers are ASCII in v0.1.
+- Nested block comments are supported.
+- Unicode identifiers are fully supported.
 - No keyword escaping syntax such as `` `type` ``.
 - No numeric suffixes such as `42u32`; type selection is handled by context or annotations.
 - No single-token interpolated string. Interpolation produces nested expression tokens between `INTERP_START` and `INTERP_END`.

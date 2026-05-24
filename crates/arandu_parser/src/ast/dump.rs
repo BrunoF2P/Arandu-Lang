@@ -1,6 +1,14 @@
+use std::fmt::Write;
+
 use arandu_lexer::Span;
 
-use super::*;
+use super::{
+    Attribute, BinaryOp, BindingItem, Block, CatchHandler, Condition, ConstDecl, DeferBody,
+    EnumDecl, EnumPayload, Expr, ExternDecl, ForClause, FuncDecl, FuncName, FuncSignature,
+    GenericParam, ImportDecl, InterfaceDecl, LambdaBody, MatchArm, MatchArmBody, Ownership, Param,
+    Pattern, Place, PlaceSuffix, Program, ResultType, SetOp, SimpleStmt, Stmt, StringPart,
+    StructDecl, TopLevelDecl, TypeAliasDecl, TypeExpr, TypeName, UnaryOp, Visibility, WhereItem,
+};
 
 pub fn dump_program(program: &Program) -> String {
     let mut out = Vec::new();
@@ -80,8 +88,7 @@ fn dump_func(func: &FuncDecl, out: &mut Vec<String>) {
     let result = func
         .result
         .as_ref()
-        .map(dump_result_type)
-        .unwrap_or_else(|| "void".to_string());
+        .map_or_else(|| "void".to_string(), dump_result_type);
     let mut modifiers = Vec::new();
     if func.visibility == Visibility::Public {
         modifiers.push("public");
@@ -202,8 +209,7 @@ fn dump_signature(signature: &FuncSignature, out: &mut Vec<String>, indent: usiz
     let result = signature
         .result
         .as_ref()
-        .map(dump_result_type)
-        .unwrap_or_else(|| "void".to_string());
+        .map_or_else(|| "void".to_string(), dump_result_type);
     out.push(format!(
         "{pad}Signature {} {}{}({}) -> {}{}",
         dump_span(signature.span),
@@ -406,15 +412,12 @@ fn dump_for_clause(clause: &ForClause) -> String {
             " C {} init {}; condition {}; step {}",
             dump_span(*span),
             init.as_ref()
-                .map(|stmt| dump_simple_stmt(stmt))
-                .unwrap_or_else(|| "none".to_string()),
+                .map_or_else(|| "none".to_string(), |stmt| dump_simple_stmt(stmt)),
             condition
                 .as_ref()
-                .map(|expr| dump_expr(expr))
-                .unwrap_or_else(|| "none".to_string()),
+                .map_or_else(|| "none".to_string(), |expr| dump_expr(expr)),
             step.as_ref()
-                .map(|stmt| dump_simple_stmt(stmt))
-                .unwrap_or_else(|| "none".to_string())
+                .map_or_else(|| "none".to_string(), |stmt| dump_simple_stmt(stmt))
         ),
     }
 }
@@ -538,6 +541,7 @@ fn dump_param(param: &Param) -> String {
         out.push_str(match ownership {
             Ownership::Own => "own ",
             Ownership::Mut => "mut ",
+            Ownership::Shared => "shared ",
         });
     }
     out.push_str(&param.name);
@@ -575,7 +579,7 @@ fn dump_type(ty: &TypeExpr) -> String {
             let mut out = format!("Type {} {}", dump_span(*span), dump_type_name(name));
             if !args.is_empty() {
                 let args = args.iter().map(dump_type).collect::<Vec<_>>().join(", ");
-                out.push_str(&format!("<{args}>"));
+                let _ = write!(out, "<{args}>");
             }
             out
         }
@@ -673,7 +677,7 @@ fn dump_expr(expr: &Expr) -> String {
             callee,
             args,
             trailing_block,
-        } => dump_call(*span, callee, args, trailing_block),
+        } => dump_call(*span, callee, args, trailing_block.as_ref()),
         Expr::StructLiteral { span, ty, fields } => {
             let fields = fields
                 .iter()
@@ -796,7 +800,7 @@ fn dump_expr(expr: &Expr) -> String {
     }
 }
 
-fn dump_call(span: Span, callee: &Expr, args: &[Expr], trailing_block: &Option<Block>) -> String {
+fn dump_call(span: Span, callee: &Expr, args: &[Expr], trailing_block: Option<&Block>) -> String {
     let args = args.iter().map(dump_expr).collect::<Vec<_>>().join(", ");
     match trailing_block {
         Some(block) => format!(

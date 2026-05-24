@@ -1,0 +1,12 @@
+struct User {
+    name str
+}
+
+func User.greet(shared self) str {
+    return self.name
+}
+
+func main() {
+    user User = User { name: "Ada" }
+    _ = user.greet()
+}

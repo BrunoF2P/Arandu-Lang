@@ -1,0 +1,41 @@
+Func test_enum(state: LoadState) -> int
+  locals:
+    _0: int // return
+    _1: LoadState
+    _2: LoadState
+    _3: int
+    _4: bool
+    _5: LoadState
+    _6: int
+    _7: bool
+    _8: int
+    s0: LoadState // state
+    s1: int // res
+
+  bb0:
+    s0 = _1
+    s1 = 0
+    _2 = s0
+    _3 = discriminant(_2)
+    _4 = eq _3, 0
+    switchInt _4 { 1 => bb1, otherwise => bb2 }
+  bb1:
+    s1 = 1
+    goto bb3
+  bb2:
+    _5 = s0
+    _6 = discriminant(_5)
+    _7 = eq _6, 1
+    switchInt _7 { 1 => bb4, otherwise => bb5 }
+  bb3:
+    _8 = s1
+    _0 = _8
+    return
+  bb4:
+    s1 = 2
+    goto bb6
+  bb5:
+    s1 = 3
+    goto bb6
+  bb6:
+    goto bb3

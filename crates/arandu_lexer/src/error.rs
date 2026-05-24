@@ -2,18 +2,18 @@ use std::fmt;
 
 use crate::Span;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LexError {
     pub code: LexErrorCode,
-    pub message: String,
+    pub message: &'static str,
     pub span: Span,
 }
 
 impl LexError {
-    pub fn new(code: LexErrorCode, message: impl Into<String>, span: Span) -> Self {
+    pub fn new(code: LexErrorCode, message: &'static str, span: Span) -> Self {
         Self {
             code,
-            message: message.into(),
+            message,
             span,
         }
     }

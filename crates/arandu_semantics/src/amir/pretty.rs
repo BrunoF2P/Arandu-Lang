@@ -1,169 +1,16 @@
-use crate::literal_pool::{AmirLiteralEntry, AmirLiteralPool, LiteralId};
+use super::local::TempId;
+use super::program::{AmirFunc, AmirProgram};
+use super::stmt::{AmirStmt, AmirTerminator};
+use super::value::{
+    AmirConstant, AmirOperand, AmirPlace, AmirProjection, AmirRvalue,
+};
+use crate::hir::ReceiverKind;
+use crate::literal_pool::{AmirLiteralEntry, AmirLiteralPool};
 use crate::ops::{BinaryOp, UnaryOp};
-use crate::passes::type_checker::types::ArType;
-use crate::{SymbolId, SymbolTable};
-use smallvec::SmallVec;
-
-#[derive(Debug)]
-pub struct AmirProgram {
-    pub funcs: Vec<AmirFunc>,
-    pub literal_pool: AmirLiteralPool,
-}
-
-#[derive(Debug)]
-pub struct AmirFunc {
-    pub symbol: SymbolId,
-    pub return_type: ArType,
-    pub params: Vec<LocalId>,
-    pub locals: Vec<AmirLocal>,
-    pub blocks: Vec<AmirBasicBlock>,
-}
-
-#[derive(Debug)]
-pub struct AmirLocal {
-    pub id: LocalId,
-    pub ty: ArType,
-    pub symbol: Option<SymbolId>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct LocalId(pub u32);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct BlockId(pub u32);
-
-impl LocalId {
-    #[must_use]
-    pub const fn as_usize(self) -> usize {
-        self.0 as usize
-    }
-
-    #[must_use]
-    pub const fn from_usize(v: usize) -> Self {
-        Self(v as u32)
-    }
-}
-
-impl BlockId {
-    #[must_use]
-    pub const fn as_usize(self) -> usize {
-        self.0 as usize
-    }
-
-    #[must_use]
-    pub const fn from_usize(v: usize) -> Self {
-        Self(v as u32)
-    }
-}
-
-#[derive(Debug)]
-pub struct AmirPlace {
-    pub local: LocalId,
-    pub projections: SmallVec<[AmirProjection; 2]>,
-}
-
-#[derive(Debug)]
-#[non_exhaustive]
-pub enum AmirProjection {
-    Field(String),
-    Index(AmirOperand),
-}
-
-#[derive(Debug)]
-pub struct AmirBasicBlock {
-    pub id: BlockId,
-    pub statements: Vec<AmirStmt>,
-    pub terminator: AmirTerminator,
-    pub successors: Vec<BlockId>,
-    pub predecessors: Vec<BlockId>,
-}
-
-#[derive(Debug)]
-#[non_exhaustive]
-pub enum AmirStmt {
-    Assign {
-        lhs: AmirPlace,
-        rhs: AmirRvalue,
-    },
-    Call {
-        lhs: Option<LocalId>,
-        callee: AmirOperand,
-        args: SmallVec<[AmirOperand; 4]>,
-    },
-}
-
-#[derive(Debug)]
-#[non_exhaustive]
-pub enum AmirRvalue {
-    Use(AmirOperand),
-    Binary {
-        op: BinaryOp,
-        left: AmirOperand,
-        right: AmirOperand,
-    },
-    Unary {
-        op: UnaryOp,
-        operand: AmirOperand,
-    },
-    FieldAccess {
-        base: AmirOperand,
-        field: String,
-    },
-    StructLiteral {
-        struct_symbol: SymbolId,
-        fields: Vec<(String, AmirOperand)>,
-    },
-    IndexAccess {
-        base: AmirOperand,
-        index: AmirOperand,
-    },
-    Array {
-        items: Vec<AmirOperand>,
-    },
-    Tuple {
-        items: Vec<AmirOperand>,
-    },
-}
-
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub enum AmirOperand {
-    Copy(LocalId),
-    Move(LocalId),
-    Constant(AmirConstant),
-    FunctionRef(SymbolId),
-    GlobalRef(SymbolId),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum AmirConstant {
-    Pool(LiteralId),
-    Bool(bool),
-    Nil,
-}
-
-#[derive(Debug)]
-#[non_exhaustive]
-pub enum AmirTerminator {
-    Return,
-    Goto(BlockId),
-    /// Boolean conditional branch: if `condition` is true, jump to `if_true`, else `if_false`.
-    Branch {
-        condition: AmirOperand,
-        if_true: BlockId,
-        if_false: BlockId,
-    },
-    /// Integer discriminant switch (e.g. enum tags, `switch` on int).
-    SwitchInt {
-        discriminant: AmirOperand,
-        targets: Vec<(i128, BlockId)>,
-        otherwise: BlockId,
-    },
-    Unreachable,
-}
+use crate::SymbolTable;
 
 impl AmirProgram {
+    #[must_use]
     pub fn pretty_print(&self, symbols: &SymbolTable) -> String {
         let mut out = String::new();
         for (i, func) in self.funcs.iter().enumerate() {
@@ -176,18 +23,36 @@ impl AmirProgram {
     }
 }
 
+fn receiver_kind_prefix(kind: ReceiverKind) -> &'static str {
+    match kind {
+        ReceiverKind::Shared => "shared ",
+        ReceiverKind::Mut => "mut ",
+        ReceiverKind::Own => "own ",
+    }
+}
+
 impl AmirFunc {
     fn pretty_print_to(&self, out: &mut String, symbols: &SymbolTable, pool: &AmirLiteralPool) {
         let param_strs: Vec<String> = self
             .params
             .iter()
-            .map(|p| {
-                let local = &self.locals[p.as_usize()];
-                let name_str = local
-                    .symbol
-                    .map(|s| symbols.get(s).name.as_str())
-                    .unwrap_or("param");
-                format!("{}: {}", name_str, local.ty.display(symbols))
+            .enumerate()
+            .map(|(i, p)| {
+                let ty = self.temps
+                    .iter()
+                    .find(|t| t.id == *p)
+                    .map_or(crate::passes::type_checker::types::ArType::Void, |t| t.ty.clone());
+                let prefix = self
+                    .receiver
+                    .as_ref()
+                    .filter(|recv| recv.temp == *p)
+                    .map_or("", |recv| receiver_kind_prefix(recv.kind));
+                // Corresponding local is at index i
+                let name_str = self.locals
+                    .get(i)
+                    .and_then(|l| l.symbol)
+                    .map_or("param", |s| symbols.get(s).name.as_str());
+                format!("{prefix}{name_str}: {}", ty.display(symbols))
             })
             .collect();
         out.push_str(&format!(
@@ -198,16 +63,29 @@ impl AmirFunc {
         ));
 
         out.push_str("  locals:\n");
-        for local in &self.locals {
-            let comment = if local.id == LocalId(0) {
+        // Print SSA temporary registers
+        for temp in &self.temps {
+            let comment = if temp.id == TempId(0) {
                 " // return".to_string()
-            } else if let Some(sym) = local.symbol {
-                format!(" // {}", symbols.get(sym).name)
             } else {
                 String::new()
             };
             out.push_str(&format!(
                 "    _{}: {}{}\n",
+                temp.id.0,
+                temp.ty.display(symbols),
+                comment
+            ));
+        }
+        // Print stack local variables
+        for local in &self.locals {
+            let comment = if let Some(sym) = local.symbol {
+                format!(" // {}", symbols.get(sym).name)
+            } else {
+                String::new()
+            };
+            out.push_str(&format!(
+                "    s{}: {}{}\n",
                 local.id.0,
                 local.ty.display(symbols),
                 comment
@@ -233,11 +111,11 @@ impl AmirFunc {
 
 impl AmirPlace {
     pub fn pretty_print_to(&self, out: &mut String, symbols: &SymbolTable, pool: &AmirLiteralPool) {
-        out.push_str(&format!("_{}", self.local.0));
+        out.push_str(&format!("s{}", self.local.0));
         for proj in &self.projections {
             match proj {
                 AmirProjection::Field(name) => {
-                    out.push_str(&format!(".{}", name));
+                    out.push_str(&format!(".{name}"));
                 }
                 AmirProjection::Index(op) => {
                     out.push_str(&format!("[{}]", op.to_pretty_string(symbols, pool)));
@@ -251,6 +129,10 @@ impl AmirStmt {
     fn pretty_print_to(&self, out: &mut String, symbols: &SymbolTable, pool: &AmirLiteralPool) {
         match self {
             AmirStmt::Assign { lhs, rhs } => {
+                out.push_str(&format!("_{} = ", lhs.0));
+                rhs.pretty_print_to(out, symbols, pool);
+            }
+            AmirStmt::Store { lhs, rhs } => {
                 lhs.pretty_print_to(out, symbols, pool);
                 out.push_str(" = ");
                 rhs.pretty_print_to(out, symbols, pool);
@@ -268,6 +150,19 @@ impl AmirStmt {
                     .collect();
                 out.push_str(&arg_strs.join(", "));
                 out.push(')');
+            }
+            AmirStmt::Free(op) => {
+                out.push_str(&format!("free {}", op.to_pretty_string(symbols, pool)));
+            }
+            AmirStmt::StorageLive(local) => {
+                out.push_str(&format!("StorageLive(v{})", local.0));
+            }
+            AmirStmt::StorageDead(local) => {
+                out.push_str(&format!("StorageDead(v{})", local.0));
+            }
+            AmirStmt::Destroy(place) => {
+                out.push_str("destroy ");
+                place.pretty_print_to(out, symbols, pool);
             }
         }
     }
@@ -306,7 +201,7 @@ impl AmirRvalue {
                 fields,
             } => {
                 let struct_name = &symbols.get(*struct_symbol).name;
-                out.push_str(&format!("{} {{ ", struct_name));
+                out.push_str(&format!("{struct_name} {{ "));
                 let field_strs: Vec<String> = fields
                     .iter()
                     .map(|(name, op)| format!("{}: {}", name, op.to_pretty_string(symbols, pool)))
@@ -335,6 +230,42 @@ impl AmirRvalue {
                     .collect();
                 out.push_str(&format!("({})", item_strs.join(", ")));
             }
+            AmirRvalue::Discriminant { value } => {
+                out.push_str(&format!(
+                    "discriminant({})",
+                    value.to_pretty_string(symbols, pool)
+                ));
+            }
+            AmirRvalue::EnumPayload {
+                value,
+                variant,
+                index,
+            } => {
+                let variant_name = symbols.get(*variant).name.as_str();
+                out.push_str(&format!(
+                    "payload({} as {}.{})",
+                    value.to_pretty_string(symbols, pool),
+                    variant_name,
+                    index
+                ));
+            }
+            AmirRvalue::Len(value) => {
+                out.push_str(&format!("len({})", value.to_pretty_string(symbols, pool)));
+            }
+            AmirRvalue::Alloc(value) => {
+                out.push_str(&format!("alloc({})", value.to_pretty_string(symbols, pool)));
+            }
+            AmirRvalue::Load(place) => {
+                place.pretty_print_to(out, symbols, pool);
+            }
+            AmirRvalue::Borrow(place) => {
+                out.push_str("&");
+                place.pretty_print_to(out, symbols, pool);
+            }
+            AmirRvalue::BorrowMut(place) => {
+                out.push_str("&mut ");
+                place.pretty_print_to(out, symbols, pool);
+            }
         }
     }
 }
@@ -348,11 +279,11 @@ impl AmirOperand {
 
     fn pretty_print_to(&self, out: &mut String, symbols: &SymbolTable, pool: &AmirLiteralPool) {
         match self {
-            AmirOperand::Copy(l) => {
-                out.push_str(&format!("_{}", l.0));
+            AmirOperand::Copy(t) => {
+                out.push_str(&format!("_{}", t.0));
             }
-            AmirOperand::Move(l) => {
-                out.push_str(&format!("move _{}", l.0));
+            AmirOperand::Move(t) => {
+                out.push_str(&format!("move _{}", t.0));
             }
             AmirOperand::Constant(c) => {
                 c.pretty_print_to(out, pool);

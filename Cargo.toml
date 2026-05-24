@@ -7,3 +7,10 @@ members = [
     "crates/arandu_cli",
 ]
 resolver = "3"
+
+[workspace.lints]
+# Intentionally empty: use default toolchain lint levels.
+
+[workspace.lints.clippy]
+# No clippy overrides.
+

@@ -16,15 +16,18 @@ Implemented:
 - Semantics crate with v0.2 name resolution, hierarchical symbol tables, namespace imports, prelude members, doc comment mapping, diagnostics, and CLI `check`.
 - Type checker (experimental) with primitive types, assignments, returns, fields, indexing, and basic diagnostics.
 - AHIR lowering and pretty-printing with golden tests (`tests/hir/`).
-- AMIR lowering v0.1 (experimental) with CFG, locals, basic expressions, and golden tests (`tests/amir/`).
+- AMIR lowering v0.1 (experimental) with CFG, locals, match, defer/errdefer, `?`/safe ops, for-in, alloc/free, and golden tests (`tests/amir/`).
 
 Not implemented yet:
 
-- Complete type checker (generics instantiation, full constraint solving)
-- Full stdlib/module loading
-- AMIR match/defer/try/catch/safe-access lowering (explicitly unsupported in v0.1)
-- Memory checker / ownership model
+- `Result<T,E>` / `Option<T>` as first-class types (today: tuple-error heuristics)
+- `self` receiver on methods
+- Complete type checker (generics instantiation, interface satisfaction)
+- Definite init, OSSA, move checker
+- Memory checker / generational fallback
 - Backend
+
+**Compiler roadmap (single source of truth):** [docs/arandu-compiler-roadmap-v0.1.md](docs/arandu-compiler-roadmap-v0.1.md)
 
 ## Style Guide
 
@@ -131,7 +134,4 @@ tests/amir/       AMIR golden fixtures (.aru → .amir)
 
 ## Next Steps
 
-1. Stabilize AMIR lowering semantics (match, defer, try/catch CFG desugaring).
-2. Add AMIR invariant validation.
-3. Begin ownership/move model design.
-4. Backend planning.
+See [docs/arandu-compiler-roadmap-v0.1.md](docs/arandu-compiler-roadmap-v0.1.md) — start with **v0.1-B** (`Result<T,E>` in the type checker), then **C** (`self`), **D** (AMIR on `Result`), then ownership passes.

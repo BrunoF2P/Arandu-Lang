@@ -1,0 +1,23 @@
+func test_alloc_free() {
+    buffer = alloc 64
+    free buffer
+}
+
+func test_defer() int {
+    x = 0
+    defer {
+        set x = 1
+    }
+    return x
+}
+
+func test_defer_scope() int {
+    x = 0
+    if true {
+        defer {
+            set x = x + 10
+        }
+        set x = 5
+    }
+    return x
+}

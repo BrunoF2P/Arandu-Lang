@@ -1,0 +1,50 @@
+Func test_alloc_free() -> void
+  locals:
+    _0: void // return
+    _1: ptr[int]
+    _2: ptr[int]
+    s0: ptr[int] // buffer
+
+  bb0:
+    _1 = alloc(64)
+    s0 = _1
+    _2 = s0
+    free _2
+    return
+
+Func test_defer() -> int
+  locals:
+    _0: int // return
+    _1: int
+    s0: int // x
+
+  bb0:
+    s0 = 0
+    s0 = 1
+    _1 = s0
+    _0 = _1
+    return
+
+Func test_defer_scope() -> int
+  locals:
+    _0: int // return
+    _1: int
+    _2: int
+    _3: int
+    s0: int // x
+
+  bb0:
+    s0 = 0
+    switchInt true { 1 => bb1, otherwise => bb2 }
+  bb1:
+    s0 = 5
+    _1 = s0
+    _2 = add _1, 10
+    s0 = _2
+    goto bb3
+  bb2:
+    goto bb3
+  bb3:
+    _3 = s0
+    _0 = _3
+    return

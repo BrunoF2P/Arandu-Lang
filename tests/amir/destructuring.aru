@@ -5,9 +5,6 @@ func foo() (int, bool) {
 }
 
 func main() {
-    x, y = foo()
-    
-    set x, y = foo()
-    
-    io.println(x)
+    pair = foo()
+    io.println("done")
 }

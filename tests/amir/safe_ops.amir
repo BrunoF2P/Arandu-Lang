@@ -1,0 +1,130 @@
+Func load() -> Result<int, Err>
+  locals:
+    _0: Result<int, Err> // return
+
+  bb0:
+    _0 = (0, nil)
+    return
+
+Func test_try() -> int
+  locals:
+    _0: int // return
+    _1: Result<int, Err>
+    _2: Err
+    _3: bool
+    _4: int
+    _5: int
+    s0: int // x
+
+  bb0:
+    _1 = call fn@load()
+    _2 = _1._1
+    _3 = ne _2, nil
+    branch _3 => bb1, else bb2
+  bb1:
+    _0 = _2
+    return
+  bb2:
+    _4 = _1._0
+    s0 = _4
+    _5 = s0
+    _0 = mul _5, 2
+    return
+
+Func test_safe_field(p: Point?) -> int
+  locals:
+    _0: int // return
+    _1: Point?
+    _2: int?
+    _3: Point?
+    _4: bool
+    _5: bool
+    s0: Point? // p
+
+  bb0:
+    s0 = _1
+    _3 = s0
+    _4 = eq _3, nil
+    branch _4 => bb1, else bb2
+  bb1:
+    _2 = nil
+    goto bb3
+  bb2:
+    _2 = _3.x
+    goto bb3
+  bb3:
+    _5 = ne _2, nil
+    branch _5 => bb4, else bb5
+  bb4:
+    _0 = _2
+    goto bb6
+  bb5:
+    _0 = 0
+    goto bb6
+  bb6:
+    return
+
+Func test_safe_index(arr: []int, idx: int) -> int
+  locals:
+    _0: int // return
+    _1: []int
+    _2: int
+    _3: int?
+    _4: []int
+    _5: bool
+    _6: int
+    _7: bool
+    s0: []int // arr
+    s1: int // idx
+
+  bb0:
+    s0 = _1
+    s1 = _2
+    _4 = s0
+    _5 = eq _4, nil
+    branch _5 => bb1, else bb2
+  bb1:
+    _3 = nil
+    goto bb3
+  bb2:
+    _6 = s1
+    _3 = _4[_6]
+    goto bb3
+  bb3:
+    _7 = ne _3, nil
+    branch _7 => bb4, else bb5
+  bb4:
+    _0 = _3
+    goto bb6
+  bb5:
+    _0 = neg 1
+    goto bb6
+  bb6:
+    return
+
+Func test_null_coalesce(a: int?, b: int) -> int
+  locals:
+    _0: int // return
+    _1: int?
+    _2: int
+    _3: int?
+    _4: bool
+    _5: int
+    s0: int? // a
+    s1: int // b
+
+  bb0:
+    s0 = _1
+    s1 = _2
+    _3 = s0
+    _4 = ne _3, nil
+    branch _4 => bb1, else bb2
+  bb1:
+    _0 = _3
+    goto bb3
+  bb2:
+    _5 = s1
+    _0 = _5
+    goto bb3
+  bb3:
+    return

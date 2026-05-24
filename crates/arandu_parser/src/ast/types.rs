@@ -52,6 +52,7 @@ pub enum TypeExpr {
 }
 
 impl TypeExpr {
+    #[must_use]
     pub fn span(&self) -> Span {
         match self {
             TypeExpr::Primitive { span, .. }

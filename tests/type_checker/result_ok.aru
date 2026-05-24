@@ -1,0 +1,3 @@
+func ok() Result<int, Err> {
+    return Result.Ok(42)
+}

@@ -1,4 +1,9 @@
-use super::{symbol_name, *};
+use super::{
+    BinaryOp, HirBlock, HirCatchHandler, HirCondition, HirConst, HirDecl, HirEnum, HirExpr,
+    HirExprKind, HirExtern, HirForClause, HirFunc, HirInterface, HirLambdaBody, HirMatchArmBody,
+    HirParam, HirPlace, HirPlaceSuffix, HirProgram, HirSimpleStmt, HirStmt, HirStmtKind, HirStruct,
+    HirTypeAlias, ReceiverKind, SetOp, SymbolTable, UnaryOp, symbol_name,
+};
 
 // ── Pretty Printer Implementation ───────────────────────────────────
 
@@ -7,11 +12,27 @@ pub struct HirPrettyCtx<'a> {
     pub show_spans: bool,
 }
 
+fn format_hir_param(p: &HirParam, ctx: &HirPrettyCtx<'_>) -> String {
+    let name = symbol_name(ctx.symbols, p.symbol);
+    let ty = p.ty.display(ctx.symbols);
+    if p.is_receiver {
+        let prefix = match p.receiver_kind {
+            Some(ReceiverKind::Shared) => "shared ",
+            Some(ReceiverKind::Mut) => "mut ",
+            Some(ReceiverKind::Own) => "own ",
+            None => "",
+        };
+        format!("{prefix}{name}: {ty}")
+    } else {
+        format!("{name}: {ty}")
+    }
+}
+
 pub fn print_program(program: &HirProgram, ctx: &HirPrettyCtx<'_>) -> String {
     let mut out = String::new();
     out.push_str("Program\n");
     if let Some(ref m) = program.module {
-        out.push_str(&format!("  Module {}\n", m));
+        out.push_str(&format!("  Module {m}\n"));
     }
 
     let mut first = true;
@@ -70,13 +91,7 @@ impl HirFunc {
         let params_str: Vec<String> = self
             .params
             .iter()
-            .map(|p| {
-                format!(
-                    "{}: {}",
-                    symbol_name(ctx.symbols, p.symbol),
-                    p.ty.display(ctx.symbols)
-                )
-            })
+            .map(|p| format_hir_param(p, ctx))
             .collect();
         let return_ty_str = self.return_type.display(ctx.symbols);
         out.push_str(&format!(
@@ -157,17 +172,8 @@ impl HirExtern {
         out.push_str(&format!("{}Extern \"{}\"\n", ind, self.abi));
         let member_ind = "  ".repeat(indent + 1);
         for m in &self.members {
-            let params_str: Vec<String> = m
-                .params
-                .iter()
-                .map(|p| {
-                    format!(
-                        "{}: {}",
-                        symbol_name(ctx.symbols, p.symbol),
-                        p.ty.display(ctx.symbols)
-                    )
-                })
-                .collect();
+            let params_str: Vec<String> =
+                m.params.iter().map(|p| format_hir_param(p, ctx)).collect();
             out.push_str(&format!(
                 "{}Func {}({}) -> {}\n",
                 member_ind,
@@ -227,26 +233,26 @@ impl HirStmt {
             }
             HirStmtKind::Return { values } => {
                 if values.is_empty() {
-                    out.push_str(&format!("{}Return\n", ind));
+                    out.push_str(&format!("{ind}Return\n"));
                 } else {
-                    out.push_str(&format!("{}Return\n", ind));
+                    out.push_str(&format!("{ind}Return\n"));
                     for v in values {
                         v.pretty_print_to(out, indent + 1, ctx);
                     }
                 }
             }
             HirStmtKind::Break => {
-                out.push_str(&format!("{}Break\n", ind));
+                out.push_str(&format!("{ind}Break\n"));
             }
             HirStmtKind::Continue => {
-                out.push_str(&format!("{}Continue\n", ind));
+                out.push_str(&format!("{ind}Continue\n"));
             }
             HirStmtKind::Free(expr) => {
-                out.push_str(&format!("{}Free\n", ind));
+                out.push_str(&format!("{ind}Free\n"));
                 expr.pretty_print_to(out, indent + 1, ctx);
             }
             HirStmtKind::Expr(expr) => {
-                out.push_str(&format!("{}Expr\n", ind));
+                out.push_str(&format!("{ind}Expr\n"));
                 expr.pretty_print_to(out, indent + 1, ctx);
             }
             HirStmtKind::If {
@@ -254,28 +260,28 @@ impl HirStmt {
                 then_block,
                 else_block,
             } => {
-                out.push_str(&format!("{}If\n", ind));
+                out.push_str(&format!("{ind}If\n"));
                 condition.pretty_print_to(out, indent + 1, ctx);
                 let block_ind = "  ".repeat(indent + 1);
-                out.push_str(&format!("{}Then\n", block_ind));
+                out.push_str(&format!("{block_ind}Then\n"));
                 then_block.pretty_print_to(out, indent + 2, ctx);
                 if let Some(else_blk) = else_block {
-                    out.push_str(&format!("{}Else\n", block_ind));
+                    out.push_str(&format!("{block_ind}Else\n"));
                     else_blk.pretty_print_to(out, indent + 2, ctx);
                 }
             }
             HirStmtKind::While { condition, body } => {
-                out.push_str(&format!("{}While\n", ind));
+                out.push_str(&format!("{ind}While\n"));
                 condition.pretty_print_to(out, indent + 1, ctx);
                 body.pretty_print_to(out, indent + 1, ctx);
             }
             HirStmtKind::For { clause, body } => {
-                out.push_str(&format!("{}For\n", ind));
+                out.push_str(&format!("{ind}For\n"));
                 clause.pretty_print_to(out, indent + 1, ctx);
                 body.pretty_print_to(out, indent + 1, ctx);
             }
             HirStmtKind::Match { value, arms } => {
-                out.push_str(&format!("{}Match\n", ind));
+                out.push_str(&format!("{ind}Match\n"));
                 value.pretty_print_to(out, indent + 1, ctx);
                 let arm_ind = "  ".repeat(indent + 1);
                 for arm in arms {
@@ -299,15 +305,15 @@ impl HirStmt {
                 }
             }
             HirStmtKind::Defer(block) => {
-                out.push_str(&format!("{}Defer\n", ind));
+                out.push_str(&format!("{ind}Defer\n"));
                 block.pretty_print_to(out, indent + 1, ctx);
             }
             HirStmtKind::ErrDefer(block) => {
-                out.push_str(&format!("{}ErrDefer\n", ind));
+                out.push_str(&format!("{ind}ErrDefer\n"));
                 block.pretty_print_to(out, indent + 1, ctx);
             }
             HirStmtKind::Unsafe(block) => {
-                out.push_str(&format!("{}Unsafe\n", ind));
+                out.push_str(&format!("{ind}Unsafe\n"));
                 block.pretty_print_to(out, indent + 1, ctx);
             }
         }
@@ -322,10 +328,10 @@ impl HirCondition {
                 expr.pretty_print_to(out, indent, ctx);
             }
             HirCondition::Is { expr, pattern } => {
-                out.push_str(&format!("{}Is\n", ind));
+                out.push_str(&format!("{ind}Is\n"));
                 expr.pretty_print_to(out, indent + 1, ctx);
                 let pat_ind = "  ".repeat(indent + 1);
-                out.push_str(&format!("{}Pattern: {:?}\n", pat_ind, pattern));
+                out.push_str(&format!("{pat_ind}Pattern: {pattern:?}\n"));
             }
         }
     }
@@ -357,18 +363,18 @@ impl HirForClause {
                 step,
                 ..
             } => {
-                out.push_str(&format!("{}CStyle\n", ind));
+                out.push_str(&format!("{ind}CStyle\n"));
                 let sub_ind = "  ".repeat(indent + 1);
                 if let Some(init_stmt) = init {
-                    out.push_str(&format!("{}Init\n", sub_ind));
+                    out.push_str(&format!("{sub_ind}Init\n"));
                     init_stmt.pretty_print_to(out, indent + 2, ctx);
                 }
                 if let Some(cond_expr) = condition {
-                    out.push_str(&format!("{}Condition\n", sub_ind));
+                    out.push_str(&format!("{sub_ind}Condition\n"));
                     cond_expr.pretty_print_to(out, indent + 2, ctx);
                 }
                 if let Some(step_stmt) = step {
-                    out.push_str(&format!("{}Step\n", sub_ind));
+                    out.push_str(&format!("{sub_ind}Step\n"));
                     step_stmt.pretty_print_to(out, indent + 2, ctx);
                 }
             }
@@ -427,7 +433,7 @@ impl HirPlace {
         for suffix in &self.suffixes {
             match suffix {
                 HirPlaceSuffix::Field { name, .. } => {
-                    out.push_str(&format!(".{}", name));
+                    out.push_str(&format!(".{name}"));
                 }
                 HirPlaceSuffix::Index { expr, .. } => {
                     out.push_str(&format!("[{}]", expr.pretty_print_inline(ctx)));
@@ -444,8 +450,8 @@ impl HirExpr {
             HirExprKind::Int(v) => v.clone(),
             HirExprKind::Float(v) => v.clone(),
             HirExprKind::Bool(v) => v.to_string(),
-            HirExprKind::Char(v) => format!("'{}'", v),
-            HirExprKind::Str(v) => format!("\"{}\"", v),
+            HirExprKind::Char(v) => format!("'{v}'"),
+            HirExprKind::Str(v) => format!("\"{v}\""),
             HirExprKind::Nil => "nil".to_string(),
             HirExprKind::Path { symbol } => ctx.symbols.get(*symbol).name.clone(),
             HirExprKind::Binary { op, left, right } => {
@@ -559,9 +565,23 @@ impl HirExpr {
                 }
                 if let Some(block) = trailing_block {
                     let sub_ind = "  ".repeat(indent + 1);
-                    out.push_str(&format!("{}TrailingBlock\n", sub_ind));
+                    out.push_str(&format!("{sub_ind}TrailingBlock\n"));
                     block.pretty_print_to(out, indent + 2, ctx);
                 }
+            }
+            HirExprKind::ResultCtor { variant, value } => {
+                let name = match variant {
+                    crate::hir::ResultCtorVariant::Ok => "Result.Ok",
+                    crate::hir::ResultCtorVariant::Err => "Result.Err",
+                    crate::hir::ResultCtorVariant::Some => "Option.Some",
+                };
+                out.push_str(&format!(
+                    "{}{}: {}\n",
+                    ind,
+                    name,
+                    self.ty.display(ctx.symbols)
+                ));
+                value.pretty_print_to(out, indent + 1, ctx);
             }
             HirExprKind::StructLiteral {
                 struct_symbol,
@@ -640,9 +660,9 @@ impl HirExpr {
                 out.push_str(&format!("{}If: {}\n", ind, self.ty.display(ctx.symbols)));
                 condition.pretty_print_to(out, indent + 1, ctx);
                 let sub_ind = "  ".repeat(indent + 1);
-                out.push_str(&format!("{}Then\n", sub_ind));
+                out.push_str(&format!("{sub_ind}Then\n"));
                 then_block.pretty_print_to(out, indent + 2, ctx);
-                out.push_str(&format!("{}Else\n", sub_ind));
+                out.push_str(&format!("{sub_ind}Else\n"));
                 else_block.pretty_print_to(out, indent + 2, ctx);
             }
             HirExprKind::Match { value, arms } => {
@@ -653,7 +673,7 @@ impl HirExpr {
                     let guard_str = if let Some(ref g) = arm.guard {
                         format!(" if {}", g.pretty_print_inline(ctx))
                     } else {
-                        "".to_string()
+                        String::new()
                     };
                     out.push_str(&format!(
                         "{}Arm({:?}{}):\n",
@@ -675,14 +695,14 @@ impl HirExpr {
                 let sub_ind = "  ".repeat(indent + 1);
                 match handler {
                     HirCatchHandler::Expr(h_expr) => {
-                        out.push_str(&format!("{}Handler\n", sub_ind));
+                        out.push_str(&format!("{sub_ind}Handler\n"));
                         h_expr.pretty_print_to(out, indent + 2, ctx);
                     }
                     HirCatchHandler::Block {
                         error_name, block, ..
                     } => {
                         let err_str = error_name.as_deref().unwrap_or("error");
-                        out.push_str(&format!("{}Handler({})\n", sub_ind, err_str));
+                        out.push_str(&format!("{sub_ind}Handler({err_str})\n"));
                         block.pretty_print_to(out, indent + 2, ctx);
                     }
                 }

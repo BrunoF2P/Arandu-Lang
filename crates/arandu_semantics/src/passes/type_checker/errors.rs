@@ -10,6 +10,7 @@ use super::types::ArType;
 ///
 /// The key insight: instead of saying "expected X, found Y", we show
 /// *where* X came from and *where* Y came from — the flow.
+#[must_use]
 pub fn constraint_to_diagnostic(constraint: &Constraint, symbols: &SymbolTable) -> Diagnostic {
     let expected_str = constraint.expected.display(symbols);
     let found_str = constraint.found.display(symbols);
@@ -18,20 +19,17 @@ pub fn constraint_to_diagnostic(constraint: &Constraint, symbols: &SymbolTable) 
         ConstraintOrigin::Assignment { lhs_span, rhs_span } => Diagnostic::error(
             DiagCode::T002IncompatibleAssignment,
             format!(
-                "incompatible type in assignment: expected '{}', found '{}'",
-                expected_str, found_str
+                "incompatible type in assignment: expected '{expected_str}', found '{found_str}'"
             ),
             *rhs_span,
         )
-        .with_label(*lhs_span, format!("type '{}' declared here", expected_str))
-        .with_label(*rhs_span, format!("value has type '{}'", found_str))
+        .with_label(*lhs_span, format!("type '{expected_str}' declared here"))
+        .with_label(*rhs_span, format!("value has type '{found_str}'"))
         .with_note(format!(
-            "flow: declaration ({}, {:?}) → value ({}, {:?})",
-            expected_str, lhs_span, found_str, rhs_span
+            "flow: declaration ({expected_str}, {lhs_span:?}) → value ({found_str}, {rhs_span:?})"
         ))
         .with_hint(format!(
-            "convert with '{} as {}' or change the declaration type",
-            found_str, expected_str
+            "convert with '{found_str} as {expected_str}' or change the declaration type"
         )),
 
         ConstraintOrigin::CallArg {
@@ -53,7 +51,7 @@ pub fn constraint_to_diagnostic(constraint: &Constraint, symbols: &SymbolTable) 
             *param_span,
             format!("parameter {} expects '{}'", arg_index + 1, expected_str),
         )
-        .with_label(*arg_span, format!("argument has type '{}'", found_str))
+        .with_label(*arg_span, format!("argument has type '{found_str}'"))
         .with_note(format!(
             "flow: argument {} ({}) → parameter ({} expected)",
             arg_index + 1,
@@ -67,19 +65,17 @@ pub fn constraint_to_diagnostic(constraint: &Constraint, symbols: &SymbolTable) 
         } => Diagnostic::error(
             DiagCode::T004IncompatibleReturnType,
             format!(
-                "incompatible return type: expected '{}', found '{}'",
-                expected_str, found_str
+                "incompatible return type: expected '{expected_str}', found '{found_str}'"
             ),
             *return_span,
         )
         .with_label(
             *declared_span,
-            format!("return type '{}' declared here", expected_str),
+            format!("return type '{expected_str}' declared here"),
         )
-        .with_label(*return_span, format!("returns '{}'", found_str))
+        .with_label(*return_span, format!("returns '{found_str}'"))
         .with_hint(format!(
-            "convert the return value with 'as {}' or change the function's return type",
-            expected_str
+            "convert the return value with 'as {expected_str}' or change the function's return type"
         )),
 
         ConstraintOrigin::IfBranches {
@@ -88,16 +84,15 @@ pub fn constraint_to_diagnostic(constraint: &Constraint, symbols: &SymbolTable) 
         } => Diagnostic::error(
             DiagCode::T007IfBranchMismatch,
             format!(
-                "if branches have incompatible types: '{}' and '{}'",
-                expected_str, found_str
+                "if branches have incompatible types: '{expected_str}' and '{found_str}'"
             ),
             *else_span,
         )
         .with_label(
             *then_span,
-            format!("then branch has type '{}'", expected_str),
+            format!("then branch has type '{expected_str}'"),
         )
-        .with_label(*else_span, format!("else branch has type '{}'", found_str))
+        .with_label(*else_span, format!("else branch has type '{found_str}'"))
         .with_hint(
             "both branches must have the same type when if is used as an expression".to_string(),
         ),
@@ -118,7 +113,7 @@ pub fn constraint_to_diagnostic(constraint: &Constraint, symbols: &SymbolTable) 
         )
         .with_label(
             *first_span,
-            format!("first arm has type '{}'", expected_str),
+            format!("first arm has type '{expected_str}'"),
         )
         .with_label(
             *mismatch_span,
@@ -134,13 +129,12 @@ pub fn constraint_to_diagnostic(constraint: &Constraint, symbols: &SymbolTable) 
             let diag = Diagnostic::error(
                 DiagCode::T005OperatorNotApplicable,
                 format!(
-                    "operator not applicable to '{}' and '{}'",
-                    expected_str, found_str,
+                    "operator not applicable to '{expected_str}' and '{found_str}'",
                 ),
                 *op_span,
             )
-            .with_label(*left_span, format!("type '{}'", expected_str))
-            .with_label(*right_span, format!("type '{}'", found_str));
+            .with_label(*left_span, format!("type '{expected_str}'"))
+            .with_label(*right_span, format!("type '{found_str}'"));
 
             add_operator_hint(diag, &constraint.expected, &constraint.found, symbols)
         }
@@ -150,17 +144,17 @@ pub fn constraint_to_diagnostic(constraint: &Constraint, symbols: &SymbolTable) 
             operand_span,
         } => Diagnostic::error(
             DiagCode::T005OperatorNotApplicable,
-            format!("operator not applicable to '{}'", found_str),
+            format!("operator not applicable to '{found_str}'"),
             *op_span,
         )
-        .with_label(*operand_span, format!("type '{}'", found_str)),
+        .with_label(*operand_span, format!("type '{found_str}'")),
 
         ConstraintOrigin::Condition { span } => Diagnostic::error(
             DiagCode::T009ConditionNotBool,
-            format!("condition must be 'bool', found '{}'", found_str,),
+            format!("condition must be 'bool', found '{found_str}'"),
             *span,
         )
-        .with_label(*span, format!("type '{}' is not bool", found_str))
+        .with_label(*span, format!("type '{found_str}' is not bool"))
         .with_hint(suggest_bool_conversion(&constraint.found)),
 
         ConstraintOrigin::FieldInit {
@@ -171,16 +165,15 @@ pub fn constraint_to_diagnostic(constraint: &Constraint, symbols: &SymbolTable) 
         } => Diagnostic::error(
             DiagCode::T002IncompatibleAssignment,
             format!(
-                "incompatible type for field '{}': expected '{}', found '{}'",
-                field_name, expected_str, found_str,
+                "incompatible type for field '{field_name}': expected '{expected_str}', found '{found_str}'",
             ),
             *value_span,
         )
         .with_label(
             *field_span,
-            format!("field '{}' has type '{}'", field_name, expected_str),
+            format!("field '{field_name}' has type '{expected_str}'"),
         )
-        .with_label(*value_span, format!("value has type '{}'", found_str)),
+        .with_label(*value_span, format!("value has type '{found_str}'")),
 
         ConstraintOrigin::SetTarget {
             place_span,
@@ -188,26 +181,25 @@ pub fn constraint_to_diagnostic(constraint: &Constraint, symbols: &SymbolTable) 
         } => Diagnostic::error(
             DiagCode::T002IncompatibleAssignment,
             format!(
-                "incompatible type in set: expected '{}', found '{}'",
-                expected_str, found_str,
+                "incompatible type in set: expected '{expected_str}', found '{found_str}'",
             ),
             *value_span,
         )
-        .with_label(*place_span, format!("place has type '{}'", expected_str))
-        .with_label(*value_span, format!("value has type '{}'", found_str)),
+        .with_label(*place_span, format!("place has type '{expected_str}'"))
+        .with_label(*value_span, format!("value has type '{found_str}'")),
 
         ConstraintOrigin::CastExpr {
             expr_span,
             target_span,
         } => Diagnostic::error(
             DiagCode::T010InvalidCast,
-            format!("invalid cast from '{}' to '{}'", found_str, expected_str,),
+            format!("invalid cast from '{found_str}' to '{expected_str}'"),
             *target_span,
         )
-        .with_label(*expr_span, format!("expression has type '{}'", found_str))
+        .with_label(*expr_span, format!("expression has type '{found_str}'"))
         .with_label(
             *target_span,
-            format!("cast to '{}' is not possible", expected_str),
+            format!("cast to '{expected_str}' is not possible"),
         ),
 
         ConstraintOrigin::ImplicitWidening {
@@ -216,31 +208,25 @@ pub fn constraint_to_diagnostic(constraint: &Constraint, symbols: &SymbolTable) 
         } => Diagnostic::error(
             DiagCode::T015ImplicitWidening,
             format!(
-                "implicit widening from '{}' to '{}' is not allowed",
-                found_str, expected_str,
+                "implicit widening from '{found_str}' to '{expected_str}' is not allowed",
             ),
             *source_span,
         )
-        .with_label(*source_span, format!("type '{}' here", found_str))
-        .with_label(*target_span, format!("expected '{}'", expected_str))
+        .with_label(*source_span, format!("type '{found_str}' here"))
+        .with_label(*target_span, format!("expected '{expected_str}'"))
         .with_hint(format!(
-            "use explicit conversion: 'value as {}'",
-            expected_str
+            "use explicit conversion: 'value as {expected_str}'"
         )),
 
         ConstraintOrigin::TryInvalid { span } => Diagnostic::error(
             DiagCode::T016TryInvalid,
             format!(
-                "the '?' operator can only be applied to a Result tuple, found '{}'",
-                found_str
+                "the '?' operator can only be applied to Result<T,E> or Option<T>, found '{found_str}'"
             ),
             *span,
         )
-        .with_label(*span, format!("this has type '{}'", found_str))
-        .with_hint(
-            "ensure the expression returns a tuple where the second element is an error type"
-                .to_string(),
-        ),
+        .with_label(*span, format!("this has type '{found_str}'"))
+        .with_hint("use a `Result<T, E>` or `Option<T>` value here"),
 
         ConstraintOrigin::InvalidIndex {
             base_span,
@@ -250,20 +236,20 @@ pub fn constraint_to_diagnostic(constraint: &Constraint, symbols: &SymbolTable) 
             if *is_base_error {
                 Diagnostic::error(
                     DiagCode::T017InvalidIndex,
-                    format!("type '{}' cannot be indexed", expected_str),
+                    format!("type '{expected_str}' cannot be indexed"),
                     *base_span,
                 )
                 .with_label(
                     *base_span,
-                    format!("this has type '{}', expected array or slice", expected_str),
+                    format!("this has type '{expected_str}', expected array or slice"),
                 )
             } else {
                 Diagnostic::error(
                     DiagCode::T017InvalidIndex,
-                    format!("index must be of type 'int', found '{}'", found_str),
+                    format!("index must be of type 'int', found '{found_str}'"),
                     *index_span,
                 )
-                .with_label(*index_span, format!("this has type '{}'", found_str))
+                .with_label(*index_span, format!("this has type '{found_str}'"))
             }
         }
 
@@ -273,11 +259,58 @@ pub fn constraint_to_diagnostic(constraint: &Constraint, symbols: &SymbolTable) 
             field_name,
         } => Diagnostic::error(
             DiagCode::T018UndefinedField,
-            format!("no field '{}' on type '{}'", field_name, expected_str),
+            format!("no field '{field_name}' on type '{expected_str}'"),
             *field_span,
         )
-        .with_label(*base_span, format!("this has type '{}'", expected_str))
+        .with_label(*base_span, format!("this has type '{expected_str}'"))
         .with_label(*field_span, "unknown field".to_string()),
+
+        ConstraintOrigin::ArrayLiteral {
+            array_span,
+            item_span,
+            item_index,
+        } => Diagnostic::error(
+            DiagCode::T002IncompatibleAssignment,
+            format!(
+                "array element {} has type '{found_str}', expected '{expected_str}'",
+                item_index + 1,
+            ),
+            *item_span,
+        )
+        .with_label(
+            *array_span,
+            format!("first element type is '{expected_str}'"),
+        )
+        .with_label(*item_span, format!("element has type '{found_str}'")),
+
+        ConstraintOrigin::NullCoalesce {
+            left_span,
+            right_span,
+        } => Diagnostic::error(
+            DiagCode::T002IncompatibleAssignment,
+            format!(
+                "incompatible types in `??`: nullable side expects inner type '{expected_str}', found '{found_str}'"
+            ),
+            *right_span,
+        )
+        .with_label(*left_span, format!("nullable value has inner type '{expected_str}'"))
+        .with_label(*right_span, format!("right-hand side has type '{found_str}'")),
+
+        ConstraintOrigin::CatchHandler {
+            expr_span,
+            handler_span,
+        } => Diagnostic::error(
+            DiagCode::T002IncompatibleAssignment,
+            format!(
+                "catch handler type '{found_str}' is incompatible with Result ok type '{expected_str}'"
+            ),
+            *handler_span,
+        )
+        .with_label(
+            *expr_span,
+            format!("expression ok type is '{expected_str}'"),
+        )
+        .with_label(*handler_span, format!("handler has type '{found_str}'")),
     }
 }
 

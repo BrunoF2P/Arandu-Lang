@@ -1,6 +1,10 @@
-use super::*;
+use super::{
+    BinaryOp, Block, CatchHandler, Expr, FieldInit, LambdaBody, LambdaParam, ParseError,
+    ParseErrorCode, Parser, Stmt, StringPart, TokenKind, TypeExpr, UnaryOp, merge_text_parts,
+    span_between,
+};
 
-impl Parser {
+impl<'a> Parser<'a> {
     pub(super) fn parse_expr(&mut self, min_bp: u8) -> Result<Expr, ParseError> {
         let start = self.mark();
         match self.try_parse_expr(min_bp) {
@@ -34,6 +38,7 @@ impl Parser {
                         ParseErrorCode::ExpectedToken,
                         "generic block calls are not valid in this context",
                         self.current(),
+                        self.source,
                     ));
                 }
                 continue;
@@ -46,6 +51,7 @@ impl Parser {
                     ParseErrorCode::ExpectedToken,
                     "generic arguments in expressions must be followed by call arguments or block",
                     self.current(),
+                    self.source,
                 ));
             }
             if self.at_kind_name("LPAREN") {
@@ -177,6 +183,7 @@ impl Parser {
                     ParseErrorCode::ExpectedToken,
                     "chained ranges require parentheses",
                     self.current(),
+                    self.source,
                 ));
             }
             let span_start = left.span();
@@ -266,27 +273,34 @@ impl Parser {
             }
             TokenKind::KwIf => self.parse_if_expr(),
             TokenKind::KwMatch => self.parse_match_expr(),
-            TokenKind::IdentValue(_) => {
+            TokenKind::KwSelf => {
+                self.consume();
+                Ok(Expr::Path {
+                    span: self.span_from_mark(start),
+                    path: vec!["self".to_string()],
+                })
+            }
+            TokenKind::IdentValue => {
                 let name = self.expect_ident_value()?;
                 Ok(Expr::Path {
                     span: self.span_from_mark(start),
                     path: vec![name],
                 })
             }
-            TokenKind::IdentType(_) => self.parse_type_led_expr(),
-            TokenKind::IntDec(value)
-            | TokenKind::IntHex(value)
-            | TokenKind::IntBin(value)
-            | TokenKind::IntOct(value) => {
-                let value = value.clone();
+            TokenKind::IdentType => self.parse_type_led_expr(),
+            TokenKind::IntDec
+            | TokenKind::IntHex
+            | TokenKind::IntBin
+            | TokenKind::IntOct => {
+                let value = self.current_text().to_string();
                 self.consume();
                 Ok(Expr::Int {
                     span: self.span_from_mark(start),
                     value,
                 })
             }
-            TokenKind::Float(value) => {
-                let value = value.clone();
+            TokenKind::Float => {
+                let value = self.current_text().to_string();
                 self.consume();
                 Ok(Expr::Float {
                     span: self.span_from_mark(start),
@@ -307,8 +321,8 @@ impl Parser {
                     value: false,
                 })
             }
-            TokenKind::Char(value) => {
-                let value = value.clone();
+            TokenKind::Char => {
+                let value = self.current().char_content(self.source).to_string();
                 self.consume();
                 Ok(Expr::Char {
                     span: self.span_from_mark(start),
@@ -325,8 +339,8 @@ impl Parser {
             TokenKind::MultilineStringStart => {
                 self.parse_string_like("MULTILINE_STRING_START", "MULTILINE_STRING_END")
             }
-            TokenKind::RawString(value) => {
-                let value = value.clone();
+            TokenKind::RawString => {
+                let value = self.current().raw_string_content(self.source).to_string();
                 self.consume();
                 Ok(Expr::InterpolatedString {
                     span: self.span_from_mark(start),
@@ -351,6 +365,7 @@ impl Parser {
                 ParseErrorCode::ExpectedExpression,
                 "expected expression",
                 self.current(),
+                self.source,
             )),
         }
     }
@@ -367,8 +382,7 @@ impl Parser {
         };
         let end = trailing_block
             .as_ref()
-            .map(|block| block.span)
-            .unwrap_or_else(|| self.previous().span);
+            .map_or_else(|| self.previous().span, |block| block.span);
         Ok(Expr::Call {
             span: span_between(span_start, end),
             callee: Box::new(callee),
@@ -531,6 +545,7 @@ impl Parser {
             ParseErrorCode::ExpectedExpression,
             "expected type-qualified expression or struct literal",
             self.current(),
+            self.source,
         ))
     }
 
@@ -565,11 +580,11 @@ impl Parser {
         let mut parts = Vec::new();
         while !self.at_kind_name(end_name) {
             match &self.current().kind {
-                TokenKind::StringText(text) | TokenKind::StringEscape(text) => {
+                TokenKind::StringText | TokenKind::StringEscape => {
                     let span = self.current().span;
                     parts.push(StringPart::Text {
                         span,
-                        text: text.clone(),
+                        text: self.current_text().to_string(),
                     });
                     self.consume();
                 }
@@ -588,6 +603,7 @@ impl Parser {
                         ParseErrorCode::ExpectedExpression,
                         "expected string part",
                         self.current(),
+                        self.source,
                     ));
                 }
             }

@@ -1,0 +1,19 @@
+func test_literal(x int) int {
+    res = 0
+    if x is 5 {
+        set res = 10
+    } else {
+        set res = 20
+    }
+    return res
+}
+
+func test_wildcard(x int) int {
+    res = 0
+    if x is _ {
+        set res = 10
+    } else {
+        set res = 20
+    }
+    return res
+}

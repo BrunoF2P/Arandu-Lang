@@ -1,5 +1,7 @@
 # Arandu Compiler IR Architecture v0.1
 
+> **Roadmap e checklist executivo:** [arandu-compiler-roadmap-v0.1.md](./arandu-compiler-roadmap-v0.1.md)
+
 This document defines the intermediate representation (IR) strategy for the Arandu compiler. To keep the compiler development pragmatic, modular, and maintainable, Arandu strictly separates semantic analysis from control flow and memory analysis using a two-level IR architecture.
 
 ---
@@ -46,7 +48,7 @@ The intermediate representations serve distinct purposes at different stages of 
 | **Structure** | Tree (matching source) | Tree (typed, resolved) | Control Flow Graph (CFG) |
 | **Names** | Unresolved strings | Resolved `SymbolId` / `LocalId` | SSA Temp registers (`_0`, `%0`) |
 | **Types** | Unresolved (`TypeExpr`) | Fully resolved (`ArType`) | Lowered representation types |
-| **Memory / Safety**| None (implicit/syntax only) | None | Explicit Ownership SSA (OSSA) |
+| **Memory / Safety** | None (implicit/syntax only) | None | Explicit Ownership SSA (OSSA) |
 
 ---
 
@@ -55,12 +57,14 @@ The intermediate representations serve distinct purposes at different stages of 
 AHIR v0.1 serves as the **Typed AST**. It represents the program semantically while maintaining tree structure and source-level constructs.
 
 ### Scope of AHIR
+
 - **Fully Resolved Names**: Every identifier reference is resolved to its defined `SymbolId`.
 - **Fully Inferred/Checked Types**: Every expression and variable binding carries its concrete `ArType`.
 - **Generics & Interfaces**: Preserves structural interface constraints, generic parameters, and `where` clauses in their source-level semantic form.
 - **Diagnostics Context**: Preserves source spans (`Span`) to emit high-quality diagnostics close to the user's code.
 
 ### Excluded from AHIR
+
 - **No CFG**: Loops, conditions, and logical evaluations remain as nested tree statements.
 - **No Borrow Checking**: Lifetime analysis and mutation conflicts are not evaluated here.
 - **No Lowering**: Features like `defer`, `errdefer`, catch blocks, and safe-navigation (`?`) are preserved as-is.
@@ -72,13 +76,16 @@ AHIR v0.1 serves as the **Typed AST**. It represents the program semantically wh
 AMIR represents the program as a Control Flow Graph (CFG) with explicit control-flow blocks and dataflow edges. It is designed to perform dataflow analysis and enforce memory safety.
 
 ### AMIR v0.1 (Current)
+
 - **Explicit Control Flow Graph (CFG)**: Lowers `if`, `while`, `for`, and control flow into basic blocks and jumps.
 - **Local Registers**: Every variable and temporary is a numbered local (`_0`, `_1`, ...) with explicit type.
 - **Place Projections**: Supports nested field and index mutations via `AmirPlace` with projections.
 - **Basic Expressions**: Literals, binary/unary ops, field access, index access, array literals, struct literals, calls.
-- **Unsupported in v0.1**: `match` (requires pattern CFG), `defer`/`errdefer` (requires scope-exit lowering), `?`/`?.`/`?[]`/`??`/`catch` (require error/nil CFG desugaring), lambdas, async blocks.
+- **Lowered in AMIR (experimental):** `match`, `if is`, `defer`/`errdefer`, `?`/`?.`/`?[]`/`??`, `for in`, `alloc`/`free` (tuple-`Result` heuristics until `Result<T,E>` lands — see roadmap §4.B–D).
+- **Still unsupported:** `catch`, lambdas, async blocks as expressions.
 
 ### AMIR v0.2+ (Future)
+
 - **Definite Initialization**: Analyzes variable lifetimes to ensure they are initialized before use.
 - **Ownership SSA (OSSA)**: Every operation will specify ownership transitions explicitly:
   - `copy`: Duplicates a copyable value or increases reference count.
@@ -111,6 +118,7 @@ To ensure steady progress and prevent overengineering, several advanced compiler
 The `arandu hir` subcommand outputs a pretty-printed representation of the AHIR. This format is designed for readability, debugging, and verification via golden tests.
 
 ### Contract Rules
+
 1. **Source/AST Order**: The pretty printer outputs declarations and statements in the exact order they appeared in the source file.
 2. **Deterministic Output**: For structures without a natural AST order (like member sets or generic associations), elements must be sorted alphabetically by name before printing.
 3. **Indentation**: Indentation uses two spaces (`  `) per level to represent hierarchical nesting.
@@ -119,12 +127,14 @@ The `arandu hir` subcommand outputs a pretty-printed representation of the AHIR.
 ### Pretty-Printing Examples
 
 #### Module
+
 ```text
 Program
   Module examples.stable.syntax.hello
 ```
 
 #### Function with Binary Expression
+
 ```text
 Func add(a: int, b: int) -> int
   Return
@@ -134,6 +144,7 @@ Func add(a: int, b: int) -> int
 ```
 
 #### Structs
+
 ```text
 Struct User
   id: int
@@ -142,6 +153,7 @@ Struct User
 ```
 
 #### Enums
+
 ```text
 Enum LoadState
   Idle
@@ -151,6 +163,7 @@ Enum LoadState
 ```
 
 #### Constants
+
 ```text
 Const maxRetries: int =
   Int(3): int

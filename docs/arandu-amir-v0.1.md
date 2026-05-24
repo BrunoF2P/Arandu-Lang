@@ -1,5 +1,7 @@
 # Arandu Mid-level Intermediate Representation (AMIR) v0.1
 
+> **Plano estratégico e roadmap:** [arandu-strategic-plan-v0.1.md](./arandu-strategic-plan-v0.1.md) · [arandu-compiler-roadmap-v0.1.md](./arandu-compiler-roadmap-v0.1.md)
+
 AMIR v0.1 is a Control Flow Graph (CFG) representation of the program. It flattens the high-level syntax structures (like nesting and structured control flow) into linear lists of instructions grouped in Basic Blocks and linked by jumps.
 
 ## Core Concepts
@@ -20,7 +22,7 @@ AMIR v0.1 is a Control Flow Graph (CFG) representation of the program. It flatte
    - `Return`: Exits the function, passing the value in the return register `_0`.
    - `Goto(bbX)`: Unconditionally transfers control to basic block `bbX`.
    - `Branch { condition, if_true: bbX, if_false: bbY }`: Boolean conditional branch; used for `if`, `while`, and C-style `for` conditions.
-   - `SwitchInt { discriminant, targets: [(value, bbX), ...], otherwise: bbY }`: Integer discriminant switch (reserved for `match` on integers / enum tags in a future version).
+   - `SwitchInt { discriminant, targets: [(value, bbX), ...], otherwise: bbY }`: Integer discriminant switch used for `match` on `int` literals, enum unit variants (via `discriminant`), `if`/`while` boolean conditions (`1 => true`), and hybrid fallbacks (range/guard arms chain on `otherwise`).
    - `Unreachable`: Denotes code that cannot be executed.
 
 4. **Statements and Rvalues**:
@@ -30,12 +32,15 @@ AMIR v0.1 is a Control Flow Graph (CFG) representation of the program. It flatte
 ## Textual Pretty-Printing Contract
 
 AMIR outputs conform to a deterministic, indented format:
+
 1. Two spaces (`  `) are used for code blocks.
 2. The `locals` section lists all registers defined in the function with their types and names (if they correspond to a source variable).
 3. Basic blocks are printed as `bbX:` followed by statements and a terminator.
 
 ### Example: Basic Addition
+
 Source:
+
 ```swift
 func add(a int, b int) int {
     return a + b
@@ -43,6 +48,7 @@ func add(a int, b int) int {
 ```
 
 AMIR Output:
+
 ```text
 Func add(a: int, b: int) -> int
   locals:
@@ -56,7 +62,9 @@ Func add(a: int, b: int) -> int
 ```
 
 ### Example: Branching (If/Else)
+
 Source:
+
 ```swift
 func test(x int) int {
     if x > 5 {
@@ -68,6 +76,7 @@ func test(x int) int {
 ```
 
 AMIR Output:
+
 ```text
 Func test(x: int) -> int
   locals:
@@ -89,7 +98,9 @@ Func test(x: int) -> int
 ```
 
 ### Example: While Loop
+
 Source:
+
 ```swift
 func test() {
     idx = 0
@@ -100,6 +111,7 @@ func test() {
 ```
 
 AMIR Output:
+
 ```text
 Func test() -> void
   locals:
@@ -125,9 +137,58 @@ Func test() -> void
     return
 ```
 
+## Invariantes formais (v0.1)
+
+Todo pass que lê ou escreve AMIR deve preservar estas regras. O validador `validate_amir_program` em `arandu_semantics/src/amir_validate.rs` aplica CFG-1…CFG-5 e TYP-1 nos goldens `tests/amir/*`. HIR usa `validate_invariants` separadamente.
+
+### CFG
+
+| ID | Invariante |
+|----|------------|
+| CFG-1 | Todo basic block termina com exatamente um **terminador** (`Return`, `Goto`, `Branch`, `SwitchInt`, `Unreachable`). |
+| CFG-2 | Nenhuma instrução aparece **após** o terminador no mesmo bloco. |
+| CFG-3 | Todo `Goto` / `Branch` / `SwitchInt` aponta para um `bb` existente na mesma função. |
+| CFG-4 | `bb0` é o único ponto de entrada; blocos órfãos são erro de lowering (ou `Unreachable` explícito). |
+| CFG-5 | Blocos alcançáveis a partir de `bb0` (exceto código morto marcado `Unreachable`). |
+
+### SSA (v0.1 — preparação)
+
+| ID | Invariante |
+|----|------------|
+| SSA-1 | Cada local `_N` tem tipo `ArType` concreto (não `Error`) após type check. |
+| SSA-2 | **Definição antes do uso** dentro do mesmo caminho linear do bloco (v0.1); phi explícitos em merges — v0.2. |
+| SSA-3 | Parâmetros `_1.._N` e retorno `_0` alocados antes do corpo; nomes de símbolo opcionais na seção `locals`. |
+
+### Ownership / OSSA (a partir de F1)
+
+| ID | Invariante |
+|----|------------|
+| OSSA-1 | `move dst ← src` invalida `src` para usos posteriores no mesmo caminho (checado por move checker). |
+| OSSA-2 | `destroy` só em valores **own** no fim de escopo ou após move não propagado. |
+| OSSA-3 | `copy` só em tipos **Copy** (primitivos, `shared` ref — lista no plano estratégico). |
+| OSSA-4 | Instruções OSSA não aparecem no AHIR — só no AMIR. |
+
+### Tipagem
+
+| ID | Invariante |
+|----|------------|
+| TYP-1 | Todo operando de rvalue tem tipo compatível com a operação (checker já validou; AMIR não re-inventa tipos). |
+| TYP-2 | `Result` / `Option` no AMIR usam representação acordada (`ResultCtor` ou layout ok/err interno) — tipagem fonte só `Result<T,E>` e `Option<T>`. |
+
+### Efeitos (metadata v0.2+)
+
+| ID | Invariante |
+|----|------------|
+| EFF-1 | Funções podem carregar flags `can_throw`, `can_suspend` derivadas do AHIR (preparação; não obrigatório v0.1). |
+
+Violações devem falhar no validador de IR ou no pass que as introduz, não no backend C.
+
+---
+
 ## Lowering from AHIR to AMIR
 
 The AMIR lowering compiler pass performs the following steps:
+
 1. Pre-allocates parameters (`_1.._N`) and maps their symbol IDs in a translation context.
 2. Creates an initial basic block `bb0`.
 3. Processes declarations and statements sequentially.

@@ -1,0 +1,25 @@
+func load() Result<int, Err> {
+    return Result.Ok(0)
+}
+
+func test_try() int {
+    x = load()?
+    return x * 2
+}
+
+struct Point {
+    x int
+    y int
+}
+
+func test_safe_field(p Point?) int {
+    return p?.x ?? 0
+}
+
+func test_safe_index(arr []int, idx int) int {
+    return arr?[idx] ?? -1
+}
+
+func test_null_coalesce(a int?, b int) int {
+    return a ?? b
+}

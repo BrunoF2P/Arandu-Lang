@@ -1,3 +1,5 @@
+#![allow(clippy::format_collect)]
+
 use arandu_lexer::Span;
 use arandu_semantics::{DiagCode, SymbolKind, SymbolTable, resolve};
 use std::{fs, path::PathBuf};
@@ -54,8 +56,7 @@ fn assert_diagnostic_golden(name: &str) {
         .diagnostics
         .iter()
         .map(|d| format!("{}\n", d.format_for_cli(&rel_filepath)))
-        .collect::<Vec<_>>()
-        .join("");
+        .collect::<String>();
 
     let update_golden = std::env::var("UPDATE_GOLDEN").is_ok();
     if update_golden {
@@ -74,8 +75,7 @@ fn assert_diagnostic_golden(name: &str) {
 
         assert_eq!(
             actual_lines, expected_lines,
-            "Mismatch in golden diagnostic test output.\nActual:\n{}\nExpected:\n{}",
-            actual, expected
+            "Mismatch in golden diagnostic test output.\nActual:\n{actual}\nExpected:\n{expected}"
         );
     }
 }
@@ -83,7 +83,7 @@ fn assert_diagnostic_golden(name: &str) {
 #[test]
 fn resolves_forward_function_reference() {
     let result = resolve_source(
-        r#"
+        r"
 module tests.forward
 
 func main() {
@@ -93,7 +93,7 @@ func main() {
 func later() int {
     return 1
 }
-"#,
+",
     );
 
     assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
@@ -123,7 +123,7 @@ fn matches_set_missing_diagnostic_golden() {
 #[test]
 fn resolves_params_locals_and_set_roots() {
     let result = resolve_source(
-        r#"
+        r"
 module tests.locals
 
 func add(a int, b int) int {
@@ -131,7 +131,7 @@ func add(a int, b int) int {
     set total += 1
     return total
 }
-"#,
+",
     );
 
     assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
@@ -161,7 +161,7 @@ func main() {
 #[test]
 fn reports_namespace_used_as_value() {
     let result = resolve_source(
-        r#"
+        r"
 module tests.namespace_as_value
 
 import io
@@ -169,7 +169,7 @@ import io
 func main() {
     value = io
 }
-"#,
+",
     );
 
     assert_eq!(codes(&result), vec![DiagCode::N008NamespaceUsedAsValue]);
@@ -178,7 +178,7 @@ func main() {
 #[test]
 fn reports_undefined_namespace_member() {
     let result = resolve_source(
-        r#"
+        r"
 module tests.undefined_member
 
 import io
@@ -186,7 +186,7 @@ import io
 func main() {
     io.missing()
 }
-"#,
+",
     );
 
     assert_eq!(codes(&result), vec![DiagCode::N009UndefinedNamespaceMember]);
@@ -210,7 +210,7 @@ func render(window AppWindow) Button {
 #[test]
 fn resolves_type_qualified_associated_function() {
     assert_no_diagnostics(
-        r#"
+        r"
 module tests.associated
 
 struct User {
@@ -224,14 +224,14 @@ func User.greet(user User) str {
 func main(user User) {
     text = User.greet(user)
 }
-"#,
+",
     );
 }
 
 #[test]
 fn reports_undefined_associated_function() {
     let result = resolve_source(
-        r#"
+        r"
 module tests.associated_missing
 
 struct User {
@@ -241,7 +241,7 @@ struct User {
 func main(user User) {
     text = User.missing(user)
 }
-"#,
+",
     );
 
     assert_eq!(
@@ -253,13 +253,13 @@ func main(user User) {
 #[test]
 fn reports_undefined_assignment_target_with_set_specific_hint() {
     let result = resolve_source(
-        r#"
+        r"
 module tests.set_missing
 
 func main() {
     set missing = 1
 }
-"#,
+",
     );
 
     assert_eq!(
@@ -279,7 +279,7 @@ func main() {
 #[test]
 fn resolves_type_names_in_params_and_struct_literals() {
     let result = resolve_source(
-        r#"
+        r"
 module tests.types
 
 struct User {
@@ -289,7 +289,7 @@ struct User {
 func make(name str) User {
     return User { name: name }
 }
-"#,
+",
     );
 
     assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
@@ -304,24 +304,21 @@ func make(name str) User {
 #[test]
 fn reports_undefined_value_with_suggestion() {
     let result = resolve_source(
-        r#"
+        r"
 module tests.suggest
 
 func main() {
     user = 1
     value = usre
 }
-"#,
+",
     );
 
     assert_eq!(codes(&result), vec![DiagCode::N001UndefinedValue]);
     let diagnostic = &result.diagnostics[0];
     assert!(diagnostic.message.contains("usre"));
     assert!(
-        diagnostic
-            .hints
-            .iter()
-            .any(|hint| hint.contains("user")),
+        diagnostic.hints.iter().any(|hint| hint.contains("user")),
         "{diagnostic:#?}"
     );
 }
@@ -329,13 +326,13 @@ func main() {
 #[test]
 fn reports_undefined_type() {
     let result = resolve_source(
-        r#"
+        r"
 module tests.undefined_type
 
 func main(value MissingType) {
     return
 }
-"#,
+",
     );
 
     assert_eq!(codes(&result), vec![DiagCode::N002UndefinedType]);
@@ -344,7 +341,7 @@ func main(value MissingType) {
 #[test]
 fn reports_redeclare_same_scope_but_allows_nested_shadowing() {
     let result = resolve_source(
-        r#"
+        r"
 module tests.redeclare
 
 func main() {
@@ -354,7 +351,7 @@ func main() {
     }
     value = 3
 }
-"#,
+",
     );
 
     assert_eq!(codes(&result), vec![DiagCode::N003RedefinedName]);
@@ -382,7 +379,7 @@ fn symbol_table_keeps_value_and_type_namespaces_distinguishable() {
 #[test]
 fn resolves_match_pattern_bindings_in_arm_scope() {
     let result = resolve_source(
-        r#"
+        r"
 module tests.match_bindings
 
 enum Token {
@@ -394,7 +391,7 @@ func describe(token Token) str {
         Token.Word(text) => text
     }
 }
-"#,
+",
     );
 
     assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
@@ -403,7 +400,7 @@ func describe(token Token) str {
 #[test]
 fn resolves_match_statement_pattern_bindings_in_arm_scope() {
     let result = resolve_source(
-        r#"
+        r"
 module tests.match_statement_bindings
 
 enum Token {
@@ -419,7 +416,7 @@ func describe(token Token) {
         Token.Word(text) => sink(text)
     }
 }
-"#,
+",
     );
 
     assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
@@ -428,7 +425,7 @@ func describe(token Token) {
 #[test]
 fn resolves_for_bindings_in_loop_scope() {
     let result = resolve_source(
-        r#"
+        r"
 module tests.forBindings
 
 func main(items []int) {
@@ -436,7 +433,7 @@ func main(items []int) {
         value = item
     }
 }
-"#,
+",
     );
 
     assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
@@ -445,13 +442,13 @@ func main(items []int) {
 #[test]
 fn resolves_module_qualified_type_names() {
     let result = resolve_source(
-        r#"
+        r"
         module tests.qualifiedType
         import myModule
         func main() {
             x myModule.SomeType = 0
         }
-        "#,
+        ",
     );
     let diagnostics = codes(&result);
     // myModule is a module, not a type. Checking a qualified member type should report N009

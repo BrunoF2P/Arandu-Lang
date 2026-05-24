@@ -100,6 +100,11 @@ fn parses_type_qualified_call_fixture() {
 }
 
 #[test]
+fn parses_method_self_fixture() {
+    assert_golden("method_self");
+}
+
+#[test]
 fn parses_declarations_struct_fixture() {
     assert_golden("declarations_struct");
 }

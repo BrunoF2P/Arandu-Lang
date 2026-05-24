@@ -47,9 +47,8 @@ fn parses_required_example_corpus() {
             .components()
             .any(|component| component.as_os_str() == "invalid")
         {
-            let _err = match parse(&source) {
-                Ok(_) => panic!("parser should reject {}", path.display()),
-                Err(err) => err,
+            let Err(_err) = parse(&source) else {
+                panic!("parser should reject {}", path.display());
             };
         } else {
             parse(&source)

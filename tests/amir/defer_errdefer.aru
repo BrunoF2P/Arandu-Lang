@@ -1,0 +1,27 @@
+import err
+
+func on_err() {
+}
+
+func on_ok() {
+}
+
+func test_success() Result<void, Err> {
+    errdefer {
+        on_err()
+    }
+    defer {
+        on_ok()
+    }
+    return nil
+}
+
+func test_error() Result<void, Err> {
+    errdefer {
+        on_err()
+    }
+    defer {
+        on_ok()
+    }
+    return Result.Err(err.new("boom"))
+}

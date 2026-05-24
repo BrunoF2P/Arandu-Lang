@@ -17,6 +17,7 @@ AHIR v0.1 is a typed, name-resolved syntax tree representation of the Arandu lan
 ## Pretty-Printing Contract
 
 The pretty-printed representation of AHIR (output by `arandu hir`) complies with the following format:
+
 1. **Indentation**: 2 spaces per indentation level.
 2. **Source Order**: Elements must be printed in the exact order they appeared in the source code.
 3. **Deterministic Collections**: Associated structures (such as struct fields, enum variants) that do not have a defined source-level statement order are sorted alphabetically before printing.
@@ -25,6 +26,7 @@ The pretty-printed representation of AHIR (output by `arandu hir`) complies with
 ## Structural Examples
 
 ### 1. Func Declaration with Binary Expression
+
 ```text
 Func add(a: int, b: int) -> int
   Return
@@ -34,6 +36,7 @@ Func add(a: int, b: int) -> int
 ```
 
 ### 2. Struct Definitions
+
 ```text
 Struct Point
   x: int
@@ -41,6 +44,7 @@ Struct Point
 ```
 
 ### 3. Enum Definition
+
 ```text
 Enum LoadState
   Idle
@@ -48,6 +52,7 @@ Enum LoadState
 ```
 
 ### 4. If Expression
+
 ```text
 If: int
   Binary(>): bool
@@ -62,6 +67,7 @@ If: int
 ```
 
 ### 5. Match Expression
+
 ```text
 Match: int
   LocalRef(state): LoadState
@@ -72,6 +78,7 @@ Match: int
 ```
 
 ### 6. While Loop with Assignments
+
 ```text
 While
   Binary(<): bool
@@ -86,6 +93,7 @@ While
 ## Relationship to the Type Checker
 
 AHIR is constructed during the **Lowering** pass after type checking completes. The lowering pass takes the parsed AST, the resolved namespace definitions, and the `TypeInfo` produced by the type checker:
+
 - Unresolved variable paths are replaced by `HirExprKind::Path` carrying the resolved `SymbolId`.
 - Implicit type conversions are fully annotated.
 - If type checking or name resolution finds any semantic errors (diagnostics of severity `Error`), the pipeline aborts, diagnostics are printed to standard error, and the compiler exits with status code `1` without generating or printing AHIR.

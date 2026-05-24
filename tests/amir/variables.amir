@@ -1,11 +1,15 @@
 Func variables() -> int
   locals:
     _0: int // return
-    _1: int // x
-    _2: int // y
+    _1: int
+    _2: int
+    s0: int // x
+    s1: int // y
 
   bb0:
-    _1 = 10
-    _2 = 20
+    s0 = 10
+    s1 = 20
+    _1 = s0
+    _2 = s1
     _0 = add _1, _2
     return

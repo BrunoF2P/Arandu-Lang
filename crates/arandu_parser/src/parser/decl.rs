@@ -1,8 +1,15 @@
-use super::*;
+use super::{
+    Attribute, ConstDecl, EnumDecl, EnumPayload, EnumVariant, ExternDecl, FieldDecl, FuncDecl,
+    FuncName, FuncSignature, ImportDecl, ImportItem, InterfaceDecl, ModuleDecl, ParseError,
+    ParseErrorCode, Parser, StructDecl, TokenKind, TopLevelDecl, TypeAliasDecl, Visibility,
+    is_contextual_module_segment,
+};
 
-impl Parser {
+impl<'a> Parser<'a> {
     pub(super) fn expect_optional_semicolon_after_module_path(&mut self) -> Result<(), ParseError> {
-        if !self.at_kind_name("SEMICOLON") {
+        if self.at_kind_name("SEMICOLON") {
+            self.expect_semicolon()?;
+        } else {
             let last_segment_is_contextual = is_contextual_module_segment(&self.previous().kind);
             let next_starts_top_level = self.at_kind_name("EOF")
                 || self.at_kind_name("KW_IMPORT")
@@ -22,8 +29,6 @@ impl Parser {
             if !(last_segment_is_contextual && next_starts_top_level) {
                 self.expect_semicolon()?;
             }
-        } else {
-            self.expect_semicolon()?;
         }
         Ok(())
     }
@@ -124,6 +129,7 @@ impl Parser {
                 ParseErrorCode::ExpectedTopLevelDecl,
                 "expected top-level declaration",
                 self.current(),
+                self.source,
             )),
         }?;
         self.attach_docs(docs, decl.span());
@@ -189,7 +195,11 @@ impl Parser {
         let name = self.parse_func_name()?;
         let generic_params = self.parse_generic_params()?;
         self.expect_name("LPAREN")?;
-        let params = self.parse_params()?;
+        let method_receiver = match &name {
+            FuncName::Method { receiver, .. } => Some(receiver),
+            FuncName::Free { .. } => None,
+        };
+        let params = self.parse_params(method_receiver)?;
         self.expect_name("RPAREN")?;
         let result = if self.can_start_type() || self.at_kind_name("LPAREN") {
             Some(self.parse_result_type()?)
@@ -234,6 +244,7 @@ impl Parser {
                     ParseErrorCode::ExpectedToken,
                     "expected '}'",
                     self.current(),
+                    self.source,
                 ));
                 break;
             }
@@ -299,6 +310,7 @@ impl Parser {
                     ParseErrorCode::ExpectedToken,
                     "expected '}'",
                     self.current(),
+                    self.source,
                 ));
                 break;
             }
@@ -329,8 +341,7 @@ impl Parser {
         let name = self.expect_ident_type()?;
         let payload = if self.eat_name("LPAREN") {
             let payload_start = self.pos.saturating_sub(1);
-            let types =
-                self.parse_comma_separated_list("RPAREN", 0, |parser| parser.parse_type())?;
+            let types = self.parse_comma_separated_list("RPAREN", 0, super::Parser::parse_type)?;
             self.expect_name("RPAREN")?;
             Some(EnumPayload::Tuple {
                 span: self.span_from_mark(payload_start),
@@ -405,8 +416,8 @@ impl Parser {
     pub(super) fn parse_abi_literal(&mut self) -> Result<String, ParseError> {
         self.expect_name("STRING_START")?;
         let abi = match &self.current().kind {
-            TokenKind::StringText(text) => {
-                let text = text.clone();
+            TokenKind::StringText => {
+                let text = self.current_text().to_string();
                 self.consume();
                 text
             }
@@ -415,6 +426,7 @@ impl Parser {
                     ParseErrorCode::ExpectedToken,
                     "expected static ABI string",
                     self.current(),
+                    self.source,
                 ));
             }
         };
@@ -433,7 +445,7 @@ impl Parser {
         let name = self.expect_ident_value()?;
         let generic_params = self.parse_generic_params()?;
         self.expect_name("LPAREN")?;
-        let params = self.parse_params()?;
+        let params = self.parse_params(None)?;
         self.expect_name("RPAREN")?;
         let result = if self.can_start_type() || self.at_kind_name("LPAREN") {
             Some(self.parse_result_type()?)
@@ -493,6 +505,7 @@ impl Parser {
                 ParseErrorCode::ExpectedToken,
                 format!("expected item before {end_name}"),
                 self.current(),
+                self.source,
             ));
         }
 
@@ -512,6 +525,7 @@ impl Parser {
                 ParseErrorCode::ExpectedToken,
                 format!("expected at least {min_items} item(s) before {end_name}"),
                 self.current(),
+                self.source,
             ));
         }
 
@@ -537,6 +551,7 @@ impl Parser {
                     ParseErrorCode::ExpectedToken,
                     "expected '}'",
                     self.current(),
+                    self.source,
                 ));
                 break;
             }
@@ -566,10 +581,7 @@ impl Parser {
 
     pub(super) fn parse_func_name(&mut self) -> Result<FuncName, ParseError> {
         let start = self.pos;
-        if matches!(
-            self.current().kind,
-            TokenKind::IdentType(_) | TokenKind::IdentValue(_)
-        ) {
+        if matches!(self.current().kind, TokenKind::IdentType | TokenKind::IdentValue) {
             if let Ok(receiver) = self.parse_type_name()
                 && self.eat_name("DOT")
             {

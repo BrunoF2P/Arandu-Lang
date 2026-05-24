@@ -1,0 +1,18 @@
+Program
+  Struct User
+    name: str
+
+  Func User.greet(shared self: User) -> str
+    Return
+      Field(name): str
+        LocalRef(self): User
+
+  Func main() -> void
+    Var user: User =
+      StructLiteral(User): User
+        name:
+          Str(interpolated): str
+    Var _: str =
+      Call: str
+        Path(User.greet): func(User) str
+        LocalRef(user): User

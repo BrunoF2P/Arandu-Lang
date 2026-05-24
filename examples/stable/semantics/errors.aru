@@ -3,12 +3,12 @@ module examples.stable.semantics.errors
 import err
 import io
 
-func readName(path str) (str, Err?) {
+func readName(path str) Result<str, Err> {
     if path == "" {
-        return "", err.new("missingPath")
+        return Result.Err(err.new("missingPath"))
     }
 
-    return "Bruno", nil
+    return Result.Ok("Bruno")
 }
 
 func main() {

@@ -1,0 +1,14 @@
+interface Writer {
+    func write() void
+}
+
+struct Buffer {
+    data int
+}
+
+func send<T: Writer>(value T) void {
+}
+
+func main() {
+    send<Buffer>(Buffer { data: 1 })
+}

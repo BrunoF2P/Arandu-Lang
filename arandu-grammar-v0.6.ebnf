@@ -421,7 +421,7 @@ index_suffix       = "[" expr "]" ;
 safe_index_suffix  = "?[" expr "]" ;
 
 try_suffix         = "?" ;
-                   (* semantic rule: expr? works on (T, Err), Result<T>, or Option<T>. *)
+                   (* semantic rule: expr? works on Result<T,E> or Option<T> (and Nullable T? where allowed). *)
 
 
 (* ------------------------------------------------------------------ *)

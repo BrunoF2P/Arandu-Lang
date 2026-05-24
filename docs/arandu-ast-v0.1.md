@@ -746,7 +746,7 @@ Fields:
 
 Invariant:
 
-- `expr?` is parsed before the type checker decides whether the expression is `(T, Err)`, `Result<T>`, or `Option<T>`.
+- `expr?` is parsed before the type checker decides whether the expression is `Result<T, E>`, `Option<T>`, or an allowed `Nullable` (`T?`).
 
 ## Literals
 

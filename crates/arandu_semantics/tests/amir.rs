@@ -1,4 +1,4 @@
-use arandu_semantics::{lower_to_amir, lower_to_hir, resolve, type_check};
+use arandu_semantics::{lower_to_amir, lower_to_hir, resolve, type_check, validate_amir_program};
 
 #[test]
 fn test_amir_golden_files() {
@@ -33,20 +33,31 @@ fn test_amir_golden_files() {
         let src = std::fs::read_to_string(&path).unwrap();
 
         let program = arandu_parser::parse(&src).unwrap_or_else(|err| {
-            panic!("failed to parse {}: {:?}", name, err);
+            panic!("failed to parse {name}: {err:?}");
         });
         let resolution = resolve(&program);
         let tc = type_check(resolution, &program);
-        if !tc.diagnostics.is_empty() {
-            panic!("type check failed for {}: {:?}", name, tc.diagnostics);
-        }
+        let errors: Vec<_> = tc
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == arandu_semantics::Severity::Error)
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "type check failed for {name}: {errors:?}"
+        );
         let hir = lower_to_hir(&tc, &program).expect("HIR lowering failed");
         hir.validate_invariants(&tc.symbols)
             .expect("HIR invariant validation failed");
         let amir = lower_to_amir(&tc, &hir).expect("AMIR lowering failed");
+        let amir_issues = validate_amir_program(&amir, &tc.symbols);
+        assert!(
+            amir_issues.is_empty(),
+            "AMIR validation failed for {name}: {amir_issues:?}"
+        );
         let pretty = amir.pretty_print(&tc.symbols);
 
-        let golden_path = fixtures_dir.join(format!("{}.amir", name));
+        let golden_path = fixtures_dir.join(format!("{name}.amir"));
         if update_golden {
             std::fs::write(&golden_path, &pretty).unwrap();
         } else {
@@ -59,8 +70,7 @@ fn test_amir_golden_files() {
             let pretty_normalized = pretty.replace("\r\n", "\n");
             assert_eq!(
                 pretty_normalized, expected_normalized,
-                "AMIR mismatch for {}. Run with UPDATE_GOLDEN=1 to update.",
-                name
+                "AMIR mismatch for {name}. Run with UPDATE_GOLDEN=1 to update."
             );
         }
     }

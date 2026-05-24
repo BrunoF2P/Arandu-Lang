@@ -269,8 +269,8 @@ Forms:
 ```text
 func main() {}
 public func main() {}
-async func fetch(path str) (str, Err?) {}
-public async func fetch(path str) (str, Err?) {}
+async func fetch(path str) Result<str, Err> {}
+public async func fetch(path str) Result<str, Err> {}
 func User.greet(user User) str {}
 ```
 
@@ -281,7 +281,8 @@ Parser decisions:
 - `KW_PUBLIC KW_ASYNC KW_FUNC` is a public async function declaration.
 - `IDENT_VALUE` after `func` is a free function.
 - `IDENT_TYPE DOT IDENT_VALUE` after `func` is a method-like function name.
-- Function result type is present when the token after `)` can start a type or is `LPAREN` for multi-result.
+- Function result type is present when the token after `)` can start a type or is `LPAREN` for multi-value returns.
+- Error-bearing functions must use `Result<T, E>`. Tuple returns like `(T, E)` where `E` is `Err` are rejected at parse time (**P006**).
 
 Related diagnostics:
 
@@ -327,7 +328,7 @@ Form:
 
 ```arandu
 interface Writer {
-    func write(bytes []byte) Err?
+    func write(bytes []byte) Result<void, Err>
 }
 ```
 
@@ -386,7 +387,7 @@ Type forms:
 - Pointer: `ptr[u8]`
 - Function: `func(int, int) int`
 - Parenthesized: `(int)`
-- Nullable: `Err?`
+- Nullable: `T?` (optional value types; function errors use `Result<T, E>`)
 
 Parser decision:
 

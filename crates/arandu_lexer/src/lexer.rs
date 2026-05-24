@@ -16,39 +16,86 @@ pub struct Lexer<'a> {
     diagnostics: Vec<LexError>,
 }
 
+#[derive(Clone, Copy)]
+struct Mark {
+    pos: usize,
+    line: usize,
+    col: usize,
+}
+
+#[derive(Clone, Copy)]
+enum Radix {
+    Bin,
+    Oct,
+    Hex,
+}
+
+impl Radix {
+    fn is_valid_digit(self, ch: char) -> bool {
+        match self {
+            Radix::Bin => matches!(ch, '0' | '1' | '_'),
+            Radix::Oct => matches!(ch, '0'..='7' | '_'),
+            Radix::Hex => ch.is_ascii_hexdigit() || ch == '_',
+        }
+    }
+
+    fn token_kind(self) -> TokenKind {
+        match self {
+            Radix::Bin => TokenKind::IntBin,
+            Radix::Oct => TokenKind::IntOct,
+            Radix::Hex => TokenKind::IntHex,
+        }
+    }
+
+    fn invalid_digit_code(self) -> LexErrorCode {
+        match self {
+            Radix::Bin => LexErrorCode::InvalidBinaryDigit,
+            Radix::Oct => LexErrorCode::InvalidOctalDigit,
+            Radix::Hex => LexErrorCode::InvalidHexDigit,
+        }
+    }
+}
+
 impl<'a> Lexer<'a> {
+    #[must_use]
     pub fn new(source: &'a str) -> Self {
         Self {
             source,
             pos: 0,
             line: 1,
             col: 1,
-            tokens: Vec::new(),
+            tokens: Vec::with_capacity(source.len() / 4),
             prev_significant: None,
             diagnostics: Vec::new(),
         }
     }
 
-    pub fn lex(self) -> Result<Vec<Token>, LexError> {
+    /// Lexes the full source, returning tokens or the first lexical error.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first [`LexError`] if the source contains invalid tokens.
+    pub fn lex(self) -> Result<crate::Lexed<'a>, LexError> {
         let lexed = self.lex_recovering();
-        if let Some(err) = lexed.diagnostics.into_iter().next() {
+        if let Some(err) = lexed.diagnostics.first().copied() {
             Err(err)
         } else {
-            Ok(lexed.tokens)
+            Ok(lexed)
         }
     }
 
-    pub fn lex_recovering(mut self) -> crate::Lexed {
+    #[must_use]
+    pub fn lex_recovering(mut self) -> crate::Lexed<'a> {
         while !self.is_at_end() {
-            let start_mark = self.mark();
+            let start_pos = self.pos;
             let result = self.lex_next_token();
 
             if let Err(err) = result {
                 let code = err.code;
                 let span = err.span;
                 self.diagnostics.push(err);
-                self.push_token(TokenKind::Error(code), "", span, false);
-                if self.pos == start_mark.0 {
+                self.push_token(TokenKind::Error(code), span, false);
+                if self.pos == start_pos {
                     self.bump();
                 }
             }
@@ -56,53 +103,65 @@ impl<'a> Lexer<'a> {
 
         self.insert_semicolon_if_needed();
         let span = self.current_span();
-        self.push_token(TokenKind::Eof, "", span, false);
-        
+        self.push_token(TokenKind::Eof, span, false);
+
         crate::Lexed {
+            source: self.source,
             tokens: self.tokens,
             diagnostics: self.diagnostics,
         }
     }
 
     fn lex_next_token(&mut self) -> Result<(), LexError> {
-        if self.consume_space_or_newline()? {
+        if self.consume_space_or_newline() {
             return Ok(());
         }
 
-        if self.starts_with("///") {
-            self.lex_line_doc_comment();
+        let bytes = self.source.as_bytes();
+        let remaining = bytes.len() - self.pos;
+        if remaining == 0 {
             return Ok(());
-        }
-        if self.starts_with("/**") {
-            return self.lex_block_doc_comment();
-        }
-        if self.starts_with("//") {
-            self.skip_line_comment();
-            return Ok(());
-        }
-        if self.starts_with("/*") {
-            return self.skip_block_comment();
         }
 
-        if self.starts_with("r\"\"\"") {
-            return self.lex_raw_multiline_string();
+        let first = bytes[self.pos];
+
+        match first {
+            b'/' => {
+                if remaining >= 3 && bytes[self.pos + 1] == b'/' && bytes[self.pos + 2] == b'/' {
+                    self.lex_line_doc_comment();
+                    return Ok(());
+                } else if remaining >= 3 && bytes[self.pos + 1] == b'*' && bytes[self.pos + 2] == b'*' {
+                    return self.lex_block_doc_comment();
+                } else if remaining >= 2 && bytes[self.pos + 1] == b'/' {
+                    self.skip_line_comment();
+                    return Ok(());
+                } else if remaining >= 2 && bytes[self.pos + 1] == b'*' {
+                    return self.skip_block_comment();
+                }
+            }
+            b'r' => {
+                if remaining >= 4 && &bytes[self.pos..self.pos + 4] == b"r\"\"\"" {
+                    return self.lex_raw_multiline_string();
+                } else if remaining >= 2 && bytes[self.pos + 1] == b'"' {
+                    return self.lex_raw_string();
+                }
+            }
+            b'"' => {
+                if remaining >= 3 && bytes[self.pos + 1] == b'"' && bytes[self.pos + 2] == b'"' {
+                    return self.lex_multiline_string();
+                }
+                return self.lex_string(false);
+            }
+            b'\'' => {
+                return self.lex_char();
+            }
+            b'0'..=b'9' => {
+                return self.lex_number();
+            }
+            _ => {}
         }
-        if self.starts_with("r\"") {
-            return self.lex_raw_string();
-        }
-        if self.starts_with("\"\"\"") {
-            return self.lex_multiline_string();
-        }
-        if self.peek() == Some('"') {
-            return self.lex_string(false);
-        }
-        if self.peek() == Some('\'') {
-            return self.lex_char();
-        }
-        if self.peek().is_some_and(|ch| ch.is_ascii_digit()) {
-            return self.lex_number();
-        }
-        if self.peek().is_some_and(is_ident_start) {
+
+        if first < 128 && is_ident_start(first as char) || first >= 128 && self.peek().is_some_and(is_ident_start) {
             self.lex_ident_or_keyword();
             return Ok(());
         }
@@ -110,33 +169,32 @@ impl<'a> Lexer<'a> {
         self.lex_operator_or_punctuation()
     }
 
-    fn consume_space_or_newline(&mut self) -> Result<bool, LexError> {
+    fn consume_space_or_newline(&mut self) -> bool {
         match self.peek() {
             Some(' ' | '\t') => {
                 self.bump();
-                Ok(true)
+                true
             }
             Some('\r') if self.peek_next() == Some('\n') => {
                 let span = self.current_span();
                 self.bump();
                 self.bump();
                 self.maybe_insert_semicolon_at(span);
-                Ok(true)
+                true
             }
             Some('\n') => {
                 let span = self.current_span();
                 self.bump();
                 self.maybe_insert_semicolon_at(span);
-                Ok(true)
+                true
             }
-            _ => Ok(false),
+            _ => false,
         }
     }
 
     fn maybe_insert_semicolon_at(&mut self, span: Span) {
         let can_insert = self
             .prev_significant
-            .as_ref()
             .is_some_and(TokenKind::can_end_statement);
         if !can_insert {
             return;
@@ -149,17 +207,16 @@ impl<'a> Lexer<'a> {
             return;
         }
 
-        self.push_token(TokenKind::Semicolon, "", span, true);
+        self.push_token(TokenKind::Semicolon, span, true);
     }
 
     fn insert_semicolon_if_needed(&mut self) {
         let can_insert = self
             .prev_significant
-            .as_ref()
             .is_some_and(TokenKind::can_end_statement);
         if can_insert {
             let span = self.current_span();
-            self.push_token(TokenKind::Semicolon, "", span, true);
+            self.push_token(TokenKind::Semicolon, span, true);
         }
     }
 
@@ -168,36 +225,32 @@ impl<'a> Lexer<'a> {
         while !self.is_at_end() && !matches!(self.peek(), Some('\n' | '\r')) {
             self.bump();
         }
-        let lexeme = self.slice_from(start.0).to_string();
-        self.push_token(
-            TokenKind::DocComment(lexeme.clone()),
-            lexeme,
-            self.span_from(start),
-            false,
-        );
+        self.push_token(TokenKind::DocComment, self.span_from(start), false);
     }
 
     fn lex_block_doc_comment(&mut self) -> Result<(), LexError> {
         let start = self.mark();
-        self.bump_n(3);
-        while !self.is_at_end() && !self.starts_with("*/") {
-            self.bump();
+        self.bump_ascii(3); // /**
+        let mut depth = 1;
+        while !self.is_at_end() && depth > 0 {
+            if self.starts_with("/*") {
+                self.bump_ascii(2);
+                depth += 1;
+            } else if self.starts_with("*/") {
+                self.bump_ascii(2);
+                depth -= 1;
+            } else {
+                self.bump();
+            }
         }
-        if self.is_at_end() {
+        if depth > 0 {
             return Err(self.error_from(
                 start,
                 LexErrorCode::UnterminatedBlockComment,
                 "unterminated doc block comment",
             ));
         }
-        self.bump_n(2);
-        let lexeme = self.slice_from(start.0).to_string();
-        self.push_token(
-            TokenKind::DocComment(lexeme.clone()),
-            lexeme,
-            self.span_from(start),
-            false,
-        );
+        self.push_token(TokenKind::DocComment, self.span_from(start), false);
         Ok(())
     }
 
@@ -209,25 +262,32 @@ impl<'a> Lexer<'a> {
 
     fn skip_block_comment(&mut self) -> Result<(), LexError> {
         let start = self.mark();
-        self.bump_n(2);
-        while !self.is_at_end() && !self.starts_with("*/") {
-            self.bump();
+        self.bump_ascii(2); // /*
+        let mut depth = 1;
+        while !self.is_at_end() && depth > 0 {
+            if self.starts_with("/*") {
+                self.bump_ascii(2);
+                depth += 1;
+            } else if self.starts_with("*/") {
+                self.bump_ascii(2);
+                depth -= 1;
+            } else {
+                self.bump();
+            }
         }
-        if self.is_at_end() {
+        if depth > 0 {
             return Err(self.error_from(
                 start,
                 LexErrorCode::UnterminatedBlockComment,
                 "unterminated block comment",
             ));
         }
-        self.bump_n(2);
         Ok(())
     }
 
     fn lex_raw_string(&mut self) -> Result<(), LexError> {
         let start = self.mark();
-        self.bump_n(2);
-        let content_start = self.pos;
+        self.bump_ascii(2);
         while !self.is_at_end() && self.peek() != Some('"') {
             self.bump();
         }
@@ -238,21 +298,14 @@ impl<'a> Lexer<'a> {
                 "unterminated raw string literal",
             ));
         }
-        let content = self.source[content_start..self.pos].to_string();
         self.bump();
-        self.push_token(
-            TokenKind::RawString(content),
-            self.slice_from(start.0).to_string(),
-            self.span_from(start),
-            false,
-        );
+        self.push_token(TokenKind::RawString, self.span_from(start), false);
         Ok(())
     }
 
     fn lex_raw_multiline_string(&mut self) -> Result<(), LexError> {
         let start = self.mark();
-        self.bump_n(4);
-        let content_start = self.pos;
+        self.bump_ascii(4);
         while !self.is_at_end() && !self.starts_with("\"\"\"") {
             self.bump();
         }
@@ -263,58 +316,50 @@ impl<'a> Lexer<'a> {
                 "unterminated raw multiline string literal",
             ));
         }
-        let content = self.source[content_start..self.pos].to_string();
-        self.bump_n(3);
-        self.push_token(
-            TokenKind::RawString(content),
-            self.slice_from(start.0).to_string(),
-            self.span_from(start),
-            false,
-        );
+        self.bump_ascii(3);
+        self.push_token(TokenKind::RawString, self.span_from(start), false);
         Ok(())
     }
 
     fn lex_string(&mut self, interpolation_mode: bool) -> Result<(), LexError> {
         let start = self.mark();
         self.bump();
-        self.push_token(TokenKind::StringStart, "\"", self.span_from(start), false);
-        self.lex_string_parts('"', interpolation_mode, LexErrorCode::UnterminatedString)?;
+        self.push_token(TokenKind::StringStart, self.span_from(start), false);
+        self.lex_string_body(
+            StringTerminator::Quote,
+            interpolation_mode,
+            LexErrorCode::UnterminatedString,
+        )?;
         let end = self.mark();
         self.bump();
-        self.push_token(TokenKind::StringEnd, "\"", self.span_from(end), false);
+        self.push_token(TokenKind::StringEnd, self.span_from(end), false);
         Ok(())
     }
 
     fn lex_multiline_string(&mut self) -> Result<(), LexError> {
         let start = self.mark();
-        self.bump_n(3);
-        self.push_token(
-            TokenKind::MultilineStringStart,
-            "\"\"\"",
-            self.span_from(start),
-            false,
-        );
-        self.lex_multiline_string_parts()?;
+        self.bump_ascii(3);
+        self.push_token(TokenKind::MultilineStringStart, self.span_from(start), false);
+        self.lex_string_body(
+            StringTerminator::TripleQuote,
+            true,
+            LexErrorCode::UnterminatedMultilineString,
+        )?;
         let end = self.mark();
-        self.bump_n(3);
-        self.push_token(
-            TokenKind::MultilineStringEnd,
-            "\"\"\"",
-            self.span_from(end),
-            false,
-        );
+        self.bump_ascii(3);
+        self.push_token(TokenKind::MultilineStringEnd, self.span_from(end), false);
         Ok(())
     }
 
-    fn lex_string_parts(
+    fn lex_string_body(
         &mut self,
-        terminator: char,
-        interpolation_mode: bool,
+        terminator: StringTerminator,
+        allow_newline: bool,
         unterminated_code: LexErrorCode,
     ) -> Result<(), LexError> {
         let mut text_start = self.mark();
-        while !self.is_at_end() && self.peek() != Some(terminator) {
-            if !interpolation_mode && matches!(self.peek(), Some('\n' | '\r')) {
+        while !self.is_at_end() && !self.at_string_terminator(terminator) {
+            if !allow_newline && matches!(self.peek(), Some('\n' | '\r')) {
                 return Err(self.error_from(
                     text_start,
                     unterminated_code,
@@ -324,8 +369,8 @@ impl<'a> Lexer<'a> {
             if self.starts_with("${") {
                 self.flush_text(text_start, self.pos);
                 let start = self.mark();
-                self.bump_n(2);
-                self.push_token(TokenKind::InterpStart, "${", self.span_from(start), false);
+                self.bump_ascii(2);
+                self.push_token(TokenKind::InterpStart, self.span_from(start), false);
                 self.lex_interpolation()?;
                 text_start = self.mark();
                 continue;
@@ -349,35 +394,11 @@ impl<'a> Lexer<'a> {
         Ok(())
     }
 
-    fn lex_multiline_string_parts(&mut self) -> Result<(), LexError> {
-        let mut text_start = self.mark();
-        while !self.is_at_end() && !self.starts_with("\"\"\"") {
-            if self.starts_with("${") {
-                self.flush_text(text_start, self.pos);
-                let start = self.mark();
-                self.bump_n(2);
-                self.push_token(TokenKind::InterpStart, "${", self.span_from(start), false);
-                self.lex_interpolation()?;
-                text_start = self.mark();
-                continue;
-            }
-            if self.peek() == Some('\\') {
-                self.flush_text(text_start, self.pos);
-                self.lex_escape()?;
-                text_start = self.mark();
-                continue;
-            }
-            self.bump();
+    fn at_string_terminator(&self, terminator: StringTerminator) -> bool {
+        match terminator {
+            StringTerminator::Quote => self.peek() == Some('"'),
+            StringTerminator::TripleQuote => self.starts_with("\"\"\""),
         }
-        if self.is_at_end() {
-            return Err(self.error_from(
-                text_start,
-                LexErrorCode::UnterminatedMultilineString,
-                "unterminated multiline string literal",
-            ));
-        }
-        self.flush_text(text_start, self.pos);
-        Ok(())
     }
 
     fn lex_interpolation(&mut self) -> Result<(), LexError> {
@@ -391,7 +412,7 @@ impl<'a> Lexer<'a> {
                 self.lex_operator_or_punctuation()?;
                 continue;
             }
-            if self.consume_space_or_newline()? {
+            if self.consume_space_or_newline() {
                 continue;
             }
             if self.peek() == Some('"') {
@@ -420,12 +441,18 @@ impl<'a> Lexer<'a> {
         }
         let end = self.mark();
         self.bump();
-        self.push_token(TokenKind::InterpEnd, "}", self.span_from(end), false);
+        self.push_token(TokenKind::InterpEnd, self.span_from(end), false);
         Ok(())
     }
 
     fn lex_escape(&mut self) -> Result<(), LexError> {
         let start = self.mark();
+        self.consume_escape_sequence(start)?;
+        self.push_token(TokenKind::StringEscape, self.span_from(start), false);
+        Ok(())
+    }
+
+    fn consume_escape_sequence(&mut self, start: Mark) -> Result<(), LexError> {
         self.bump();
         match self.peek() {
             Some('n' | 't' | 'r' | '0' | '\\' | '"' | '\'' | '$') => {
@@ -453,7 +480,17 @@ impl<'a> Lexer<'a> {
                         "invalid unicode escape",
                     ));
                 }
-                self.bump();
+                self.bump(); // }
+                let code_str = self.slice_from(start.pos);
+                let hex = &code_str[3..code_str.len() - 1];
+                let value = u32::from_str_radix(hex, 16).unwrap_or(u32::MAX);
+                if value > 0x10FFFF {
+                    return Err(self.error_from(
+                        start,
+                        LexErrorCode::InvalidUnicodeEscape,
+                        "unicode escape must be a valid scalar value (<= 0x10FFFF)",
+                    ));
+                }
             }
             _ => {
                 return Err(self.error_from(
@@ -463,13 +500,6 @@ impl<'a> Lexer<'a> {
                 ));
             }
         }
-        let lexeme = self.slice_from(start.0).to_string();
-        self.push_token(
-            TokenKind::StringEscape(lexeme.clone()),
-            lexeme,
-            self.span_from(start),
-            false,
-        );
         Ok(())
     }
 
@@ -479,46 +509,9 @@ impl<'a> Lexer<'a> {
         if self.peek() == Some('\'') {
             return Err(self.error_from(start, LexErrorCode::EmptyChar, "empty char literal"));
         }
-        let content_start = self.pos;
         let mut count = 0;
         if self.peek() == Some('\\') {
-            self.bump();
-            match self.peek() {
-                Some('n' | 't' | 'r' | '0' | '\\' | '"' | '\'' | '$') => {
-                    self.bump();
-                }
-                Some('u') => {
-                    self.bump();
-                    if self.peek() != Some('{') {
-                        return Err(self.error_from(
-                            start,
-                            LexErrorCode::InvalidUnicodeEscape,
-                            "invalid unicode escape",
-                        ));
-                    }
-                    self.bump();
-                    let mut digits = 0;
-                    while self.peek().is_some_and(|ch| ch.is_ascii_hexdigit()) {
-                        digits += 1;
-                        self.bump();
-                    }
-                    if digits == 0 || self.peek() != Some('}') {
-                        return Err(self.error_from(
-                            start,
-                            LexErrorCode::InvalidUnicodeEscape,
-                            "invalid unicode escape",
-                        ));
-                    }
-                    self.bump();
-                }
-                _ => {
-                    return Err(self.error_from(
-                        start,
-                        LexErrorCode::InvalidEscape,
-                        "invalid escape sequence",
-                    ));
-                }
-            }
+            self.consume_escape_sequence(start)?;
             count = 1;
         } else {
             while !self.is_at_end() && self.peek() != Some('\'') {
@@ -547,27 +540,21 @@ impl<'a> Lexer<'a> {
                 "char literal contains more than one codepoint",
             ));
         }
-        let content = self.source[content_start..self.pos].to_string();
         self.bump();
-        self.push_token(
-            TokenKind::Char(content),
-            self.slice_from(start.0).to_string(),
-            self.span_from(start),
-            false,
-        );
+        self.push_token(TokenKind::Char, self.span_from(start), false);
         Ok(())
     }
 
     fn lex_number(&mut self) -> Result<(), LexError> {
         let start = self.mark();
         if self.starts_with("0x") {
-            return self.lex_radix_number(start, 16);
+            return self.lex_radix_number(start, Radix::Hex);
         }
         if self.starts_with("0b") {
-            return self.lex_radix_number(start, 2);
+            return self.lex_radix_number(start, Radix::Bin);
         }
         if self.starts_with("0o") {
-            return self.lex_radix_number(start, 8);
+            return self.lex_radix_number(start, Radix::Oct);
         }
 
         self.bump_digits_or_underscores();
@@ -600,12 +587,19 @@ impl<'a> Lexer<'a> {
             self.bump_digits_or_underscores();
         }
 
-        let lexeme = self.slice_from(start.0).to_string();
+        let lexeme = self.slice_from(start.pos);
         if lexeme.ends_with('_') {
             return Err(self.error_from(
                 start,
                 LexErrorCode::InvalidNumericLiteral,
                 "numeric literal cannot end with `_`",
+            ));
+        }
+        if lexeme.contains("__") {
+            return Err(self.error_from(
+                start,
+                LexErrorCode::InvalidNumericLiteral,
+                "numeric literal cannot contain multiple consecutive underscores",
             ));
         }
         if !is_float && lexeme.len() > 1 && lexeme.starts_with('0') {
@@ -615,18 +609,25 @@ impl<'a> Lexer<'a> {
                 "decimal literals cannot have leading zeroes",
             ));
         }
+        if self.peek().is_some_and(is_ident_start) {
+            return Err(self.error_from(
+                start,
+                LexErrorCode::InvalidNumericLiteral,
+                "numeric literal cannot be directly followed by an identifier",
+            ));
+        }
 
         let kind = if is_float {
-            TokenKind::Float(lexeme.clone())
+            TokenKind::Float
         } else {
-            TokenKind::IntDec(lexeme.clone())
+            TokenKind::IntDec
         };
-        self.push_token(kind, lexeme, self.span_from(start), false);
+        self.push_token(kind, self.span_from(start), false);
         Ok(())
     }
 
-    fn lex_radix_number(&mut self, start: Mark, radix: u8) -> Result<(), LexError> {
-        self.bump_n(2);
+    fn lex_radix_number(&mut self, start: Mark, radix: Radix) -> Result<(), LexError> {
+        self.bump_ascii(2);
         let digit_start = self.pos;
         while self
             .peek()
@@ -635,26 +636,12 @@ impl<'a> Lexer<'a> {
             let Some(ch) = self.peek() else {
                 break;
             };
-            let valid = match radix {
-                2 => matches!(ch, '0' | '1' | '_'),
-                8 => matches!(ch, '0'..='7' | '_'),
-                16 => ch.is_ascii_hexdigit() || ch == '_',
-                _ => {
-                    return Err(self.error_from(
-                        start,
-                        LexErrorCode::InvalidNumericLiteral,
-                        "unsupported numeric radix",
-                    ));
-                }
-            };
-            if !valid {
-                let code = match radix {
-                    2 => LexErrorCode::InvalidBinaryDigit,
-                    8 => LexErrorCode::InvalidOctalDigit,
-                    16 => LexErrorCode::InvalidHexDigit,
-                    _ => LexErrorCode::InvalidNumericLiteral,
-                };
-                return Err(self.error_from(start, code, "invalid digit for numeric literal"));
+            if !radix.is_valid_digit(ch) {
+                return Err(self.error_from(
+                    start,
+                    radix.invalid_digit_code(),
+                    "invalid digit for numeric literal",
+                ));
             }
             self.bump();
         }
@@ -665,7 +652,7 @@ impl<'a> Lexer<'a> {
                 "expected digit after numeric prefix",
             ));
         }
-        let lexeme = self.slice_from(start.0).to_string();
+        let lexeme = self.slice_from(start.pos);
         if lexeme.ends_with('_') {
             return Err(self.error_from(
                 start,
@@ -673,19 +660,21 @@ impl<'a> Lexer<'a> {
                 "numeric literal cannot end with `_`",
             ));
         }
-        let kind = match radix {
-            2 => TokenKind::IntBin(lexeme.clone()),
-            8 => TokenKind::IntOct(lexeme.clone()),
-            16 => TokenKind::IntHex(lexeme.clone()),
-            _ => {
-                return Err(self.error_from(
-                    start,
-                    LexErrorCode::InvalidNumericLiteral,
-                    "unsupported numeric radix",
-                ));
-            }
-        };
-        self.push_token(kind, lexeme, self.span_from(start), false);
+        if lexeme.contains("__") {
+            return Err(self.error_from(
+                start,
+                LexErrorCode::InvalidNumericLiteral,
+                "numeric literal cannot contain multiple consecutive underscores",
+            ));
+        }
+        if self.peek().is_some_and(is_ident_start) {
+            return Err(self.error_from(
+                start,
+                LexErrorCode::InvalidNumericLiteral,
+                "numeric literal cannot be directly followed by an identifier",
+            ));
+        }
+        self.push_token(radix.token_kind(), self.span_from(start), false);
         Ok(())
     }
 
@@ -695,94 +684,87 @@ impl<'a> Lexer<'a> {
         while self.peek().is_some_and(is_ident_continue) {
             self.bump();
         }
-        let lexeme = self.slice_from(start.0).to_string();
-        let kind = keyword_kind(&lexeme).unwrap_or_else(|| {
-            if lexeme.starts_with(|ch: char| ch.is_ascii_uppercase()) {
-                TokenKind::IdentType(lexeme.clone())
+        let lexeme = self.slice_from(start.pos);
+        let kind = keyword_kind(lexeme).unwrap_or_else(|| {
+            let is_type = lexeme
+                .as_bytes()
+                .first()
+                .is_some_and(|byte| byte.is_ascii_uppercase());
+            if is_type {
+                TokenKind::IdentType
             } else {
-                TokenKind::IdentValue(lexeme.clone())
+                TokenKind::IdentValue
             }
         });
-        self.push_token(kind, lexeme, self.span_from(start), false);
+        self.push_token(kind, self.span_from(start), false);
     }
 
     fn lex_operator_or_punctuation(&mut self) -> Result<(), LexError> {
         let start = self.mark();
-        let Some((kind, len)) = token_kind_from_prefix(&self.source[self.pos..]) else {
+        let Some((kind, len)) = token_kind_from_prefix(&self.source.as_bytes()[self.pos..]) else {
             if self.is_at_end() {
                 return Ok(());
             }
             self.bump();
             return Err(self.error_from(start, LexErrorCode::InvalidChar, "invalid character"));
         };
-        self.bump_n(len);
-        self.push_token(
-            kind,
-            self.slice_from(start.0).to_string(),
-            self.span_from(start),
-            false,
-        );
+        self.bump_ascii(len);
+        self.push_token(kind, self.span_from(start), false);
         Ok(())
     }
 
     fn flush_text(&mut self, start: Mark, end_pos: usize) {
-        if end_pos <= start.0 {
+        if end_pos <= start.pos {
             return;
         }
-        let text = self.source[start.0..end_pos].to_string();
-        let span = Span::new(start.0, end_pos, start.1, start.2, self.line, self.col);
-        self.push_token(TokenKind::StringText(text.clone()), text, span, false);
+        let span = Span::new(start.pos, end_pos, start.line, start.col, self.line, self.col);
+        self.push_token(TokenKind::StringText, span, false);
     }
 
     fn peek_next_significant_kind(&self) -> Option<TokenKind> {
+        let bytes = self.source.as_bytes();
         let mut i = self.pos;
-        loop {
-            let rest = &self.source[i..];
-            if rest.is_empty() {
-                return Some(TokenKind::Eof);
-            }
-            if rest.starts_with(' ')
-                || rest.starts_with('\t')
-                || rest.starts_with('\n')
-                || rest.starts_with("\r\n")
-            {
-                let Some(ch) = rest.chars().next() else {
-                    return Some(TokenKind::Eof);
-                };
-                i += ch.len_utf8();
+        while i < bytes.len() {
+            let b = bytes[i];
+            if b == b' ' || b == b'\t' || b == b'\n' || b == b'\r' {
+                i += 1;
                 continue;
             }
-            if rest.starts_with("//") {
-                if let Some(offset) = rest.find(['\n', '\r']) {
-                    i += offset;
+            let remaining = bytes.len() - i;
+            if remaining >= 2 && bytes[i] == b'/' {
+                if bytes[i + 1] == b'/' {
+                    while i < bytes.len() && bytes[i] != b'\n' && bytes[i] != b'\r' {
+                        i += 1;
+                    }
+                    continue;
+                } else if bytes[i + 1] == b'*' {
+                    i += 2;
+                    while i + 1 < bytes.len() {
+                        if bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                            i += 2;
+                            break;
+                        }
+                        i += 1;
+                    }
                     continue;
                 }
-                return Some(TokenKind::Eof);
             }
-            if rest.starts_with("/*") {
-                if let Some(offset) = rest.find("*/") {
-                    i += offset + 2;
-                    continue;
-                }
-                return Some(TokenKind::Eof);
-            }
-            return Some(peek_kind_from(rest));
+            return Some(peek_kind_from(&self.source[i..]));
         }
+        Some(TokenKind::Eof)
     }
 
     fn push_token(
         &mut self,
         kind: TokenKind,
-        lexeme: impl Into<String>,
         span: Span,
         inserted: bool,
     ) {
-        if !matches!(kind, TokenKind::DocComment(_)) {
-            self.prev_significant = Some(kind.clone());
+        if !matches!(kind, TokenKind::DocComment) {
+            self.prev_significant = Some(kind);
         }
         self.tokens.push(Token {
             kind,
-            lexeme: lexeme.into(),
             span,
             inserted,
         });
@@ -793,15 +775,19 @@ impl<'a> Lexer<'a> {
     }
 
     fn span_from(&self, start: Mark) -> Span {
-        Span::new(start.0, self.pos, start.1, start.2, self.line, self.col)
+        Span::new(start.pos, self.pos, start.line, start.col, self.line, self.col)
     }
 
-    fn error_from(&self, start: Mark, code: LexErrorCode, message: impl Into<String>) -> LexError {
+    fn error_from(&self, start: Mark, code: LexErrorCode, message: &'static str) -> LexError {
         LexError::new(code, message, self.span_from(start))
     }
 
     fn mark(&self) -> Mark {
-        (self.pos, self.line, self.col)
+        Mark {
+            pos: self.pos,
+            line: self.line,
+            col: self.col,
+        }
     }
 
     fn slice_from(&self, start: usize) -> &str {
@@ -817,11 +803,17 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn bump_n(&mut self, bytes: usize) {
-        let target = self.pos + bytes;
-        while self.pos < target {
-            self.bump();
-        }
+    /// Advance past `n` bytes of known ASCII content that contains no newlines.
+    /// All callers use this for fixed delimiters like `//`, `/*`, `*/`, `${`, `"""`, etc.
+    fn bump_ascii(&mut self, n: usize) {
+        debug_assert!(
+            self.source.as_bytes()[self.pos..self.pos + n]
+                .iter()
+                .all(|&b| b.is_ascii() && b != b'\n'),
+            "bump_ascii called with non-ASCII or newline content"
+        );
+        self.pos += n;
+        self.col += n;
     }
 
     fn bump(&mut self) -> Option<char> {
@@ -837,17 +829,40 @@ impl<'a> Lexer<'a> {
     }
 
     fn peek(&self) -> Option<char> {
-        self.source[self.pos..].chars().next()
+        let bytes = self.source.as_bytes();
+        if self.pos < bytes.len() {
+            let b = bytes[self.pos];
+            if b < 128 {
+                Some(b as char)
+            } else {
+                self.source[self.pos..].chars().next()
+            }
+        } else {
+            None
+        }
     }
 
     fn peek_next(&self) -> Option<char> {
+        let bytes = self.source.as_bytes();
+        if self.pos < bytes.len() {
+            let b = bytes[self.pos];
+            if b < 128 {
+                let next_pos = self.pos + 1;
+                if next_pos < bytes.len() {
+                    let b2 = bytes[next_pos];
+                    if b2 < 128 {
+                        return Some(b2 as char);
+                    }
+                }
+            }
+        }
         let mut chars = self.source[self.pos..].chars();
         chars.next()?;
         chars.next()
     }
 
     fn starts_with(&self, prefix: &str) -> bool {
-        self.source[self.pos..].starts_with(prefix)
+        self.source.as_bytes()[self.pos..].starts_with(prefix.as_bytes())
     }
 
     fn is_at_end(&self) -> bool {
@@ -855,4 +870,8 @@ impl<'a> Lexer<'a> {
     }
 }
 
-type Mark = (usize, usize, usize);
+#[derive(Clone, Copy)]
+enum StringTerminator {
+    Quote,
+    TripleQuote,
+}

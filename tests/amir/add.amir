@@ -1,9 +1,17 @@
 Func add(a: int, b: int) -> int
   locals:
     _0: int // return
-    _1: int // a
-    _2: int // b
+    _1: int
+    _2: int
+    _3: int
+    _4: int
+    s0: int // a
+    s1: int // b
 
   bb0:
-    _0 = add _1, _2
+    s0 = _1
+    s1 = _2
+    _3 = s0
+    _4 = s1
+    _0 = add _3, _4
     return

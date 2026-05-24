@@ -1,20 +1,73 @@
 Func control_flow(x: int) -> int
   locals:
     _0: int // return
-    _1: int // x
-    _2: int // res
+    _1: int
+    _2: int
     _3: bool
+    _4: int
+    s0: int // x
+    s1: int // res
 
   bb0:
-    _2 = 0
-    _3 = gt _1, 5
-    branch _3 => bb1, else bb2
+    s0 = _1
+    s1 = 0
+    _2 = s0
+    _3 = gt _2, 5
+    switchInt _3 { 1 => bb1, otherwise => bb2 }
   bb1:
-    _2 = 10
+    s1 = 10
     goto bb3
   bb2:
-    _2 = 20
+    s1 = 20
     goto bb3
   bb3:
-    _0 = _2
+    _4 = s1
+    _0 = _4
+    return
+
+Func test_for_in(items: []int) -> void
+  locals:
+    _0: void // return
+    _1: []int
+    _2: []int
+    _3: int
+    _4: int
+    _5: int
+    _6: bool
+    _7: int
+    _8: int
+    _9: int
+    _10: int
+    _11: int
+    s0: []int // items
+    s1: int
+    s2: int
+    s3: int // item
+    s4: int // item_val
+
+  bb0:
+    s0 = _1
+    _2 = s0
+    s1 = 0
+    _3 = len(_2)
+    s2 = _3
+    goto bb1
+  bb1:
+    _4 = s1
+    _5 = s2
+    _6 = lt _4, _5
+    switchInt _6 { 1 => bb2, otherwise => bb4 }
+  bb2:
+    _7 = s1
+    _8 = _2[_7]
+    s3 = _8
+    _9 = s3
+    s4 = _9
+    goto bb3
+  bb3:
+    _10 = s1
+    _11 = add _10, 1
+    s1 = _11
+    goto bb1
+  bb4:
     return

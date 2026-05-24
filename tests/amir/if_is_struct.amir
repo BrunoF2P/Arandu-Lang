@@ -1,0 +1,38 @@
+Func test_struct_pattern(user: User) -> int
+  locals:
+    _0: int // return
+    _1: User
+    _2: User
+    _3: str
+    _4: bool
+    _5: int
+    _6: bool
+    _7: bool
+    _8: int
+    _9: int
+    s0: User // user
+    s1: int // val
+    s2: str // name
+
+  bb0:
+    s0 = _1
+    s1 = 0
+    _2 = s0
+    _3 = _2.name
+    s2 = _3
+    _4 = and true, true
+    _5 = _2.age
+    _6 = eq _5, 25
+    _7 = and _4, _6
+    switchInt _7 { 1 => bb1, otherwise => bb2 }
+  bb1:
+    s1 = 1
+    goto bb3
+  bb2:
+    _8 = neg 1
+    s1 = _8
+    goto bb3
+  bb3:
+    _9 = s1
+    _0 = _9
+    return

@@ -282,3 +282,19 @@ fn from_on_new_line() {
     let _program = parse("module test\nimport {\n  Button\n}\nfrom ui\n")
         .expect("parser should accept from on a new line");
 }
+
+#[test]
+fn invalid_tuple_err_return_rejected() {
+    assert_contract_rejects(
+        "invalid_tuple_err_return",
+        ParseErrorCode::InvalidResultReturn,
+    );
+}
+
+#[test]
+fn invalid_err_only_return_rejected() {
+    assert_contract_rejects(
+        "invalid_err_only_return",
+        ParseErrorCode::InvalidResultReturn,
+    );
+}

@@ -58,6 +58,7 @@ impl Diagnostic {
         }
     }
 
+    #[must_use]
     pub fn with_label(mut self, span: Span, message: impl Into<String>) -> Self {
         self.labels.push(Label {
             span,
@@ -66,16 +67,19 @@ impl Diagnostic {
         self
     }
 
+    #[must_use]
     pub fn with_note(mut self, note: impl Into<String>) -> Self {
         self.notes.push(note.into());
         self
     }
 
+    #[must_use]
     pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
         self.hints.push(hint.into());
         self
     }
 
+    #[must_use]
     pub fn format_for_cli(&self, filepath: &str) -> String {
         use std::fmt::Write;
         let mut out = String::new();

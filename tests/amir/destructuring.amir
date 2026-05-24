@@ -10,20 +10,10 @@ Func main() -> void
   locals:
     _0: void // return
     _1: (int, bool)
-    _2: int // x
-    _3: bool // y
-    _4: (int, bool)
-    _5: int
-    _6: bool
+    s0: (int, bool) // pair
 
   bb0:
     _1 = call fn@foo()
-    _2 = _1._0
-    _3 = _1._1
-    _4 = call fn@foo()
-    _5 = _4._0
-    _2 = _5
-    _6 = _4._1
-    _3 = _6
-    call fn@io.println(_2)
+    s0 = _1
+    call fn@io.println("interpolated")
     return

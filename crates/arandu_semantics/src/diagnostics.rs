@@ -38,9 +38,20 @@ pub enum DiagCode {
     // ── Lowering (HIR / AMIR) ──────────────────────────────────────
     L001LoweringUnresolvedSymbol,
     L002AmirUnsupportedFeature,
+
+    T019ResultNotHandled,
+    T021MethodSelfRequired,
+    T022BreakContinueOutsideLoop,
+    T023FreeRequiresPtr,
+    T024NonExhaustiveMatch,
+    T025InterfaceNotSatisfied,
+
+    // ── Ownership / Initialization ────────────────────────────────
+    O008UseBeforeInit,
 }
 
 impl DiagCode {
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             DiagCode::N001UndefinedValue => "N001",
@@ -73,6 +84,13 @@ impl DiagCode {
             DiagCode::T018UndefinedField => "T018",
             DiagCode::L001LoweringUnresolvedSymbol => "L001",
             DiagCode::L002AmirUnsupportedFeature => "L002",
+            DiagCode::T019ResultNotHandled => "T019",
+            DiagCode::T021MethodSelfRequired => "T021",
+            DiagCode::T022BreakContinueOutsideLoop => "T022",
+            DiagCode::T023FreeRequiresPtr => "T023",
+            DiagCode::T024NonExhaustiveMatch => "T024",
+            DiagCode::T025InterfaceNotSatisfied => "T025",
+            DiagCode::O008UseBeforeInit => "O008",
         }
     }
 }
@@ -140,6 +158,7 @@ impl Diagnostic {
         self
     }
 
+    #[must_use]
     pub fn format_for_cli(&self, filepath: &str) -> String {
         let diag = arandu_diagnostics::Diagnostic::from(self.clone());
         diag.format_for_cli(filepath)

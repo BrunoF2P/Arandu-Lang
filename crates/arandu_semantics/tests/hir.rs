@@ -17,6 +17,76 @@ fn lower(src: &str) -> (HirProgram, SymbolTable) {
     (hir, tc.symbols)
 }
 
+#[test]
+fn lowers_io_println_call() {
+    lower(
+        r#"
+import io
+
+func main() {
+    io.println("done")
+}
+"#,
+    );
+}
+
+#[test]
+fn lowers_err_new_in_result_err() {
+    lower(
+        r#"
+import err
+
+func main() Result<void, Err> {
+    return Result.Err(err.new("boom"))
+}
+"#,
+    );
+}
+
+#[test]
+fn resolves_prelude_namespace_symbols() {
+    let program = arandu_parser::parse(
+        r#"
+import err
+
+func main() {
+    _ = err.new("x")
+}
+"#,
+    )
+    .expect("parse");
+    let resolution = resolve(&program);
+    let tc = type_check(resolution, &program);
+    let scope = tc.symbols.global_scope();
+    assert!(
+        tc.symbols.lookup_module(scope, "err").is_some(),
+        "expected imported module `err`"
+    );
+    assert!(
+        tc.symbols.lookup_module_member("io", "println").is_some(),
+        "expected prelude member `io.println`"
+    );
+    assert!(
+        tc.symbols.lookup_module_member("err", "new").is_some(),
+        "expected prelude member `err.new`"
+    );
+}
+
+#[test]
+fn lowers_imported_namespace_calls() {
+    lower(
+        r#"
+import err
+import io
+
+func main() {
+    err.new("boom")
+    io.println("ok")
+}
+"#,
+    );
+}
+
 // ── Struct lowering ─────────────────────────────────────────────────
 
 #[test]
@@ -398,13 +468,16 @@ fn test_hir_golden_files() {
         let src = std::fs::read_to_string(&path).unwrap();
 
         let program = arandu_parser::parse(&src).unwrap_or_else(|err| {
-            panic!("failed to parse {}: {:?}", name, err);
+            panic!("failed to parse {name}: {err:?}");
         });
         let resolution = resolve(&program);
         let tc = type_check(resolution, &program);
-        if !tc.diagnostics.is_empty() {
-            panic!("type check failed for {}: {:?}", name, tc.diagnostics);
-        }
+        assert!(
+            tc.diagnostics.is_empty(),
+            "type check failed for {}: {:?}",
+            name,
+            tc.diagnostics
+        );
         let hir = lower_to_hir(&tc, &program).expect("HIR lowering failed");
         hir.validate_invariants(&tc.symbols)
             .expect("HIR invariant validation failed");
@@ -414,7 +487,7 @@ fn test_hir_golden_files() {
         };
         let pretty = hir.pretty_print(&ctx);
 
-        let golden_path = fixtures_dir.join(format!("{}.hir", name));
+        let golden_path = fixtures_dir.join(format!("{name}.hir"));
         if update_golden {
             std::fs::write(&golden_path, &pretty).unwrap();
         } else {
@@ -427,8 +500,7 @@ fn test_hir_golden_files() {
             let pretty_normalized = pretty.replace("\r\n", "\n");
             assert_eq!(
                 pretty_normalized, expected_normalized,
-                "HIR mismatch for {}. Run with UPDATE_GOLDEN=1 to update.",
-                name
+                "HIR mismatch for {name}. Run with UPDATE_GOLDEN=1 to update."
             );
         }
     }

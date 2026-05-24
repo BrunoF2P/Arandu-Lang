@@ -1,0 +1,14 @@
+use super::stmt::{AmirStmt, AmirTerminator};
+
+use crate::newtype_index;
+
+newtype_index!(BlockId);
+
+#[derive(Debug)]
+pub struct AmirBasicBlock {
+    pub id: BlockId,
+    pub statements: Vec<AmirStmt>,
+    pub terminator: AmirTerminator,
+    pub successors: Vec<BlockId>,
+    pub predecessors: Vec<BlockId>,
+}

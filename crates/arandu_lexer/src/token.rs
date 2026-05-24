@@ -14,6 +14,7 @@ pub struct Span {
 }
 
 impl Span {
+    #[must_use]
     pub fn new(
         start: usize,
         end: usize,
@@ -34,44 +35,73 @@ impl Span {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Token {
     pub kind: TokenKind,
-    pub lexeme: String,
     pub span: Span,
     pub inserted: bool,
 }
 
 impl Token {
-    pub fn dump(&self) -> String {
+    #[must_use]
+    pub fn lexeme<'a>(&self, source: &'a str) -> &'a str {
+        if self.inserted || matches!(self.kind, TokenKind::Error(_) | TokenKind::Eof) {
+            return "";
+        }
+        &source[self.span.start..self.span.end]
+    }
+
+    #[must_use]
+    pub fn raw_string_content<'a>(&self, source: &'a str) -> &'a str {
+        let lexeme = self.lexeme(source);
+        if let Some(stripped) = lexeme.strip_prefix("r\"\"\"") {
+            return stripped.strip_suffix("\"\"\"").unwrap_or("");
+        }
+        if let Some(stripped) = lexeme.strip_prefix("r\"") {
+            return stripped.strip_suffix('"').unwrap_or("");
+        }
+        ""
+    }
+
+    #[must_use]
+    pub fn char_content<'a>(&self, source: &'a str) -> &'a str {
+        let lexeme = self.lexeme(source);
+        lexeme
+            .strip_prefix('\'')
+            .and_then(|text| text.strip_suffix('\''))
+            .unwrap_or("")
+    }
+
+    #[must_use]
+    pub fn dump(&self, source: &str) -> String {
         if self.kind == TokenKind::Semicolon && self.inserted {
             "SEMICOLON(inserted)".to_string()
         } else {
-            self.kind.to_string()
+            self.kind.display_with(self, source)
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenKind {
-    IdentValue(String),
-    IdentType(String),
-    DocComment(String),
-    IntDec(String),
-    IntHex(String),
-    IntBin(String),
-    IntOct(String),
-    Float(String),
+    IdentValue,
+    IdentType,
+    DocComment,
+    IntDec,
+    IntHex,
+    IntBin,
+    IntOct,
+    Float,
     StringStart,
-    StringText(String),
-    StringEscape(String),
+    StringText,
+    StringEscape,
     InterpStart,
     InterpEnd,
     StringEnd,
-    RawString(String),
+    RawString,
     MultilineStringStart,
     MultilineStringEnd,
-    Char(String),
+    Char,
     KwIf,
     KwElse,
     KwFor,
@@ -102,6 +132,8 @@ pub enum TokenKind {
     KwSet,
     KwOwn,
     KwMut,
+    KwShared,
+    KwSelf,
     KwPtr,
     KwAlloc,
     KwFree,
@@ -186,45 +218,57 @@ pub enum TokenKind {
 impl fmt::Display for TokenKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TokenKind::IdentValue(value) => write!(f, "IDENT_VALUE({value})"),
-            TokenKind::IdentType(value) => write!(f, "IDENT_TYPE({value})"),
-            TokenKind::DocComment(value) => write!(f, "DOC_COMMENT({value})"),
-            TokenKind::IntDec(value) => write!(f, "INT_DEC({value})"),
-            TokenKind::IntHex(value) => write!(f, "INT_HEX({value})"),
-            TokenKind::IntBin(value) => write!(f, "INT_BIN({value})"),
-            TokenKind::IntOct(value) => write!(f, "INT_OCT({value})"),
-            TokenKind::Float(value) => write!(f, "FLOAT({value})"),
-            TokenKind::StringText(value) => write!(f, "STRING_TEXT({value})"),
-            TokenKind::StringEscape(value) => write!(f, "STRING_ESCAPE({value})"),
-            TokenKind::RawString(value) => write!(f, "RAW_STRING({value})"),
-            TokenKind::Char(value) => write!(f, "CHAR({value})"),
-            TokenKind::Error(code) => write!(f, "ERROR({:?})", code),
+            TokenKind::Error(code) => write!(f, "ERROR({code:?})"),
             other => f.write_str(other.name()),
         }
     }
 }
 
 impl TokenKind {
+    #[must_use]
+    pub fn display_with(self, token: &Token, source: &str) -> String {
+        match self {
+            TokenKind::IdentValue => format!("IDENT_VALUE({})", token.lexeme(source)),
+            TokenKind::IdentType => format!("IDENT_TYPE({})", token.lexeme(source)),
+            TokenKind::DocComment => format!("DOC_COMMENT({})", token.lexeme(source)),
+            TokenKind::IntDec => format!("INT_DEC({})", token.lexeme(source)),
+            TokenKind::IntHex => format!("INT_HEX({})", token.lexeme(source)),
+            TokenKind::IntBin => format!("INT_BIN({})", token.lexeme(source)),
+            TokenKind::IntOct => format!("INT_OCT({})", token.lexeme(source)),
+            TokenKind::Float => format!("FLOAT({})", token.lexeme(source)),
+            TokenKind::StringText => format!("STRING_TEXT({})", token.lexeme(source)),
+            TokenKind::StringEscape => format!("STRING_ESCAPE({})", token.lexeme(source)),
+            TokenKind::RawString => {
+                format!("RAW_STRING({})", token.raw_string_content(source))
+            }
+            TokenKind::Char => format!("CHAR({})", token.char_content(source)),
+            TokenKind::Error(code) => format!("ERROR({code:?})"),
+            other => other.name().to_string(),
+        }
+    }
+
+    #[must_use]
+    #[allow(clippy::too_many_lines)]
     pub fn name(&self) -> &'static str {
         match self {
-            TokenKind::IdentValue(_) => "IDENT_VALUE",
-            TokenKind::IdentType(_) => "IDENT_TYPE",
-            TokenKind::DocComment(_) => "DOC_COMMENT",
-            TokenKind::IntDec(_) => "INT_DEC",
-            TokenKind::IntHex(_) => "INT_HEX",
-            TokenKind::IntBin(_) => "INT_BIN",
-            TokenKind::IntOct(_) => "INT_OCT",
-            TokenKind::Float(_) => "FLOAT",
+            TokenKind::IdentValue => "IDENT_VALUE",
+            TokenKind::IdentType => "IDENT_TYPE",
+            TokenKind::DocComment => "DOC_COMMENT",
+            TokenKind::IntDec => "INT_DEC",
+            TokenKind::IntHex => "INT_HEX",
+            TokenKind::IntBin => "INT_BIN",
+            TokenKind::IntOct => "INT_OCT",
+            TokenKind::Float => "FLOAT",
             TokenKind::StringStart => "STRING_START",
-            TokenKind::StringText(_) => "STRING_TEXT",
-            TokenKind::StringEscape(_) => "STRING_ESCAPE",
+            TokenKind::StringText => "STRING_TEXT",
+            TokenKind::StringEscape => "STRING_ESCAPE",
             TokenKind::InterpStart => "INTERP_START",
             TokenKind::InterpEnd => "INTERP_END",
             TokenKind::StringEnd => "STRING_END",
-            TokenKind::RawString(_) => "RAW_STRING",
+            TokenKind::RawString => "RAW_STRING",
             TokenKind::MultilineStringStart => "MULTILINE_STRING_START",
             TokenKind::MultilineStringEnd => "MULTILINE_STRING_END",
-            TokenKind::Char(_) => "CHAR",
+            TokenKind::Char => "CHAR",
             TokenKind::KwIf => "KW_IF",
             TokenKind::KwElse => "KW_ELSE",
             TokenKind::KwFor => "KW_FOR",
@@ -255,6 +299,8 @@ impl TokenKind {
             TokenKind::KwSet => "KW_SET",
             TokenKind::KwOwn => "KW_OWN",
             TokenKind::KwMut => "KW_MUT",
+            TokenKind::KwShared => "KW_SHARED",
+            TokenKind::KwSelf => "KW_SELF",
             TokenKind::KwPtr => "KW_PTR",
             TokenKind::KwAlloc => "KW_ALLOC",
             TokenKind::KwFree => "KW_FREE",
@@ -337,11 +383,12 @@ impl TokenKind {
         }
     }
 
-    pub fn can_end_statement(&self) -> bool {
+    #[must_use]
+    pub fn can_end_statement(self) -> bool {
         matches!(
             self,
-            TokenKind::IdentValue(_)
-                | TokenKind::IdentType(_)
+            TokenKind::IdentValue
+                | TokenKind::IdentType
                 | TokenKind::TypeInt
                 | TokenKind::TypeUint
                 | TokenKind::TypeFloat
@@ -361,17 +408,17 @@ impl TokenKind {
                 | TokenKind::TypeStr
                 | TokenKind::TypeAny
                 | TokenKind::TypeErr
-                | TokenKind::IntDec(_)
-                | TokenKind::IntHex(_)
-                | TokenKind::IntBin(_)
-                | TokenKind::IntOct(_)
-                | TokenKind::Float(_)
+                | TokenKind::IntDec
+                | TokenKind::IntHex
+                | TokenKind::IntBin
+                | TokenKind::IntOct
+                | TokenKind::Float
                 | TokenKind::BoolTrue
                 | TokenKind::BoolFalse
                 | TokenKind::Nil
-                | TokenKind::Char(_)
+                | TokenKind::Char
                 | TokenKind::StringEnd
-                | TokenKind::RawString(_)
+                | TokenKind::RawString
                 | TokenKind::MultilineStringEnd
                 | TokenKind::RParen
                 | TokenKind::RBracket
@@ -383,7 +430,8 @@ impl TokenKind {
         )
     }
 
-    pub fn prevents_semicolon_before(&self) -> bool {
+    #[must_use]
+    pub fn prevents_semicolon_before(self) -> bool {
         matches!(
             self,
             TokenKind::RParen

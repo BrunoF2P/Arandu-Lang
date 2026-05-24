@@ -1,0 +1,3 @@
+func maybe() Option<int> {
+    return Option.Some(7)
+}

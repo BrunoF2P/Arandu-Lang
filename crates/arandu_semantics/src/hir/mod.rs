@@ -35,6 +35,7 @@ pub enum HirDecl {
 }
 
 impl HirDecl {
+    #[must_use]
     pub fn span(&self) -> Span {
         match self {
             HirDecl::Const(decl) => decl.span,
@@ -72,11 +73,20 @@ pub struct HirFunc {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ReceiverKind {
+    Shared,
+    Mut,
+    Own,
+}
+
+#[derive(Debug, Clone)]
 pub struct HirParam {
     pub symbol: SymbolId,
     pub ty: ArType,
     pub span: Span,
+    pub is_receiver: bool,
+    pub receiver_kind: Option<ReceiverKind>,
 }
 
 #[derive(Debug)]
@@ -128,19 +138,19 @@ pub struct HirFuncSignature {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HirBlock {
     pub statements: Vec<HirStmt>,
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HirStmt {
     pub kind: HirStmtKind,
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 #[allow(clippy::large_enum_variant)]
 pub enum HirStmtKind {
@@ -182,14 +192,14 @@ pub enum HirStmtKind {
     Unsafe(HirBlock),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum HirCondition {
     Expr(HirExpr),
     Is { expr: HirExpr, pattern: HirPattern },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 #[allow(clippy::large_enum_variant)]
 pub enum HirForClause {
@@ -206,14 +216,14 @@ pub enum HirForClause {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HirForBinding {
     pub symbol: SymbolId,
     pub ty: ArType,
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum HirSimpleStmt {
     VarDecl {
@@ -228,14 +238,14 @@ pub enum HirSimpleStmt {
     Expr(HirExpr),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HirBindingItem {
     pub symbol: SymbolId,
     pub ty: ArType,
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HirPlace {
     pub root_symbol: SymbolId,
     pub suffixes: SmallVec<[HirPlaceSuffix; 2]>,
@@ -243,7 +253,7 @@ pub struct HirPlace {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 #[allow(clippy::large_enum_variant)]
 pub enum HirPlaceSuffix {
@@ -259,14 +269,22 @@ pub enum HirPlaceSuffix {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HirExpr {
     pub kind: HirExprKind,
     pub ty: ArType,
     pub span: Span,
 }
 
-#[derive(Debug)]
+/// Builtin `Result.Ok` / `Result.Err` / `Option.Some` constructor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResultCtorVariant {
+    Ok,
+    Err,
+    Some,
+}
+
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum HirExprKind {
     Path {
@@ -303,6 +321,10 @@ pub enum HirExprKind {
         callee: Box<HirExpr>,
         args: Vec<HirExpr>,
         trailing_block: Option<HirBlock>,
+    },
+    ResultCtor {
+        variant: ResultCtorVariant,
+        value: Box<HirExpr>,
     },
     StructLiteral {
         struct_symbol: SymbolId,
@@ -362,28 +384,28 @@ pub enum HirExprKind {
     Nil,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HirFieldInit {
     pub span: Span,
     pub name: String,
     pub value: HirExpr,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HirLambdaParam {
     pub span: Span,
     pub symbol: SymbolId,
     pub ty: ArType,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum HirLambdaBody {
     Expr(Box<HirExpr>),
     Block(HirBlock),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HirMatchArm {
     pub span: Span,
     pub pattern: HirPattern,
@@ -391,14 +413,14 @@ pub struct HirMatchArm {
     pub body: HirMatchArmBody,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum HirMatchArmBody {
     Expr(Box<HirExpr>),
     Block(HirBlock),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum HirCatchHandler {
     Expr(Box<HirExpr>),
@@ -410,6 +432,7 @@ pub enum HirCatchHandler {
 }
 
 impl HirProgram {
+    #[must_use]
     pub fn pretty_print(&self, ctx: &HirPrettyCtx<'_>) -> String {
         pretty::print_program(self, ctx)
     }
@@ -654,7 +677,10 @@ impl HirExpr {
     pub fn validate_invariants(&self, symbols: &SymbolTable) -> Result<(), String> {
         check_span(self.span)?;
         if matches!(self.ty, ArType::Error) {
-            return Err("Expression has Error type".to_string());
+            return Err(format!(
+                "Expression has Error type at {}:{}",
+                self.span.start_line, self.span.start_col
+            ));
         }
         match &self.kind {
             HirExprKind::Path { symbol } => {
@@ -699,6 +725,9 @@ impl HirExpr {
                 if let Some(tb) = trailing_block {
                     tb.validate_invariants(symbols)?;
                 }
+            }
+            HirExprKind::ResultCtor { value, .. } => {
+                value.validate_invariants(symbols)?;
             }
             HirExprKind::StructLiteral {
                 struct_symbol,

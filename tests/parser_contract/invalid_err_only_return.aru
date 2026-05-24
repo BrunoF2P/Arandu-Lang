@@ -1,0 +1,4 @@
+module tests.invalidErrOnlyReturn
+
+func fail() Err? {
+}

@@ -1,6 +1,9 @@
-use super::*;
+use super::{
+    BindingItem, Block, Condition, DeferBody, Expr, ForBinding, ForClause, ParseError,
+    ParseErrorCode, Parser, Place, PlaceSuffix, SetOp, SimpleStmt, Stmt, TokenKind,
+};
 
-impl Parser {
+impl<'a> Parser<'a> {
     pub(super) fn parse_block(&mut self) -> Result<Block, ParseError> {
         let start = self.mark();
         self.expect_name("LBRACE")?;
@@ -16,6 +19,7 @@ impl Parser {
                     ParseErrorCode::ExpectedToken,
                     "expected '}'",
                     self.current(),
+                    self.source,
                 ));
                 break;
             }
@@ -172,8 +176,12 @@ impl Parser {
     pub(super) fn parse_place(&mut self) -> Result<Place, ParseError> {
         let start = self.mark();
         let root = match &self.current().kind {
-            TokenKind::IdentValue(name) => {
-                let name = name.clone();
+            TokenKind::KwSelf => {
+                self.consume();
+                "self".to_string()
+            }
+            TokenKind::IdentValue => {
+                let name = self.current_text().to_string();
                 self.consume();
                 name
             }
@@ -182,6 +190,7 @@ impl Parser {
                     ParseErrorCode::ExpectedPlace,
                     "expected assignment target",
                     self.current(),
+                    self.source,
                 ));
             }
         };
@@ -451,6 +460,7 @@ impl Parser {
                     ParseErrorCode::ExpectedToken,
                     "expected assignment operator",
                     self.current(),
+                    self.source,
                     &[
                         "=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=",
                     ],
@@ -462,7 +472,7 @@ impl Parser {
     }
 
     pub(super) fn looks_like_var_decl(&self) -> bool {
-        if !matches!(self.current().kind, TokenKind::IdentValue(_)) {
+        if !matches!(self.current().kind, TokenKind::IdentValue) {
             return false;
         }
 
@@ -490,7 +500,7 @@ impl Parser {
             if !self
                 .tokens
                 .get(index)
-                .is_some_and(|token| matches!(token.kind, TokenKind::IdentValue(_)))
+                .is_some_and(|token| matches!(token.kind, TokenKind::IdentValue))
             {
                 return false;
             }

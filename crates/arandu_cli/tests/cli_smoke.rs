@@ -30,12 +30,12 @@ fn lex_parse_and_check_valid_files_exit_successfully() {
     let file = dir.join("arandu_cli_smoke.aru");
     fs::write(
         &file,
-        r#"module tests.cli
+        r"module tests.cli
 
 func main() {
     value = 1
 }
-"#,
+",
     )
     .expect("fixture should be writable");
 
@@ -60,12 +60,12 @@ fn check_invalid_file_reports_name_error_and_exits_1() {
     let file = dir.join("arandu_cli_check_invalid.aru");
     fs::write(
         &file,
-        r#"module tests.cli
+        r"module tests.cli
 
 func main() {
     value = missing_name
 }
-"#,
+",
     )
     .expect("fixture should be writable");
 
@@ -82,12 +82,12 @@ fn check_missing_set_target_reports_specific_name_error() {
     let file = dir.join("arandu_cli_check_set_missing.aru");
     fs::write(
         &file,
-        r#"module tests.cli
+        r"module tests.cli
 
 func main() {
     set missing = 1
 }
-"#,
+",
     )
     .expect("fixture should be writable");
 

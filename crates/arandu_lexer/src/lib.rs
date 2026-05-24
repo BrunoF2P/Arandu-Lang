@@ -6,27 +6,42 @@ pub use error::{LexError, LexErrorCode};
 pub use lexer::Lexer;
 pub use token::{Span, Token, TokenKind};
 
-pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
+/// Lexes source, stopping at the first error.
+///
+/// # Errors
+///
+/// Returns the first [`LexError`] if the source contains invalid tokens.
+pub fn lex<'a>(source: &'a str) -> Result<Lexed<'a>, LexError> {
     Lexer::new(source).lex()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Lexed {
+pub struct Lexed<'a> {
+    pub source: &'a str,
     pub tokens: Vec<Token>,
     pub diagnostics: Vec<LexError>,
 }
 
-pub fn lex_recovering(source: &str) -> Lexed {
+#[must_use]
+pub fn lex_recovering<'a>(source: &'a str) -> Lexed<'a> {
     Lexer::new(source).lex_recovering()
 }
 
+/// Lexes source and returns a newline-separated token dump.
+///
+/// # Errors
+///
+/// Returns the first [`LexError`] if the source contains invalid tokens.
 pub fn lex_to_string(source: &str) -> Result<String, LexError> {
-    let tokens = lex(source)?;
-    Ok(tokens
-        .iter()
-        .map(Token::dump)
-        .collect::<Vec<_>>()
-        .join("\n"))
+    let lexed = lex(source)?;
+    let mut out = String::new();
+    for (i, token) in lexed.tokens.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str(&token.dump(lexed.source));
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

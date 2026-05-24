@@ -81,7 +81,7 @@ pub enum ConstraintOrigin {
         target_span: Span,
     },
 
-    /// `expr?` applied to a non-result tuple.
+    /// `expr?` applied to a type that is neither `Result` nor `Option`.
     TryInvalid { span: Span },
 
     /// `base[index]` applied to non-array/slice or non-int index.
@@ -97,4 +97,17 @@ pub enum ConstraintOrigin {
         field_span: Span,
         field_name: String,
     },
+
+    /// Array literal elements must share the same type.
+    ArrayLiteral {
+        array_span: Span,
+        item_span: Span,
+        item_index: usize,
+    },
+
+    /// `left ?? right` — nullable left must unify with right-hand type.
+    NullCoalesce { left_span: Span, right_span: Span },
+
+    /// `expr catch handler` — handler type must match `Result` ok type.
+    CatchHandler { expr_span: Span, handler_span: Span },
 }

@@ -1,11 +1,11 @@
 use crate::TokenKind;
 
 pub(super) fn is_ident_start(ch: char) -> bool {
-    ch == '_' || ch.is_ascii_alphabetic()
+    ch == '_' || ch.is_alphabetic()
 }
 
 pub(super) fn is_ident_continue(ch: char) -> bool {
-    ch == '_' || ch.is_ascii_alphanumeric()
+    ch == '_' || ch.is_alphanumeric()
 }
 
 pub(super) fn keyword_kind(text: &str) -> Option<TokenKind> {
@@ -40,6 +40,8 @@ pub(super) fn keyword_kind(text: &str) -> Option<TokenKind> {
         "set" => TokenKind::KwSet,
         "own" => TokenKind::KwOwn,
         "mut" => TokenKind::KwMut,
+        "shared" => TokenKind::KwShared,
+        "self" => TokenKind::KwSelf,
         "ptr" => TokenKind::KwPtr,
         "alloc" => TokenKind::KwAlloc,
         "free" => TokenKind::KwFree,

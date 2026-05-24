@@ -23,6 +23,7 @@ impl AmirLiteralPool {
         LiteralId(id as u32)
     }
 
+    #[must_use]
     pub fn get(&self, id: LiteralId) -> &AmirLiteralEntry {
         &self.entries[id.0 as usize]
     }

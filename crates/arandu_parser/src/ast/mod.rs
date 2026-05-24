@@ -12,6 +12,7 @@ pub use stmt::*;
 pub use types::*;
 
 impl Program {
+    #[must_use]
     pub fn dump(&self) -> String {
         dump::dump_program(self)
     }

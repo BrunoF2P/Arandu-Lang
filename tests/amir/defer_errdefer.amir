@@ -1,0 +1,34 @@
+Func on_err() -> void
+  locals:
+    _0: void // return
+
+  bb0:
+    return
+
+Func on_ok() -> void
+  locals:
+    _0: void // return
+
+  bb0:
+    return
+
+Func test_success() -> Result<void, Err>
+  locals:
+    _0: Result<void, Err> // return
+
+  bb0:
+    call fn@on_ok()
+    _0 = nil
+    return
+
+Func test_error() -> Result<void, Err>
+  locals:
+    _0: Result<void, Err> // return
+    _1: Err
+
+  bb0:
+    call fn@on_err()
+    call fn@on_ok()
+    _1 = call fn@err.new("interpolated")
+    _0 = (nil, _1)
+    return

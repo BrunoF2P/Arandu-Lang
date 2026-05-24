@@ -213,6 +213,7 @@ pub enum BinaryOp {
 }
 
 impl Expr {
+    #[must_use]
     pub fn span(&self) -> Span {
         match self {
             Expr::Path { span, .. }
