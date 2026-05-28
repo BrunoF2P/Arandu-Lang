@@ -7,9 +7,11 @@ use crate::hir::{
 use crate::passes::lowering::require_def_symbol;
 use crate::passes::type_checker::types::ArType;
 use arandu_parser::TopLevelDecl;
+use arandu_parser::ast_pool::AstPool;
 
 pub(crate) fn lower_decl(
     type_check: &TypeCheckResult,
+    pool: &AstPool,
     decl: &TopLevelDecl,
 ) -> Result<HirDecl, Diagnostic> {
     match decl {
@@ -23,7 +25,7 @@ pub(crate) fn lower_decl(
             Ok(HirDecl::Const(HirConst {
                 symbol,
                 ty,
-                value: super::expr::lower_expr(type_check, &d.value)?,
+                value: super::expr::lower_expr(type_check, pool, d.value)?,
                 span: d.span,
             }))
         }
@@ -71,7 +73,7 @@ pub(crate) fn lower_decl(
                     receiver_kind: p.ownership.map(super::stmt::ownership_to_receiver_kind),
                 });
             }
-            let body = Some(super::stmt::lower_block(type_check, &d.body)?);
+            let body = Some(super::stmt::lower_block(type_check, pool, &d.body)?);
             Ok(HirDecl::Func(HirFunc {
                 symbol,
                 params,

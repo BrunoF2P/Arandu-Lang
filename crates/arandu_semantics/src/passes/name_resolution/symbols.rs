@@ -1,13 +1,20 @@
 use arandu_lexer::Span;
+use arandu_parser::ast_pool::ExprId;
 
 use crate::{DiagCode, Diagnostic, ScopeId, SymbolKind};
 
 use super::Resolver;
 
-impl Resolver {
-    pub(crate) fn resolve_value_name(&mut self, scope: ScopeId, name: &str, span: Span) {
+impl<'a> Resolver<'a> {
+    pub(crate) fn resolve_value_name(
+        &mut self,
+        scope: ScopeId,
+        name: &str,
+        expr: ExprId,
+        span: Span,
+    ) {
         if let Some(symbol) = self.symbols.lookup_value(scope, name) {
-            self.resolved.value_ref(span, symbol);
+            self.resolved.expr_ref(expr, symbol);
             return;
         }
         if self.symbols.lookup_module(scope, name).is_some() {
@@ -72,13 +79,14 @@ impl Resolver {
         scope: ScopeId,
         namespace: &str,
         member: &str,
+        expr: ExprId,
         span: Span,
     ) -> bool {
         if !self.is_namespace(scope, namespace) {
             return false;
         }
         if let Some(symbol) = self.symbols.lookup_module_member(namespace, member) {
-            self.resolved.value_ref(span, symbol);
+            self.resolved.expr_ref(expr, symbol);
         } else {
             self.diagnostics.push(Diagnostic::error(
                 DiagCode::N009UndefinedNamespaceMember,
@@ -114,7 +122,7 @@ impl Resolver {
         self.suggest_from(name, self.symbols.type_candidates(scope))
     }
 
-    pub(crate) fn suggest_from<'a>(
+    pub(crate) fn suggest_from(
         &self,
         name: &str,
         candidates: impl IntoIterator<Item = &'a crate::Symbol>,

@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
 use arandu_parser::Program;
+use arandu_parser::ast_pool::{AstPool, ExprId};
 
-use crate::{Diagnostic, NodeKey, ResolutionResult, ResolvedNames, ScopeId, SymbolId, SymbolTable};
+use crate::{Diagnostic, ResolutionResult, ResolvedNames, ScopeId, SymbolId, SymbolTable};
 
 pub mod check;
 pub mod constraints;
@@ -23,6 +24,7 @@ pub fn type_check(resolution: ResolutionResult, program: &Program) -> TypeCheckR
         resolution.symbols,
         resolution.resolved,
         resolution.diagnostics,
+        &program.pool,
     );
     check::check_program(&mut checker, program);
     checker.finish()
@@ -30,7 +32,7 @@ pub fn type_check(resolution: ResolutionResult, program: &Program) -> TypeCheckR
 
 // ── TypeChecker state ───────────────────────────────────────────────
 
-pub struct TypeChecker {
+pub struct TypeChecker<'a> {
     pub symbols: SymbolTable,
     pub resolved: ResolvedNames,
     pub ctx: TyCtx,
@@ -38,14 +40,16 @@ pub struct TypeChecker {
     pub diagnostics: Vec<Diagnostic>,
     /// Scope for lowering type expressions inside the current function body.
     type_scope_id: Option<ScopeId>,
+    pub pool: &'a AstPool,
 }
 
-impl TypeChecker {
+impl<'a> TypeChecker<'a> {
     #[must_use]
     pub fn new(
         symbols: SymbolTable,
         resolved: ResolvedNames,
         diagnostics: Vec<Diagnostic>,
+        pool: &'a AstPool,
     ) -> Self {
         Self {
             symbols,
@@ -54,6 +58,7 @@ impl TypeChecker {
             type_info: TypeInfo::new(),
             diagnostics,
             type_scope_id: None,
+            pool,
         }
     }
 
@@ -76,8 +81,8 @@ impl TypeChecker {
         self.diagnostics.push(diag);
     }
 
-    pub(crate) fn record_expr_type(&mut self, key: NodeKey, ty: ArType) -> TypeId {
-        self.type_info.record_expr_type(key, ty)
+    pub(crate) fn record_expr_type(&mut self, expr: ExprId, ty: ArType) -> TypeId {
+        self.type_info.record_expr_type(expr, ty)
     }
 
     pub(crate) fn record_decl_type(&mut self, symbol: SymbolId, ty: ArType) -> TypeId {
@@ -85,8 +90,8 @@ impl TypeChecker {
     }
 
     #[must_use]
-    pub(crate) fn expr_type(&self, key: NodeKey) -> Option<ArType> {
-        self.type_info.expr_type(key).cloned()
+    pub(crate) fn expr_type(&self, expr: ExprId) -> Option<ArType> {
+        self.type_info.expr_type(expr).cloned()
     }
 
     #[must_use]
@@ -116,7 +121,7 @@ pub enum EnumPayloadShape {
 #[derive(Debug, Clone, Default)]
 pub struct TypeInfo {
     pub type_interner: TypeInterner,
-    pub expr_types: HashMap<NodeKey, TypeId>,
+    pub expr_types: Vec<Option<TypeId>>,
     pub decl_types: HashMap<SymbolId, TypeId>,
     pub struct_fields: HashMap<SymbolId, HashMap<String, ArType>>,
     pub struct_field_symbols: HashMap<SymbolId, HashMap<String, SymbolId>>,
@@ -134,7 +139,7 @@ impl TypeInfo {
     pub fn new() -> Self {
         Self {
             type_interner: TypeInterner::new(),
-            expr_types: HashMap::new(),
+            expr_types: Vec::new(),
             decl_types: HashMap::new(),
             struct_fields: HashMap::new(),
             struct_field_symbols: HashMap::new(),
@@ -145,9 +150,13 @@ impl TypeInfo {
         }
     }
 
-    pub fn record_expr_type(&mut self, key: NodeKey, ty: ArType) -> TypeId {
+    pub fn record_expr_type(&mut self, expr: ExprId, ty: ArType) -> TypeId {
         let id = self.type_interner.intern(ty);
-        self.expr_types.insert(key, id);
+        let idx = expr.as_usize();
+        if self.expr_types.len() <= idx {
+            self.expr_types.resize(idx + 1, None);
+        }
+        self.expr_types[idx] = Some(id);
         id
     }
 
@@ -158,10 +167,10 @@ impl TypeInfo {
     }
 
     #[must_use]
-    pub fn expr_type(&self, key: NodeKey) -> Option<&ArType> {
+    pub fn expr_type(&self, expr: ExprId) -> Option<&ArType> {
         self.expr_types
-            .get(&key)
-            .map(|id| self.type_interner.resolve(*id))
+            .get(expr.as_usize())
+            .and_then(|id| id.as_ref().map(|id| self.type_interner.resolve(*id)))
     }
 
     #[must_use]

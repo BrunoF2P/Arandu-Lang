@@ -2,10 +2,12 @@ use crate::diagnostics::Diagnostic;
 use crate::hir::{HirPlace, HirPlaceSuffix};
 use crate::passes::type_checker::types::ArType;
 use crate::{NodeKey, TypeCheckResult};
+use arandu_parser::ast_pool::AstPool;
 use arandu_parser::{Place, PlaceSuffix};
 
 pub(crate) fn lower_place(
     type_check: &TypeCheckResult,
+    pool: &AstPool,
     place: &Place,
 ) -> Result<HirPlace, Diagnostic> {
     let root_key = NodeKey::from(place.span);
@@ -44,7 +46,7 @@ pub(crate) fn lower_place(
                 PlaceSuffix::Index { span, expr } => {
                     suffixes.push(HirPlaceSuffix::Index {
                         span: *span,
-                        expr: super::expr::lower_expr(type_check, expr)?,
+                        expr: Box::new(super::expr::lower_expr(type_check, pool, **expr)?),
                         ty: ArType::Error,
                     });
                 }
@@ -100,7 +102,7 @@ pub(crate) fn lower_place(
                 current_ty = elem_ty.clone();
                 suffixes.push(HirPlaceSuffix::Index {
                     span: *span,
-                    expr: super::expr::lower_expr(type_check, expr)?,
+                    expr: Box::new(super::expr::lower_expr(type_check, pool, **expr)?),
                     ty: elem_ty,
                 });
             }

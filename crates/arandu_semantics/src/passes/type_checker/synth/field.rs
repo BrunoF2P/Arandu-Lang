@@ -1,4 +1,4 @@
-use arandu_parser::Expr;
+use arandu_parser::ast_pool::{ExprId, ExprKind};
 
 use super::super::TypeChecker;
 use super::super::constraints::ConstraintOrigin;
@@ -6,19 +6,20 @@ use super::super::types::{ArType, Primitive};
 use super::expr::synth_expr;
 
 pub(crate) fn resolve_namespace_field(
-    checker: &mut TypeChecker,
-    base: &Expr,
+    checker: &mut TypeChecker<'_>,
+    base: ExprId,
+    expr: ExprId,
     field: &str,
-    span: arandu_lexer::Span,
+    _span: arandu_lexer::Span,
 ) -> Option<ArType> {
-    let Expr::Path { path, .. } = base else {
+    let ExprKind::Path { path } = checker.pool.expr(base) else {
         return None;
     };
     if path.len() != 1 {
         return None;
     }
     let symbol_id = checker.symbols.lookup_module_member(&path[0], field)?;
-    checker.resolved.value_ref(span, symbol_id);
+    checker.resolved.expr_ref(expr, symbol_id);
     if let Some(ty) = checker.ctx.lookup(symbol_id) {
         return Some(ty.clone());
     }
@@ -26,15 +27,14 @@ pub(crate) fn resolve_namespace_field(
 }
 
 pub(crate) fn resolve_namespace_member_type(
-    checker: &TypeChecker,
-    span: arandu_lexer::Span,
+    checker: &TypeChecker<'_>,
+    expr: ExprId,
 ) -> Option<ArType> {
-    let key = crate::NodeKey::from(span);
-    if let Some(symbol_id) = checker.resolved.value_refs.get(&key) {
-        if let Some(ty) = checker.ctx.lookup(*symbol_id) {
+    if let Some(symbol_id) = checker.resolved.expr_symbol(expr) {
+        if let Some(ty) = checker.ctx.lookup(symbol_id) {
             return Some(ty.clone());
         }
-        if let Some(ty) = checker.decl_type(*symbol_id) {
+        if let Some(ty) = checker.decl_type(symbol_id) {
             return Some(ty);
         }
     }
@@ -42,8 +42,8 @@ pub(crate) fn resolve_namespace_member_type(
 }
 
 pub(crate) fn resolve_field(
-    checker: &mut TypeChecker,
-    base: &Expr,
+    checker: &mut TypeChecker<'_>,
+    base: ExprId,
     field: &String,
     field_span: arandu_lexer::Span,
     safe: bool,
@@ -69,7 +69,7 @@ pub(crate) fn resolve_field(
             field_span,
         )
         .with_label(
-            base.span(),
+            checker.pool.expr_span(base),
             format!("this has type '{}'", base_ty.display(&checker.symbols)),
         )
         .with_hint("use safe access `?.` or make the value non-nullable".to_string());
@@ -104,7 +104,7 @@ pub(crate) fn resolve_field(
                     actual_base_ty.clone(),
                     ArType::Error,
                     ConstraintOrigin::UndefinedField {
-                        base_span: base.span(),
+                        base_span: checker.pool.expr_span(base),
                         field_span,
                         field_name: field.clone(),
                     },
@@ -117,7 +117,7 @@ pub(crate) fn resolve_field(
             actual_base_ty.clone(),
             ArType::Error,
             ConstraintOrigin::UndefinedField {
-                base_span: base.span(),
+                base_span: checker.pool.expr_span(base),
                 field_span,
                 field_name: field.clone(),
             },
@@ -133,9 +133,9 @@ pub(crate) fn resolve_field(
 }
 
 pub(crate) fn resolve_index(
-    checker: &mut TypeChecker,
-    base: &Expr,
-    index: &Expr,
+    checker: &mut TypeChecker<'_>,
+    base: ExprId,
+    index: ExprId,
     safe: bool,
 ) -> ArType {
     let base_ty = synth_expr(checker, base);
@@ -157,10 +157,10 @@ pub(crate) fn resolve_index(
                 "cannot index nullable type '{}'",
                 base_ty.display(&checker.symbols)
             ),
-            index.span(),
+            checker.pool.expr_span(index),
         )
         .with_label(
-            base.span(),
+            checker.pool.expr_span(base),
             format!("this has type '{}'", base_ty.display(&checker.symbols)),
         )
         .with_hint("use safe index `?[...]` or make the value non-nullable".to_string());
@@ -175,8 +175,8 @@ pub(crate) fn resolve_index(
                 actual_base_ty.clone(),
                 ArType::Error,
                 ConstraintOrigin::InvalidIndex {
-                    base_span: base.span(),
-                    index_span: index.span(),
+                    base_span: checker.pool.expr_span(base),
+                    index_span: checker.pool.expr_span(index),
                     is_base_error: true,
                 },
             );
@@ -189,8 +189,8 @@ pub(crate) fn resolve_index(
             ArType::Primitive(Primitive::Int),
             index_ty,
             ConstraintOrigin::InvalidIndex {
-                base_span: base.span(),
-                index_span: index.span(),
+                base_span: checker.pool.expr_span(base),
+                index_span: checker.pool.expr_span(index),
                 is_base_error: false,
             },
         );

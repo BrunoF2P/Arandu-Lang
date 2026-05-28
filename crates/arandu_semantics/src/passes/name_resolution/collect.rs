@@ -5,7 +5,7 @@ use crate::{DiagCode, Diagnostic, ScopeId, SymbolKind};
 use super::Resolver;
 use super::util::is_type_case;
 
-impl Resolver {
+impl<'a> Resolver<'a> {
     pub(crate) fn collect_import(&mut self, scope: ScopeId, import: &ImportDecl) {
         match import {
             ImportDecl::Module { span, path } => {

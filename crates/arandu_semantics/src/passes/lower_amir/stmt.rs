@@ -26,7 +26,7 @@ impl LowerCtx<'_> {
             HirStmtKind::VarDecl { bindings, value } => {
                 if bindings.len() == 1 {
                     let b = &bindings[0];
-                    let local_id = self.new_local(b.ty.clone(), b.symbol);
+                    let local_id = self.new_local(b.ty.clone(), b.symbol, b.span);
                     let val_op = self.lower_expr(value, None, symbols)?;
                     self.emit_store_place(
                         AmirPlace {
@@ -38,7 +38,7 @@ impl LowerCtx<'_> {
                 } else {
                     let val_op = self.lower_expr(value, None, symbols)?;
                     for (i, b) in bindings.iter().enumerate() {
-                        let local_id = self.new_local(b.ty.clone(), b.symbol);
+                        let local_id = self.new_local(b.ty.clone(), b.symbol, b.span);
                         let temp = self.new_temp(b.ty.clone());
                         self.emit_assign_temp(
                             temp,
@@ -148,7 +148,7 @@ impl LowerCtx<'_> {
 
                 self.current_block = Some(bb_exit);
             }
-            HirStmtKind::For { clause, body } => match clause {
+            HirStmtKind::For { clause, body } => match &**clause {
                 HirForClause::In {
                     span: _,
                     bindings,
@@ -221,7 +221,9 @@ impl LowerCtx<'_> {
                             .symbol_map
                             .get(&binding.symbol)
                             .copied()
-                            .unwrap_or_else(|| self.new_local(binding.ty.clone(), binding.symbol));
+                            .unwrap_or_else(|| {
+                                self.new_local(binding.ty.clone(), binding.symbol, binding.span)
+                            });
                         let idx_op2 = self.load_place(
                             &AmirPlace {
                                 local: idx_local,
@@ -361,7 +363,7 @@ impl LowerCtx<'_> {
             HirSimpleStmt::VarDecl { bindings, value } => {
                 if bindings.len() == 1 {
                     let b = &bindings[0];
-                    let local_id = self.new_local(b.ty.clone(), b.symbol);
+                    let local_id = self.new_local(b.ty.clone(), b.symbol, b.span);
                     let val_op = self.lower_expr(value, None, symbols)?;
                     self.emit_store_place(
                         AmirPlace {
@@ -373,7 +375,7 @@ impl LowerCtx<'_> {
                 } else {
                     let val_op = self.lower_expr(value, None, symbols)?;
                     for (i, b) in bindings.iter().enumerate() {
-                        let local_id = self.new_local(b.ty.clone(), b.symbol);
+                        let local_id = self.new_local(b.ty.clone(), b.symbol, b.span);
                         let temp = self.new_temp(b.ty.clone());
                         self.emit_assign_temp(
                             temp,

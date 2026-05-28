@@ -14,5 +14,6 @@ Program
           Str(interpolated): str
     Var _: str =
       Call: str
-        Path(User.greet): func(User) str
+        Field(greet): func(User) str
+          LocalRef(user): User
         LocalRef(user): User

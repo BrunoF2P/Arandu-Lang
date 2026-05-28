@@ -1,7 +1,7 @@
 use super::super::TypeChecker;
 use super::super::types::{ArType, Primitive};
 
-pub(crate) fn register_prelude(checker: &mut TypeChecker) {
+pub(crate) fn register_prelude(checker: &mut TypeChecker<'_>) {
     for (module, members_with_types) in [
         (
             "io",

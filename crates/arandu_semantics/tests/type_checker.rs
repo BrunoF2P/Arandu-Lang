@@ -434,14 +434,10 @@ fn test_type_info_uses_interned_type_ids() {
     let resolution = resolve(&program);
     let result = type_check(resolution, &program);
 
-    let mut int_ids = result
-        .type_info
-        .decl_types
-        .iter()
-        .filter_map(|(_, type_id)| {
-            let ty = result.type_info.resolve_type_id(*type_id);
-            (ty.display(&result.symbols) == "int").then_some(*type_id)
-        });
+    let mut int_ids = result.type_info.decl_types.values().filter_map(|type_id| {
+        let ty = result.type_info.resolve_type_id(*type_id);
+        (ty.display(&result.symbols) == "int").then_some(*type_id)
+    });
     let first = int_ids.next().expect("expected at least one int type id");
     assert!(
         int_ids.any(|type_id| type_id == first),
@@ -602,6 +598,18 @@ fn test_call_validation() {
         }
         ",
         [T003IncompatibleCallArg]
+    );
+}
+
+#[test]
+fn test_cast_validation() {
+    assert_type_errors!(
+        r#"
+        func main() {
+            x int = "hello" as int
+        }
+        "#,
+        [T010InvalidCast]
     );
 }
 

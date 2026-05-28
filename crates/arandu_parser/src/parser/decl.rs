@@ -114,17 +114,21 @@ impl<'a> Parser<'a> {
             TokenKind::KwType => Ok(TopLevelDecl::TypeAlias(
                 self.parse_type_alias(attrs, visibility)?,
             )),
-            TokenKind::KwAsync | TokenKind::KwFunc => {
-                Ok(TopLevelDecl::Func(self.parse_func(attrs, visibility)?))
-            }
-            TokenKind::KwStruct => Ok(TopLevelDecl::Struct(
+            TokenKind::KwAsync | TokenKind::KwFunc => Ok(TopLevelDecl::Func(Box::new(
+                self.parse_func(attrs, visibility)?,
+            ))),
+            TokenKind::KwStruct => Ok(TopLevelDecl::Struct(Box::new(
                 self.parse_struct_decl(attrs, visibility)?,
-            )),
-            TokenKind::KwEnum => Ok(TopLevelDecl::Enum(self.parse_enum_decl(attrs, visibility)?)),
-            TokenKind::KwInterface => Ok(TopLevelDecl::Interface(
+            ))),
+            TokenKind::KwEnum => Ok(TopLevelDecl::Enum(Box::new(
+                self.parse_enum_decl(attrs, visibility)?,
+            ))),
+            TokenKind::KwInterface => Ok(TopLevelDecl::Interface(Box::new(
                 self.parse_interface_decl(attrs, visibility)?,
-            )),
-            TokenKind::KwExtern => Ok(TopLevelDecl::Extern(self.parse_extern_decl(attrs)?)),
+            ))),
+            TokenKind::KwExtern => Ok(TopLevelDecl::Extern(Box::new(
+                self.parse_extern_decl(attrs)?,
+            ))),
             _ => Err(ParseError::new(
                 ParseErrorCode::ExpectedTopLevelDecl,
                 "expected top-level declaration",

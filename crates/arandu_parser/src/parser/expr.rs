@@ -1,34 +1,44 @@
 use super::{
-    BinaryOp, Block, CatchHandler, Expr, FieldInit, LambdaBody, LambdaParam, ParseError,
-    ParseErrorCode, Parser, Stmt, StringPart, TokenKind, TypeExpr, UnaryOp, merge_text_parts,
-    span_between,
+    BinaryOp, Block, CatchHandler, FieldInit, LambdaBody, LambdaParam, ParseError, ParseErrorCode,
+    Parser, Stmt, StringPart, TokenKind, TypeExpr, UnaryOp, merge_text_parts, span_between,
 };
+use crate::ast::ast_pool::{ExprId, ExprKind};
 
 impl<'a> Parser<'a> {
-    pub(super) fn parse_expr(&mut self, min_bp: u8) -> Result<Expr, ParseError> {
+    pub(super) fn parse_expr(&mut self, min_bp: u8) -> Result<ExprId, ParseError> {
         let start = self.mark();
         match self.try_parse_expr(min_bp) {
             Ok(expr) => Ok(expr),
             Err(err) => {
                 self.diagnostics.push(err);
                 // No synchronize_expr yet, to avoid eating too much.
-                // It just falls back to Expr::Error so parent parses can fail/recover naturally.
-                Ok(Expr::Error(self.span_from_mark(start)))
+                // It just falls back to ExprKind::Error so parent parses can fail/recover naturally.
+                let span = self.span_from_mark(start);
+                Ok(self.pool.alloc_expr(ExprKind::Error, span))
             }
         }
     }
 
-    pub(super) fn try_parse_expr(&mut self, min_bp: u8) -> Result<Expr, ParseError> {
+    pub(super) fn try_parse_expr(&mut self, min_bp: u8) -> Result<ExprId, ParseError> {
         let mut left = self.parse_prefix()?;
         loop {
             if self.at_kind_name("LT") && self.looks_like_generic_call_or_block_suffix() {
-                let generic_start = left.span();
+                let generic_start = self.pool.expr_span(left);
                 let args = self.parse_generic_args()?;
-                left = Expr::Generic {
-                    span: span_between(generic_start, self.previous().span),
-                    callee: Box::new(left),
-                    args,
-                };
+                let mut type_ids = Vec::new();
+                for arg in args {
+                    type_ids.push(self.pool.alloc_type_expr(arg));
+                }
+                let type_range = self.pool.alloc_type_expr_list(&type_ids);
+                let span = span_between(generic_start, self.previous().span);
+                left = self.pool.alloc_expr(
+                    ExprKind::Generic {
+                        callee: left,
+                        args: type_range,
+                    },
+                    span,
+                );
+
                 if self.at_kind_name("LPAREN") {
                     left = self.finish_call(left)?;
                 } else if self.allow_block_calls {
@@ -63,54 +73,48 @@ impl<'a> Parser<'a> {
                 continue;
             }
             if self.at_kind_name("LBRACKET") {
-                let span_start = left.span();
+                let span_start = self.pool.expr_span(left);
                 self.consume();
                 let index = self.parse_expr(0)?;
                 self.expect_name("RBRACKET")?;
-                left = Expr::Index {
-                    span: span_between(span_start, self.previous().span),
-                    base: Box::new(left),
-                    index: Box::new(index),
-                };
+                let span = span_between(span_start, self.previous().span);
+                left = self
+                    .pool
+                    .alloc_expr(ExprKind::Index { base: left, index }, span);
                 continue;
             }
             if self.eat_name("SAFE_INDEX_START") {
-                let span_start = left.span();
+                let span_start = self.pool.expr_span(left);
                 let index = self.parse_expr(0)?;
                 self.expect_name("RBRACKET")?;
-                left = Expr::SafeIndex {
-                    span: span_between(span_start, self.previous().span),
-                    base: Box::new(left),
-                    index: Box::new(index),
-                };
+                let span = span_between(span_start, self.previous().span);
+                left = self
+                    .pool
+                    .alloc_expr(ExprKind::SafeIndex { base: left, index }, span);
                 continue;
             }
             if self.eat_name("DOT") {
-                let span_start = left.span();
+                let span_start = self.pool.expr_span(left);
                 let field = self.expect_ident_value()?;
-                left = Expr::Field {
-                    span: span_between(span_start, self.previous().span),
-                    base: Box::new(left),
-                    field,
-                };
+                let span = span_between(span_start, self.previous().span);
+                left = self
+                    .pool
+                    .alloc_expr(ExprKind::Field { base: left, field }, span);
                 continue;
             }
             if self.eat_name("SAFE_DOT") {
-                let span_start = left.span();
+                let span_start = self.pool.expr_span(left);
                 let field = self.expect_ident_value()?;
-                left = Expr::SafeField {
-                    span: span_between(span_start, self.previous().span),
-                    base: Box::new(left),
-                    field,
-                };
+                let span = span_between(span_start, self.previous().span);
+                left = self
+                    .pool
+                    .alloc_expr(ExprKind::SafeField { base: left, field }, span);
                 continue;
             }
             if self.eat_name("QUESTION") {
-                let span_start = left.span();
-                left = Expr::Try {
-                    span: span_between(span_start, self.previous().span),
-                    expr: Box::new(left),
-                };
+                let span_start = self.pool.expr_span(left);
+                let span = span_between(span_start, self.previous().span);
+                left = self.pool.alloc_expr(ExprKind::Try { expr: left }, span);
                 continue;
             }
 
@@ -120,31 +124,36 @@ impl<'a> Parser<'a> {
                 if left_bp < min_bp {
                     break;
                 }
-                let span_start = left.span();
+                let span_start = self.pool.expr_span(left);
                 self.consume();
                 let handler = if self.eat_name("PIPE") {
                     let handler_start = self.pos.saturating_sub(1);
                     let error = self.expect_ident_value()?;
                     self.expect_name("PIPE")?;
                     let block = self.parse_block()?;
-                    CatchHandler::Block {
+                    let catch_handler = CatchHandler::Block {
                         span: self.span_from_mark(handler_start),
                         error,
                         block,
-                    }
+                    };
+                    self.pool.alloc_catch_handler(catch_handler)
                 } else {
                     let handler_start = self.mark();
                     let expr = self.parse_expr(right_bp)?;
-                    CatchHandler::Expr {
+                    let catch_handler = CatchHandler::Expr {
                         span: self.span_from_mark(handler_start),
-                        expr: Box::new(expr),
-                    }
+                        expr,
+                    };
+                    self.pool.alloc_catch_handler(catch_handler)
                 };
-                left = Expr::Catch {
-                    span: span_between(span_start, self.previous().span),
-                    expr: Box::new(left),
-                    handler,
-                };
+                let span = span_between(span_start, self.previous().span);
+                left = self.pool.alloc_expr(
+                    ExprKind::Catch {
+                        expr: left,
+                        handler,
+                    },
+                    span,
+                );
                 continue;
             }
 
@@ -153,14 +162,18 @@ impl<'a> Parser<'a> {
                 if left_bp < min_bp {
                     break;
                 }
-                let span_start = left.span();
+                let span_start = self.pool.expr_span(left);
                 self.consume();
                 let ty = self.parse_type()?;
-                left = Expr::Cast {
-                    span: span_between(span_start, ty.span()),
-                    expr: Box::new(left),
-                    ty,
-                };
+                let type_id = self.pool.alloc_type_expr(ty.clone());
+                let span = span_between(span_start, ty.span());
+                left = self.pool.alloc_expr(
+                    ExprKind::Cast {
+                        expr: left,
+                        ty: type_id,
+                    },
+                    span,
+                );
                 continue;
             }
 
@@ -170,167 +183,165 @@ impl<'a> Parser<'a> {
             if left_bp < min_bp {
                 break;
             }
-            if matches!(op, BinaryOp::RangeExclusive | BinaryOp::RangeInclusive)
-                && matches!(
-                    left,
-                    Expr::Binary {
+            if matches!(op, BinaryOp::RangeExclusive | BinaryOp::RangeInclusive) {
+                let left_kind = self.pool.expr(left);
+                if matches!(
+                    left_kind,
+                    ExprKind::Binary {
                         op: BinaryOp::RangeExclusive | BinaryOp::RangeInclusive,
                         ..
                     }
-                )
-            {
-                return Err(ParseError::new(
-                    ParseErrorCode::ExpectedToken,
-                    "chained ranges require parentheses",
-                    self.current(),
-                    self.source,
-                ));
+                ) {
+                    return Err(ParseError::new(
+                        ParseErrorCode::ExpectedToken,
+                        "chained ranges require parentheses",
+                        self.current(),
+                        self.source,
+                    ));
+                }
             }
-            let span_start = left.span();
+            let span_start = self.pool.expr_span(left);
             self.consume();
             let right = self.parse_expr(right_bp)?;
-            let span = span_between(span_start, right.span());
+            let span = span_between(span_start, self.pool.expr_span(right));
             left = if op == BinaryOp::NullCoalesce {
-                Expr::NullCoalesce {
-                    span,
-                    left: Box::new(left),
-                    right: Box::new(right),
-                }
+                self.pool
+                    .alloc_expr(ExprKind::NullCoalesce { left, right }, span)
             } else {
-                Expr::Binary {
-                    span,
-                    op,
-                    left: Box::new(left),
-                    right: Box::new(right),
-                }
+                self.pool
+                    .alloc_expr(ExprKind::Binary { op, left, right }, span)
             };
         }
         Ok(left)
     }
 
-    pub(super) fn parse_prefix(&mut self) -> Result<Expr, ParseError> {
+    pub(super) fn parse_prefix(&mut self) -> Result<ExprId, ParseError> {
         let start = self.mark();
         match &self.current().kind {
             TokenKind::Minus => {
                 self.consume();
                 let expr = self.parse_expr(150)?;
-                Ok(Expr::Unary {
-                    span: self.span_from_mark(start),
-                    op: UnaryOp::Neg,
-                    expr: Box::new(expr),
-                })
+                let span = self.span_from_mark(start);
+                Ok(self.pool.alloc_expr(
+                    ExprKind::Unary {
+                        op: UnaryOp::Neg,
+                        expr,
+                    },
+                    span,
+                ))
             }
             TokenKind::Bang => {
                 self.consume();
                 let expr = self.parse_expr(150)?;
-                Ok(Expr::Unary {
-                    span: self.span_from_mark(start),
-                    op: UnaryOp::Not,
-                    expr: Box::new(expr),
-                })
+                let span = self.span_from_mark(start);
+                Ok(self.pool.alloc_expr(
+                    ExprKind::Unary {
+                        op: UnaryOp::Not,
+                        expr,
+                    },
+                    span,
+                ))
             }
             TokenKind::Tilde => {
                 self.consume();
                 let expr = self.parse_expr(150)?;
-                Ok(Expr::Unary {
-                    span: self.span_from_mark(start),
-                    op: UnaryOp::BitNot,
-                    expr: Box::new(expr),
-                })
+                let span = self.span_from_mark(start);
+                Ok(self.pool.alloc_expr(
+                    ExprKind::Unary {
+                        op: UnaryOp::BitNot,
+                        expr,
+                    },
+                    span,
+                ))
             }
             TokenKind::KwAwait => {
                 self.consume();
                 let expr = self.parse_expr(150)?;
-                Ok(Expr::Unary {
-                    span: self.span_from_mark(start),
-                    op: UnaryOp::Await,
-                    expr: Box::new(expr),
-                })
+                let span = self.span_from_mark(start);
+                Ok(self.pool.alloc_expr(
+                    ExprKind::Unary {
+                        op: UnaryOp::Await,
+                        expr,
+                    },
+                    span,
+                ))
             }
             TokenKind::KwAlloc => {
                 self.consume();
                 let expr = self.parse_expr(150)?;
-                Ok(Expr::Alloc {
-                    span: self.span_from_mark(start),
-                    expr: Box::new(expr),
-                })
+                let span = self.span_from_mark(start);
+                Ok(self.pool.alloc_expr(ExprKind::Alloc { expr }, span))
             }
             TokenKind::KwAsync => {
                 self.consume();
                 let block = self.parse_block()?;
-                Ok(Expr::AsyncBlock {
-                    span: self.span_from_mark(start),
-                    block,
-                })
+                let block_id = self.pool.alloc_block(block);
+                let span = self.span_from_mark(start);
+                Ok(self
+                    .pool
+                    .alloc_expr(ExprKind::AsyncBlock { block: block_id }, span))
             }
             TokenKind::KwUnsafe => {
                 self.consume();
                 let block = self.parse_block()?;
-                Ok(Expr::UnsafeBlock {
-                    span: self.span_from_mark(start),
-                    block,
-                })
+                let block_id = self.pool.alloc_block(block);
+                let span = self.span_from_mark(start);
+                Ok(self
+                    .pool
+                    .alloc_expr(ExprKind::UnsafeBlock { block: block_id }, span))
             }
             TokenKind::KwIf => self.parse_if_expr(),
             TokenKind::KwMatch => self.parse_match_expr(),
             TokenKind::KwSelf => {
                 self.consume();
-                Ok(Expr::Path {
-                    span: self.span_from_mark(start),
-                    path: vec!["self".to_string()],
-                })
+                let span = self.span_from_mark(start);
+                Ok(self.pool.alloc_expr(
+                    ExprKind::Path {
+                        path: vec!["self".to_string()],
+                    },
+                    span,
+                ))
             }
             TokenKind::IdentValue => {
                 let name = self.expect_ident_value()?;
-                Ok(Expr::Path {
-                    span: self.span_from_mark(start),
-                    path: vec![name],
-                })
+                let span = self.span_from_mark(start);
+                Ok(self
+                    .pool
+                    .alloc_expr(ExprKind::Path { path: vec![name] }, span))
             }
             TokenKind::IdentType => self.parse_type_led_expr(),
             TokenKind::IntDec | TokenKind::IntHex | TokenKind::IntBin | TokenKind::IntOct => {
                 let value = self.current_text().to_string();
                 self.consume();
-                Ok(Expr::Int {
-                    span: self.span_from_mark(start),
-                    value,
-                })
+                let span = self.span_from_mark(start);
+                Ok(self.pool.alloc_expr(ExprKind::Int { value }, span))
             }
             TokenKind::Float => {
                 let value = self.current_text().to_string();
                 self.consume();
-                Ok(Expr::Float {
-                    span: self.span_from_mark(start),
-                    value,
-                })
+                let span = self.span_from_mark(start);
+                Ok(self.pool.alloc_expr(ExprKind::Float { value }, span))
             }
             TokenKind::BoolTrue => {
                 self.consume();
-                Ok(Expr::Bool {
-                    span: self.span_from_mark(start),
-                    value: true,
-                })
+                let span = self.span_from_mark(start);
+                Ok(self.pool.alloc_expr(ExprKind::Bool { value: true }, span))
             }
             TokenKind::BoolFalse => {
                 self.consume();
-                Ok(Expr::Bool {
-                    span: self.span_from_mark(start),
-                    value: false,
-                })
+                let span = self.span_from_mark(start);
+                Ok(self.pool.alloc_expr(ExprKind::Bool { value: false }, span))
             }
             TokenKind::Char => {
                 let value = self.current().char_content(self.source).to_string();
                 self.consume();
-                Ok(Expr::Char {
-                    span: self.span_from_mark(start),
-                    value,
-                })
+                let span = self.span_from_mark(start);
+                Ok(self.pool.alloc_expr(ExprKind::Char { value }, span))
             }
             TokenKind::Nil => {
                 self.consume();
-                Ok(Expr::Nil {
-                    span: self.span_from_mark(start),
-                })
+                let span = self.span_from_mark(start);
+                Ok(self.pool.alloc_expr(ExprKind::Nil, span))
             }
             TokenKind::StringStart => self.parse_string_like("STRING_START", "STRING_END"),
             TokenKind::MultilineStringStart => {
@@ -339,23 +350,21 @@ impl<'a> Parser<'a> {
             TokenKind::RawString => {
                 let value = self.current().raw_string_content(self.source).to_string();
                 self.consume();
-                Ok(Expr::InterpolatedString {
-                    span: self.span_from_mark(start),
-                    parts: vec![StringPart::Text {
-                        span: self.span_from_mark(start),
-                        text: value,
-                    }],
-                })
+                let span = self.span_from_mark(start);
+                let text_part = StringPart::Text { span, text: value };
+                let part_id = self.pool.alloc_string_part(text_part);
+                let range = self.pool.alloc_string_part_list(&[part_id]);
+                Ok(self
+                    .pool
+                    .alloc_expr(ExprKind::InterpolatedString { parts: range }, span))
             }
             TokenKind::LParen if self.looks_like_lambda_expr() => self.parse_lambda(),
             TokenKind::LParen => {
                 self.consume();
                 let expr = self.parse_expr(0)?;
                 self.expect_name("RPAREN")?;
-                Ok(Expr::Group {
-                    span: self.span_from_mark(start),
-                    expr: Box::new(expr),
-                })
+                let span = self.span_from_mark(start);
+                Ok(self.pool.alloc_expr(ExprKind::Group { expr }, span))
             }
             TokenKind::LBracket => self.parse_array(),
             _ => Err(ParseError::new(
@@ -367,39 +376,51 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub(super) fn finish_call(&mut self, callee: Expr) -> Result<Expr, ParseError> {
-        let span_start = callee.span();
+    pub(super) fn finish_call(&mut self, callee: ExprId) -> Result<ExprId, ParseError> {
+        let span_start = self.pool.expr_span(callee);
         self.expect_name("LPAREN")?;
         let args = self.parse_arguments()?;
         self.expect_name("RPAREN")?;
         let trailing_block = if self.at_kind_name("LBRACE") {
-            Some(self.parse_block()?)
+            let block = self.parse_block()?;
+            Some(self.pool.alloc_block(block))
         } else {
             None
         };
-        let end = trailing_block
-            .as_ref()
-            .map_or_else(|| self.previous().span, |block| block.span);
-        Ok(Expr::Call {
-            span: span_between(span_start, end),
-            callee: Box::new(callee),
-            args,
-            trailing_block,
-        })
+        let end = trailing_block.as_ref().map_or_else(
+            || self.previous().span,
+            |block_id| self.pool.block(*block_id).span,
+        );
+        let range = self.pool.alloc_expr_list(&args);
+        Ok(self.pool.alloc_expr(
+            ExprKind::Call {
+                callee,
+                args: range,
+                trailing_block,
+            },
+            span_between(span_start, end),
+        ))
     }
 
-    pub(super) fn finish_trailing_block_call(&mut self, callee: Expr) -> Result<Expr, ParseError> {
-        let span_start = callee.span();
+    pub(super) fn finish_trailing_block_call(
+        &mut self,
+        callee: ExprId,
+    ) -> Result<ExprId, ParseError> {
+        let span_start = self.pool.expr_span(callee);
         let trailing_block = self.parse_block()?;
-        Ok(Expr::Call {
-            span: span_between(span_start, trailing_block.span),
-            callee: Box::new(callee),
-            args: Vec::new(),
-            trailing_block: Some(trailing_block),
-        })
+        let block_id = self.pool.alloc_block(trailing_block.clone());
+        let range = self.pool.alloc_expr_list(&[]);
+        Ok(self.pool.alloc_expr(
+            ExprKind::Call {
+                callee,
+                args: range,
+                trailing_block: Some(block_id),
+            },
+            span_between(span_start, trailing_block.span),
+        ))
     }
 
-    pub(super) fn parse_if_expr(&mut self) -> Result<Expr, ParseError> {
+    pub(super) fn parse_if_expr(&mut self) -> Result<ExprId, ParseError> {
         let start = self.mark();
         self.expect_name("KW_IF")?;
         let condition = self.parse_condition()?;
@@ -407,25 +428,31 @@ impl<'a> Parser<'a> {
         self.expect_name("KW_ELSE")?;
         let else_block = if self.at_kind_name("KW_IF") {
             let nested = self.parse_if_expr()?;
+            let nested_span = self.pool.expr_span(nested);
             Block {
-                span: nested.span(),
-                statements: vec![Stmt::Expr {
-                    span: nested.span(),
+                span: nested_span,
+                statements: vec![self.pool.alloc_stmt(Stmt::Expr {
+                    span: nested_span,
                     expr: Box::new(nested),
-                }],
+                })],
             }
         } else {
             self.parse_block()?
         };
-        Ok(Expr::If {
-            span: self.span_from_mark(start),
-            condition: Box::new(condition),
-            then_block,
-            else_block,
-        })
+        let then_id = self.pool.alloc_block(then_block);
+        let else_id = self.pool.alloc_block(else_block);
+        let span = self.span_from_mark(start);
+        Ok(self.pool.alloc_expr(
+            ExprKind::If {
+                condition,
+                then_block: then_id,
+                else_block: else_id,
+            },
+            span,
+        ))
     }
 
-    pub(super) fn parse_array(&mut self) -> Result<Expr, ParseError> {
+    pub(super) fn parse_array(&mut self) -> Result<ExprId, ParseError> {
         let start = self.mark();
         self.expect_name("LBRACKET")?;
         let mut items = Vec::new();
@@ -441,13 +468,12 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect_name("RBRACKET")?;
-        Ok(Expr::Array {
-            span: self.span_from_mark(start),
-            items,
-        })
+        let range = self.pool.alloc_expr_list(&items);
+        let span = self.span_from_mark(start);
+        Ok(self.pool.alloc_expr(ExprKind::Array { items: range }, span))
     }
 
-    pub(super) fn parse_lambda(&mut self) -> Result<Expr, ParseError> {
+    pub(super) fn parse_lambda(&mut self) -> Result<ExprId, ParseError> {
         let start = self.mark();
         self.expect_name("LPAREN")?;
         let mut params = Vec::new();
@@ -460,11 +486,13 @@ impl<'a> Parser<'a> {
                 } else {
                     None
                 };
-                params.push(LambdaParam {
+                let param = LambdaParam {
                     span: self.span_from_mark(param_start),
                     name,
                     ty,
-                });
+                };
+                let param_id = self.pool.alloc_lambda_param(param);
+                params.push(param_id);
                 if !self.eat_name("COMMA") {
                     break;
                 }
@@ -486,17 +514,21 @@ impl<'a> Parser<'a> {
             let expr = self.parse_expr(0)?;
             LambdaBody::Expr {
                 span: self.span_from_mark(body_start),
-                expr: Box::new(expr),
+                expr,
             }
         };
-        Ok(Expr::Lambda {
-            span: self.span_from_mark(start),
-            params,
-            body,
-        })
+        let range = self.pool.alloc_lambda_param_list(&params);
+        let span = self.span_from_mark(start);
+        Ok(self.pool.alloc_expr(
+            ExprKind::Lambda {
+                params: range,
+                body,
+            },
+            span,
+        ))
     }
 
-    pub(super) fn parse_type_led_expr(&mut self) -> Result<Expr, ParseError> {
+    pub(super) fn parse_type_led_expr(&mut self) -> Result<ExprId, ParseError> {
         let start = self.mark();
         let ty = self.parse_type()?;
         if self.eat_name("LBRACE") {
@@ -507,11 +539,13 @@ impl<'a> Parser<'a> {
                     let name = self.expect_ident_value()?;
                     self.expect_name("COLON")?;
                     let value = self.parse_expr(0)?;
-                    fields.push(FieldInit {
+                    let init = FieldInit {
                         span: self.span_from_mark(field_start),
                         name,
                         value,
-                    });
+                    };
+                    let init_id = self.pool.alloc_field_init(init);
+                    fields.push(init_id);
                     if !self.eat_name("COMMA") {
                         break;
                     }
@@ -521,22 +555,30 @@ impl<'a> Parser<'a> {
                 }
             }
             self.expect_name("RBRACE")?;
-            return Ok(Expr::StructLiteral {
-                span: self.span_from_mark(start),
-                ty,
-                fields,
-            });
+            let range = self.pool.alloc_field_init_list(&fields);
+            let type_id = self.pool.alloc_type_expr(ty);
+            let span = self.span_from_mark(start);
+            return Ok(self.pool.alloc_expr(
+                ExprKind::StructLiteral {
+                    ty: type_id,
+                    fields: range,
+                },
+                span,
+            ));
         }
         if let TypeExpr::Named { name, args, .. } = ty
             && args.is_empty()
             && self.eat_name("DOT")
         {
             let member = self.expect_name_like()?;
-            return Ok(Expr::TypePath {
-                span: self.span_from_mark(start),
-                type_name: name,
-                member,
-            });
+            let span = self.span_from_mark(start);
+            return Ok(self.pool.alloc_expr(
+                ExprKind::TypePath {
+                    type_name: name,
+                    member,
+                },
+                span,
+            ));
         }
         Err(ParseError::new(
             ParseErrorCode::ExpectedExpression,
@@ -546,7 +588,7 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    pub(super) fn parse_match_expr(&mut self) -> Result<Expr, ParseError> {
+    pub(super) fn parse_match_expr(&mut self) -> Result<ExprId, ParseError> {
         let start = self.mark();
         self.expect_name("KW_MATCH")?;
         let value = self.parse_expr_without_block_calls(0)?;
@@ -557,21 +599,23 @@ impl<'a> Parser<'a> {
             if self.at_kind_name("RBRACE") {
                 break;
             }
-            arms.push(self.parse_match_arm()?);
+            let arm = self.parse_match_arm()?;
+            let arm_id = self.pool.alloc_match_arm(arm);
+            arms.push(arm_id);
         }
         self.expect_name("RBRACE")?;
-        Ok(Expr::Match {
-            span: self.span_from_mark(start),
-            value: Box::new(value),
-            arms,
-        })
+        let range = self.pool.alloc_match_arm_list(&arms);
+        let span = self.span_from_mark(start);
+        Ok(self
+            .pool
+            .alloc_expr(ExprKind::Match { value, arms: range }, span))
     }
 
     pub(super) fn parse_string_like(
         &mut self,
         start_name: &str,
         end_name: &str,
-    ) -> Result<Expr, ParseError> {
+    ) -> Result<ExprId, ParseError> {
         let start = self.mark();
         self.expect_name(start_name)?;
         let mut parts = Vec::new();
@@ -579,11 +623,9 @@ impl<'a> Parser<'a> {
             match &self.current().kind {
                 TokenKind::StringText | TokenKind::StringEscape => {
                     let span = self.current().span;
-                    parts.push(StringPart::Text {
-                        span,
-                        text: self.current_text().to_string(),
-                    });
+                    let text = self.current_text().to_string();
                     self.consume();
+                    parts.push(StringPart::Text { span, text });
                 }
                 TokenKind::InterpStart => {
                     let part_start = self.mark();
@@ -592,7 +634,7 @@ impl<'a> Parser<'a> {
                     self.expect_name("INTERP_END")?;
                     parts.push(StringPart::Expr {
                         span: self.span_from_mark(part_start),
-                        expr: Box::new(expr),
+                        expr,
                     });
                 }
                 _ => {
@@ -606,13 +648,19 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect_name(end_name)?;
-        Ok(Expr::InterpolatedString {
-            span: self.span_from_mark(start),
-            parts: merge_text_parts(parts),
-        })
+        let merged = merge_text_parts(parts);
+        let mut part_ids = Vec::new();
+        for p in merged {
+            part_ids.push(self.pool.alloc_string_part(p));
+        }
+        let range = self.pool.alloc_string_part_list(&part_ids);
+        let span = self.span_from_mark(start);
+        Ok(self
+            .pool
+            .alloc_expr(ExprKind::InterpolatedString { parts: range }, span))
     }
 
-    pub(super) fn parse_arguments(&mut self) -> Result<Vec<Expr>, ParseError> {
+    pub(super) fn parse_arguments(&mut self) -> Result<Vec<ExprId>, ParseError> {
         let mut args = Vec::new();
         if self.at_kind_name("RPAREN") {
             return Ok(args);

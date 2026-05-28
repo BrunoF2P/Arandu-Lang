@@ -181,7 +181,7 @@ impl LowerCtx<'_> {
                     .decl_type(*symbol)
                     .cloned()
                     .unwrap_or(ArType::Error);
-                let local_id = self.new_local(ty, *symbol);
+                let local_id = self.new_local(ty, *symbol, pattern.span());
                 self.emit_store_place(
                     AmirPlace {
                         local: local_id,
@@ -256,7 +256,7 @@ impl LowerCtx<'_> {
                                 field.span,
                             ));
                         };
-                        let local_id = self.new_local(field_ty, symbol_id);
+                        let local_id = self.new_local(field_ty, symbol_id, field.span);
                         self.emit_store_place(
                             AmirPlace {
                                 local: local_id,

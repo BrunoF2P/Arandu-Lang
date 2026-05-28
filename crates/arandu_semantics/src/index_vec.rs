@@ -6,6 +6,17 @@ pub trait IdIndex: Copy + PartialEq + Eq {
     fn from_usize(value: usize) -> Self;
 }
 
+impl IdIndex for usize {
+    #[inline]
+    fn to_usize(self) -> usize {
+        self
+    }
+    #[inline]
+    fn from_usize(value: usize) -> Self {
+        value
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct IndexVec<I: IdIndex, T> {
     pub raw: Vec<T>,

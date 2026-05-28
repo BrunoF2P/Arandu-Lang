@@ -30,7 +30,7 @@ pub struct ParseOutput {
 /// # Errors
 ///
 /// Returns the first [`ParseError`] if the source is invalid.
-pub fn parse<'a>(source: &'a str) -> Result<Program, ParseError> {
+pub fn parse(source: &str) -> Result<Program, ParseError> {
     let output = parse_recovering(source);
     if let Some(err) = output.diagnostics.into_iter().next() {
         Err(err)
@@ -39,7 +39,7 @@ pub fn parse<'a>(source: &'a str) -> Result<Program, ParseError> {
     }
 }
 
-pub fn parse_recovering<'a>(source: &'a str) -> ParseOutput {
+pub fn parse_recovering(source: &str) -> ParseOutput {
     let lexed = arandu_lexer::lex_recovering(source);
     let mut parser = Parser::new(lexed.source, lexed.tokens);
     let mut diagnostics: Vec<ParseError> = lexed
@@ -69,6 +69,7 @@ pub fn parse_recovering<'a>(source: &'a str) -> ParseOutput {
                 imports: Vec::new(),
                 decls: Vec::new(),
                 docs: Vec::new(),
+                pool: parser.pool.clone(),
             }
         }
     };
@@ -97,6 +98,7 @@ pub struct Parser<'a> {
     allow_block_calls: bool,
     docs: Vec<DocCommentAttachment>,
     pending_docs: Vec<PendingDoc>,
+    pub pool: crate::ast::ast_pool::AstPool,
     pub(super) diagnostics: Vec<ParseError>,
 }
 
@@ -117,6 +119,7 @@ impl<'a> Parser<'a> {
             docs: Vec::new(),
             pending_docs: Vec::new(),
             diagnostics: Vec::new(),
+            pool: crate::ast::ast_pool::AstPool::new(),
         }
     }
 
@@ -156,6 +159,7 @@ impl<'a> Parser<'a> {
             imports,
             decls,
             docs: std::mem::take(&mut self.docs),
+            pool: std::mem::take(&mut self.pool),
         })
     }
     pub(super) fn mark(&self) -> usize {

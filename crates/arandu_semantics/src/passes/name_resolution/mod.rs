@@ -13,12 +13,13 @@ mod util;
 
 #[must_use]
 pub fn resolve(program: &Program) -> ResolutionResult {
-    Resolver::new().resolve_program(program)
+    Resolver::new(&program.pool).resolve_program(program)
 }
 
-struct Resolver {
+struct Resolver<'a> {
     symbols: SymbolTable,
     resolved: ResolvedNames,
     docs: crate::DocCommentMap,
     diagnostics: Vec<crate::Diagnostic>,
+    pool: &'a arandu_parser::ast_pool::AstPool,
 }

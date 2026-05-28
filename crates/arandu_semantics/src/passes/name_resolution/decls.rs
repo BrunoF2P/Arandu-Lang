@@ -8,7 +8,7 @@ use crate::{ScopeId, SymbolKind};
 
 use super::Resolver;
 
-impl Resolver {
+impl<'a> Resolver<'a> {
     pub(crate) fn resolve_top_level(&mut self, scope: ScopeId, decl: &TopLevelDecl) {
         match decl {
             TopLevelDecl::Const(decl) => self.resolve_const(scope, decl),
@@ -32,7 +32,7 @@ impl Resolver {
         if let Some(ty) = &decl.ty {
             self.resolve_type_expr(scope, ty);
         }
-        self.resolve_expr(scope, &decl.value);
+        self.resolve_expr(scope, decl.value);
     }
 
     pub(crate) fn resolve_type_alias(&mut self, scope: ScopeId, decl: &TypeAliasDecl) {
@@ -58,7 +58,7 @@ impl Resolver {
         if let Some(result) = &decl.result {
             self.resolve_result_type(func_scope, result);
         }
-        self.resolve_block_in_scope(func_scope, &decl.body);
+        self.resolve_block_in_scope(func_scope, self.pool, &decl.body);
     }
 
     pub(crate) fn resolve_struct(&mut self, scope: ScopeId, decl: &StructDecl) {
@@ -168,7 +168,7 @@ impl Resolver {
     pub(crate) fn resolve_attrs(&mut self, scope: ScopeId, attrs: &[Attribute]) {
         for attr in attrs {
             for arg in &attr.args {
-                self.resolve_expr(scope, arg);
+                self.resolve_expr(scope, *arg);
             }
         }
     }

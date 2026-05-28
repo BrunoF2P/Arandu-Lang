@@ -29,7 +29,10 @@ fn pattern_variant_short_name(pat: &Pattern) -> Option<String> {
     }
 }
 
-fn enum_variant_short_names(checker: &TypeChecker, enum_id: crate::SymbolId) -> HashSet<String> {
+fn enum_variant_short_names(
+    checker: &TypeChecker<'_>,
+    enum_id: crate::SymbolId,
+) -> HashSet<String> {
     let enum_name = checker.symbols.get(enum_id).name.clone();
     let mut names = HashSet::new();
     let mut seen = HashSet::new();
@@ -46,7 +49,7 @@ fn enum_variant_short_names(checker: &TypeChecker, enum_id: crate::SymbolId) -> 
 }
 
 pub fn check_match_exhaustiveness(
-    checker: &mut TypeChecker,
+    checker: &mut TypeChecker<'_>,
     value_ty: &ArType,
     arms: &[MatchArm],
     match_span: Span,

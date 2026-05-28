@@ -3,5 +3,7 @@ pub mod lower_amir;
 pub mod lower_hir;
 pub mod lowering;
 pub mod monomorphize;
+pub mod move_checker;
 pub mod name_resolution;
+pub mod optimize;
 pub mod type_checker;

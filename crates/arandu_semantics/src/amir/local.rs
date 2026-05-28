@@ -2,6 +2,7 @@ use crate::SymbolId;
 use crate::hir::ReceiverKind;
 use crate::newtype_index;
 use crate::passes::type_checker::types::ArType;
+use arandu_lexer::Span;
 
 newtype_index!(LocalId);
 newtype_index!(TempId);
@@ -17,10 +18,13 @@ pub struct AmirLocal {
     pub id: LocalId,
     pub ty: ArType,
     pub symbol: Option<SymbolId>,
+    pub span: Span,
+    pub use_span: Option<Span>,
 }
 
 #[derive(Debug, Clone)]
 pub struct AmirTemp {
     pub id: TempId,
     pub ty: ArType,
+    pub span: Span,
 }

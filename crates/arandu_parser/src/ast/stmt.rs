@@ -1,10 +1,10 @@
-use super::{Expr, TypeExpr};
+use super::{Expr, StmtId, TypeExpr};
 use arandu_lexer::Span;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Block {
     pub span: Span,
-    pub statements: Vec<Stmt>,
+    pub statements: Vec<StmtId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -71,6 +71,29 @@ pub enum Stmt {
         block: Block,
     },
     Error(Span),
+}
+
+impl Stmt {
+    #[must_use]
+    pub fn span(&self) -> Span {
+        match self {
+            Stmt::VarDecl { span, .. }
+            | Stmt::Set { span, .. }
+            | Stmt::Return { span, .. }
+            | Stmt::Break { span }
+            | Stmt::Continue { span }
+            | Stmt::Free { span, .. }
+            | Stmt::Expr { span, .. }
+            | Stmt::If { span, .. }
+            | Stmt::For { span, .. }
+            | Stmt::While { span, .. }
+            | Stmt::Match { span, .. }
+            | Stmt::Defer { span, .. }
+            | Stmt::ErrDefer { span, .. }
+            | Stmt::Unsafe { span, .. }
+            | Stmt::Error(span) => *span,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

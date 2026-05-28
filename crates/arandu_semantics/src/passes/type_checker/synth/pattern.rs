@@ -5,7 +5,7 @@ use super::super::constraints::ConstraintOrigin;
 use super::super::types::ArType;
 use super::expr::synth_expr;
 
-pub fn check_pattern(checker: &mut TypeChecker, pattern: &Pattern, value_ty: &ArType) {
+pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: &Pattern, value_ty: &ArType) {
     match pattern {
         Pattern::Wildcard { .. } => {}
         Pattern::Bind { span, name: _ } => {
@@ -16,14 +16,14 @@ pub fn check_pattern(checker: &mut TypeChecker, pattern: &Pattern, value_ty: &Ar
             }
         }
         Pattern::Literal { expr, .. } => {
-            let expr_ty = synth_expr(checker, expr);
+            let expr_ty = synth_expr(checker, **expr);
             if !super::super::types::unify(value_ty, &expr_ty) {
                 checker.add_constraint(
                     value_ty.clone(),
                     expr_ty,
                     ConstraintOrigin::Assignment {
                         lhs_span: pattern.span(),
-                        rhs_span: expr.span(),
+                        rhs_span: checker.pool.expr_span(**expr),
                     },
                 );
             }
@@ -246,15 +246,15 @@ pub fn check_pattern(checker: &mut TypeChecker, pattern: &Pattern, value_ty: &Ar
             span: _,
             ..
         } => {
-            let start_ty = synth_expr(checker, start);
-            let end_ty = synth_expr(checker, end);
+            let start_ty = synth_expr(checker, **start);
+            let end_ty = synth_expr(checker, **end);
             if !super::super::types::unify(value_ty, &start_ty) {
                 checker.add_constraint(
                     value_ty.clone(),
                     start_ty,
                     ConstraintOrigin::Assignment {
                         lhs_span: pattern.span(),
-                        rhs_span: start.span(),
+                        rhs_span: checker.pool.expr_span(**start),
                     },
                 );
             }
@@ -264,7 +264,7 @@ pub fn check_pattern(checker: &mut TypeChecker, pattern: &Pattern, value_ty: &Ar
                     end_ty,
                     ConstraintOrigin::Assignment {
                         lhs_span: pattern.span(),
-                        rhs_span: end.span(),
+                        rhs_span: checker.pool.expr_span(**end),
                     },
                 );
             }

@@ -20,6 +20,7 @@
 //!
 //! This module is designed to be invoked *after* type checking, operating on
 //! the fully-typed HIR and using the `TypeInterner` for efficient type identity.
+#![allow(clippy::collapsible_if, clippy::len_zero)]
 
 use crate::SymbolId;
 use crate::SymbolTable;
@@ -456,7 +457,7 @@ impl InstantiationAnalyzer<'_> {
                 }
             }
             HirStmtKind::For { clause, body } => {
-                match clause {
+                match &**clause {
                     crate::hir::HirForClause::In { iterable, .. } => {
                         self.visit_expr(iterable, current);
                     }

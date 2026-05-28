@@ -12,6 +12,32 @@ use crate::hir::HirExpr;
 use crate::hir::HirExprKind;
 use crate::hir::ResultCtorVariant;
 
+fn resolve_method_target(callee: &HirExpr, symbols: &SymbolTable) -> Option<crate::SymbolId> {
+    let (base, field) = match &callee.kind {
+        HirExprKind::Field { base, field } | HirExprKind::SafeField { base, field } => {
+            (base, field)
+        }
+        _ => return None,
+    };
+
+    let base_ty = &base.ty;
+    let actual_base_ty = match base_ty {
+        ArType::Nullable(inner) => inner.as_ref(),
+        other => other,
+    };
+    let struct_id = match actual_base_ty {
+        ArType::Named(id, _) => Some(*id),
+        ArType::Ptr(inner) => match &**inner {
+            ArType::Named(id, _) => Some(*id),
+            _ => None,
+        },
+        _ => None,
+    }?;
+
+    let struct_name = symbols.get(struct_id).name.clone();
+    symbols.lookup_associated_member(&struct_name, field)
+}
+
 impl LowerCtx<'_> {
     pub(crate) fn expr_is_nil(expr: &HirExpr) -> bool {
         matches!(expr.kind, HirExprKind::Nil)
@@ -316,8 +342,20 @@ impl LowerCtx<'_> {
                 Ok(AmirOperand::Copy(dest))
             }
             HirExprKind::Call { callee, args, .. } => {
-                let callee_op = self.lower_expr(callee, None, symbols)?;
+                let method_target = resolve_method_target(callee, symbols);
+                let callee_op = if let Some(method_symbol) = method_target {
+                    AmirOperand::FunctionRef(method_symbol)
+                } else {
+                    self.lower_expr(callee, None, symbols)?
+                };
                 let mut arg_ops = Vec::new();
+                if method_target.is_some()
+                    && let HirExprKind::Field { base, .. } | HirExprKind::SafeField { base, .. } =
+                        &callee.kind
+                {
+                    let base_op = self.lower_expr(base, None, symbols)?;
+                    arg_ops.push(base_op);
+                }
                 for arg in args {
                     let arg_op = self.lower_expr(arg, None, symbols)?;
                     arg_ops.push(self.consume_operand(arg_op)?);
@@ -557,12 +595,26 @@ impl LowerCtx<'_> {
                 self.current_block = Some(bb_join);
                 Ok(AmirOperand::Copy(dest))
             }
-            HirExprKind::Catch { .. } => Err(amir_unsupported(expr.span, "`catch` handler")),
-            HirExprKind::Lambda { .. } => Err(amir_unsupported(expr.span, "lambda/closure")),
-            HirExprKind::AsyncBlock { .. } => Err(amir_unsupported(expr.span, "async block")),
-            HirExprKind::UnsafeBlock { .. } => {
-                Err(amir_unsupported(expr.span, "unsafe block expression"))
-            }
+            HirExprKind::Catch { .. } => Err(amir_unsupported(
+                expr.span,
+                "`catch` handler",
+                "v0.2 CATCH: AMIR catch lowering",
+            )),
+            HirExprKind::Lambda { .. } => Err(amir_unsupported(
+                expr.span,
+                "lambda/closure",
+                "v0.3 LAMBDA: closure lowering",
+            )),
+            HirExprKind::AsyncBlock { .. } => Err(amir_unsupported(
+                expr.span,
+                "async block",
+                "v0.3 ASYNC: effect flags and async lowering",
+            )),
+            HirExprKind::UnsafeBlock { .. } => Err(amir_unsupported(
+                expr.span,
+                "unsafe block expression",
+                "v0.2 UNSAFE: unsafe legality and lowering",
+            )),
         }
     }
 }

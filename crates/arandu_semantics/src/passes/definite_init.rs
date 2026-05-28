@@ -20,6 +20,12 @@
 //! propagating gen/kill sets per block until a fixpoint is reached. This is
 //! the same class of algorithm as the LLVM `MaybeUninitializedPlaces` analysis.
 
+#![allow(
+    clippy::collapsible_match,
+    clippy::single_match,
+    clippy::collapsible_if
+)]
+
 use crate::SymbolTable;
 use crate::amir::block::BlockId;
 use crate::amir::local::LocalId;
@@ -109,12 +115,10 @@ pub fn check_definite_init(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagno
         let bi = block.id.as_usize();
         for stmt in &block.statements {
             match stmt {
-                AmirStmt::Store { lhs, .. } => {
+                AmirStmt::Store { lhs, .. } if lhs.projections.is_empty() => {
                     // A store to a plain local (no projections) means that
                     // local is definitely initialized after this statement.
-                    if lhs.projections.is_empty() {
-                        block_gens[bi].set(lhs.local);
-                    }
+                    block_gens[bi].set(lhs.local);
                 }
                 _ => {}
             }
@@ -130,17 +134,12 @@ pub fn check_definite_init(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagno
     //    Entry block starts with no locals initialized (unless they
     //    appear in gen).
     // ------------------------------------------------------------------
-    let mut block_in: Vec<InitBits> = vec![InitBits::new(num_locals); num_blocks];
-    let mut block_out: Vec<InitBits> = vec![InitBits::new(num_locals); num_blocks];
-
-    // Entry block: out = gen
-    block_out[0] = block_gens[0].clone();
+    let mut block_in: Vec<InitBits> = vec![InitBits::all_init(num_locals); num_blocks];
+    let mut block_out: Vec<InitBits> = vec![InitBits::all_init(num_locals); num_blocks];
 
     let mut worklist = VecDeque::new();
     for block in &func.blocks {
-        if block.id != BlockId::from_usize(0) {
-            worklist.push_back(block.id);
-        }
+        worklist.push_back(block.id);
     }
 
     let mut iterations = 0;
@@ -156,7 +155,7 @@ pub fn check_definite_init(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagno
         let block = &func.blocks[bi];
 
         // Compute IN as intersection of all predecessors' OUT
-        let new_in = if block.predecessors.is_empty() {
+        let new_in = if bid == BlockId::from_usize(0) || block.predecessors.is_empty() {
             InitBits::new(num_locals)
         } else {
             let mut acc = InitBits::all_init(num_locals);
@@ -220,10 +219,11 @@ pub fn check_definite_init(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagno
             check_stmt_loads(stmt, &current, func, symbols, &mut diagnostics);
 
             // Apply gen: stores update the running state
-            if let AmirStmt::Store { lhs, .. } = stmt {
-                if lhs.projections.is_empty() {
+            match stmt {
+                AmirStmt::Store { lhs, .. } if lhs.projections.is_empty() => {
                     current.set(lhs.local);
                 }
+                _ => {}
             }
         }
     }
@@ -270,10 +270,10 @@ fn check_rvalue_loads(
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     match rvalue {
-        AmirRvalue::Load(place) | AmirRvalue::Borrow(place) | AmirRvalue::BorrowMut(place) => {
-            if !current.get(place.local) {
-                emit_uninit_diag(place.local, func, symbols, diagnostics);
-            }
+        AmirRvalue::Load(place) | AmirRvalue::Borrow(place) | AmirRvalue::BorrowMut(place)
+            if !current.get(place.local) =>
+        {
+            emit_uninit_diag(place.local, func, symbols, diagnostics);
         }
         _ => {}
     }
@@ -325,6 +325,8 @@ mod tests {
             id: LocalId::from_usize(id),
             ty: ArType::Primitive(crate::passes::type_checker::types::Primitive::Int),
             symbol: sym,
+            span: Span::new(0, 0, 0, 0, 0, 0),
+            use_span: None,
         }
     }
 
@@ -332,6 +334,7 @@ mod tests {
         AmirTemp {
             id: TempId::from_usize(id),
             ty: ArType::Primitive(crate::passes::type_checker::types::Primitive::Int),
+            span: Span::new(0, 0, 0, 0, 0, 0),
         }
     }
 

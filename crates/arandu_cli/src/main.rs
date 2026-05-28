@@ -56,20 +56,21 @@ fn parse_and_check(source: &str, filepath: &str) -> CheckedProgram {
 }
 
 fn usage_and_exit() -> ! {
-    eprintln!("usage: arandu_cli <lex|parse|check|hir|amir> <path> [--debug]");
+    eprintln!("usage: arandu_cli <lex|parse|check|hir|amir> <path> [--debug] [--opt]");
 
     process::exit(2);
 }
 
 fn main() {
     let mut debug = false;
+    let mut opt = false;
     let mut args = Vec::new();
 
     for arg in env::args() {
-        if arg == "--debug" {
-            debug = true;
-        } else {
-            args.push(arg);
+        match arg.as_str() {
+            "--debug" => debug = true,
+            "--opt" => opt = true,
+            _ => args.push(arg),
         }
     }
 
@@ -155,10 +156,13 @@ fn main() {
 
             validate_hir_and_analyze(&hir, &checked.type_check, &filepath);
 
-            let amir = match arandu_semantics::lower_to_amir(&checked.type_check, &hir) {
+            let mut amir = match arandu_semantics::lower_to_amir(&checked.type_check, &hir) {
                 Ok(amir) => amir,
                 Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
             };
+            if opt {
+                arandu_semantics::optimize_amir(&mut amir);
+            }
 
             if debug {
                 println!("{amir:#?}");

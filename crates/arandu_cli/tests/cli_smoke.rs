@@ -99,3 +99,30 @@ func main() {
     assert!(stderr.contains("N007"));
     assert!(stderr.contains("missing = ..."));
 }
+
+#[test]
+fn amir_opt_flag_folds_constants_without_changing_default_command() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_amir_opt.aru");
+    fs::write(
+        &file,
+        r"func main() {
+    value int = 1 + 2
+}
+",
+    )
+    .expect("fixture should be writable");
+
+    let path = file.to_string_lossy();
+    let plain = run_cli(&["amir", &path]);
+    let optimized = run_cli(&["amir", &path, "--opt"]);
+
+    assert!(plain.status.success());
+    assert!(optimized.status.success());
+
+    let plain_stdout = String::from_utf8_lossy(&plain.stdout);
+    let optimized_stdout = String::from_utf8_lossy(&optimized.stdout);
+    assert!(plain_stdout.contains("add 1, 2"));
+    assert!(!optimized_stdout.contains("add 1, 2"));
+    assert!(optimized_stdout.contains("_1 = 3"));
+}

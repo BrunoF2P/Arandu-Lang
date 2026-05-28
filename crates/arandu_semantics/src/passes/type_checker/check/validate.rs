@@ -1,6 +1,7 @@
+use arandu_parser::ast_pool::{AstPool, ExprId, ExprKind};
 use arandu_parser::{
-    Block, CatchHandler, Condition, DeferBody, Expr, ForClause, LambdaBody, MatchArmBody,
-    ResultType, SimpleStmt, Stmt, TopLevelDecl, TypeExpr,
+    Block, CatchHandler, Condition, DeferBody, ForClause, LambdaBody, MatchArmBody, ResultType,
+    SimpleStmt, Stmt, TopLevelDecl, TypeExpr,
 };
 
 use super::super::TypeChecker;
@@ -58,7 +59,7 @@ pub(crate) fn contains_any(ty: &TypeExpr) -> Option<Span> {
     }
 }
 
-fn report_any_error(checker: &mut TypeChecker, span: Span) {
+fn report_any_error(checker: &mut TypeChecker<'_>, span: Span) {
     checker.diagnostics.push(crate::Diagnostic::error(
         crate::DiagCode::T014InvalidVariadicType,
         ANY_ERROR_MESSAGE,
@@ -66,13 +67,13 @@ fn report_any_error(checker: &mut TypeChecker, span: Span) {
     ));
 }
 
-fn validate_type_no_any(checker: &mut TypeChecker, ty: &TypeExpr) {
+fn validate_type_no_any(checker: &mut TypeChecker<'_>, ty: &TypeExpr) {
     if let Some(span) = contains_any(ty) {
         report_any_error(checker, span);
     }
 }
 
-fn validate_result_type_no_any(checker: &mut TypeChecker, result: &ResultType) {
+fn validate_result_type_no_any(checker: &mut TypeChecker<'_>, result: &ResultType) {
     match result {
         ResultType::Single { ty, .. } => validate_type_no_any(checker, ty),
         ResultType::Multi { types, .. } => {
@@ -83,117 +84,137 @@ fn validate_result_type_no_any(checker: &mut TypeChecker, result: &ResultType) {
     }
 }
 
-fn validate_expr(checker: &mut TypeChecker, expr: &Expr) {
-    match expr {
-        Expr::Generic { callee, args, .. } => {
-            validate_expr(checker, callee);
-            for arg in args {
-                validate_type_no_any(checker, arg);
+fn validate_expr(checker: &mut TypeChecker<'_>, expr: ExprId) {
+    match checker.pool.expr(expr) {
+        ExprKind::Generic { callee, args } => {
+            validate_expr(checker, *callee);
+            let arg_ids = checker.pool.type_expr_list(*args).to_vec();
+            for arg_id in arg_ids {
+                validate_type_no_any(checker, checker.pool.type_expr(arg_id));
             }
         }
-        Expr::Field { base, .. }
-        | Expr::SafeField { base, .. }
-        | Expr::Alloc { expr: base, .. }
-        | Expr::Try { expr: base, .. }
-        | Expr::Group { expr: base, .. }
-        | Expr::Unary { expr: base, .. } => {
-            validate_expr(checker, base);
+        ExprKind::Field { base, .. }
+        | ExprKind::SafeField { base, .. }
+        | ExprKind::Alloc { expr: base, .. }
+        | ExprKind::Try { expr: base, .. }
+        | ExprKind::Group { expr: base, .. }
+        | ExprKind::Unary { expr: base, .. } => {
+            validate_expr(checker, *base);
         }
-        Expr::Cast { expr: base, ty, .. } => {
-            validate_expr(checker, base);
-            validate_type_no_any(checker, ty);
+        ExprKind::Cast { expr: base, ty, .. } => {
+            validate_expr(checker, *base);
+            validate_type_no_any(checker, checker.pool.type_expr(*ty));
         }
-        Expr::Index { base, index, .. }
-        | Expr::SafeIndex { base, index, .. }
-        | Expr::NullCoalesce {
+        ExprKind::Index { base, index, .. }
+        | ExprKind::SafeIndex { base, index, .. }
+        | ExprKind::NullCoalesce {
             left: base,
             right: index,
             ..
         }
-        | Expr::Binary {
+        | ExprKind::Binary {
             left: base,
             right: index,
             ..
         } => {
-            validate_expr(checker, base);
-            validate_expr(checker, index);
+            validate_expr(checker, *base);
+            validate_expr(checker, *index);
         }
-        Expr::Call {
+        ExprKind::Call {
             callee,
             args,
             trailing_block,
             ..
         } => {
-            validate_expr(checker, callee);
-            for arg in args {
-                validate_expr(checker, arg);
+            validate_expr(checker, *callee);
+            let arg_ids = checker.pool.expr_list(*args).to_vec();
+            for arg_id in arg_ids {
+                validate_expr(checker, arg_id);
             }
-            if let Some(block) = trailing_block {
-                validate_block(checker, block);
-            }
-        }
-        Expr::StructLiteral { ty, fields, .. } => {
-            validate_type_no_any(checker, ty);
-            for field in fields {
-                validate_expr(checker, &field.value);
+            if let Some(block_id) = trailing_block {
+                validate_block(checker, checker.pool, checker.pool.block(*block_id));
             }
         }
-        Expr::Array { items, .. } => {
-            for item in items {
-                validate_expr(checker, item);
+        ExprKind::StructLiteral { ty, fields, .. } => {
+            validate_type_no_any(checker, checker.pool.type_expr(*ty));
+            let field_ids = checker.pool.field_init_list(*fields).to_vec();
+            for field_id in field_ids {
+                validate_expr(checker, checker.pool.field_init(field_id).value);
             }
         }
-        Expr::Lambda { params, body, .. } => {
-            for param in params {
+        ExprKind::Array { items, .. } => {
+            let item_ids = checker.pool.expr_list(*items).to_vec();
+            for item_id in item_ids {
+                validate_expr(checker, item_id);
+            }
+        }
+        ExprKind::Lambda { params, body, .. } => {
+            let param_ids = checker.pool.lambda_param_list(*params).to_vec();
+            for param_id in param_ids {
+                let param = checker.pool.lambda_param(param_id);
                 if let Some(ty) = &param.ty {
                     validate_type_no_any(checker, ty);
                 }
             }
             match body {
-                LambdaBody::Expr { expr, .. } => validate_expr(checker, expr),
-                LambdaBody::Block { block, .. } => validate_block(checker, block),
+                LambdaBody::Expr {
+                    expr: inner_expr, ..
+                } => validate_expr(checker, *inner_expr),
+                LambdaBody::Block { block, .. } => validate_block(checker, checker.pool, block),
             }
         }
-        Expr::AsyncBlock { block, .. } | Expr::UnsafeBlock { block, .. } => {
-            validate_block(checker, block);
+        ExprKind::AsyncBlock { block, .. } | ExprKind::UnsafeBlock { block, .. } => {
+            validate_block(checker, checker.pool, checker.pool.block(*block));
         }
-        Expr::If {
+        ExprKind::If {
             condition,
             then_block,
             else_block,
             ..
         } => {
             validate_condition(checker, condition);
-            validate_block(checker, then_block);
-            validate_block(checker, else_block);
+            validate_block(checker, checker.pool, checker.pool.block(*then_block));
+            validate_block(checker, checker.pool, checker.pool.block(*else_block));
         }
-        Expr::Match { value, arms, .. } => {
-            validate_expr(checker, value);
-            for arm in arms {
+        ExprKind::Match { value, arms, .. } => {
+            validate_expr(checker, *value);
+            let arm_ids = checker.pool.match_arm_list(*arms).to_vec();
+            for arm_id in arm_ids {
+                let arm = checker.pool.match_arm(arm_id);
                 if let Some(guard) = &arm.guard {
-                    validate_expr(checker, guard);
+                    validate_expr(checker, *guard);
                 }
                 match &arm.body {
-                    MatchArmBody::Expr { expr, .. } => validate_expr(checker, expr),
-                    MatchArmBody::Block { block, .. } => validate_block(checker, block),
+                    MatchArmBody::Expr {
+                        expr: inner_expr, ..
+                    } => validate_expr(checker, **inner_expr),
+                    MatchArmBody::Block { block, .. } => {
+                        validate_block(checker, checker.pool, block)
+                    }
                 }
             }
         }
-        Expr::Catch {
+        ExprKind::Catch {
             expr: base,
             handler,
             ..
         } => {
-            validate_expr(checker, base);
-            match handler {
-                CatchHandler::Expr { expr, .. } => validate_expr(checker, expr),
-                CatchHandler::Block { block, .. } => validate_block(checker, block),
+            validate_expr(checker, *base);
+            match checker.pool.catch_handler(*handler) {
+                CatchHandler::Expr {
+                    expr: inner_expr, ..
+                } => validate_expr(checker, *inner_expr),
+                CatchHandler::Block { block, .. } => validate_block(checker, checker.pool, block),
             }
         }
-        Expr::InterpolatedString { parts, .. } => {
-            for part in parts {
-                if let arandu_parser::StringPart::Expr { expr, .. } = part {
-                    validate_expr(checker, expr);
+        ExprKind::InterpolatedString { parts, .. } => {
+            let part_ids = checker.pool.string_part_list(*parts).to_vec();
+            for part_id in part_ids {
+                if let arandu_parser::StringPart::Expr {
+                    expr: inner_expr, ..
+                } = checker.pool.string_part(part_id)
+                {
+                    validate_expr(checker, *inner_expr);
                 }
             }
         }
@@ -201,14 +222,14 @@ fn validate_expr(checker: &mut TypeChecker, expr: &Expr) {
     }
 }
 
-fn validate_condition(checker: &mut TypeChecker, cond: &Condition) {
+fn validate_condition(checker: &mut TypeChecker<'_>, cond: &Condition) {
     match cond {
-        Condition::Expr { expr, .. } => validate_expr(checker, expr),
-        Condition::Is { expr, .. } => validate_expr(checker, expr),
+        Condition::Expr { expr, .. } => validate_expr(checker, **expr),
+        Condition::Is { expr, .. } => validate_expr(checker, **expr),
     }
 }
 
-fn validate_simple_stmt(checker: &mut TypeChecker, stmt: &SimpleStmt) {
+fn validate_simple_stmt(checker: &mut TypeChecker<'_>, stmt: &SimpleStmt) {
     match stmt {
         SimpleStmt::VarDecl {
             bindings, value, ..
@@ -218,19 +239,20 @@ fn validate_simple_stmt(checker: &mut TypeChecker, stmt: &SimpleStmt) {
                     validate_type_no_any(checker, ty);
                 }
             }
-            validate_expr(checker, value);
+            validate_expr(checker, *value);
         }
         SimpleStmt::Set { value, .. } => {
-            validate_expr(checker, value);
+            validate_expr(checker, *value);
         }
         SimpleStmt::Expr { expr, .. } => {
-            validate_expr(checker, expr);
+            validate_expr(checker, **expr);
         }
     }
 }
 
-fn validate_block(checker: &mut TypeChecker, block: &Block) {
+fn validate_block(checker: &mut TypeChecker<'_>, pool: &AstPool, block: &Block) {
     for stmt in &block.statements {
+        let stmt = pool.stmt(*stmt);
         match stmt {
             Stmt::VarDecl {
                 bindings, value, ..
@@ -240,21 +262,21 @@ fn validate_block(checker: &mut TypeChecker, block: &Block) {
                         validate_type_no_any(checker, ty);
                     }
                 }
-                validate_expr(checker, value);
+                validate_expr(checker, *value);
             }
             Stmt::Set { value, .. } => {
-                validate_expr(checker, value);
+                validate_expr(checker, *value);
             }
             Stmt::Return { values, .. } => {
                 for val in values {
-                    validate_expr(checker, val);
+                    validate_expr(checker, *val);
                 }
             }
             Stmt::Free { expr, .. } => {
-                validate_expr(checker, expr);
+                validate_expr(checker, *expr);
             }
             Stmt::Expr { expr, .. } => {
-                validate_expr(checker, expr);
+                validate_expr(checker, **expr);
             }
             Stmt::If {
                 condition,
@@ -263,15 +285,15 @@ fn validate_block(checker: &mut TypeChecker, block: &Block) {
                 ..
             } => {
                 validate_condition(checker, condition);
-                validate_block(checker, then_block);
+                validate_block(checker, pool, then_block);
                 if let Some(block) = else_block {
-                    validate_block(checker, block);
+                    validate_block(checker, pool, block);
                 }
             }
             Stmt::For { clause, body, .. } => {
                 match &**clause {
                     ForClause::In { iterable, .. } => {
-                        validate_expr(checker, iterable);
+                        validate_expr(checker, **iterable);
                     }
                     ForClause::CStyle {
                         init,
@@ -283,37 +305,37 @@ fn validate_block(checker: &mut TypeChecker, block: &Block) {
                             validate_simple_stmt(checker, init_stmt);
                         }
                         if let Some(cond_expr) = condition {
-                            validate_expr(checker, cond_expr);
+                            validate_expr(checker, **cond_expr);
                         }
                         if let Some(step_stmt) = step {
                             validate_simple_stmt(checker, step_stmt);
                         }
                     }
                 }
-                validate_block(checker, body);
+                validate_block(checker, pool, body);
             }
             Stmt::While {
                 condition, body, ..
             } => {
                 validate_condition(checker, condition);
-                validate_block(checker, body);
+                validate_block(checker, pool, body);
             }
             Stmt::Match { expr, .. } => {
-                validate_expr(checker, expr);
+                validate_expr(checker, *expr);
             }
             Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => match body {
-                DeferBody::Expr { expr, .. } => validate_expr(checker, expr),
-                DeferBody::Block { block, .. } => validate_block(checker, block),
+                DeferBody::Expr { expr, .. } => validate_expr(checker, **expr),
+                DeferBody::Block { block, .. } => validate_block(checker, pool, block),
             },
             Stmt::Unsafe { block, .. } => {
-                validate_block(checker, block);
+                validate_block(checker, pool, block);
             }
             _ => {}
         }
     }
 }
 
-pub(crate) fn validate_top_level_any(checker: &mut TypeChecker, decl: &TopLevelDecl) {
+pub(crate) fn validate_top_level_any(checker: &mut TypeChecker<'_>, decl: &TopLevelDecl) {
     match decl {
         TopLevelDecl::Struct(struct_decl) => {
             for field in &struct_decl.fields {
@@ -350,7 +372,7 @@ pub(crate) fn validate_top_level_any(checker: &mut TypeChecker, decl: &TopLevelD
             if let Some(result) = &func_decl.result {
                 validate_result_type_no_any(checker, result);
             }
-            validate_block(checker, &func_decl.body);
+            validate_block(checker, checker.pool, &func_decl.body);
         }
         _ => {}
     }

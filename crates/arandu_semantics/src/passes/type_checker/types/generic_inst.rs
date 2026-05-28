@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use arandu_parser::{Expr, TypeExpr};
+use arandu_parser::ast_pool::{ExprId, ExprKind, IndexRange};
 
 use super::ar_type::ArType;
 use super::lower::lower_type_expr;
@@ -10,7 +10,7 @@ use crate::SymbolId;
 use crate::passes::type_checker::TypeChecker;
 
 pub(crate) fn collect_generic_param_symbols(
-    checker: &TypeChecker,
+    checker: &TypeChecker<'_>,
     generic_params: &[arandu_parser::GenericParam],
 ) -> Vec<SymbolId> {
     generic_params
@@ -32,7 +32,7 @@ pub(crate) fn instantiate_type(ty: &ArType, subst: &GenericSubst) -> ArType {
 
 #[must_use]
 pub(crate) fn struct_fields_instantiated(
-    checker: &mut TypeChecker,
+    checker: &mut TypeChecker<'_>,
     struct_id: SymbolId,
     generic_args: &[ArType],
 ) -> Option<HashMap<String, ArType>> {
@@ -60,22 +60,25 @@ pub(crate) fn struct_fields_instantiated(
 
 /// Instantiate a generic callee (`identity<int>`, `Result.Ok<int>`, …) to its value type.
 pub(crate) fn synth_generic_instantiation(
-    checker: &mut TypeChecker,
-    callee: &Expr,
-    type_args: &[TypeExpr],
+    checker: &mut TypeChecker<'_>,
+    callee: ExprId,
+    type_args: IndexRange,
     span: arandu_lexer::Span,
 ) -> ArType {
-    let arg_tys: Vec<ArType> = type_args
+    let arg_ids = checker.pool.type_expr_list(type_args).to_vec();
+    let arg_tys: Vec<ArType> = arg_ids
         .iter()
-        .map(|a| lower_type_expr(a, &checker.symbols, checker.type_scope(), &checker.resolved))
+        .map(|a| {
+            lower_type_expr(
+                checker.pool.type_expr(*a),
+                &checker.symbols,
+                checker.type_scope(),
+                &checker.resolved,
+            )
+        })
         .collect();
 
-    if let Expr::TypePath {
-        type_name,
-        member,
-        span: tp_span,
-    } = callee
-    {
+    if let ExprKind::TypePath { type_name, member } = checker.pool.expr(callee) {
         let base = type_name_base(type_name);
         if base == "Result" {
             if arg_tys.len() != 1 {
@@ -87,7 +90,7 @@ pub(crate) fn synth_generic_instantiation(
                     ),
                     span,
                 )
-                .with_label(callee.span(), "generic callee is here")
+                .with_label(checker.pool.expr_span(callee), "generic callee is here")
                 .with_label(span, format!("{} type arguments provided", arg_tys.len()));
                 checker.diagnostics.push(diag);
                 return ArType::Error;
@@ -109,7 +112,7 @@ pub(crate) fn synth_generic_instantiation(
                     checker.diagnostics.push(crate::Diagnostic::error(
                         crate::DiagCode::T018UndefinedField,
                         format!("unknown Result member '{member}'"),
-                        *tp_span,
+                        checker.pool.expr_span(callee),
                     ));
                     ArType::Error
                 }
@@ -125,7 +128,7 @@ pub(crate) fn synth_generic_instantiation(
                     ),
                     span,
                 )
-                .with_label(callee.span(), "generic callee is here")
+                .with_label(checker.pool.expr_span(callee), "generic callee is here")
                 .with_label(span, format!("{} type arguments provided", arg_tys.len()));
                 checker.diagnostics.push(diag);
                 return ArType::Error;
@@ -171,7 +174,7 @@ pub(crate) fn synth_generic_instantiation(
             ),
             span,
         )
-        .with_label(callee.span(), "generic callee is here")
+        .with_label(checker.pool.expr_span(callee), "generic callee is here")
         .with_label(span, format!("{} type arguments provided", arg_tys.len()));
         checker.diagnostics.push(diag);
         return ArType::Error;
@@ -192,27 +195,18 @@ pub(crate) fn synth_generic_instantiation(
     instantiate_type(&template, &subst)
 }
 
-fn resolve_generic_callee_symbol(checker: &TypeChecker, callee: &Expr) -> Option<SymbolId> {
-    match callee {
-        Expr::Path { span, .. } => checker
-            .resolved
-            .value_refs
-            .get(&crate::NodeKey::from(*span))
-            .copied(),
-        Expr::TypePath { span, .. } => checker
-            .resolved
-            .value_refs
-            .get(&crate::NodeKey::from(*span))
-            .copied()
-            .or_else(|| {
-                checker
-                    .resolved
-                    .type_refs
-                    .get(&crate::NodeKey::from(*span))
-                    .copied()
-            }),
-        Expr::Field { base, field, span } => {
-            let base_ty = checker.expr_type(crate::NodeKey::from(base.span()))?;
+fn resolve_generic_callee_symbol(checker: &TypeChecker<'_>, callee: ExprId) -> Option<SymbolId> {
+    match checker.pool.expr(callee) {
+        ExprKind::Path { .. } => checker.resolved.expr_symbol(callee),
+        ExprKind::TypePath { .. } => checker.resolved.expr_symbol(callee).or_else(|| {
+            checker
+                .resolved
+                .type_refs
+                .get(&crate::NodeKey::from(checker.pool.expr_span(callee)))
+                .copied()
+        }),
+        ExprKind::Field { base, field } => {
+            let base_ty = checker.expr_type(*base)?;
             let ArType::Named(struct_id, _) = base_ty else {
                 return None;
             };
@@ -220,13 +214,7 @@ fn resolve_generic_callee_symbol(checker: &TypeChecker, callee: &Expr) -> Option
             checker
                 .symbols
                 .lookup_associated_member(&struct_name, field)
-                .or_else(|| {
-                    checker
-                        .resolved
-                        .value_refs
-                        .get(&crate::NodeKey::from(*span))
-                        .copied()
-                })
+                .or_else(|| checker.resolved.expr_symbol(callee))
         }
         _ => None,
     }

@@ -1,4 +1,6 @@
-use arandu_parser::{Expr, Stmt};
+use arandu_parser::Stmt;
+use arandu_parser::ast_pool::AstPool;
+use arandu_parser::ast_pool::ExprKind;
 
 use super::super::TypeChecker;
 use super::super::constraints::ConstraintOrigin;
@@ -7,14 +9,14 @@ use super::block::check_block;
 use super::condition::check_condition;
 use super::place::synth_place;
 
-pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
+pub fn check_stmt(checker: &mut TypeChecker<'_>, _pool: &AstPool, stmt: &Stmt) {
     match stmt {
         Stmt::VarDecl {
             span: _,
             bindings,
             value,
         } => {
-            let val_ty = super::super::synth::synth_expr(checker, value);
+            let val_ty = super::super::synth::synth_expr(checker, *value);
 
             if bindings.len() > 1 {
                 let val_tys = if let Some((ok, err)) = super::super::types::result_ok_err(&val_ty) {
@@ -52,7 +54,7 @@ pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
                                     expected.clone(),
                                     elem_ty.clone(),
                                     ConstraintOrigin::ImplicitWidening {
-                                        source_span: value.span(),
+                                        source_span: checker.pool.expr_span(*value),
                                         target_span: binding.span,
                                     },
                                 );
@@ -62,7 +64,7 @@ pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
                                     elem_ty.clone(),
                                     ConstraintOrigin::Assignment {
                                         lhs_span: binding.span,
-                                        rhs_span: value.span(),
+                                        rhs_span: checker.pool.expr_span(*value),
                                     },
                                 );
                             }
@@ -77,7 +79,7 @@ pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
                 let binding_key = crate::NodeKey::from(binding.span);
                 if let Some(symbol_id) = checker.resolved.definitions.get(&binding_key).copied() {
                     let mut bind_ty = val_ty.clone();
-                    if matches!(value, Expr::Nil { .. })
+                    if matches!(checker.pool.expr(*value), ExprKind::Nil)
                         && let Some(ty_expr) = &binding.ty
                     {
                         let expected = super::super::types::lower_type_expr(
@@ -87,10 +89,7 @@ pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
                             &checker.resolved,
                         );
                         if !expected.is_error() {
-                            checker.type_info.record_expr_type(
-                                crate::NodeKey::from(value.span()),
-                                expected.clone(),
-                            );
+                            checker.type_info.record_expr_type(*value, expected.clone());
                             bind_ty = expected;
                         }
                     }
@@ -109,7 +108,7 @@ pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
                         checker.diagnostics.push(crate::Diagnostic::error(
                             crate::DiagCode::T019ResultNotHandled,
                             "Result value must be handled with `?` or `value, err = f()`",
-                            value.span(),
+                            checker.pool.expr_span(*value),
                         ));
                     }
 
@@ -131,7 +130,7 @@ pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
                                 expected.clone(),
                                 val_ty.clone(),
                                 ConstraintOrigin::ImplicitWidening {
-                                    source_span: value.span(),
+                                    source_span: checker.pool.expr_span(*value),
                                     target_span: binding.span,
                                 },
                             );
@@ -141,7 +140,7 @@ pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
                                 bind_ty.clone(),
                                 ConstraintOrigin::Assignment {
                                     lhs_span: binding.span,
-                                    rhs_span: value.span(),
+                                    rhs_span: checker.pool.expr_span(*value),
                                 },
                             );
                         }
@@ -159,7 +158,7 @@ pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
             op: _,
             value,
         } => {
-            let val_ty = super::super::synth::synth_expr(checker, value);
+            let val_ty = super::super::synth::synth_expr(checker, *value);
             if places.len() > 1 {
                 let val_tys = if let Some((ok, err)) = super::super::types::result_ok_err(&val_ty) {
                     vec![ok, err]
@@ -179,7 +178,7 @@ pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
                             elem_ty.clone(),
                             ConstraintOrigin::SetTarget {
                                 place_span: place.span,
-                                value_span: value.span(),
+                                value_span: checker.pool.expr_span(*value),
                             },
                         );
                     } else if !elem_ty.is_literal()
@@ -192,7 +191,7 @@ pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
                             expected_ty,
                             elem_ty.clone(),
                             ConstraintOrigin::ImplicitWidening {
-                                source_span: value.span(),
+                                source_span: checker.pool.expr_span(*value),
                                 target_span: place.span,
                             },
                         );
@@ -206,7 +205,7 @@ pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
                     checker.diagnostics.push(crate::Diagnostic::error(
                         crate::DiagCode::T019ResultNotHandled,
                         "Result value must be handled with `?` or `value, err = f()`",
-                        value.span(),
+                        checker.pool.expr_span(*value),
                     ));
                 }
                 if !super::super::types::unify(&expected_ty, &val_ty) {
@@ -215,7 +214,7 @@ pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
                         val_ty.clone(),
                         ConstraintOrigin::SetTarget {
                             place_span: place.span,
-                            value_span: value.span(),
+                            value_span: checker.pool.expr_span(*value),
                         },
                     );
                 } else if !val_ty.is_literal()
@@ -227,7 +226,7 @@ pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
                         expected_ty,
                         val_ty.clone(),
                         ConstraintOrigin::ImplicitWidening {
-                            source_span: value.span(),
+                            source_span: checker.pool.expr_span(*value),
                             target_span: place.span,
                         },
                     );
@@ -244,11 +243,11 @@ pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
             let val_ty = if values.is_empty() {
                 ArType::Void
             } else if values.len() == 1 {
-                super::super::synth::synth_expr(checker, &values[0])
+                super::super::synth::synth_expr(checker, values[0])
             } else {
                 let tys = values
                     .iter()
-                    .map(|v| super::super::synth::synth_expr(checker, v))
+                    .map(|v| super::super::synth::synth_expr(checker, *v))
                     .collect();
                 ArType::Tuple(tys)
             };
@@ -271,14 +270,14 @@ pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
                     current_ret,
                     val_ty.clone(),
                     ConstraintOrigin::ImplicitWidening {
-                        source_span: values.first().map_or(*span, arandu_parser::Expr::span),
+                        source_span: values.first().map_or(*span, |v| checker.pool.expr_span(*v)),
                         target_span: *span,
                     },
                 );
             }
         }
         Stmt::Expr { expr, .. } => {
-            super::super::synth::synth_expr(checker, expr);
+            super::super::synth::synth_expr(checker, **expr);
         }
         Stmt::If {
             span: _,
@@ -287,9 +286,9 @@ pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
             else_block,
         } => {
             check_condition(checker, condition);
-            check_block(checker, then_block);
+            check_block(checker, _pool, then_block);
             if let Some(eb) = else_block {
-                check_block(checker, eb);
+                check_block(checker, _pool, eb);
             }
         }
         Stmt::While {
@@ -299,7 +298,7 @@ pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
         } => {
             check_condition(checker, condition);
             checker.ctx.enter_loop();
-            check_block(checker, body);
+            check_block(checker, _pool, body);
             checker.ctx.exit_loop();
         }
         Stmt::For {
@@ -313,7 +312,7 @@ pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
                     bindings,
                     iterable,
                 } => {
-                    let iterable_ty = super::super::synth::synth_expr(checker, iterable);
+                    let iterable_ty = super::super::synth::synth_expr(checker, **iterable);
                     let elem_ty = match &iterable_ty {
                         ArType::Array(_, inner) | ArType::Slice(inner) => inner.as_ref().clone(),
                         ArType::Error => ArType::Error,
@@ -324,7 +323,7 @@ pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
                                     "expected array or slice, found '{}'",
                                     iterable_ty.display(&checker.symbols)
                                 ),
-                                iterable.span(),
+                                checker.pool.expr_span(**iterable),
                             ));
                             ArType::Error
                         }
@@ -354,10 +353,11 @@ pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
                             } => {
                                 check_stmt(
                                     checker,
+                                    _pool,
                                     &Stmt::VarDecl {
                                         span: *span,
                                         bindings: bindings.clone(),
-                                        value: value.clone(),
+                                        value: *value,
                                     },
                                 );
                             }
@@ -369,21 +369,22 @@ pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
                             } => {
                                 check_stmt(
                                     checker,
+                                    _pool,
                                     &Stmt::Set {
                                         span: *span,
                                         places: places.clone(),
                                         op: op.clone(),
-                                        value: value.clone(),
+                                        value: *value,
                                     },
                                 );
                             }
                             arandu_parser::SimpleStmt::Expr { expr, span: _ } => {
-                                super::super::synth::synth_expr(checker, expr);
+                                super::super::synth::synth_expr(checker, **expr);
                             }
                         }
                     }
                     if let Some(cond_expr) = condition {
-                        let cond_ty = super::super::synth::synth_expr(checker, cond_expr);
+                        let cond_ty = super::super::synth::synth_expr(checker, **cond_expr);
                         if !cond_ty.is_error()
                             && !super::super::types::unify(
                                 &cond_ty,
@@ -394,7 +395,7 @@ pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
                                 ArType::Primitive(Primitive::Bool),
                                 cond_ty,
                                 ConstraintOrigin::Condition {
-                                    span: cond_expr.span(),
+                                    span: checker.pool.expr_span(**cond_expr),
                                 },
                             );
                         }
@@ -408,10 +409,11 @@ pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
                             } => {
                                 check_stmt(
                                     checker,
+                                    _pool,
                                     &Stmt::VarDecl {
                                         span: *span,
                                         bindings: bindings.clone(),
-                                        value: value.clone(),
+                                        value: *value,
                                     },
                                 );
                             }
@@ -423,31 +425,31 @@ pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
                             } => {
                                 check_stmt(
                                     checker,
+                                    _pool,
                                     &Stmt::Set {
                                         span: *span,
                                         places: places.clone(),
                                         op: op.clone(),
-                                        value: value.clone(),
+                                        value: *value,
                                     },
                                 );
                             }
                             arandu_parser::SimpleStmt::Expr { expr, span: _ } => {
-                                super::super::synth::synth_expr(checker, expr);
+                                super::super::synth::synth_expr(checker, **expr);
                             }
                         }
                     }
                 }
             }
             checker.ctx.enter_loop();
-            check_block(checker, body);
+            check_block(checker, _pool, body);
             checker.ctx.exit_loop();
         }
         Stmt::Match { span: _, expr } => {
-            // expr is always an Expr::Match. We just synth it and discard the result
-            super::super::synth::synth_expr(checker, expr);
+            super::super::synth::synth_expr(checker, *expr);
         }
         Stmt::Free { span, expr } => {
-            let ty = super::super::synth::synth_expr(checker, expr);
+            let ty = super::super::synth::synth_expr(checker, *expr);
             if !ty.is_error() && !matches!(ty, ArType::Ptr(_)) {
                 checker.diagnostics.push(
                     crate::Diagnostic::error(
@@ -459,7 +461,7 @@ pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
                         *span,
                     )
                     .with_label(
-                        expr.span(),
+                        checker.pool.expr_span(*expr),
                         format!("expression has type '{}'", ty.display(&checker.symbols)),
                     ),
                 );
@@ -467,10 +469,10 @@ pub fn check_stmt(checker: &mut TypeChecker, stmt: &Stmt) {
         }
         Stmt::Defer { span: _, body } | Stmt::ErrDefer { span: _, body } => match body {
             arandu_parser::DeferBody::Block { block, .. } => {
-                check_block(checker, block);
+                check_block(checker, _pool, block);
             }
             arandu_parser::DeferBody::Expr { expr, .. } => {
-                super::super::synth::synth_expr(checker, expr);
+                super::super::synth::synth_expr(checker, **expr);
             }
         },
         Stmt::Break { span } if !checker.ctx.is_in_loop() => {

@@ -2,7 +2,7 @@ use super::super::TypeChecker;
 use super::super::constraints::ConstraintOrigin;
 use super::super::types::{ArType, Primitive};
 
-pub(crate) fn synth_place(checker: &mut TypeChecker, place: &arandu_parser::Place) -> ArType {
+pub(crate) fn synth_place(checker: &mut TypeChecker<'_>, place: &arandu_parser::Place) -> ArType {
     let root_key = crate::NodeKey::from(place.span);
     let mut current_ty = if let Some(symbol_id) = checker.resolved.value_refs.get(&root_key) {
         if let Some(ty) = checker.ctx.lookup(*symbol_id) {
@@ -73,7 +73,7 @@ pub(crate) fn synth_place(checker: &mut TypeChecker, place: &arandu_parser::Plac
                 }
             }
             arandu_parser::PlaceSuffix::Index { span, expr } => {
-                let index_ty = super::super::synth::synth_expr(checker, expr);
+                let index_ty = super::super::synth::synth_expr(checker, **expr);
                 let (actual_base_ty, was_nullable) = match &current_ty {
                     ArType::Nullable(inner) => (inner.as_ref().clone(), true),
                     other => (other.clone(), false),
@@ -108,7 +108,7 @@ pub(crate) fn synth_place(checker: &mut TypeChecker, place: &arandu_parser::Plac
                             ArType::Error,
                             ConstraintOrigin::InvalidIndex {
                                 base_span: place.span,
-                                index_span: expr.span(),
+                                index_span: checker.pool.expr_span(**expr),
                                 is_base_error: true,
                             },
                         );
@@ -121,7 +121,7 @@ pub(crate) fn synth_place(checker: &mut TypeChecker, place: &arandu_parser::Plac
                         index_ty,
                         ConstraintOrigin::InvalidIndex {
                             base_span: place.span,
-                            index_span: expr.span(),
+                            index_span: checker.pool.expr_span(**expr),
                             is_base_error: false,
                         },
                     );

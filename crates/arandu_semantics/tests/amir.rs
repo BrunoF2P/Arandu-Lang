@@ -1,6 +1,6 @@
 use arandu_semantics::amir::{AmirProjection, AmirStmt};
 use arandu_semantics::{
-    SymbolKind, lower_to_amir, lower_to_hir, resolve, type_check, validate_amir_program,
+    DiagCode, SymbolKind, lower_to_amir, lower_to_hir, resolve, type_check, validate_amir_program,
 };
 
 #[test]
@@ -120,7 +120,7 @@ func main() {
 }
 
 #[test]
-fn non_copy_local_use_after_move_fails_during_amir_lowering() {
+fn non_copy_local_use_after_move_fails_during_amir_analysis() {
     let src = r#"
 struct Boxed {
     value int
@@ -141,8 +141,8 @@ func main() {
     assert!(
         diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.message.contains("use of moved local")),
-        "expected moved local diagnostic, got {diagnostics:?}"
+            .any(|diagnostic| diagnostic.code == DiagCode::O001UseAfterMove),
+        "expected O001 use-after-move diagnostic, got {diagnostics:?}"
     );
 }
 
@@ -164,5 +164,34 @@ func main() {
     assert!(
         !pretty.contains("move _"),
         "copy types must not emit move operands"
+    );
+}
+
+#[test]
+fn branch_move_mismatch_reports_o007() {
+    let src = r#"
+struct Boxed {
+    value int
+}
+
+func main(cond bool) {
+    a Boxed = Boxed { value: 1 }
+    if cond {
+        b Boxed = a
+    }
+    c Boxed = a
+}
+"#;
+    let program = arandu_parser::parse(src).expect("parse failed");
+    let resolution = resolve(&program);
+    let tc = type_check(resolution, &program);
+    let hir = lower_to_hir(&tc, &program).expect("HIR lowering failed");
+    let diagnostics = lower_to_amir(&tc, &hir).expect_err("expected branch move diagnostic");
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == DiagCode::O007InconsistentMoveBetweenBranches),
+        "expected O007 inconsistent move diagnostic, got {diagnostics:?}"
     );
 }

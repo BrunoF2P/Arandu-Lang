@@ -152,7 +152,6 @@ pub struct HirStmt {
 
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-#[allow(clippy::large_enum_variant)]
 pub enum HirStmtKind {
     VarDecl {
         bindings: Vec<HirBindingItem>,
@@ -172,24 +171,24 @@ pub enum HirStmtKind {
     Expr(HirExpr),
     If {
         condition: HirCondition,
-        then_block: HirBlock,
-        else_block: Option<HirBlock>,
+        then_block: Box<HirBlock>,
+        else_block: Option<Box<HirBlock>>,
     },
     For {
-        clause: HirForClause,
-        body: HirBlock,
+        clause: Box<HirForClause>,
+        body: Box<HirBlock>,
     },
     While {
         condition: HirCondition,
-        body: HirBlock,
+        body: Box<HirBlock>,
     },
     Match {
         value: HirExpr,
         arms: Vec<HirMatchArm>,
     },
-    Defer(HirBlock),
-    ErrDefer(HirBlock),
-    Unsafe(HirBlock),
+    Defer(Box<HirBlock>),
+    ErrDefer(Box<HirBlock>),
+    Unsafe(Box<HirBlock>),
 }
 
 #[derive(Debug, Clone)]
@@ -201,18 +200,17 @@ pub enum HirCondition {
 
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-#[allow(clippy::large_enum_variant)]
 pub enum HirForClause {
     In {
         span: Span,
         bindings: Vec<HirForBinding>,
-        iterable: HirExpr,
+        iterable: Box<HirExpr>,
     },
     CStyle {
         span: Span,
-        init: Option<HirSimpleStmt>,
-        condition: Option<HirExpr>,
-        step: Option<HirSimpleStmt>,
+        init: Option<Box<HirSimpleStmt>>,
+        condition: Option<Box<HirExpr>>,
+        step: Option<Box<HirSimpleStmt>>,
     },
 }
 
@@ -255,7 +253,6 @@ pub struct HirPlace {
 
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-#[allow(clippy::large_enum_variant)]
 pub enum HirPlaceSuffix {
     Field {
         span: Span,
@@ -265,7 +262,7 @@ pub enum HirPlaceSuffix {
     },
     Index {
         span: Span,
-        expr: HirExpr,
+        expr: Box<HirExpr>,
         ty: ArType,
     },
 }
@@ -579,7 +576,7 @@ impl HirStmt {
                 }
             }
             HirStmtKind::For { clause, body } => {
-                match clause {
+                match &**clause {
                     HirForClause::In {
                         bindings, iterable, ..
                     } => {

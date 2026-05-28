@@ -5,7 +5,7 @@ use super::super::constraints::ConstraintOrigin;
 use super::super::types::ArType;
 use super::block::check_block;
 
-fn validate_method_receiver(checker: &mut TypeChecker, decl: &FuncDecl) {
+fn validate_method_receiver(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
     let arandu_parser::FuncName::Method { receiver, span, .. } = &decl.name else {
         return;
     };
@@ -60,7 +60,7 @@ fn validate_method_receiver(checker: &mut TypeChecker, decl: &FuncDecl) {
     }
 }
 
-fn func_type_scope(checker: &TypeChecker, decl: &FuncDecl) -> crate::ScopeId {
+fn func_type_scope(checker: &TypeChecker<'_>, decl: &FuncDecl) -> crate::ScopeId {
     if let Some(param) = decl.params.first() {
         let param_key = crate::NodeKey::from(param.span);
         if let Some(symbol_id) = checker.resolved.definitions.get(&param_key) {
@@ -74,7 +74,7 @@ fn func_type_scope(checker: &TypeChecker, decl: &FuncDecl) -> crate::ScopeId {
     checker.symbols.global_scope()
 }
 
-pub fn check_func_body(checker: &mut TypeChecker, decl: &FuncDecl) {
+pub fn check_func_body(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
     if matches!(decl.name, arandu_parser::FuncName::Method { .. }) {
         validate_method_receiver(checker, decl);
     }
@@ -112,7 +112,7 @@ pub fn check_func_body(checker: &mut TypeChecker, decl: &FuncDecl) {
     }
 
     checker.ctx.push_return(ret_ty, return_decl_span);
-    check_block(checker, &decl.body);
+    check_block(checker, checker.pool, &decl.body);
     checker.ctx.pop_return();
     checker.type_scope_id = None;
 }

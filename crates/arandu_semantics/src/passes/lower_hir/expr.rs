@@ -5,25 +5,23 @@ use crate::hir::{
 use crate::passes::lowering::{require_def_symbol, require_type_symbol, require_value_symbol};
 use crate::passes::type_checker::types::ArType;
 use crate::{NodeKey, TypeCheckResult};
-use arandu_parser::{CatchHandler, Expr, LambdaBody};
+use arandu_parser::CatchHandler;
+use arandu_parser::ast_pool::{AstPool, ExprId, ExprKind};
 
 fn get_resolved_value_ref(
     type_check: &TypeCheckResult,
-    span: arandu_lexer::Span,
+    expr: ExprId,
 ) -> Option<crate::symbol_table::SymbolId> {
-    type_check
-        .resolved
-        .value_refs
-        .get(&NodeKey::from(span))
-        .copied()
+    type_check.resolved.expr_symbol(expr)
 }
 
 fn lookup_namespace_field(
-    base: &Expr,
+    pool: &AstPool,
+    base: ExprId,
     field: &str,
     type_check: &TypeCheckResult,
 ) -> Option<crate::symbol_table::SymbolId> {
-    let Expr::Path { path, .. } = base else {
+    let ExprKind::Path { path, .. } = pool.expr(base) else {
         return None;
     };
     if path.len() != 1 {
@@ -32,10 +30,10 @@ fn lookup_namespace_field(
     type_check.symbols.lookup_module_member(&path[0], field)
 }
 
-fn builtin_ctor_variant(callee: &Expr) -> Option<crate::hir::ResultCtorVariant> {
-    let Expr::TypePath {
+fn builtin_ctor_variant(pool: &AstPool, callee: ExprId) -> Option<crate::hir::ResultCtorVariant> {
+    let ExprKind::TypePath {
         type_name, member, ..
-    } = callee
+    } = pool.expr(callee)
     else {
         return None;
     };
@@ -101,38 +99,42 @@ fn expr_type_for_kind(
     }
 }
 
-pub(crate) fn lower_expr(type_check: &TypeCheckResult, expr: &Expr) -> Result<HirExpr, Diagnostic> {
-    let span = expr.span();
-    let key = NodeKey::from(span);
+pub(crate) fn lower_expr(
+    type_check: &TypeCheckResult,
+    pool: &AstPool,
+    expr: ExprId,
+) -> Result<HirExpr, Diagnostic> {
+    let span = pool.expr_span(expr);
     let fallback_ty = type_check
         .type_info
-        .expr_type(key)
+        .expr_type(expr)
         .cloned()
         .unwrap_or(ArType::Error);
 
-    let kind = match expr {
-        Expr::Path { .. } => {
-            let symbol = require_value_symbol(&type_check.resolved, span)?;
+    let kind = match pool.expr(expr) {
+        ExprKind::Path { .. } => {
+            let symbol = require_value_symbol(&type_check.resolved, expr, span)?;
             HirExprKind::Path { symbol }
         }
-        Expr::TypePath {
+        ExprKind::TypePath {
             type_name,
             member: _,
             ..
         } => {
             let type_symbol = require_type_symbol(&type_check.resolved, type_name.span)?;
-            let member_symbol = require_value_symbol(&type_check.resolved, span)?;
+            let member_symbol = require_value_symbol(&type_check.resolved, expr, span)?;
             HirExprKind::TypePath {
                 type_symbol,
                 member_symbol,
             }
         }
-        Expr::Generic { callee, args, .. } => {
-            let hir_callee = lower_expr(type_check, callee)?;
+        ExprKind::Generic { callee, args, .. } => {
+            let hir_callee = lower_expr(type_check, pool, *callee)?;
             let mut hir_args = Vec::new();
-            for arg in args {
+            let arg_ids = pool.type_expr_list(*args).to_vec();
+            for arg_id in arg_ids {
                 hir_args.push(crate::passes::type_checker::types::lower_type_expr(
-                    arg,
+                    pool.type_expr(arg_id),
                     &type_check.symbols,
                     crate::ScopeId(0),
                     &type_check.resolved,
@@ -143,80 +145,84 @@ pub(crate) fn lower_expr(type_check: &TypeCheckResult, expr: &Expr) -> Result<Hi
                 args: hir_args,
             }
         }
-        Expr::Field { base, field, .. } => {
-            if let Some(symbol) = lookup_namespace_field(base, field, type_check)
-                .or_else(|| get_resolved_value_ref(type_check, span))
+        ExprKind::Field { base, field, .. } => {
+            let base_id = *base;
+            if let Some(symbol) = lookup_namespace_field(pool, base_id, field, type_check)
+                .or_else(|| get_resolved_value_ref(type_check, expr))
             {
                 HirExprKind::Path { symbol }
             } else {
                 HirExprKind::Field {
-                    base: Box::new(lower_expr(type_check, base)?),
+                    base: Box::new(lower_expr(type_check, pool, base_id)?),
                     field: field.clone(),
                 }
             }
         }
-        Expr::SafeField { base, field, .. } => {
-            if let Some(symbol) = lookup_namespace_field(base, field, type_check)
-                .or_else(|| get_resolved_value_ref(type_check, span))
+        ExprKind::SafeField { base, field, .. } => {
+            let base_id = *base;
+            if let Some(symbol) = lookup_namespace_field(pool, base_id, field, type_check)
+                .or_else(|| get_resolved_value_ref(type_check, expr))
             {
                 HirExprKind::Path { symbol }
             } else {
                 HirExprKind::SafeField {
-                    base: Box::new(lower_expr(type_check, base)?),
+                    base: Box::new(lower_expr(type_check, pool, base_id)?),
                     field: field.clone(),
                 }
             }
         }
-        Expr::Index { base, index, .. } => HirExprKind::Index {
-            base: Box::new(lower_expr(type_check, base)?),
-            index: Box::new(lower_expr(type_check, index)?),
+        ExprKind::Index { base, index, .. } => HirExprKind::Index {
+            base: Box::new(lower_expr(type_check, pool, *base)?),
+            index: Box::new(lower_expr(type_check, pool, *index)?),
         },
-        Expr::SafeIndex { base, index, .. } => HirExprKind::SafeIndex {
-            base: Box::new(lower_expr(type_check, base)?),
-            index: Box::new(lower_expr(type_check, index)?),
+        ExprKind::SafeIndex { base, index, .. } => HirExprKind::SafeIndex {
+            base: Box::new(lower_expr(type_check, pool, *base)?),
+            index: Box::new(lower_expr(type_check, pool, *index)?),
         },
-        Expr::Try { expr, .. } => HirExprKind::Try {
-            expr: Box::new(lower_expr(type_check, expr)?),
+        ExprKind::Try {
+            expr: inner_expr, ..
+        } => HirExprKind::Try {
+            expr: Box::new(lower_expr(type_check, pool, *inner_expr)?),
         },
-        Expr::Call {
+        ExprKind::Call {
             callee,
             args,
             trailing_block,
             ..
         } => {
+            let callee_id = *callee;
+            let arg_ids = pool.expr_list(*args).to_vec();
             if trailing_block.is_none()
-                && let Some(variant) = builtin_ctor_variant(callee)
-                && args.len() == 1
+                && let Some(variant) = builtin_ctor_variant(pool, callee_id)
+                && arg_ids.len() == 1
             {
-                let value = Box::new(lower_expr(type_check, &args[0])?);
+                let value = Box::new(lower_expr(type_check, pool, arg_ids[0])?);
                 let kind = HirExprKind::ResultCtor { variant, value };
                 let ty = expr_type_for_kind(type_check, &kind, fallback_ty);
                 return Ok(HirExpr { kind, ty, span });
             }
-            let method_base = match &**callee {
-                Expr::Field { base, field, .. } | Expr::SafeField { base, field, .. } => {
-                    if lookup_namespace_field(base, field, type_check).is_some() {
+            let method_base = match pool.expr(callee_id) {
+                ExprKind::Field { base, field, .. } | ExprKind::SafeField { base, field, .. } => {
+                    if lookup_namespace_field(pool, *base, field, type_check).is_some() {
                         None
                     } else {
-                        Some(&**base)
+                        Some(*base)
                     }
                 }
                 _ => None,
             };
-            let hir_callee = lower_expr(type_check, callee)?;
-            let mut hir_args: Vec<HirExpr> = if let Some(base) = method_base {
-                vec![lower_expr(type_check, base)?]
+            let hir_callee = lower_expr(type_check, pool, callee_id)?;
+            let mut hir_args: Vec<HirExpr> = if let Some(base_id) = method_base {
+                vec![lower_expr(type_check, pool, base_id)?]
             } else {
                 Vec::new()
             };
-            hir_args.extend(
-                args.iter()
-                    .map(|a| lower_expr(type_check, a))
-                    .collect::<Result<Vec<_>, _>>()?,
-            );
+            for arg_id in arg_ids {
+                hir_args.push(lower_expr(type_check, pool, arg_id)?);
+            }
             let hir_trailing = trailing_block
                 .as_ref()
-                .map(|b| super::stmt::lower_block(type_check, b))
+                .map(|b| super::stmt::lower_block(type_check, pool, pool.block(*b)))
                 .transpose()?;
             HirExprKind::Call {
                 callee: Box::new(hir_callee),
@@ -224,7 +230,7 @@ pub(crate) fn lower_expr(type_check: &TypeCheckResult, expr: &Expr) -> Result<Hi
                 trailing_block: hir_trailing,
             }
         }
-        Expr::StructLiteral { fields, .. } => {
+        ExprKind::StructLiteral { ty: _, fields, .. } => {
             let struct_symbol = match &fallback_ty {
                 ArType::Named(id, _) => *id,
                 _ => {
@@ -235,13 +241,15 @@ pub(crate) fn lower_expr(type_check: &TypeCheckResult, expr: &Expr) -> Result<Hi
                     ));
                 }
             };
-            let hir_fields: Result<Vec<_>, _> = fields
+            let field_ids = pool.field_init_list(*fields).to_vec();
+            let hir_fields: Result<Vec<_>, _> = field_ids
                 .iter()
-                .map(|f| {
+                .map(|fid| {
+                    let f = pool.field_init(*fid);
                     Ok(HirFieldInit {
                         span: f.span,
                         name: f.name.clone(),
-                        value: lower_expr(type_check, &f.value)?,
+                        value: lower_expr(type_check, pool, f.value)?,
                     })
                 })
                 .collect();
@@ -250,14 +258,19 @@ pub(crate) fn lower_expr(type_check: &TypeCheckResult, expr: &Expr) -> Result<Hi
                 fields: hir_fields?,
             }
         }
-        Expr::Array { items, .. } => {
-            let hir_items: Result<Vec<_>, _> =
-                items.iter().map(|i| lower_expr(type_check, i)).collect();
+        ExprKind::Array { items, .. } => {
+            let item_ids = pool.expr_list(*items).to_vec();
+            let hir_items: Result<Vec<_>, _> = item_ids
+                .iter()
+                .map(|i| lower_expr(type_check, pool, *i))
+                .collect();
             HirExprKind::Array { items: hir_items? }
         }
-        Expr::Lambda { params, body, .. } => {
+        ExprKind::Lambda { params, body, .. } => {
             let mut hir_params = Vec::new();
-            for p in params {
+            let param_ids = pool.lambda_param_list(*params).to_vec();
+            for pid in param_ids {
+                let p = pool.lambda_param(pid);
                 let symbol = require_def_symbol(&type_check.resolved, p.span)?;
                 let p_ty = type_check
                     .type_info
@@ -271,11 +284,11 @@ pub(crate) fn lower_expr(type_check: &TypeCheckResult, expr: &Expr) -> Result<Hi
                 });
             }
             let hir_body = match body {
-                LambdaBody::Expr { expr, .. } => {
-                    HirLambdaBody::Expr(Box::new(lower_expr(type_check, expr)?))
-                }
-                LambdaBody::Block { block, .. } => {
-                    HirLambdaBody::Block(super::stmt::lower_block(type_check, block)?)
+                arandu_parser::LambdaBody::Expr {
+                    expr: inner_expr, ..
+                } => HirLambdaBody::Expr(Box::new(lower_expr(type_check, pool, *inner_expr)?)),
+                arandu_parser::LambdaBody::Block { block, .. } => {
+                    HirLambdaBody::Block(super::stmt::lower_block(type_check, pool, block)?)
                 }
             };
             HirExprKind::Lambda {
@@ -283,34 +296,43 @@ pub(crate) fn lower_expr(type_check: &TypeCheckResult, expr: &Expr) -> Result<Hi
                 body: hir_body,
             }
         }
-        Expr::Alloc { expr, .. } => HirExprKind::Alloc {
-            expr: Box::new(lower_expr(type_check, expr)?),
+        ExprKind::Alloc {
+            expr: inner_expr, ..
+        } => HirExprKind::Alloc {
+            expr: Box::new(lower_expr(type_check, pool, *inner_expr)?),
         },
-        Expr::AsyncBlock { block, .. } => HirExprKind::AsyncBlock {
-            block: super::stmt::lower_block(type_check, block)?,
+        ExprKind::AsyncBlock { block, .. } => HirExprKind::AsyncBlock {
+            block: super::stmt::lower_block(type_check, pool, pool.block(*block))?,
         },
-        Expr::UnsafeBlock { block, .. } => HirExprKind::UnsafeBlock {
-            block: super::stmt::lower_block(type_check, block)?,
+        ExprKind::UnsafeBlock { block, .. } => HirExprKind::UnsafeBlock {
+            block: super::stmt::lower_block(type_check, pool, pool.block(*block))?,
         },
-        Expr::If {
+        ExprKind::If {
             condition,
             then_block,
             else_block,
             ..
         } => HirExprKind::If {
-            condition: Box::new(super::stmt::lower_condition(type_check, condition)?),
-            then_block: super::stmt::lower_block(type_check, then_block)?,
-            else_block: super::stmt::lower_block(type_check, else_block)?,
+            condition: Box::new(super::stmt::lower_condition(type_check, pool, condition)?),
+            then_block: super::stmt::lower_block(type_check, pool, pool.block(*then_block))?,
+            else_block: super::stmt::lower_block(type_check, pool, pool.block(*else_block))?,
         },
-        Expr::Match { value, arms, .. } => HirExprKind::Match {
-            value: Box::new(lower_expr(type_check, value)?),
-            arms: super::pattern::lower_match_arms(type_check, arms)?,
-        },
-        Expr::Catch { expr, handler, .. } => {
-            let hir_expr = lower_expr(type_check, expr)?;
-            let hir_handler = match handler {
-                CatchHandler::Expr { expr, .. } => {
-                    HirCatchHandler::Expr(Box::new(lower_expr(type_check, expr)?))
+        ExprKind::Match { value, arms, .. } => {
+            let arm_ids = pool.match_arm_list(*arms).to_vec();
+            HirExprKind::Match {
+                value: Box::new(lower_expr(type_check, pool, *value)?),
+                arms: super::pattern::lower_match_arms(type_check, pool, &arm_ids)?,
+            }
+        }
+        ExprKind::Catch {
+            expr: inner_expr,
+            handler,
+            ..
+        } => {
+            let hir_expr = lower_expr(type_check, pool, *inner_expr)?;
+            let hir_handler = match pool.catch_handler(*handler) {
+                CatchHandler::Expr { expr: h, .. } => {
+                    HirCatchHandler::Expr(Box::new(lower_expr(type_check, pool, *h)?))
                 }
                 CatchHandler::Block { span, error, block } => {
                     let error_symbol = type_check
@@ -321,7 +343,7 @@ pub(crate) fn lower_expr(type_check: &TypeCheckResult, expr: &Expr) -> Result<Hi
                     HirCatchHandler::Block {
                         error_symbol,
                         error_name: Some(error.clone()),
-                        block: super::stmt::lower_block(type_check, block)?,
+                        block: super::stmt::lower_block(type_check, pool, block)?,
                     }
                 }
             };
@@ -330,45 +352,53 @@ pub(crate) fn lower_expr(type_check: &TypeCheckResult, expr: &Expr) -> Result<Hi
                 handler: hir_handler,
             }
         }
-        Expr::NullCoalesce { left, right, .. } => HirExprKind::NullCoalesce {
-            left: Box::new(lower_expr(type_check, left)?),
-            right: Box::new(lower_expr(type_check, right)?),
+        ExprKind::NullCoalesce { left, right, .. } => HirExprKind::NullCoalesce {
+            left: Box::new(lower_expr(type_check, pool, *left)?),
+            right: Box::new(lower_expr(type_check, pool, *right)?),
         },
-        Expr::Cast {
-            expr, ty: cast_ty, ..
+        ExprKind::Cast {
+            expr: inner_expr,
+            ty: cast_ty,
+            ..
         } => {
             let target_ty = crate::passes::type_checker::types::lower_type_expr(
-                cast_ty,
+                pool.type_expr(*cast_ty),
                 &type_check.symbols,
                 crate::ScopeId(0),
                 &type_check.resolved,
             );
             HirExprKind::Cast {
-                expr: Box::new(lower_expr(type_check, expr)?),
+                expr: Box::new(lower_expr(type_check, pool, *inner_expr)?),
                 target_ty,
             }
         }
-        Expr::Group { expr, .. } => {
-            return lower_expr(type_check, expr);
+        ExprKind::Group {
+            expr: inner_expr, ..
+        } => {
+            return lower_expr(type_check, pool, *inner_expr);
         }
-        Expr::Unary { op, expr, .. } => HirExprKind::Unary {
+        ExprKind::Unary {
+            op,
+            expr: inner_expr,
+            ..
+        } => HirExprKind::Unary {
             op: (*op).into(),
-            expr: Box::new(lower_expr(type_check, expr)?),
+            expr: Box::new(lower_expr(type_check, pool, *inner_expr)?),
         },
-        Expr::Binary {
+        ExprKind::Binary {
             op, left, right, ..
         } => HirExprKind::Binary {
             op: (*op).into(),
-            left: Box::new(lower_expr(type_check, left)?),
-            right: Box::new(lower_expr(type_check, right)?),
+            left: Box::new(lower_expr(type_check, pool, *left)?),
+            right: Box::new(lower_expr(type_check, pool, *right)?),
         },
-        Expr::Int { value, .. } => HirExprKind::Int(value.clone()),
-        Expr::Float { value, .. } => HirExprKind::Float(value.clone()),
-        Expr::Bool { value, .. } => HirExprKind::Bool(*value),
-        Expr::Char { value, .. } => HirExprKind::Char(value.clone()),
-        Expr::InterpolatedString { .. } => HirExprKind::Str("interpolated".to_string()),
-        Expr::Nil { .. } => HirExprKind::Nil,
-        Expr::Error(_) => unreachable!("syntax error in HIR lowering"),
+        ExprKind::Int { value } => HirExprKind::Int(value.clone()),
+        ExprKind::Float { value } => HirExprKind::Float(value.clone()),
+        ExprKind::Bool { value } => HirExprKind::Bool(*value),
+        ExprKind::Char { value } => HirExprKind::Char(value.clone()),
+        ExprKind::InterpolatedString { .. } => HirExprKind::Str("interpolated".to_string()),
+        ExprKind::Nil => HirExprKind::Nil,
+        ExprKind::Error => unreachable!("syntax error in HIR lowering"),
     };
 
     let ty = expr_type_for_kind(type_check, &kind, fallback_ty);

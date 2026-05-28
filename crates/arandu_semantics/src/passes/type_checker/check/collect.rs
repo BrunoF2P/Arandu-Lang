@@ -3,7 +3,7 @@ use arandu_parser::{Program, TopLevelDecl};
 use super::super::TypeChecker;
 use super::super::types::ArType;
 
-pub(crate) fn collect_type_shapes(checker: &mut TypeChecker, program: &Program) {
+pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Program) {
     for decl in &program.decls {
         if let TopLevelDecl::Struct(struct_decl) = decl {
             let mut fields = std::collections::HashMap::new();
@@ -81,7 +81,7 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker, program: &Program) 
     }
 }
 
-pub(crate) fn collect_signature_types(checker: &mut TypeChecker, program: &Program) {
+pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &Program) {
     for decl in &program.decls {
         match decl {
             TopLevelDecl::Func(func_decl) => {

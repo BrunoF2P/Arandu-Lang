@@ -2,6 +2,7 @@ use super::{
     BindingItem, Block, Condition, DeferBody, Expr, ForBinding, ForClause, ParseError,
     ParseErrorCode, Parser, Place, PlaceSuffix, SetOp, SimpleStmt, Stmt, TokenKind,
 };
+use crate::ast::ExprKind;
 
 impl<'a> Parser<'a> {
     pub(super) fn parse_block(&mut self) -> Result<Block, ParseError> {
@@ -32,19 +33,21 @@ impl<'a> Parser<'a> {
         })
     }
 
-    pub(super) fn parse_stmt(&mut self) -> Result<Stmt, ParseError> {
+    pub(super) fn parse_stmt(&mut self) -> Result<crate::ast_pool::StmtId, ParseError> {
         let start = self.mark();
         match self.try_parse_stmt() {
             Ok(stmt) => Ok(stmt),
             Err(err) => {
                 self.diagnostics.push(err);
                 self.synchronize_stmt();
-                Ok(Stmt::Error(self.span_from_mark(start)))
+                Ok(self
+                    .pool
+                    .alloc_stmt(Stmt::Error(self.span_from_mark(start))))
             }
         }
     }
 
-    pub(super) fn try_parse_stmt(&mut self) -> Result<Stmt, ParseError> {
+    pub(super) fn try_parse_stmt(&mut self) -> Result<crate::ast_pool::StmtId, ParseError> {
         if self.at_kind_name("KW_RETURN") {
             return self.parse_return();
         }
@@ -52,17 +55,17 @@ impl<'a> Parser<'a> {
             let start = self.mark();
             self.consume();
             self.expect_semicolon()?;
-            return Ok(Stmt::Break {
+            return Ok(self.pool.alloc_stmt(Stmt::Break {
                 span: self.span_from_mark(start),
-            });
+            }));
         }
         if self.at_kind_name("KW_CONTINUE") {
             let start = self.mark();
             self.consume();
             self.expect_semicolon()?;
-            return Ok(Stmt::Continue {
+            return Ok(self.pool.alloc_stmt(Stmt::Continue {
                 span: self.span_from_mark(start),
-            });
+            }));
         }
         if self.at_kind_name("KW_FREE") {
             return self.parse_free();
@@ -86,10 +89,10 @@ impl<'a> Parser<'a> {
             let start = self.mark();
             self.consume();
             let block = self.parse_block()?;
-            return Ok(Stmt::Unsafe {
+            return Ok(self.pool.alloc_stmt(Stmt::Unsafe {
                 span: self.span_from_mark(start),
                 block,
-            });
+            }));
         }
         if self.at_kind_name("KW_SET") {
             return self.parse_set();
@@ -100,27 +103,29 @@ impl<'a> Parser<'a> {
         let start = self.mark();
         let expr = self.parse_expr(0)?;
         self.expect_semicolon()?;
-        Ok(match expr {
-            Expr::Match { .. } => Stmt::Match {
+        let is_match = matches!(self.pool.expr(expr), ExprKind::Match { .. });
+        Ok(self.pool.alloc_stmt(if is_match {
+            Stmt::Match {
                 span: self.span_from_mark(start),
                 expr,
-            },
-            expr => Stmt::Expr {
+            }
+        } else {
+            Stmt::Expr {
                 span: self.span_from_mark(start),
                 expr: Box::new(expr),
-            },
-        })
+            }
+        }))
     }
 
-    pub(super) fn parse_var_decl(&mut self) -> Result<Stmt, ParseError> {
+    pub(super) fn parse_var_decl(&mut self) -> Result<crate::ast_pool::StmtId, ParseError> {
         let start = self.mark();
         let (bindings, value) = self.parse_var_decl_parts()?;
         self.expect_semicolon()?;
-        Ok(Stmt::VarDecl {
+        Ok(self.pool.alloc_stmt(Stmt::VarDecl {
             span: self.span_from_mark(start),
             bindings,
             value,
-        })
+        }))
     }
 
     pub(super) fn parse_var_decl_parts(&mut self) -> Result<(Vec<BindingItem>, Expr), ParseError> {
@@ -150,16 +155,16 @@ impl<'a> Parser<'a> {
         })
     }
 
-    pub(super) fn parse_set(&mut self) -> Result<Stmt, ParseError> {
+    pub(super) fn parse_set(&mut self) -> Result<crate::ast_pool::StmtId, ParseError> {
         let start = self.mark();
         let (places, op, value) = self.parse_set_parts()?;
         self.expect_semicolon()?;
-        Ok(Stmt::Set {
+        Ok(self.pool.alloc_stmt(Stmt::Set {
             span: self.span_from_mark(start),
             places,
             op,
             value,
-        })
+        }))
     }
 
     pub(super) fn parse_set_parts(&mut self) -> Result<(Vec<Place>, SetOp, Expr), ParseError> {
@@ -222,28 +227,28 @@ impl<'a> Parser<'a> {
         })
     }
 
-    pub(super) fn parse_return(&mut self) -> Result<Stmt, ParseError> {
+    pub(super) fn parse_return(&mut self) -> Result<crate::ast_pool::StmtId, ParseError> {
         let start = self.mark();
         self.expect_name("KW_RETURN")?;
         if self.at_kind_name("SEMICOLON") {
             self.expect_semicolon()?;
-            return Ok(Stmt::Return {
+            return Ok(self.pool.alloc_stmt(Stmt::Return {
                 span: self.span_from_mark(start),
                 values: Vec::new(),
-            });
+            }));
         }
         let mut values = vec![self.parse_expr(0)?];
         while self.eat_name("COMMA") {
             values.push(self.parse_expr(0)?);
         }
         self.expect_semicolon()?;
-        Ok(Stmt::Return {
+        Ok(self.pool.alloc_stmt(Stmt::Return {
             span: self.span_from_mark(start),
             values,
-        })
+        }))
     }
 
-    pub(super) fn parse_if(&mut self) -> Result<Stmt, ParseError> {
+    pub(super) fn parse_if(&mut self) -> Result<crate::ast_pool::StmtId, ParseError> {
         let start = self.mark();
         self.expect_name("KW_IF")?;
         let condition = self.parse_condition()?;
@@ -261,12 +266,12 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
-        Ok(Stmt::If {
+        Ok(self.pool.alloc_stmt(Stmt::If {
             span: self.span_from_mark(start),
             condition,
             then_block,
             else_block,
-        })
+        }))
     }
 
     pub(super) fn parse_condition(&mut self) -> Result<Condition, ParseError> {
@@ -287,30 +292,30 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub(super) fn parse_free(&mut self) -> Result<Stmt, ParseError> {
+    pub(super) fn parse_free(&mut self) -> Result<crate::ast_pool::StmtId, ParseError> {
         let start = self.mark();
         self.expect_name("KW_FREE")?;
         let value = self.parse_expr(0)?;
         self.expect_semicolon()?;
-        Ok(Stmt::Free {
+        Ok(self.pool.alloc_stmt(Stmt::Free {
             span: self.span_from_mark(start),
             expr: value,
-        })
+        }))
     }
 
-    pub(super) fn parse_while(&mut self) -> Result<Stmt, ParseError> {
+    pub(super) fn parse_while(&mut self) -> Result<crate::ast_pool::StmtId, ParseError> {
         let start = self.mark();
         self.expect_name("KW_WHILE")?;
         let condition = self.parse_condition()?;
         let body = self.parse_block()?;
-        Ok(Stmt::While {
+        Ok(self.pool.alloc_stmt(Stmt::While {
             span: self.span_from_mark(start),
             condition,
             body,
-        })
+        }))
     }
 
-    pub(super) fn parse_for(&mut self) -> Result<Stmt, ParseError> {
+    pub(super) fn parse_for(&mut self) -> Result<crate::ast_pool::StmtId, ParseError> {
         let start = self.mark();
         self.expect_name("KW_FOR")?;
         let clause = if self.looks_like_for_in_clause() {
@@ -353,11 +358,11 @@ impl<'a> Parser<'a> {
             }
         };
         let body = self.parse_block()?;
-        Ok(Stmt::For {
+        Ok(self.pool.alloc_stmt(Stmt::For {
             span: self.span_from_mark(start),
             clause: Box::new(clause),
             body,
-        })
+        }))
     }
 
     pub(super) fn parse_for_binding(&mut self) -> Result<ForBinding, ParseError> {
@@ -407,7 +412,10 @@ impl<'a> Parser<'a> {
         result
     }
 
-    pub(super) fn parse_defer(&mut self, is_errdefer: bool) -> Result<Stmt, ParseError> {
+    pub(super) fn parse_defer(
+        &mut self,
+        is_errdefer: bool,
+    ) -> Result<crate::ast_pool::StmtId, ParseError> {
         let start = self.mark();
         if is_errdefer {
             self.expect_name("KW_ERRDEFER")?;
@@ -429,7 +437,7 @@ impl<'a> Parser<'a> {
                 expr: Box::new(expr),
             }
         };
-        Ok(if is_errdefer {
+        Ok(self.pool.alloc_stmt(if is_errdefer {
             Stmt::ErrDefer {
                 span: self.span_from_mark(start),
                 body,
@@ -439,7 +447,7 @@ impl<'a> Parser<'a> {
                 span: self.span_from_mark(start),
                 body,
             }
-        })
+        }))
     }
 
     pub(super) fn parse_set_op(&mut self) -> Result<SetOp, ParseError> {

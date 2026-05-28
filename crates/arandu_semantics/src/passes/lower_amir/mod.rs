@@ -1,7 +1,10 @@
 use crate::amir::{AmirBasicBlock, AmirLocal, AmirProgram, AmirTemp, BlockId, LocalId};
+use crate::amir_validate::validate_amir_func;
 use crate::diagnostics::{DiagCode, Diagnostic, Severity};
 use crate::hir::{HirBlock, HirDecl, HirFunc, HirProgram};
 use crate::literal_pool::AmirLiteralPool;
+use crate::passes::definite_init::check_definite_init;
+use crate::passes::move_checker::check_moves;
 use crate::passes::type_checker::types::ArType;
 use crate::{SymbolId, TypeCheckResult};
 use arandu_lexer::Span;
@@ -36,7 +39,12 @@ pub fn lower_to_amir(
         ) = decl
         {
             match lower_func(f, body, tc, hir, &mut literal_pool) {
-                Ok(amir_f) => funcs.push(amir_f),
+                Ok(amir_f) => {
+                    diagnostics.extend(validate_amir_func(&amir_f, &tc.symbols));
+                    diagnostics.extend(check_definite_init(&amir_f, &tc.symbols));
+                    diagnostics.extend(check_moves(&amir_f, &tc.symbols));
+                    funcs.push(amir_f);
+                }
                 Err(diag) => diagnostics.push(diag),
             }
         }
@@ -52,12 +60,13 @@ pub fn lower_to_amir(
     }
 }
 
-pub(crate) fn amir_unsupported(span: Span, feature: &str) -> Diagnostic {
+pub(crate) fn amir_unsupported(span: Span, feature: &str, roadmap: &str) -> Diagnostic {
     Diagnostic::error(
         DiagCode::L002AmirUnsupportedFeature,
-        format!("AMIR v0.1: {feature} is not yet supported"),
+        format!("AMIR v0.1: {feature} is not supported yet ({roadmap})"),
         span,
     )
+    .with_hint("see docs/arandu-compiler-roadmap-v0.1.md for the planned milestone")
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

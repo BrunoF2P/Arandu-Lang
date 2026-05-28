@@ -165,7 +165,7 @@ impl<'a> Parser<'a> {
             }
         };
         if result_type_must_use_result_generic(&result) {
-            let token = self.current().clone();
+            let token = *self.current();
             return Err(ParseError::new(
                 ParseErrorCode::InvalidResultReturn,
                 "function result must use `Result<T, E>` syntax",

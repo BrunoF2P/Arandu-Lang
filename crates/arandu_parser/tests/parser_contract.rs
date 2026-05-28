@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use arandu_parser::ast_pool::ExprKind;
 use arandu_parser::{ParseErrorCode, parse, parse_to_string};
 
 fn contains(outer_start: usize, outer_end: usize, inner_start: usize, inner_end: usize) -> bool {
@@ -63,17 +64,24 @@ fn ast_nested_expression_spans_are_contained_by_parent() {
         arandu_parser::TopLevelDecl::Func(func) => func,
         other => panic!("expected func, got {other:?}"),
     };
-    let stmt = &func.body.statements[0];
+    let stmt = program.pool.stmt(func.body.statements[0]);
     let arandu_parser::Stmt::VarDecl { value, .. } = stmt else {
         panic!("expected var decl, got {stmt:?}");
     };
-    let arandu_parser::Expr::Call { span, args, .. } = value else {
-        panic!("expected call, got {value:?}");
+    let value_id = *value;
+    let call_span = program.pool.expr_span(value_id);
+    let call_kind = program.pool.expr(value_id);
+    let ExprKind::Call { args, .. } = call_kind else {
+        panic!("expected call, got {call_kind:?}");
     };
-    let arandu_parser::Expr::Binary { span: inner, .. } = &args[0] else {
-        panic!("expected binary arg, got {:?}", args[0]);
-    };
-    assert!(contains(span.start, span.end, inner.start, inner.end));
+    let arg_id = program.pool.expr_list(*args)[0];
+    let inner_span = program.pool.expr_span(arg_id);
+    assert!(contains(
+        call_span.start,
+        call_span.end,
+        inner_span.start,
+        inner_span.end
+    ));
 }
 
 #[test]
@@ -85,19 +93,18 @@ fn ast_call_with_block_span_covers_trailing_block() {
         arandu_parser::TopLevelDecl::Func(func) => func,
         other => panic!("expected func, got {other:?}"),
     };
-    let stmt = &func.body.statements[0];
+    let stmt = program.pool.stmt(func.body.statements[0]);
     let arandu_parser::Stmt::Expr { expr, .. } = stmt else {
         panic!("expected expr stmt, got {stmt:?}");
     };
-    let arandu_parser::Expr::Call {
-        span,
-        trailing_block,
-        ..
-    } = &**expr
-    else {
-        panic!("expected call, got {expr:?}");
+    let expr_id = **expr;
+    let call_kind = program.pool.expr(expr_id);
+    let ExprKind::Call { trailing_block, .. } = call_kind else {
+        panic!("expected call, got {call_kind:?}");
     };
-    let block = trailing_block.as_ref().expect("call should have block");
+    let span = program.pool.expr_span(expr_id);
+    let block_id = trailing_block.expect("call should have block");
+    let block = program.pool.block(block_id);
     assert_eq!(span.end_line, block.span.end_line);
     assert_eq!(span.end_col, block.span.end_col);
 }
@@ -110,13 +117,12 @@ fn ast_multiline_string_span_covers_delimiters() {
         arandu_parser::TopLevelDecl::Func(func) => func,
         other => panic!("expected func, got {other:?}"),
     };
-    let stmt = &func.body.statements[0];
+    let stmt = program.pool.stmt(func.body.statements[0]);
     let arandu_parser::Stmt::VarDecl { value, .. } = stmt else {
         panic!("expected var decl, got {stmt:?}");
     };
-    let arandu_parser::Expr::InterpolatedString { span, .. } = value else {
-        panic!("expected string, got {value:?}");
-    };
+    let value_id = *value;
+    let span = program.pool.expr_span(value_id);
     assert_eq!(span.start_line, 3);
     assert_eq!(span.start_col, 12);
     assert_eq!(span.end_line, 5);

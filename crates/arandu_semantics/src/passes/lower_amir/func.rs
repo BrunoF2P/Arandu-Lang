@@ -1,3 +1,5 @@
+#![allow(clippy::collapsible_if)]
+
 use super::{LowerCtx, MoveState};
 use crate::TypeCheckResult;
 use crate::amir::{AmirFunc, AmirOperand, AmirPlace, AmirTemp, AmirTerminator, TempId};
@@ -35,6 +37,7 @@ pub(crate) fn lower_func(
     ctx.temps.push(AmirTemp {
         id: TempId(0),
         ty: f.return_type.clone(),
+        span: arandu_lexer::Span::new(0, 0, 0, 0, 0, 0),
     });
     ctx.temp_states.push(MoveState::Available);
     ctx.temp_origins.push(None);
@@ -59,7 +62,7 @@ pub(crate) fn lower_func(
         params.push(p_temp);
 
         // Copy incoming parameter SSA register value to local stack slot
-        let p_local = ctx.new_local(param.ty.clone(), param.symbol);
+        let p_local = ctx.new_local(param.ty.clone(), param.symbol, param.span);
         ctx.emit_store_place(
             AmirPlace {
                 local: p_local,

@@ -14,6 +14,8 @@
 
 pub mod amir;
 mod amir_validate;
+pub mod arena;
+pub mod bitset;
 mod cfg;
 mod diagnostics;
 pub mod hir;
@@ -21,15 +23,27 @@ pub mod index_vec;
 pub mod literal_pool;
 pub mod ops;
 pub mod passes;
+pub mod stable_id;
+pub mod string_pool;
+pub mod vm;
+
 pub use ops::{BinaryOp, SetOp, UnaryOp};
 mod resolved;
 mod symbol_table;
+
+pub use arena::BumpArena;
+pub use bitset::BitSet;
+pub use stable_id::{GenerationalId, SlotMap};
+pub use string_pool::{SsoString, StringPool};
+pub use vm::VmReservation;
 
 pub use amir_validate::validate_amir_program;
 pub use diagnostics::{DiagCode, Diagnostic, Label, Severity};
 pub use passes::lower_amir::lower_to_amir;
 pub use passes::lower_hir::lower_to_hir;
+pub use passes::move_checker::check_moves;
 pub use passes::name_resolution::resolve;
+pub use passes::optimize::optimize_amir;
 pub use passes::type_checker::{TypeCheckResult, TypeInfo, type_check};
 pub use resolved::{DocCommentMap, NodeKey, ResolvedNames};
 pub use symbol_table::{ScopeId, Symbol, SymbolId, SymbolKind, SymbolTable};

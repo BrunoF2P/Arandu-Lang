@@ -1,59 +1,59 @@
 use arandu_lexer::Span;
-use arandu_parser::{Expr, TypeName};
+use arandu_parser::TypeName;
+use arandu_parser::ast_pool::{AstPool, ExprId, ExprKind, IndexRange};
 
 use super::super::TypeChecker;
 use super::super::constraints::ConstraintOrigin;
 use super::super::types::ArType;
 use super::expr::synth_expr;
 
-fn type_path_member(callee: &Expr) -> Option<(&TypeName, &str)> {
-    match callee {
-        Expr::TypePath {
-            type_name, member, ..
-        } => Some((type_name, member.as_str())),
+fn type_path_member(pool: &AstPool, callee: ExprId) -> Option<(&TypeName, &str)> {
+    match pool.expr(callee) {
+        ExprKind::TypePath { type_name, member } => Some((type_name, member.as_str())),
         _ => None,
     }
 }
 
 pub(crate) fn synth_result_ctor(
-    checker: &mut TypeChecker,
-    callee: &Expr,
-    args: &[Expr],
+    checker: &mut TypeChecker<'_>,
+    callee: ExprId,
+    args: IndexRange,
     span: Span,
 ) -> Option<ArType> {
-    let (type_name, member) = type_path_member(callee)?;
+    let (type_name, member) = type_path_member(checker.pool, callee)?;
     if super::super::types::type_name_base(type_name) != "Result" {
         return None;
     }
+    let arg_ids = checker.pool.expr_list(args).to_vec();
     match member {
         "Ok" => {
-            if args.len() != 1 {
+            if arg_ids.len() != 1 {
                 let diag = crate::Diagnostic::error(
                     crate::DiagCode::T012WrongArgCount,
-                    format!("Result.Ok expects 1 argument, found {}", args.len()),
+                    format!("Result.Ok expects 1 argument, found {}", arg_ids.len()),
                     span,
                 )
-                .with_label(callee.span(), "call target is here")
-                .with_label(span, format!("{} arguments provided", args.len()));
+                .with_label(checker.pool.expr_span(callee), "call target is here")
+                .with_label(span, format!("{} arguments provided", arg_ids.len()));
                 checker.diagnostics.push(diag);
                 return Some(ArType::Error);
             }
-            let ok_ty = synth_expr(checker, &args[0]);
+            let ok_ty = synth_expr(checker, arg_ids[0]);
             Some(ArType::Result(Box::new(ok_ty), Box::new(ArType::Err)))
         }
         "Err" => {
-            if args.len() != 1 {
+            if arg_ids.len() != 1 {
                 let diag = crate::Diagnostic::error(
                     crate::DiagCode::T012WrongArgCount,
-                    format!("Result.Err expects 1 argument, found {}", args.len()),
+                    format!("Result.Err expects 1 argument, found {}", arg_ids.len()),
                     span,
                 )
-                .with_label(callee.span(), "call target is here")
-                .with_label(span, format!("{} arguments provided", args.len()));
+                .with_label(checker.pool.expr_span(callee), "call target is here")
+                .with_label(span, format!("{} arguments provided", arg_ids.len()));
                 checker.diagnostics.push(diag);
                 return Some(ArType::Error);
             }
-            let err_ty = synth_expr(checker, &args[0]);
+            let err_ty = synth_expr(checker, arg_ids[0]);
             Some(ArType::Result(Box::new(ArType::Error), Box::new(err_ty)))
         }
         _ => None,
@@ -61,29 +61,30 @@ pub(crate) fn synth_result_ctor(
 }
 
 pub(crate) fn synth_option_ctor(
-    checker: &mut TypeChecker,
-    callee: &Expr,
-    args: &[Expr],
+    checker: &mut TypeChecker<'_>,
+    callee: ExprId,
+    args: IndexRange,
     span: Span,
 ) -> Option<ArType> {
-    let (type_name, member) = type_path_member(callee)?;
+    let (type_name, member) = type_path_member(checker.pool, callee)?;
     if super::super::types::type_name_base(type_name) != "Option" {
         return None;
     }
+    let arg_ids = checker.pool.expr_list(args).to_vec();
     match member {
         "Some" => {
-            if args.len() != 1 {
+            if arg_ids.len() != 1 {
                 let diag = crate::Diagnostic::error(
                     crate::DiagCode::T012WrongArgCount,
-                    format!("Option.Some expects 1 argument, found {}", args.len()),
+                    format!("Option.Some expects 1 argument, found {}", arg_ids.len()),
                     span,
                 )
-                .with_label(callee.span(), "call target is here")
-                .with_label(span, format!("{} arguments provided", args.len()));
+                .with_label(checker.pool.expr_span(callee), "call target is here")
+                .with_label(span, format!("{} arguments provided", arg_ids.len()));
                 checker.diagnostics.push(diag);
                 return Some(ArType::Error);
             }
-            let inner = synth_expr(checker, &args[0]);
+            let inner = synth_expr(checker, arg_ids[0]);
             Some(ArType::Option(Box::new(inner)))
         }
         _ => None,
@@ -91,11 +92,12 @@ pub(crate) fn synth_option_ctor(
 }
 
 pub(crate) fn synth_method_call(
-    checker: &mut TypeChecker,
-    base: &Expr,
+    checker: &mut TypeChecker<'_>,
+    base: ExprId,
+    callee: ExprId,
     method: &str,
     field_span: arandu_lexer::Span,
-    args: &[Expr],
+    args: IndexRange,
     call_span: arandu_lexer::Span,
 ) -> Option<ArType> {
     let base_ty = synth_expr(checker, base);
@@ -139,30 +141,31 @@ pub(crate) fn synth_method_call(
             ConstraintOrigin::CallArg {
                 call_span,
                 param_span: field_span,
-                arg_span: base.span(),
+                arg_span: checker.pool.expr_span(base),
                 arg_index: 0,
             },
         );
     }
 
     let explicit_params = &params[1..];
-    if explicit_params.len() != args.len() {
+    let arg_ids = checker.pool.expr_list(args).to_vec();
+    if explicit_params.len() != arg_ids.len() {
         let diag = crate::Diagnostic::error(
             crate::DiagCode::T012WrongArgCount,
             format!(
                 "method '{struct_name}.{method}' expects {} argument(s), found {}",
                 explicit_params.len(),
-                args.len()
+                arg_ids.len()
             ),
             call_span,
         )
         .with_label(field_span, "call target is here")
-        .with_label(call_span, format!("{} arguments provided", args.len()));
+        .with_label(call_span, format!("{} arguments provided", arg_ids.len()));
         checker.diagnostics.push(diag);
     }
 
-    for (i, arg) in args.iter().enumerate() {
-        let arg_ty = synth_expr(checker, arg);
+    for (i, arg_id) in arg_ids.iter().copied().enumerate() {
+        let arg_ty = synth_expr(checker, arg_id);
         if let Some(expected) = explicit_params.get(i)
             && !super::super::types::unify(expected, &arg_ty)
         {
@@ -172,7 +175,7 @@ pub(crate) fn synth_method_call(
                 ConstraintOrigin::CallArg {
                     call_span,
                     param_span: field_span,
-                    arg_span: arg.span(),
+                    arg_span: checker.pool.expr_span(arg_id),
                     arg_index: i + 1,
                 },
             );
@@ -180,10 +183,7 @@ pub(crate) fn synth_method_call(
     }
 
     checker.resolved.value_ref(field_span, method_sym);
-    checker.record_expr_type(
-        crate::NodeKey::from(field_span),
-        ArType::Func(params, ret.clone()),
-    );
+    checker.record_expr_type(callee, ArType::Func(params, ret.clone()));
 
     Some(*ret)
 }

@@ -261,7 +261,7 @@ impl AmirRvalue {
                 place.pretty_print_to(out, symbols, pool);
             }
             AmirRvalue::Borrow(place) => {
-                out.push_str("&");
+                out.push('&');
                 place.pretty_print_to(out, symbols, pool);
             }
             AmirRvalue::BorrowMut(place) => {

@@ -49,6 +49,9 @@ pub enum DiagCode {
     G002GenericInstantiationLimit,
 
     // ── Ownership / Initialization ────────────────────────────────
+    O001UseAfterMove,
+    O005DoubleFree,
+    O007InconsistentMoveBetweenBranches,
     O008UseBeforeInit,
 }
 
@@ -94,6 +97,9 @@ impl DiagCode {
             DiagCode::T025InterfaceNotSatisfied => "T025",
             DiagCode::G001GenericInstantiationCycle => "G001",
             DiagCode::G002GenericInstantiationLimit => "G002",
+            DiagCode::O001UseAfterMove => "O001",
+            DiagCode::O005DoubleFree => "O005",
+            DiagCode::O007InconsistentMoveBetweenBranches => "O007",
             DiagCode::O008UseBeforeInit => "O008",
         }
     }

@@ -4,7 +4,7 @@ use crate::{DiagCode, Diagnostic, ScopeId};
 
 use super::Resolver;
 
-impl Resolver {
+impl<'a> Resolver<'a> {
     pub(crate) fn resolve_result_type(&mut self, scope: ScopeId, result: &ResultType) {
         match result {
             ResultType::Single { ty, .. } => self.resolve_type_expr(scope, ty),

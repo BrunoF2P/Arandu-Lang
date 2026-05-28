@@ -14,16 +14,18 @@ Implemented:
 - Parser crate with AST debug output for the current parser slice.
 - Parser golden tests for declarations, generics, extern, match, interpolation, places, and expressions.
 - Semantics crate with v0.2 name resolution, hierarchical symbol tables, namespace imports, prelude members, doc comment mapping, diagnostics, and CLI `check`.
-- Type checker (experimental) with primitive types, assignments, returns, fields, indexing, and basic diagnostics.
+- Type checker v0.1 core with primitive types, assignments, returns, fields, indexing, generics constraints, interface satisfaction, `Result<T,E>`, `Option<T>`, nullable/safe operations, and diagnostics.
 - AHIR lowering and pretty-printing with golden tests (`tests/hir/`).
 - AMIR lowering v0.1 (experimental) with CFG, locals, match, defer/errdefer, `?`/safe ops, for-in, alloc/free, and golden tests (`tests/amir/`).
+- Method receivers with `shared self`, `mut self`, and `own self`.
+- Definite initialization analysis with O008 diagnostics.
+- OSSA foundation in AMIR: move/copy operands, storage lifetime markers, and destroy statements.
+- Intraprocedural move checker with O001/O005/O007 diagnostics.
+- Opt-in AMIR optimizer (`amir --opt`) with constant folding and DCE.
+- Type interning and monomorphization graph infrastructure.
 
 Not implemented yet:
 
-- `Result<T,E>` / `Option<T>` as first-class types (today: tuple-error heuristics)
-- `self` receiver on methods
-- Complete type checker (generics instantiation, interface satisfaction)
-- Definite init, OSSA, move checker
 - Memory checker / generational fallback
 - Backend
 
@@ -97,6 +99,7 @@ Print the AMIR (mid-level IR / CFG):
 ```bash
 cargo run -p arandu_cli -- amir tests/amir/add.aru
 cargo run -p arandu_cli -- amir tests/amir/add.aru --debug
+cargo run -p arandu_cli -- amir tests/amir/add.aru --opt
 ```
 
 Update golden test files (after intentional IR changes):
@@ -134,4 +137,4 @@ tests/amir/       AMIR golden fixtures (.aru → .amir)
 
 ## Next Steps
 
-See [docs/arandu-compiler-roadmap-v0.1.md](docs/arandu-compiler-roadmap-v0.1.md) — start with **v0.1-B** (`Result<T,E>` in the type checker), then **C** (`self`), **D** (AMIR on `Result`), then ownership passes.
+See [docs/arandu-compiler-roadmap-v0.1.md](docs/arandu-compiler-roadmap-v0.1.md). Documentation is now aligned with the current v0.1 compiler state; the next recommended technical milestone is the memory checker / generational fallback, followed by backend work.

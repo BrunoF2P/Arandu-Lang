@@ -5,13 +5,14 @@ use crate::{DocCommentMap, NodeKey, ResolutionResult, ResolvedNames, SymbolKind,
 
 use super::Resolver;
 
-impl Resolver {
-    pub(crate) fn new() -> Self {
+impl<'a> Resolver<'a> {
+    pub(crate) fn new(pool: &'a arandu_parser::ast_pool::AstPool) -> Self {
         let mut resolver = Self {
             symbols: SymbolTable::new(),
             resolved: ResolvedNames::default(),
             docs: DocCommentMap::default(),
             diagnostics: Vec::new(),
+            pool,
         };
         resolver.define_prelude();
         resolver

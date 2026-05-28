@@ -25,18 +25,24 @@ impl LowerCtx<'_> {
 
     pub(crate) fn new_temp(&mut self, ty: ArType) -> TempId {
         let id = self.next_temp_id();
-        self.temps.push(AmirTemp { id, ty });
+        self.temps.push(AmirTemp {
+            id,
+            ty,
+            span: Span::new(0, 0, 0, 0, 0, 0),
+        });
         self.temp_states.push(MoveState::Available);
         self.temp_origins.push(None);
         id
     }
 
-    pub(crate) fn new_local(&mut self, ty: ArType, symbol: SymbolId) -> LocalId {
+    pub(crate) fn new_local(&mut self, ty: ArType, symbol: SymbolId, span: Span) -> LocalId {
         let id = self.next_local_id();
         self.locals.push(AmirLocal {
             id,
             ty,
             symbol: Some(symbol),
+            span,
+            use_span: None,
         });
         self.local_states.push(MoveState::Available);
         self.symbol_map.insert(symbol, id);
@@ -49,6 +55,8 @@ impl LowerCtx<'_> {
             id,
             ty,
             symbol: None,
+            span: Span::new(0, 0, 0, 0, 0, 0),
+            use_span: None,
         });
         self.local_states.push(MoveState::Available);
         id
@@ -187,11 +195,6 @@ impl LowerCtx<'_> {
         ty: ArType,
         _projection_types: &[ArType],
     ) -> Result<AmirOperand, Diagnostic> {
-        if place.projections.is_empty()
-            && self.local_states[place.local.as_usize()] == MoveState::Moved
-        {
-            return Err(self.move_diag(format!("use of moved local s{}", place.local.as_usize())));
-        }
         let temp = self.new_temp(ty);
         self.emit_assign_temp(temp, AmirRvalue::Load(place.clone()));
         if place.projections.is_empty() {
@@ -213,9 +216,6 @@ impl LowerCtx<'_> {
             return Ok(AmirOperand::Copy(temp));
         }
         self.temp_states[idx] = MoveState::Moved;
-        if let Some(local) = self.temp_origins[idx] {
-            self.local_states[local.as_usize()] = MoveState::Moved;
-        }
         Ok(AmirOperand::Move(temp))
     }
 

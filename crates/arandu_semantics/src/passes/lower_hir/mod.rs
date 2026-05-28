@@ -23,7 +23,7 @@ pub fn lower_to_hir(
 
     let mut decls = Vec::new();
     for decl in &program.decls {
-        decls.push(decl::lower_decl(type_check, decl).map_err(|e| vec![e])?);
+        decls.push(decl::lower_decl(type_check, &program.pool, decl).map_err(|e| vec![e])?);
     }
     let module = program.module.as_ref().map(|m| m.path.join("."));
     Ok(HirProgram {

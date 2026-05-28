@@ -1,3 +1,4 @@
+pub mod ast_pool;
 mod decl;
 mod dump;
 mod expr;
@@ -5,6 +6,7 @@ mod pattern;
 mod stmt;
 mod types;
 
+pub use ast_pool::*;
 pub use decl::*;
 pub use expr::*;
 pub use pattern::*;

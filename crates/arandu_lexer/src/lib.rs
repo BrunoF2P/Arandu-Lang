@@ -1,6 +1,7 @@
 mod error;
 mod lexer;
 mod token;
+mod token_name;
 
 pub use error::{LexError, LexErrorCode};
 pub use lexer::Lexer;

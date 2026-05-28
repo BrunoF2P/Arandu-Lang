@@ -1,30 +1,27 @@
 use arandu_parser::{
-    CatchHandler, Expr, FieldInit, FieldPattern, LambdaBody, LambdaParam, MatchArm, MatchArmBody,
-    Pattern,
+    CatchHandler, ExprId, ExprKind, FieldInit, FieldPattern, LambdaBody, LambdaParam, MatchArm,
+    MatchArmBody, Pattern,
 };
 
 use crate::{DiagCode, Diagnostic, ScopeId, SymbolKind};
 
 use super::Resolver;
 
-impl Resolver {
-    pub(crate) fn resolve_expr(&mut self, scope: ScopeId, expr: &Expr) {
-        match expr {
-            Expr::Path { span, path } => {
+impl<'a> Resolver<'a> {
+    pub(crate) fn resolve_expr(&mut self, scope: ScopeId, expr: ExprId) {
+        let span = self.pool.expr_span(expr);
+        match self.pool.expr(expr) {
+            ExprKind::Path { path } => {
                 if let Some(root) = path.first() {
-                    if path.len() > 1 && self.resolve_namespace_member(scope, root, &path[1], *span)
+                    if path.len() > 1
+                        && self.resolve_namespace_member(scope, root, &path[1], expr, span)
                     {
                         return;
                     }
-                    self.resolve_value_name(scope, root, *span);
+                    self.resolve_value_name(scope, root, expr, span);
                 }
             }
-            Expr::TypePath {
-                type_name,
-                member,
-                span,
-                ..
-            } => {
+            ExprKind::TypePath { type_name, member } => {
                 let base = type_name
                     .path
                     .last()
@@ -39,122 +36,140 @@ impl Resolver {
                 if type_resolved {
                     let ty = type_name.path.join(".");
                     if let Some(symbol) = self.symbols.lookup_associated_member(&ty, member) {
-                        self.resolved.value_ref(*span, symbol);
+                        self.resolved.expr_ref(expr, symbol);
                     } else {
                         self.diagnostics.push(Diagnostic::error(
                             DiagCode::N010UndefinedAssociatedFunction,
                             format!("associated function '{ty}.{member}' is not declared"),
-                            *span,
+                            span,
                         ));
                     }
                 }
             }
-            Expr::Generic { callee, args, .. } => {
-                self.resolve_expr(scope, callee);
-                for arg in args {
-                    self.resolve_type_expr(scope, arg);
+            ExprKind::Generic { callee, args, .. } => {
+                self.resolve_expr(scope, *callee);
+                let type_expr_ids = self.pool.type_expr_list(*args);
+                for arg_id in type_expr_ids {
+                    self.resolve_type_expr(scope, self.pool.type_expr(*arg_id));
                 }
             }
-            Expr::Field { span, base, field } | Expr::SafeField { span, base, field } => {
-                if let Expr::Path { path, .. } = &**base
+            ExprKind::Field { base, field } | ExprKind::SafeField { base, field } => {
+                let base_kind = self.pool.expr(*base);
+                if let ExprKind::Path { path } = base_kind
                     && let Some(root) = path.first()
                     && path.len() == 1
-                    && self.resolve_namespace_member(scope, root, field, *span)
+                    && self.resolve_namespace_member(scope, root, field, expr, span)
                 {
                     return;
                 }
-                self.resolve_expr(scope, base);
+                self.resolve_expr(scope, *base);
             }
-            Expr::Try { expr: base, .. } => {
-                self.resolve_expr(scope, base);
+            ExprKind::Try { expr: base, .. } => {
+                self.resolve_expr(scope, *base);
             }
-            Expr::Index { base, index, .. } | Expr::SafeIndex { base, index, .. } => {
-                self.resolve_expr(scope, base);
-                self.resolve_expr(scope, index);
+            ExprKind::Index { base, index, .. } | ExprKind::SafeIndex { base, index, .. } => {
+                self.resolve_expr(scope, *base);
+                self.resolve_expr(scope, *index);
             }
-            Expr::Call {
+            ExprKind::Call {
                 callee,
                 args,
                 trailing_block,
                 ..
             } => {
-                self.resolve_expr(scope, callee);
-                for arg in args {
-                    self.resolve_expr(scope, arg);
+                self.resolve_expr(scope, *callee);
+                let arg_ids = self.pool.expr_list(*args);
+                for arg in arg_ids {
+                    self.resolve_expr(scope, *arg);
                 }
-                if let Some(block) = trailing_block {
-                    self.resolve_block_child(scope, block);
-                }
-            }
-            Expr::StructLiteral { ty, fields, .. } => {
-                self.resolve_type_expr(scope, ty);
-                for field in fields {
-                    self.resolve_field_init(scope, field);
+                if let Some(block_id) = trailing_block {
+                    self.resolve_block_child(scope, self.pool, self.pool.block(*block_id));
                 }
             }
-            Expr::Array { items, .. } => {
-                for item in items {
-                    self.resolve_expr(scope, item);
+            ExprKind::StructLiteral { ty, fields, .. } => {
+                self.resolve_type_expr(scope, self.pool.type_expr(*ty));
+                let field_init_ids = self.pool.field_init_list(*fields);
+                for field_id in field_init_ids {
+                    self.resolve_field_init(scope, self.pool.field_init(*field_id));
                 }
             }
-            Expr::Lambda { params, body, .. } => self.resolve_lambda(scope, params, body),
-            Expr::Alloc { expr, .. } | Expr::Group { expr, .. } => self.resolve_expr(scope, expr),
-            Expr::AsyncBlock { block, .. } | Expr::UnsafeBlock { block, .. } => {
-                self.resolve_block_child(scope, block);
+            ExprKind::Array { items, .. } => {
+                let item_ids = self.pool.expr_list(*items);
+                for item in item_ids {
+                    self.resolve_expr(scope, *item);
+                }
             }
-            Expr::If {
+            ExprKind::Lambda { params, body, .. } => {
+                let param_ids = self.pool.lambda_param_list(*params);
+                let mut params_vec = Vec::new();
+                for param_id in param_ids {
+                    params_vec.push(self.pool.lambda_param(*param_id).clone());
+                }
+                self.resolve_lambda(scope, &params_vec, body);
+            }
+            ExprKind::Alloc { expr } | ExprKind::Group { expr, .. } => {
+                self.resolve_expr(scope, *expr)
+            }
+            ExprKind::AsyncBlock { block, .. } | ExprKind::UnsafeBlock { block, .. } => {
+                self.resolve_block_child(scope, self.pool, self.pool.block(*block));
+            }
+            ExprKind::If {
                 condition,
                 then_block,
                 else_block,
                 ..
             } => {
-                let then_scope = self.resolve_condition(scope, condition);
-                self.resolve_block_child(then_scope, then_block);
-                self.resolve_block_child(scope, else_block);
+                let then_scope = self.resolve_condition(scope, self.pool, condition);
+                self.resolve_block_child(then_scope, self.pool, self.pool.block(*then_block));
+                self.resolve_block_child(scope, self.pool, self.pool.block(*else_block));
             }
-            Expr::Match { value, arms, .. } => {
-                self.resolve_expr(scope, value);
-                for arm in arms {
-                    self.resolve_match_arm(scope, arm);
+            ExprKind::Match { value, arms, .. } => {
+                self.resolve_expr(scope, *value);
+                let arm_ids = self.pool.match_arm_list(*arms);
+                for arm_id in arm_ids {
+                    self.resolve_match_arm(scope, self.pool.match_arm(*arm_id));
                 }
             }
-            Expr::Catch { expr, handler, .. } => {
-                self.resolve_expr(scope, expr);
-                self.resolve_catch_handler(scope, handler);
+            ExprKind::Catch { expr, handler, .. } => {
+                self.resolve_expr(scope, *expr);
+                self.resolve_catch_handler(scope, self.pool.catch_handler(*handler));
             }
-            Expr::NullCoalesce { left, right, .. } => {
-                self.resolve_expr(scope, left);
-                self.resolve_expr(scope, right);
+            ExprKind::NullCoalesce { left, right, .. } => {
+                self.resolve_expr(scope, *left);
+                self.resolve_expr(scope, *right);
             }
-            Expr::Cast { expr, ty, .. } => {
-                self.resolve_expr(scope, expr);
-                self.resolve_type_expr(scope, ty);
+            ExprKind::Cast { expr, ty, .. } => {
+                self.resolve_expr(scope, *expr);
+                self.resolve_type_expr(scope, self.pool.type_expr(*ty));
             }
-            Expr::Unary { op: _, expr, .. } => self.resolve_expr(scope, expr),
-            Expr::Binary {
+            ExprKind::Unary { op: _, expr, .. } => self.resolve_expr(scope, *expr),
+            ExprKind::Binary {
                 op: _, left, right, ..
             } => {
-                self.resolve_expr(scope, left);
-                self.resolve_expr(scope, right);
+                self.resolve_expr(scope, *left);
+                self.resolve_expr(scope, *right);
             }
-            Expr::InterpolatedString { parts, .. } => {
-                for part in parts {
-                    if let arandu_parser::StringPart::Expr { expr, .. } = part {
-                        self.resolve_expr(scope, expr);
+            ExprKind::InterpolatedString { parts, .. } => {
+                let part_ids = self.pool.string_part_list(*parts);
+                for part_id in part_ids {
+                    if let arandu_parser::StringPart::Expr { expr, .. } =
+                        self.pool.string_part(*part_id)
+                    {
+                        self.resolve_expr(scope, *expr);
                     }
                 }
             }
-            Expr::Int { .. }
-            | Expr::Float { .. }
-            | Expr::Bool { .. }
-            | Expr::Char { .. }
-            | Expr::Nil { .. }
-            | Expr::Error(_) => {}
+            ExprKind::Int { .. }
+            | ExprKind::Float { .. }
+            | ExprKind::Bool { .. }
+            | ExprKind::Char { .. }
+            | ExprKind::Nil
+            | ExprKind::Error => {}
         }
     }
 
     pub(crate) fn resolve_field_init(&mut self, scope: ScopeId, field: &FieldInit) {
-        self.resolve_expr(scope, &field.value);
+        self.resolve_expr(scope, field.value);
     }
 
     pub(crate) fn resolve_lambda(
@@ -171,18 +186,18 @@ impl Resolver {
             self.define(scope, &param.name, SymbolKind::Param, param.span);
         }
         match body {
-            LambdaBody::Expr { expr, .. } => self.resolve_expr(scope, expr),
-            LambdaBody::Block { block, .. } => self.resolve_block_in_scope(scope, block),
+            LambdaBody::Expr { expr, .. } => self.resolve_expr(scope, *expr),
+            LambdaBody::Block { block, .. } => self.resolve_block_in_scope(scope, self.pool, block),
         }
     }
 
     pub(crate) fn resolve_catch_handler(&mut self, parent: ScopeId, handler: &CatchHandler) {
         match handler {
-            CatchHandler::Expr { expr, .. } => self.resolve_expr(parent, expr),
+            CatchHandler::Expr { expr, .. } => self.resolve_expr(parent, *expr),
             CatchHandler::Block { span, error, block } => {
                 let scope = self.symbols.new_scope(parent);
                 self.define(scope, error, SymbolKind::Local, *span);
-                self.resolve_block_in_scope(scope, block);
+                self.resolve_block_in_scope(scope, self.pool, block);
             }
         }
     }
@@ -191,11 +206,13 @@ impl Resolver {
         let scope = self.symbols.new_scope(parent);
         self.resolve_pattern(scope, &arm.pattern);
         if let Some(guard) = &arm.guard {
-            self.resolve_expr(scope, guard);
+            self.resolve_expr(scope, *guard);
         }
         match &arm.body {
-            MatchArmBody::Expr { expr, .. } => self.resolve_expr(scope, expr),
-            MatchArmBody::Block { block, .. } => self.resolve_block_in_scope(scope, block),
+            MatchArmBody::Expr { expr, .. } => self.resolve_expr(scope, **expr),
+            MatchArmBody::Block { block, .. } => {
+                self.resolve_block_in_scope(scope, self.pool, block)
+            }
         }
     }
 
@@ -205,7 +222,7 @@ impl Resolver {
             Pattern::Bind { span, name } => {
                 self.define(scope, name, SymbolKind::Local, *span);
             }
-            Pattern::Literal { expr, .. } => self.resolve_expr(scope, expr),
+            Pattern::Literal { expr, .. } => self.resolve_expr(scope, **expr),
             Pattern::Enum {
                 type_name, payload, ..
             } => {
@@ -233,8 +250,8 @@ impl Resolver {
                 }
             }
             Pattern::Range { start, end, .. } => {
-                self.resolve_expr(scope, start);
-                self.resolve_expr(scope, end);
+                self.resolve_expr(scope, **start);
+                self.resolve_expr(scope, **end);
             }
         }
     }

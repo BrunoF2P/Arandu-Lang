@@ -8,6 +8,7 @@ pub struct Program {
     pub imports: Vec<ImportDecl>,
     pub decls: Vec<TopLevelDecl>,
     pub docs: Vec<DocCommentAttachment>,
+    pub pool: super::AstPool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -56,11 +57,11 @@ pub struct ImportItem {
 pub enum TopLevelDecl {
     Const(ConstDecl),
     TypeAlias(TypeAliasDecl),
-    Func(FuncDecl),
-    Struct(StructDecl),
-    Enum(EnumDecl),
-    Interface(InterfaceDecl),
-    Extern(ExternDecl),
+    Func(Box<FuncDecl>),
+    Struct(Box<StructDecl>),
+    Enum(Box<EnumDecl>),
+    Interface(Box<InterfaceDecl>),
+    Extern(Box<ExternDecl>),
     Error(Span),
 }
 
