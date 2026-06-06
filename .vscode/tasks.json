@@ -44,6 +44,129 @@
 				"$rustc"
 			],
 			"group": "test"
+		},
+		{
+			"label": "test-arandu-semantics",
+			"type": "shell",
+			"command": "cargo",
+			"args": [
+				"test",
+				"-p",
+				"arandu_semantics",
+				"--quiet"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "check-arandu-semantics",
+			"type": "shell",
+			"command": "cargo",
+			"args": [
+				"check",
+				"-p",
+				"arandu_semantics"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "check-arandu-semantics-2",
+			"type": "shell",
+			"command": "cargo",
+			"args": [
+				"check",
+				"-p",
+				"arandu_semantics"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "check-arandu-semantics-3",
+			"type": "shell",
+			"command": "cargo",
+			"args": [
+				"check",
+				"-p",
+				"arandu_semantics"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "test-arandu-semantics-2",
+			"type": "shell",
+			"command": "cargo",
+			"args": [
+				"test",
+				"-p",
+				"arandu_semantics",
+				"--quiet"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "check-arandu-semantics-4",
+			"type": "shell",
+			"command": "cargo",
+			"args": [
+				"check",
+				"-p",
+				"arandu_semantics"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "check-arandu-semantics-5",
+			"type": "shell",
+			"command": "cargo",
+			"args": [
+				"check",
+				"-p",
+				"arandu_semantics"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "test-arandu-semantics-3",
+			"type": "shell",
+			"command": "cargo",
+			"args": [
+				"test",
+				"-p",
+				"arandu_semantics",
+				"--quiet"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "test"
 		}
 	]
 }

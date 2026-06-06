@@ -20,6 +20,7 @@ pub struct HirProgram {
     pub span: Span,
     pub module: Option<String>,
     pub decls: Vec<HirDecl>,
+    pub pool: crate::hir::HirPool,
 }
 
 #[derive(Debug)]
@@ -69,7 +70,7 @@ pub struct HirFunc {
     pub symbol: SymbolId,
     pub params: Vec<HirParam>,
     pub return_type: ArType,
-    pub body: Option<HirBlock>,
+    pub body: Option<pool::HirBlockId>,
     pub span: Span,
 }
 
@@ -140,7 +141,7 @@ pub struct HirFuncSignature {
 
 #[derive(Debug, Clone)]
 pub struct HirBlock {
-    pub statements: Vec<HirStmt>,
+    pub statements: Vec<pool::HirStmtId>,
     pub span: Span,
 }
 
@@ -171,24 +172,24 @@ pub enum HirStmtKind {
     Expr(HirExpr),
     If {
         condition: HirCondition,
-        then_block: Box<HirBlock>,
-        else_block: Option<Box<HirBlock>>,
+        then_block: pool::HirBlockId,
+        else_block: Option<pool::HirBlockId>,
     },
     For {
         clause: Box<HirForClause>,
-        body: Box<HirBlock>,
+        body: pool::HirBlockId,
     },
     While {
         condition: HirCondition,
-        body: Box<HirBlock>,
+        body: pool::HirBlockId,
     },
     Match {
         value: HirExpr,
         arms: Vec<HirMatchArm>,
     },
-    Defer(Box<HirBlock>),
-    ErrDefer(Box<HirBlock>),
-    Unsafe(Box<HirBlock>),
+    Defer(pool::HirBlockId),
+    ErrDefer(pool::HirBlockId),
+    Unsafe(pool::HirBlockId),
 }
 
 #[derive(Debug, Clone)]
@@ -318,7 +319,7 @@ pub enum HirExprKind {
     Call {
         callee: Box<HirExpr>,
         args: Vec<HirExpr>,
-        trailing_block: Option<HirBlock>,
+        trailing_block: Option<pool::HirBlockId>,
     },
     ResultCtor {
         variant: ResultCtorVariant,
@@ -339,15 +340,15 @@ pub enum HirExprKind {
         expr: Box<HirExpr>,
     },
     AsyncBlock {
-        block: HirBlock,
+        block: pool::HirBlockId,
     },
     UnsafeBlock {
-        block: HirBlock,
+        block: pool::HirBlockId,
     },
     If {
         condition: Box<HirCondition>,
-        then_block: HirBlock,
-        else_block: HirBlock,
+        then_block: pool::HirBlockId,
+        else_block: pool::HirBlockId,
     },
     Match {
         value: Box<HirExpr>,
@@ -400,7 +401,7 @@ pub struct HirLambdaParam {
 #[non_exhaustive]
 pub enum HirLambdaBody {
     Expr(Box<HirExpr>),
-    Block(HirBlock),
+    Block(pool::HirBlockId),
 }
 
 #[derive(Debug, Clone)]
@@ -415,7 +416,7 @@ pub struct HirMatchArm {
 #[non_exhaustive]
 pub enum HirMatchArmBody {
     Expr(Box<HirExpr>),
-    Block(HirBlock),
+    Block(pool::HirBlockId),
 }
 
 #[derive(Debug, Clone)]
@@ -425,7 +426,7 @@ pub enum HirCatchHandler {
     Block {
         error_symbol: Option<SymbolId>,
         error_name: Option<String>,
-        block: HirBlock,
+        block: pool::HirBlockId,
     },
 }
 
@@ -450,14 +451,14 @@ fn check_span(span: Span) -> Result<(), String> {
 }
 
 impl HirProgram {
-    pub fn validate_invariants(&self, symbols: &SymbolTable) -> Result<(), String> {
+    pub fn validate_invariants(&self, pool: &HirPool, symbols: &SymbolTable) -> Result<(), String> {
         check_span(self.span)?;
         for decl in &self.decls {
             check_span(decl.span())?;
             match decl {
                 HirDecl::Const(c) => {
                     let _sym = symbols.get(c.symbol);
-                    c.value.validate_invariants(symbols)?;
+                    c.value.validate_invariants(pool, symbols)?;
                 }
                 HirDecl::TypeAlias(_) => {}
                 HirDecl::Func(f) => {
@@ -465,8 +466,8 @@ impl HirProgram {
                     for param in &f.params {
                         check_span(param.span)?;
                     }
-                    if let Some(body) = &f.body {
-                        body.validate_invariants(symbols)?;
+                    if let Some(body_id) = f.body {
+                        pool.block(body_id).validate_invariants(pool, symbols)?;
                     }
                 }
                 HirDecl::Struct(s) => {
@@ -497,10 +498,11 @@ impl HirProgram {
 }
 
 impl HirBlock {
-    pub fn validate_invariants(&self, symbols: &SymbolTable) -> Result<(), String> {
+    pub fn validate_invariants(&self, pool: &HirPool, symbols: &SymbolTable) -> Result<(), String> {
         check_span(self.span)?;
         let mut last_start = 0;
-        for stmt in &self.statements {
+        for stmt_id in &self.statements {
+            let stmt = pool.stmt(*stmt_id);
             check_span(stmt.span)?;
             if stmt.span.start != 0 || stmt.span.end != 0 {
                 if stmt.span.start < last_start {
@@ -511,14 +513,14 @@ impl HirBlock {
                 }
                 last_start = stmt.span.start;
             }
-            stmt.validate_invariants(symbols)?;
+            stmt.validate_invariants(pool, symbols)?;
         }
         Ok(())
     }
 }
 
 impl HirStmt {
-    pub fn validate_invariants(&self, symbols: &SymbolTable) -> Result<(), String> {
+    pub fn validate_invariants(&self, pool: &HirPool, symbols: &SymbolTable) -> Result<(), String> {
         check_span(self.span)?;
         match &self.kind {
             HirStmtKind::VarDecl { bindings, value } => {
@@ -531,7 +533,7 @@ impl HirStmt {
                         ));
                     }
                 }
-                value.validate_invariants(symbols)?;
+                value.validate_invariants(pool, symbols)?;
             }
             HirStmtKind::Set {
                 places,
@@ -550,29 +552,29 @@ impl HirStmt {
                         ));
                     }
                 }
-                value.validate_invariants(symbols)?;
+                value.validate_invariants(pool, symbols)?;
             }
             HirStmtKind::Return { values } => {
                 for v in values {
-                    v.validate_invariants(symbols)?;
+                    v.validate_invariants(pool, symbols)?;
                 }
             }
             HirStmtKind::Break | HirStmtKind::Continue => {}
             HirStmtKind::Free(expr) => {
-                expr.validate_invariants(symbols)?;
+                expr.validate_invariants(pool, symbols)?;
             }
             HirStmtKind::Expr(expr) => {
-                expr.validate_invariants(symbols)?;
+                expr.validate_invariants(pool, symbols)?;
             }
             HirStmtKind::If {
                 condition,
                 then_block,
                 else_block,
             } => {
-                condition.validate_invariants(symbols)?;
-                then_block.validate_invariants(symbols)?;
+                condition.validate_invariants(pool, symbols)?;
+                pool.block(*then_block).validate_invariants(pool, symbols)?;
                 if let Some(eb) = else_block {
-                    eb.validate_invariants(symbols)?;
+                    pool.block(*eb).validate_invariants(pool, symbols)?;
                 }
             }
             HirStmtKind::For { clause, body } => {
@@ -583,7 +585,7 @@ impl HirStmt {
                         for b in bindings {
                             check_span(b.span)?;
                         }
-                        iterable.validate_invariants(symbols)?;
+                        iterable.validate_invariants(pool, symbols)?;
                     }
                     HirForClause::CStyle {
                         init,
@@ -592,37 +594,39 @@ impl HirStmt {
                         ..
                     } => {
                         if let Some(i) = init {
-                            i.validate_invariants(symbols)?;
+                            i.validate_invariants(pool, symbols)?;
                         }
                         if let Some(c) = condition {
-                            c.validate_invariants(symbols)?;
+                            c.validate_invariants(pool, symbols)?;
                         }
                         if let Some(s) = step {
-                            s.validate_invariants(symbols)?;
+                            s.validate_invariants(pool, symbols)?;
                         }
                     }
                 }
-                body.validate_invariants(symbols)?;
+                pool.block(*body).validate_invariants(pool, symbols)?;
             }
             HirStmtKind::While { condition, body } => {
-                condition.validate_invariants(symbols)?;
-                body.validate_invariants(symbols)?;
+                condition.validate_invariants(pool, symbols)?;
+                pool.block(*body).validate_invariants(pool, symbols)?;
             }
             HirStmtKind::Match { value, arms } => {
-                value.validate_invariants(symbols)?;
+                value.validate_invariants(pool, symbols)?;
                 for arm in arms {
                     check_span(arm.span)?;
                     if let Some(g) = &arm.guard {
-                        g.validate_invariants(symbols)?;
+                        g.validate_invariants(pool, symbols)?;
                     }
                     match &arm.body {
-                        HirMatchArmBody::Expr(e) => e.validate_invariants(symbols)?,
-                        HirMatchArmBody::Block(b) => b.validate_invariants(symbols)?,
+                        HirMatchArmBody::Expr(e) => e.validate_invariants(pool, symbols)?,
+                        HirMatchArmBody::Block(b) => {
+                            pool.block(*b).validate_invariants(pool, symbols)?
+                        }
                     }
                 }
             }
             HirStmtKind::Defer(b) | HirStmtKind::ErrDefer(b) | HirStmtKind::Unsafe(b) => {
-                b.validate_invariants(symbols)?;
+                pool.block(*b).validate_invariants(pool, symbols)?;
             }
         }
         Ok(())
@@ -630,16 +634,16 @@ impl HirStmt {
 }
 
 impl HirCondition {
-    pub fn validate_invariants(&self, symbols: &SymbolTable) -> Result<(), String> {
+    pub fn validate_invariants(&self, pool: &HirPool, symbols: &SymbolTable) -> Result<(), String> {
         match self {
-            HirCondition::Expr(expr) => expr.validate_invariants(symbols),
-            HirCondition::Is { expr, .. } => expr.validate_invariants(symbols),
+            HirCondition::Expr(expr) => expr.validate_invariants(pool, symbols),
+            HirCondition::Is { expr, .. } => expr.validate_invariants(pool, symbols),
         }
     }
 }
 
 impl HirSimpleStmt {
-    pub fn validate_invariants(&self, symbols: &SymbolTable) -> Result<(), String> {
+    pub fn validate_invariants(&self, pool: &HirPool, symbols: &SymbolTable) -> Result<(), String> {
         match self {
             HirSimpleStmt::VarDecl { bindings, value } => {
                 for b in bindings {
@@ -651,7 +655,7 @@ impl HirSimpleStmt {
                         ));
                     }
                 }
-                value.validate_invariants(symbols)?;
+                value.validate_invariants(pool, symbols)?;
             }
             HirSimpleStmt::Set {
                 places,
@@ -661,10 +665,10 @@ impl HirSimpleStmt {
                 for p in places {
                     check_span(p.span)?;
                 }
-                value.validate_invariants(symbols)?;
+                value.validate_invariants(pool, symbols)?;
             }
             HirSimpleStmt::Expr(expr) => {
-                expr.validate_invariants(symbols)?;
+                expr.validate_invariants(pool, symbols)?;
             }
         }
         Ok(())
@@ -672,7 +676,7 @@ impl HirSimpleStmt {
 }
 
 impl HirExpr {
-    pub fn validate_invariants(&self, symbols: &SymbolTable) -> Result<(), String> {
+    pub fn validate_invariants(&self, pool: &HirPool, symbols: &SymbolTable) -> Result<(), String> {
         check_span(self.span)?;
         if matches!(self.ty, ArType::Error) {
             return Err(format!(
@@ -693,39 +697,39 @@ impl HirExpr {
                 let _m_sym = symbols.get(*member_symbol);
             }
             HirExprKind::Generic { callee, .. } => {
-                callee.validate_invariants(symbols)?;
+                callee.validate_invariants(pool, symbols)?;
             }
             HirExprKind::Field { base, .. } | HirExprKind::SafeField { base, .. } => {
-                base.validate_invariants(symbols)?;
+                base.validate_invariants(pool, symbols)?;
                 if matches!(base.ty, ArType::Error) {
                     return Err("Field access base expression has Error type".to_string());
                 }
             }
             HirExprKind::Index { base, index } | HirExprKind::SafeIndex { base, index } => {
-                base.validate_invariants(symbols)?;
-                index.validate_invariants(symbols)?;
+                base.validate_invariants(pool, symbols)?;
+                index.validate_invariants(pool, symbols)?;
             }
             HirExprKind::Try { expr } => {
-                expr.validate_invariants(symbols)?;
+                expr.validate_invariants(pool, symbols)?;
             }
             HirExprKind::Call {
                 callee,
                 args,
                 trailing_block,
             } => {
-                callee.validate_invariants(symbols)?;
+                callee.validate_invariants(pool, symbols)?;
                 if matches!(callee.ty, ArType::Error) {
                     return Err("Call callee expression has Error type".to_string());
                 }
                 for arg in args {
-                    arg.validate_invariants(symbols)?;
+                    arg.validate_invariants(pool, symbols)?;
                 }
                 if let Some(tb) = trailing_block {
-                    tb.validate_invariants(symbols)?;
+                    pool.block(*tb).validate_invariants(pool, symbols)?;
                 }
             }
             HirExprKind::ResultCtor { value, .. } => {
-                value.validate_invariants(symbols)?;
+                value.validate_invariants(pool, symbols)?;
             }
             HirExprKind::StructLiteral {
                 struct_symbol,
@@ -734,12 +738,12 @@ impl HirExpr {
                 let _sym = symbols.get(*struct_symbol);
                 for f in fields {
                     check_span(f.span)?;
-                    f.value.validate_invariants(symbols)?;
+                    f.value.validate_invariants(pool, symbols)?;
                 }
             }
             HirExprKind::Array { items } => {
                 for item in items {
-                    item.validate_invariants(symbols)?;
+                    item.validate_invariants(pool, symbols)?;
                 }
             }
             HirExprKind::Lambda { params, body } => {
@@ -748,58 +752,62 @@ impl HirExpr {
                     let _sym = symbols.get(p.symbol);
                 }
                 match body {
-                    HirLambdaBody::Expr(e) => e.validate_invariants(symbols)?,
-                    HirLambdaBody::Block(b) => b.validate_invariants(symbols)?,
+                    HirLambdaBody::Expr(e) => e.validate_invariants(pool, symbols)?,
+                    HirLambdaBody::Block(b) => pool.block(*b).validate_invariants(pool, symbols)?,
                 }
             }
             HirExprKind::Alloc { expr } => {
-                expr.validate_invariants(symbols)?;
+                expr.validate_invariants(pool, symbols)?;
             }
             HirExprKind::AsyncBlock { block } | HirExprKind::UnsafeBlock { block } => {
-                block.validate_invariants(symbols)?;
+                pool.block(*block).validate_invariants(pool, symbols)?;
             }
             HirExprKind::If {
                 condition,
                 then_block,
                 else_block,
             } => {
-                condition.validate_invariants(symbols)?;
-                then_block.validate_invariants(symbols)?;
-                else_block.validate_invariants(symbols)?;
+                condition.validate_invariants(pool, symbols)?;
+                pool.block(*then_block).validate_invariants(pool, symbols)?;
+                pool.block(*else_block).validate_invariants(pool, symbols)?;
             }
             HirExprKind::Match { value, arms } => {
-                value.validate_invariants(symbols)?;
+                value.validate_invariants(pool, symbols)?;
                 for arm in arms {
                     check_span(arm.span)?;
                     if let Some(g) = &arm.guard {
-                        g.validate_invariants(symbols)?;
+                        g.validate_invariants(pool, symbols)?;
                     }
                     match &arm.body {
-                        HirMatchArmBody::Expr(e) => e.validate_invariants(symbols)?,
-                        HirMatchArmBody::Block(b) => b.validate_invariants(symbols)?,
+                        HirMatchArmBody::Expr(e) => e.validate_invariants(pool, symbols)?,
+                        HirMatchArmBody::Block(b) => {
+                            pool.block(*b).validate_invariants(pool, symbols)?
+                        }
                     }
                 }
             }
             HirExprKind::Catch { expr, handler } => {
-                expr.validate_invariants(symbols)?;
+                expr.validate_invariants(pool, symbols)?;
                 match handler {
-                    HirCatchHandler::Expr(e) => e.validate_invariants(symbols)?,
-                    HirCatchHandler::Block { block, .. } => block.validate_invariants(symbols)?,
+                    HirCatchHandler::Expr(e) => e.validate_invariants(pool, symbols)?,
+                    HirCatchHandler::Block { block, .. } => {
+                        pool.block(*block).validate_invariants(pool, symbols)?
+                    }
                 }
             }
             HirExprKind::NullCoalesce { left, right } => {
-                left.validate_invariants(symbols)?;
-                right.validate_invariants(symbols)?;
+                left.validate_invariants(pool, symbols)?;
+                right.validate_invariants(pool, symbols)?;
             }
             HirExprKind::Cast { expr, .. } => {
-                expr.validate_invariants(symbols)?;
+                expr.validate_invariants(pool, symbols)?;
             }
             HirExprKind::Unary { expr, .. } => {
-                expr.validate_invariants(symbols)?;
+                expr.validate_invariants(pool, symbols)?;
             }
             HirExprKind::Binary { left, right, .. } => {
-                left.validate_invariants(symbols)?;
-                right.validate_invariants(symbols)?;
+                left.validate_invariants(pool, symbols)?;
+                right.validate_invariants(pool, symbols)?;
             }
             HirExprKind::Int(_)
             | HirExprKind::Float(_)
@@ -811,3 +819,6 @@ impl HirExpr {
         Ok(())
     }
 }
+
+mod pool;
+pub use pool::{HirBlockId, HirExprId, HirPool, HirStmtId};

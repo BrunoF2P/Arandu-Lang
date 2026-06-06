@@ -22,13 +22,20 @@ pub fn lower_to_hir(
     }
 
     let mut decls = Vec::new();
+    // Create a HirPool to seed HIR allocations for future ID-based lowering.
+    let mut hir_pool = crate::hir::HirPool::new();
     for decl in &program.decls {
-        decls.push(decl::lower_decl(type_check, &program.pool, decl).map_err(|e| vec![e])?);
+        let hir_decl = decl::lower_decl(type_check, &program.pool, &mut hir_pool, decl)
+            .map_err(|e| vec![e])?;
+        decls.push(hir_decl);
     }
     let module = program.module.as_ref().map(|m| m.path.join("."));
     Ok(HirProgram {
         span: program.span,
         module,
         decls,
+        pool: hir_pool,
     })
 }
+
+// population is done during decl lowering; no separate backfill required.

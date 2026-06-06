@@ -5,9 +5,7 @@ use crate::amir::{
     TempId,
 };
 use crate::diagnostics::Diagnostic;
-use crate::hir::{
-    HirBlock, HirForClause, HirPlace, HirPlaceSuffix, HirSimpleStmt, HirStmt, HirStmtKind,
-};
+use crate::hir::{HirForClause, HirPlace, HirPlaceSuffix, HirSimpleStmt, HirStmt, HirStmtKind};
 use crate::literal_pool::AmirLiteralEntry;
 use crate::ops::{BinaryOp, SetOp};
 use crate::passes::type_checker::types::{ArType, Primitive};
@@ -110,7 +108,7 @@ impl LowerCtx<'_> {
 
                 // Then
                 self.current_block = Some(bb_then);
-                self.lower_block(then_block, symbols)?;
+                self.lower_block(*then_block, symbols)?;
                 if self.current_block.is_some() {
                     self.set_terminator(AmirTerminator::Goto(bb_join));
                 }
@@ -118,7 +116,7 @@ impl LowerCtx<'_> {
                 // Else
                 self.current_block = Some(bb_else);
                 if let Some(eb) = else_block {
-                    self.lower_block(eb, symbols)?;
+                    self.lower_block(*eb, symbols)?;
                 }
                 if self.current_block.is_some() {
                     self.set_terminator(AmirTerminator::Goto(bb_join));
@@ -140,7 +138,7 @@ impl LowerCtx<'_> {
                 let defer_depth = self.defer_frames.len();
                 self.loop_stack.push((bb_cond, bb_exit, defer_depth));
                 self.current_block = Some(bb_body);
-                self.lower_block(body, symbols)?;
+                self.lower_block(*body, symbols)?;
                 if self.current_block.is_some() {
                     self.set_terminator(AmirTerminator::Goto(bb_cond));
                 }
@@ -249,7 +247,7 @@ impl LowerCtx<'_> {
                         )?;
                     }
 
-                    self.lower_block(body, symbols)?;
+                    self.lower_block(*body, symbols)?;
                     if self.current_block.is_some() {
                         self.set_terminator(AmirTerminator::Goto(bb_step));
                     }
@@ -313,7 +311,7 @@ impl LowerCtx<'_> {
                     let defer_depth = self.defer_frames.len();
                     self.loop_stack.push((bb_step, bb_exit, defer_depth));
                     self.current_block = Some(bb_body);
-                    self.lower_block(body, symbols)?;
+                    self.lower_block(*body, symbols)?;
                     if self.current_block.is_some() {
                         self.set_terminator(AmirTerminator::Goto(bb_step));
                     }
@@ -335,13 +333,13 @@ impl LowerCtx<'_> {
                 self.lower_match_stmt(value, arms, bb_end, symbols)?;
             }
             HirStmtKind::Unsafe(b) => {
-                self.lower_block(b, symbols)?;
+                self.lower_block(*b, symbols)?;
             }
             HirStmtKind::Defer(block) => {
-                self.register_defer(block, DeferKind::Defer);
+                self.register_defer(self.hir.pool.block(*block), DeferKind::Defer);
             }
             HirStmtKind::ErrDefer(block) => {
-                self.register_defer(block, DeferKind::ErrDefer);
+                self.register_defer(self.hir.pool.block(*block), DeferKind::ErrDefer);
             }
             HirStmtKind::Free(expr) => {
                 let op = self.lower_expr(expr, None, symbols)?;
@@ -523,13 +521,15 @@ impl LowerCtx<'_> {
 
     pub(crate) fn lower_block(
         &mut self,
-        block: &HirBlock,
+        block: crate::hir::HirBlockId,
         symbols: &SymbolTable,
     ) -> Result<(), Diagnostic> {
         self.defer_frames.push(DeferFrame {
             entries: Vec::new(),
         });
-        for stmt in &block.statements {
+        let blk = self.hir.pool.block(block);
+        for stmt_id in &blk.statements {
+            let stmt = self.hir.pool.stmt(*stmt_id);
             self.lower_stmt(stmt, symbols)?;
         }
         if self.current_block.is_some() {
@@ -542,14 +542,15 @@ impl LowerCtx<'_> {
     /// last statement is an expression statement, its value is assigned to `target`.
     pub(crate) fn lower_block_as_expr(
         &mut self,
-        block: &HirBlock,
+        block: crate::hir::HirBlockId,
         target: Option<TempId>,
         symbols: &SymbolTable,
     ) -> Result<(), Diagnostic> {
         self.defer_frames.push(DeferFrame {
             entries: Vec::new(),
         });
-        if block.statements.is_empty() {
+        let blk = self.hir.pool.block(block);
+        if blk.statements.is_empty() {
             if let Some(dest) = target {
                 self.emit_assign_temp(
                     dest,
@@ -561,8 +562,9 @@ impl LowerCtx<'_> {
             }
             return Ok(());
         }
-        let last_idx = block.statements.len() - 1;
-        for (i, stmt) in block.statements.iter().enumerate() {
+        let last_idx = blk.statements.len() - 1;
+        for (i, stmt_id) in blk.statements.iter().enumerate() {
+            let stmt = self.hir.pool.stmt(*stmt_id);
             if i == last_idx {
                 if let HirStmtKind::Expr(ref expr) = stmt.kind {
                     self.lower_expr(expr, target, symbols)?;

@@ -38,7 +38,7 @@ pub fn lower_to_amir(
             },
         ) = decl
         {
-            match lower_func(f, body, tc, hir, &mut literal_pool) {
+            match lower_func(f, *body, tc, hir, &mut literal_pool) {
                 Ok(amir_f) => {
                     diagnostics.extend(validate_amir_func(&amir_f, &tc.symbols));
                     diagnostics.extend(check_definite_init(&amir_f, &tc.symbols));

@@ -406,14 +406,14 @@ impl LowerCtx<'_> {
 
                 // Then branch
                 self.current_block = Some(bb_then);
-                self.lower_block_as_expr(then_block, Some(dest), symbols)?;
+                self.lower_block_as_expr(*then_block, Some(dest), symbols)?;
                 if self.current_block.is_some() {
                     self.set_terminator(AmirTerminator::Goto(bb_join));
                 }
 
                 // Else branch
                 self.current_block = Some(bb_else);
-                self.lower_block_as_expr(else_block, Some(dest), symbols)?;
+                self.lower_block_as_expr(*else_block, Some(dest), symbols)?;
                 if self.current_block.is_some() {
                     self.set_terminator(AmirTerminator::Goto(bb_join));
                 }

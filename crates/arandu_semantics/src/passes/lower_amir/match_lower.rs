@@ -384,7 +384,7 @@ impl LowerCtx<'_> {
                 self.lower_expr(expr, None, symbols)?;
             }
             HirMatchArmBody::Block(block) => {
-                self.lower_block(block, symbols)?;
+                self.lower_block(*block, symbols)?;
             }
         }
         if self.current_block.is_some() {
@@ -446,7 +446,7 @@ impl LowerCtx<'_> {
                 self.lower_expr(expr, Some(dest), symbols)?;
             }
             HirMatchArmBody::Block(block) => {
-                self.lower_block_as_expr(block, Some(dest), symbols)?;
+                self.lower_block_as_expr(*block, Some(dest), symbols)?;
             }
         }
         if self.current_block.is_some() {

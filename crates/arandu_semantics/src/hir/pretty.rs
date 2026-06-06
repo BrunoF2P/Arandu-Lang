@@ -8,6 +8,7 @@ use super::{
 // ── Pretty Printer Implementation ───────────────────────────────────
 
 pub struct HirPrettyCtx<'a> {
+    pub pool: &'a crate::hir::HirPool,
     pub symbols: &'a SymbolTable,
     pub show_spans: bool,
 }
@@ -101,8 +102,8 @@ impl HirFunc {
             params_str.join(", "),
             return_ty_str
         ));
-        if let Some(ref body) = self.body {
-            body.pretty_print_to(out, indent + 1, ctx);
+        if let Some(body_id) = self.body {
+            ctx.pool.block(body_id).pretty_print_to(out, indent + 1, ctx);
         }
     }
 }
@@ -187,8 +188,8 @@ impl HirExtern {
 
 impl HirBlock {
     fn pretty_print_to(&self, out: &mut String, indent: usize, ctx: &HirPrettyCtx<'_>) {
-        for stmt in &self.statements {
-            stmt.pretty_print_to(out, indent, ctx);
+        for stmt_id in &self.statements {
+            ctx.pool.stmt(*stmt_id).pretty_print_to(out, indent, ctx);
         }
     }
 }
@@ -264,21 +265,21 @@ impl HirStmt {
                 condition.pretty_print_to(out, indent + 1, ctx);
                 let block_ind = "  ".repeat(indent + 1);
                 out.push_str(&format!("{block_ind}Then\n"));
-                then_block.pretty_print_to(out, indent + 2, ctx);
+                ctx.pool.block(*then_block).pretty_print_to(out, indent + 2, ctx);
                 if let Some(else_blk) = else_block {
                     out.push_str(&format!("{block_ind}Else\n"));
-                    else_blk.pretty_print_to(out, indent + 2, ctx);
+                    ctx.pool.block(*else_blk).pretty_print_to(out, indent + 2, ctx);
                 }
             }
             HirStmtKind::While { condition, body } => {
                 out.push_str(&format!("{ind}While\n"));
                 condition.pretty_print_to(out, indent + 1, ctx);
-                body.pretty_print_to(out, indent + 1, ctx);
+                ctx.pool.block(*body).pretty_print_to(out, indent + 1, ctx);
             }
             HirStmtKind::For { clause, body } => {
                 out.push_str(&format!("{ind}For\n"));
                 clause.pretty_print_to(out, indent + 1, ctx);
-                body.pretty_print_to(out, indent + 1, ctx);
+                ctx.pool.block(*body).pretty_print_to(out, indent + 1, ctx);
             }
             HirStmtKind::Match { value, arms } => {
                 out.push_str(&format!("{ind}Match\n"));
@@ -299,22 +300,22 @@ impl HirStmt {
                             expr.pretty_print_to(out, indent + 2, ctx);
                         }
                         HirMatchArmBody::Block(block) => {
-                            block.pretty_print_to(out, indent + 2, ctx);
+                            ctx.pool.block(*block).pretty_print_to(out, indent + 2, ctx);
                         }
                     }
                 }
             }
             HirStmtKind::Defer(block) => {
                 out.push_str(&format!("{ind}Defer\n"));
-                block.pretty_print_to(out, indent + 1, ctx);
+                ctx.pool.block(*block).pretty_print_to(out, indent + 1, ctx);
             }
             HirStmtKind::ErrDefer(block) => {
                 out.push_str(&format!("{ind}ErrDefer\n"));
-                block.pretty_print_to(out, indent + 1, ctx);
+                ctx.pool.block(*block).pretty_print_to(out, indent + 1, ctx);
             }
             HirStmtKind::Unsafe(block) => {
                 out.push_str(&format!("{ind}Unsafe\n"));
-                block.pretty_print_to(out, indent + 1, ctx);
+                ctx.pool.block(*block).pretty_print_to(out, indent + 1, ctx);
             }
         }
     }
@@ -566,7 +567,7 @@ impl HirExpr {
                 if let Some(block) = trailing_block {
                     let sub_ind = "  ".repeat(indent + 1);
                     out.push_str(&format!("{sub_ind}TrailingBlock\n"));
-                    block.pretty_print_to(out, indent + 2, ctx);
+                    ctx.pool.block(*block).pretty_print_to(out, indent + 2, ctx);
                 }
             }
             HirExprKind::ResultCtor { variant, value } => {
@@ -628,7 +629,7 @@ impl HirExpr {
                         expr.pretty_print_to(out, indent + 1, ctx);
                     }
                     HirLambdaBody::Block(block) => {
-                        block.pretty_print_to(out, indent + 1, ctx);
+                        ctx.pool.block(*block).pretty_print_to(out, indent + 1, ctx);
                     }
                 }
             }
@@ -642,7 +643,7 @@ impl HirExpr {
                     ind,
                     self.ty.display(ctx.symbols)
                 ));
-                block.pretty_print_to(out, indent + 1, ctx);
+                ctx.pool.block(*block).pretty_print_to(out, indent + 1, ctx);
             }
             HirExprKind::UnsafeBlock { block } => {
                 out.push_str(&format!(
@@ -650,7 +651,7 @@ impl HirExpr {
                     ind,
                     self.ty.display(ctx.symbols)
                 ));
-                block.pretty_print_to(out, indent + 1, ctx);
+                ctx.pool.block(*block).pretty_print_to(out, indent + 1, ctx);
             }
             HirExprKind::If {
                 condition,
@@ -661,9 +662,9 @@ impl HirExpr {
                 condition.pretty_print_to(out, indent + 1, ctx);
                 let sub_ind = "  ".repeat(indent + 1);
                 out.push_str(&format!("{sub_ind}Then\n"));
-                then_block.pretty_print_to(out, indent + 2, ctx);
+                ctx.pool.block(*then_block).pretty_print_to(out, indent + 2, ctx);
                 out.push_str(&format!("{sub_ind}Else\n"));
-                else_block.pretty_print_to(out, indent + 2, ctx);
+                ctx.pool.block(*else_block).pretty_print_to(out, indent + 2, ctx);
             }
             HirExprKind::Match { value, arms } => {
                 out.push_str(&format!("{}Match: {}\n", ind, self.ty.display(ctx.symbols)));
@@ -684,7 +685,7 @@ impl HirExpr {
                             expr.pretty_print_to(out, indent + 2, ctx);
                         }
                         HirMatchArmBody::Block(block) => {
-                            block.pretty_print_to(out, indent + 2, ctx);
+                            ctx.pool.block(*block).pretty_print_to(out, indent + 2, ctx);
                         }
                     }
                 }
@@ -703,7 +704,7 @@ impl HirExpr {
                     } => {
                         let err_str = error_name.as_deref().unwrap_or("error");
                         out.push_str(&format!("{sub_ind}Handler({err_str})\n"));
-                        block.pretty_print_to(out, indent + 2, ctx);
+                        ctx.pool.block(*block).pretty_print_to(out, indent + 2, ctx);
                     }
                 }
             }

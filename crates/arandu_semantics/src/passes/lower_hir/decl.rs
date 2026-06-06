@@ -12,6 +12,7 @@ use arandu_parser::ast_pool::AstPool;
 pub(crate) fn lower_decl(
     type_check: &TypeCheckResult,
     pool: &AstPool,
+    hir_pool: &mut crate::hir::HirPool,
     decl: &TopLevelDecl,
 ) -> Result<HirDecl, Diagnostic> {
     match decl {
@@ -22,10 +23,12 @@ pub(crate) fn lower_decl(
                 .decl_type(symbol)
                 .cloned()
                 .unwrap_or(ArType::Error);
+            let value_vid = super::expr::lower_expr(type_check, pool, hir_pool, d.value)?;
+            let value_hir = hir_pool.expr(value_vid).clone();
             Ok(HirDecl::Const(HirConst {
                 symbol,
                 ty,
-                value: super::expr::lower_expr(type_check, pool, d.value)?,
+                value: value_hir,
                 span: d.span,
             }))
         }
@@ -73,12 +76,11 @@ pub(crate) fn lower_decl(
                     receiver_kind: p.ownership.map(super::stmt::ownership_to_receiver_kind),
                 });
             }
-            let body = Some(super::stmt::lower_block(type_check, pool, &d.body)?);
             Ok(HirDecl::Func(HirFunc {
                 symbol,
                 params,
                 return_type,
-                body,
+                body: Some(super::stmt::lower_block(type_check, pool, hir_pool, &d.body)?),
                 span: d.span,
             }))
         }

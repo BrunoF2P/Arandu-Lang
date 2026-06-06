@@ -5,13 +5,13 @@ use crate::TypeCheckResult;
 use crate::amir::{AmirFunc, AmirOperand, AmirPlace, AmirTemp, AmirTerminator, TempId};
 use crate::cfg::compute_cfg_edges;
 use crate::diagnostics::Diagnostic;
-use crate::hir::{HirBlock, HirFunc, HirProgram};
+use crate::hir::{HirBlockId, HirFunc, HirProgram};
 use crate::literal_pool::AmirLiteralPool;
 use std::collections::HashMap;
 
 pub(crate) fn lower_func(
     f: &HirFunc,
-    body: &HirBlock,
+    body: HirBlockId,
     tc: &TypeCheckResult,
     hir: &HirProgram,
     literal_pool: &mut AmirLiteralPool,

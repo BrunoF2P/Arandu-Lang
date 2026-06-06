@@ -118,7 +118,8 @@ impl LowerCtx<'_> {
         block: &HirBlock,
         symbols: &SymbolTable,
     ) -> Result<(), Diagnostic> {
-        for stmt in &block.statements {
+        for stmt_id in &block.statements {
+            let stmt = self.hir.pool.stmt(*stmt_id);
             self.lower_stmt(stmt, symbols)?;
         }
         Ok(())

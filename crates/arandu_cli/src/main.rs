@@ -18,7 +18,7 @@ fn validate_hir_and_analyze(
     type_check: &arandu_semantics::TypeCheckResult,
     filepath: &str,
 ) {
-    if let Err(err) = hir.validate_invariants(&type_check.symbols) {
+    if let Err(err) = hir.validate_invariants(&hir.pool, &type_check.symbols) {
         eprintln!("HIR invariant violation: {err}");
         process::exit(1);
     }
@@ -138,6 +138,7 @@ fn main() {
                 println!("{hir:#?}");
             } else {
                 let ctx = arandu_semantics::hir::HirPrettyCtx {
+                    pool: &hir.pool,
                     symbols: &checked.type_check.symbols,
                     show_spans: false,
                 };

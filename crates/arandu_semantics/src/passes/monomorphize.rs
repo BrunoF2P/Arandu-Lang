@@ -26,8 +26,8 @@ use crate::SymbolId;
 use crate::SymbolTable;
 use crate::diagnostics::{DiagCode, Diagnostic};
 use crate::hir::{
-    HirBlock, HirCatchHandler, HirCondition, HirDecl, HirExpr, HirExprKind, HirLambdaBody,
-    HirMatchArmBody, HirProgram, HirSimpleStmt, HirStmt, HirStmtKind,
+    HirCatchHandler, HirCondition, HirDecl, HirExpr, HirExprKind, HirLambdaBody, HirMatchArmBody,
+    HirProgram, HirSimpleStmt, HirStmt, HirStmtKind,
 };
 use crate::newtype_index;
 use crate::passes::type_checker::TypeCheckResult;
@@ -352,6 +352,7 @@ pub fn analyze_instantiations(
 ) -> Result<InstantiationGraph, Vec<Diagnostic>> {
     let mut analyzer = InstantiationAnalyzer {
         tc,
+        hir,
         interner: tc.type_info.type_interner.clone(),
         graph: InstantiationGraph::new(),
         diagnostics: Vec::new(),
@@ -359,10 +360,10 @@ pub fn analyze_instantiations(
 
     for decl in &hir.decls {
         if let HirDecl::Func(func) = decl
-            && let Some(body) = &func.body
+            && let Some(body_id) = func.body
         {
             let current = analyzer.current_generic_node(func.symbol);
-            analyzer.visit_block(body, current);
+            analyzer.visit_block(body_id, current);
         }
     }
 
@@ -390,6 +391,7 @@ pub fn analyze_instantiations(
 
 struct InstantiationAnalyzer<'a> {
     tc: &'a TypeCheckResult,
+    hir: &'a HirProgram,
     interner: TypeInterner,
     graph: InstantiationGraph,
     diagnostics: Vec<Diagnostic>,
@@ -428,8 +430,10 @@ impl InstantiationAnalyzer<'_> {
         }
     }
 
-    fn visit_block(&mut self, block: &HirBlock, current: Option<InstantiationNodeId>) {
-        for stmt in &block.statements {
+    fn visit_block(&mut self, block: crate::hir::HirBlockId, current: Option<InstantiationNodeId>) {
+        let blk = self.hir.pool.block(block);
+        for stmt_id in &blk.statements {
+            let stmt = self.hir.pool.stmt(*stmt_id);
             self.visit_stmt(stmt, current);
         }
     }
@@ -451,9 +455,9 @@ impl InstantiationAnalyzer<'_> {
                 else_block,
             } => {
                 self.visit_condition(condition, current);
-                self.visit_block(then_block, current);
+                self.visit_block(*then_block, current);
                 if let Some(block) = else_block {
-                    self.visit_block(block, current);
+                    self.visit_block(*block, current);
                 }
             }
             HirStmtKind::For { clause, body } => {
@@ -478,11 +482,11 @@ impl InstantiationAnalyzer<'_> {
                         }
                     }
                 }
-                self.visit_block(body, current);
+                self.visit_block(*body, current);
             }
             HirStmtKind::While { condition, body } => {
                 self.visit_condition(condition, current);
-                self.visit_block(body, current);
+                self.visit_block(*body, current);
             }
             HirStmtKind::Match { value, arms } => {
                 self.visit_expr(value, current);
@@ -492,14 +496,14 @@ impl InstantiationAnalyzer<'_> {
                     }
                     match &arm.body {
                         HirMatchArmBody::Expr(expr) => self.visit_expr(expr, current),
-                        HirMatchArmBody::Block(block) => self.visit_block(block, current),
+                        HirMatchArmBody::Block(block) => self.visit_block(*block, current),
                     }
                 }
             }
             HirStmtKind::Defer(block)
             | HirStmtKind::ErrDefer(block)
             | HirStmtKind::Unsafe(block) => {
-                self.visit_block(block, current);
+                self.visit_block(*block, current);
             }
             HirStmtKind::Break | HirStmtKind::Continue => {}
         }
@@ -559,7 +563,7 @@ impl InstantiationAnalyzer<'_> {
                     self.visit_expr(arg, current);
                 }
                 if let Some(block) = trailing_block {
-                    self.visit_block(block, current);
+                    self.visit_block(*block, current);
                 }
             }
             HirExprKind::ResultCtor { value, .. } => self.visit_expr(value, current),
@@ -575,10 +579,10 @@ impl InstantiationAnalyzer<'_> {
             }
             HirExprKind::Lambda { body, .. } => match body {
                 HirLambdaBody::Expr(expr) => self.visit_expr(expr, current),
-                HirLambdaBody::Block(block) => self.visit_block(block, current),
+                HirLambdaBody::Block(block) => self.visit_block(*block, current),
             },
             HirExprKind::AsyncBlock { block } | HirExprKind::UnsafeBlock { block } => {
-                self.visit_block(block, current);
+                self.visit_block(*block, current);
             }
             HirExprKind::If {
                 condition,
@@ -586,8 +590,8 @@ impl InstantiationAnalyzer<'_> {
                 else_block,
             } => {
                 self.visit_condition(condition, current);
-                self.visit_block(then_block, current);
-                self.visit_block(else_block, current);
+                self.visit_block(*then_block, current);
+                self.visit_block(*else_block, current);
             }
             HirExprKind::Match { value, arms } => {
                 self.visit_expr(value, current);
@@ -597,7 +601,7 @@ impl InstantiationAnalyzer<'_> {
                     }
                     match &arm.body {
                         HirMatchArmBody::Expr(expr) => self.visit_expr(expr, current),
-                        HirMatchArmBody::Block(block) => self.visit_block(block, current),
+                        HirMatchArmBody::Block(block) => self.visit_block(*block, current),
                     }
                 }
             }
@@ -605,7 +609,7 @@ impl InstantiationAnalyzer<'_> {
                 self.visit_expr(expr, current);
                 match handler {
                     HirCatchHandler::Expr(expr) => self.visit_expr(expr, current),
-                    HirCatchHandler::Block { block, .. } => self.visit_block(block, current),
+                    HirCatchHandler::Block { block, .. } => self.visit_block(*block, current),
                 }
             }
             HirExprKind::NullCoalesce { left, right } | HirExprKind::Binary { left, right, .. } => {

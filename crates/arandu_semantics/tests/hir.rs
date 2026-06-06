@@ -12,7 +12,7 @@ fn lower(src: &str) -> (HirProgram, SymbolTable) {
         tc.diagnostics
     );
     let hir = lower_to_hir(&tc, &program).expect("HIR lowering failed");
-    hir.validate_invariants(&tc.symbols)
+    hir.validate_invariants(&hir.pool, &tc.symbols)
         .expect("HIR invariant validation failed");
     (hir, tc.symbols)
 }
@@ -133,9 +133,9 @@ fn lowers_function_with_params_and_return_type() {
                 f.return_type
             );
             assert!(f.body.is_some());
-            let body = f.body.as_ref().unwrap();
+            let body = hir.pool.block(f.body.unwrap());
             assert!(!body.statements.is_empty());
-            match &body.statements[0].kind {
+            match &hir.pool.stmt(body.statements[0]).kind {
                 HirStmtKind::Return { values } => {
                     assert_eq!(values.len(), 1);
                     assert!(matches!(values[0].kind, HirExprKind::Binary { .. }));
@@ -158,8 +158,8 @@ fn lowers_var_decl_with_type_annotation() {
     );
     match &hir.decls[0] {
         HirDecl::Func(f) => {
-            let body = f.body.as_ref().unwrap();
-            match &body.statements[0].kind {
+            let body = hir.pool.block(f.body.unwrap());
+            match &hir.pool.stmt(body.statements[0]).kind {
                 HirStmtKind::VarDecl { bindings, value } => {
                     assert_eq!(bindings.len(), 1);
                     assert_eq!(symbol_name(&symbols, bindings[0].symbol), "x");
@@ -191,8 +191,8 @@ fn expr_nodes_carry_resolved_types() {
     );
     match &hir.decls[0] {
         HirDecl::Func(f) => {
-            let body = f.body.as_ref().unwrap();
-            match &body.statements[1].kind {
+            let body = hir.pool.block(f.body.unwrap());
+            match &hir.pool.stmt(body.statements[1]).kind {
                 HirStmtKind::VarDecl { value, .. } => {
                     assert!(
                         !matches!(value.ty, ArType::Error),
@@ -218,8 +218,8 @@ fn path_expr_resolves_symbol() {
     );
     match &hir.decls[0] {
         HirDecl::Func(f) => {
-            let body = f.body.as_ref().unwrap();
-            match &body.statements[1].kind {
+            let body = hir.pool.block(f.body.unwrap());
+            match &hir.pool.stmt(body.statements[1]).kind {
                 HirStmtKind::VarDecl { value, .. } => match &value.kind {
                     HirExprKind::Path { symbol } => {
                         assert!(symbol.0 != 0, "symbol should be resolved");
@@ -247,8 +247,8 @@ fn lowers_call_expression() {
     );
     match &hir.decls[1] {
         HirDecl::Func(f) => {
-            let body = f.body.as_ref().unwrap();
-            match &body.statements[0].kind {
+            let body = hir.pool.block(f.body.unwrap());
+            match &hir.pool.stmt(body.statements[0]).kind {
                 HirStmtKind::VarDecl { value, .. } => match &value.kind {
                     HirExprKind::Call { callee, args, .. } => {
                         assert!(matches!(callee.kind, HirExprKind::Path { .. }));
@@ -260,6 +260,42 @@ fn lowers_call_expression() {
             }
         }
         other => panic!("expected Func, got {other:?}"),
+    }
+}
+
+#[test]
+fn lowers_call_with_trailing_block() {
+    let (hir, _symbols) = lower(
+        "func foo(a int) int {
+            return a
+        }
+        func main() {
+            result int = foo(1) {
+                2
+            }
+        }",
+    );
+    // find the `main` function decl
+    let main_func = hir
+        .decls
+        .iter()
+        .find_map(|d| match d {
+            HirDecl::Func(f) if symbol_name(&_symbols, f.symbol) == "main" => Some(f),
+            _ => None,
+        })
+        .expect("main function not found");
+    let body = hir.pool.block(main_func.body.unwrap());
+    match &hir.pool.stmt(body.statements[0]).kind {
+        HirStmtKind::VarDecl { value, .. } => match &value.kind {
+            HirExprKind::Call { trailing_block, .. } => {
+                assert!(trailing_block.is_some());
+                let bid = trailing_block.unwrap();
+                let blk = hir.pool.block(bid);
+                assert!(!blk.statements.is_empty());
+            }
+            other => panic!("expected Call, got {other:?}"),
+        },
+        other => panic!("expected VarDecl, got {other:?}"),
     }
 }
 
@@ -303,15 +339,15 @@ fn lowers_if_stmt() {
     );
     match &hir.decls[0] {
         HirDecl::Func(f) => {
-            let body = f.body.as_ref().unwrap();
-            match &body.statements[1].kind {
+            let body = hir.pool.block(f.body.unwrap());
+            match &hir.pool.stmt(body.statements[1]).kind {
                 HirStmtKind::If {
                     condition,
                     then_block,
                     else_block,
                 } => {
                     assert!(matches!(condition, HirCondition::Expr(_)));
-                    assert!(!then_block.statements.is_empty());
+                    assert!(!hir.pool.block(*then_block).statements.is_empty());
                     assert!(else_block.is_some());
                 }
                 other => panic!("expected If, got {other:?}"),
@@ -332,8 +368,8 @@ fn group_expressions_unwrap() {
     );
     match &hir.decls[0] {
         HirDecl::Func(f) => {
-            let body = f.body.as_ref().unwrap();
-            match &body.statements[0].kind {
+            let body = hir.pool.block(f.body.unwrap());
+            match &hir.pool.stmt(body.statements[0]).kind {
                 HirStmtKind::VarDecl { value, .. } => {
                     assert!(
                         matches!(value.kind, HirExprKind::Int(_)),
@@ -383,8 +419,8 @@ fn lowers_struct_literal() {
     );
     match &hir.decls[1] {
         HirDecl::Func(f) => {
-            let body = f.body.as_ref().unwrap();
-            match &body.statements[0].kind {
+            let body = hir.pool.block(f.body.unwrap());
+            match &hir.pool.stmt(body.statements[0]).kind {
                 HirStmtKind::VarDecl { value, .. } => match &value.kind {
                     HirExprKind::StructLiteral {
                         struct_symbol,
@@ -416,8 +452,8 @@ fn func_param_symbols_match_usage() {
     match &hir.decls[0] {
         HirDecl::Func(f) => {
             let param_symbol = f.params[0].symbol;
-            let body = f.body.as_ref().unwrap();
-            match &body.statements[0].kind {
+            let body = hir.pool.block(f.body.unwrap());
+            match &hir.pool.stmt(body.statements[0]).kind {
                 HirStmtKind::Return { values } => match &values[0].kind {
                     HirExprKind::Path { symbol } => {
                         assert_eq!(
@@ -479,9 +515,10 @@ fn test_hir_golden_files() {
             tc.diagnostics
         );
         let hir = lower_to_hir(&tc, &program).expect("HIR lowering failed");
-        hir.validate_invariants(&tc.symbols)
+        hir.validate_invariants(&hir.pool, &tc.symbols)
             .expect("HIR invariant validation failed");
         let ctx = HirPrettyCtx {
+            pool: &hir.pool,
             symbols: &tc.symbols,
             show_spans: false,
         };

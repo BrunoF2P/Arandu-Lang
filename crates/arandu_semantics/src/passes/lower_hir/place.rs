@@ -8,6 +8,7 @@ use arandu_parser::{Place, PlaceSuffix};
 pub(crate) fn lower_place(
     type_check: &TypeCheckResult,
     pool: &AstPool,
+    hir_pool: &mut crate::hir::HirPool,
     place: &Place,
 ) -> Result<HirPlace, Diagnostic> {
     let root_key = NodeKey::from(place.span);
@@ -44,9 +45,11 @@ pub(crate) fn lower_place(
                     });
                 }
                 PlaceSuffix::Index { span, expr } => {
+                    let eid = super::expr::lower_expr(type_check, pool, hir_pool, **expr)?;
+                    let e = hir_pool.expr(eid).clone();
                     suffixes.push(HirPlaceSuffix::Index {
                         span: *span,
-                        expr: Box::new(super::expr::lower_expr(type_check, pool, **expr)?),
+                        expr: Box::new(e),
                         ty: ArType::Error,
                     });
                 }
@@ -100,9 +103,11 @@ pub(crate) fn lower_place(
                     _ => ArType::Error,
                 };
                 current_ty = elem_ty.clone();
+                let eid = super::expr::lower_expr(type_check, pool, hir_pool, **expr)?;
+                let e = hir_pool.expr(eid).clone();
                 suffixes.push(HirPlaceSuffix::Index {
                     span: *span,
-                    expr: Box::new(super::expr::lower_expr(type_check, pool, **expr)?),
+                    expr: Box::new(e),
                     ty: elem_ty,
                 });
             }

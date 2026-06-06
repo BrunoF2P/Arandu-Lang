@@ -50,7 +50,7 @@ fn test_amir_golden_files() {
             "type check failed for {name}: {errors:?}"
         );
         let hir = lower_to_hir(&tc, &program).expect("HIR lowering failed");
-        hir.validate_invariants(&tc.symbols)
+        hir.validate_invariants(&hir.pool, &tc.symbols)
             .expect("HIR invariant validation failed");
         let amir = lower_to_amir(&tc, &hir).expect("AMIR lowering failed");
         let amir_issues = validate_amir_program(&amir, &tc.symbols);

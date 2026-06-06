@@ -9,6 +9,7 @@ use arandu_parser::ast_pool::{AstPool, MatchArmId};
 pub(crate) fn lower_pattern(
     type_check: &TypeCheckResult,
     pool: &AstPool,
+    hir_pool: &mut crate::hir::HirPool,
     pattern: &Pattern,
 ) -> Result<HirPattern, Diagnostic> {
     match pattern {
@@ -21,10 +22,11 @@ pub(crate) fn lower_pattern(
                 symbol,
             })
         }
-        Pattern::Literal { span, expr } => Ok(HirPattern::Literal {
-            span: *span,
-            expr: Box::new(super::expr::lower_expr(type_check, pool, **expr)?),
-        }),
+        Pattern::Literal { span, expr } => {
+            let eid = super::expr::lower_expr(type_check, pool, hir_pool, **expr)?;
+            let e = hir_pool.expr(eid).clone();
+            Ok(HirPattern::Literal { span: *span, expr: Box::new(e) })
+        }
         Pattern::Enum {
             span,
             type_name,
@@ -39,7 +41,7 @@ pub(crate) fn lower_pattern(
                 .copied();
             let mut hir_payload = Vec::new();
             for p in payload {
-                hir_payload.push(lower_pattern(type_check, pool, p)?);
+                hir_payload.push(lower_pattern(type_check, pool, hir_pool, p)?);
             }
             Ok(HirPattern::Enum {
                 span: *span,
@@ -56,7 +58,7 @@ pub(crate) fn lower_pattern(
         } => {
             let mut hir_payload = Vec::new();
             for p in payload {
-                hir_payload.push(lower_pattern(type_check, pool, p)?);
+                hir_payload.push(lower_pattern(type_check, pool, hir_pool, p)?);
             }
             Ok(HirPattern::TypeTuple {
                 span: *span,
@@ -76,7 +78,7 @@ pub(crate) fn lower_pattern(
                     span: f.span,
                     name: f.name.clone(),
                     pattern: match f.pattern.as_ref() {
-                        Some(p) => Some(Box::new(lower_pattern(type_check, pool, p)?)),
+                        Some(p) => Some(Box::new(lower_pattern(type_check, pool, hir_pool, p)?)),
                         None => None,
                     },
                 });
@@ -90,7 +92,7 @@ pub(crate) fn lower_pattern(
         Pattern::Tuple { span, items } => {
             let mut hir_items = Vec::new();
             for p in items {
-                hir_items.push(lower_pattern(type_check, pool, p)?);
+                hir_items.push(lower_pattern(type_check, pool, hir_pool, p)?);
             }
             Ok(HirPattern::Tuple {
                 span: *span,
@@ -102,39 +104,48 @@ pub(crate) fn lower_pattern(
             start,
             inclusive,
             end,
-        } => Ok(HirPattern::Range {
-            span: *span,
-            start: Box::new(super::expr::lower_expr(type_check, pool, **start)?),
-            inclusive: *inclusive,
-            end: Box::new(super::expr::lower_expr(type_check, pool, **end)?),
-        }),
+        } => {
+            let sid = super::expr::lower_expr(type_check, pool, hir_pool, **start)?;
+            let eid = super::expr::lower_expr(type_check, pool, hir_pool, **end)?;
+            let s = hir_pool.expr(sid).clone();
+            let e = hir_pool.expr(eid).clone();
+            Ok(HirPattern::Range {
+                span: *span,
+                start: Box::new(s),
+                inclusive: *inclusive,
+                end: Box::new(e),
+            })
+        }
     }
 }
 
 pub(crate) fn lower_match_arms(
     type_check: &TypeCheckResult,
     pool: &AstPool,
+    hir_pool: &mut crate::hir::HirPool,
     arms: &[MatchArmId],
 ) -> Result<Vec<HirMatchArm>, Diagnostic> {
     let mut hir_arms = Vec::new();
     for arm_id in arms {
         let arm = pool.match_arm(*arm_id);
-        let guard = arm
+            let guard = arm
             .guard
             .as_ref()
-            .map(|g| super::expr::lower_expr(type_check, pool, *g))
+            .map(|g| super::expr::lower_expr(type_check, pool, hir_pool, *g).map(|id| hir_pool.expr(id).clone()))
             .transpose()?;
         let body = match &arm.body {
             MatchArmBody::Expr { expr, .. } => {
-                HirMatchArmBody::Expr(Box::new(super::expr::lower_expr(type_check, pool, **expr)?))
+                let eid = super::expr::lower_expr(type_check, pool, hir_pool, **expr)?;
+                let e = hir_pool.expr(eid).clone();
+                HirMatchArmBody::Expr(Box::new(e))
             }
-            MatchArmBody::Block { block, .. } => {
-                HirMatchArmBody::Block(super::stmt::lower_block(type_check, pool, block)?)
+                MatchArmBody::Block { block, .. } => {
+                HirMatchArmBody::Block(super::stmt::lower_block(type_check, pool, hir_pool, block)?)
             }
         };
         hir_arms.push(HirMatchArm {
             span: arm.span,
-            pattern: lower_pattern(type_check, pool, &arm.pattern)?,
+            pattern: lower_pattern(type_check, pool, hir_pool, &arm.pattern)?,
             guard,
             body,
         });
