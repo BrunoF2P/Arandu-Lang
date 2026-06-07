@@ -32,10 +32,27 @@ impl<I: IdIndex, T> IndexVec<I, T> {
         }
     }
 
+    #[must_use]
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            raw: Vec::with_capacity(capacity),
+            _marker: PhantomData,
+        }
+    }
+
     pub fn push(&mut self, val: T) -> I {
         let idx = self.raw.len();
         self.raw.push(val);
         I::from_usize(idx)
+    }
+
+    pub fn push_many<Iter>(&mut self, values: Iter) -> std::ops::Range<I>
+    where
+        Iter: IntoIterator<Item = T>,
+    {
+        let start = self.raw.len();
+        self.raw.extend(values);
+        I::from_usize(start)..I::from_usize(self.raw.len())
     }
 
     pub fn get(&self, index: I) -> Option<&T> {
@@ -60,6 +77,45 @@ impl<I: IdIndex, T> IndexVec<I, T> {
 
     pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, T> {
         self.raw.iter_mut()
+    }
+
+    pub fn ids(&self) -> impl Iterator<Item = I> + '_ {
+        (0..self.raw.len()).map(I::from_usize)
+    }
+
+    pub fn as_slice(&self) -> &[T] {
+        &self.raw
+    }
+
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
+        &mut self.raw
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::newtype_index;
+
+    newtype_index!(TestId);
+
+    #[test]
+    fn ids_iterate_over_dense_indices() {
+        let mut vec = IndexVec::<TestId, i32>::with_capacity(2);
+        assert_eq!(TestId::from_usize(7).as_usize(), 7);
+        assert_eq!(vec.push(10), TestId(0));
+        assert_eq!(vec.push(20), TestId(1));
+        assert_eq!(vec.ids().collect::<Vec<_>>(), vec![TestId(0), TestId(1)]);
+        assert_eq!(vec.as_slice(), &[10, 20]);
+    }
+
+    #[test]
+    fn push_many_returns_typed_range() {
+        let mut vec = IndexVec::<TestId, i32>::new();
+        vec.push(1);
+        let range = vec.push_many([2, 3, 4]);
+        assert_eq!(range, TestId(1)..TestId(4));
+        assert_eq!(vec.as_slice(), &[1, 2, 3, 4]);
     }
 }
 

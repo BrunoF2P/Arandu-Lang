@@ -1,4 +1,6 @@
-use crate::amir::{AmirBasicBlock, AmirLocal, AmirProgram, AmirTemp, BlockId, LocalId};
+use crate::amir::{
+    AmirBasicBlock, AmirLocal, AmirProgram, AmirStmtTable, AmirTemp, BlockId, LocalId,
+};
 use crate::amir_validate::validate_amir_func;
 use crate::diagnostics::{DiagCode, Diagnostic, Severity};
 use crate::hir::{HirBlock, HirDecl, HirFunc, HirProgram};
@@ -86,6 +88,7 @@ pub(crate) struct LowerCtx<'a> {
     locals: Vec<AmirLocal>,
     temps: Vec<AmirTemp>,
     blocks: Vec<AmirBasicBlock>,
+    stmts: AmirStmtTable,
     current_block: Option<BlockId>,
     symbol_map: HashMap<SymbolId, LocalId>,
     /// (`continue_block`, `exit_block`, `defer_frame_depth_at_loop_entry`)

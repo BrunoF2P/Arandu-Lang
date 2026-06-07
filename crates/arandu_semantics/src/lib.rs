@@ -20,6 +20,7 @@ mod cfg;
 mod diagnostics;
 pub mod hir;
 pub mod index_vec;
+pub mod layout;
 pub mod literal_pool;
 pub mod ops;
 pub mod passes;
@@ -33,6 +34,7 @@ mod symbol_table;
 
 pub use arena::BumpArena;
 pub use bitset::BitSet;
+pub use layout::DenseRange;
 pub use stable_id::{GenerationalId, SlotMap};
 pub use string_pool::{SsoString, StringPool};
 pub use vm::VmReservation;

@@ -104,8 +104,9 @@ func main() {
     let hir = lower_to_hir(&tc, &program).expect("HIR lowering failed");
     let amir = lower_to_amir(&tc, &hir).expect("AMIR lowering failed");
 
-    let has_symbol_projection = amir.funcs[0].blocks.iter().any(|block| {
-        block.statements.iter().any(|stmt| match stmt {
+    let func = &amir.funcs[0];
+    let has_symbol_projection = func.blocks.iter().any(|block| {
+        func.block_stmts(block.id).any(|stmt| match stmt {
             AmirStmt::Store { lhs, .. } => lhs
                 .projections
                 .iter()

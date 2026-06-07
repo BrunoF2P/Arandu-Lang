@@ -113,7 +113,7 @@ pub fn check_definite_init(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagno
 
     for block in &func.blocks {
         let bi = block.id.as_usize();
-        for stmt in &block.statements {
+        for stmt in func.block_stmts(block.id) {
             match stmt {
                 AmirStmt::Store { lhs, .. } if lhs.projections.is_empty() => {
                     // A store to a plain local (no projections) means that
@@ -214,7 +214,7 @@ pub fn check_definite_init(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagno
         let bi = block.id.as_usize();
         let mut current = block_in[bi].clone();
 
-        for stmt in &block.statements {
+        for stmt in func.block_stmts(block.id) {
             // Check loads (reads) before recording stores (writes)
             check_stmt_loads(stmt, &current, func, symbols, &mut diagnostics);
 
@@ -309,9 +309,10 @@ mod tests {
     use crate::SymbolId;
     use crate::amir::block::AmirBasicBlock;
     use crate::amir::local::{AmirLocal, AmirTemp, TempId};
-    use crate::amir::program::AmirFunc;
-    use crate::amir::stmt::{AmirStmt, AmirTerminator};
+    use crate::amir::program::{AmirFunc, extend_block_range};
+    use crate::amir::stmt::{AmirStmt, AmirStmtTable, AmirTerminator};
     use crate::amir::value::{AmirConstant, AmirOperand, AmirPlace, AmirRvalue};
+    use crate::layout::DenseRange;
     use crate::passes::type_checker::types::ArType;
     use crate::symbol_table::SymbolTable;
     use smallvec::smallvec;
@@ -345,6 +346,31 @@ mod tests {
         }
     }
 
+    fn make_block(
+        id: usize,
+        statements: Vec<AmirStmt>,
+        terminator: AmirTerminator,
+        successors: &[usize],
+        predecessors: &[usize],
+        stmts: &mut AmirStmtTable,
+    ) -> AmirBasicBlock {
+        let mut range = DenseRange::empty();
+        for stmt in statements {
+            let instr = stmts.push(stmt);
+            extend_block_range(&mut range, instr);
+        }
+        AmirBasicBlock {
+            id: BlockId::from_usize(id),
+            statements: range,
+            terminator,
+            successors: successors.iter().map(|&x| BlockId::from_usize(x)).collect(),
+            predecessors: predecessors
+                .iter()
+                .map(|&x| BlockId::from_usize(x))
+                .collect(),
+        }
+    }
+
     #[test]
     fn test_init_bits_tracks_locals_across_word_boundaries() {
         let mut bits = InitBits::new(130);
@@ -370,9 +396,10 @@ mod tests {
     #[test]
     fn test_no_error_when_stored_before_load() {
         // bb0: Store local0 = const; Assign t1 = Load(local0); return
-        let blocks = vec![AmirBasicBlock {
-            id: BlockId::from_usize(0),
-            statements: vec![
+        let mut stmts = AmirStmtTable::new();
+        let blocks = vec![make_block(
+            0,
+            vec![
                 AmirStmt::Store {
                     lhs: place(0),
                     rhs: AmirOperand::Constant(AmirConstant::Bool(true)),
@@ -382,10 +409,11 @@ mod tests {
                     rhs: AmirRvalue::Load(place(0)),
                 },
             ],
-            terminator: AmirTerminator::Return,
-            successors: vec![],
-            predecessors: vec![],
-        }];
+            AmirTerminator::Return,
+            &[],
+            &[],
+            &mut stmts,
+        )];
 
         let func = AmirFunc {
             symbol: SymbolId(0),
@@ -395,6 +423,7 @@ mod tests {
             locals: vec![make_local(0, None)],
             temps: vec![make_temp(0), make_temp(1)],
             blocks,
+            stmts,
         };
 
         let st = make_symbol_table();
@@ -405,16 +434,18 @@ mod tests {
     #[test]
     fn test_error_when_loaded_without_store() {
         // bb0: Assign t1 = Load(local0); return
-        let blocks = vec![AmirBasicBlock {
-            id: BlockId::from_usize(0),
-            statements: vec![AmirStmt::Assign {
+        let mut stmts = AmirStmtTable::new();
+        let blocks = vec![make_block(
+            0,
+            vec![AmirStmt::Assign {
                 lhs: TempId::from_usize(1),
                 rhs: AmirRvalue::Load(place(0)),
             }],
-            terminator: AmirTerminator::Return,
-            successors: vec![],
-            predecessors: vec![],
-        }];
+            AmirTerminator::Return,
+            &[],
+            &[],
+            &mut stmts,
+        )];
 
         let func = AmirFunc {
             symbol: SymbolId(0),
@@ -424,6 +455,7 @@ mod tests {
             locals: vec![make_local(0, None)],
             temps: vec![make_temp(0), make_temp(1)],
             blocks,
+            stmts,
         };
 
         let st = make_symbol_table();
@@ -438,45 +470,50 @@ mod tests {
         // bb1: Store local0; Goto bb3
         // bb2: Goto bb3
         // bb3: Load local0  <-- ERROR: only initialized on one branch
+        let mut stmts = AmirStmtTable::new();
         let blocks = vec![
-            AmirBasicBlock {
-                id: BlockId::from_usize(0),
-                statements: vec![],
-                terminator: AmirTerminator::Branch {
+            make_block(
+                0,
+                vec![],
+                AmirTerminator::Branch {
                     condition: AmirOperand::Constant(AmirConstant::Bool(true)),
                     if_true: BlockId::from_usize(1),
                     if_false: BlockId::from_usize(2),
                 },
-                successors: vec![BlockId::from_usize(1), BlockId::from_usize(2)],
-                predecessors: vec![],
-            },
-            AmirBasicBlock {
-                id: BlockId::from_usize(1),
-                statements: vec![AmirStmt::Store {
+                &[1, 2],
+                &[],
+                &mut stmts,
+            ),
+            make_block(
+                1,
+                vec![AmirStmt::Store {
                     lhs: place(0),
                     rhs: AmirOperand::Constant(AmirConstant::Bool(true)),
                 }],
-                terminator: AmirTerminator::Goto(BlockId::from_usize(3)),
-                successors: vec![BlockId::from_usize(3)],
-                predecessors: vec![BlockId::from_usize(0)],
-            },
-            AmirBasicBlock {
-                id: BlockId::from_usize(2),
-                statements: vec![],
-                terminator: AmirTerminator::Goto(BlockId::from_usize(3)),
-                successors: vec![BlockId::from_usize(3)],
-                predecessors: vec![BlockId::from_usize(0)],
-            },
-            AmirBasicBlock {
-                id: BlockId::from_usize(3),
-                statements: vec![AmirStmt::Assign {
+                AmirTerminator::Goto(BlockId::from_usize(3)),
+                &[3],
+                &[0],
+                &mut stmts,
+            ),
+            make_block(
+                2,
+                vec![],
+                AmirTerminator::Goto(BlockId::from_usize(3)),
+                &[3],
+                &[0],
+                &mut stmts,
+            ),
+            make_block(
+                3,
+                vec![AmirStmt::Assign {
                     lhs: TempId::from_usize(1),
                     rhs: AmirRvalue::Load(place(0)),
                 }],
-                terminator: AmirTerminator::Return,
-                successors: vec![],
-                predecessors: vec![BlockId::from_usize(1), BlockId::from_usize(2)],
-            },
+                AmirTerminator::Return,
+                &[],
+                &[1, 2],
+                &mut stmts,
+            ),
         ];
 
         let func = AmirFunc {
@@ -487,6 +524,7 @@ mod tests {
             locals: vec![make_local(0, None)],
             temps: vec![make_temp(0), make_temp(1)],
             blocks,
+            stmts,
         };
 
         let st = make_symbol_table();
@@ -501,48 +539,53 @@ mod tests {
         // bb1: Store local0; Goto bb3
         // bb2: Store local0; Goto bb3
         // bb3: Load local0  <-- OK: initialized on both branches
+        let mut stmts = AmirStmtTable::new();
         let blocks = vec![
-            AmirBasicBlock {
-                id: BlockId::from_usize(0),
-                statements: vec![],
-                terminator: AmirTerminator::Branch {
+            make_block(
+                0,
+                vec![],
+                AmirTerminator::Branch {
                     condition: AmirOperand::Constant(AmirConstant::Bool(true)),
                     if_true: BlockId::from_usize(1),
                     if_false: BlockId::from_usize(2),
                 },
-                successors: vec![BlockId::from_usize(1), BlockId::from_usize(2)],
-                predecessors: vec![],
-            },
-            AmirBasicBlock {
-                id: BlockId::from_usize(1),
-                statements: vec![AmirStmt::Store {
+                &[1, 2],
+                &[],
+                &mut stmts,
+            ),
+            make_block(
+                1,
+                vec![AmirStmt::Store {
                     lhs: place(0),
                     rhs: AmirOperand::Constant(AmirConstant::Bool(true)),
                 }],
-                terminator: AmirTerminator::Goto(BlockId::from_usize(3)),
-                successors: vec![BlockId::from_usize(3)],
-                predecessors: vec![BlockId::from_usize(0)],
-            },
-            AmirBasicBlock {
-                id: BlockId::from_usize(2),
-                statements: vec![AmirStmt::Store {
+                AmirTerminator::Goto(BlockId::from_usize(3)),
+                &[3],
+                &[0],
+                &mut stmts,
+            ),
+            make_block(
+                2,
+                vec![AmirStmt::Store {
                     lhs: place(0),
                     rhs: AmirOperand::Constant(AmirConstant::Bool(true)),
                 }],
-                terminator: AmirTerminator::Goto(BlockId::from_usize(3)),
-                successors: vec![BlockId::from_usize(3)],
-                predecessors: vec![BlockId::from_usize(0)],
-            },
-            AmirBasicBlock {
-                id: BlockId::from_usize(3),
-                statements: vec![AmirStmt::Assign {
+                AmirTerminator::Goto(BlockId::from_usize(3)),
+                &[3],
+                &[0],
+                &mut stmts,
+            ),
+            make_block(
+                3,
+                vec![AmirStmt::Assign {
                     lhs: TempId::from_usize(1),
                     rhs: AmirRvalue::Load(place(0)),
                 }],
-                terminator: AmirTerminator::Return,
-                successors: vec![],
-                predecessors: vec![BlockId::from_usize(1), BlockId::from_usize(2)],
-            },
+                AmirTerminator::Return,
+                &[],
+                &[1, 2],
+                &mut stmts,
+            ),
         ];
 
         let func = AmirFunc {
@@ -553,6 +596,7 @@ mod tests {
             locals: vec![make_local(0, None)],
             temps: vec![make_temp(0), make_temp(1)],
             blocks,
+            stmts,
         };
 
         let st = make_symbol_table();

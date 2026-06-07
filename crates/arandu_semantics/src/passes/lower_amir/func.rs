@@ -2,7 +2,9 @@
 
 use super::{LowerCtx, MoveState};
 use crate::TypeCheckResult;
-use crate::amir::{AmirFunc, AmirOperand, AmirPlace, AmirTemp, AmirTerminator, TempId};
+use crate::amir::{
+    AmirFunc, AmirOperand, AmirPlace, AmirStmtTable, AmirTemp, AmirTerminator, TempId,
+};
 use crate::cfg::compute_cfg_edges;
 use crate::diagnostics::Diagnostic;
 use crate::hir::{HirBlockId, HirFunc, HirProgram};
@@ -23,6 +25,7 @@ pub(crate) fn lower_func(
         locals: Vec::new(),
         temps: Vec::new(),
         blocks: Vec::new(),
+        stmts: AmirStmtTable::new(),
         current_block: None,
         symbol_map: HashMap::new(),
         loop_stack: Vec::new(),
@@ -91,6 +94,7 @@ pub(crate) fn lower_func(
         locals: ctx.locals,
         temps: ctx.temps,
         blocks: ctx.blocks,
+        stmts: ctx.stmts,
     })
 }
 

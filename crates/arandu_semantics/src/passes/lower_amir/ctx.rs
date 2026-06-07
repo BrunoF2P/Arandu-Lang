@@ -1,10 +1,12 @@
 use super::{DeferKind, LowerCtx, MoveState};
+use crate::amir::program::extend_block_range;
 use crate::amir::{
     AmirBasicBlock, AmirConstant, AmirLocal, AmirOperand, AmirPlace, AmirRvalue, AmirStmt,
     AmirTemp, AmirTerminator, BlockId, LocalId, TempId,
 };
 use crate::diagnostics::Diagnostic;
 use crate::hir::HirBlock;
+use crate::layout::DenseRange;
 use crate::literal_pool::AmirLiteralEntry;
 use crate::passes::type_checker::types::{ArType, Primitive};
 use crate::{SymbolId, SymbolTable};
@@ -80,7 +82,7 @@ impl LowerCtx<'_> {
         let id = BlockId::from_usize(self.blocks.len());
         self.blocks.push(AmirBasicBlock {
             id,
-            statements: Vec::new(),
+            statements: DenseRange::empty(),
             terminator: AmirTerminator::Unreachable,
             successors: Vec::new(),
             predecessors: Vec::new(),
@@ -90,7 +92,8 @@ impl LowerCtx<'_> {
 
     pub(crate) fn push_stmt(&mut self, stmt: AmirStmt) {
         if let Some(curr) = self.current_block {
-            self.blocks[curr.as_usize()].statements.push(stmt);
+            let id = self.stmts.push(stmt);
+            extend_block_range(&mut self.blocks[curr.as_usize()].statements, id);
         }
     }
 

@@ -7,8 +7,10 @@
 #![allow(clippy::collapsible_if)]
 
 use crate::amir::{
-    AmirConstant, AmirFunc, AmirOperand, AmirProgram, AmirRvalue, AmirStmt, AmirTerminator,
+    AmirConstant, AmirFunc, AmirOperand, AmirProgram, AmirRvalue, AmirStmt, AmirStmtTable,
+    AmirTerminator,
 };
+use crate::layout::DenseRange;
 use crate::literal_pool::{AmirLiteralEntry, AmirLiteralPool};
 use crate::ops::{BinaryOp, UnaryOp};
 
@@ -21,9 +23,12 @@ pub fn optimize_amir(program: &mut AmirProgram) {
 
 /// Folds constants intra-block. Note: Constants are currently not propagated across basic blocks.
 fn fold_constants(func: &mut AmirFunc, pool: &mut AmirLiteralPool) {
-    for block in &mut func.blocks {
+    for bi in 0..func.blocks.len() {
+        let block_id = func.blocks[bi].id;
+        let stmt_ids: Vec<_> = func.block_stmt_ids(block_id).collect();
         let mut constants = vec![None; func.temps.len()];
-        for stmt in &mut block.statements {
+        for stmt_id in stmt_ids {
+            let stmt = func.stmt_mut(stmt_id);
             let AmirStmt::Assign { lhs, rhs } = stmt else {
                 continue;
             };
@@ -152,21 +157,48 @@ fn int_constant(value: i128, pool: &mut AmirLiteralPool) -> AmirConstant {
 fn eliminate_dead_assigns(func: &mut AmirFunc) {
     loop {
         let used = used_temps(func);
-        let mut changed = false;
-
-        for block in &mut func.blocks {
-            let before = block.statements.len();
-            block.statements.retain(|stmt| match stmt {
-                AmirStmt::Assign { lhs, rhs } => used[lhs.as_usize()] || !is_removable_rvalue(rhs),
-                _ => true,
-            });
-            changed |= before != block.statements.len();
-        }
+        let (new_stmts, new_ranges, changed) = rebuild_without_dead_assigns(func, &used);
 
         if !changed {
             break;
         }
+        func.stmts = new_stmts;
+        for (block, range) in func.blocks.iter_mut().zip(new_ranges) {
+            block.statements = range;
+        }
     }
+}
+
+fn rebuild_without_dead_assigns(
+    func: &AmirFunc,
+    used: &[bool],
+) -> (AmirStmtTable, Vec<DenseRange>, bool) {
+    let mut table = AmirStmtTable::new();
+    let mut ranges = Vec::with_capacity(func.blocks.len());
+    let mut changed = false;
+
+    for block in &func.blocks {
+        let start = table.len();
+        let mut kept = 0usize;
+
+        for stmt in func.block_stmts(block.id) {
+            let keep = match stmt {
+                AmirStmt::Assign { lhs, rhs } => used[lhs.as_usize()] || !is_removable_rvalue(rhs),
+                _ => true,
+            };
+
+            if keep {
+                table.push(stmt.clone());
+                kept += 1;
+            } else {
+                changed = true;
+            }
+        }
+
+        ranges.push(DenseRange::new(start, kept));
+    }
+
+    (table, ranges, changed)
 }
 
 fn used_temps(func: &AmirFunc) -> Vec<bool> {
@@ -176,7 +208,7 @@ fn used_temps(func: &AmirFunc) -> Vec<bool> {
         used[0] = true;
     }
     for block in &func.blocks {
-        for stmt in &block.statements {
+        for stmt in func.block_stmts(block.id) {
             match stmt {
                 AmirStmt::Assign { rhs, .. } => collect_rvalue_temps(rhs, &mut used[..]),
                 AmirStmt::Store { rhs, lhs } => {
@@ -290,7 +322,9 @@ fn rvalue_contains_move(rvalue: &AmirRvalue) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::amir::{AmirBasicBlock, BlockId, TempId};
+    use crate::amir::program::extend_block_range;
+    use crate::amir::{AmirBasicBlock, AmirStmtTable, BlockId, TempId};
+    use crate::layout::DenseRange;
     use crate::passes::type_checker::types::{ArType, Primitive};
 
     fn int_temp(id: usize) -> crate::amir::AmirTemp {
@@ -310,6 +344,12 @@ mod tests {
     }
 
     fn func(statements: Vec<AmirStmt>, temps: Vec<crate::amir::AmirTemp>) -> AmirFunc {
+        let mut stmts = AmirStmtTable::new();
+        let mut range = DenseRange::empty();
+        for stmt in statements {
+            let instr = stmts.push(stmt);
+            extend_block_range(&mut range, instr);
+        }
         AmirFunc {
             symbol: crate::SymbolId(0),
             return_type: ArType::Void,
@@ -319,11 +359,12 @@ mod tests {
             temps,
             blocks: vec![AmirBasicBlock {
                 id: BlockId::from_usize(0),
-                statements,
+                statements: range,
                 terminator: AmirTerminator::Return,
                 successors: Vec::new(),
                 predecessors: Vec::new(),
             }],
+            stmts,
         }
     }
 
@@ -356,8 +397,12 @@ mod tests {
 
         fold_constants(&mut func, &mut pool);
 
+        let folded_stmt = func
+            .block_stmts(BlockId::from_usize(0))
+            .nth(1)
+            .expect("expected folded comparison statement");
         assert!(matches!(
-            &func.blocks[0].statements[1],
+            folded_stmt,
             AmirStmt::Assign {
                 rhs: AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Bool(true))),
                 ..
@@ -383,9 +428,13 @@ mod tests {
 
         eliminate_dead_assigns(&mut func);
 
-        assert_eq!(func.blocks[0].statements.len(), 1);
+        assert_eq!(func.blocks[0].statements.len, 1);
+        let stmt = func
+            .block_stmts(BlockId::from_usize(0))
+            .next()
+            .expect("expected one statement");
         assert!(matches!(
-            func.blocks[0].statements[0],
+            stmt,
             AmirStmt::Assign {
                 rhs: AmirRvalue::Alloc(_),
                 ..

@@ -1,5 +1,6 @@
 use super::block::BlockId;
 use super::program::AmirFunc;
+use super::rpo::reverse_post_order;
 
 pub struct Dominators {
     // Maps each BlockId (by its index) to its immediate dominator (idom).
@@ -21,10 +22,9 @@ impl Dominators {
         let entry = BlockId::from_usize(0);
         idoms[entry.as_usize()] = Some(entry);
 
-        // Step 1: Compute post-order of reachable blocks via DFS
-        let mut visited = vec![false; n];
-        let mut post_order = Vec::with_capacity(n);
-        post_order_walk(entry, func, &mut visited, &mut post_order);
+        // Step 1: Compute reverse post-order of reachable blocks.
+        let full_rpo = reverse_post_order(func);
+        let post_order: Vec<BlockId> = full_rpo.iter().rev().copied().collect();
 
         // Map BlockId to its index in the post_order vector
         let mut post_order_indices = vec![0; n];
@@ -32,8 +32,7 @@ impl Dominators {
             post_order_indices[block_id.as_usize()] = idx;
         }
 
-        // Reverse post-order for iteration (excluding entry)
-        let mut rpo: Vec<BlockId> = post_order.into_iter().rev().collect();
+        let mut rpo = full_rpo;
         if let Some(pos) = rpo.iter().position(|&b| b == entry) {
             rpo.remove(pos);
         }
@@ -99,26 +98,6 @@ impl Dominators {
     }
 }
 
-fn post_order_walk(
-    block_id: BlockId,
-    func: &AmirFunc,
-    visited: &mut Vec<bool>,
-    post_order: &mut Vec<BlockId>,
-) {
-    let idx = block_id.as_usize();
-    if visited[idx] {
-        return;
-    }
-    visited[idx] = true;
-
-    if let Some(block) = func.blocks.get(idx) {
-        for &succ in &block.successors {
-            post_order_walk(succ, func, visited, post_order);
-        }
-    }
-    post_order.push(block_id);
-}
-
 fn intersect(
     mut b1: BlockId,
     mut b2: BlockId,
@@ -141,13 +120,14 @@ mod tests {
     use super::*;
     use crate::SymbolId;
     use crate::amir::block::AmirBasicBlock;
-    use crate::amir::stmt::AmirTerminator;
+    use crate::amir::stmt::{AmirStmtTable, AmirTerminator};
+    use crate::layout::DenseRange;
     use crate::passes::type_checker::types::ArType;
 
     fn make_block(id: usize, predecessors: &[usize], successors: &[usize]) -> AmirBasicBlock {
         AmirBasicBlock {
             id: BlockId::from_usize(id),
-            statements: Vec::new(),
+            statements: DenseRange::empty(),
             terminator: AmirTerminator::Return,
             successors: successors.iter().map(|&x| BlockId::from_usize(x)).collect(),
             predecessors: predecessors
@@ -166,6 +146,7 @@ mod tests {
             locals: Vec::new(),
             temps: Vec::new(),
             blocks,
+            stmts: AmirStmtTable::new(),
         }
     }
 
@@ -211,6 +192,26 @@ mod tests {
         assert!(!doms.dominates(BlockId::from_usize(2), BlockId::from_usize(3)));
         assert!(doms.dominates(BlockId::from_usize(3), BlockId::from_usize(4)));
         assert!(doms.dominates(BlockId::from_usize(0), BlockId::from_usize(4)));
+    }
+
+    #[test]
+    fn rpo_skips_unreachable_blocks_and_starts_at_entry() {
+        let blocks = vec![
+            make_block(0, &[], &[1, 2]),
+            make_block(1, &[0], &[3]),
+            make_block(2, &[0], &[3]),
+            make_block(3, &[1, 2], &[]),
+            make_block(4, &[], &[]),
+        ];
+        let func = make_func(blocks);
+        let rpo = crate::amir::reverse_post_order(&func);
+
+        assert_eq!(rpo.first().copied(), Some(BlockId::from_usize(0)));
+        assert_eq!(rpo.len(), 4);
+        assert!(!rpo.contains(&BlockId::from_usize(4)));
+        assert!(rpo.contains(&BlockId::from_usize(1)));
+        assert!(rpo.contains(&BlockId::from_usize(2)));
+        assert_eq!(rpo.last().copied(), Some(BlockId::from_usize(3)));
     }
 
     #[test]

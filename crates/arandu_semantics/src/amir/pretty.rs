@@ -99,7 +99,7 @@ impl AmirFunc {
         // Basic blocks
         for block in &self.blocks {
             out.push_str(&format!("  bb{}:\n", block.id.0));
-            for stmt in &block.statements {
+            for stmt in self.block_stmts(block.id) {
                 out.push_str("    ");
                 stmt.pretty_print_to(out, symbols, pool);
                 out.push('\n');

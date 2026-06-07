@@ -109,7 +109,7 @@ pub fn check_moves(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagnostic> {
             num_locals,
         );
         let mut new_out = new_in.clone();
-        apply_block(block, func, &temp_origins, &mut new_out, None);
+        apply_block(block.id, func, &temp_origins, &mut new_out, None);
 
         if new_in != block_in[bi] || new_out != block_out[bi] {
             block_in[bi] = new_in;
@@ -124,7 +124,7 @@ pub fn check_moves(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagnostic> {
     for block in &func.blocks {
         let mut state = block_in[block.id.as_usize()].clone();
         apply_block(
-            block,
+            block.id,
             func,
             &temp_origins,
             &mut state,
@@ -138,7 +138,7 @@ pub fn check_moves(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagnostic> {
 fn temp_origins(func: &AmirFunc) -> Vec<Option<LocalId>> {
     let mut origins = vec![None; func.temps.len()];
     for block in &func.blocks {
-        for stmt in &block.statements {
+        for stmt in func.block_stmts(block.id) {
             if let AmirStmt::Assign {
                 lhs,
                 rhs: AmirRvalue::Load(place),
@@ -154,13 +154,13 @@ fn temp_origins(func: &AmirFunc) -> Vec<Option<LocalId>> {
 }
 
 fn apply_block(
-    block: &crate::amir::AmirBasicBlock,
+    block: crate::amir::BlockId,
     func: &AmirFunc,
     temp_origins: &[Option<LocalId>],
     state: &mut MoveState,
     mut diagnostics: Option<(&SymbolTable, &mut Vec<Diagnostic>)>,
 ) {
-    for stmt in &block.statements {
+    for stmt in func.block_stmts(block) {
         match stmt {
             AmirStmt::Assign { rhs, .. } => {
                 check_rvalue_reads(rhs, func, state, &mut diagnostics);
@@ -192,7 +192,7 @@ fn apply_block(
         }
     }
 
-    match &block.terminator {
+    match &func.block(block).terminator {
         AmirTerminator::Branch { condition, .. } => {
             check_operand_read(condition, func, temp_origins, state, &mut diagnostics);
         }
@@ -435,7 +435,9 @@ fn successors(term: &AmirTerminator) -> Vec<crate::amir::BlockId> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::amir::{AmirBasicBlock, AmirLocal, AmirTemp, BlockId};
+    use crate::amir::program::extend_block_range;
+    use crate::amir::{AmirBasicBlock, AmirLocal, AmirStmtTable, AmirTemp, BlockId};
+    use crate::layout::DenseRange;
     use crate::passes::type_checker::types::{ArType, Primitive};
     use smallvec::smallvec;
 
@@ -472,8 +474,24 @@ mod tests {
         }
     }
 
+    fn block(statements: Vec<AmirStmt>, stmts: &mut AmirStmtTable) -> AmirBasicBlock {
+        let mut range = DenseRange::empty();
+        for stmt in statements {
+            let instr = stmts.push(stmt);
+            extend_block_range(&mut range, instr);
+        }
+        AmirBasicBlock {
+            id: BlockId::from_usize(0),
+            statements: range,
+            terminator: AmirTerminator::Return,
+            successors: Vec::new(),
+            predecessors: Vec::new(),
+        }
+    }
+
     #[test]
     fn duplicate_destroy_reports_double_free() {
+        let mut stmts = AmirStmtTable::new();
         let func = AmirFunc {
             symbol: crate::SymbolId(0),
             return_type: ArType::Void,
@@ -481,13 +499,11 @@ mod tests {
             params: Vec::new(),
             locals: vec![local(0, non_copy_ty())],
             temps: Vec::new(),
-            blocks: vec![AmirBasicBlock {
-                id: BlockId::from_usize(0),
-                statements: vec![AmirStmt::Destroy(place(0)), AmirStmt::Destroy(place(0))],
-                terminator: AmirTerminator::Return,
-                successors: Vec::new(),
-                predecessors: Vec::new(),
-            }],
+            blocks: vec![block(
+                vec![AmirStmt::Destroy(place(0)), AmirStmt::Destroy(place(0))],
+                &mut stmts,
+            )],
+            stmts,
         };
         let symbols = SymbolTable::new();
         let diags = check_moves(&func, &symbols);
@@ -501,6 +517,7 @@ mod tests {
 
     #[test]
     fn copy_type_move_does_not_mark_origin_moved() {
+        let mut stmts = AmirStmtTable::new();
         let func = AmirFunc {
             symbol: crate::SymbolId(0),
             return_type: ArType::Void,
@@ -508,9 +525,8 @@ mod tests {
             params: Vec::new(),
             locals: vec![local(0, int_ty())],
             temps: vec![temp(0, int_ty())],
-            blocks: vec![AmirBasicBlock {
-                id: BlockId::from_usize(0),
-                statements: vec![
+            blocks: vec![block(
+                vec![
                     AmirStmt::Assign {
                         lhs: TempId::from_usize(0),
                         rhs: AmirRvalue::Load(place(0)),
@@ -524,10 +540,9 @@ mod tests {
                         rhs: AmirRvalue::Load(place(0)),
                     },
                 ],
-                terminator: AmirTerminator::Return,
-                successors: Vec::new(),
-                predecessors: Vec::new(),
-            }],
+                &mut stmts,
+            )],
+            stmts,
         };
         let symbols = SymbolTable::new();
 

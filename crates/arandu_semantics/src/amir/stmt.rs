@@ -1,9 +1,24 @@
 use super::block::BlockId;
 use super::local::TempId;
 use super::value::{AmirOperand, AmirPlace, AmirRvalue};
+use crate::index_vec::IndexVec;
+use crate::newtype_index;
 use smallvec::SmallVec;
 
-#[derive(Debug)]
+newtype_index!(InstrId);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AmirStmtKind {
+    Assign,
+    Store,
+    Call,
+    Free,
+    StorageLive,
+    StorageDead,
+    Destroy,
+}
+
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum AmirStmt {
     /// Binds an SSA register to an RValue.
@@ -30,7 +45,69 @@ pub enum AmirStmt {
     Destroy(AmirPlace),
 }
 
-#[derive(Debug)]
+impl AmirStmt {
+    #[must_use]
+    pub const fn kind(&self) -> AmirStmtKind {
+        match self {
+            Self::Assign { .. } => AmirStmtKind::Assign,
+            Self::Store { .. } => AmirStmtKind::Store,
+            Self::Call { .. } => AmirStmtKind::Call,
+            Self::Free(_) => AmirStmtKind::Free,
+            Self::StorageLive(_) => AmirStmtKind::StorageLive,
+            Self::StorageDead(_) => AmirStmtKind::StorageDead,
+            Self::Destroy(_) => AmirStmtKind::Destroy,
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct AmirStmtTable {
+    pub kinds: IndexVec<InstrId, AmirStmtKind>,
+    pub payloads: IndexVec<InstrId, AmirStmt>,
+}
+
+impl AmirStmtTable {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            kinds: IndexVec::new(),
+            payloads: IndexVec::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.payloads.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.payloads.is_empty()
+    }
+
+    pub fn push(&mut self, stmt: AmirStmt) -> InstrId {
+        let kind = stmt.kind();
+        let id = self.payloads.push(stmt);
+        let kind_id = self.kinds.push(kind);
+        debug_assert_eq!(id, kind_id);
+        id
+    }
+
+    #[must_use]
+    pub fn get(&self, id: InstrId) -> Option<&AmirStmt> {
+        self.payloads.get(id)
+    }
+
+    pub fn get_mut(&mut self, id: InstrId) -> Option<&mut AmirStmt> {
+        self.payloads.get_mut(id)
+    }
+
+    pub fn iter_ids(&self) -> impl Iterator<Item = InstrId> + '_ {
+        self.payloads.ids()
+    }
+}
+
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum AmirTerminator {
     Return,
