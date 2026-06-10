@@ -10,6 +10,8 @@ pub struct LexError {
 }
 
 impl LexError {
+    #[cold]
+    #[inline(never)]
     pub fn new(code: LexErrorCode, message: &'static str, span: Span) -> Self {
         Self {
             code,

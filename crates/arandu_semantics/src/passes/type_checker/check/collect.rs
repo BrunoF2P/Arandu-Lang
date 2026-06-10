@@ -6,8 +6,8 @@ use super::super::types::ArType;
 pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Program) {
     for decl in &program.decls {
         if let TopLevelDecl::Struct(struct_decl) = decl {
-            let mut fields = std::collections::HashMap::new();
-            let mut field_symbols = std::collections::HashMap::new();
+            let mut fields = fxhash::FxHashMap::default();
+            let mut field_symbols = fxhash::FxHashMap::default();
             for field in &struct_decl.fields {
                 let field_ty = super::super::types::lower_type_expr(
                     &field.ty,

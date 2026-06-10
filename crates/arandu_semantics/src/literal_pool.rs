@@ -1,6 +1,6 @@
 //! Interned literal storage for AMIR constants (C2).
 
-use std::collections::HashMap;
+use fxhash::FxHashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LiteralId(pub u32);
@@ -16,7 +16,7 @@ pub enum AmirLiteralEntry {
 #[derive(Debug, Default, Clone)]
 pub struct AmirLiteralPool {
     pub entries: Vec<AmirLiteralEntry>,
-    pub index: HashMap<AmirLiteralEntry, LiteralId>,
+    pub index: FxHashMap<AmirLiteralEntry, LiteralId>,
 }
 
 impl AmirLiteralPool {

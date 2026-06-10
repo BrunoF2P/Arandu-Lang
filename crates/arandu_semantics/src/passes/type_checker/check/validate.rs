@@ -59,6 +59,8 @@ pub(crate) fn contains_any(ty: &TypeExpr) -> Option<Span> {
     }
 }
 
+#[cold]
+#[inline(never)]
 fn report_any_error(checker: &mut TypeChecker<'_>, span: Span) {
     checker.diagnostics.push(crate::Diagnostic::error(
         crate::DiagCode::T014InvalidVariadicType,

@@ -12,6 +12,8 @@ pub struct ParseError {
 }
 
 impl ParseError {
+    #[cold]
+    #[inline(never)]
     pub(super) fn new(
         code: ParseErrorCode,
         message: impl Into<String>,
@@ -27,6 +29,8 @@ impl ParseError {
         }
     }
 
+    #[cold]
+    #[inline(never)]
     pub(super) fn expected(
         code: ParseErrorCode,
         message: impl Into<String>,

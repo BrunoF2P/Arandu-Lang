@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use fxhash::FxHashMap;
 
 use arandu_lexer::Span;
 
@@ -77,8 +77,8 @@ pub struct Scope {
 pub struct SymbolTable {
     scopes: Vec<Scope>,
     symbols: Vec<Symbol>,
-    module_members: HashMap<String, HashMap<String, SymbolId>>,
-    associated_members: HashMap<String, HashMap<String, SymbolId>>,
+    module_members: FxHashMap<String, FxHashMap<String, SymbolId>>,
+    associated_members: FxHashMap<String, FxHashMap<String, SymbolId>>,
 }
 
 impl Default for SymbolTable {
@@ -96,8 +96,8 @@ impl SymbolTable {
                 symbols: Vec::new(),
             }],
             symbols: Vec::new(),
-            module_members: HashMap::new(),
-            associated_members: HashMap::new(),
+            module_members: FxHashMap::default(),
+            associated_members: FxHashMap::default(),
         }
     }
 

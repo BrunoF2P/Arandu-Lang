@@ -1,10 +1,10 @@
-use std::collections::HashMap;
+use fxhash::FxHashMap;
 
 use super::ar_type::ArType;
 use crate::SymbolId;
 
 /// Map from type-parameter `SymbolId` to concrete type.
-pub type GenericSubst = HashMap<SymbolId, ArType>;
+pub type GenericSubst = FxHashMap<SymbolId, ArType>;
 
 #[must_use]
 pub fn build_subst(param_symbols: &[SymbolId], args: &[ArType]) -> GenericSubst {

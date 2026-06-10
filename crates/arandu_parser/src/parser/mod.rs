@@ -317,6 +317,31 @@ impl<'a> Parser<'a> {
         }
     }
 
+    pub(super) fn expect_kind(&mut self, kind: TokenKind) -> Result<(), ParseError> {
+        if self.current().kind == kind {
+            self.consume();
+            Ok(())
+        } else {
+            let name = kind.name();
+            Err(ParseError::expected(
+                ParseErrorCode::ExpectedToken,
+                format!("expected {name}"),
+                self.current(),
+                self.source,
+                token_expectation_names(name),
+            ))
+        }
+    }
+
+    pub(super) fn eat_kind(&mut self, kind: TokenKind) -> bool {
+        if self.current().kind == kind {
+            self.consume();
+            true
+        } else {
+            false
+        }
+    }
+
     pub(super) fn at_kind_name(&self, name: &str) -> bool {
         self.current().kind.name() == name
     }
@@ -345,6 +370,8 @@ impl<'a> Parser<'a> {
         token
     }
 
+    #[cold]
+    #[inline(never)]
     pub(super) fn synchronize_top_level(&mut self) {
         self.consume();
         while !self.at_kind_name("EOF") {
@@ -366,6 +393,8 @@ impl<'a> Parser<'a> {
         }
     }
 
+    #[cold]
+    #[inline(never)]
     pub(super) fn synchronize_stmt(&mut self) {
         self.consume();
         while !self.at_kind_name("EOF") {

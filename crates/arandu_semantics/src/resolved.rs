@@ -1,11 +1,11 @@
-use std::collections::HashMap;
+use fxhash::FxHashMap;
 
 use arandu_lexer::Span;
 use arandu_parser::ast_pool::ExprId;
 
 use crate::SymbolId;
 
-pub type DocCommentMap = HashMap<NodeKey, Vec<String>>;
+pub type DocCommentMap = FxHashMap<NodeKey, Vec<String>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NodeKey {
@@ -24,10 +24,10 @@ impl From<Span> for NodeKey {
 
 #[derive(Debug, Clone, Default)]
 pub struct ResolvedNames {
-    pub definitions: HashMap<NodeKey, SymbolId>,
+    pub definitions: FxHashMap<NodeKey, SymbolId>,
     pub expr_symbols: Vec<Option<SymbolId>>,
-    pub value_refs: HashMap<NodeKey, SymbolId>,
-    pub type_refs: HashMap<NodeKey, SymbolId>,
+    pub value_refs: FxHashMap<NodeKey, SymbolId>,
+    pub type_refs: FxHashMap<NodeKey, SymbolId>,
 }
 
 impl ResolvedNames {

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use fxhash::FxHashMap;
 
 use arandu_parser::ast_pool::{ExprId, ExprKind, IndexRange};
 
@@ -35,7 +35,7 @@ pub(crate) fn struct_fields_instantiated(
     checker: &mut TypeChecker<'_>,
     struct_id: SymbolId,
     generic_args: &[ArType],
-) -> Option<HashMap<String, ArType>> {
+) -> Option<FxHashMap<String, ArType>> {
     let fields = checker.type_info.struct_fields.get(&struct_id)?.clone();
     let params = checker.type_info.generic_params.get(&struct_id)?.clone();
     if params.len() != generic_args.len() {

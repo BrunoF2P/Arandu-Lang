@@ -30,6 +30,8 @@ fn cast_types_compatible(found: &ArType, target: &ArType) -> bool {
     found.is_numeric() && target.is_numeric()
 }
 
+#[cold]
+#[inline(never)]
 fn report_unsupported(checker: &mut TypeChecker<'_>, span: Span, feature: &str, roadmap: &str) {
     checker.diagnostics.push(
         crate::Diagnostic::error(

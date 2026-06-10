@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use fxhash::FxHashSet;
 
 use arandu_lexer::Span;
 use arandu_parser::{MatchArm, Pattern};
@@ -32,10 +32,10 @@ fn pattern_variant_short_name(pat: &Pattern) -> Option<String> {
 fn enum_variant_short_names(
     checker: &TypeChecker<'_>,
     enum_id: crate::SymbolId,
-) -> HashSet<String> {
+) -> FxHashSet<String> {
     let enum_name = checker.symbols.get(enum_id).name.clone();
-    let mut names = HashSet::new();
-    let mut seen = HashSet::new();
+    let mut names = FxHashSet::default();
+    let mut seen = FxHashSet::default();
     for (variant_id, (parent_enum, _)) in &checker.type_info.enum_variants {
         if *parent_enum != enum_id || !seen.insert(*variant_id) {
             continue;
@@ -70,7 +70,7 @@ pub fn check_match_exhaustiveness(
         return;
     }
 
-    let mut covered = HashSet::new();
+    let mut covered = FxHashSet::default();
     for arm in arms {
         if let Some(name) = pattern_variant_short_name(&arm.pattern) {
             covered.insert(name);

@@ -7,7 +7,7 @@
 
 #![allow(clippy::collapsible_if)]
 
-use crate::SymbolTable;
+use crate::{BitSet, SymbolTable};
 use crate::amir::{
     AmirFunc, AmirOperand, AmirPlace, AmirRvalue, AmirStmt, AmirTerminator, LocalId, TempId,
 };
@@ -22,25 +22,17 @@ enum LocalMoveState {
     MaybeMoved,
 }
 
-impl LocalMoveState {
-    fn join(self, other: Self) -> Self {
-        match (self, other) {
-            (Self::Available, Self::Available) => Self::Available,
-            (Self::Moved, Self::Moved) => Self::Moved,
-            _ => Self::MaybeMoved,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct MoveState {
-    locals: Vec<LocalMoveState>,
+    moved: BitSet<LocalId>,
+    maybe_moved: BitSet<LocalId>,
 }
 
 impl MoveState {
     fn new(num_locals: usize) -> Self {
         Self {
-            locals: vec![LocalMoveState::Available; num_locals],
+            moved: BitSet::with_capacity(num_locals),
+            maybe_moved: BitSet::with_capacity(num_locals),
         }
     }
 
@@ -51,23 +43,45 @@ impl MoveState {
         };
 
         for pred in preds {
-            for (state, other) in acc.locals.iter_mut().zip(pred.locals.iter()) {
-                *state = state.join(*other);
-            }
+            let mut new_m = acc.moved.clone();
+            new_m.intersect_with(&pred.moved);
+
+            let mut union_m = acc.moved.clone();
+            union_m.union_with(&pred.moved);
+            union_m.difference_with(&new_m);
+
+            acc.maybe_moved.union_with(&pred.maybe_moved);
+            acc.maybe_moved.union_with(&union_m);
+
+            acc.moved = new_m;
         }
         acc
     }
 
     fn get(&self, local: LocalId) -> LocalMoveState {
-        self.locals
-            .get(local.as_usize())
-            .copied()
-            .unwrap_or(LocalMoveState::Available)
+        if self.moved.contains(local) {
+            LocalMoveState::Moved
+        } else if self.maybe_moved.contains(local) {
+            LocalMoveState::MaybeMoved
+        } else {
+            LocalMoveState::Available
+        }
     }
 
     fn set(&mut self, local: LocalId, state: LocalMoveState) {
-        if let Some(slot) = self.locals.get_mut(local.as_usize()) {
-            *slot = state;
+        match state {
+            LocalMoveState::Available => {
+                self.moved.remove(local);
+                self.maybe_moved.remove(local);
+            }
+            LocalMoveState::Moved => {
+                self.moved.insert(local);
+                self.maybe_moved.remove(local);
+            }
+            LocalMoveState::MaybeMoved => {
+                self.moved.remove(local);
+                self.maybe_moved.insert(local);
+            }
         }
     }
 }
@@ -388,6 +402,8 @@ fn origin_for(temp: TempId, temp_origins: &[Option<LocalId>]) -> Option<LocalId>
     temp_origins.get(temp.as_usize()).copied().flatten()
 }
 
+#[cold]
+#[inline(never)]
 fn move_diag(
     code: DiagCode,
     local: LocalId,

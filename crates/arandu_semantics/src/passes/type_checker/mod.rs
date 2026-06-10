@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use fxhash::FxHashMap;
 
 use arandu_parser::Program;
 use arandu_parser::ast_pool::{AstPool, ExprId};
@@ -122,16 +122,16 @@ pub enum EnumPayloadShape {
 pub struct TypeInfo {
     pub type_interner: TypeInterner,
     pub expr_types: Vec<Option<TypeId>>,
-    pub decl_types: HashMap<SymbolId, TypeId>,
-    pub struct_fields: HashMap<SymbolId, HashMap<String, ArType>>,
-    pub struct_field_symbols: HashMap<SymbolId, HashMap<String, SymbolId>>,
-    pub enum_variants: HashMap<SymbolId, (SymbolId, EnumPayloadShape)>,
+    pub decl_types: FxHashMap<SymbolId, TypeId>,
+    pub struct_fields: FxHashMap<SymbolId, FxHashMap<String, ArType>>,
+    pub struct_field_symbols: FxHashMap<SymbolId, FxHashMap<String, SymbolId>>,
+    pub enum_variants: FxHashMap<SymbolId, (SymbolId, EnumPayloadShape)>,
     /// Ordered type-parameter symbols for generic decls (func, struct, …).
-    pub generic_params: HashMap<SymbolId, Vec<SymbolId>>,
+    pub generic_params: FxHashMap<SymbolId, Vec<SymbolId>>,
     /// Type-parameter symbol → interface symbols required (`T: Display`).
-    pub param_constraints: HashMap<SymbolId, Vec<SymbolId>>,
+    pub param_constraints: FxHashMap<SymbolId, Vec<SymbolId>>,
     /// Interface symbol → method signatures (nominal, Go-style structural check).
-    pub(crate) interfaces: HashMap<SymbolId, types::InterfaceInfo>,
+    pub(crate) interfaces: FxHashMap<SymbolId, types::InterfaceInfo>,
 }
 
 impl TypeInfo {
@@ -140,13 +140,13 @@ impl TypeInfo {
         Self {
             type_interner: TypeInterner::new(),
             expr_types: Vec::new(),
-            decl_types: HashMap::new(),
-            struct_fields: HashMap::new(),
-            struct_field_symbols: HashMap::new(),
-            enum_variants: HashMap::new(),
-            generic_params: HashMap::new(),
-            param_constraints: HashMap::new(),
-            interfaces: HashMap::new(),
+            decl_types: FxHashMap::default(),
+            struct_fields: FxHashMap::default(),
+            struct_field_symbols: FxHashMap::default(),
+            enum_variants: FxHashMap::default(),
+            generic_params: FxHashMap::default(),
+            param_constraints: FxHashMap::default(),
+            interfaces: FxHashMap::default(),
         }
     }
 

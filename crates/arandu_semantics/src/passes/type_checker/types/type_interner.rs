@@ -20,7 +20,7 @@
 use crate::SymbolTable;
 use crate::newtype_index;
 use crate::passes::type_checker::types::ArType;
-use std::collections::HashMap;
+use fxhash::FxHashMap;
 
 newtype_index!(TypeId);
 
@@ -28,7 +28,7 @@ newtype_index!(TypeId);
 #[derive(Debug, Clone)]
 pub struct TypeInterner {
     /// Forward map: ArType → TypeId  (deduplication).
-    map: HashMap<ArType, TypeId>,
+    map: FxHashMap<ArType, TypeId>,
     /// Reverse map: TypeId → ArType  (resolution).
     types: Vec<ArType>,
 }
@@ -37,7 +37,7 @@ impl TypeInterner {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            map: HashMap::new(),
+            map: FxHashMap::default(),
             types: Vec::new(),
         }
     }

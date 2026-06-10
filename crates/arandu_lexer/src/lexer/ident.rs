@@ -1,11 +1,72 @@
 use crate::TokenKind;
 
+pub(super) const FLAG_IDENT_START: u8 = 1 << 0;
+pub(super) const FLAG_IDENT_CONTINUE: u8 = 1 << 1;
+pub(super) const FLAG_WHITESPACE: u8 = 1 << 2;
+pub(super) const FLAG_DIGIT: u8 = 1 << 3;
+
+pub(super) const CHAR_PROPERTIES: [u8; 128] = {
+    let mut table = [0u8; 128];
+    
+    // Fill whitespace
+    table[b' ' as usize] |= FLAG_WHITESPACE;
+    table[b'\t' as usize] |= FLAG_WHITESPACE;
+    table[b'\r' as usize] |= FLAG_WHITESPACE;
+    table[b'\n' as usize] |= FLAG_WHITESPACE;
+
+    // Fill identifier start (a-z, A-Z, _)
+    let mut i = b'a';
+    while i <= b'z' {
+        table[i as usize] |= FLAG_IDENT_START | FLAG_IDENT_CONTINUE;
+        i += 1;
+    }
+    let mut i = b'A';
+    while i <= b'Z' {
+        table[i as usize] |= FLAG_IDENT_START | FLAG_IDENT_CONTINUE;
+        i += 1;
+    }
+    table[b'_' as usize] |= FLAG_IDENT_START | FLAG_IDENT_CONTINUE;
+
+    // Fill digits (0-9)
+    let mut i = b'0';
+    while i <= b'9' {
+        table[i as usize] |= FLAG_IDENT_CONTINUE | FLAG_DIGIT;
+        i += 1;
+    }
+
+    table
+};
+
+#[inline]
 pub(super) fn is_ident_start(ch: char) -> bool {
-    ch == '_' || ch.is_alphabetic()
+    let val = ch as u32;
+    if val < 128 {
+        (CHAR_PROPERTIES[val as usize] & FLAG_IDENT_START) != 0
+    } else {
+        ch.is_alphabetic()
+    }
 }
 
+#[inline]
 pub(super) fn is_ident_continue(ch: char) -> bool {
-    ch == '_' || ch.is_alphanumeric()
+    let val = ch as u32;
+    if val < 128 {
+        (CHAR_PROPERTIES[val as usize] & FLAG_IDENT_CONTINUE) != 0
+    } else {
+        ch.is_alphanumeric()
+    }
+}
+
+#[inline]
+pub(super) fn is_whitespace(ch: char) -> bool {
+    let val = ch as u32;
+    val < 128 && (CHAR_PROPERTIES[val as usize] & FLAG_WHITESPACE) != 0
+}
+
+#[inline]
+pub(super) fn is_digit(ch: char) -> bool {
+    let val = ch as u32;
+    val < 128 && (CHAR_PROPERTIES[val as usize] & FLAG_DIGIT) != 0
 }
 
 pub(super) fn keyword_kind(text: &str) -> Option<TokenKind> {

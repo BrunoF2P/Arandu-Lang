@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use fxhash::FxHashMap;
 
 use arandu_lexer::Span;
 use arandu_parser::{FuncSignature, GenericParam, TypeName, WhereItem};
@@ -179,7 +179,7 @@ fn collect_decl_constraints(
             .or_insert_with(|| param_symbols.clone());
     }
 
-    let name_to_sym: HashMap<String, SymbolId> = generic_params
+    let name_to_sym: FxHashMap<String, SymbolId> = generic_params
         .iter()
         .zip(param_symbols.iter())
         .map(|(gp, sym)| (gp.name.clone(), *sym))
@@ -348,10 +348,10 @@ fn interface_subst_for_concrete(
     concrete: &ArType,
 ) -> GenericSubst {
     let Some(iface_params) = checker.type_info.generic_params.get(&iface_sym) else {
-        return HashMap::new();
+        return FxHashMap::default();
     };
     if iface_params.is_empty() {
-        return HashMap::new();
+        return FxHashMap::default();
     }
     if let ArType::Named(_, args) = concrete
         && args.len() == iface_params.len()
@@ -361,7 +361,7 @@ fn interface_subst_for_concrete(
     if iface_params.len() == 1 {
         return build_subst(iface_params, std::slice::from_ref(concrete));
     }
-    HashMap::new()
+    FxHashMap::default()
 }
 
 fn lookup_method_type(checker: &TypeChecker, type_name: &str, method: &str) -> Option<ArType> {

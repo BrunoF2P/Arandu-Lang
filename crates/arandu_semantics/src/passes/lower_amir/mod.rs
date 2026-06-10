@@ -10,7 +10,7 @@ use crate::passes::move_checker::check_moves;
 use crate::passes::type_checker::types::ArType;
 use crate::{SymbolId, TypeCheckResult};
 use arandu_lexer::Span;
-use std::collections::HashMap;
+use fxhash::FxHashMap;
 
 mod ctx;
 mod expr;
@@ -90,7 +90,7 @@ pub(crate) struct LowerCtx<'a> {
     blocks: Vec<AmirBasicBlock>,
     stmts: AmirStmtTable,
     current_block: Option<BlockId>,
-    symbol_map: HashMap<SymbolId, LocalId>,
+    symbol_map: FxHashMap<SymbolId, LocalId>,
     /// (`continue_block`, `exit_block`, `defer_frame_depth_at_loop_entry`)
     loop_stack: Vec<(BlockId, BlockId, usize)>,
     literal_pool: &'a mut AmirLiteralPool,

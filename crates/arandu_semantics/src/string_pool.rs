@@ -1,5 +1,5 @@
 use crate::newtype_index;
-use std::collections::HashMap;
+use fxhash::FxHashMap;
 use std::fmt;
 
 /// A Small String Optimization (SSO) string.
@@ -78,7 +78,7 @@ newtype_index!(StringId);
 /// to keep the memory footprint low and comparison times at O(1).
 #[derive(Debug, Clone)]
 pub struct StringPool {
-    map: HashMap<SsoString, StringId>,
+    map: FxHashMap<SsoString, StringId>,
     strings: Vec<SsoString>,
 }
 
@@ -87,7 +87,7 @@ impl StringPool {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            map: HashMap::new(),
+            map: FxHashMap::default(),
             strings: Vec::new(),
         }
     }

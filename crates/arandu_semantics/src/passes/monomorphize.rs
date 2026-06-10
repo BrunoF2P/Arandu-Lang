@@ -33,7 +33,7 @@ use crate::newtype_index;
 use crate::passes::type_checker::TypeCheckResult;
 use crate::passes::type_checker::types::{ArType, TypeId, TypeInterner};
 use arandu_lexer::Span;
-use std::collections::HashMap;
+use fxhash::FxHashMap;
 
 newtype_index!(InstantiationNodeId);
 
@@ -70,7 +70,7 @@ pub struct InstantiationNode {
 pub struct InstantiationGraph {
     nodes: Vec<InstantiationNode>,
     /// Maps from key → node id for deduplication.
-    index: HashMap<InstantiationKey, InstantiationNodeId>,
+    index: FxHashMap<InstantiationKey, InstantiationNodeId>,
     /// Maximum recursion depth for generic instantiations.
     recursion_limit: usize,
 }
@@ -81,7 +81,7 @@ impl InstantiationGraph {
     pub fn new() -> Self {
         Self {
             nodes: Vec::new(),
-            index: HashMap::new(),
+            index: FxHashMap::default(),
             recursion_limit: 64,
         }
     }
@@ -91,7 +91,7 @@ impl InstantiationGraph {
     pub fn with_recursion_limit(limit: usize) -> Self {
         Self {
             nodes: Vec::new(),
-            index: HashMap::new(),
+            index: FxHashMap::default(),
             recursion_limit: limit,
         }
     }

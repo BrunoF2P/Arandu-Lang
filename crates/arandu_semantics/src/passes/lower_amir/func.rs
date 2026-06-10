@@ -9,7 +9,7 @@ use crate::cfg::compute_cfg_edges;
 use crate::diagnostics::Diagnostic;
 use crate::hir::{HirBlockId, HirFunc, HirProgram};
 use crate::literal_pool::AmirLiteralPool;
-use std::collections::HashMap;
+use fxhash::FxHashMap;
 
 pub(crate) fn lower_func(
     f: &HirFunc,
@@ -27,7 +27,7 @@ pub(crate) fn lower_func(
         blocks: Vec::new(),
         stmts: AmirStmtTable::new(),
         current_block: None,
-        symbol_map: HashMap::new(),
+        symbol_map: FxHashMap::default(),
         loop_stack: Vec::new(),
         literal_pool,
         defer_frames: Vec::new(),

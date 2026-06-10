@@ -1,7 +1,7 @@
 mod ident;
 mod punctuation;
 
-use ident::{is_ident_continue, is_ident_start, keyword_kind};
+use ident::{is_ident_continue, is_ident_start, is_digit, is_whitespace, keyword_kind};
 use punctuation::{peek_kind_from, token_kind_from_prefix};
 
 use crate::{LexError, LexErrorCode, Span, Token, TokenKind};
@@ -175,25 +175,25 @@ impl<'a> Lexer<'a> {
     }
 
     fn consume_space_or_newline(&mut self) -> bool {
-        match self.peek() {
-            Some(' ' | '\t') => {
-                self.bump();
-                true
-            }
-            Some('\r') if self.peek_next() == Some('\n') => {
-                let span = self.current_span();
-                self.bump();
-                self.bump();
-                self.maybe_insert_semicolon_at(span);
-                true
-            }
-            Some('\n') => {
-                let span = self.current_span();
-                self.bump();
-                self.maybe_insert_semicolon_at(span);
-                true
-            }
-            _ => false,
+        let Some(ch) = self.peek() else {
+            return false;
+        };
+        if ch == '\n' {
+            let span = self.current_span();
+            self.bump();
+            self.maybe_insert_semicolon_at(span);
+            true
+        } else if ch == '\r' && self.peek_next() == Some('\n') {
+            let span = self.current_span();
+            self.bump();
+            self.bump();
+            self.maybe_insert_semicolon_at(span);
+            true
+        } else if is_whitespace(ch) {
+            self.bump();
+            true
+        } else {
+            false
         }
     }
 
@@ -426,7 +426,7 @@ impl<'a> Lexer<'a> {
             }
             if self.peek() == Some('"') {
                 self.lex_string(true)?;
-            } else if self.peek().is_some_and(|ch| ch.is_ascii_digit()) {
+            } else if self.peek().is_some_and(is_digit) {
                 self.lex_number()?;
             } else if self.peek().is_some_and(is_ident_start) {
                 self.lex_ident_or_keyword();
@@ -571,7 +571,7 @@ impl<'a> Lexer<'a> {
         if self.peek() == Some('.') && self.peek_next() != Some('.') {
             is_float = true;
             self.bump();
-            if !self.peek().is_some_and(|ch| ch.is_ascii_digit()) {
+            if !self.peek().is_some_and(is_digit) {
                 return Err(self.error_from(
                     start,
                     LexErrorCode::InvalidNumericLiteral,
@@ -586,7 +586,7 @@ impl<'a> Lexer<'a> {
             if matches!(self.peek(), Some('+' | '-')) {
                 self.bump();
             }
-            if !self.peek().is_some_and(|ch| ch.is_ascii_digit()) {
+            if !self.peek().is_some_and(is_digit) {
                 return Err(self.error_from(
                     start,
                     LexErrorCode::InvalidNumericLiteral,
@@ -786,6 +786,8 @@ impl<'a> Lexer<'a> {
         )
     }
 
+    #[cold]
+    #[inline(never)]
     fn error_from(&self, start: Mark, code: LexErrorCode, message: &'static str) -> LexError {
         LexError::new(code, message, self.span_from(start))
     }
@@ -805,7 +807,7 @@ impl<'a> Lexer<'a> {
     fn bump_digits_or_underscores(&mut self) {
         while self
             .peek()
-            .is_some_and(|ch| ch.is_ascii_digit() || ch == '_')
+            .is_some_and(|ch| is_digit(ch) || ch == '_')
         {
             self.bump();
         }

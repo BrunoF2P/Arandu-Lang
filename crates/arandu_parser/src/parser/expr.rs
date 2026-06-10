@@ -22,159 +22,166 @@ impl<'a> Parser<'a> {
     pub(super) fn try_parse_expr(&mut self, min_bp: u8) -> Result<ExprId, ParseError> {
         let mut left = self.parse_prefix()?;
         loop {
-            if self.at_kind_name("LT") && self.looks_like_generic_call_or_block_suffix() {
-                let generic_start = self.pool.expr_span(left);
-                let args = self.parse_generic_args()?;
-                let mut type_ids = Vec::new();
-                for arg in args {
-                    type_ids.push(self.pool.alloc_type_expr(arg));
-                }
-                let type_range = self.pool.alloc_type_expr_list(&type_ids);
-                let span = span_between(generic_start, self.previous().span);
-                left = self.pool.alloc_expr(
-                    ExprKind::Generic {
-                        callee: left,
-                        args: type_range,
-                    },
-                    span,
-                );
+            let next_kind = self.current().kind;
+            match next_kind {
+                TokenKind::Lt => {
+                    if self.looks_like_generic_call_or_block_suffix() {
+                        let generic_start = self.pool.expr_span(left);
+                        let args = self.parse_generic_args()?;
+                        let mut type_ids = Vec::new();
+                        for arg in args {
+                            type_ids.push(self.pool.alloc_type_expr(arg));
+                        }
+                        let type_range = self.pool.alloc_type_expr_list(&type_ids);
+                        let span = span_between(generic_start, self.previous().span);
+                        left = self.pool.alloc_expr(
+                            ExprKind::Generic {
+                                callee: left,
+                                args: type_range,
+                            },
+                            span,
+                        );
 
-                if self.at_kind_name("LPAREN") {
+                        if matches!(self.current().kind, TokenKind::LParen) {
+                            left = self.finish_call(left)?;
+                        } else if self.allow_block_calls {
+                            left = self.finish_trailing_block_call(left)?;
+                        } else {
+                            return Err(ParseError::new(
+                                ParseErrorCode::ExpectedToken,
+                                "generic block calls are not valid in this context",
+                                self.current(),
+                                self.source,
+                            ));
+                        }
+                        continue;
+                    }
+                    if self.looks_like_bare_generic_args()
+                        && self.looks_like_generic_args_boundary()
+                    {
+                        return Err(ParseError::new(
+                            ParseErrorCode::ExpectedToken,
+                            "generic arguments in expressions must be followed by call arguments or block",
+                            self.current(),
+                            self.source,
+                        ));
+                    }
+                }
+                TokenKind::LParen => {
                     left = self.finish_call(left)?;
-                } else if self.allow_block_calls {
+                    continue;
+                }
+                TokenKind::LBrace if self.allow_block_calls => {
                     left = self.finish_trailing_block_call(left)?;
-                } else {
-                    return Err(ParseError::new(
-                        ParseErrorCode::ExpectedToken,
-                        "generic block calls are not valid in this context",
-                        self.current(),
-                        self.source,
-                    ));
+                    continue;
                 }
-                continue;
-            }
-            if self.at_kind_name("LT")
-                && self.looks_like_bare_generic_args()
-                && self.looks_like_generic_args_boundary()
-            {
-                return Err(ParseError::new(
-                    ParseErrorCode::ExpectedToken,
-                    "generic arguments in expressions must be followed by call arguments or block",
-                    self.current(),
-                    self.source,
-                ));
-            }
-            if self.at_kind_name("LPAREN") {
-                left = self.finish_call(left)?;
-                continue;
-            }
-            if self.allow_block_calls && self.at_kind_name("LBRACE") {
-                left = self.finish_trailing_block_call(left)?;
-                continue;
-            }
-            if self.at_kind_name("LBRACKET") {
-                let span_start = self.pool.expr_span(left);
-                self.consume();
-                let index = self.parse_expr(0)?;
-                self.expect_name("RBRACKET")?;
-                let span = span_between(span_start, self.previous().span);
-                left = self
-                    .pool
-                    .alloc_expr(ExprKind::Index { base: left, index }, span);
-                continue;
-            }
-            if self.eat_name("SAFE_INDEX_START") {
-                let span_start = self.pool.expr_span(left);
-                let index = self.parse_expr(0)?;
-                self.expect_name("RBRACKET")?;
-                let span = span_between(span_start, self.previous().span);
-                left = self
-                    .pool
-                    .alloc_expr(ExprKind::SafeIndex { base: left, index }, span);
-                continue;
-            }
-            if self.eat_name("DOT") {
-                let span_start = self.pool.expr_span(left);
-                let field = self.expect_ident_value()?;
-                let span = span_between(span_start, self.previous().span);
-                left = self
-                    .pool
-                    .alloc_expr(ExprKind::Field { base: left, field }, span);
-                continue;
-            }
-            if self.eat_name("SAFE_DOT") {
-                let span_start = self.pool.expr_span(left);
-                let field = self.expect_ident_value()?;
-                let span = span_between(span_start, self.previous().span);
-                left = self
-                    .pool
-                    .alloc_expr(ExprKind::SafeField { base: left, field }, span);
-                continue;
-            }
-            if self.eat_name("QUESTION") {
-                let span_start = self.pool.expr_span(left);
-                let span = span_between(span_start, self.previous().span);
-                left = self.pool.alloc_expr(ExprKind::Try { expr: left }, span);
-                continue;
-            }
-
-            if self.at_kind_name("KW_CATCH") {
-                let left_bp = 10;
-                let right_bp = 10;
-                if left_bp < min_bp {
-                    break;
+                TokenKind::LBracket => {
+                    let span_start = self.pool.expr_span(left);
+                    self.consume();
+                    let index = self.parse_expr(0)?;
+                    self.expect_kind(TokenKind::RBracket)?;
+                    let span = span_between(span_start, self.previous().span);
+                    left = self
+                        .pool
+                        .alloc_expr(ExprKind::Index { base: left, index }, span);
+                    continue;
                 }
-                let span_start = self.pool.expr_span(left);
-                self.consume();
-                let handler = if self.eat_name("PIPE") {
-                    let handler_start = self.pos.saturating_sub(1);
-                    let error = self.expect_ident_value()?;
-                    self.expect_name("PIPE")?;
-                    let block = self.parse_block()?;
-                    let catch_handler = CatchHandler::Block {
-                        span: self.span_from_mark(handler_start),
-                        error,
-                        block,
+                TokenKind::SafeIndexStart => {
+                    self.consume();
+                    let span_start = self.pool.expr_span(left);
+                    let index = self.parse_expr(0)?;
+                    self.expect_kind(TokenKind::RBracket)?;
+                    let span = span_between(span_start, self.previous().span);
+                    left = self
+                        .pool
+                        .alloc_expr(ExprKind::SafeIndex { base: left, index }, span);
+                    continue;
+                }
+                TokenKind::Dot => {
+                    self.consume();
+                    let span_start = self.pool.expr_span(left);
+                    let field = self.expect_ident_value()?;
+                    let span = span_between(span_start, self.previous().span);
+                    left = self
+                        .pool
+                        .alloc_expr(ExprKind::Field { base: left, field }, span);
+                    continue;
+                }
+                TokenKind::SafeDot => {
+                    self.consume();
+                    let span_start = self.pool.expr_span(left);
+                    let field = self.expect_ident_value()?;
+                    let span = span_between(span_start, self.previous().span);
+                    left = self
+                        .pool
+                        .alloc_expr(ExprKind::SafeField { base: left, field }, span);
+                    continue;
+                }
+                TokenKind::Question => {
+                    self.consume();
+                    let span_start = self.pool.expr_span(left);
+                    let span = span_between(span_start, self.previous().span);
+                    left = self.pool.alloc_expr(ExprKind::Try { expr: left }, span);
+                    continue;
+                }
+                TokenKind::KwCatch => {
+                    let left_bp = 10;
+                    let right_bp = 10;
+                    if left_bp < min_bp {
+                        break;
+                    }
+                    let span_start = self.pool.expr_span(left);
+                    self.consume();
+                    let handler = if self.eat_kind(TokenKind::Pipe) {
+                        let handler_start = self.pos.saturating_sub(1);
+                        let error = self.expect_ident_value()?;
+                        self.expect_kind(TokenKind::Pipe)?;
+                        let block = self.parse_block()?;
+                        let catch_handler = CatchHandler::Block {
+                            span: self.span_from_mark(handler_start),
+                            error,
+                            block,
+                        };
+                        self.pool.alloc_catch_handler(catch_handler)
+                    } else {
+                        let handler_start = self.mark();
+                        let expr = self.parse_expr(right_bp)?;
+                        let catch_handler = CatchHandler::Expr {
+                            span: self.span_from_mark(handler_start),
+                            expr,
+                        };
+                        self.pool.alloc_catch_handler(catch_handler)
                     };
-                    self.pool.alloc_catch_handler(catch_handler)
-                } else {
-                    let handler_start = self.mark();
-                    let expr = self.parse_expr(right_bp)?;
-                    let catch_handler = CatchHandler::Expr {
-                        span: self.span_from_mark(handler_start),
-                        expr,
-                    };
-                    self.pool.alloc_catch_handler(catch_handler)
-                };
-                let span = span_between(span_start, self.previous().span);
-                left = self.pool.alloc_expr(
-                    ExprKind::Catch {
-                        expr: left,
-                        handler,
-                    },
-                    span,
-                );
-                continue;
-            }
-
-            if self.at_kind_name("KW_AS") {
-                let left_bp = 140;
-                if left_bp < min_bp {
-                    break;
+                    let span = span_between(span_start, self.previous().span);
+                    left = self.pool.alloc_expr(
+                        ExprKind::Catch {
+                            expr: left,
+                            handler,
+                        },
+                        span,
+                    );
+                    continue;
                 }
-                let span_start = self.pool.expr_span(left);
-                self.consume();
-                let ty = self.parse_type()?;
-                let type_id = self.pool.alloc_type_expr(ty.clone());
-                let span = span_between(span_start, ty.span());
-                left = self.pool.alloc_expr(
-                    ExprKind::Cast {
-                        expr: left,
-                        ty: type_id,
-                    },
-                    span,
-                );
-                continue;
+                TokenKind::KwAs => {
+                    let left_bp = 140;
+                    if left_bp < min_bp {
+                        break;
+                    }
+                    let span_start = self.pool.expr_span(left);
+                    self.consume();
+                    let ty = self.parse_type()?;
+                    let type_id = self.pool.alloc_type_expr(ty.clone());
+                    let span = span_between(span_start, ty.span());
+                    left = self.pool.alloc_expr(
+                        ExprKind::Cast {
+                            expr: left,
+                            ty: type_id,
+                        },
+                        span,
+                    );
+                    continue;
+                }
+                _ => {}
             }
 
             let Some((op, left_bp, right_bp)) = self.current_binary() else {
