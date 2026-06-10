@@ -1,4 +1,4 @@
-use std::{env, fs, path::Path, process};
+use std::{env, fs, path::{Path, PathBuf}, process};
 
 fn print_diagnostics_and_exit(diagnostics: &[arandu_semantics::Diagnostic], filepath: &str) -> ! {
     for diagnostic in diagnostics {
@@ -56,20 +56,37 @@ fn parse_and_check(source: &str, filepath: &str) -> CheckedProgram {
 }
 
 fn usage_and_exit() -> ! {
-    eprintln!("usage: arandu_cli <lex|parse|check|hir|amir> <path> [--debug] [--opt]");
+    eprintln!("usage: arandu_cli <lex|parse|check|hir|amir> <path> [--debug] [--opt] [--parallel]");
 
     process::exit(2);
+}
+
+fn find_aru_files(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    if dir.is_dir() {
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                find_aru_files(&path, files)?;
+            } else if path.extension().and_then(|s| s.to_str()) == Some("aru") {
+                files.push(path);
+            }
+        }
+    }
+    Ok(())
 }
 
 fn main() {
     let mut debug = false;
     let mut opt = false;
+    let mut parallel = false;
     let mut args = Vec::new();
 
     for arg in env::args() {
         match arg.as_str() {
             "--debug" => debug = true,
             "--opt" => opt = true,
+            "--parallel" => parallel = true,
             _ => args.push(arg),
         }
     }
@@ -86,92 +103,162 @@ fn main() {
 
     let path = Path::new(&args[2]);
 
-    let source = match fs::read_to_string(path) {
-        Ok(source) => source,
-        Err(err) => {
-            eprintln!("failed to read {}: {err}", path.display());
-
+    let mut paths = Vec::new();
+    if path.is_dir() {
+        if let Err(err) = find_aru_files(path, &mut paths) {
+            eprintln!("failed to list directory {}: {err}", path.display());
             process::exit(1);
         }
-    };
+        paths.sort();
+    } else {
+        paths.push(path.to_path_buf());
+    }
 
-    let filepath = path.to_string_lossy();
+    if paths.is_empty() {
+        eprintln!("no .aru source files found at {}", path.display());
+        process::exit(1);
+    }
 
-    match command.as_str() {
-        "lex" => match arandu_lexer::lex_to_string(&source) {
-            Ok(output) => println!("{output}"),
-            Err(err) => {
-                eprintln!("{err}");
-                process::exit(1);
-            }
-        },
+    let use_parallel = parallel || paths.len() > 1;
 
-        "parse" => match arandu_parser::parse_to_string(&source) {
-            Ok(output) => println!("{output}"),
-            Err(err) => {
-                eprintln!("{err}");
-                process::exit(1);
-            }
-        },
-
-        "check" => {
-            let checked = parse_and_check(&source, &filepath);
-            let hir = match arandu_semantics::lower_to_hir(&checked.type_check, &checked.program) {
-                Ok(hir) => hir,
-                Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
-            };
-            validate_hir_and_analyze(&hir, &checked.type_check, &filepath);
-            println!("ok");
+    if use_parallel {
+        if matches!(command.as_str(), "lex" | "parse") {
+            eprintln!("parallel mode is not supported for command '{}'", command);
+            process::exit(1);
         }
 
-        "hir" => {
-            let checked = parse_and_check(&source, &filepath);
+        match arandu_semantics::compile_parallel(paths) {
+            Ok(output) => {
+                match command.as_str() {
+                    "check" => {
+                        println!("ok");
+                    }
+                    "hir" => {
+                        for (i, hir) in output.hirs.iter().enumerate() {
+                            let filepath = output.paths[i].to_string_lossy();
+                            println!("--- HIR for {} ---", filepath);
+                            if debug {
+                                println!("{hir:#?}");
+                            } else {
+                                let ctx = arandu_semantics::hir::HirPrettyCtx {
+                                    pool: &hir.pool,
+                                    symbols: &output.symbols[i],
+                                    show_spans: false,
+                                };
+                                print!("{}", hir.pretty_print(&ctx));
+                            }
+                        }
+                    }
+                    "amir" => {
+                        for (i, amir) in output.amirs.iter().enumerate() {
+                            let filepath = output.paths[i].to_string_lossy();
+                            println!("--- AMIR for {} ---", filepath);
+                            if debug {
+                                println!("{amir:#?}");
+                            } else {
+                                print!("{}", amir.pretty_print(&output.symbols[i]));
+                            }
+                        }
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            Err(diags) => {
+                for diag in diags {
+                    eprintln!("{}", diag.format_for_cli(""));
+                }
+                process::exit(1);
+            }
+        }
+    } else {
+        let source = match fs::read_to_string(path) {
+            Ok(source) => source,
+            Err(err) => {
+                eprintln!("failed to read {}: {err}", path.display());
 
-            let hir = match arandu_semantics::lower_to_hir(&checked.type_check, &checked.program) {
-                Ok(hir) => hir,
-                Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
-            };
+                process::exit(1);
+            }
+        };
 
-            validate_hir_and_analyze(&hir, &checked.type_check, &filepath);
+        let filepath = path.to_string_lossy();
 
-            if debug {
-                println!("{hir:#?}");
-            } else {
-                let ctx = arandu_semantics::hir::HirPrettyCtx {
-                    pool: &hir.pool,
-                    symbols: &checked.type_check.symbols,
-                    show_spans: false,
+        match command.as_str() {
+            "lex" => match arandu_lexer::lex_to_string(&source) {
+                Ok(output) => println!("{output}"),
+                Err(err) => {
+                    eprintln!("{err}");
+                    process::exit(1);
+                }
+            },
+
+            "parse" => match arandu_parser::parse_to_string(&source) {
+                Ok(output) => println!("{output}"),
+                Err(err) => {
+                    eprintln!("{err}");
+                    process::exit(1);
+                }
+            },
+
+            "check" => {
+                let checked = parse_and_check(&source, &filepath);
+                let hir = match arandu_semantics::lower_to_hir(&checked.type_check, &checked.program) {
+                    Ok(hir) => hir,
+                    Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
+                };
+                validate_hir_and_analyze(&hir, &checked.type_check, &filepath);
+                println!("ok");
+            }
+
+            "hir" => {
+                let checked = parse_and_check(&source, &filepath);
+
+                let hir = match arandu_semantics::lower_to_hir(&checked.type_check, &checked.program) {
+                    Ok(hir) => hir,
+                    Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
                 };
 
-                print!("{}", hir.pretty_print(&ctx));
+                validate_hir_and_analyze(&hir, &checked.type_check, &filepath);
+
+                if debug {
+                    println!("{hir:#?}");
+                } else {
+                    let ctx = arandu_semantics::hir::HirPrettyCtx {
+                        pool: &hir.pool,
+                        symbols: &checked.type_check.symbols,
+                        show_spans: false,
+                    };
+
+                    print!("{}", hir.pretty_print(&ctx));
+                }
             }
+
+            "amir" => {
+                let checked = parse_and_check(&source, &filepath);
+
+                let hir = match arandu_semantics::lower_to_hir(&checked.type_check, &checked.program) {
+                    Ok(hir) => hir,
+                    Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
+                };
+
+                validate_hir_and_analyze(&hir, &checked.type_check, &filepath);
+
+                let mut amir = match arandu_semantics::lower_to_amir(&checked.type_check, &hir) {
+                    Ok(amir) => amir,
+                    Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
+                };
+                if opt {
+                    arandu_semantics::optimize_amir(&mut amir);
+                }
+
+                if debug {
+                    println!("{amir:#?}");
+                } else {
+                    print!("{}", amir.pretty_print(&checked.type_check.symbols));
+                }
+            }
+
+            _ => unreachable!(),
         }
-
-        "amir" => {
-            let checked = parse_and_check(&source, &filepath);
-
-            let hir = match arandu_semantics::lower_to_hir(&checked.type_check, &checked.program) {
-                Ok(hir) => hir,
-                Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
-            };
-
-            validate_hir_and_analyze(&hir, &checked.type_check, &filepath);
-
-            let mut amir = match arandu_semantics::lower_to_amir(&checked.type_check, &hir) {
-                Ok(amir) => amir,
-                Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
-            };
-            if opt {
-                arandu_semantics::optimize_amir(&mut amir);
-            }
-
-            if debug {
-                println!("{amir:#?}");
-            } else {
-                print!("{}", amir.pretty_print(&checked.type_check.symbols));
-            }
-        }
-
-        _ => unreachable!(),
     }
 }
+

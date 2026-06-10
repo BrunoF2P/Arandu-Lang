@@ -27,6 +27,7 @@ pub mod passes;
 pub mod stable_id;
 pub mod string_pool;
 pub mod vm;
+pub mod parallel;
 
 pub use ops::{BinaryOp, SetOp, UnaryOp};
 mod resolved;
@@ -49,6 +50,8 @@ pub use passes::optimize::optimize_amir;
 pub use passes::type_checker::{TypeCheckResult, TypeInfo, type_check};
 pub use resolved::{DocCommentMap, NodeKey, ResolvedNames};
 pub use symbol_table::{ScopeId, Symbol, SymbolId, SymbolKind, SymbolTable};
+pub use parallel::compile_parallel;
+
 
 #[derive(Debug, Clone)]
 pub struct ResolutionResult {

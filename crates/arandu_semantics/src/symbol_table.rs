@@ -101,6 +101,68 @@ impl SymbolTable {
         }
     }
 
+    pub fn merge_from(&mut self, other: SymbolTable) {
+        let self_symbols_len = self.symbols.len() as u32;
+        let self_scopes_len = self.scopes.len() as u32;
+
+        let map_scope = |old_scope: ScopeId| -> ScopeId {
+            if old_scope.0 == 0 {
+                ScopeId(0)
+            } else {
+                ScopeId(old_scope.0 + self_scopes_len - 1)
+            }
+        };
+
+        let map_symbol = |old_symbol: SymbolId| -> SymbolId {
+            SymbolId(old_symbol.0 + self_symbols_len)
+        };
+
+        // 1. Merge other scopes (except global scope at index 0)
+        for old_symbol_id in &other.scopes[0].symbols {
+            self.scopes[0].symbols.push(map_symbol(*old_symbol_id));
+        }
+
+        for i in 1..other.scopes.len() {
+            let old_scope = &other.scopes[i];
+            let new_parent = old_scope.parent.map(map_scope);
+            let new_symbols = old_scope.symbols.iter().map(|id| map_symbol(*id)).collect();
+            self.scopes.push(Scope {
+                parent: new_parent,
+                symbols: new_symbols,
+            });
+        }
+
+        // 2. Merge other symbols
+        for old_symbol in other.symbols {
+            let new_id = map_symbol(old_symbol.id);
+            let new_scope = map_scope(old_symbol.scope);
+            self.symbols.push(Symbol {
+                id: new_id,
+                name: old_symbol.name,
+                kind: old_symbol.kind,
+                span: old_symbol.span,
+                scope: new_scope,
+            });
+        }
+
+        // 3. Merge other module members
+        for (module, members) in other.module_members {
+            let entry = self.module_members.entry(module).or_default();
+            for (member, old_symbol_id) in members {
+                entry.insert(member, map_symbol(old_symbol_id));
+            }
+        }
+
+        // 4. Merge other associated members
+        for (ty, members) in other.associated_members {
+            let entry = self.associated_members.entry(ty).or_default();
+            for (member, old_symbol_id) in members {
+                entry.insert(member, map_symbol(old_symbol_id));
+            }
+        }
+    }
+
+
     #[must_use]
     pub fn global_scope(&self) -> ScopeId {
         ScopeId(0)
