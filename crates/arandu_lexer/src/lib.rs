@@ -3,6 +3,13 @@ mod lexer;
 mod token;
 mod token_name;
 
+#[path = "lexer/ident.rs"]
+pub(crate) mod ident;
+#[path = "lexer/punctuation.rs"]
+pub(crate) mod punctuation;
+
+pub mod simd;
+
 pub use error::{LexError, LexErrorCode};
 pub use lexer::Lexer;
 pub use token::{Span, Token, TokenKind};

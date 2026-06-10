@@ -1,8 +1,6 @@
-mod ident;
-mod punctuation;
-
-use ident::{is_ident_continue, is_ident_start, is_digit, is_whitespace, keyword_kind};
-use punctuation::{peek_kind_from, token_kind_from_prefix};
+use crate::ident::{is_ident_continue, is_ident_start, is_digit, keyword_kind};
+use crate::punctuation::{peek_kind_from, token_kind_from_prefix};
+use crate::simd::SimdBackendKind;
 
 use crate::{LexError, LexErrorCode, Span, Token, TokenKind};
 
@@ -14,6 +12,7 @@ pub struct Lexer<'a> {
     tokens: Vec<Token>,
     prev_significant: Option<TokenKind>,
     diagnostics: Vec<LexError>,
+    backend: SimdBackendKind,
 }
 
 #[derive(Clone, Copy)]
@@ -67,6 +66,7 @@ impl<'a> Lexer<'a> {
             tokens: Vec::with_capacity(source.len() / 4),
             prev_significant: None,
             diagnostics: Vec::new(),
+            backend: SimdBackendKind::detect(),
         }
     }
 
@@ -113,7 +113,9 @@ impl<'a> Lexer<'a> {
     }
 
     fn lex_next_token(&mut self) -> Result<(), LexError> {
-        if self.consume_space_or_newline() {
+        let prev_pos = self.pos;
+        self.skip_whitespace();
+        if self.pos > prev_pos {
             return Ok(());
         }
 
@@ -174,26 +176,52 @@ impl<'a> Lexer<'a> {
         self.lex_operator_or_punctuation()
     }
 
-    fn consume_space_or_newline(&mut self) -> bool {
-        let Some(ch) = self.peek() else {
-            return false;
+    fn skip_whitespace(&mut self) {
+        let (newlines, skipped, last_nl) = match self.backend {
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            SimdBackendKind::Avx2 => unsafe { crate::simd::avx2::skip_whitespace(&self.source.as_bytes()[self.pos..]) },
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            SimdBackendKind::Sse2 => unsafe { crate::simd::sse2::skip_whitespace(&self.source.as_bytes()[self.pos..]) },
+            #[cfg(target_arch = "aarch64")]
+            SimdBackendKind::Neon => unsafe { crate::simd::neon::skip_whitespace(&self.source.as_bytes()[self.pos..]) },
+            _ => crate::simd::scalar::skip_whitespace(&self.source.as_bytes()[self.pos..]),
         };
-        if ch == '\n' {
-            let span = self.current_span();
-            self.bump();
-            self.maybe_insert_semicolon_at(span);
-            true
-        } else if ch == '\r' && self.peek_next() == Some('\n') {
-            let span = self.current_span();
-            self.bump();
-            self.bump();
-            self.maybe_insert_semicolon_at(span);
-            true
-        } else if is_whitespace(ch) {
-            self.bump();
-            true
+
+        if skipped == 0 {
+            return;
+        }
+
+        if newlines > 0 {
+            let mut first_nl_offset = self.source.as_bytes()[self.pos..self.pos + skipped]
+                .iter()
+                .position(|&b| b == b'\n')
+                .unwrap_or(0);
+
+            if first_nl_offset > 0 && self.source.as_bytes()[self.pos + first_nl_offset - 1] == b'\r' {
+                first_nl_offset -= 1;
+            }
+
+            let first_nl_span = Span::new(
+                self.pos + first_nl_offset,
+                self.pos + first_nl_offset,
+                self.line,
+                self.col + first_nl_offset,
+                self.line,
+                self.col + first_nl_offset,
+            );
+
+            self.pos += skipped;
+            self.line += newlines;
+            if let Some(last_nl_idx) = last_nl {
+                self.col = skipped - last_nl_idx;
+            } else {
+                self.col += skipped;
+            }
+
+            self.maybe_insert_semicolon_at(first_nl_span);
         } else {
-            false
+            self.pos += skipped;
+            self.col += skipped;
         }
     }
 
@@ -421,7 +449,9 @@ impl<'a> Lexer<'a> {
                 self.lex_operator_or_punctuation()?;
                 continue;
             }
-            if self.consume_space_or_newline() {
+            let prev_pos = self.pos;
+            self.skip_whitespace();
+            if self.pos > prev_pos {
                 continue;
             }
             if self.peek() == Some('"') {
@@ -690,8 +720,24 @@ impl<'a> Lexer<'a> {
     fn lex_ident_or_keyword(&mut self) {
         let start = self.mark();
         self.bump();
-        while self.peek().is_some_and(is_ident_continue) {
-            self.bump();
+        let len = match self.backend {
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            SimdBackendKind::Avx2 => unsafe { crate::simd::avx2::scan_identifier(self.source[self.pos..].as_bytes()) },
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            SimdBackendKind::Sse2 => unsafe { crate::simd::sse2::scan_identifier(self.source[self.pos..].as_bytes()) },
+            #[cfg(target_arch = "aarch64")]
+            SimdBackendKind::Neon => unsafe { crate::simd::neon::scan_identifier(self.source[self.pos..].as_bytes()) },
+            _ => crate::simd::scalar::scan_identifier(self.source[self.pos..].as_bytes()),
+        };
+        self.pos += len;
+        self.col += len;
+
+        while let Some(ch) = self.peek() {
+            if is_ident_continue(ch) {
+                self.bump();
+            } else {
+                break;
+            }
         }
         let lexeme = self.slice_from(start.pos);
         let kind = keyword_kind(lexeme).unwrap_or_else(|| {
