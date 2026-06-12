@@ -1036,3 +1036,75 @@ fn golden_interface_not_satisfied() {
 fn golden_where_invalid_type_param() {
     assert_diagnostic_golden("where_invalid_type_param");
 }
+
+#[test]
+fn test_type_checker_smart_suggestions() {
+    let source = "
+        struct Point {
+            myfield int
+            y int
+        }
+        func Point.get_x(self) int {
+            return self.myfield
+        }
+        func main() {
+            p Point = Point { myfield: 0, y: 0 }
+            // Case-insensitive match on field
+            a int = p.myField
+            // Method suggestion
+            b int = p.get_
+            // Pointer to struct suggestion
+            ptr_p ptr[Point] = alloc Point { myfield: 1, y: 2 }
+            c int = ptr_p.y_
+        }
+    ";
+    let program = parse(source).expect("Failed to parse");
+    let resolution = resolve(&program);
+    let result = type_check(resolution, &program);
+
+    let hints: Vec<String> = result.diagnostics
+        .iter()
+        .flat_map(|d| d.hints.clone())
+        .collect();
+
+    assert!(hints.contains(&"did you mean 'myfield'?".to_string()), "got hints: {:?}", hints);
+    assert!(hints.contains(&"did you mean 'get_x()'?".to_string()), "got hints: {:?}", hints);
+    assert!(hints.contains(&"did you mean 'y'?".to_string()), "got hints: {:?}", hints);
+}
+
+#[test]
+fn test_interface_missing_method_suggestions() {
+    let source = "
+        interface Writer {
+            func write() void
+        }
+        struct Buffer {
+            data int
+        }
+        // Buffer implements a typo-ed method wrte instead of write
+        func Buffer.wrte(self) void {
+        }
+        func send<T: Writer>(value T) void {
+        }
+        func main() {
+            send<Buffer>(Buffer { data: 1 })
+        }
+    ";
+    let program = parse(source).expect("Failed to parse");
+    let resolution = resolve(&program);
+    let result = type_check(resolution, &program);
+
+    // Check that we got the expected error and spelling suggestion
+    let mut found = false;
+    for diag in &result.diagnostics {
+        if diag.code == arandu_semantics::DiagCode::T025InterfaceNotSatisfied {
+            for note in &diag.notes {
+                if note.contains("write (did you mean `wrte`?)") {
+                    found = true;
+                }
+            }
+        }
+    }
+    assert!(found, "Expected note suggesting 'wrte' for missing method 'write', but got diagnostics: {:?}", result.diagnostics);
+}
+

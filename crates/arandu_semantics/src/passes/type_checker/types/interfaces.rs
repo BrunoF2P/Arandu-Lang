@@ -324,7 +324,25 @@ fn missing_interface_methods(
     for (method, required) in &iface.methods {
         let required_inst = substitute_type(required, &iface_subst);
         let Some(provided) = lookup_method_type(checker, &type_name, method) else {
-            missing.push(method.clone());
+            let mut similar = Vec::new();
+            if let Some(methods) = checker.symbols.associated_members.get(&type_name) {
+                let max_distance = if method.len() <= 4 { 2 } else { 3 };
+                for prov_name in methods.keys() {
+                    let dist = if prov_name.to_lowercase() == method.to_lowercase() {
+                        0
+                    } else {
+                        strsim::levenshtein(method, prov_name)
+                    };
+                    if dist <= max_distance {
+                        similar.push(prov_name.clone());
+                    }
+                }
+            }
+            if !similar.is_empty() {
+                missing.push(format!("{method} (did you mean `{}`?)", similar.join("`, `")));
+            } else {
+                missing.push(method.clone());
+            }
             continue;
         };
         let provided = strip_receiver(provided);

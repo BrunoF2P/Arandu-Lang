@@ -78,7 +78,7 @@ pub struct SymbolTable {
     scopes: Vec<Scope>,
     symbols: Vec<Symbol>,
     module_members: FxHashMap<String, FxHashMap<String, SymbolId>>,
-    associated_members: FxHashMap<String, FxHashMap<String, SymbolId>>,
+    pub(crate) associated_members: FxHashMap<String, FxHashMap<String, SymbolId>>,
 }
 
 impl Default for SymbolTable {

@@ -1,6 +1,17 @@
-use arandu_semantics::amir::{AmirProjection, AmirStmt};
+use arandu_lexer::Span;
+use arandu_semantics::DenseRange;
+use arandu_semantics::amir::{
+    AmirBasicBlock, AmirConstant, AmirFunc, AmirLocal, AmirOperand, AmirPlace, AmirProjection,
+    AmirRvalue, AmirStmt, AmirStmtTable, AmirTemp, AmirTerminator, BlockId, Dominators, LocalId,
+    TempId, reachable_blocks_dense,
+};
+use arandu_semantics::literal_pool::AmirLiteralPool;
+use arandu_semantics::passes::liveness::analyze_local_liveness;
+use arandu_semantics::passes::optimize::optimize_amir_func;
+use arandu_semantics::passes::type_checker::types::ArType;
 use arandu_semantics::{
-    DiagCode, SymbolKind, lower_to_amir, lower_to_hir, resolve, type_check, validate_amir_program,
+    DiagCode, SymbolId, SymbolKind, lower_to_amir, lower_to_hir, resolve, type_check,
+    validate_amir_program,
 };
 
 #[test]
@@ -195,4 +206,188 @@ func main(cond bool) {
             .any(|diagnostic| diagnostic.code == DiagCode::O007InconsistentMoveBetweenBranches),
         "expected O007 inconsistent move diagnostic, got {diagnostics:?}"
     );
+}
+
+fn empty_block(id: usize, predecessors: &[usize], successors: &[usize]) -> AmirBasicBlock {
+    AmirBasicBlock {
+        id: BlockId::from_usize(id),
+        statements: DenseRange::empty(),
+        terminator: AmirTerminator::Unreachable,
+        successors: successors
+            .iter()
+            .map(|id| BlockId::from_usize(*id))
+            .collect(),
+        predecessors: predecessors
+            .iter()
+            .map(|id| BlockId::from_usize(*id))
+            .collect(),
+    }
+}
+
+fn temp(id: usize) -> TempId {
+    TempId::from_usize(id)
+}
+
+fn local(id: usize) -> LocalId {
+    LocalId::from_usize(id)
+}
+
+fn place(id: usize) -> AmirPlace {
+    AmirPlace {
+        local: local(id),
+        projections: Default::default(),
+    }
+}
+
+fn symbol(id: u32) -> SymbolId {
+    SymbolId(id)
+}
+
+fn dummy_span() -> Span {
+    Span::new(0, 0, 0, 0, 0, 0)
+}
+
+fn test_local(id: usize, symbol_id: u32) -> AmirLocal {
+    AmirLocal {
+        id: local(id),
+        symbol: Some(symbol(symbol_id)),
+        ty: ArType::Void,
+        span: dummy_span(),
+        use_span: None,
+    }
+}
+
+fn test_temp(id: usize) -> AmirTemp {
+    AmirTemp {
+        id: temp(id),
+        ty: ArType::Void,
+        span: dummy_span(),
+    }
+}
+
+fn test_func(
+    locals: Vec<AmirLocal>,
+    temps: Vec<AmirTemp>,
+    blocks: Vec<AmirBasicBlock>,
+    stmts: AmirStmtTable,
+) -> AmirFunc {
+    AmirFunc {
+        symbol: symbol(0),
+        return_type: ArType::Void,
+        receiver: None,
+        params: Vec::new(),
+        locals,
+        temps,
+        blocks,
+        stmts,
+    }
+}
+
+#[test]
+fn dense_reachability_tracks_cfg_without_hash_sets() {
+    let mut func = test_func(
+        Vec::new(),
+        Vec::new(),
+        vec![
+            empty_block(0, &[], &[1]),
+            empty_block(1, &[0], &[2]),
+            empty_block(2, &[1], &[]),
+            empty_block(3, &[], &[]),
+        ],
+        AmirStmtTable::new(),
+    );
+    func.blocks[0].terminator = AmirTerminator::Goto(BlockId::from_usize(1));
+    func.blocks[1].terminator = AmirTerminator::Goto(BlockId::from_usize(2));
+    func.blocks[2].terminator = AmirTerminator::Return;
+
+    let reachable = reachable_blocks_dense(&func);
+
+    assert!(reachable.contains(BlockId::from_usize(0)));
+    assert!(reachable.contains(BlockId::from_usize(1)));
+    assert!(reachable.contains(BlockId::from_usize(2)));
+    assert!(!reachable.contains(BlockId::from_usize(3)));
+}
+
+#[test]
+fn dominance_frontiers_are_represented_as_dense_bit_matrix() {
+    let func = test_func(
+        Vec::new(),
+        Vec::new(),
+        vec![
+            empty_block(0, &[], &[1, 2]),
+            empty_block(1, &[0], &[3]),
+            empty_block(2, &[0], &[3]),
+            empty_block(3, &[1, 2], &[]),
+        ],
+        AmirStmtTable::new(),
+    );
+    let doms = Dominators::new(&func);
+    let frontiers = doms.frontiers(&func);
+
+    assert!(frontiers.contains(BlockId::from_usize(1), BlockId::from_usize(3)));
+    assert!(frontiers.contains(BlockId::from_usize(2), BlockId::from_usize(3)));
+    assert!(!frontiers.contains(BlockId::from_usize(0), BlockId::from_usize(3)));
+}
+
+#[test]
+fn local_liveness_uses_dense_bitsets() {
+    let mut stmts = AmirStmtTable::new();
+    let first = stmts.push(AmirStmt::Assign {
+        lhs: temp(0),
+        rhs: AmirRvalue::Load(place(0)),
+    });
+    let second = stmts.push(AmirStmt::Store {
+        lhs: place(1),
+        rhs: AmirOperand::Copy(temp(0)),
+    });
+    let func = test_func(
+        vec![test_local(0, 1), test_local(1, 2)],
+        vec![test_temp(0)],
+        vec![AmirBasicBlock {
+            id: BlockId::from_usize(0),
+            statements: DenseRange::new(first.as_usize(), second.as_usize() - first.as_usize() + 1),
+            terminator: AmirTerminator::Return,
+            successors: Vec::new(),
+            predecessors: Vec::new(),
+        }],
+        stmts,
+    );
+
+    let liveness = analyze_local_liveness(&func);
+
+    assert!(liveness.live_in(BlockId::from_usize(0)).contains(local(0)));
+    assert!(!liveness.live_in(BlockId::from_usize(0)).contains(local(1)));
+}
+
+#[test]
+fn dce_tracks_used_temps_with_dense_bitsets() {
+    let mut stmts = AmirStmtTable::new();
+    let first = stmts.push(AmirStmt::Assign {
+        lhs: temp(0),
+        rhs: AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Bool(true))),
+    });
+    stmts.push(AmirStmt::Assign {
+        lhs: temp(1),
+        rhs: AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Bool(false))),
+    });
+    let func_block = AmirBasicBlock {
+        id: BlockId::from_usize(0),
+        statements: DenseRange::new(first.as_usize(), 2),
+        terminator: AmirTerminator::Return,
+        successors: Vec::new(),
+        predecessors: Vec::new(),
+    };
+    let mut func = test_func(
+        Vec::new(),
+        vec![test_temp(0), test_temp(1)],
+        vec![func_block],
+        stmts,
+    );
+    let mut literal_pool = AmirLiteralPool::default();
+
+    optimize_amir_func(&mut func, &mut literal_pool);
+
+    let remaining: Vec<_> = func.block_stmt_ids(BlockId::from_usize(0)).collect();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0], first);
 }

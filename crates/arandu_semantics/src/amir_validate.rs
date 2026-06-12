@@ -1,7 +1,7 @@
 //! AMIR CFG invariant validation (CFG-1 … CFG-5 per `docs/arandu-amir-v0.1.md`).
 
 use crate::SymbolTable;
-use crate::amir::{AmirFunc, AmirProgram, AmirTerminator, BlockId};
+use crate::amir::{reachable_blocks_dense, AmirFunc, AmirProgram, AmirTerminator, BlockId};
 use crate::diagnostics::{DiagCode, Diagnostic};
 
 /// Validate all functions in an AMIR program.
@@ -51,12 +51,14 @@ pub fn validate_amir_func(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagnos
         }
     }
 
-    let reachable = reachable_blocks(func);
+    let reachable = reachable_blocks_dense(func);
     for (i, block) in func.blocks.iter().enumerate() {
         if i == 0 {
             continue;
         }
-        if !reachable.contains(&i) && !matches!(block.terminator, AmirTerminator::Unreachable) {
+        if !reachable.contains(BlockId::from_usize(i))
+            && !matches!(block.terminator, AmirTerminator::Unreachable)
+        {
             diags.push(Diagnostic::error(
                 DiagCode::L002AmirUnsupportedFeature,
                 format!("bb{i}: not reachable from bb0 (CFG-5)"),
@@ -117,18 +119,4 @@ fn terminator_targets(term: &AmirTerminator) -> Vec<BlockId> {
             v
         }
     }
-}
-
-fn reachable_blocks(func: &AmirFunc) -> std::collections::HashSet<usize> {
-    let mut seen = std::collections::HashSet::new();
-    let mut stack = vec![0usize];
-    while let Some(i) = stack.pop() {
-        if !seen.insert(i) || i >= func.blocks.len() {
-            continue;
-        }
-        for succ in terminator_targets(&func.blocks[i].terminator) {
-            stack.push(succ.as_usize());
-        }
-    }
-    seen
 }

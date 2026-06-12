@@ -187,17 +187,19 @@ pub fn compile_parallel(paths: Vec<PathBuf>) -> Result<ParallelOutput, Vec<Diagn
         let condvar = Arc::clone(&condvar);
         let condvar_mutex = Arc::clone(&condvar_mutex);
 
+        let worker = WorkerThread {
+            worker_id,
+            num_workers,
+            queues,
+            state,
+            ctx,
+            todo_count,
+            condvar,
+            condvar_mutex,
+        };
+
         handles.push(thread::spawn(move || {
-            worker_thread_loop(
-                worker_id,
-                num_workers,
-                queues,
-                state,
-                ctx,
-                todo_count,
-                condvar,
-                condvar_mutex,
-            );
+            worker_thread_loop(worker);
         }));
     }
 
@@ -254,7 +256,7 @@ pub fn compile_parallel(paths: Vec<PathBuf>) -> Result<ParallelOutput, Vec<Diagn
         } else {
             // Fallback to merged table if type-check didn't run (e.g. parse error)
             result_symbols.push(
-                ctx.merged_symbol_table.lock().unwrap().clone().unwrap_or_else(SymbolTable::new)
+                ctx.merged_symbol_table.lock().unwrap().clone().unwrap_or_default()
             );
         }
     }
@@ -267,7 +269,7 @@ pub fn compile_parallel(paths: Vec<PathBuf>) -> Result<ParallelOutput, Vec<Diagn
     })
 }
 
-fn worker_thread_loop(
+struct WorkerThread {
     worker_id: usize,
     num_workers: usize,
     queues: Arc<Vec<TaskQueue>>,
@@ -276,51 +278,53 @@ fn worker_thread_loop(
     todo_count: Arc<AtomicUsize>,
     condvar: Arc<Condvar>,
     condvar_mutex: Arc<Mutex<()>>,
-) {
-    pin_thread_to_core(worker_id);
+}
+
+fn worker_thread_loop(worker: WorkerThread) {
+    pin_thread_to_core(worker.worker_id);
 
     loop {
         let mut task = None;
 
         // Try local queue
-        if let Ok(mut q) = queues[worker_id].tasks.lock() {
+        if let Ok(mut q) = worker.queues[worker.worker_id].tasks.lock() {
             task = q.pop_back();
         }
 
         // Steal work if local queue is empty
         if task.is_none() {
-            for offset in 1..num_workers {
-                let target_id = (worker_id + offset) % num_workers;
-                if let Ok(mut q) = queues[target_id].tasks.lock() {
-                    if let Some(t) = q.pop_front() {
-                        task = Some(t);
-                        break;
-                    }
+            for offset in 1..worker.num_workers {
+                let target_id = (worker.worker_id + offset) % worker.num_workers;
+                if let Ok(mut q) = worker.queues[target_id].tasks.lock()
+                    && let Some(t) = q.pop_front()
+                {
+                    task = Some(t);
+                    break;
                 }
             }
         }
 
         if let Some(t) = task {
-            run_task(t, worker_id, &queues, &state, &ctx, &todo_count, &condvar);
+            run_task(t, &worker);
             continue;
         }
 
-        if todo_count.load(Ordering::Acquire) == 0 {
+        if worker.todo_count.load(Ordering::Acquire) == 0 {
             break;
         }
 
-        let lock = condvar_mutex.lock().unwrap();
-        if todo_count.load(Ordering::Acquire) == 0 {
+        let lock = worker.condvar_mutex.lock().unwrap();
+        if worker.todo_count.load(Ordering::Acquire) == 0 {
             break;
         }
-        let _unused = condvar.wait(lock).unwrap();
+        let _unused = worker.condvar.wait(lock).unwrap();
     }
 }
 
 fn enqueue_task(
     task: Task,
     target_worker: usize,
-    queues: &Vec<TaskQueue>,
+    queues: &[TaskQueue],
     condvar: &Condvar,
 ) {
     if let Ok(mut q) = queues[target_worker].tasks.lock() {
@@ -331,39 +335,34 @@ fn enqueue_task(
 
 fn run_task(
     task: Task,
-    worker_id: usize,
-    queues: &Vec<TaskQueue>,
-    state: &SchedulerState,
-    ctx: &CompilationContext,
-    todo_count: &AtomicUsize,
-    condvar: &Condvar,
+    worker: &WorkerThread,
 ) {
     match task {
         Task::Parse { file_idx } => {
-            let path = &ctx.paths[file_idx];
+            let path = &worker.ctx.paths[file_idx];
             if let Ok(source) = std::fs::read_to_string(path) {
                 let output = arandu_parser::parse_recovering(&source);
-                *ctx.programs[file_idx].lock().unwrap() = Some(output.program);
-                *ctx.parse_errors[file_idx].lock().unwrap() = output.diagnostics;
+                *worker.ctx.programs[file_idx].lock().unwrap() = Some(output.program);
+                *worker.ctx.parse_errors[file_idx].lock().unwrap() = output.diagnostics;
             } else {
-                ctx.diagnostics.lock().unwrap().push(Diagnostic::error(
+                worker.ctx.diagnostics.lock().unwrap().push(Diagnostic::error(
                     crate::DiagCode::N006UnresolvedImport,
                     format!("failed to read file {}", path.display()),
                     arandu_lexer::Span::new(0, 0, 0, 0, 0, 0),
                 ));
             }
 
-            if let Some(program) = ctx.programs[file_idx].lock().unwrap().as_ref() {
+            if let Some(program) = worker.ctx.programs[file_idx].lock().unwrap().as_ref() {
                 let (syms, resolved, docs, diags) = crate::passes::name_resolution::collect_symbols(program);
-                *ctx.symbol_tables[file_idx].lock().unwrap() = Some(syms);
-                *ctx.resolveds[file_idx].lock().unwrap() = Some(resolved);
-                *ctx.doc_maps[file_idx].lock().unwrap() = Some(docs);
-                *ctx.resolve_diags[file_idx].lock().unwrap() = diags;
+                *worker.ctx.symbol_tables[file_idx].lock().unwrap() = Some(syms);
+                *worker.ctx.resolveds[file_idx].lock().unwrap() = Some(resolved);
+                *worker.ctx.doc_maps[file_idx].lock().unwrap() = Some(docs);
+                *worker.ctx.resolve_diags[file_idx].lock().unwrap() = diags;
             }
 
-            let prev = state.merge_deps.fetch_sub(1, Ordering::SeqCst);
+            let prev = worker.state.merge_deps.fetch_sub(1, Ordering::SeqCst);
             if prev == 1 {
-                enqueue_task(Task::MergeSymbols, worker_id, queues, condvar);
+                enqueue_task(Task::MergeSymbols, worker.worker_id, &worker.queues, &worker.condvar);
             }
         }
 
@@ -372,116 +371,116 @@ fn run_task(
             let mut combined_docs = crate::DocCommentMap::default();
             let mut combined_diags = Vec::new();
 
-            for file_idx in 0..ctx.num_files {
+            for file_idx in 0..worker.ctx.num_files {
                 let current_offset = combined_symbols.iter().count();
-                *ctx.symbol_offsets[file_idx].lock().unwrap() = current_offset;
+                *worker.ctx.symbol_offsets[file_idx].lock().unwrap() = current_offset;
 
-                if let Some(syms) = ctx.symbol_tables[file_idx].lock().unwrap().take() {
+                if let Some(syms) = worker.ctx.symbol_tables[file_idx].lock().unwrap().take() {
                     combined_symbols.merge_from(syms);
                 }
-                if let Some(docs) = ctx.doc_maps[file_idx].lock().unwrap().take() {
+                if let Some(docs) = worker.ctx.doc_maps[file_idx].lock().unwrap().take() {
                     for (k, v) in docs {
                         combined_docs.entry(k).or_default().extend(v);
                     }
                 }
-                let diags = std::mem::take(&mut *ctx.resolve_diags[file_idx].lock().unwrap());
+                let diags = std::mem::take(&mut *worker.ctx.resolve_diags[file_idx].lock().unwrap());
                 combined_diags.extend(diags);
             }
 
-            *ctx.merged_symbol_table.lock().unwrap() = Some(combined_symbols);
-            *ctx.merged_docs.lock().unwrap() = Some(combined_docs);
-            *ctx.merged_diags.lock().unwrap() = combined_diags;
+            *worker.ctx.merged_symbol_table.lock().unwrap() = Some(combined_symbols);
+            *worker.ctx.merged_docs.lock().unwrap() = Some(combined_docs);
+            *worker.ctx.merged_diags.lock().unwrap() = combined_diags;
 
-            for file_idx in 0..ctx.num_files {
-                let prev = state.resolve_deps[file_idx].fetch_sub(1, Ordering::SeqCst);
+            for file_idx in 0..worker.ctx.num_files {
+                let prev = worker.state.resolve_deps[file_idx].fetch_sub(1, Ordering::SeqCst);
                 if prev == 1 {
-                    enqueue_task(Task::Resolve { file_idx }, worker_id, queues, condvar);
+                    enqueue_task(Task::Resolve { file_idx }, worker.worker_id, &worker.queues, &worker.condvar);
                 }
             }
         }
 
         Task::Resolve { file_idx } => {
-            let program_lock = ctx.programs[file_idx].lock().unwrap();
-            let mut resolved_lock = ctx.resolveds[file_idx].lock().unwrap();
+            let program_lock = worker.ctx.programs[file_idx].lock().unwrap();
+            let mut resolved_lock = worker.ctx.resolveds[file_idx].lock().unwrap();
             if let Some(program) = program_lock.as_ref()
                 && let Some(mut resolved) = resolved_lock.take()
             {
-                let offset = *ctx.symbol_offsets[file_idx].lock().unwrap();
+                let offset = *worker.ctx.symbol_offsets[file_idx].lock().unwrap();
                 resolved.offset_symbols(offset as u32);
 
-                let syms = ctx.merged_symbol_table.lock().unwrap().clone().unwrap();
-                let docs = ctx.merged_docs.lock().unwrap().clone().unwrap();
-                let diags = ctx.merged_diags.lock().unwrap().clone();
+                let syms = worker.ctx.merged_symbol_table.lock().unwrap().clone().unwrap();
+                let docs = worker.ctx.merged_docs.lock().unwrap().clone().unwrap();
+                let diags = worker.ctx.merged_diags.lock().unwrap().clone();
 
                 let res = crate::passes::name_resolution::resolve_with_symbols(syms, resolved, docs, diags, program);
-                *ctx.resolutions[file_idx].lock().unwrap() = Some(res);
+                *worker.ctx.resolutions[file_idx].lock().unwrap() = Some(res);
             }
 
-            let prev = state.typecheck_deps[file_idx].fetch_sub(1, Ordering::SeqCst);
+            let prev = worker.state.typecheck_deps[file_idx].fetch_sub(1, Ordering::SeqCst);
             if prev == 1 {
-                enqueue_task(Task::TypeCheck { file_idx }, worker_id, queues, condvar);
+                enqueue_task(Task::TypeCheck { file_idx }, worker.worker_id, &worker.queues, &worker.condvar);
             }
         }
 
         Task::TypeCheck { file_idx } => {
-            let program_lock = ctx.programs[file_idx].lock().unwrap();
-            let mut res_lock = ctx.resolutions[file_idx].lock().unwrap();
+            let program_lock = worker.ctx.programs[file_idx].lock().unwrap();
+            let mut res_lock = worker.ctx.resolutions[file_idx].lock().unwrap();
             if let Some(program) = program_lock.as_ref()
                 && let Some(resolution) = res_lock.take()
             {
                 let tc = crate::passes::type_checker::type_check(resolution, program);
-                *ctx.type_checks[file_idx].lock().unwrap() = Some(tc);
+                *worker.ctx.type_checks[file_idx].lock().unwrap() = Some(tc);
             }
 
-            let prev = state.hir_deps[file_idx].fetch_sub(1, Ordering::SeqCst);
+            let prev = worker.state.hir_deps[file_idx].fetch_sub(1, Ordering::SeqCst);
             if prev == 1 {
-                enqueue_task(Task::LowerHir { file_idx }, worker_id, queues, condvar);
+                enqueue_task(Task::LowerHir { file_idx }, worker.worker_id, &worker.queues, &worker.condvar);
             }
         }
 
         Task::LowerHir { file_idx } => {
-            let program_lock = ctx.programs[file_idx].lock().unwrap();
-            let tc_lock = ctx.type_checks[file_idx].lock().unwrap();
+            let program_lock = worker.ctx.programs[file_idx].lock().unwrap();
+            let tc_lock = worker.ctx.type_checks[file_idx].lock().unwrap();
             if let Some(program) = program_lock.as_ref()
                 && let Some(tc) = tc_lock.as_ref()
             {
                 match crate::lower_to_hir(tc, program) {
                     Ok(hir) => {
-                        *ctx.hirs[file_idx].lock().unwrap() = Some(hir);
+                        *worker.ctx.hirs[file_idx].lock().unwrap() = Some(hir);
                     }
                     Err(diags) => {
-                        ctx.diagnostics.lock().unwrap().extend(diags);
+                        worker.ctx.diagnostics.lock().unwrap().extend(diags);
                     }
                 }
             }
 
-            let prev = state.amir_deps[file_idx].fetch_sub(1, Ordering::SeqCst);
+            let prev = worker.state.amir_deps[file_idx].fetch_sub(1, Ordering::SeqCst);
             if prev == 1 {
-                enqueue_task(Task::LowerAmir { file_idx }, worker_id, queues, condvar);
+                enqueue_task(Task::LowerAmir { file_idx }, worker.worker_id, &worker.queues, &worker.condvar);
             }
         }
 
         Task::LowerAmir { file_idx } => {
-            let tc_lock = ctx.type_checks[file_idx].lock().unwrap();
-            let hir_lock = ctx.hirs[file_idx].lock().unwrap();
+            let tc_lock = worker.ctx.type_checks[file_idx].lock().unwrap();
+            let hir_lock = worker.ctx.hirs[file_idx].lock().unwrap();
             if let Some(tc) = tc_lock.as_ref()
                 && let Some(hir) = hir_lock.as_ref()
             {
                 match crate::lower_to_amir(tc, hir) {
                     Ok(mut amir) => {
                         crate::optimize_amir(&mut amir);
-                        *ctx.amirs[file_idx].lock().unwrap() = Some(amir);
+                        *worker.ctx.amirs[file_idx].lock().unwrap() = Some(amir);
                     }
                     Err(diags) => {
-                        ctx.diagnostics.lock().unwrap().extend(diags);
+                        worker.ctx.diagnostics.lock().unwrap().extend(diags);
                     }
                 }
             }
         }
     }
 
-    let prev = todo_count.fetch_sub(1, Ordering::SeqCst);
+    let prev = worker.todo_count.fetch_sub(1, Ordering::SeqCst);
     if prev == 1 {
-        condvar.notify_all();
+        worker.condvar.notify_all();
     }
 }

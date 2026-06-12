@@ -43,7 +43,6 @@ impl AmirFunc {
         self.stmts.get_mut(id).expect("invalid AMIR instruction id")
     }
 
-    #[must_use]
     pub fn block_stmt_ids(
         &self,
         block: super::block::BlockId,
@@ -51,7 +50,6 @@ impl AmirFunc {
         self.block(block).statements.iter_ids::<InstrId>()
     }
 
-    #[must_use]
     pub fn block_stmts(
         &self,
         block: super::block::BlockId,

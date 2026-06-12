@@ -25,8 +25,7 @@
     clippy::single_match,
     clippy::collapsible_if
 )]
-
-use crate::SymbolTable;
+use crate::{BitMatrix, BitSet, SymbolTable};
 use crate::amir::block::BlockId;
 use crate::amir::local::LocalId;
 use crate::amir::program::AmirFunc;
@@ -37,61 +36,6 @@ use crate::diagnostics::{DiagCode, Diagnostic};
 use arandu_lexer::Span;
 
 use std::collections::VecDeque;
-
-/// A bitset tracking which locals are definitely initialized.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct InitBits {
-    words: Vec<u64>,
-    len: usize,
-}
-
-impl InitBits {
-    fn new(n: usize) -> Self {
-        Self {
-            words: vec![0; n.div_ceil(64)],
-            len: n,
-        }
-    }
-
-    fn all_init(n: usize) -> Self {
-        let mut bits = Self {
-            words: vec![u64::MAX; n.div_ceil(64)],
-            len: n,
-        };
-        bits.mask_tail();
-        bits
-    }
-
-    fn mask_tail(&mut self) {
-        let rem = self.len % 64;
-        if rem == 0 {
-            return;
-        }
-        if let Some(last) = self.words.last_mut() {
-            *last &= (1u64 << rem) - 1;
-        }
-    }
-
-    fn set(&mut self, id: LocalId) {
-        let idx = id.as_usize();
-        if idx < self.len {
-            self.words[idx / 64] |= 1u64 << (idx % 64);
-        }
-    }
-
-    fn get(&self, id: LocalId) -> bool {
-        let idx = id.as_usize();
-        idx < self.len && (self.words[idx / 64] & (1u64 << (idx % 64))) != 0
-    }
-
-    /// Intersect: a local is initialized only if initialized in *both* sets.
-    fn intersect_with(&mut self, other: &Self) {
-        for (a, b) in self.words.iter_mut().zip(other.words.iter()) {
-            *a &= *b;
-        }
-        self.mask_tail();
-    }
-}
 
 /// Run definite-initialization analysis over a single AMIR function.
 ///
@@ -109,16 +53,16 @@ pub fn check_definite_init(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagno
     // 1. Compute per-block gen sets (locals that are definitely stored)
     //    and collect load locations for later error reporting.
     // ------------------------------------------------------------------
-    let mut block_gens: Vec<InitBits> = vec![InitBits::new(num_locals); num_blocks];
+    let mut block_gens = BitMatrix::<BlockId, LocalId>::new(num_blocks, num_locals);
 
     for block in &func.blocks {
-        let bi = block.id.as_usize();
-        for stmt in func.block_stmts(block.id) {
+        let bid = block.id;
+        for stmt in func.block_stmts(bid) {
             match stmt {
                 AmirStmt::Store { lhs, .. } if lhs.projections.is_empty() => {
                     // A store to a plain local (no projections) means that
                     // local is definitely initialized after this statement.
-                    block_gens[bi].set(lhs.local);
+                    block_gens.insert(bid, lhs.local);
                 }
                 _ => {}
             }
@@ -134,8 +78,8 @@ pub fn check_definite_init(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagno
     //    Entry block starts with no locals initialized (unless they
     //    appear in gen).
     // ------------------------------------------------------------------
-    let mut block_in: Vec<InitBits> = vec![InitBits::all_init(num_locals); num_blocks];
-    let mut block_out: Vec<InitBits> = vec![InitBits::all_init(num_locals); num_blocks];
+    let mut block_in = vec![BitSet::<LocalId>::all_set(num_locals); num_blocks];
+    let mut block_out = vec![BitSet::<LocalId>::all_set(num_locals); num_blocks];
 
     let mut worklist = VecDeque::new();
     for block in &func.blocks {
@@ -156,9 +100,9 @@ pub fn check_definite_init(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagno
 
         // Compute IN as intersection of all predecessors' OUT
         let new_in = if bid == BlockId::from_usize(0) || block.predecessors.is_empty() {
-            InitBits::new(num_locals)
+            BitSet::with_capacity(num_locals)
         } else {
-            let mut acc = InitBits::all_init(num_locals);
+            let mut acc = BitSet::all_set(num_locals);
             for &pred in &block.predecessors {
                 acc.intersect_with(&block_out[pred.as_usize()]);
             }
@@ -167,12 +111,7 @@ pub fn check_definite_init(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagno
 
         // OUT = IN ∪ gen
         let mut new_out = new_in.clone();
-        for i in 0..num_locals {
-            let lid = LocalId::from_usize(i);
-            if block_gens[bi].get(lid) {
-                new_out.set(lid);
-            }
-        }
+        new_out.union_with(&block_gens.row_set(bid));
 
         if new_out != block_out[bi] {
             block_in[bi] = new_in;
@@ -221,7 +160,7 @@ pub fn check_definite_init(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagno
             // Apply gen: stores update the running state
             match stmt {
                 AmirStmt::Store { lhs, .. } if lhs.projections.is_empty() => {
-                    current.set(lhs.local);
+                    current.insert(lhs.local);
                 }
                 _ => {}
             }
@@ -234,7 +173,7 @@ pub fn check_definite_init(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagno
 /// Check whether any `Load` in a statement reads from an uninitialized local.
 fn check_stmt_loads(
     stmt: &AmirStmt,
-    current: &InitBits,
+    current: &BitSet<LocalId>,
     func: &AmirFunc,
     symbols: &SymbolTable,
     diagnostics: &mut Vec<Diagnostic>,
@@ -245,7 +184,7 @@ fn check_stmt_loads(
         }
         AmirStmt::Store { rhs, lhs, .. } => {
             // If storing to a projection (e.g. x.field), the base must be initialized
-            if !lhs.projections.is_empty() && !current.get(lhs.local) {
+            if !lhs.projections.is_empty() && !current.contains(lhs.local) {
                 emit_uninit_diag(lhs.local, func, symbols, diagnostics);
             }
             // Check if rhs references uninitialized locals via operand
@@ -254,7 +193,7 @@ fn check_stmt_loads(
         }
         AmirStmt::Call { .. } | AmirStmt::Free(_) => {}
         AmirStmt::Destroy(place) => {
-            if !current.get(place.local) {
+            if !current.contains(place.local) {
                 emit_uninit_diag(place.local, func, symbols, diagnostics);
             }
         }
@@ -264,14 +203,14 @@ fn check_stmt_loads(
 
 fn check_rvalue_loads(
     rvalue: &AmirRvalue,
-    current: &InitBits,
+    current: &BitSet<LocalId>,
     func: &AmirFunc,
     symbols: &SymbolTable,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     match rvalue {
         AmirRvalue::Load(place) | AmirRvalue::Borrow(place) | AmirRvalue::BorrowMut(place)
-            if !current.get(place.local) =>
+            if !current.contains(place.local) =>
         {
             emit_uninit_diag(place.local, func, symbols, diagnostics);
         }
@@ -369,28 +308,6 @@ mod tests {
                 .map(|&x| BlockId::from_usize(x))
                 .collect(),
         }
-    }
-
-    #[test]
-    fn test_init_bits_tracks_locals_across_word_boundaries() {
-        let mut bits = InitBits::new(130);
-        bits.set(LocalId::from_usize(0));
-        bits.set(LocalId::from_usize(64));
-        bits.set(LocalId::from_usize(129));
-
-        assert!(bits.get(LocalId::from_usize(0)));
-        assert!(bits.get(LocalId::from_usize(64)));
-        assert!(bits.get(LocalId::from_usize(129)));
-        assert!(!bits.get(LocalId::from_usize(128)));
-        assert!(!bits.get(LocalId::from_usize(130)));
-
-        let mut all = InitBits::all_init(130);
-        all.intersect_with(&bits);
-        assert!(all.get(LocalId::from_usize(0)));
-        assert!(all.get(LocalId::from_usize(64)));
-        assert!(all.get(LocalId::from_usize(129)));
-        assert!(!all.get(LocalId::from_usize(128)));
-        assert!(!all.get(LocalId::from_usize(130)));
     }
 
     #[test]

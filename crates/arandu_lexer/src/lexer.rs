@@ -722,12 +722,12 @@ impl<'a> Lexer<'a> {
         self.bump();
         let len = match self.backend {
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-            SimdBackendKind::Avx2 => unsafe { crate::simd::avx2::scan_identifier(self.source[self.pos..].as_bytes()) },
+            SimdBackendKind::Avx2 => unsafe { crate::simd::avx2::scan_identifier(&self.source.as_bytes()[self.pos..]) },
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-            SimdBackendKind::Sse2 => unsafe { crate::simd::sse2::scan_identifier(self.source[self.pos..].as_bytes()) },
+            SimdBackendKind::Sse2 => unsafe { crate::simd::sse2::scan_identifier(&self.source.as_bytes()[self.pos..]) },
             #[cfg(target_arch = "aarch64")]
-            SimdBackendKind::Neon => unsafe { crate::simd::neon::scan_identifier(self.source[self.pos..].as_bytes()) },
-            _ => crate::simd::scalar::scan_identifier(self.source[self.pos..].as_bytes()),
+            SimdBackendKind::Neon => unsafe { crate::simd::neon::scan_identifier(&self.source.as_bytes()[self.pos..]) },
+            _ => crate::simd::scalar::scan_identifier(&self.source.as_bytes()[self.pos..]),
         };
         self.pos += len;
         self.col += len;

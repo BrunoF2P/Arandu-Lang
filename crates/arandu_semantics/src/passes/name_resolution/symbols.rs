@@ -131,7 +131,14 @@ impl<'a> Resolver<'a> {
 
         candidates
             .into_iter()
-            .map(|symbol| (symbol, strsim::levenshtein(name, &symbol.name)))
+            .map(|symbol| {
+                let dist = if symbol.name.to_lowercase() == name.to_lowercase() {
+                    0
+                } else {
+                    strsim::levenshtein(name, &symbol.name)
+                };
+                (symbol, dist)
+            })
             .filter(|(_, dist)| *dist <= max_distance)
             .min_by_key(|(_, dist)| *dist)
             .map(|(symbol, _)| symbol.name.clone())

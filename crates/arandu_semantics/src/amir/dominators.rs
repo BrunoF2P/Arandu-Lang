@@ -1,6 +1,7 @@
 use super::block::BlockId;
 use super::program::AmirFunc;
 use super::rpo::reverse_post_order;
+use crate::BitMatrix;
 
 pub struct Dominators {
     // Maps each BlockId (by its index) to its immediate dominator (idom).
@@ -95,6 +96,37 @@ impl Dominators {
             curr = idom;
         }
         false
+    }
+
+    #[must_use]
+    pub fn frontiers(&self, func: &AmirFunc) -> BitMatrix<BlockId, BlockId> {
+        let mut frontiers = BitMatrix::<BlockId, BlockId>::new(func.blocks.len(), func.blocks.len());
+
+        for block in &func.blocks {
+            if block.predecessors.len() < 2 {
+                continue;
+            }
+
+            let Some(block_idom) = self.immediate_dominator(block.id) else {
+                continue;
+            };
+
+            for &pred in &block.predecessors {
+                let mut runner = pred;
+                while runner != block_idom {
+                    frontiers.insert(runner, block.id);
+                    let Some(next) = self.immediate_dominator(runner) else {
+                        break;
+                    };
+                    if next == runner {
+                        break;
+                    }
+                    runner = next;
+                }
+            }
+        }
+
+        frontiers
     }
 }
 

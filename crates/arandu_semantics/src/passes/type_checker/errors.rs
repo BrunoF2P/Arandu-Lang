@@ -1,7 +1,8 @@
-use crate::{DiagCode, Diagnostic, SymbolTable};
+use crate::{DiagCode, Diagnostic, SymbolId, SymbolTable};
 
 use super::constraints::{Constraint, ConstraintOrigin};
 use super::types::ArType;
+use super::TypeInfo;
 
 // ── Flow-based error message generation ─────────────────────────────
 
@@ -11,7 +12,11 @@ use super::types::ArType;
 /// The key insight: instead of saying "expected X, found Y", we show
 /// *where* X came from and *where* Y came from — the flow.
 #[must_use]
-pub fn constraint_to_diagnostic(constraint: &Constraint, symbols: &SymbolTable) -> Diagnostic {
+pub fn constraint_to_diagnostic(
+    constraint: &Constraint,
+    symbols: &SymbolTable,
+    type_info: &TypeInfo,
+) -> Diagnostic {
     let expected_str = constraint.expected.display(symbols);
     let found_str = constraint.found.display(symbols);
 
@@ -257,13 +262,79 @@ pub fn constraint_to_diagnostic(constraint: &Constraint, symbols: &SymbolTable) 
             base_span,
             field_span,
             field_name,
-        } => Diagnostic::error(
-            DiagCode::T018UndefinedField,
-            format!("no field '{field_name}' on type '{expected_str}'"),
-            *field_span,
-        )
-        .with_label(*base_span, format!("this has type '{expected_str}'"))
-        .with_label(*field_span, "unknown field".to_string()),
+        } => {
+            let mut diag = Diagnostic::error(
+                DiagCode::T018UndefinedField,
+                format!("no field '{field_name}' on type '{expected_str}'"),
+                *field_span,
+            )
+            .with_label(*base_span, format!("this has type '{expected_str}'"))
+            .with_label(*field_span, "unknown field".to_string());
+
+            // Helper to recursively find structure ID
+            fn get_struct_id(ty: &ArType) -> Option<SymbolId> {
+                match ty {
+                    ArType::Named(id, _) => Some(*id),
+                    ArType::Ptr(inner) | ArType::Nullable(inner) => get_struct_id(inner),
+                    _ => None,
+                }
+            }
+
+            if let Some(struct_id) = get_struct_id(&constraint.expected) {
+                struct Candidate {
+                    name: String,
+                    is_method: bool,
+                }
+                let mut candidates = Vec::new();
+
+                // Add struct fields as candidates
+                if let Some(fields) = type_info.struct_fields.get(&struct_id) {
+                    for f_name in fields.keys() {
+                        candidates.push(Candidate {
+                            name: f_name.clone(),
+                            is_method: false,
+                        });
+                    }
+                }
+
+                // Add associated methods as candidates
+                let struct_name = &symbols.get(struct_id).name;
+                if let Some(methods) = symbols.associated_members.get(struct_name) {
+                    for m_name in methods.keys() {
+                        candidates.push(Candidate {
+                            name: m_name.clone(),
+                            is_method: true,
+                        });
+                    }
+                }
+
+                let max_distance = if field_name.len() <= 4 { 2 } else { 3 };
+                let best_match = candidates
+                    .iter()
+                    .map(|cand| {
+                        let dist = if cand.name.to_lowercase() == field_name.to_lowercase() {
+                            0
+                        } else {
+                            strsim::levenshtein(field_name, &cand.name)
+                        };
+                        (cand, dist)
+                    })
+                    .filter(|(_, dist)| *dist <= max_distance)
+                    .min_by_key(|(_, dist)| *dist)
+                    .map(|(cand, _)| cand);
+
+                if let Some(suggestion) = best_match {
+                    let formatted = if suggestion.is_method {
+                        format!("{}()", suggestion.name)
+                    } else {
+                        suggestion.name.clone()
+                    };
+                    diag = diag.with_hint(format!("did you mean '{formatted}'?"));
+                }
+            }
+
+            diag
+        }
 
         ConstraintOrigin::ArrayLiteral {
             array_span,

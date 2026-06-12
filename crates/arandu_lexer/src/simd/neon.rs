@@ -2,6 +2,10 @@ use std::arch::aarch64::*;
 
 #[inline]
 #[must_use]
+/// Simulates movemask behavior on Neon ARM architectures.
+///
+/// # Safety
+/// The caller must ensure that the CPU supports ARM Neon instructions.
 pub unsafe fn neon_movemask(cmp_mask: uint8x16_t) -> u16 {
     unsafe {
         let weights_data: [u8; 16] = [
@@ -24,6 +28,10 @@ pub unsafe fn neon_movemask(cmp_mask: uint8x16_t) -> u16 {
 
 #[target_feature(enable = "neon")]
 #[must_use]
+/// Skips whitespace characters using Neon ARM instructions.
+///
+/// # Safety
+/// The caller must ensure that the CPU supports the Neon ARM instruction set.
 pub unsafe fn skip_whitespace(bytes: &[u8]) -> (usize, usize, Option<usize>) {
     unsafe {
         let mut i = 0;
@@ -90,6 +98,10 @@ pub unsafe fn skip_whitespace(bytes: &[u8]) -> (usize, usize, Option<usize>) {
 
 #[target_feature(enable = "neon")]
 #[must_use]
+/// Scans an identifier name prefix using Neon ARM instructions.
+///
+/// # Safety
+/// The caller must ensure that the CPU supports the Neon ARM instruction set.
 pub unsafe fn scan_identifier(bytes: &[u8]) -> usize {
     unsafe {
         let mut i = 0;

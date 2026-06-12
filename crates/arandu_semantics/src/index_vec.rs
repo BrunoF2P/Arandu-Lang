@@ -91,34 +91,6 @@ impl<I: IdIndex, T> IndexVec<I, T> {
         &mut self.raw
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::newtype_index;
-
-    newtype_index!(TestId);
-
-    #[test]
-    fn ids_iterate_over_dense_indices() {
-        let mut vec = IndexVec::<TestId, i32>::with_capacity(2);
-        assert_eq!(TestId::from_usize(7).as_usize(), 7);
-        assert_eq!(vec.push(10), TestId(0));
-        assert_eq!(vec.push(20), TestId(1));
-        assert_eq!(vec.ids().collect::<Vec<_>>(), vec![TestId(0), TestId(1)]);
-        assert_eq!(vec.as_slice(), &[10, 20]);
-    }
-
-    #[test]
-    fn push_many_returns_typed_range() {
-        let mut vec = IndexVec::<TestId, i32>::new();
-        vec.push(1);
-        let range = vec.push_many([2, 3, 4]);
-        assert_eq!(range, TestId(1)..TestId(4));
-        assert_eq!(vec.as_slice(), &[1, 2, 3, 4]);
-    }
-}
-
 impl<I: IdIndex, T> Index<I> for IndexVec<I, T> {
     type Output = T;
     fn index(&self, index: I) -> &Self::Output {
@@ -179,4 +151,30 @@ macro_rules! newtype_index {
             }
         }
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    newtype_index!(TestId);
+
+    #[test]
+    fn ids_iterate_over_dense_indices() {
+        let mut vec = IndexVec::<TestId, i32>::with_capacity(2);
+        assert_eq!(TestId::from_usize(7).as_usize(), 7);
+        assert_eq!(vec.push(10), TestId(0));
+        assert_eq!(vec.push(20), TestId(1));
+        assert_eq!(vec.ids().collect::<Vec<_>>(), vec![TestId(0), TestId(1)]);
+        assert_eq!(vec.as_slice(), &[10, 20]);
+    }
+
+    #[test]
+    fn push_many_returns_typed_range() {
+        let mut vec = IndexVec::<TestId, i32>::new();
+        vec.push(1);
+        let range = vec.push_many([2, 3, 4]);
+        assert_eq!(range, TestId(1)..TestId(4));
+        assert_eq!(vec.as_slice(), &[1, 2, 3, 4]);
+    }
 }

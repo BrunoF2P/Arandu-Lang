@@ -6,6 +6,7 @@
 //! block are not propagated to other blocks (cross-block propagation is planned for v0.2+).
 #![allow(clippy::collapsible_if)]
 
+use crate::BitSet;
 use crate::amir::{
     AmirConstant, AmirFunc, AmirOperand, AmirProgram, AmirRvalue, AmirStmt, AmirStmtTable,
     AmirTerminator,
@@ -16,9 +17,13 @@ use crate::ops::{BinaryOp, UnaryOp};
 
 pub fn optimize_amir(program: &mut AmirProgram) {
     for func in &mut program.funcs {
-        fold_constants(func, &mut program.literal_pool);
-        eliminate_dead_assigns(func);
+        optimize_amir_func(func, &mut program.literal_pool);
     }
+}
+
+pub fn optimize_amir_func(func: &mut AmirFunc, literal_pool: &mut AmirLiteralPool) {
+    fold_constants(func, literal_pool);
+    eliminate_dead_assigns(func);
 }
 
 /// Folds constants intra-block. Note: Constants are currently not propagated across basic blocks.
@@ -171,7 +176,7 @@ fn eliminate_dead_assigns(func: &mut AmirFunc) {
 
 fn rebuild_without_dead_assigns(
     func: &AmirFunc,
-    used: &[bool],
+    used: &BitSet<crate::amir::TempId>,
 ) -> (AmirStmtTable, Vec<DenseRange>, bool) {
     let mut table = AmirStmtTable::new();
     let mut ranges = Vec::with_capacity(func.blocks.len());
@@ -183,7 +188,7 @@ fn rebuild_without_dead_assigns(
 
         for stmt in func.block_stmts(block.id) {
             let keep = match stmt {
-                AmirStmt::Assign { lhs, rhs } => used[lhs.as_usize()] || !is_removable_rvalue(rhs),
+                AmirStmt::Assign { lhs, rhs } => used.contains(*lhs) || !is_removable_rvalue(rhs),
                 _ => true,
             };
 
@@ -201,21 +206,21 @@ fn rebuild_without_dead_assigns(
     (table, ranges, changed)
 }
 
-fn used_temps(func: &AmirFunc) -> Vec<bool> {
-    let mut used = vec![false; func.temps.len()];
-    if !used.is_empty() {
+fn used_temps(func: &AmirFunc) -> BitSet<crate::amir::TempId> {
+    let mut used = BitSet::with_capacity(func.temps.len());
+    if !func.temps.is_empty() {
         // AMIR `return` reads the conventional return register `_0`.
-        used[0] = true;
+        used.insert(crate::amir::TempId::from_usize(0));
     }
     for block in &func.blocks {
         for stmt in func.block_stmts(block.id) {
             match stmt {
-                AmirStmt::Assign { rhs, .. } => collect_rvalue_temps(rhs, &mut used[..]),
+                AmirStmt::Assign { rhs, .. } => collect_rvalue_temps(rhs, &mut used),
                 AmirStmt::Store { rhs, lhs } => {
-                    collect_operand_temp(rhs, &mut used[..]);
+                    collect_operand_temp(rhs, &mut used);
                     for projection in &lhs.projections {
                         if let crate::amir::AmirProjection::Index(op) = projection {
-                            collect_operand_temp(op, &mut used[..]);
+                            collect_operand_temp(op, &mut used);
                         }
                     }
                 }
@@ -224,21 +229,21 @@ fn used_temps(func: &AmirFunc) -> Vec<bool> {
                     callee,
                     args,
                 } => {
-                    collect_operand_temp(callee, &mut used[..]);
+                    collect_operand_temp(callee, &mut used);
                     for arg in args {
-                        collect_operand_temp(arg, &mut used[..]);
+                        collect_operand_temp(arg, &mut used);
                     }
                 }
-                AmirStmt::Free(op) => collect_operand_temp(op, &mut used[..]),
+                AmirStmt::Free(op) => collect_operand_temp(op, &mut used),
                 AmirStmt::StorageLive(_) | AmirStmt::StorageDead(_) | AmirStmt::Destroy(_) => {}
             }
         }
         match &block.terminator {
             AmirTerminator::Branch { condition, .. } => {
-                collect_operand_temp(condition, &mut used[..])
+                collect_operand_temp(condition, &mut used)
             }
             AmirTerminator::SwitchInt { discriminant, .. } => {
-                collect_operand_temp(discriminant, &mut used[..]);
+                collect_operand_temp(discriminant, &mut used);
             }
             AmirTerminator::Return | AmirTerminator::Goto(_) | AmirTerminator::Unreachable => {}
         }
@@ -246,7 +251,7 @@ fn used_temps(func: &AmirFunc) -> Vec<bool> {
     used
 }
 
-fn collect_rvalue_temps(rvalue: &AmirRvalue, used: &mut [bool]) {
+fn collect_rvalue_temps(rvalue: &AmirRvalue, used: &mut BitSet<crate::amir::TempId>) {
     match rvalue {
         AmirRvalue::Use(op)
         | AmirRvalue::Unary { operand: op, .. }
@@ -254,40 +259,38 @@ fn collect_rvalue_temps(rvalue: &AmirRvalue, used: &mut [bool]) {
         | AmirRvalue::Discriminant { value: op }
         | AmirRvalue::EnumPayload { value: op, .. }
         | AmirRvalue::Len(op)
-        | AmirRvalue::Alloc(op) => collect_operand_temp(op, &mut used[..]),
+        | AmirRvalue::Alloc(op) => collect_operand_temp(op, used),
         AmirRvalue::Binary { left, right, .. }
         | AmirRvalue::IndexAccess {
             base: left,
             index: right,
         } => {
-            collect_operand_temp(left, &mut used[..]);
-            collect_operand_temp(right, &mut used[..]);
+            collect_operand_temp(left, used);
+            collect_operand_temp(right, used);
         }
         AmirRvalue::StructLiteral { fields, .. } => {
             for (_, op) in fields {
-                collect_operand_temp(op, &mut used[..]);
+                collect_operand_temp(op, used);
             }
         }
         AmirRvalue::Array { items } | AmirRvalue::Tuple { items } => {
             for op in items {
-                collect_operand_temp(op, &mut used[..]);
+                collect_operand_temp(op, used);
             }
         }
         AmirRvalue::Load(place) | AmirRvalue::Borrow(place) | AmirRvalue::BorrowMut(place) => {
             for projection in &place.projections {
                 if let crate::amir::AmirProjection::Index(op) = projection {
-                    collect_operand_temp(op, &mut used[..]);
+                    collect_operand_temp(op, used);
                 }
             }
         }
     }
 }
 
-fn collect_operand_temp(op: &AmirOperand, used: &mut [bool]) {
+fn collect_operand_temp(op: &AmirOperand, used: &mut BitSet<crate::amir::TempId>) {
     if let AmirOperand::Copy(temp) | AmirOperand::Move(temp) = op {
-        if let Some(slot) = used.get_mut(temp.as_usize()) {
-            *slot = true;
-        }
+        used.insert(*temp);
     }
 }
 

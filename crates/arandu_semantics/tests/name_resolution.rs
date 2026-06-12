@@ -454,3 +454,61 @@ fn resolves_module_qualified_type_names() {
     // myModule is a module, not a type. Checking a qualified member type should report N009
     assert_eq!(diagnostics, vec![DiagCode::N009UndefinedNamespaceMember]);
 }
+
+#[test]
+fn reports_undefined_associated_function_with_suggestion() {
+    let result = resolve_source(
+        r"
+module tests.associated_suggest
+
+struct User {
+    name str
+}
+
+func User.greet(user User) str {
+    return user.name
+}
+
+func main(user User) {
+    text = User.grte(user)
+}
+",
+    );
+
+    assert_eq!(
+        codes(&result),
+        vec![DiagCode::N010UndefinedAssociatedFunction]
+    );
+    let diag = &result.diagnostics[0];
+    assert!(
+        diag.hints.iter().any(|h| h.contains("greet")),
+        "should suggest 'greet' in hints, got: {:?}",
+        diag.hints
+    );
+}
+
+#[test]
+fn test_case_insensitive_suggestion_priority() {
+    let result = resolve_source(
+        r"
+module tests.suggest_priority
+
+func main() {
+    myva = 1
+    myVar = 2
+    // 'myvar' has distance 1 from 'myva' (c -> a) and case-insensitive distance 0 from 'myVar'.
+    // We want 'myVar' to be suggested because case-insensitive matches are prioritized (dist = 0).
+    value = myvar
+}
+",
+    );
+
+    assert_eq!(codes(&result), vec![DiagCode::N001UndefinedValue]);
+    let diag = &result.diagnostics[0];
+    assert!(
+        diag.hints.iter().any(|h| h.contains("myVar")),
+        "should suggest 'myVar' due to case-insensitivity priority, got: {:?}",
+        diag.hints
+    );
+}
+

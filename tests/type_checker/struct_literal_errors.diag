@@ -6,3 +6,4 @@ T018: no field 'z' on type 'Point'
   --> tests/type_checker/struct_literal_errors.aru:8:36
   label: 8:16-8:21 this has type 'Point'
   label: 8:36-8:41 unknown field
+  hint: did you mean 'x'?

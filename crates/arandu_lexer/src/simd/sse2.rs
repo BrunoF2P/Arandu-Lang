@@ -5,6 +5,10 @@ use std::arch::x86_64::*;
 
 #[target_feature(enable = "sse2")]
 #[must_use]
+/// Skips whitespace characters using SSE2 instructions.
+///
+/// # Safety
+/// The caller must ensure that the CPU supports the SSE2 instruction set.
 pub unsafe fn skip_whitespace(bytes: &[u8]) -> (usize, usize, Option<usize>) {
     unsafe {
         let mut i = 0;
@@ -71,6 +75,10 @@ pub unsafe fn skip_whitespace(bytes: &[u8]) -> (usize, usize, Option<usize>) {
 
 #[target_feature(enable = "sse2")]
 #[must_use]
+/// Scans an identifier name prefix using SSE2 instructions.
+///
+/// # Safety
+/// The caller must ensure that the CPU supports the SSE2 instruction set.
 pub unsafe fn scan_identifier(bytes: &[u8]) -> usize {
     unsafe {
         let mut i = 0;

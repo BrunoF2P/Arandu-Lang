@@ -206,6 +206,9 @@ fn main() {
                     Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
                 };
                 validate_hir_and_analyze(&hir, &checked.type_check, &filepath);
+                if let Err(diags) = arandu_semantics::lower_to_amir(&checked.type_check, &hir) {
+                    print_diagnostics_and_exit(&diags, &filepath);
+                }
                 println!("ok");
             }
 

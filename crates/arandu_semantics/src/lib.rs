@@ -34,7 +34,7 @@ mod resolved;
 mod symbol_table;
 
 pub use arena::BumpArena;
-pub use bitset::BitSet;
+pub use bitset::{BitSet, BitMatrix};
 pub use layout::DenseRange;
 pub use stable_id::{GenerationalId, SlotMap};
 pub use string_pool::{SsoString, StringPool};

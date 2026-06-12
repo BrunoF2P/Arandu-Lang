@@ -77,7 +77,7 @@ impl<'a> TypeChecker<'a> {
             found,
             origin,
         };
-        let diag = errors::constraint_to_diagnostic(&constraint, &self.symbols);
+        let diag = errors::constraint_to_diagnostic(&constraint, &self.symbols, &self.type_info);
         self.diagnostics.push(diag);
     }
 
