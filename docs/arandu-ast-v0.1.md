@@ -824,6 +824,6 @@ AST sketch:
 
 ## Known Grammar Pressure Points
 
-- Enum declarations and enum patterns exist in EBNF v0.6, but enum value construction is not yet represented as a primary expression. Stable examples therefore avoid constructing enum variants directly.
+- General enum declarations and enum patterns exist in EBNF v0.6, but general enum value construction is not represented as a standalone primary expression. Current checked constructors use type-qualified calls such as `Result.Ok(...)`, `Result.Err(...)`, and `Option.Some(...)`.
 - `Err` is a primitive type keyword, not currently a value constructor. Stable examples use value-path helpers such as `err.new(...)` where an error value is needed.
 - UI and web examples live under `examples/draft/` because they intentionally explore syntax beyond the stable compiler contract.

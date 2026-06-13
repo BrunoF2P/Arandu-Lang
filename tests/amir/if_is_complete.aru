@@ -9,7 +9,7 @@ func make_pair() (int, int) {
 
 func test_tuple_pattern() int {
     pair = make_pair()
-    val = 0
+    mut val = 0
     if pair is (x, 10) {
         set val = x
     }
@@ -17,7 +17,7 @@ func test_tuple_pattern() int {
 }
 
 func test_typetuple_pattern(res Result) int {
-    val = 0
+    mut val = 0
     if res is Ok(x) {
         set val = x
     }
@@ -25,7 +25,7 @@ func test_typetuple_pattern(res Result) int {
 }
 
 func test_range_pattern(x int) bool {
-    res = false
+    mut res = false
     if x is 1..=10 {
         set res = true
     }
@@ -33,7 +33,7 @@ func test_range_pattern(x int) bool {
 }
 
 func test_range_exclusive(x int) bool {
-    res = false
+    mut res = false
     if x is 1..10 {
         set res = true
     }

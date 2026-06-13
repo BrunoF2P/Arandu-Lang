@@ -3,10 +3,10 @@ func foo() (int, bool) {
 }
 
 func main() {
-    x int = 10
+    mut x int = 10
     set x = 20
     
-    a int = 0
-    b bool = false
+    mut a int = 0
+    mut b bool = false
     set a, b = foo()
 }

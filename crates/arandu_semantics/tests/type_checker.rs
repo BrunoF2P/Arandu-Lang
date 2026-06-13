@@ -78,7 +78,6 @@ macro_rules! assert_type_errors {
         let actual_codes: Vec<arandu_semantics::DiagCode> = result
             .diagnostics
             .iter()
-            .filter(|d| format!("{}", d.code).starts_with('T'))
             .map(|d| d.code)
             .collect();
 
@@ -254,7 +253,7 @@ fn test_result_not_handled() {
             config = openConfig()
         }
         ",
-        [T019ResultNotHandled]
+        [W006UnhandledResult]
     );
 }
 
@@ -290,7 +289,7 @@ fn test_incompatible_assignment() {
     assert_type_errors!(
         "
         func main() {
-            x bool = true
+            mut x bool = true
             set x = 10
         }
         ",
@@ -366,8 +365,8 @@ fn test_multi_assignment_destructuring() {
             return 10, true
         }
         func main() {
-            a int = 0
-            b bool = false
+            mut a int = 0
+            mut b bool = false
             set a, b = foo() // Ok if assignment destructuring works
         }
         ",
@@ -380,8 +379,8 @@ fn test_multi_assignment_destructuring() {
             return 10, true
         }
         func main() {
-            a bool = false
-            b bool = false
+            mut a bool = false
+            mut b bool = false
             set a, b = foo() // Mismatch: a is bool, LHS is int
         }
         ",
@@ -811,7 +810,7 @@ fn test_break_continue_outside_loop() {
             continue
         }
         ",
-        [T022BreakContinueOutsideLoop, T022BreakContinueOutsideLoop]
+        [N011BreakContinueOutsideLoop, N011BreakContinueOutsideLoop]
     );
 }
 
@@ -824,7 +823,7 @@ fn test_free_requires_ptr() {
             free x
         }
         ",
-        [T023FreeRequiresPtr]
+        [O011FreeRequiresPtr]
     );
 }
 
@@ -960,7 +959,7 @@ fn test_result_ok_generic() {
             x = ok()
         }
         ",
-        [T019ResultNotHandled]
+        [W006UnhandledResult]
     );
 }
 
@@ -1064,7 +1063,7 @@ fn test_type_checker_smart_suggestions() {
 
     let hints: Vec<String> = result.diagnostics
         .iter()
-        .flat_map(|d| d.hints.clone())
+        .flat_map(|d| d.hints.iter().map(|h| h.message.clone()))
         .collect();
 
     assert!(hints.contains(&"did you mean 'myfield'?".to_string()), "got hints: {:?}", hints);

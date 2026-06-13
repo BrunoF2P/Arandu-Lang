@@ -40,14 +40,14 @@ Still outside this parser contract: type checking, name resolution, mutability v
 
 | Feature | Lexer | Parser | Name Resolution | Type Check |
 | --- | --- | --- | --- | --- |
-| `module` / `import` | yes | yes | single-file namespace imports and named aliases; no file loading | no |
-| `func` / `struct` / `enum` / `interface` / `extern` | yes | yes | yes, including type-qualified associated funcs | no |
-| generics / `where` | yes | yes | names and constraints | no |
-| `for` / `while` | yes | yes | names only | no |
-| `defer` / `errdefer` | yes | yes | names only | no |
-| `unsafe` / `free` / `alloc` | yes | yes | names only | no |
-| `catch` / `as` / `?` / `??` / safe access | yes | yes | names only | no |
-| lambdas / arrays / block calls | yes | yes | names and lambda params | no |
+| `module` / `import` | yes | yes | single-file namespace imports and named aliases; no file loading | prelude/import checks for current subset |
+| `func` / `struct` / `enum` / `interface` / `extern` | yes | yes | yes, including type-qualified associated funcs | v0.1 core yes |
+| generics / `where` | yes | yes | names and constraints | generic calls, constraints, and interface satisfaction |
+| `for` / `while` | yes | yes | loop bindings | partial |
+| `defer` / `errdefer` | yes | yes | names in cleanup blocks | partial |
+| `unsafe` / `free` / `alloc` | yes | yes | names | `free` requires ptr; unsafe legality deferred |
+| `catch` / `as` / `?` / `??` / safe access | yes | yes | names | checked for v0.1 cases; full catch lowering deferred |
+| lambdas / arrays / block calls | yes | yes | names and lambda params | arrays yes; lambda semantics deferred |
 
 ## Input and Output
 
@@ -860,6 +860,6 @@ VarDecl(compare)
 - The parser does not check mutability, ownership, type validity, exhaustiveness, or unsafe legality.
 - The parser may accept semantically invalid ASTs so later phases can produce better diagnostics.
 - The parser accepts `any` wherever a type expression is syntactically valid; the type checker rejects it outside variadic parameters, extern/FFI declarations, and compiler builtins.
-- Enum value construction is not introduced by this contract because EBNF v0.6 does not define it as an expression form.
-- `Err(...)` is not parsed as an error constructor. Use ordinary calls such as `err.new(...)` until the language defines constructors.
+- General enum value construction is not introduced by this contract because EBNF v0.6 does not define it as an expression form; current checked constructors use type-qualified calls such as `Result.Ok(...)`, `Result.Err(...)`, and `Option.Some(...)`.
+- `Err(...)` is not parsed as an error constructor. Use ordinary calls such as `err.new(...)` where an error value is needed.
 - Parser tests should use `examples/stable/` as positive fixtures and `examples/invalid/syntax/` as negative fixtures.

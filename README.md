@@ -1,5 +1,8 @@
 # Arandu
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE-MIT)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE-APACHE)
+
 Arandu is an experimental Brazilian systems programming language focused on memory safety, clean syntax, explicit errors, and native tooling.
 
 ## Current Status
@@ -138,3 +141,7 @@ tests/amir/       AMIR golden fixtures (.aru → .amir)
 ## Next Steps
 
 See [docs/arandu-compiler-roadmap-v0.1.md](docs/arandu-compiler-roadmap-v0.1.md). Documentation is now aligned with the current v0.1 compiler state; the next recommended technical milestone is the memory checker / generational fallback, followed by backend work.
+
+## License
+
+This project is dual-licensed under both the [MIT License](LICENSE-MIT) and the [Apache License, Version 2.0](LICENSE-APACHE).

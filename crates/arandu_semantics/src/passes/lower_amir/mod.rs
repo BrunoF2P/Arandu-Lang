@@ -64,7 +64,7 @@ pub fn lower_to_amir(
 
 pub(crate) fn amir_unsupported(span: Span, feature: &str, roadmap: &str) -> Diagnostic {
     Diagnostic::error(
-        DiagCode::L002AmirUnsupportedFeature,
+        DiagCode::U001FeatureNotSupported,
         format!("AMIR v0.1: {feature} is not supported yet ({roadmap})"),
         span,
     )

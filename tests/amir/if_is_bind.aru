@@ -1,5 +1,5 @@
 func test_bind(x int) int {
-    res = 0
+    mut res = 0
     if x is y {
         set res = y
     } else {

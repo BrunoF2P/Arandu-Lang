@@ -28,8 +28,8 @@
 ### 1.2 Onde está o risco real (ordem)
 
 1. **Type checker monolítico** — `check.rs` / `synth.rs` / `types.rs` vão explodir com generics, flow, ownership metadata.
-2. **AMIR informal** — passes assumem CFG/SSA/ownership de formas diferentes → backend e optimizer quebram depois.
-3. **Semântica espalhada** — heurísticas em lowering (`Result`, `errdefer`) em vez de contrato AMIR.
+2. **Semântica de memória ainda incompleta** — `Result`, `errdefer`, safe ops, definite init e M1 move checker já têm contrato AMIR; borrow checking, gen fallback e ownership interprocedural continuam pendentes.
+3. **Otimização middle-end ainda inicial** — O1 cobre constant folding + DCE opt-in; CFG cleanup, SCCP, DSE, inlining e escape analysis ficam para fases posteriores.
 4. **Ausência de módulos reais** — single-file não escala para projetos, incremental, pacotes.
 5. **Layout de memória do compilador** — `Box`/`Vec`/`String` em IR; falta arena + interning.
 6. **Ownership híbrido + generational fallback** — diferencial de mercado, mas exige transparência (O004 sempre visível).
@@ -228,18 +228,17 @@ Integração da análise de código + sessão de correção AMIR/namespace.
 **Objetivo:** compilador que **analisa** programas reais com semântica consistente, sem backend.
 
 ```text
-[1] Bugs críticos (§7.1)
-[2] Modularizar type checker (§5) — em paralelo, PRs pequenos
+[x] Bugs críticos (§7.1)
+[x] Modularizar type checker (§5)
 [x] AMIR: SwitchInt formal (int/enum/bool; `match_lower.rs`)
 [x] AMIR: validador CFG (`amir_validate.rs`, goldens `tests/amir`)
 [x] Generics: `where` + interface satisfaction (T011/T025, `types/interfaces.rs`)
-[4] Definite initialization (G)
-[5] OSSA mínimo: move, copy, destroy (F1)
-[6] Move checker básico: O001, O005, O007 (M1)
-[7] Constant folding + DCE (O1)
-[8] Generics + interfaces (T) — após modularização
-[9] Result canônico (E) + goldens
-[10] Docs (A)
+[x] Result canônico (E) + goldens
+[x] Definite initialization (G)
+[x] OSSA mínimo: move, copy, destroy (F1)
+[x] Docs (A)
+[x] Move checker básico: O001, O005, O007 (M1)
+[x] Constant folding + DCE (O1)
 ```
 
 **Não fazer em v0.1:**
@@ -297,14 +296,12 @@ Integração da análise de código + sessão de correção AMIR/namespace.
 
 ---
 
-## 11. Próximos passos imediatos (ordem sugerida)
+## 11. Próximos marcos técnicos (ordem sugerida)
 
-1. PR: bugs **BUG-01** a **BUG-05** + DiagCodes T022/T023.
-2. PR: extrair `prelude.rs` + `nullable.rs` do type checker (primeiro passo §5).
-3. PR: validador AMIR invariantes + `SwitchInt` enum match.
-4. PR: `definite_init.rs` (G).
-5. PR: OSSA + move checker (F1, M1).
-6. Atualizar §Painel em [roadmap](./arandu-compiler-roadmap-v0.1.md) a cada merge.
+1. PR: **v0.2 design curto** para backend C, stdlib mínima e próximos passos de borrow/gen fallback.
+2. PR: **memory checker / generational fallback** — definir O004 e a estratégia mínima de referências geracionais.
+3. PR: **Backend C 1:1** — primeiro caminho executável, mantendo AMIR não otimizado como saída padrão de debug.
+4. Manter o §Painel em [roadmap](./arandu-compiler-roadmap-v0.1.md) atualizado a cada merge.
 
 ---
 

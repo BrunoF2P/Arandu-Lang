@@ -79,7 +79,79 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
             }
         }
     }
+
+    // T029: Recursive struct size validation
+    let struct_ids: Vec<crate::SymbolId> = checker.type_info.struct_fields.keys().copied().collect();
+    for struct_id in struct_ids {
+        let mut visiting = fxhash::FxHashSet::default();
+        let mut visited = fxhash::FxHashSet::default();
+        check_recursive(struct_id, struct_id, &mut visiting, &mut visited, checker);
+    }
 }
+
+fn check_recursive(
+    root_struct_id: crate::SymbolId,
+    current_struct_id: crate::SymbolId,
+    visiting: &mut fxhash::FxHashSet<crate::SymbolId>,
+    visited: &mut fxhash::FxHashSet<crate::SymbolId>,
+    checker: &mut TypeChecker<'_>,
+) {
+    if visited.contains(&current_struct_id) {
+        return;
+    }
+    if visiting.contains(&current_struct_id) {
+        let struct_symbol = checker.symbols.get(root_struct_id);
+        let struct_name = struct_symbol.name.clone();
+        let diag = crate::Diagnostic::error(
+            crate::DiagCode::T029RecursiveStructInfiniteSize,
+            format!("recursive type '{struct_name}' has infinite size"),
+            struct_symbol.span,
+        )
+        .with_label(struct_symbol.span, "recursive type has infinite size")
+        .with_hint("insert indirection (e.g. use a pointer type like `ptr[T]`) to make it finite");
+        checker.diagnostics.push(diag);
+        return;
+    }
+
+    visiting.insert(current_struct_id);
+
+    if let Some(fields) = checker.type_info.struct_fields.get(&current_struct_id).cloned() {
+        for field_ty in fields.values() {
+            visit_type(root_struct_id, field_ty, visiting, visited, checker);
+        }
+    }
+
+    visiting.remove(&current_struct_id);
+    visited.insert(current_struct_id);
+}
+
+fn visit_type(
+    root_struct_id: crate::SymbolId,
+    ty: &ArType,
+    visiting: &mut fxhash::FxHashSet<crate::SymbolId>,
+    visited: &mut fxhash::FxHashSet<crate::SymbolId>,
+    checker: &mut TypeChecker<'_>,
+) {
+    match ty {
+        ArType::Named(id, _) if checker.type_info.struct_fields.contains_key(id) => {
+            check_recursive(root_struct_id, *id, visiting, visited, checker);
+        }
+        ArType::Tuple(tys) => {
+            for t in tys {
+                visit_type(root_struct_id, t, visiting, visited, checker);
+            }
+        }
+        ArType::Array(_, inner) | ArType::Slice(inner) | ArType::Nullable(inner) | ArType::Option(inner) => {
+            visit_type(root_struct_id, inner, visiting, visited, checker);
+        }
+        ArType::Result(ok, err) => {
+            visit_type(root_struct_id, ok, visiting, visited, checker);
+            visit_type(root_struct_id, err, visiting, visited, checker);
+        }
+        _ => {}
+    }
+}
+
 
 pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &Program) {
     for decl in &program.decls {

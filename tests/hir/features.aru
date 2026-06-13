@@ -25,7 +25,7 @@ func main() {
         20
     }
 
-    idx int = 0
+    mut idx int = 0
     while idx < 5 {
         set idx = idx + 1
     }

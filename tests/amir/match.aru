@@ -8,7 +8,7 @@ func test_match_expr(x int) int {
 }
 
 func test_match_stmt(x int) int {
-    res = 0
+    mut res = 0
     match x {
         1 => {
             set res = 10

@@ -61,6 +61,7 @@ AHIR v0.1 serves as the **Typed AST**. It represents the program semantically wh
 - **Fully Resolved Names**: Every identifier reference is resolved to its defined `SymbolId`.
 - **Fully Inferred/Checked Types**: Every expression and variable binding carries its concrete `ArType`.
 - **Generics & Interfaces**: Preserves structural interface constraints, generic parameters, and `where` clauses in their source-level semantic form.
+- **Result/Option Constructors**: `Result.Ok`, `Result.Err`, and `Option.Some` are represented semantically before AMIR lowering.
 - **Diagnostics Context**: Preserves source spans (`Span`) to emit high-quality diagnostics close to the user's code.
 
 ### Excluded from AHIR
@@ -81,20 +82,19 @@ AMIR represents the program as a Control Flow Graph (CFG) with explicit control-
 - **Local Registers**: Every variable and temporary is a numbered local (`_0`, `_1`, ...) with explicit type.
 - **Place Projections**: Supports nested field and index mutations via `AmirPlace` with projections.
 - **Basic Expressions**: Literals, binary/unary ops, field access, index access, array literals, struct literals, calls.
-- **Lowered in AMIR (experimental):** `match`, `if is`, `defer`/`errdefer`, `?`/`?.`/`?[]`/`??`, `for in`, `alloc`/`free` (tuple-`Result` heuristics until `Result<T,E>` lands — see roadmap §4.B–D).
-- **Still unsupported:** `catch`, lambdas, async blocks as expressions.
+- **Lowered in AMIR:** `match`, `if is`, `defer`/`errdefer`, `?`, `?.`, `?[]`, `??`, `for in`, `alloc`, and `free`.
+- **Result/Option Representation:** Source-level `Result<T,E>` and `Option<T>` lower through `ResultCtor`/tuple ok-err layout without legacy source-level tuple fallback rules.
+- **Definite Initialization:** `passes/definite_init.rs` runs a CFG dataflow analysis and reports O008 for possibly uninitialized local reads.
+- **OSSA Foundation:** AMIR models `copy`, `move`, `borrow`, `borrow_mut`, `destroy`, `StorageLive`, and `StorageDead`; full borrow checking remains future work.
+- **Still unsupported in AMIR lowering:** `catch` (roadmap v0.2 CATCH), unsafe block expressions (v0.2 UNSAFE), lambdas (v0.3 LAMBDA), and async blocks/`await` (v0.3 ASYNC).
 
 ### AMIR v0.2+ (Future)
 
-- **Definite Initialization**: Analyzes variable lifetimes to ensure they are initialized before use.
-- **Ownership SSA (OSSA)**: Every operation will specify ownership transitions explicitly:
-  - `copy`: Duplicates a copyable value or increases reference count.
-  - `move`: Transfers ownership of a value; source variable becomes uninitialized.
-  - `borrow_shared`: Creates an immutable reference.
-  - `borrow_mut`: Creates a mutable reference.
-  - `end_borrow`: Ends the lifetime of a reference.
-  - `destroy`: Reclaims memory/resources of an owned value that was not moved.
-- **Lowering Passes**: Desugars `defer`, `errdefer`, catch-handlers, safe-navigation, and match patterns.
+- **Move Checker Pass**: Promotes the current move/copy annotations into O001/O005/O007 diagnostics over the CFG.
+- **Borrow OSSA**: Adds explicit `end_borrow` and validates shared/mutable borrow conflicts.
+- **Catch Lowering**: Desugars catch-handlers into explicit CFG branches.
+- **Generational Fallback**: Inserts transparent runtime checks where the static ownership model intentionally falls back.
+- **Unsafe Lowering**: Validates unsafe-only operations and lowers unsafe block expressions.
 
 ---
 

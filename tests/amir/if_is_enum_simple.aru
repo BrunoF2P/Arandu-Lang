@@ -6,7 +6,7 @@ enum LoadState {
 }
 
 func test_enum(state LoadState) int {
-    res = 0
+    mut res = 0
     if state is LoadState.Idle {
         set res = 1
     } else if state is LoadState.Loading {

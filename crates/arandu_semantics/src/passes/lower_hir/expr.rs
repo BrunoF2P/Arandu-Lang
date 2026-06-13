@@ -243,7 +243,7 @@ pub(crate) fn lower_expr_raw(
                 }
             };
             let field_ids = pool.field_init_list(*fields).to_vec();
-            let hir_fields: Result<Vec<_>, _> = field_ids
+            let hir_fields: Result<Vec<_>, Diagnostic> = field_ids
                 .iter()
                 .map(|fid| {
                     let f = pool.field_init(*fid);
@@ -261,7 +261,7 @@ pub(crate) fn lower_expr_raw(
         }
         ExprKind::Array { items, .. } => {
             let item_ids = pool.expr_list(*items).to_vec();
-            let hir_items: Result<Vec<_>, _> = item_ids
+            let hir_items: Result<Vec<_>, Diagnostic> = item_ids
                 .iter()
                 .map(|i| lower_expr_raw(type_check, pool, hir_pool, *i))
                 .collect();

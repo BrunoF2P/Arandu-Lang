@@ -225,7 +225,7 @@ impl LowerCtx<'_> {
 
     pub(crate) fn move_diag(&self, message: impl Into<String>) -> Diagnostic {
         Diagnostic::error(
-            crate::DiagCode::L002AmirUnsupportedFeature,
+            crate::DiagCode::U001FeatureNotSupported,
             message.into(),
             Span::new(0, 0, 0, 0, 0, 0),
         )

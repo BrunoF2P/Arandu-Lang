@@ -35,7 +35,7 @@ fn cast_types_compatible(found: &ArType, target: &ArType) -> bool {
 fn report_unsupported(checker: &mut TypeChecker<'_>, span: Span, feature: &str, roadmap: &str) {
     checker.diagnostics.push(
         crate::Diagnostic::error(
-            crate::DiagCode::L002AmirUnsupportedFeature,
+            crate::DiagCode::U001FeatureNotSupported,
             format!("{feature} is not supported yet ({roadmap})"),
             span,
         )
@@ -314,9 +314,27 @@ fn synth_expr_inner(checker: &mut TypeChecker<'_>, expr: ExprId) -> ArType {
                 )
                 .or_else(|| checker.type_info.struct_fields.get(symbol_id).cloned());
                 let field_ids = checker.pool.field_init_list(fields_range).to_vec();
+
+                let mut seen_fields = fxhash::FxHashMap::default();
+                for &fid in &field_ids {
+                    let field = checker.pool.field_init(fid);
+                    if let Some(&prev_span) = seen_fields.get(&field.name) {
+                        let diag = crate::Diagnostic::error(
+                            crate::DiagCode::T028DuplicateFieldInit,
+                            format!("field '{}' initialized more than once", field.name),
+                            field.span,
+                        )
+                        .with_label(prev_span, "first initialization here")
+                        .with_label(field.span, "duplicate initialization");
+                        checker.diagnostics.push(diag);
+                    } else {
+                        seen_fields.insert(field.name.clone(), field.span);
+                    }
+                }
+
                 if let Some(fields_def) = field_map {
-                    for fid in field_ids {
-                        let field = checker.pool.field_init(fid);
+                    for fid in &field_ids {
+                        let field = checker.pool.field_init(*fid);
                         let field_val_ty = synth_expr(checker, field.value);
                         let defined_field_ty = fields_def.get(&field.name).cloned();
                         if let Some(defined_field_ty) = defined_field_ty {
@@ -343,6 +361,27 @@ fn synth_expr_inner(checker: &mut TypeChecker<'_>, expr: ExprId) -> ArType {
                                 },
                             );
                         }
+                    }
+
+                    // T027: Missing struct fields in initializer
+                    let mut missing_fields = Vec::new();
+                    for def_name in fields_def.keys() {
+                        // TODO: Exclude fields with default values in the future when defaults are supported
+                        if !seen_fields.contains_key(def_name) {
+                            missing_fields.push(format!("`{def_name}`"));
+                        }
+                    }
+                    if !missing_fields.is_empty() {
+                        missing_fields.sort(); // Keep ordering deterministic
+                        let missing_str = missing_fields.join(", ");
+                        let struct_name = checker.symbols.get(*symbol_id).name.clone();
+                        let diag = crate::Diagnostic::error(
+                            crate::DiagCode::T027MissingStructFields,
+                            format!("missing fields {missing_str} in struct initializer"),
+                            span,
+                        )
+                        .with_label(span, format!("instantiating struct '{struct_name}' here"));
+                        checker.diagnostics.push(diag);
                     }
                 } else {
                     for fid in field_ids {

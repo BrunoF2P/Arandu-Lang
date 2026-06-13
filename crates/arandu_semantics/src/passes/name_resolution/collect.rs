@@ -13,7 +13,7 @@ impl<'a> Resolver<'a> {
                     self.define(scope, root, SymbolKind::Module, *span);
                 } else {
                     self.diagnostics.push(Diagnostic::error(
-                        DiagCode::N006UnresolvedImport,
+                        DiagCode::M001UnresolvedImport,
                         "empty import path",
                         *span,
                     ));

@@ -4,7 +4,7 @@ enum Result {
 }
 
 func test_payload(res Result) int {
-    val = 0
+    mut val = 0
     if res is Result.Ok(x) {
         set val = x
     } else {

@@ -21,7 +21,7 @@ pub fn validate_amir_func(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagnos
 
     if func.blocks.is_empty() {
         diags.push(Diagnostic::error(
-            DiagCode::L002AmirUnsupportedFeature,
+            DiagCode::U001FeatureNotSupported,
             "function has no basic blocks (CFG-4)".to_string(),
             span,
         ));
@@ -31,7 +31,7 @@ pub fn validate_amir_func(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagnos
     for (i, block) in func.blocks.iter().enumerate() {
         if !is_valid_terminator(&block.terminator) {
             diags.push(Diagnostic::error(
-                DiagCode::L002AmirUnsupportedFeature,
+                DiagCode::U001FeatureNotSupported,
                 format!("bb{i}: invalid terminator (CFG-1)"),
                 span,
             ));
@@ -40,7 +40,7 @@ pub fn validate_amir_func(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagnos
         for succ in terminator_targets(&block.terminator) {
             if succ.as_usize() >= func.blocks.len() {
                 diags.push(Diagnostic::error(
-                    DiagCode::L002AmirUnsupportedFeature,
+                    DiagCode::U001FeatureNotSupported,
                     format!(
                         "bb{i}: terminator targets non-existent bb{} (CFG-3)",
                         succ.as_usize()
@@ -60,7 +60,7 @@ pub fn validate_amir_func(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagnos
             && !matches!(block.terminator, AmirTerminator::Unreachable)
         {
             diags.push(Diagnostic::error(
-                DiagCode::L002AmirUnsupportedFeature,
+                DiagCode::U001FeatureNotSupported,
                 format!("bb{i}: not reachable from bb0 (CFG-5)"),
                 span,
             ));
@@ -70,7 +70,7 @@ pub fn validate_amir_func(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagnos
     for local in &func.locals {
         if local.ty.is_error() {
             diags.push(Diagnostic::error(
-                DiagCode::L002AmirUnsupportedFeature,
+                DiagCode::U001FeatureNotSupported,
                 format!(
                     "local s{} has poison type Error (TYP-1)",
                     local.id.as_usize()
@@ -83,7 +83,7 @@ pub fn validate_amir_func(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagnos
     for temp in &func.temps {
         if temp.ty.is_error() {
             diags.push(Diagnostic::error(
-                DiagCode::L002AmirUnsupportedFeature,
+                DiagCode::U001FeatureNotSupported,
                 format!("temp _{} has poison type Error (TYP-1)", temp.id.as_usize()),
                 span,
             ));

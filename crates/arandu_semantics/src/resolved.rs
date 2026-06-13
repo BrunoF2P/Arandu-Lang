@@ -28,6 +28,7 @@ pub struct ResolvedNames {
     pub expr_symbols: Vec<Option<SymbolId>>,
     pub value_refs: FxHashMap<NodeKey, SymbolId>,
     pub type_refs: FxHashMap<NodeKey, SymbolId>,
+    pub mutable_symbols: fxhash::FxHashSet<SymbolId>,
 }
 
 impl ResolvedNames {

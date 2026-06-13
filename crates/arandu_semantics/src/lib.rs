@@ -41,7 +41,7 @@ pub use string_pool::{SsoString, StringPool};
 pub use vm::VmReservation;
 
 pub use amir_validate::validate_amir_program;
-pub use diagnostics::{DiagCode, Diagnostic, Label, Severity};
+pub use diagnostics::{DiagCode, Diagnostic, Label, Severity, Hint, CodeReplacement};
 pub use passes::lower_amir::lower_to_amir;
 pub use passes::lower_hir::lower_to_hir;
 pub use passes::move_checker::check_moves;

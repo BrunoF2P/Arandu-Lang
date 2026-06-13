@@ -172,7 +172,7 @@ func main() {
 ",
     );
 
-    assert_eq!(codes(&result), vec![DiagCode::N008NamespaceUsedAsValue]);
+    assert_eq!(codes(&result), vec![DiagCode::M003NamespaceUsedAsValue]);
 }
 
 #[test]
@@ -189,7 +189,7 @@ func main() {
 ",
     );
 
-    assert_eq!(codes(&result), vec![DiagCode::N009UndefinedNamespaceMember]);
+    assert_eq!(codes(&result), vec![DiagCode::M002UndefinedNamespaceMember]);
 }
 
 #[test]
@@ -270,7 +270,7 @@ func main() {
         result.diagnostics[0]
             .hints
             .iter()
-            .any(|hint| hint.contains("missing =")),
+            .any(|hint| hint.message.contains("missing =")),
         "{:#?}",
         result.diagnostics
     );
@@ -318,7 +318,7 @@ func main() {
     let diagnostic = &result.diagnostics[0];
     assert!(diagnostic.message.contains("usre"));
     assert!(
-        diagnostic.hints.iter().any(|hint| hint.contains("user")),
+        diagnostic.hints.iter().any(|hint| hint.message.contains("user")),
         "{diagnostic:#?}"
     );
 }
@@ -452,7 +452,7 @@ fn resolves_module_qualified_type_names() {
     );
     let diagnostics = codes(&result);
     // myModule is a module, not a type. Checking a qualified member type should report N009
-    assert_eq!(diagnostics, vec![DiagCode::N009UndefinedNamespaceMember]);
+    assert_eq!(diagnostics, vec![DiagCode::M002UndefinedNamespaceMember]);
 }
 
 #[test]
@@ -481,7 +481,7 @@ func main(user User) {
     );
     let diag = &result.diagnostics[0];
     assert!(
-        diag.hints.iter().any(|h| h.contains("greet")),
+        diag.hints.iter().any(|h| h.message.contains("greet")),
         "should suggest 'greet' in hints, got: {:?}",
         diag.hints
     );
@@ -506,7 +506,7 @@ func main() {
     assert_eq!(codes(&result), vec![DiagCode::N001UndefinedValue]);
     let diag = &result.diagnostics[0];
     assert!(
-        diag.hints.iter().any(|h| h.contains("myVar")),
+        diag.hints.iter().any(|h| h.message.contains("myVar")),
         "should suggest 'myVar' due to case-insensitivity priority, got: {:?}",
         diag.hints
     );

@@ -4,7 +4,7 @@ func test_alloc_free() {
 }
 
 func test_defer() int {
-    x = 0
+    mut x = 0
     defer {
         set x = 1
     }
@@ -12,7 +12,7 @@ func test_defer() int {
 }
 
 func test_defer_scope() int {
-    x = 0
+    mut x = 0
     if true {
         defer {
             set x = x + 10

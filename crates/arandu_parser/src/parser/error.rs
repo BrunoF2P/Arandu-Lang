@@ -65,14 +65,23 @@ impl ParseError {
 
 impl From<ParseError> for arandu_diagnostics::Diagnostic {
     fn from(err: ParseError) -> Self {
-        let code_str = match err.code {
-            ParseErrorCode::Lex => "L001",
-            ParseErrorCode::ExpectedToken => "P001",
-            ParseErrorCode::ExpectedTopLevelDecl => "P002",
-            ParseErrorCode::ExpectedExpression => "P003",
-            ParseErrorCode::ExpectedType => "P004",
-            ParseErrorCode::ExpectedPlace => "P005",
-            ParseErrorCode::InvalidResultReturn => "P006",
+        let diag_code = match err.code {
+            ParseErrorCode::Lex => {
+                match &*err.found {
+                    "InvalidChar" => arandu_diagnostics::DiagCode::LX002InvalidUnicodeChar,
+                    "UnterminatedString" | "UnterminatedMultilineString" | "UnterminatedRawString" | 
+                    "UnterminatedChar" | "UnterminatedBlockComment" | "UnclosedInterpolation" => arandu_diagnostics::DiagCode::LX001UnterminatedString,
+                    "InvalidNumericLiteral" | "InvalidBinaryDigit" | "InvalidOctalDigit" | 
+                    "InvalidHexDigit" | "LeadingZero" => arandu_diagnostics::DiagCode::LX003InvalidNumericLiteral,
+                    _ => arandu_diagnostics::DiagCode::LX002InvalidUnicodeChar,
+                }
+            }
+            ParseErrorCode::ExpectedToken => arandu_diagnostics::DiagCode::P001UnexpectedToken,
+            ParseErrorCode::ExpectedTopLevelDecl => arandu_diagnostics::DiagCode::P001UnexpectedToken,
+            ParseErrorCode::ExpectedExpression => arandu_diagnostics::DiagCode::P005ExpectedExpression,
+            ParseErrorCode::ExpectedType => arandu_diagnostics::DiagCode::P001UnexpectedToken,
+            ParseErrorCode::ExpectedPlace => arandu_diagnostics::DiagCode::P001UnexpectedToken,
+            ParseErrorCode::InvalidResultReturn => arandu_diagnostics::DiagCode::P001UnexpectedToken,
         };
         let msg = if err.expected.is_empty() {
             format!("{} (found {})", err.message, err.found)
@@ -84,7 +93,7 @@ impl From<ParseError> for arandu_diagnostics::Diagnostic {
                 err.found
             )
         };
-        arandu_diagnostics::Diagnostic::error(code_str, msg, err.span)
+        arandu_diagnostics::Diagnostic::error(diag_code, msg, err.span)
     }
 }
 

@@ -83,6 +83,9 @@ impl<'a> Resolver<'a> {
         }
         for binding in bindings {
             self.define(scope, &binding.name, SymbolKind::Local, binding.span);
+            if let Some(symbol_id) = self.resolved.definitions.get(&binding.span.into()).copied().filter(|_| binding.mutable) {
+                self.resolved.mutable_symbols.insert(symbol_id);
+            }
         }
     }
 
@@ -140,6 +143,9 @@ impl<'a> Resolver<'a> {
 
     pub(crate) fn define_for_binding(&mut self, scope: ScopeId, binding: &ForBinding) {
         self.define(scope, &binding.name, SymbolKind::Local, binding.span);
+        if let Some(symbol_id) = self.resolved.definitions.get(&binding.span.into()).copied().filter(|_| binding.mutable) {
+            self.resolved.mutable_symbols.insert(symbol_id);
+        }
     }
 
     pub(crate) fn resolve_defer_body(&mut self, scope: ScopeId, pool: &AstPool, body: &DeferBody) {

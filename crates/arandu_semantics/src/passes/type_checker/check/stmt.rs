@@ -105,8 +105,8 @@ pub fn check_stmt(checker: &mut TypeChecker<'_>, _pool: &AstPool, stmt: &Stmt) {
                     });
                     if super::super::types::result_ok_err(&val_ty).is_some() && !annotated_as_result
                     {
-                        checker.diagnostics.push(crate::Diagnostic::error(
-                            crate::DiagCode::T019ResultNotHandled,
+                        checker.diagnostics.push(crate::Diagnostic::warning(
+                            crate::DiagCode::W006UnhandledResult,
                             "Result value must be handled with `?` or `value, err = f()`",
                             checker.pool.expr_span(*value),
                         ));
@@ -158,6 +158,9 @@ pub fn check_stmt(checker: &mut TypeChecker<'_>, _pool: &AstPool, stmt: &Stmt) {
             op: _,
             value,
         } => {
+            for place in places {
+                validate_mutability(checker, place);
+            }
             let val_ty = super::super::synth::synth_expr(checker, *value);
             if places.len() > 1 {
                 let val_tys = if let Some((ok, err)) = super::super::types::result_ok_err(&val_ty) {
@@ -202,8 +205,8 @@ pub fn check_stmt(checker: &mut TypeChecker<'_>, _pool: &AstPool, stmt: &Stmt) {
                 if super::super::types::result_ok_err(&val_ty).is_some()
                     && super::super::types::result_ok_err(&expected_ty).is_none()
                 {
-                    checker.diagnostics.push(crate::Diagnostic::error(
-                        crate::DiagCode::T019ResultNotHandled,
+                    checker.diagnostics.push(crate::Diagnostic::warning(
+                        crate::DiagCode::W006UnhandledResult,
                         "Result value must be handled with `?` or `value, err = f()`",
                         checker.pool.expr_span(*value),
                     ));
@@ -453,7 +456,7 @@ pub fn check_stmt(checker: &mut TypeChecker<'_>, _pool: &AstPool, stmt: &Stmt) {
             if !ty.is_error() && !matches!(ty, ArType::Ptr(_)) {
                 checker.diagnostics.push(
                     crate::Diagnostic::error(
-                        crate::DiagCode::T023FreeRequiresPtr,
+                        crate::DiagCode::O011FreeRequiresPtr,
                         format!(
                             "`free` requires a pointer type (`ptr[T]`), found '{}'",
                             ty.display(&checker.symbols)
@@ -477,14 +480,14 @@ pub fn check_stmt(checker: &mut TypeChecker<'_>, _pool: &AstPool, stmt: &Stmt) {
         },
         Stmt::Break { span } if !checker.ctx.is_in_loop() => {
             checker.diagnostics.push(crate::Diagnostic::error(
-                crate::DiagCode::T022BreakContinueOutsideLoop,
+                crate::DiagCode::N011BreakContinueOutsideLoop,
                 "`break` is only allowed inside a loop",
                 *span,
             ));
         }
         Stmt::Continue { span } if !checker.ctx.is_in_loop() => {
             checker.diagnostics.push(crate::Diagnostic::error(
-                crate::DiagCode::T022BreakContinueOutsideLoop,
+                crate::DiagCode::N011BreakContinueOutsideLoop,
                 "`continue` is only allowed inside a loop",
                 *span,
             ));
@@ -493,3 +496,34 @@ pub fn check_stmt(checker: &mut TypeChecker<'_>, _pool: &AstPool, stmt: &Stmt) {
         _ => {}
     }
 }
+
+fn validate_mutability(checker: &mut TypeChecker<'_>, place: &arandu_parser::Place) {
+    if place.suffixes.is_empty() {
+        let root_key = crate::NodeKey::from(place.span);
+        if let Some(symbol_id) = checker.resolved.value_refs.get(&root_key) {
+            let symbol = checker.symbols.get(*symbol_id);
+            if (symbol.kind == crate::SymbolKind::Local || symbol.kind == crate::SymbolKind::Param)
+                && !checker.resolved.mutable_symbols.contains(symbol_id)
+            {
+                let name = &symbol.name;
+                let replacement = crate::Hint {
+                    message: format!("consider declaring the variable as mutable: `let mut {} = ...;`", name),
+                    replacement: Some(crate::CodeReplacement {
+                        span: symbol.span,
+                        new_text: format!("mut {name}"),
+                    }),
+                };
+                let diag = crate::Diagnostic::error(
+                    crate::DiagCode::T026CannotAssignImmutable,
+                    format!("cannot assign twice to immutable variable '{name}'"),
+                    place.span,
+                )
+                .with_label(place.span, "cannot assign to immutable variable")
+                .with_label(symbol.span, "variable declared here as immutable")
+                .with_hint_replacement(replacement);
+                checker.diagnostics.push(diag);
+            }
+        }
+    }
+}
+

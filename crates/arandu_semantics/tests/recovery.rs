@@ -135,7 +135,7 @@ fn test_recovery_name_resolution() {
         .find(|d| d.code == arandu_semantics::DiagCode::N001UndefinedValue)
         .unwrap();
     assert!(
-        diag.hints.iter().any(|h| h.contains("my_variable")),
+        diag.hints.iter().any(|h| h.message.contains("my_variable")),
         "should suggest 'my_variable' in hints, got: {:?}",
         diag.hints
     );
@@ -159,7 +159,7 @@ fn test_recovery_name_resolution() {
         .find(|d| d.code == arandu_semantics::DiagCode::N002UndefinedType)
         .unwrap();
     assert!(
-        diag_ty.hints.iter().any(|h| h.contains("Person")),
+        diag_ty.hints.iter().any(|h| h.message.contains("Person")),
         "should suggest 'Person' in hints, got: {:?}",
         diag_ty.hints
     );

@@ -216,7 +216,7 @@ pub fn compile_parallel(paths: Vec<PathBuf>) -> Result<ParallelOutput, Vec<Diagn
         let filepath = ctx.paths[file_idx].to_string_lossy();
         for err in &*errors {
             final_diagnostics.push(Diagnostic::error(
-                crate::DiagCode::N006UnresolvedImport,
+                crate::DiagCode::M001UnresolvedImport,
                 err.format_for_cli(&filepath),
                 err.span,
             ));
@@ -346,7 +346,7 @@ fn run_task(
                 *worker.ctx.parse_errors[file_idx].lock().unwrap() = output.diagnostics;
             } else {
                 worker.ctx.diagnostics.lock().unwrap().push(Diagnostic::error(
-                    crate::DiagCode::N006UnresolvedImport,
+                    crate::DiagCode::M001UnresolvedImport,
                     format!("failed to read file {}", path.display()),
                     arandu_lexer::Span::new(0, 0, 0, 0, 0, 0),
                 ));

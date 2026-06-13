@@ -2,6 +2,8 @@
 name = "arandu_diagnostics"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
+authors.workspace = true
 
 [lints]
 workspace = true
@@ -11,3 +13,4 @@ path = "src/lib.rs"
 
 [dependencies]
 arandu_lexer = { path = "../arandu_lexer" }
+

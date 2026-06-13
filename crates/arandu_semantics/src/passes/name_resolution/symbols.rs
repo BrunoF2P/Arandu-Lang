@@ -19,7 +19,7 @@ impl<'a> Resolver<'a> {
         }
         if self.symbols.lookup_module(scope, name).is_some() {
             self.diagnostics.push(Diagnostic::error(
-                DiagCode::N008NamespaceUsedAsValue,
+                DiagCode::M003NamespaceUsedAsValue,
                 format!("namespace '{name}' cannot be used as a value"),
                 span,
             ));
@@ -89,7 +89,7 @@ impl<'a> Resolver<'a> {
             self.resolved.expr_ref(expr, symbol);
         } else {
             self.diagnostics.push(Diagnostic::error(
-                DiagCode::N009UndefinedNamespaceMember,
+                DiagCode::M002UndefinedNamespaceMember,
                 format!("namespace member '{namespace}.{member}' is not declared"),
                 span,
             ));

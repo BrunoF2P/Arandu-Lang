@@ -110,7 +110,7 @@ fn lower_stmt_raw(
         Stmt::Set {
             places, op, value, ..
         } => {
-            let hir_places: Result<Vec<_>, _> = places
+            let hir_places: Result<Vec<_>, Diagnostic> = places
                 .iter()
                 .map(|p| super::place::lower_place(type_check, pool, hir_pool, p))
                 .collect();
@@ -123,7 +123,7 @@ fn lower_stmt_raw(
             }
         }
         Stmt::Return { values, .. } => {
-            let hir_values: Result<Vec<_>, _> = values
+            let hir_values: Result<Vec<_>, Diagnostic> = values
                 .iter()
                 .map(|v| {
                     let vid = super::expr::lower_expr(type_check, pool, hir_pool, *v)?;
@@ -320,7 +320,7 @@ pub(crate) fn lower_for_clause(
                 .map(Box::new),
             condition: condition
                 .as_ref()
-                .map(|e| {
+                .map(|e| -> Result<_, Diagnostic> {
                     let eid = super::expr::lower_expr(type_check, pool, hir_pool, **e)?;
                     Ok(hir_pool.expr(eid).clone())
                 })
@@ -368,7 +368,7 @@ pub(crate) fn lower_simple_stmt(
         SimpleStmt::Set {
             places, op, value, ..
         } => {
-            let hir_places: Result<Vec<_>, _> = places
+            let hir_places: Result<Vec<_>, Diagnostic> = places
                 .iter()
                 .map(|p| super::place::lower_place(type_check, pool, hir_pool, p))
                 .collect();

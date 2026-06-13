@@ -1,5 +1,5 @@
 func test_literal(x int) int {
-    res = 0
+    mut res = 0
     if x is 5 {
         set res = 10
     } else {
@@ -9,7 +9,7 @@ func test_literal(x int) int {
 }
 
 func test_wildcard(x int) int {
-    res = 0
+    mut res = 0
     if x is _ {
         set res = 10
     } else {

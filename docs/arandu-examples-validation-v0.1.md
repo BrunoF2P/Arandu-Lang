@@ -17,9 +17,11 @@ This document separates lexer, parser, checker, and draft expectations so exampl
 | Lexer | implemented |
 | Parser | implemented |
 | Name resolver | implemented |
-| Type checker | experimental |
+| Type checker | v0.1 core implemented |
 | AHIR | implemented |
-| AMIR | experimental |
+| AMIR | v0.1 implemented |
+| Move checker | implemented |
+| Middle-end optimizer | opt-in basic O1 |
 | Memory checker | not implemented |
 | Backend | not implemented |
 
@@ -33,17 +35,21 @@ Implemented now:
 - Parser golden tests under `tests/parser/`.
 - `arandu_semantics` crate.
 - Name resolution v0.2 with hierarchical symbol tables, namespace imports, prelude members, associated functions, doc comment mapping, and diagnostics.
-- Type checker (experimental) with primitive types, assignments, returns, fields, indexing, and basic diagnostics.
+- Type checker v0.1 core with primitive types, assignments, returns, fields, indexing, generics, interface satisfaction, `Result<T,E>`, `Option<T>`, nullable/safe operations, and diagnostics.
 - AHIR lowering and pretty-printing with golden tests under `tests/hir/`.
-- AMIR lowering v0.1 (experimental) with CFG and locals, golden tests under `tests/amir/`.
+- AMIR lowering v0.1 with CFG, locals, match/if-is, defer/errdefer, `?`, safe operations, for-in, alloc/free, golden tests under `tests/amir/`, and AMIR invariant validation.
+- Definite initialization analysis with O008 diagnostics.
+- OSSA foundation in AMIR: move/copy operands, storage lifetime markers, and destroy statements.
+- Intraprocedural move checker with O001/O005/O007 diagnostics.
+- Opt-in AMIR optimizer (`amir --opt`) with constant folding and DCE.
 - `arandu_cli check <path>` debug command for parse + name resolution + type check.
 - `arandu_cli hir <path>` debug command for AHIR pretty-printing.
-- `arandu_cli amir <path>` debug command for AMIR pretty-printing.
+- `arandu_cli amir <path>` debug command for AMIR pretty-printing, with `--opt` for optimized AMIR.
 
 Not implemented yet:
 
-- Complete type checker (generics instantiation, full constraint solving).
-- AMIR match/defer/try/catch/safe-access lowering.
+- AMIR `catch`, lambda, and async-block lowering.
+- Advanced middle-end optimizer passes beyond O1.
 - Memory checker.
 - Backend.
 
@@ -51,29 +57,29 @@ Not implemented yet:
 
 | Feature | Lexer | Parser | Name Resolution | Type Check | AHIR | AMIR |
 | --- | --- | --- | --- | --- | --- | --- |
-| `module` / `import` | yes | yes | single-file namespace imports and named aliases; no file loading | no | yes | n/a |
-| `func` / `struct` / `enum` / `interface` / `extern` | yes | yes | yes, names, type references, and type-qualified associated funcs | experimental | yes | experimental (funcs only) |
+| `module` / `import` | yes | yes | single-file namespace imports and named aliases; no file loading | prelude/import checks for current single-file subset | yes | n/a |
+| `func` / `struct` / `enum` / `interface` / `extern` | yes | yes | yes, names, type references, and type-qualified associated funcs | yes for v0.1 core | yes | yes for function bodies |
 | attributes and doc comments | yes | attributes yes; doc comments attach to documentable nodes | attributes args resolved; docs exposed through `DocCommentMap` | no | yes | n/a |
-| generics / `where` | yes | yes | type parameter names and constraints | no | yes | n/a |
-| var declarations / `set` | yes | yes | locals, params, and `set` roots | experimental | yes | yes |
-| `if` / `while` | yes | yes | names and pattern bindings | experimental | yes | yes |
-| `match` / patterns | yes | yes | names and pattern bindings | experimental | yes | **not yet** |
-| `for` | yes | yes | names only | no | yes | experimental |
-| `defer` / `errdefer` | yes | yes | names only | no | yes | **not yet** |
-| `unsafe` / `free` / `alloc` | yes | yes | names only | no | yes | partial |
-| `catch` / `as` / `?` / `??` / safe access | yes | yes | names only | no | yes | **not yet** |
-| lambdas / arrays / block calls | yes | yes | names and lambda params | no | yes (arrays), partial (lambdas) | arrays yes, lambdas **not yet** |
+| generics / `where` | yes | yes | type parameter names and constraints | generic calls, constraints, and interface satisfaction | yes | monomorphization graph infrastructure |
+| var declarations / `set` | yes | yes | locals, params, and `set` roots | yes | yes | yes |
+| `if` / `while` | yes | yes | names and pattern bindings | yes | yes | yes |
+| `match` / patterns | yes | yes | names and pattern bindings | type checked and exhaustiveness checked for enums | yes | yes |
+| `for` | yes | yes | loop bindings | partial | yes | yes |
+| `defer` / `errdefer` | yes | yes | names in cleanup blocks | partial | yes | yes |
+| `unsafe` / `free` / `alloc` | yes | yes | names | `free` requires ptr; unsafe legality deferred | yes | partial |
+| `catch` / `as` / `?` / `??` / safe access | yes | yes | names | `catch`, casts, `?`, `??`, and safe access checked for v0.1 cases | yes | `?`, `??`, and safe access yes; `catch` no |
+| lambdas / arrays / block calls | yes | yes | names and lambda params | arrays yes; lambda semantics deferred | arrays yes, lambdas partial | arrays yes, lambdas no |
 | `examples/draft/**` | optional | optional | optional | optional | optional | optional |
 
 ## Validation Matrix
 
 | Path | Lexer now | Parser now | Name resolver now | Type checker now | AHIR now | AMIR now | Required now |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `examples/stable/syntax/**/*.aru` | pass | pass | pass for current single-file/prelude subset | experimental | pass | partial | lexer + parser smoke |
-| `examples/stable/semantics/**/*.aru` | pass | pass | partial | experimental | partial | partial | lexer + parser smoke |
-| `examples/stable/interop/**/*.aru` | pass | pass | partial until FFI/module loading exists | partial | partial | n/a | lexer + parser smoke |
+| `examples/stable/syntax/**/*.aru` | pass | pass | pass for current single-file/prelude subset | pass for checked v0.1 subset | pass | partial by feature | lexer + parser smoke |
+| `examples/stable/semantics/**/*.aru` | pass | pass | partial where external modules/stdlib are aspirational | pass for checked v0.1 subset | partial by feature | partial by feature | lexer + parser smoke |
+| `examples/stable/interop/**/*.aru` | pass | pass | partial until FFI/module loading exists | partial until backend/FFI contracts exist | partial | n/a | lexer + parser smoke |
 | `examples/invalid/syntax/**/*.aru` | pass unless malformed token | fail | not reached | not reached | not reached | not reached | lexer smoke only |
-| `examples/invalid/semantics/**/*.aru` | pass | pass | partial diagnostics only | experimental | partial | n/a | lexer + parser smoke |
+| `examples/invalid/semantics/**/*.aru` | pass | pass | diagnostics for resolver-covered cases | diagnostics for checker-covered cases | partial | n/a | lexer + parser smoke |
 | `examples/draft/**/*.aru` | optional | optional | optional | optional | optional | optional | no |
 
 ## Manual Checklist
@@ -152,9 +158,9 @@ cargo run -p arandu_cli -- amir tests/amir/add.aru
 
 This prints the AMIR pretty-printed representation.
 
-## Future Checker Checks
+## Future End-to-End Checks
 
-When checker exists, add:
+When module loading, stdlib contracts, ownership checking, and backend support exist, add:
 
 ```powershell
 arandu check examples/stable/semantics/**/*.aru
@@ -162,7 +168,7 @@ arandu check examples/stable/semantics/**/*.aru
 
 Expected result:
 
-- all pass.
+- all stable semantic examples pass through the full semantic pipeline.
 
 Add negative checker tests:
 
@@ -172,4 +178,4 @@ arandu check examples/invalid/semantics/**/*.aru
 
 Expected result:
 
-- all fail with the error category described by each `expected:` comment.
+- all fail in the intended compiler phase with the error category described by each `expected:` comment.

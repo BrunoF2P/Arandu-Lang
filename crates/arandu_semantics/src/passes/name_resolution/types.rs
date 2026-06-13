@@ -52,7 +52,7 @@ impl<'a> Resolver<'a> {
                 return true;
             }
             self.diagnostics.push(Diagnostic::error(
-                DiagCode::N009UndefinedNamespaceMember,
+                DiagCode::M002UndefinedNamespaceMember,
                 format!("namespace member '{root}.{member}' is not declared"),
                 name.span,
             ));
