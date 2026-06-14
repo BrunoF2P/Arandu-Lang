@@ -14,31 +14,32 @@
 
 pub mod amir;
 mod amir_validate;
-pub mod arena;
-pub mod bitset;
+pub use arandu_base::arena;
+pub use arandu_base::bitset;
 mod cfg;
 mod diagnostics;
 pub mod hir;
-pub mod index_vec;
+pub use arandu_base::index_vec;
 pub mod layout;
 pub mod literal_pool;
 pub mod ops;
 pub mod passes;
-pub mod stable_id;
-pub mod string_pool;
-pub mod vm;
+pub use arandu_base::stable_id;
+pub use arandu_base::string_pool;
+pub use arandu_base::vm;
 pub mod parallel;
 
 pub use ops::{BinaryOp, SetOp, UnaryOp};
 mod resolved;
 mod symbol_table;
 
-pub use arena::BumpArena;
-pub use bitset::{BitSet, BitMatrix};
+pub use arandu_base::arena::BumpArena;
+pub use arandu_base::bitset::{BitSet, BitMatrix};
 pub use layout::DenseRange;
-pub use stable_id::{GenerationalId, SlotMap};
-pub use string_pool::{SsoString, StringPool};
-pub use vm::VmReservation;
+pub use arandu_base::stable_id::{GenerationalId, SlotMap, DenseSlotMap, StableHandle};
+pub use arandu_base::newtype_index;
+pub use arandu_base::string_pool::{SsoString, StringPool, StringId};
+pub use arandu_base::vm::VmReservation;
 
 pub use amir_validate::validate_amir_program;
 pub use diagnostics::{DiagCode, Diagnostic, Label, Severity, Hint, CodeReplacement};

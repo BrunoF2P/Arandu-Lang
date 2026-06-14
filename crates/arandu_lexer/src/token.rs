@@ -2,53 +2,31 @@ use std::fmt;
 
 use crate::LexErrorCode;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Span {
-    pub file_id: usize,
-    pub start: usize,
-    pub end: usize,
-    pub start_line: usize,
-    pub start_col: usize,
-    pub end_line: usize,
-    pub end_col: usize,
-}
-
-impl Span {
-    #[must_use]
-    pub fn new(
-        start: usize,
-        end: usize,
-        start_line: usize,
-        start_col: usize,
-        end_line: usize,
-        end_col: usize,
-    ) -> Self {
-        Self {
-            file_id: 0,
-            start,
-            end,
-            start_line,
-            start_col,
-            end_line,
-            end_col,
-        }
-    }
-}
+pub use arandu_base::span::Span;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Token {
+    pub start: u32,
+    pub len: u32,
     pub kind: TokenKind,
-    pub span: Span,
     pub inserted: bool,
 }
 
+const _: () = assert!(std::mem::size_of::<Token>() == 12);
+const _: () = assert!(std::mem::size_of::<TokenKind>() == 2);
+
 impl Token {
+    #[must_use]
+    pub fn span(&self, file_id: u32) -> Span {
+        Span::new(file_id, self.start, self.start + self.len)
+    }
+
     #[must_use]
     pub fn lexeme<'a>(&self, source: &'a str) -> &'a str {
         if self.inserted || matches!(self.kind, TokenKind::Error(_) | TokenKind::Eof) {
             return "";
         }
-        &source[self.span.start..self.span.end]
+        &source[self.start as usize..(self.start + self.len) as usize]
     }
 
     #[must_use]
@@ -83,6 +61,7 @@ impl Token {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub enum TokenKind {
     IdentValue,
     IdentType,

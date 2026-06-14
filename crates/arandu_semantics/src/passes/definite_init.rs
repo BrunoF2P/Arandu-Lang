@@ -234,7 +234,7 @@ fn emit_uninit_diag(
         Diagnostic::error(
             DiagCode::O008UseBeforeInit,
             format!("use of possibly uninitialized variable `{name}`"),
-            Span::new(0, 0, 0, 0, 0, 0),
+            Span::new(0, 0, 0),
         )
         .with_note(format!(
             "variable `{name}` may not be initialized on all paths"
@@ -265,7 +265,7 @@ mod tests {
             id: LocalId::from_usize(id),
             ty: ArType::Primitive(crate::passes::type_checker::types::Primitive::Int),
             symbol: sym,
-            span: Span::new(0, 0, 0, 0, 0, 0),
+            span: Span::new(0, 0, 0),
             use_span: None,
         }
     }
@@ -274,7 +274,7 @@ mod tests {
         AmirTemp {
             id: TempId::from_usize(id),
             ty: ArType::Primitive(crate::passes::type_checker::types::Primitive::Int),
-            span: Span::new(0, 0, 0, 0, 0, 0),
+            span: Span::new(0, 0, 0),
         }
     }
 

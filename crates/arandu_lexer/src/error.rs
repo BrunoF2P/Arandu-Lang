@@ -25,8 +25,8 @@ impl fmt::Display for LexError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{:?}: {} at {}:{}",
-            self.code, self.message, self.span.start_line, self.span.start_col
+            "{:?}: {} at byte {}",
+            self.code, self.message, self.span.start
         )
     }
 }
@@ -34,6 +34,7 @@ impl fmt::Display for LexError {
 impl std::error::Error for LexError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub enum LexErrorCode {
     InvalidChar,
     UnterminatedString,

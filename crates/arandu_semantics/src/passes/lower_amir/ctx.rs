@@ -30,7 +30,7 @@ impl LowerCtx<'_> {
         self.temps.push(AmirTemp {
             id,
             ty,
-            span: Span::new(0, 0, 0, 0, 0, 0),
+            span: Span::new(0, 0, 0),
         });
         self.temp_states.push(MoveState::Available);
         self.temp_origins.push(None);
@@ -57,7 +57,7 @@ impl LowerCtx<'_> {
             id,
             ty,
             symbol: None,
-            span: Span::new(0, 0, 0, 0, 0, 0),
+            span: Span::new(0, 0, 0),
             use_span: None,
         });
         self.local_states.push(MoveState::Available);
@@ -227,7 +227,7 @@ impl LowerCtx<'_> {
         Diagnostic::error(
             crate::DiagCode::U001FeatureNotSupported,
             message.into(),
-            Span::new(0, 0, 0, 0, 0, 0),
+            Span::new(0, 0, 0),
         )
     }
 }

@@ -3,9 +3,18 @@
 version = 4
 
 [[package]]
+name = "arandu_base"
+version = "0.1.0"
+dependencies = [
+ "fxhash",
+ "libc",
+]
+
+[[package]]
 name = "arandu_cli"
 version = "0.1.0"
 dependencies = [
+ "arandu_base",
  "arandu_diagnostics",
  "arandu_lexer",
  "arandu_parser",
@@ -16,17 +25,21 @@ dependencies = [
 name = "arandu_diagnostics"
 version = "0.1.0"
 dependencies = [
- "arandu_lexer",
+ "arandu_base",
 ]
 
 [[package]]
 name = "arandu_lexer"
 version = "0.1.0"
+dependencies = [
+ "arandu_base",
+]
 
 [[package]]
 name = "arandu_parser"
 version = "0.1.0"
 dependencies = [
+ "arandu_base",
  "arandu_diagnostics",
  "arandu_lexer",
 ]
@@ -35,6 +48,7 @@ dependencies = [
 name = "arandu_semantics"
 version = "0.1.0"
 dependencies = [
+ "arandu_base",
  "arandu_diagnostics",
  "arandu_lexer",
  "arandu_parser",

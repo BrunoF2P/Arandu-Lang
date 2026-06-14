@@ -244,7 +244,7 @@ fn symbol(id: u32) -> SymbolId {
 }
 
 fn dummy_span() -> Span {
-    Span::new(0, 0, 0, 0, 0, 0)
+    Span::new(0, 0, 0)
 }
 
 fn test_local(id: usize, symbol_id: u32) -> AmirLocal {

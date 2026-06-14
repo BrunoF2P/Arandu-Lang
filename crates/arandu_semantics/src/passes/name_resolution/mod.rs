@@ -14,7 +14,7 @@ mod util;
 #[must_use]
 pub fn create_symbol_table_with_prelude() -> SymbolTable {
     let mut table = SymbolTable::new();
-    let span = arandu_lexer::Span::new(0, 0, 0, 0, 0, 0);
+    let span = arandu_lexer::Span::new(0, 0, 0);
     for (module, members) in [
         ("io", ["println", "create", "remove"].as_slice()),
         ("err", ["new"].as_slice()),

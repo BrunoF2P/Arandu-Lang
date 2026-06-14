@@ -40,7 +40,7 @@ pub(crate) fn lower_func(
     ctx.temps.push(AmirTemp {
         id: TempId(0),
         ty: f.return_type.clone(),
-        span: arandu_lexer::Span::new(0, 0, 0, 0, 0, 0),
+        span: arandu_lexer::Span::new(0, 0, 0),
     });
     ctx.temp_states.push(MoveState::Available);
     ctx.temp_origins.push(None);

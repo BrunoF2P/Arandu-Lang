@@ -118,6 +118,7 @@ impl<'a> Parser<'a> {
                         ParseErrorCode::ExpectedType,
                         "receiver parameter 'self' requires an explicit type here",
                         parser.current(),
+                        parser.file_id,
                         parser.source,
                     )
                 })?;
@@ -131,6 +132,7 @@ impl<'a> Parser<'a> {
                     ParseErrorCode::ExpectedType,
                     "expected parameter type",
                     parser.current(),
+                    parser.file_id,
                     parser.source,
                 ));
             };
@@ -170,6 +172,7 @@ impl<'a> Parser<'a> {
                 ParseErrorCode::InvalidResultReturn,
                 "function result must use `Result<T, E>` syntax",
                 &token,
+                self.file_id,
                 self.source,
             ));
         }
@@ -218,6 +221,7 @@ impl<'a> Parser<'a> {
                         ParseErrorCode::ExpectedToken,
                         "expected array size",
                         self.current(),
+                        self.file_id,
                         self.source,
                     ));
                 }
@@ -291,6 +295,7 @@ impl<'a> Parser<'a> {
             ParseErrorCode::ExpectedType,
             "expected type",
             self.current(),
+            self.file_id,
             self.source,
         ))
     }

@@ -37,23 +37,30 @@ fn assert_contract_rejects(name: &str, expected: ParseErrorCode) {
 
 #[test]
 fn parse_error_reports_expected_tokens_and_found_token() {
-    let err = parse("module tests.diagnostics\nfunc main( { }")
+    let source = "module tests.diagnostics\nfunc main( { }";
+    let err = parse(source)
         .expect_err("parser should reject malformed function parameter list");
 
     assert_eq!(err.code, ParseErrorCode::ExpectedToken);
     assert_eq!(err.found.as_ref(), "LBRACE");
     assert!(err.expected.contains(&"value identifier"));
-    assert_eq!(err.span.start_line, 2);
+    let line_index = arandu_base::line_index::LineIndex::new(source);
+    let (start_line, _) = line_index.line_col(err.span.start);
+    assert_eq!(start_line, 2);
 }
 
 #[test]
 fn ast_program_span_covers_source_before_eof() {
-    let program = parse("module tests.spans\nfunc main() {\n    value = add(1, 2)\n}\n")
+    let source = "module tests.spans\nfunc main() {\n    value = add(1, 2)\n}\n";
+    let program = parse(source)
         .expect("parser should succeed");
-    assert_eq!(program.span.start_line, 1);
-    assert_eq!(program.span.start_col, 1);
-    assert_eq!(program.span.end_line, 4);
-    assert_eq!(program.span.end_col, 2);
+    let line_index = arandu_base::line_index::LineIndex::new(source);
+    let (start_line, start_col) = line_index.line_col(program.span.start);
+    let (end_line, end_col) = line_index.line_col(program.span.end);
+    assert_eq!(start_line, 1);
+    assert_eq!(start_col, 1);
+    assert_eq!(end_line, 4);
+    assert_eq!(end_col, 2);
 }
 
 #[test]
@@ -77,17 +84,18 @@ fn ast_nested_expression_spans_are_contained_by_parent() {
     let arg_id = program.pool.expr_list(*args)[0];
     let inner_span = program.pool.expr_span(arg_id);
     assert!(contains(
-        call_span.start,
-        call_span.end,
-        inner_span.start,
-        inner_span.end
+        call_span.start as usize,
+        call_span.end as usize,
+        inner_span.start as usize,
+        inner_span.end as usize
     ));
 }
 
 #[test]
 fn ast_call_with_block_span_covers_trailing_block() {
+    let source = "module tests.spans\nfunc main() {\n    route(\"/\") {\n        ok()\n    }\n}\n";
     let program =
-        parse("module tests.spans\nfunc main() {\n    route(\"/\") {\n        ok()\n    }\n}\n")
+        parse(source)
             .expect("parser should succeed");
     let func = match &program.decls[0] {
         arandu_parser::TopLevelDecl::Func(func) => func,
@@ -105,13 +113,17 @@ fn ast_call_with_block_span_covers_trailing_block() {
     let span = program.pool.expr_span(expr_id);
     let block_id = trailing_block.expect("call should have block");
     let block = program.pool.block(block_id);
-    assert_eq!(span.end_line, block.span.end_line);
-    assert_eq!(span.end_col, block.span.end_col);
+    let line_index = arandu_base::line_index::LineIndex::new(source);
+    let (span_end_line, span_end_col) = line_index.line_col(span.end);
+    let (block_end_line, block_end_col) = line_index.line_col(block.span.end);
+    assert_eq!(span_end_line, block_end_line);
+    assert_eq!(span_end_col, block_end_col);
 }
 
 #[test]
 fn ast_multiline_string_span_covers_delimiters() {
-    let program = parse("module tests.spans\nfunc main() {\n    text = \"\"\"\nhello\n\"\"\"\n}\n")
+    let source = "module tests.spans\nfunc main() {\n    text = \"\"\"\nhello\n\"\"\"\n}\n";
+    let program = parse(source)
         .expect("parser should succeed");
     let func = match &program.decls[0] {
         arandu_parser::TopLevelDecl::Func(func) => func,
@@ -123,10 +135,13 @@ fn ast_multiline_string_span_covers_delimiters() {
     };
     let value_id = *value;
     let span = program.pool.expr_span(value_id);
-    assert_eq!(span.start_line, 3);
-    assert_eq!(span.start_col, 12);
-    assert_eq!(span.end_line, 5);
-    assert_eq!(span.end_col, 4);
+    let line_index = arandu_base::line_index::LineIndex::new(source);
+    let (start_line, start_col) = line_index.line_col(span.start);
+    let (end_line, end_col) = line_index.line_col(span.end);
+    assert_eq!(start_line, 3);
+    assert_eq!(start_col, 12);
+    assert_eq!(end_line, 5);
+    assert_eq!(end_col, 4);
 }
 
 #[test]

@@ -38,11 +38,14 @@ fn assert_diagnostic_golden(name: &str) {
         .unwrap()
         .replace('\\', "/");
 
+    let mut registry = arandu_base::source_registry::SourceRegistry::default();
+    registry.register(&rel_filepath, &source);
+
     let actual = result
         .diagnostics
         .iter()
         .filter(|d| format!("{}", d.code).starts_with('T'))
-        .map(|d| format!("{}\n", d.format_for_cli(&rel_filepath)))
+        .map(|d| format!("{}\n", d.format_for_cli(&registry)))
         .collect::<String>();
 
     let actual_lines: Vec<&str> = actual
@@ -758,17 +761,20 @@ fn test_official_invalid_suite() {
             .replace('\\', "/");
 
         let mut actual = String::new();
+        let mut registry = arandu_base::source_registry::SourceRegistry::default();
+        registry.register(&rel_filepath, &source);
+
         match parse(&source) {
             Ok(program) => {
                 let resolution = resolve(&program);
                 let result = type_check(resolution, &program);
                 for diagnostic in &result.diagnostics {
-                    actual.push_str(&diagnostic.format_for_cli(&rel_filepath));
+                    actual.push_str(&diagnostic.format_for_cli(&registry));
                     actual.push('\n');
                 }
             }
             Err(err) => {
-                actual.push_str(&err.format_for_cli(&rel_filepath));
+                actual.push_str(&err.format_for_cli(&registry));
                 actual.push('\n');
             }
         }

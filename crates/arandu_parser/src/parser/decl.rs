@@ -133,6 +133,7 @@ impl<'a> Parser<'a> {
                 ParseErrorCode::ExpectedTopLevelDecl,
                 "expected top-level declaration",
                 self.current(),
+                self.file_id,
                 self.source,
             )),
         }?;
@@ -248,6 +249,7 @@ impl<'a> Parser<'a> {
                     ParseErrorCode::ExpectedToken,
                     "expected '}'",
                     self.current(),
+                    self.file_id,
                     self.source,
                 ));
                 break;
@@ -314,6 +316,7 @@ impl<'a> Parser<'a> {
                     ParseErrorCode::ExpectedToken,
                     "expected '}'",
                     self.current(),
+                    self.file_id,
                     self.source,
                 ));
                 break;
@@ -430,6 +433,7 @@ impl<'a> Parser<'a> {
                     ParseErrorCode::ExpectedToken,
                     "expected static ABI string",
                     self.current(),
+                    self.file_id,
                     self.source,
                 ));
             }
@@ -509,6 +513,7 @@ impl<'a> Parser<'a> {
                 ParseErrorCode::ExpectedToken,
                 format!("expected item before {end_name}"),
                 self.current(),
+                self.file_id,
                 self.source,
             ));
         }
@@ -529,6 +534,7 @@ impl<'a> Parser<'a> {
                 ParseErrorCode::ExpectedToken,
                 format!("expected at least {min_items} item(s) before {end_name}"),
                 self.current(),
+                self.file_id,
                 self.source,
             ));
         }
@@ -555,6 +561,7 @@ impl<'a> Parser<'a> {
                     ParseErrorCode::ExpectedToken,
                     "expected '}'",
                     self.current(),
+                    self.file_id,
                     self.source,
                 ));
                 break;

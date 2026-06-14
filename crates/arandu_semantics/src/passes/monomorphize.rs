@@ -378,7 +378,7 @@ pub fn analyze_instantiations(
                 "generic instantiation cycle detected: {}",
                 names.join(" -> ")
             ),
-            Span::new(0, 0, 0, 0, 0, 0),
+            Span::new(0, 0, 0),
         ));
     }
 
@@ -406,7 +406,7 @@ impl InstantiationAnalyzer<'_> {
             .collect();
         self.insert_key(
             InstantiationKey { symbol, type_args },
-            Span::new(0, 0, 0, 0, 0, 0),
+            Span::new(0, 0, 0),
         )
     }
 
@@ -658,7 +658,7 @@ mod tests {
             st.global_scope(),
             name,
             crate::SymbolKind::Func,
-            Span::new(0, 0, 0, 0, 0, 0),
+            Span::new(0, 0, 0),
         )
         .unwrap()
     }

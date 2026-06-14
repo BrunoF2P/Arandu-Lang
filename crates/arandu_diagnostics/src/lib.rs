@@ -1,4 +1,5 @@
-use arandu_lexer::Span;
+pub use arandu_base::span::Span;
+pub use arandu_base::source_registry::SourceRegistry;
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -264,6 +265,9 @@ pub struct Diagnostic {
 }
 
 pub mod registry;
+pub use arandu_base::index_vec;
+pub use arandu_base::stable_id;
+
 
 impl Diagnostic {
     pub fn error(code: DiagCode, message: impl Into<String>, span: Span) -> Self {
@@ -362,9 +366,16 @@ impl Diagnostic {
     }
 
     #[must_use]
-    pub fn format_for_cli(&self, filepath: &str) -> String {
+    pub fn format_for_cli(&self, registry: &SourceRegistry) -> String {
         use std::fmt::Write;
         let mut out = String::new();
+
+        let (filepath, start_line, start_col) = if let Some(file) = registry.get_file(self.span.file_id) {
+            let (line, col) = file.line_index.line_col(self.span.start);
+            (file.path.as_str(), line, col)
+        } else {
+            ("", 1, 1)
+        };
 
         let file_prefix = if filepath.is_empty() {
             String::new()
@@ -379,17 +390,24 @@ impl Diagnostic {
         let _ = writeln!(
             out,
             "  --> {}{}:{}",
-            file_prefix, self.span.start_line, self.span.start_col
+            file_prefix, start_line, start_col
         );
 
         for label in &self.labels {
+            let (l_start_line, l_start_col, l_end_line, l_end_col) = if let Some(file) = registry.get_file(label.span.file_id) {
+                let (s_line, s_col) = file.line_index.line_col(label.span.start);
+                let (e_line, e_col) = file.line_index.line_col(label.span.end);
+                (s_line, s_col, e_line, e_col)
+            } else {
+                (1, 1, 1, 1)
+            };
             let _ = writeln!(
                 out,
                 "  label: {}:{}-{}:{} {}",
-                label.span.start_line,
-                label.span.start_col,
-                label.span.end_line,
-                label.span.end_col,
+                l_start_line,
+                l_start_col,
+                l_end_line,
+                l_end_col,
                 label.message
             );
         }
@@ -399,13 +417,20 @@ impl Diagnostic {
         for hint in &self.hints {
             let _ = writeln!(out, "  hint: {}", hint.message);
             if let Some(ref rep) = hint.replacement {
+                let (r_start_line, r_start_col, r_end_line, r_end_col) = if let Some(file) = registry.get_file(rep.span.file_id) {
+                    let (s_line, s_col) = file.line_index.line_col(rep.span.start);
+                    let (e_line, e_col) = file.line_index.line_col(rep.span.end);
+                    (s_line, s_col, e_line, e_col)
+                } else {
+                    (1, 1, 1, 1)
+                };
                 let _ = writeln!(
                     out,
                     "  replacement: at {}:{}-{}:{} with {:?}",
-                    rep.span.start_line,
-                    rep.span.start_col,
-                    rep.span.end_line,
-                    rep.span.end_col,
+                    r_start_line,
+                    r_start_col,
+                    r_end_line,
+                    r_end_col,
                     rep.new_text
                 );
             }
@@ -425,6 +450,7 @@ impl Diagnostic {
 
 impl fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.format_for_cli(""))
+        let registry = SourceRegistry::default();
+        f.write_str(&self.format_for_cli(&registry))
     }
 }

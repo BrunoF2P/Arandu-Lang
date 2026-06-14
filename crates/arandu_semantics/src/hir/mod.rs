@@ -680,8 +680,8 @@ impl HirExpr {
         check_span(self.span)?;
         if matches!(self.ty, ArType::Error) {
             return Err(format!(
-                "Expression has Error type at {}:{}",
-                self.span.start_line, self.span.start_col
+                "Expression has Error type at byte {}",
+                self.span.start
             ));
         }
         match &self.kind {

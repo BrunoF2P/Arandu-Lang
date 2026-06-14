@@ -6,4 +6,5 @@ mod parser;
 pub use ast::*;
 pub use parser::{
     ParseError, ParseErrorCode, ParseOutput, Parser, parse, parse_recovering, parse_to_string,
+    parse_with_file_id, parse_recovering_with_file_id,
 };

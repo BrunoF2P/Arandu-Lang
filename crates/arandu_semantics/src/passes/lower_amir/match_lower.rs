@@ -527,10 +527,6 @@ impl LowerCtx<'_> {
                 file_id: 0,
                 start: 0,
                 end: 0,
-                start_line: 0,
-                start_col: 0,
-                end_line: 0,
-                end_col: 0,
             },
         ))
     }

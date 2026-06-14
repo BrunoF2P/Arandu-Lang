@@ -334,7 +334,7 @@ mod tests {
         crate::amir::AmirTemp {
             id: TempId::from_usize(id),
             ty: ArType::Primitive(Primitive::Int),
-            span: arandu_lexer::Span::new(0, 0, 0, 0, 0, 0),
+            span: arandu_lexer::Span::new(0, 0, 0),
         }
     }
 
@@ -342,7 +342,7 @@ mod tests {
         crate::amir::AmirTemp {
             id: TempId::from_usize(id),
             ty: ArType::Primitive(Primitive::Bool),
-            span: arandu_lexer::Span::new(0, 0, 0, 0, 0, 0),
+            span: arandu_lexer::Span::new(0, 0, 0),
         }
     }
 

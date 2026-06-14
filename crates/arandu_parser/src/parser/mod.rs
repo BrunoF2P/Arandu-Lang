@@ -31,7 +31,11 @@ pub struct ParseOutput {
 ///
 /// Returns the first [`ParseError`] if the source is invalid.
 pub fn parse(source: &str) -> Result<Program, ParseError> {
-    let output = parse_recovering(source);
+    parse_with_file_id(source, 0)
+}
+
+pub fn parse_with_file_id(source: &str, file_id: u32) -> Result<Program, ParseError> {
+    let output = parse_recovering_with_file_id(source, file_id);
     if let Some(err) = output.diagnostics.into_iter().next() {
         Err(err)
     } else {
@@ -40,12 +44,16 @@ pub fn parse(source: &str) -> Result<Program, ParseError> {
 }
 
 pub fn parse_recovering(source: &str) -> ParseOutput {
+    parse_recovering_with_file_id(source, 0)
+}
+
+pub fn parse_recovering_with_file_id(source: &str, file_id: u32) -> ParseOutput {
     let lexed = arandu_lexer::lex_recovering(source);
-    let mut parser = Parser::new(lexed.source, lexed.tokens);
+    let mut parser = Parser::new(lexed.source, lexed.tokens).with_file_id(file_id);
     let mut diagnostics: Vec<ParseError> = lexed
         .diagnostics
         .into_iter()
-        .map(ParseError::from_lex)
+        .map(|err| ParseError::from_lex(err, file_id))
         .collect();
 
     // We expect parse_program to finish without returning Err
@@ -57,13 +65,9 @@ pub fn parse_recovering(source: &str) -> ParseOutput {
             // Construct a fallback program
             Program {
                 span: Span {
-                    file_id: 0,
+                    file_id: parser.file_id,
                     start: 0,
                     end: 0,
-                    start_line: 0,
-                    start_col: 0,
-                    end_line: 0,
-                    end_col: 0,
                 },
                 module: None,
                 imports: Vec::new(),
@@ -88,7 +92,7 @@ pub fn parse_recovering(source: &str) -> ParseOutput {
 ///
 /// Returns the first [`ParseError`] if the source is invalid.
 pub fn parse_to_string(source: &str) -> Result<String, ParseError> {
-    Ok(parse(source)?.dump())
+    Ok(parse(source)?.dump(source))
 }
 
 pub struct Parser<'a> {
@@ -100,6 +104,7 @@ pub struct Parser<'a> {
     pending_docs: Vec<PendingDoc>,
     pub pool: crate::ast::ast_pool::AstPool,
     pub(super) diagnostics: Vec<ParseError>,
+    pub file_id: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -120,7 +125,14 @@ impl<'a> Parser<'a> {
             pending_docs: Vec::new(),
             diagnostics: Vec::new(),
             pool: crate::ast::ast_pool::AstPool::new(),
+            file_id: 0,
         }
+    }
+
+    #[must_use]
+    pub fn with_file_id(mut self, file_id: u32) -> Self {
+        self.file_id = file_id;
+        self
     }
 
     /// Parses a full program, collecting recoverable errors in [`Self::diagnostics`].
@@ -170,13 +182,13 @@ impl<'a> Parser<'a> {
         let start_span = self
             .tokens
             .get(start)
-            .map_or_else(|| self.current().span, |token| token.span);
+            .map_or_else(|| self.current().span(self.file_id), |token| token.span(self.file_id));
         let end_span = if self.pos == start {
             start_span
         } else {
             self.tokens
                 .get(self.pos.saturating_sub(1))
-                .map_or(start_span, |token| token.span)
+                .map_or(start_span, |token| token.span(self.file_id))
         };
         span_between(start_span, end_span)
     }
@@ -190,7 +202,7 @@ impl<'a> Parser<'a> {
     pub(super) fn collect_doc_comments(&mut self) {
         while matches!(self.current().kind, TokenKind::DocComment) {
             self.pending_docs.push(PendingDoc {
-                span: self.current().span,
+                span: self.current().span(self.file_id),
                 text: self.current_text().to_string(),
             });
             self.consume();
@@ -231,6 +243,7 @@ impl<'a> Parser<'a> {
                 ParseErrorCode::ExpectedToken,
                 "expected value identifier",
                 self.current(),
+                self.file_id,
                 self.source,
                 &["value identifier"],
             )),
@@ -248,6 +261,7 @@ impl<'a> Parser<'a> {
                 ParseErrorCode::ExpectedToken,
                 "expected type identifier",
                 self.current(),
+                self.file_id,
                 self.source,
                 &["type identifier"],
             )),
@@ -265,6 +279,7 @@ impl<'a> Parser<'a> {
                 ParseErrorCode::ExpectedToken,
                 "expected identifier",
                 self.current(),
+                self.file_id,
                 self.source,
                 &["identifier"],
             )),
@@ -287,6 +302,7 @@ impl<'a> Parser<'a> {
                 ParseErrorCode::ExpectedToken,
                 "expected module path segment",
                 self.current(),
+                self.file_id,
                 self.source,
                 &["module path segment"],
             )),
@@ -302,6 +318,7 @@ impl<'a> Parser<'a> {
                 ParseErrorCode::ExpectedToken,
                 format!("expected {name}"),
                 self.current(),
+                self.file_id,
                 self.source,
                 token_expectation_names(name),
             ))
@@ -327,6 +344,7 @@ impl<'a> Parser<'a> {
                 ParseErrorCode::ExpectedToken,
                 format!("expected {name}"),
                 self.current(),
+                self.file_id,
                 self.source,
                 token_expectation_names(name),
             ))
@@ -530,9 +548,5 @@ pub(super) fn span_between(start: Span, end: Span) -> Span {
         file_id: start.file_id,
         start: start.start,
         end: end.end,
-        start_line: start.start_line,
-        start_col: start.start_col,
-        end_line: end.end_line,
-        end_col: end.end_col,
     }
 }

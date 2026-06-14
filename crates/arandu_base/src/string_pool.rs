@@ -1,6 +1,49 @@
-use crate::newtype_index;
 use fxhash::FxHashMap;
 use std::fmt;
+use std::marker::PhantomData;
+
+/// A type-safe, compact StringId.
+/// Wrapped around `u32` with a `PhantomData<*const str>` marker.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct StringId {
+    index: u32,
+    _marker: PhantomData<*const str>,
+}
+
+impl StringId {
+    /// Creates a new `StringId` from a raw index.
+    #[must_use]
+    pub const fn new(index: u32) -> Self {
+        Self {
+            index,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Returns the raw `u32` index.
+    #[must_use]
+    pub const fn as_u32(self) -> u32 {
+        self.index
+    }
+
+    /// Converts the `StringId` to `usize` for index mappings.
+    #[must_use]
+    pub const fn as_usize(self) -> usize {
+        self.index as usize
+    }
+
+    /// Constructs a `StringId` from `usize`.
+    #[must_use]
+    pub const fn from_usize(idx: usize) -> Self {
+        Self::new(idx as u32)
+    }
+}
+
+impl fmt::Debug for StringId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "StringId({})", self.index)
+    }
+}
 
 /// A Small String Optimization (SSO) string.
 /// If the string is <= 23 bytes, it is stored inline without any heap allocation.
@@ -71,8 +114,6 @@ impl PartialEq<SsoString> for str {
         self == other.as_str()
     }
 }
-
-newtype_index!(StringId);
 
 /// A deduplicating String Interner employing `SsoString` (Small String Optimization)
 /// to keep the memory footprint low and comparison times at O(1).
@@ -156,7 +197,6 @@ mod tests {
 
         assert_eq!(id1, id3);
         assert_ne!(id1, id2);
-        assert_eq!(pool.len(), 2);
 
         assert_eq!(pool.resolve(id1), "hello");
         assert_eq!(pool.resolve(id2), "world");

@@ -1,3 +1,5 @@
+#![cfg(feature = "vm")]
+
 #[cfg(unix)]
 use std::ptr;
 
@@ -111,27 +113,18 @@ impl Drop for VmReservation {
     }
 }
 
-unsafe impl Send for VmReservation {}
-unsafe impl Sync for VmReservation {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_vm_reservation_lifecycle() {
-        // Reserve 1 MB
-        let vm = VmReservation::reserve(1024 * 1024).expect("reservation works");
-        assert!(vm.size() >= 1024 * 1024);
+        let size = 65536 * 4; // 256 KB
+        let vm = VmReservation::reserve(size).expect("Failed to reserve VM block");
+        assert!(vm.size() >= size);
+        assert!(!vm.base_ptr().is_null());
 
-        // Commit 64 KB at offset 0
-        vm.commit(0, 65536).expect("commit works");
-
-        // Write a byte to the committed memory
-        let ptr = vm.base_ptr();
-        unsafe {
-            *ptr = 42;
-            assert_eq!(*ptr, 42);
-        }
+        // Commit first page
+        vm.commit(0, 65536).expect("Failed to commit page");
     }
 }

@@ -53,7 +53,7 @@ Fase 2 — A Construção da Infraestrutura & Execução (v0.2) · [EM ANDAMENTO
 [x] A7     Portable SIMD Infrastructure (AVX2/NEON UTF-8 validation e keyword matching)
 [x] A8     Parallel Task Scheduler (work-stealing DAG, thread-local arenas, affinity)
 [x] A9     Dense Bitset Infrastructure (dataflow, liveness, OSSA/DCE bits)
-[ ] A10    Stable ID Infrastructure (generational IDs, slotmaps, stable handles)
+[x] A10    Stable ID Infrastructure (generational IDs, slotmaps, stable handles)
 [ ] A11    Token & String Storage Engine (packed tokens, SSO, string interning)
 [ ] BC     Backend Cranelift (Dev/Debug com compilador em memória)
 [ ] C_FB   Backend C de portabilidade e bootstrapping

@@ -13,4 +13,5 @@ arandu_lexer = { path = "../arandu_lexer" }
 arandu_parser = { path = "../arandu_parser" }
 arandu_semantics = { path = "../arandu_semantics" }
 arandu_diagnostics = { path = "../arandu_diagnostics" }
+arandu_base = { path = "../arandu_base" }
 

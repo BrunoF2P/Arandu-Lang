@@ -1,15 +1,27 @@
 use std::{env, fs, path::{Path, PathBuf}, process};
 
 fn print_diagnostics_and_exit(diagnostics: &[arandu_semantics::Diagnostic], filepath: &str) -> ! {
+    let mut registry = arandu_base::SourceRegistry::default();
+    if !filepath.is_empty() {
+        if let Ok(source) = fs::read_to_string(filepath) {
+            registry.register(filepath, &source);
+        }
+    }
     for diagnostic in diagnostics {
-        eprintln!("{}", diagnostic.format_for_cli(filepath));
+        eprintln!("{}", diagnostic.format_for_cli(&registry));
     }
 
     process::exit(1);
 }
 
 fn print_parse_error_and_exit(err: &arandu_parser::ParseError, filepath: &str) -> ! {
-    eprintln!("{}", err.format_for_cli(filepath));
+    let mut registry = arandu_base::SourceRegistry::default();
+    if !filepath.is_empty() {
+        if let Ok(source) = fs::read_to_string(filepath) {
+            registry.register(filepath, &source);
+        }
+    }
+    eprintln!("{}", err.format_for_cli(&registry));
     process::exit(1);
 }
 
@@ -36,7 +48,10 @@ struct CheckedProgram {
 }
 
 fn parse_and_check(source: &str, filepath: &str) -> CheckedProgram {
-    let program = match arandu_parser::parse(source) {
+    let mut registry = arandu_base::SourceRegistry::default();
+    let file_id = registry.register(filepath, source);
+
+    let program = match arandu_parser::parse_with_file_id(source, file_id) {
         Ok(program) => program,
         Err(err) => print_parse_error_and_exit(&err, filepath),
     };
@@ -127,7 +142,7 @@ fn main() {
             process::exit(1);
         }
 
-        match arandu_semantics::compile_parallel(paths) {
+        match arandu_semantics::compile_parallel(paths.clone()) {
             Ok(output) => {
                 match command.as_str() {
                     "check" => {
@@ -164,8 +179,14 @@ fn main() {
                 }
             }
             Err(diags) => {
+                let mut registry = arandu_base::SourceRegistry::default();
+                for p in &paths {
+                    if let Ok(source) = fs::read_to_string(p) {
+                        registry.register(&p.to_string_lossy(), &source);
+                    }
+                }
                 for diag in diags {
-                    eprintln!("{}", diag.format_for_cli(""));
+                    eprintln!("{}", diag.format_for_cli(&registry));
                 }
                 process::exit(1);
             }

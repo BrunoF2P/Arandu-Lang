@@ -213,13 +213,8 @@ pub fn compile_parallel(paths: Vec<PathBuf>) -> Result<ParallelOutput, Vec<Diagn
     // Add parse errors
     for file_idx in 0..num_files {
         let errors = ctx.parse_errors[file_idx].lock().unwrap();
-        let filepath = ctx.paths[file_idx].to_string_lossy();
         for err in &*errors {
-            final_diagnostics.push(Diagnostic::error(
-                crate::DiagCode::M001UnresolvedImport,
-                err.format_for_cli(&filepath),
-                err.span,
-            ));
+            final_diagnostics.push(Diagnostic::from(err.clone()));
         }
     }
 
@@ -341,14 +336,14 @@ fn run_task(
         Task::Parse { file_idx } => {
             let path = &worker.ctx.paths[file_idx];
             if let Ok(source) = std::fs::read_to_string(path) {
-                let output = arandu_parser::parse_recovering(&source);
+                let output = arandu_parser::parse_recovering_with_file_id(&source, file_idx as u32);
                 *worker.ctx.programs[file_idx].lock().unwrap() = Some(output.program);
                 *worker.ctx.parse_errors[file_idx].lock().unwrap() = output.diagnostics;
             } else {
                 worker.ctx.diagnostics.lock().unwrap().push(Diagnostic::error(
                     crate::DiagCode::M001UnresolvedImport,
                     format!("failed to read file {}", path.display()),
-                    arandu_lexer::Span::new(0, 0, 0, 0, 0, 0),
+                    arandu_lexer::Span::new(file_idx as u32, 0, 0),
                 ));
             }
 

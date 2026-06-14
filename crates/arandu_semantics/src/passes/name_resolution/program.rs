@@ -54,7 +54,7 @@ impl<'a> Resolver<'a> {
     }
 
     pub(crate) fn define_prelude(&mut self) {
-        let span = Span::new(0, 0, 0, 0, 0, 0);
+        let span = Span::new(0, 0, 0);
         for (module, members) in [
             ("io", ["println", "create", "remove"].as_slice()),
             ("err", ["new"].as_slice()),

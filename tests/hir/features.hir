@@ -24,9 +24,9 @@ Program
     Var res: int =
       Match: int
         LocalRef(state): LoadState
-        Arm(Enum { span: Span { file_id: 0, start: 240, end: 254, start_line: 18, start_col: 9, end_line: 18, end_col: 23 }, type_symbol: SymbolId(5), variant: "Idle", variant_symbol: None, payload: [] }):
+        Arm(Enum { span: Span { file_id: 0, start: 240, end: 254 }, type_symbol: SymbolId(5), variant: "Idle", variant_symbol: None, payload: [] }):
           Int(0): int
-        Arm(Enum { span: Span { file_id: 0, start: 268, end: 287, start_line: 19, start_col: 9, end_line: 19, end_col: 28 }, type_symbol: SymbolId(5), variant: "Loaded", variant_symbol: None, payload: [Bind { span: Span { file_id: 0, start: 285, end: 286, start_line: 19, start_col: 26, end_line: 19, end_col: 27 }, name: "s", symbol: SymbolId(16) }] }):
+        Arm(Enum { span: Span { file_id: 0, start: 268, end: 287 }, type_symbol: SymbolId(5), variant: "Loaded", variant_symbol: None, payload: [Bind { span: Span { file_id: 0, start: 285, end: 286 }, name: "s", symbol: SymbolId(16) }] }):
           Int(1): int
     Var val: int =
       If: int

@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/arandu_base",
     "crates/arandu_lexer",
     "crates/arandu_diagnostics",
     "crates/arandu_parser",

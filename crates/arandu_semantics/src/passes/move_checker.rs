@@ -417,7 +417,7 @@ fn move_diag(
         .locals
         .get(local.as_usize())
         .map(|l| l.span)
-        .unwrap_or_else(|| Span::new(0, 0, 0, 0, 0, 0));
+        .unwrap_or_else(|| Span::new(0, 0, 0));
     Diagnostic::error(code, format!("{prefix} `{name}`"), span).with_note(note)
 }
 
@@ -470,7 +470,7 @@ mod tests {
             id: LocalId::from_usize(id),
             ty,
             symbol: None,
-            span: Span::new(0, 0, 0, 0, 0, 0),
+            span: Span::new(0, 0, 0),
             use_span: None,
         }
     }
@@ -479,7 +479,7 @@ mod tests {
         AmirTemp {
             id: TempId::from_usize(id),
             ty,
-            span: Span::new(0, 0, 0, 0, 0, 0),
+            span: Span::new(0, 0, 0),
         }
     }
 

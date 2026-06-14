@@ -20,6 +20,7 @@ impl<'a> Parser<'a> {
                     ParseErrorCode::ExpectedToken,
                     "expected '}'",
                     self.current(),
+                    self.file_id,
                     self.source,
                 ));
                 break;
@@ -195,6 +196,7 @@ impl<'a> Parser<'a> {
                     ParseErrorCode::ExpectedPlace,
                     "expected assignment target",
                     self.current(),
+                    self.file_id,
                     self.source,
                 ));
             }
@@ -468,6 +470,7 @@ impl<'a> Parser<'a> {
                     ParseErrorCode::ExpectedToken,
                     "expected assignment operator",
                     self.current(),
+                    self.file_id,
                     self.source,
                     &[
                         "=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=",

@@ -1,6 +1,8 @@
 use std::fmt;
 
-use arandu_lexer::{Span, Token};
+use arandu_base::span::Span;
+use arandu_base::source_registry::SourceRegistry;
+use arandu_lexer::Token;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseError {
@@ -18,12 +20,13 @@ impl ParseError {
         code: ParseErrorCode,
         message: impl Into<String>,
         token: &Token,
+        file_id: u32,
         source: &str,
     ) -> Self {
         Self {
             code,
             message: message.into().into_boxed_str(),
-            span: token.span,
+            span: token.span(file_id),
             found: token.kind.display_with(token, source).into_boxed_str(),
             expected: &[],
         }
@@ -35,31 +38,34 @@ impl ParseError {
         code: ParseErrorCode,
         message: impl Into<String>,
         token: &Token,
+        file_id: u32,
         source: &str,
         expected: &'static [&'static str],
     ) -> Self {
         Self {
             code,
             message: message.into().into_boxed_str(),
-            span: token.span,
+            span: token.span(file_id),
             found: token.kind.display_with(token, source).into_boxed_str(),
             expected,
         }
     }
 
-    pub(super) fn from_lex(err: arandu_lexer::LexError) -> Self {
+    pub(super) fn from_lex(err: arandu_lexer::LexError, file_id: u32) -> Self {
+        let mut span = err.span;
+        span.file_id = file_id;
         Self {
             code: ParseErrorCode::Lex,
             message: Box::from(err.message),
-            span: err.span,
+            span,
             found: format!("{:?}", err.code).into_boxed_str(),
             expected: &[],
         }
     }
     #[must_use]
-    pub fn format_for_cli(&self, filepath: &str) -> String {
+    pub fn format_for_cli(&self, registry: &SourceRegistry) -> String {
         let diag = arandu_diagnostics::Diagnostic::from(self.clone());
-        diag.format_for_cli(filepath)
+        diag.format_for_cli(registry)
     }
 }
 
@@ -99,7 +105,8 @@ impl From<ParseError> for arandu_diagnostics::Diagnostic {
 
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.format_for_cli(""))
+        let registry = SourceRegistry::default();
+        f.write_str(&self.format_for_cli(&registry))
     }
 }
 

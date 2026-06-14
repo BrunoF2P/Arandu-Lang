@@ -1,0 +1,14 @@
+[package]
+name = "arandu_base"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+authors.workspace = true
+
+[features]
+default = ["vm"]
+vm = ["dep:libc"]
+
+[dependencies]
+fxhash = "0.2.1"
+libc = { version = "0.2", optional = true }

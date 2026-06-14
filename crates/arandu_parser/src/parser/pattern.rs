@@ -64,7 +64,7 @@ impl<'a> Parser<'a> {
             });
         }
         if matches!(self.current().kind, TokenKind::IdentType) {
-            let type_start_span = self.current().span;
+            let type_start_span = self.current().span(self.file_id);
             let name = self.expect_ident_type()?;
             if self.eat_name("DOT") {
                 let variant = self.expect_ident_type()?;
@@ -194,6 +194,7 @@ impl<'a> Parser<'a> {
                 ParseErrorCode::ExpectedToken,
                 "expected pattern",
                 self.current(),
+                self.file_id,
                 self.source,
             )),
         }

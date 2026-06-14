@@ -33,7 +33,7 @@ impl<'a> Parser<'a> {
                             type_ids.push(self.pool.alloc_type_expr(arg));
                         }
                         let type_range = self.pool.alloc_type_expr_list(&type_ids);
-                        let span = span_between(generic_start, self.previous().span);
+                        let span = span_between(generic_start, self.previous().span(self.file_id));
                         left = self.pool.alloc_expr(
                             ExprKind::Generic {
                                 callee: left,
@@ -51,6 +51,7 @@ impl<'a> Parser<'a> {
                                 ParseErrorCode::ExpectedToken,
                                 "generic block calls are not valid in this context",
                                 self.current(),
+                                self.file_id,
                                 self.source,
                             ));
                         }
@@ -63,6 +64,7 @@ impl<'a> Parser<'a> {
                             ParseErrorCode::ExpectedToken,
                             "generic arguments in expressions must be followed by call arguments or block",
                             self.current(),
+                            self.file_id,
                             self.source,
                         ));
                     }
@@ -80,7 +82,7 @@ impl<'a> Parser<'a> {
                     self.consume();
                     let index = self.parse_expr(0)?;
                     self.expect_kind(TokenKind::RBracket)?;
-                    let span = span_between(span_start, self.previous().span);
+                    let span = span_between(span_start, self.previous().span(self.file_id));
                     left = self
                         .pool
                         .alloc_expr(ExprKind::Index { base: left, index }, span);
@@ -91,7 +93,7 @@ impl<'a> Parser<'a> {
                     let span_start = self.pool.expr_span(left);
                     let index = self.parse_expr(0)?;
                     self.expect_kind(TokenKind::RBracket)?;
-                    let span = span_between(span_start, self.previous().span);
+                    let span = span_between(span_start, self.previous().span(self.file_id));
                     left = self
                         .pool
                         .alloc_expr(ExprKind::SafeIndex { base: left, index }, span);
@@ -101,7 +103,7 @@ impl<'a> Parser<'a> {
                     self.consume();
                     let span_start = self.pool.expr_span(left);
                     let field = self.expect_ident_value()?;
-                    let span = span_between(span_start, self.previous().span);
+                    let span = span_between(span_start, self.previous().span(self.file_id));
                     left = self
                         .pool
                         .alloc_expr(ExprKind::Field { base: left, field }, span);
@@ -111,7 +113,7 @@ impl<'a> Parser<'a> {
                     self.consume();
                     let span_start = self.pool.expr_span(left);
                     let field = self.expect_ident_value()?;
-                    let span = span_between(span_start, self.previous().span);
+                    let span = span_between(span_start, self.previous().span(self.file_id));
                     left = self
                         .pool
                         .alloc_expr(ExprKind::SafeField { base: left, field }, span);
@@ -120,7 +122,7 @@ impl<'a> Parser<'a> {
                 TokenKind::Question => {
                     self.consume();
                     let span_start = self.pool.expr_span(left);
-                    let span = span_between(span_start, self.previous().span);
+                    let span = span_between(span_start, self.previous().span(self.file_id));
                     left = self.pool.alloc_expr(ExprKind::Try { expr: left }, span);
                     continue;
                 }
@@ -152,7 +154,7 @@ impl<'a> Parser<'a> {
                         };
                         self.pool.alloc_catch_handler(catch_handler)
                     };
-                    let span = span_between(span_start, self.previous().span);
+                    let span = span_between(span_start, self.previous().span(self.file_id));
                     left = self.pool.alloc_expr(
                         ExprKind::Catch {
                             expr: left,
@@ -203,6 +205,7 @@ impl<'a> Parser<'a> {
                         ParseErrorCode::ExpectedToken,
                         "chained ranges require parentheses",
                         self.current(),
+                        self.file_id,
                         self.source,
                     ));
                 }
@@ -378,6 +381,7 @@ impl<'a> Parser<'a> {
                 ParseErrorCode::ExpectedExpression,
                 "expected expression",
                 self.current(),
+                self.file_id,
                 self.source,
             )),
         }
@@ -395,7 +399,7 @@ impl<'a> Parser<'a> {
             None
         };
         let end = trailing_block.as_ref().map_or_else(
-            || self.previous().span,
+            || self.previous().span(self.file_id),
             |block_id| self.pool.block(*block_id).span,
         );
         let range = self.pool.alloc_expr_list(&args);
@@ -591,6 +595,7 @@ impl<'a> Parser<'a> {
             ParseErrorCode::ExpectedExpression,
             "expected type-qualified expression or struct literal",
             self.current(),
+            self.file_id,
             self.source,
         ))
     }
@@ -629,7 +634,7 @@ impl<'a> Parser<'a> {
         while !self.at_kind_name(end_name) {
             match &self.current().kind {
                 TokenKind::StringText | TokenKind::StringEscape => {
-                    let span = self.current().span;
+                    let span = self.current().span(self.file_id);
                     let text = self.current_text().to_string();
                     self.consume();
                     parts.push(StringPart::Text { span, text });
@@ -649,6 +654,7 @@ impl<'a> Parser<'a> {
                         ParseErrorCode::ExpectedExpression,
                         "expected string part",
                         self.current(),
+                        self.file_id,
                         self.source,
                     ));
                 }

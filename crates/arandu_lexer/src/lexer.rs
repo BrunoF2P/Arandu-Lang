@@ -202,12 +202,9 @@ impl<'a> Lexer<'a> {
             }
 
             let first_nl_span = Span::new(
-                self.pos + first_nl_offset,
-                self.pos + first_nl_offset,
-                self.line,
-                self.col + first_nl_offset,
-                self.line,
-                self.col + first_nl_offset,
+                0,
+                (self.pos + first_nl_offset) as u32,
+                (self.pos + first_nl_offset) as u32,
             );
 
             self.pos += skipped;
@@ -773,7 +770,9 @@ impl<'a> Lexer<'a> {
             return;
         }
         let span = Span::new(
-            start.pos, end_pos, start.line, start.col, self.line, self.col,
+            0,
+            start.pos as u32,
+            end_pos as u32,
         );
         self.push_token(TokenKind::StringText, span, false);
     }
@@ -816,20 +815,19 @@ impl<'a> Lexer<'a> {
             self.prev_significant = Some(kind);
         }
         self.tokens.push(Token {
+            start: span.start,
+            len: span.end - span.start,
             kind,
-            span,
             inserted,
         });
     }
 
     fn current_span(&self) -> Span {
-        Span::new(self.pos, self.pos, self.line, self.col, self.line, self.col)
+        Span::new(0, self.pos as u32, self.pos as u32)
     }
 
     fn span_from(&self, start: Mark) -> Span {
-        Span::new(
-            start.pos, self.pos, start.line, start.col, self.line, self.col,
-        )
+        Span::new(0, start.pos as u32, self.pos as u32)
     }
 
     #[cold]

@@ -15,7 +15,8 @@ pub use types::*;
 
 impl Program {
     #[must_use]
-    pub fn dump(&self) -> String {
-        dump::dump_program(self)
+    pub fn dump(&self, source: &str) -> String {
+        let line_index = arandu_base::line_index::LineIndex::new(source);
+        dump::dump_program(self, &line_index)
     }
 }

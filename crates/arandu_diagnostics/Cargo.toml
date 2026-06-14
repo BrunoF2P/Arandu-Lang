@@ -12,5 +12,7 @@ workspace = true
 path = "src/lib.rs"
 
 [dependencies]
-arandu_lexer = { path = "../arandu_lexer" }
+arandu_base = { path = "../arandu_base" }
+
+
 

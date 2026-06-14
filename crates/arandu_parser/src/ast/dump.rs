@@ -9,8 +9,17 @@ use super::{
 };
 use arandu_lexer::Span;
 use std::fmt::Write;
+use std::cell::RefCell;
 
-pub fn dump_program(program: &Program) -> String {
+thread_local! {
+    static CURRENT_LINE_INDEX: RefCell<Option<arandu_base::line_index::LineIndex>> = const { RefCell::new(None) };
+}
+
+pub fn dump_program(program: &Program, line_index: &arandu_base::line_index::LineIndex) -> String {
+    CURRENT_LINE_INDEX.with(|cell| {
+        *cell.borrow_mut() = Some(line_index.clone());
+    });
+
     let mut out = Vec::new();
     out.push(format!("Program {}", dump_span(program.span)));
     if let Some(module) = &program.module {
@@ -26,14 +35,27 @@ pub fn dump_program(program: &Program) -> String {
     for decl in &program.decls {
         dump_top_level_decl(&program.pool, decl, &mut out);
     }
+
+    CURRENT_LINE_INDEX.with(|cell| {
+        *cell.borrow_mut() = None;
+    });
+
     out.join("\n")
 }
 
 fn dump_span(span: Span) -> String {
-    format!(
-        "@{}:{}-{}:{}",
-        span.start_line, span.start_col, span.end_line, span.end_col
-    )
+    CURRENT_LINE_INDEX.with(|cell| {
+        if let Some(line_index) = &*cell.borrow() {
+            let (start_line, start_col) = line_index.line_col(span.start);
+            let (end_line, end_col) = line_index.line_col(span.end);
+            format!(
+                "@{}:{}-{}:{}",
+                start_line, start_col, end_line, end_col
+            )
+        } else {
+            format!("@{}:{}-{}:{}", 1, span.start, 1, span.end)
+        }
+    })
 }
 
 fn dump_top_level_decl(pool: &AstPool, decl: &TopLevelDecl, out: &mut Vec<String>) {

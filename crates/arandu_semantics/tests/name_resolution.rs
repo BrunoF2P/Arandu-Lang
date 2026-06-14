@@ -52,10 +52,13 @@ fn assert_diagnostic_golden(name: &str) {
         .unwrap()
         .replace('\\', "/");
 
+    let mut registry = arandu_base::source_registry::SourceRegistry::default();
+    registry.register(&rel_filepath, &source);
+
     let actual = result
         .diagnostics
         .iter()
-        .map(|d| format!("{}\n", d.format_for_cli(&rel_filepath)))
+        .map(|d| format!("{}\n", d.format_for_cli(&registry)))
         .collect::<String>();
 
     let update_golden = std::env::var("UPDATE_GOLDEN").is_ok();
@@ -361,7 +364,7 @@ func main() {
 fn symbol_table_keeps_value_and_type_namespaces_distinguishable() {
     let mut symbols = SymbolTable::new();
     let scope = symbols.global_scope();
-    let span = Span::new(0, 4, 1, 1, 1, 5);
+    let span = Span::new(0, 4, 5);
 
     symbols
         .define(scope, "User", SymbolKind::Struct, span)
