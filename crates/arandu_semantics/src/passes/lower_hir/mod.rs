@@ -24,10 +24,12 @@ pub fn lower_to_hir(
     let mut decls = Vec::new();
     // Create a HirPool to seed HIR allocations for future ID-based lowering.
     let mut hir_pool = crate::hir::HirPool::new();
-    for decl in &program.decls {
+    for decl_id in &program.decls {
+        let decl = program.pool.decl(*decl_id);
         let hir_decl = decl::lower_decl(type_check, &program.pool, &mut hir_pool, decl)
             .map_err(|e| vec![e])?;
-        decls.push(hir_decl);
+        let hir_decl_id = hir_pool.alloc_decl(hir_decl);
+        decls.push(hir_decl_id);
     }
     let module = program.module.as_ref().map(|m| m.path.join("."));
     Ok(HirProgram {

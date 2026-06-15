@@ -1,0 +1,24 @@
+pub mod definite_init;
+pub mod liveness;
+pub mod lower_amir;
+pub mod move_checker;
+pub mod optimize;
+
+pub use lower_amir::lower_to_amir;
+pub use move_checker::check_moves;
+pub use optimize::optimize_amir;
+
+pub use arandu_middle::{
+    amir, amir_validate, cfg, diagnostics, hir, layout, literal_pool, ops, types, BitMatrix, BitSet,
+    CodeReplacement, DiagCode, Diagnostic, DocCommentMap, GenerationalId, Label, NodeKey,
+    ResolvedNames, ScopeId, Severity, Span, SymbolId, SymbolKind, SymbolTable,
+};
+
+pub use arandu_typeck::TypeCheckResult;
+
+pub mod passes {
+    pub mod type_checker {
+        pub use arandu_middle::types;
+        pub use arandu_typeck::EnumPayloadShape;
+    }
+}

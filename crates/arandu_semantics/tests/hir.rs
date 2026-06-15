@@ -98,13 +98,14 @@ fn lowers_struct_fields_with_types() {
         }",
     );
     assert_eq!(hir.decls.len(), 1);
-    match &hir.decls[0] {
+    match hir.pool.decl(hir.decls[0]) {
         HirDecl::Struct(s) => {
             assert_eq!(symbol_name(&symbols, s.symbol), "Point");
-            assert_eq!(s.fields.len(), 2);
-            assert_eq!(symbol_name(&symbols, s.fields[0].symbol), "x");
-            assert!(matches!(s.fields[0].ty, ArType::Primitive(_)));
-            assert_eq!(symbol_name(&symbols, s.fields[1].symbol), "y");
+            let fields = hir.pool.struct_fields_list(s.fields);
+            assert_eq!(fields.len(), 2);
+            assert_eq!(symbol_name(&symbols, fields[0].symbol), "x");
+            assert!(matches!(fields[0].ty, ArType::Primitive(_)));
+            assert_eq!(symbol_name(&symbols, fields[1].symbol), "y");
         }
         other => panic!("expected Struct, got {other:?}"),
     }
@@ -120,12 +121,13 @@ fn lowers_function_with_params_and_return_type() {
         }",
     );
     assert_eq!(hir.decls.len(), 1);
-    match &hir.decls[0] {
+    match hir.pool.decl(hir.decls[0]) {
         HirDecl::Func(f) => {
             assert_eq!(symbol_name(&symbols, f.symbol), "add");
-            assert_eq!(f.params.len(), 2);
-            assert_eq!(symbol_name(&symbols, f.params[0].symbol), "x");
-            assert_eq!(symbol_name(&symbols, f.params[1].symbol), "y");
+            let params = hir.pool.params_list(f.params);
+            assert_eq!(params.len(), 2);
+            assert_eq!(symbol_name(&symbols, params[0].symbol), "x");
+            assert_eq!(symbol_name(&symbols, params[1].symbol), "y");
             // return_type is extracted from ArType::Func(params, ret)
             assert!(
                 matches!(f.return_type, ArType::Primitive(_)),
@@ -134,11 +136,13 @@ fn lowers_function_with_params_and_return_type() {
             );
             assert!(f.body.is_some());
             let body = hir.pool.block(f.body.unwrap());
-            assert!(!body.statements.is_empty());
-            match &hir.pool.stmt(body.statements[0]).kind {
+            let statements = hir.pool.stmt_list(body.statements);
+            assert!(!statements.is_empty());
+            match &hir.pool.stmt(statements[0]).kind {
                 HirStmtKind::Return { values } => {
-                    assert_eq!(values.len(), 1);
-                    assert!(matches!(values[0].kind, HirExprKind::Binary { .. }));
+                    let exprs = hir.pool.expr_list(*values);
+                    assert_eq!(exprs.len(), 1);
+                    assert!(matches!(hir.pool.expr(exprs[0]).kind, HirExprKind::Binary { .. }));
                 }
                 other => panic!("expected Return, got {other:?}"),
             }
@@ -156,18 +160,20 @@ fn lowers_var_decl_with_type_annotation() {
             x int = 42
         }",
     );
-    match &hir.decls[0] {
+    match hir.pool.decl(hir.decls[0]) {
         HirDecl::Func(f) => {
             let body = hir.pool.block(f.body.unwrap());
-            match &hir.pool.stmt(body.statements[0]).kind {
+            let statements = hir.pool.stmt_list(body.statements);
+            match &hir.pool.stmt(statements[0]).kind {
                 HirStmtKind::VarDecl { bindings, value } => {
-                    assert_eq!(bindings.len(), 1);
-                    assert_eq!(symbol_name(&symbols, bindings[0].symbol), "x");
+                    let bindings_slice = hir.pool.bindings_list(*bindings);
+                    assert_eq!(bindings_slice.len(), 1);
+                    assert_eq!(symbol_name(&symbols, bindings_slice[0].symbol), "x");
                     assert!(
-                        !matches!(bindings[0].ty, ArType::Error),
+                        !matches!(bindings_slice[0].ty, ArType::Error),
                         "expected resolved type, got Error"
                     );
-                    match &value.kind {
+                    match &hir.pool.expr(*value).kind {
                         HirExprKind::Int(v) => assert_eq!(v, "42"),
                         other => panic!("expected Int, got {other:?}"),
                     }
@@ -189,13 +195,14 @@ fn expr_nodes_carry_resolved_types() {
             y int = x + 5
         }",
     );
-    match &hir.decls[0] {
+    match hir.pool.decl(hir.decls[0]) {
         HirDecl::Func(f) => {
             let body = hir.pool.block(f.body.unwrap());
-            match &hir.pool.stmt(body.statements[1]).kind {
+            let statements = hir.pool.stmt_list(body.statements);
+            match &hir.pool.stmt(statements[1]).kind {
                 HirStmtKind::VarDecl { value, .. } => {
                     assert!(
-                        !matches!(value.ty, ArType::Error),
+                        !matches!(hir.pool.expr(*value).ty, ArType::Error),
                         "binary expr should have a resolved type"
                     );
                 }
@@ -216,11 +223,12 @@ fn path_expr_resolves_symbol() {
             y int = x
         }",
     );
-    match &hir.decls[0] {
+    match hir.pool.decl(hir.decls[0]) {
         HirDecl::Func(f) => {
             let body = hir.pool.block(f.body.unwrap());
-            match &hir.pool.stmt(body.statements[1]).kind {
-                HirStmtKind::VarDecl { value, .. } => match &value.kind {
+            let statements = hir.pool.stmt_list(body.statements);
+            match &hir.pool.stmt(statements[1]).kind {
+                HirStmtKind::VarDecl { value, .. } => match &hir.pool.expr(*value).kind {
                     HirExprKind::Path { symbol } => {
                         assert!(symbol.0 != 0, "symbol should be resolved");
                     }
@@ -245,14 +253,16 @@ fn lowers_call_expression() {
             result int = add(1, 2)
         }",
     );
-    match &hir.decls[1] {
+    match hir.pool.decl(hir.decls[1]) {
         HirDecl::Func(f) => {
             let body = hir.pool.block(f.body.unwrap());
-            match &hir.pool.stmt(body.statements[0]).kind {
-                HirStmtKind::VarDecl { value, .. } => match &value.kind {
+            let statements = hir.pool.stmt_list(body.statements);
+            match &hir.pool.stmt(statements[0]).kind {
+                HirStmtKind::VarDecl { value, .. } => match &hir.pool.expr(*value).kind {
                     HirExprKind::Call { callee, args, .. } => {
-                        assert!(matches!(callee.kind, HirExprKind::Path { .. }));
-                        assert_eq!(args.len(), 2);
+                        assert!(matches!(hir.pool.expr(*callee).kind, HirExprKind::Path { .. }));
+                        let args_slice = hir.pool.expr_list(*args);
+                        assert_eq!(args_slice.len(), 2);
                     }
                     other => panic!("expected Call, got {other:?}"),
                 },
@@ -279,19 +289,21 @@ fn lowers_call_with_trailing_block() {
     let main_func = hir
         .decls
         .iter()
-        .find_map(|d| match d {
+        .find_map(|&d| match hir.pool.decl(d) {
             HirDecl::Func(f) if symbol_name(&_symbols, f.symbol) == "main" => Some(f),
             _ => None,
         })
         .expect("main function not found");
     let body = hir.pool.block(main_func.body.unwrap());
-    match &hir.pool.stmt(body.statements[0]).kind {
-        HirStmtKind::VarDecl { value, .. } => match &value.kind {
+    let statements = hir.pool.stmt_list(body.statements);
+    match &hir.pool.stmt(statements[0]).kind {
+        HirStmtKind::VarDecl { value, .. } => match &hir.pool.expr(*value).kind {
             HirExprKind::Call { trailing_block, .. } => {
                 assert!(trailing_block.is_some());
                 let bid = trailing_block.unwrap();
                 let blk = hir.pool.block(bid);
-                assert!(!blk.statements.is_empty());
+                let block_stmts = hir.pool.stmt_list(blk.statements);
+                assert!(!block_stmts.is_empty());
             }
             other => panic!("expected Call, got {other:?}"),
         },
@@ -310,14 +322,15 @@ fn lowers_enum_with_variants() {
             Blue
         }",
     );
-    match &hir.decls[0] {
+    match hir.pool.decl(hir.decls[0]) {
         HirDecl::Enum(e) => {
             assert_eq!(symbol_name(&symbols, e.symbol), "Color");
-            assert_eq!(e.variants.len(), 3);
-            assert_eq!(symbol_name(&symbols, e.variants[0].symbol), "Red");
-            assert_eq!(symbol_name(&symbols, e.variants[1].symbol), "Green");
-            assert_eq!(symbol_name(&symbols, e.variants[2].symbol), "Blue");
-            assert!(e.variants[0].payload.is_none());
+            let variants = hir.pool.enum_variants_list(e.variants);
+            assert_eq!(variants.len(), 3);
+            assert_eq!(symbol_name(&symbols, variants[0].symbol), "Red");
+            assert_eq!(symbol_name(&symbols, variants[1].symbol), "Green");
+            assert_eq!(symbol_name(&symbols, variants[2].symbol), "Blue");
+            assert!(variants[0].payload.is_none());
         }
         other => panic!("expected Enum, got {other:?}"),
     }
@@ -337,17 +350,18 @@ fn lowers_if_stmt() {
             }
         }",
     );
-    match &hir.decls[0] {
+    match hir.pool.decl(hir.decls[0]) {
         HirDecl::Func(f) => {
             let body = hir.pool.block(f.body.unwrap());
-            match &hir.pool.stmt(body.statements[1]).kind {
+            let statements = hir.pool.stmt_list(body.statements);
+            match &hir.pool.stmt(statements[1]).kind {
                 HirStmtKind::If {
                     condition,
                     then_block,
                     else_block,
                 } => {
                     assert!(matches!(condition, HirCondition::Expr(_)));
-                    assert!(!hir.pool.block(*then_block).statements.is_empty());
+                    assert!(!hir.pool.stmt_list(hir.pool.block(*then_block).statements).is_empty());
                     assert!(else_block.is_some());
                 }
                 other => panic!("expected If, got {other:?}"),
@@ -366,15 +380,16 @@ fn group_expressions_unwrap() {
             x int = (42)
         }",
     );
-    match &hir.decls[0] {
+    match hir.pool.decl(hir.decls[0]) {
         HirDecl::Func(f) => {
             let body = hir.pool.block(f.body.unwrap());
-            match &hir.pool.stmt(body.statements[0]).kind {
+            let statements = hir.pool.stmt_list(body.statements);
+            match &hir.pool.stmt(statements[0]).kind {
                 HirStmtKind::VarDecl { value, .. } => {
                     assert!(
-                        matches!(value.kind, HirExprKind::Int(_)),
+                        matches!(hir.pool.expr(*value).kind, HirExprKind::Int(_)),
                         "expected Int after group unwrap, got {:?}",
-                        value.kind
+                        hir.pool.expr(*value).kind
                     );
                 }
                 other => panic!("expected VarDecl, got {other:?}"),
@@ -389,7 +404,7 @@ fn group_expressions_unwrap() {
 #[test]
 fn lowers_const_declaration() {
     let (hir, symbols) = lower("const MAX int = 100");
-    match &hir.decls[0] {
+    match hir.pool.decl(hir.decls[0]) {
         HirDecl::Const(c) => {
             assert_eq!(symbol_name(&symbols, c.symbol), "MAX");
             // const type comes from synth_expr, which gives IntLiteral for unadorned int
@@ -398,7 +413,7 @@ fn lowers_const_declaration() {
                 "const type should be resolved, got {:?}",
                 c.ty
             );
-            assert!(matches!(c.value.kind, HirExprKind::Int(_)));
+            assert!(matches!(hir.pool.expr(c.value).kind, HirExprKind::Int(_)));
         }
         other => panic!("expected Const, got {other:?}"),
     }
@@ -417,19 +432,21 @@ fn lowers_struct_literal() {
             p Point = Point { x: 1, y: 2 }
         }",
     );
-    match &hir.decls[1] {
+    match hir.pool.decl(hir.decls[1]) {
         HirDecl::Func(f) => {
             let body = hir.pool.block(f.body.unwrap());
-            match &hir.pool.stmt(body.statements[0]).kind {
-                HirStmtKind::VarDecl { value, .. } => match &value.kind {
+            let statements = hir.pool.stmt_list(body.statements);
+            match &hir.pool.stmt(statements[0]).kind {
+                HirStmtKind::VarDecl { value, .. } => match &hir.pool.expr(*value).kind {
                     HirExprKind::StructLiteral {
                         struct_symbol,
                         fields,
                     } => {
                         assert!(struct_symbol.0 != 0, "struct symbol should be resolved");
-                        assert_eq!(fields.len(), 2);
-                        assert_eq!(fields[0].name, "x");
-                        assert_eq!(fields[1].name, "y");
+                        let fields_slice = hir.pool.field_inits_list(*fields);
+                        assert_eq!(fields_slice.len(), 2);
+                        assert_eq!(fields_slice[0].name, "x");
+                        assert_eq!(fields_slice[1].name, "y");
                     }
                     other => panic!("expected StructLiteral, got {other:?}"),
                 },
@@ -449,20 +466,25 @@ fn func_param_symbols_match_usage() {
             return x
         }",
     );
-    match &hir.decls[0] {
+    match hir.pool.decl(hir.decls[0]) {
         HirDecl::Func(f) => {
-            let param_symbol = f.params[0].symbol;
+            let params = hir.pool.params_list(f.params);
+            let param_symbol = params[0].symbol;
             let body = hir.pool.block(f.body.unwrap());
-            match &hir.pool.stmt(body.statements[0]).kind {
-                HirStmtKind::Return { values } => match &values[0].kind {
-                    HirExprKind::Path { symbol } => {
-                        assert_eq!(
-                            *symbol, param_symbol,
-                            "usage symbol should match param definition"
-                        );
+            let statements = hir.pool.stmt_list(body.statements);
+            match &hir.pool.stmt(statements[0]).kind {
+                HirStmtKind::Return { values } => {
+                    let exprs = hir.pool.expr_list(*values);
+                    match &hir.pool.expr(exprs[0]).kind {
+                        HirExprKind::Path { symbol } => {
+                            assert_eq!(
+                                *symbol, param_symbol,
+                                "usage symbol should match param definition"
+                            );
+                        }
+                        other => panic!("expected Path, got {other:?}"),
                     }
-                    other => panic!("expected Path, got {other:?}"),
-                },
+                }
                 other => panic!("expected Return, got {other:?}"),
             }
         }

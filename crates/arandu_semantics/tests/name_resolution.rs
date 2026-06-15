@@ -34,10 +34,12 @@ fn assert_diagnostic_golden(name: &str) {
     let root = workspace_root();
     let source_path = root
         .join("tests")
+        .join("ui")
         .join("semantics")
         .join(format!("{name}.aru"));
     let expected_path = root
         .join("tests")
+        .join("ui")
         .join("semantics")
         .join(format!("{name}.diag"));
     let source = fs::read_to_string(&source_path)

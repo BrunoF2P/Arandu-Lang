@@ -63,7 +63,7 @@ fn test_parallel_compilation_multi_file_project() {
 #[test]
 fn test_parallel_compilation_individual_files_parity() {
     let root = workspace_root();
-    let ok_dir = root.join("tests").join("type_checker").join("ok");
+    let ok_dir = root.join("tests").join("ui").join("type_checker").join("ok");
     assert!(ok_dir.exists(), "ok directory does not exist");
 
     let mut paths = Vec::new();

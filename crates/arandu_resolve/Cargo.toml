@@ -1,5 +1,5 @@
 [package]
-name = "arandu_semantics"
+name = "arandu_resolve"
 version = "0.1.0"
 edition = "2024"
 license.workspace = true
@@ -9,18 +9,13 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+arandu_base = { path = "../arandu_base" }
 arandu_lexer = { path = "../arandu_lexer" }
-arandu_parser = { path = "../arandu_parser" }
 arandu_middle = { path = "../arandu_middle" }
-arandu_resolve = { path = "../arandu_resolve" }
-arandu_typeck = { path = "../arandu_typeck" }
-arandu_mir = { path = "../arandu_mir" }
+arandu_parser = { path = "../arandu_parser" }
 arandu_diagnostics = { path = "../arandu_diagnostics" }
-arandu_base = { path = "../arandu_base", features = ["vm"] }
-smallvec = "1.14"
-strsim = "0.11.1"
-libc = "0.2"
 rustc-hash = "2.1"
+strsim = "0.11.1"
 
 [lib]
 path = "src/lib.rs"

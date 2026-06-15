@@ -16,10 +16,12 @@ fn assert_diagnostic_golden(name: &str) {
     let root = workspace_root();
     let source_path = root
         .join("tests")
+        .join("ui")
         .join("type_checker")
         .join(format!("{name}.aru"));
     let expected_path = root
         .join("tests")
+        .join("ui")
         .join("type_checker")
         .join(format!("{name}.diag"));
     let source = fs::read_to_string(&source_path)
@@ -128,7 +130,7 @@ fn test_implicit_widening_error() {
 #[test]
 fn test_result_ok() {
     let root = workspace_root();
-    let source = fs::read_to_string(root.join("tests/type_checker/result_ok.aru")).unwrap();
+    let source = fs::read_to_string(root.join("tests/ui/type_checker/result_ok.aru")).unwrap();
     let program = parse(&source).expect("parse");
     let resolution = resolve(&program);
     let result = type_check(resolution, &program);
@@ -145,7 +147,7 @@ fn test_result_ok() {
 #[test]
 fn test_result_err() {
     let root = workspace_root();
-    let source = fs::read_to_string(root.join("tests/type_checker/result_err.aru")).unwrap();
+    let source = fs::read_to_string(root.join("tests/ui/type_checker/result_err.aru")).unwrap();
     let program = parse(&source).expect("parse");
     let resolution = resolve(&program);
     let result = type_check(resolution, &program);
@@ -163,7 +165,7 @@ fn test_result_err() {
 fn test_result_propagation() {
     let root = workspace_root();
     let source =
-        fs::read_to_string(root.join("tests/type_checker/result_propagation.aru")).unwrap();
+        fs::read_to_string(root.join("tests/ui/type_checker/result_propagation.aru")).unwrap();
     let program = parse(&source).expect("parse");
     let resolution = resolve(&program);
     let result = type_check(resolution, &program);
@@ -180,7 +182,7 @@ fn test_result_propagation() {
 #[test]
 fn test_method_shared() {
     let root = workspace_root();
-    let source = fs::read_to_string(root.join("tests/type_checker/method_shared.aru")).unwrap();
+    let source = fs::read_to_string(root.join("tests/ui/type_checker/method_shared.aru")).unwrap();
     let program = parse(&source).expect("parse");
     let resolution = resolve(&program);
     let result = type_check(resolution, &program);
@@ -197,7 +199,7 @@ fn test_method_shared() {
 #[test]
 fn test_method_mut() {
     let root = workspace_root();
-    let source = fs::read_to_string(root.join("tests/type_checker/method_mut.aru")).unwrap();
+    let source = fs::read_to_string(root.join("tests/ui/type_checker/method_mut.aru")).unwrap();
     let program = parse(&source).expect("parse");
     let resolution = resolve(&program);
     let result = type_check(resolution, &program);
@@ -214,7 +216,7 @@ fn test_method_mut() {
 #[test]
 fn test_method_own() {
     let root = workspace_root();
-    let source = fs::read_to_string(root.join("tests/type_checker/method_own.aru")).unwrap();
+    let source = fs::read_to_string(root.join("tests/ui/type_checker/method_own.aru")).unwrap();
     let program = parse(&source).expect("parse");
     let resolution = resolve(&program);
     let result = type_check(resolution, &program);
@@ -231,7 +233,7 @@ fn test_method_own() {
 #[test]
 fn test_option_some() {
     let root = workspace_root();
-    let source = fs::read_to_string(root.join("tests/type_checker/option_some.aru")).unwrap();
+    let source = fs::read_to_string(root.join("tests/ui/type_checker/option_some.aru")).unwrap();
     let program = parse(&source).expect("parse");
     let resolution = resolve(&program);
     let result = type_check(resolution, &program);
@@ -671,7 +673,7 @@ fn test_nullability_and_safe_access() {
 #[test]
 fn test_official_ok_suite() {
     let root = workspace_root();
-    let ok_dir = root.join("tests").join("type_checker").join("ok");
+    let ok_dir = root.join("tests").join("ui").join("type_checker").join("ok");
     assert!(ok_dir.exists(), "ok directory does not exist");
 
     let mut paths = Vec::new();
@@ -709,7 +711,7 @@ fn test_official_ok_suite() {
 #[test]
 fn test_official_invalid_suite() {
     let root = workspace_root();
-    let invalid_dir = root.join("tests").join("type_checker").join("invalid");
+    let invalid_dir = root.join("tests").join("ui").join("type_checker").join("invalid");
     assert!(invalid_dir.exists(), "invalid directory does not exist");
 
     let mut aru_files = std::collections::HashSet::new();
@@ -734,13 +736,13 @@ fn test_official_invalid_suite() {
     for name in &aru_files {
         assert!(
             diag_files.contains(name),
-            "Orphan file: tests/type_checker/invalid/{name}.aru has no corresponding .diag file"
+            "Orphan file: tests/ui/type_checker/invalid/{name}.aru has no corresponding .diag file"
         );
     }
     for name in &diag_files {
         assert!(
             aru_files.contains(name),
-            "Orphan file: tests/type_checker/invalid/{name}.diag has no corresponding .aru file"
+            "Orphan file: tests/ui/type_checker/invalid/{name}.diag has no corresponding .aru file"
         );
     }
 

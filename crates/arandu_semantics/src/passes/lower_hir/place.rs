@@ -45,11 +45,10 @@ pub(crate) fn lower_place(
                     });
                 }
                 PlaceSuffix::Index { span, expr } => {
-                    let eid = super::expr::lower_expr(type_check, pool, hir_pool, **expr)?;
-                    let e = hir_pool.expr(eid).clone();
+                    let eid = super::expr::lower_expr(type_check, pool, hir_pool, *expr)?;
                     suffixes.push(HirPlaceSuffix::Index {
                         span: *span,
-                        expr: Box::new(e),
+                        expr: eid,
                         ty: ArType::Error,
                     });
                 }
@@ -103,11 +102,10 @@ pub(crate) fn lower_place(
                     _ => ArType::Error,
                 };
                 current_ty = elem_ty.clone();
-                let eid = super::expr::lower_expr(type_check, pool, hir_pool, **expr)?;
-                let e = hir_pool.expr(eid).clone();
+                let eid = super::expr::lower_expr(type_check, pool, hir_pool, *expr)?;
                 suffixes.push(HirPlaceSuffix::Index {
                     span: *span,
-                    expr: Box::new(e),
+                    expr: eid,
                     ty: elem_ty,
                 });
             }

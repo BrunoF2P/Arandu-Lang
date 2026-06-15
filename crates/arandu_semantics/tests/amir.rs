@@ -22,7 +22,7 @@ fn test_amir_golden_files() {
         .unwrap()
         .parent()
         .unwrap();
-    let fixtures_dir = root_dir.join("tests").join("amir");
+    let fixtures_dir = root_dir.join("tests").join("codegen");
 
     if !fixtures_dir.exists() {
         // No fixtures directory = nothing to test
@@ -208,19 +208,21 @@ func main(cond bool) {
     );
 }
 
-fn empty_block(id: usize, predecessors: &[usize], successors: &[usize]) -> AmirBasicBlock {
+fn empty_block(id: usize, _predecessors: &[usize], successors: &[usize]) -> AmirBasicBlock {
+    let term = match successors {
+        [] => AmirTerminator::Unreachable,
+        &[s] => AmirTerminator::Goto(BlockId::from_usize(s)),
+        &[t, f] => AmirTerminator::Branch {
+            condition: AmirOperand::Constant(AmirConstant::Bool(true)),
+            if_true: BlockId::from_usize(t),
+            if_false: BlockId::from_usize(f),
+        },
+        _ => panic!("too many successors in test"),
+    };
     AmirBasicBlock {
         id: BlockId::from_usize(id),
         statements: DenseRange::empty(),
-        terminator: AmirTerminator::Unreachable,
-        successors: successors
-            .iter()
-            .map(|id| BlockId::from_usize(*id))
-            .collect(),
-        predecessors: predecessors
-            .iter()
-            .map(|id| BlockId::from_usize(*id))
-            .collect(),
+        terminator: term,
     }
 }
 
@@ -271,6 +273,7 @@ fn test_func(
     blocks: Vec<AmirBasicBlock>,
     stmts: AmirStmtTable,
 ) -> AmirFunc {
+    let cfg = arandu_semantics::cfg::compute_cfg_edges(&blocks);
     AmirFunc {
         symbol: symbol(0),
         return_type: ArType::Void,
@@ -280,6 +283,7 @@ fn test_func(
         temps,
         blocks,
         stmts,
+        cfg,
     }
 }
 
@@ -347,8 +351,6 @@ fn local_liveness_uses_dense_bitsets() {
             id: BlockId::from_usize(0),
             statements: DenseRange::new(first.as_usize(), second.as_usize() - first.as_usize() + 1),
             terminator: AmirTerminator::Return,
-            successors: Vec::new(),
-            predecessors: Vec::new(),
         }],
         stmts,
     );
@@ -374,8 +376,6 @@ fn dce_tracks_used_temps_with_dense_bitsets() {
         id: BlockId::from_usize(0),
         statements: DenseRange::new(first.as_usize(), 2),
         terminator: AmirTerminator::Return,
-        successors: Vec::new(),
-        predecessors: Vec::new(),
     };
     let mut func = test_func(
         Vec::new(),

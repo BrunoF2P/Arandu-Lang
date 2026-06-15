@@ -29,8 +29,9 @@ pub(crate) fn lower_block_raw(
     for s in &block.statements {
         statements.push(lower_stmt(type_check, pool, hir_pool, *s)?);
     }
+    let statements_range = hir_pool.alloc_stmt_list(&statements);
     Ok(HirBlock {
-        statements,
+        statements: statements_range,
         span: block.span,
     })
 }
@@ -101,10 +102,10 @@ fn lower_stmt_raw(
                 });
             }
             let value_vid = super::expr::lower_expr(type_check, pool, hir_pool, *value)?;
-            let value_hir = hir_pool.expr(value_vid).clone();
+            let bindings_range = hir_pool.alloc_binding_list(&hir_bindings);
             HirStmtKind::VarDecl {
-                bindings: hir_bindings,
-                value: value_hir,
+                bindings: bindings_range,
+                value: value_vid,
             }
         }
         Stmt::Set {
@@ -115,36 +116,32 @@ fn lower_stmt_raw(
                 .map(|p| super::place::lower_place(type_check, pool, hir_pool, p))
                 .collect();
             let value_vid = super::expr::lower_expr(type_check, pool, hir_pool, *value)?;
-            let value_hir = hir_pool.expr(value_vid).clone();
+            let places_range = hir_pool.alloc_place_list(&hir_places?);
             HirStmtKind::Set {
-                places: hir_places?,
+                places: places_range,
                 op: SetOp::from(op.clone()),
-                value: value_hir,
+                value: value_vid,
             }
         }
         Stmt::Return { values, .. } => {
             let hir_values: Result<Vec<_>, Diagnostic> = values
                 .iter()
-                .map(|v| {
-                    let vid = super::expr::lower_expr(type_check, pool, hir_pool, *v)?;
-                    Ok(hir_pool.expr(vid).clone())
-                })
+                .map(|v| super::expr::lower_expr(type_check, pool, hir_pool, *v))
                 .collect();
+            let values_range = hir_pool.alloc_expr_list(&hir_values?);
             HirStmtKind::Return {
-                values: hir_values?,
+                values: values_range,
             }
         }
         Stmt::Break { .. } => HirStmtKind::Break,
         Stmt::Continue { .. } => HirStmtKind::Continue,
         Stmt::Free { expr, .. } => {
             let eid = super::expr::lower_expr(type_check, pool, hir_pool, *expr)?;
-            let e = hir_pool.expr(eid).clone();
-            HirStmtKind::Free(e)
+            HirStmtKind::Free(eid)
         }
         Stmt::Expr { expr, .. } => {
-            let eid = super::expr::lower_expr(type_check, pool, hir_pool, **expr)?;
-            let e = hir_pool.expr(eid).clone();
-            HirStmtKind::Expr(e)
+            let eid = super::expr::lower_expr(type_check, pool, hir_pool, *expr)?;
+            HirStmtKind::Expr(eid)
         }
         Stmt::If {
             condition,
@@ -160,7 +157,7 @@ fn lower_stmt_raw(
                 .transpose()?,
         },
         Stmt::For { clause, body, .. } => HirStmtKind::For {
-            clause: Box::new(lower_for_clause(type_check, pool, hir_pool, clause)?),
+            clause: lower_for_clause(type_check, pool, hir_pool, clause)?,
             body: super::stmt::lower_block(type_check, pool, hir_pool, body)?,
         },
         Stmt::While {
@@ -175,31 +172,31 @@ fn lower_stmt_raw(
                 ExprKind::Match { value, arms } => {
                     let arm_ids = pool.match_arm_list(*arms).to_vec();
                     let vid = super::expr::lower_expr(type_check, pool, hir_pool, *value)?;
-                    let value_hir = hir_pool.expr(vid).clone();
+                    let arms_range = super::pattern::lower_match_arms(
+                        type_check, pool, hir_pool, &arm_ids,
+                    )?;
                     HirStmtKind::Match {
-                        value: value_hir,
-                        arms: super::pattern::lower_match_arms(
-                            type_check, pool, hir_pool, &arm_ids,
-                        )?,
+                        value: vid,
+                        arms: arms_range,
                     }
                 }
                 _ => {
                     let eid = super::expr::lower_expr(type_check, pool, hir_pool, expr_id)?;
-                    HirStmtKind::Expr(hir_pool.expr(eid).clone())
+                    HirStmtKind::Expr(eid)
                 }
             }
         }
         Stmt::Defer { body, .. } => {
             let block = match body {
                 DeferBody::Expr { span, expr } => {
-                    let eid = super::expr::lower_expr(type_check, pool, hir_pool, **expr)?;
-                    let e = hir_pool.expr(eid).clone();
+                    let eid = super::expr::lower_expr(type_check, pool, hir_pool, *expr)?;
                     let stmt_id = hir_pool.alloc_stmt(HirStmt {
-                        kind: HirStmtKind::Expr(e),
+                        kind: HirStmtKind::Expr(eid),
                         span: *span,
                     });
+                    let statements_range = hir_pool.alloc_stmt_list(&[stmt_id]);
                     hir_pool.alloc_block(HirBlock {
-                        statements: vec![stmt_id],
+                        statements: statements_range,
                         span: *span,
                     })
                 }
@@ -212,14 +209,14 @@ fn lower_stmt_raw(
         Stmt::ErrDefer { body, .. } => {
             let block = match body {
                 DeferBody::Expr { span, expr } => {
-                    let eid = super::expr::lower_expr(type_check, pool, hir_pool, **expr)?;
-                    let e = hir_pool.expr(eid).clone();
+                    let eid = super::expr::lower_expr(type_check, pool, hir_pool, *expr)?;
                     let stmt_id = hir_pool.alloc_stmt(HirStmt {
-                        kind: HirStmtKind::Expr(e),
+                        kind: HirStmtKind::Expr(eid),
                         span: *span,
                     });
+                    let statements_range = hir_pool.alloc_stmt_list(&[stmt_id]);
                     hir_pool.alloc_block(HirBlock {
-                        statements: vec![stmt_id],
+                        statements: statements_range,
                         span: *span,
                     })
                 }
@@ -258,14 +255,15 @@ pub(crate) fn lower_condition(
 ) -> Result<HirCondition, Diagnostic> {
     match cond {
         Condition::Expr { expr, .. } => {
-            let eid = super::expr::lower_expr(type_check, pool, hir_pool, **expr)?;
-            Ok(HirCondition::Expr(hir_pool.expr(eid).clone()))
+            let eid = super::expr::lower_expr(type_check, pool, hir_pool, *expr)?;
+            Ok(HirCondition::Expr(eid))
         }
         Condition::Is { expr, pattern, .. } => {
-            let eid = super::expr::lower_expr(type_check, pool, hir_pool, **expr)?;
+            let eid = super::expr::lower_expr(type_check, pool, hir_pool, *expr)?;
+            let pat_id = super::pattern::lower_pattern_to_id(type_check, pool, hir_pool, *pattern)?;
             Ok(HirCondition::Is {
-                expr: hir_pool.expr(eid).clone(),
-                pattern: super::pattern::lower_pattern(type_check, pool, hir_pool, pattern)?,
+                expr: eid,
+                pattern: pat_id,
             })
         }
     }
@@ -297,13 +295,12 @@ pub(crate) fn lower_for_clause(
                     span: b.span,
                 });
             }
+            let bindings_range = hir_pool.alloc_for_binding_list(&hir_bindings);
+            let eid = super::expr::lower_expr(type_check, pool, hir_pool, *iterable)?;
             Ok(HirForClause::In {
                 span: *span,
-                bindings: hir_bindings,
-                iterable: Box::new({
-                    let eid = super::expr::lower_expr(type_check, pool, hir_pool, **iterable)?;
-                    hir_pool.expr(eid).clone()
-                }),
+                bindings: bindings_range,
+                iterable: eid,
             })
         }
         ForClause::CStyle {
@@ -311,27 +308,26 @@ pub(crate) fn lower_for_clause(
             init,
             condition,
             step,
-        } => Ok(HirForClause::CStyle {
-            span: *span,
-            init: init
+        } => {
+            let init = init
                 .as_ref()
                 .map(|s| lower_simple_stmt(type_check, pool, hir_pool, s))
-                .transpose()?
-                .map(Box::new),
-            condition: condition
+                .transpose()?;
+            let condition = condition
                 .as_ref()
-                .map(|e| -> Result<_, Diagnostic> {
-                    let eid = super::expr::lower_expr(type_check, pool, hir_pool, **e)?;
-                    Ok(hir_pool.expr(eid).clone())
-                })
-                .transpose()?
-                .map(Box::new),
-            step: step
+                .map(|e| super::expr::lower_expr(type_check, pool, hir_pool, *e))
+                .transpose()?;
+            let step = step
                 .as_ref()
                 .map(|s| lower_simple_stmt(type_check, pool, hir_pool, s))
-                .transpose()?
-                .map(Box::new),
-        }),
+                .transpose()?;
+            Ok(HirForClause::CStyle {
+                span: *span,
+                init,
+                condition,
+                step,
+            })
+        }
     }
 }
 
@@ -359,10 +355,11 @@ pub(crate) fn lower_simple_stmt(
                     span: b.span,
                 });
             }
+            let bindings_range = hir_pool.alloc_binding_list(&hir_bindings);
             let vid = super::expr::lower_expr(type_check, pool, hir_pool, *value)?;
             Ok(HirSimpleStmt::VarDecl {
-                bindings: hir_bindings,
-                value: hir_pool.expr(vid).clone(),
+                bindings: bindings_range,
+                value: vid,
             })
         }
         SimpleStmt::Set {
@@ -373,17 +370,16 @@ pub(crate) fn lower_simple_stmt(
                 .map(|p| super::place::lower_place(type_check, pool, hir_pool, p))
                 .collect();
             let vid = super::expr::lower_expr(type_check, pool, hir_pool, *value)?;
-            let value_hir = hir_pool.expr(vid).clone();
+            let places_range = hir_pool.alloc_place_list(&hir_places?);
             Ok(HirSimpleStmt::Set {
-                places: hir_places?,
+                places: places_range,
                 op: SetOp::from(op.clone()),
-                value: value_hir,
+                value: vid,
             })
         }
         SimpleStmt::Expr { expr, .. } => {
-            let eid = super::expr::lower_expr(type_check, pool, hir_pool, **expr)?;
-            let e = hir_pool.expr(eid).clone();
-            Ok(HirSimpleStmt::Expr(e))
+            let eid = super::expr::lower_expr(type_check, pool, hir_pool, *expr)?;
+            Ok(HirSimpleStmt::Expr(eid))
         }
     }
 }

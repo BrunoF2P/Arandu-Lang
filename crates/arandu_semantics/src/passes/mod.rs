@@ -1,10 +1,8 @@
-pub mod definite_init;
-pub mod liveness;
-pub mod lower_amir;
 pub mod lower_hir;
 pub mod lowering;
 pub mod monomorphize;
-pub mod move_checker;
-pub mod name_resolution;
-pub mod optimize;
-pub mod type_checker;
+
+pub use arandu_resolve::name_resolution;
+pub use arandu_typeck::type_checker;
+pub use arandu_mir::liveness;
+pub use arandu_mir::optimize;

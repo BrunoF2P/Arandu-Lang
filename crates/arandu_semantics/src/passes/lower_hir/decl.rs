@@ -24,11 +24,10 @@ pub(crate) fn lower_decl(
                 .cloned()
                 .unwrap_or(ArType::Error);
             let value_vid = super::expr::lower_expr(type_check, pool, hir_pool, d.value)?;
-            let value_hir = hir_pool.expr(value_vid).clone();
             Ok(HirDecl::Const(HirConst {
                 symbol,
                 ty,
-                value: value_hir,
+                value: value_vid,
                 span: d.span,
             }))
         }
@@ -76,6 +75,7 @@ pub(crate) fn lower_decl(
                     receiver_kind: p.ownership.map(super::stmt::ownership_to_receiver_kind),
                 });
             }
+            let params = hir_pool.alloc_param_list(&params);
             Ok(HirDecl::Func(HirFunc {
                 symbol,
                 params,
@@ -101,6 +101,7 @@ pub(crate) fn lower_decl(
                     });
                 }
             }
+            let fields = hir_pool.alloc_struct_field_list(&fields);
             Ok(HirDecl::Struct(HirStruct {
                 symbol,
                 fields,
@@ -135,6 +136,7 @@ pub(crate) fn lower_decl(
                     span: v.span,
                 });
             }
+            let variants = hir_pool.alloc_enum_variant_list(&variants);
             Ok(HirDecl::Enum(HirEnum {
                 symbol,
                 variants,
@@ -177,6 +179,7 @@ pub(crate) fn lower_decl(
                         receiver_kind: p.ownership.map(super::stmt::ownership_to_receiver_kind),
                     });
                 }
+                let params = hir_pool.alloc_param_list(&params);
                 members.push(HirFuncSignature {
                     symbol,
                     params,
@@ -184,6 +187,7 @@ pub(crate) fn lower_decl(
                     span: m.span,
                 });
             }
+            let members = hir_pool.alloc_func_signature_list(&members);
             Ok(HirDecl::Extern(HirExtern {
                 abi: d.abi.clone(),
                 members,

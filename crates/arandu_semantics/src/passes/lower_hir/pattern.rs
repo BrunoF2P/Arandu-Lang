@@ -4,15 +4,26 @@ use crate::passes::lowering::{require_def_symbol, require_type_symbol};
 use crate::{NodeKey, TypeCheckResult};
 use arandu_parser::MatchArmBody;
 use arandu_parser::Pattern;
-use arandu_parser::ast_pool::{AstPool, MatchArmId};
+use arandu_parser::ast_pool::{AstPool, MatchArmId, PatternId};
+
+pub(crate) fn lower_pattern_to_id(
+    type_check: &TypeCheckResult,
+    pool: &AstPool,
+    hir_pool: &mut crate::hir::HirPool,
+    pattern: PatternId,
+) -> Result<crate::hir::HirPatternId, Diagnostic> {
+    let hir = lower_pattern(type_check, pool, hir_pool, pattern)?;
+    Ok(hir_pool.alloc_pattern(hir))
+}
 
 pub(crate) fn lower_pattern(
     type_check: &TypeCheckResult,
     pool: &AstPool,
     hir_pool: &mut crate::hir::HirPool,
-    pattern: &Pattern,
+    pattern: PatternId,
 ) -> Result<HirPattern, Diagnostic> {
-    match pattern {
+    let pat = pool.pattern(pattern);
+    match pat {
         Pattern::Wildcard { span } => Ok(HirPattern::Wildcard { span: *span }),
         Pattern::Bind { span, name } => {
             let symbol = require_def_symbol(&type_check.resolved, *span)?;
@@ -23,9 +34,8 @@ pub(crate) fn lower_pattern(
             })
         }
         Pattern::Literal { span, expr } => {
-            let eid = super::expr::lower_expr(type_check, pool, hir_pool, **expr)?;
-            let e = hir_pool.expr(eid).clone();
-            Ok(HirPattern::Literal { span: *span, expr: Box::new(e) })
+            let eid = super::expr::lower_expr(type_check, pool, hir_pool, *expr)?;
+            Ok(HirPattern::Literal { span: *span, expr: eid })
         }
         Pattern::Enum {
             span,
@@ -40,15 +50,16 @@ pub(crate) fn lower_pattern(
                 .get(&NodeKey::from(*span))
                 .copied();
             let mut hir_payload = Vec::new();
-            for p in payload {
-                hir_payload.push(lower_pattern(type_check, pool, hir_pool, p)?);
+            for &p in pool.pattern_list(*payload) {
+                hir_payload.push(lower_pattern_to_id(type_check, pool, hir_pool, p)?);
             }
+            let payload_range = hir_pool.alloc_pattern_list(&hir_payload);
             Ok(HirPattern::Enum {
                 span: *span,
                 type_symbol,
                 variant: variant.clone(),
                 variant_symbol,
-                payload: hir_payload,
+                payload: payload_range,
             })
         }
         Pattern::TypeTuple {
@@ -57,13 +68,14 @@ pub(crate) fn lower_pattern(
             payload,
         } => {
             let mut hir_payload = Vec::new();
-            for p in payload {
-                hir_payload.push(lower_pattern(type_check, pool, hir_pool, p)?);
+            for &p in pool.pattern_list(*payload) {
+                hir_payload.push(lower_pattern_to_id(type_check, pool, hir_pool, p)?);
             }
+            let payload_range = hir_pool.alloc_pattern_list(&hir_payload);
             Ok(HirPattern::TypeTuple {
                 span: *span,
                 name: name.clone(),
-                payload: hir_payload,
+                payload: payload_range,
             })
         }
         Pattern::Struct {
@@ -73,30 +85,36 @@ pub(crate) fn lower_pattern(
         } => {
             let struct_symbol = require_type_symbol(&type_check.resolved, type_name.span)?;
             let mut hir_fields = Vec::new();
-            for f in fields {
-                hir_fields.push(HirFieldPattern {
+            for &f_id in pool.field_pattern_list(*fields) {
+                let f = pool.field_pattern(f_id);
+                let pat_id = match f.pattern {
+                    Some(p) => Some(lower_pattern_to_id(type_check, pool, hir_pool, p)?),
+                    None => None,
+                };
+                let field_pat = HirFieldPattern {
                     span: f.span,
                     name: f.name.clone(),
-                    pattern: match f.pattern.as_ref() {
-                        Some(p) => Some(Box::new(lower_pattern(type_check, pool, hir_pool, p)?)),
-                        None => None,
-                    },
-                });
+                    pattern: pat_id,
+                };
+                let field_pat_id = hir_pool.alloc_field_pattern(field_pat);
+                hir_fields.push(field_pat_id);
             }
+            let fields_range = hir_pool.alloc_field_pattern_list(&hir_fields);
             Ok(HirPattern::Struct {
                 span: *span,
                 struct_symbol,
-                fields: hir_fields,
+                fields: fields_range,
             })
         }
         Pattern::Tuple { span, items } => {
             let mut hir_items = Vec::new();
-            for p in items {
-                hir_items.push(lower_pattern(type_check, pool, hir_pool, p)?);
+            for &p in pool.pattern_list(*items) {
+                hir_items.push(lower_pattern_to_id(type_check, pool, hir_pool, p)?);
             }
+            let items_range = hir_pool.alloc_pattern_list(&hir_items);
             Ok(HirPattern::Tuple {
                 span: *span,
-                items: hir_items,
+                items: items_range,
             })
         }
         Pattern::Range {
@@ -105,15 +123,13 @@ pub(crate) fn lower_pattern(
             inclusive,
             end,
         } => {
-            let sid = super::expr::lower_expr(type_check, pool, hir_pool, **start)?;
-            let eid = super::expr::lower_expr(type_check, pool, hir_pool, **end)?;
-            let s = hir_pool.expr(sid).clone();
-            let e = hir_pool.expr(eid).clone();
+            let sid = super::expr::lower_expr(type_check, pool, hir_pool, *start)?;
+            let eid = super::expr::lower_expr(type_check, pool, hir_pool, *end)?;
             Ok(HirPattern::Range {
                 span: *span,
-                start: Box::new(s),
+                start: sid,
                 inclusive: *inclusive,
-                end: Box::new(e),
+                end: eid,
             })
         }
     }
@@ -124,31 +140,31 @@ pub(crate) fn lower_match_arms(
     pool: &AstPool,
     hir_pool: &mut crate::hir::HirPool,
     arms: &[MatchArmId],
-) -> Result<Vec<HirMatchArm>, Diagnostic> {
+) -> Result<crate::hir::IndexRange, Diagnostic> {
     let mut hir_arms = Vec::new();
     for arm_id in arms {
         let arm = pool.match_arm(*arm_id);
-            let guard = arm
+        let guard = arm
             .guard
             .as_ref()
-            .map(|g| super::expr::lower_expr(type_check, pool, hir_pool, *g).map(|id| hir_pool.expr(id).clone()))
+            .map(|g| super::expr::lower_expr(type_check, pool, hir_pool, *g))
             .transpose()?;
         let body = match &arm.body {
             MatchArmBody::Expr { expr, .. } => {
-                let eid = super::expr::lower_expr(type_check, pool, hir_pool, **expr)?;
-                let e = hir_pool.expr(eid).clone();
-                HirMatchArmBody::Expr(Box::new(e))
+                let eid = super::expr::lower_expr(type_check, pool, hir_pool, *expr)?;
+                HirMatchArmBody::Expr(eid)
             }
-                MatchArmBody::Block { block, .. } => {
+            MatchArmBody::Block { block, .. } => {
                 HirMatchArmBody::Block(super::stmt::lower_block(type_check, pool, hir_pool, block)?)
             }
         };
+        let pattern_id = lower_pattern_to_id(type_check, pool, hir_pool, arm.pattern)?;
         hir_arms.push(HirMatchArm {
             span: arm.span,
-            pattern: lower_pattern(type_check, pool, hir_pool, &arm.pattern)?,
+            pattern: pattern_id,
             guard,
             body,
         });
     }
-    Ok(hir_arms)
+    Ok(hir_pool.alloc_match_arm_list(&hir_arms))
 }

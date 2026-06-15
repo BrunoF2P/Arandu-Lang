@@ -26,14 +26,14 @@ use crate::SymbolId;
 use crate::SymbolTable;
 use crate::diagnostics::{DiagCode, Diagnostic};
 use crate::hir::{
-    HirCatchHandler, HirCondition, HirDecl, HirExpr, HirExprKind, HirLambdaBody, HirMatchArmBody,
+    HirCatchHandler, HirCondition, HirDecl, HirExprId, HirExprKind, HirLambdaBody, HirMatchArmBody,
     HirProgram, HirSimpleStmt, HirStmt, HirStmtKind,
 };
 use crate::newtype_index;
 use crate::passes::type_checker::TypeCheckResult;
 use crate::passes::type_checker::types::{ArType, TypeId, TypeInterner};
 use arandu_lexer::Span;
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 
 newtype_index!(InstantiationNodeId);
 
@@ -358,7 +358,8 @@ pub fn analyze_instantiations(
         diagnostics: Vec::new(),
     };
 
-    for decl in &hir.decls {
+    for &decl_id in &hir.decls {
+        let decl = hir.pool.decl(decl_id);
         if let HirDecl::Func(func) = decl
             && let Some(body_id) = func.body
         {
@@ -432,8 +433,8 @@ impl InstantiationAnalyzer<'_> {
 
     fn visit_block(&mut self, block: crate::hir::HirBlockId, current: Option<InstantiationNodeId>) {
         let blk = self.hir.pool.block(block);
-        for stmt_id in &blk.statements {
-            let stmt = self.hir.pool.stmt(*stmt_id);
+        for &stmt_id in self.hir.pool.stmt_list(blk.statements) {
+            let stmt = self.hir.pool.stmt(stmt_id);
             self.visit_stmt(stmt, current);
         }
     }
@@ -442,10 +443,10 @@ impl InstantiationAnalyzer<'_> {
         match &stmt.kind {
             HirStmtKind::VarDecl { value, .. }
             | HirStmtKind::Expr(value)
-            | HirStmtKind::Free(value) => self.visit_expr(value, current),
-            HirStmtKind::Set { value, .. } => self.visit_expr(value, current),
+            | HirStmtKind::Free(value) => self.visit_expr(*value, current),
+            HirStmtKind::Set { value, .. } => self.visit_expr(*value, current),
             HirStmtKind::Return { values } => {
-                for value in values {
+                for &value in self.hir.pool.expr_list(*values) {
                     self.visit_expr(value, current);
                 }
             }
@@ -461,9 +462,9 @@ impl InstantiationAnalyzer<'_> {
                 }
             }
             HirStmtKind::For { clause, body } => {
-                match &**clause {
+                match clause {
                     crate::hir::HirForClause::In { iterable, .. } => {
-                        self.visit_expr(iterable, current);
+                        self.visit_expr(*iterable, current);
                     }
                     crate::hir::HirForClause::CStyle {
                         init,
@@ -475,7 +476,7 @@ impl InstantiationAnalyzer<'_> {
                             self.visit_simple_stmt(init, current);
                         }
                         if let Some(condition) = condition {
-                            self.visit_expr(condition, current);
+                            self.visit_expr(*condition, current);
                         }
                         if let Some(step) = step {
                             self.visit_simple_stmt(step, current);
@@ -489,13 +490,13 @@ impl InstantiationAnalyzer<'_> {
                 self.visit_block(*body, current);
             }
             HirStmtKind::Match { value, arms } => {
-                self.visit_expr(value, current);
-                for arm in arms {
+                self.visit_expr(*value, current);
+                for arm in self.hir.pool.match_arms_list(*arms) {
                     if let Some(guard) = &arm.guard {
-                        self.visit_expr(guard, current);
+                        self.visit_expr(*guard, current);
                     }
                     match &arm.body {
-                        HirMatchArmBody::Expr(expr) => self.visit_expr(expr, current),
+                        HirMatchArmBody::Expr(expr) => self.visit_expr(*expr, current),
                         HirMatchArmBody::Block(block) => self.visit_block(*block, current),
                     }
                 }
@@ -513,23 +514,24 @@ impl InstantiationAnalyzer<'_> {
         match stmt {
             HirSimpleStmt::VarDecl { value, .. }
             | HirSimpleStmt::Set { value, .. }
-            | HirSimpleStmt::Expr(value) => self.visit_expr(value, current),
+            | HirSimpleStmt::Expr(value) => self.visit_expr(*value, current),
         }
     }
 
     fn visit_condition(&mut self, condition: &HirCondition, current: Option<InstantiationNodeId>) {
         match condition {
             HirCondition::Expr(expr) | HirCondition::Is { expr, .. } => {
-                self.visit_expr(expr, current);
+                self.visit_expr(*expr, current);
             }
         }
     }
 
-    fn visit_expr(&mut self, expr: &HirExpr, current: Option<InstantiationNodeId>) {
+    fn visit_expr(&mut self, expr_id: HirExprId, current: Option<InstantiationNodeId>) {
+        let expr = self.hir.pool.expr(expr_id);
         match &expr.kind {
             HirExprKind::Generic { callee, args } => {
-                self.visit_expr(callee, current);
-                if let Some(symbol) = generic_callee_symbol(callee) {
+                self.visit_expr(*callee, current);
+                if let Some(symbol) = generic_callee_symbol(*callee, &self.hir.pool) {
                     let type_args = args
                         .iter()
                         .cloned()
@@ -548,37 +550,37 @@ impl InstantiationAnalyzer<'_> {
             | HirExprKind::Alloc { expr: base }
             | HirExprKind::Try { expr: base }
             | HirExprKind::Cast { expr: base, .. }
-            | HirExprKind::Unary { expr: base, .. } => self.visit_expr(base, current),
+            | HirExprKind::Unary { expr: base, .. } => self.visit_expr(*base, current),
             HirExprKind::Index { base, index } | HirExprKind::SafeIndex { base, index } => {
-                self.visit_expr(base, current);
-                self.visit_expr(index, current);
+                self.visit_expr(*base, current);
+                self.visit_expr(*index, current);
             }
             HirExprKind::Call {
                 callee,
                 args,
                 trailing_block,
             } => {
-                self.visit_expr(callee, current);
-                for arg in args {
+                self.visit_expr(*callee, current);
+                for &arg in self.hir.pool.expr_list(*args) {
                     self.visit_expr(arg, current);
                 }
                 if let Some(block) = trailing_block {
                     self.visit_block(*block, current);
                 }
             }
-            HirExprKind::ResultCtor { value, .. } => self.visit_expr(value, current),
+            HirExprKind::ResultCtor { value, .. } => self.visit_expr(*value, current),
             HirExprKind::StructLiteral { fields, .. } => {
-                for field in fields {
-                    self.visit_expr(&field.value, current);
+                for field in self.hir.pool.field_inits_list(*fields) {
+                    self.visit_expr(field.value, current);
                 }
             }
             HirExprKind::Array { items } => {
-                for item in items {
+                for &item in self.hir.pool.expr_list(*items) {
                     self.visit_expr(item, current);
                 }
             }
             HirExprKind::Lambda { body, .. } => match body {
-                HirLambdaBody::Expr(expr) => self.visit_expr(expr, current),
+                HirLambdaBody::Expr(expr) => self.visit_expr(*expr, current),
                 HirLambdaBody::Block(block) => self.visit_block(*block, current),
             },
             HirExprKind::AsyncBlock { block } | HirExprKind::UnsafeBlock { block } => {
@@ -594,27 +596,27 @@ impl InstantiationAnalyzer<'_> {
                 self.visit_block(*else_block, current);
             }
             HirExprKind::Match { value, arms } => {
-                self.visit_expr(value, current);
-                for arm in arms {
+                self.visit_expr(*value, current);
+                for arm in self.hir.pool.match_arms_list(*arms) {
                     if let Some(guard) = &arm.guard {
-                        self.visit_expr(guard, current);
+                        self.visit_expr(*guard, current);
                     }
                     match &arm.body {
-                        HirMatchArmBody::Expr(expr) => self.visit_expr(expr, current),
+                        HirMatchArmBody::Expr(expr) => self.visit_expr(*expr, current),
                         HirMatchArmBody::Block(block) => self.visit_block(*block, current),
                     }
                 }
             }
             HirExprKind::Catch { expr, handler } => {
-                self.visit_expr(expr, current);
+                self.visit_expr(*expr, current);
                 match handler {
-                    HirCatchHandler::Expr(expr) => self.visit_expr(expr, current),
+                    HirCatchHandler::Expr(expr) => self.visit_expr(*expr, current),
                     HirCatchHandler::Block { block, .. } => self.visit_block(*block, current),
                 }
             }
             HirExprKind::NullCoalesce { left, right } | HirExprKind::Binary { left, right, .. } => {
-                self.visit_expr(left, current);
-                self.visit_expr(right, current);
+                self.visit_expr(*left, current);
+                self.visit_expr(*right, current);
             }
             HirExprKind::Path { .. }
             | HirExprKind::TypePath { .. }
@@ -628,7 +630,8 @@ impl InstantiationAnalyzer<'_> {
     }
 }
 
-fn generic_callee_symbol(callee: &HirExpr) -> Option<SymbolId> {
+fn generic_callee_symbol(callee_id: HirExprId, pool: &crate::hir::HirPool) -> Option<SymbolId> {
+    let callee = pool.expr(callee_id);
     match &callee.kind {
         HirExprKind::Path { symbol }
         | HirExprKind::TypePath {
