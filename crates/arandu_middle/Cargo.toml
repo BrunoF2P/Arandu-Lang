@@ -1,0 +1,20 @@
+[package]
+name = "arandu_middle"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+arandu_lexer = { path = "../arandu_lexer" }
+arandu_parser = { path = "../arandu_parser" }
+arandu_diagnostics = { path = "../arandu_diagnostics" }
+arandu_base = { path = "../arandu_base", features = ["vm"] }
+smallvec = "1.14"
+rustc-hash = "2.1"
+
+[lib]
+path = "src/lib.rs"
