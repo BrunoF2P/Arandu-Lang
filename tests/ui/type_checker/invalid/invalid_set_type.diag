@@ -1,4 +1,4 @@
 T002: incompatible type in set: expected 'int', found 'str'
-  --> tests/type_checker/invalid/invalid_set_type.aru:3:13
+  --> tests/ui/type_checker/invalid/invalid_set_type.aru:3:13
   label: 3:9-3:10 place has type 'int'
   label: 3:13-3:20 value has type 'str'

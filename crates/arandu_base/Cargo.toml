@@ -10,5 +10,5 @@ default = ["vm"]
 vm = ["dep:libc"]
 
 [dependencies]
-fxhash = "0.2.1"
+rustc-hash = "2.1"
 libc = { version = "0.2", optional = true }

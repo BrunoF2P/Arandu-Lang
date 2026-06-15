@@ -1,3 +1,4 @@
+#![allow(clippy::collapsible_if)]
 use std::{env, fs, path::{Path, PathBuf}, process};
 
 fn print_diagnostics_and_exit(diagnostics: &[arandu_semantics::Diagnostic], filepath: &str) -> ! {
@@ -71,7 +72,7 @@ fn parse_and_check(source: &str, filepath: &str) -> CheckedProgram {
 }
 
 fn usage_and_exit() -> ! {
-    eprintln!("usage: arandu_cli <lex|parse|check|hir|amir> <path> [--debug] [--opt] [--parallel]");
+    eprintln!("usage: arandu_cli <lex|parse|check|hir|amir|run> <path> [--debug] [--opt] [--parallel]");
 
     process::exit(2);
 }
@@ -112,7 +113,7 @@ fn main() {
 
     let command = &args[1];
 
-    if !matches!(command.as_str(), "lex" | "parse" | "check" | "hir" | "amir") {
+    if !matches!(command.as_str(), "lex" | "parse" | "check" | "hir" | "amir" | "run") {
         usage_and_exit();
     }
 
@@ -137,8 +138,8 @@ fn main() {
     let use_parallel = parallel || paths.len() > 1;
 
     if use_parallel {
-        if matches!(command.as_str(), "lex" | "parse") {
-            eprintln!("parallel mode is not supported for command '{}'", command);
+        if matches!(command.as_str(), "lex" | "parse" | "run") {
+            eprintln!("parallel/multi-file mode is not supported for command '{}'", command);
             process::exit(1);
         }
 
@@ -278,6 +279,42 @@ fn main() {
                     println!("{amir:#?}");
                 } else {
                     print!("{}", amir.pretty_print(&checked.type_check.symbols));
+                }
+            }
+
+            "run" => {
+                let checked = parse_and_check(&source, &filepath);
+
+                let hir = match arandu_semantics::lower_to_hir(&checked.type_check, &checked.program) {
+                    Ok(hir) => hir,
+                    Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
+                };
+
+                validate_hir_and_analyze(&hir, &checked.type_check, &filepath);
+
+                let mut amir = match arandu_semantics::lower_to_amir(&checked.type_check, &hir) {
+                    Ok(amir) => amir,
+                    Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
+                };
+                if opt {
+                    arandu_semantics::optimize_amir(&mut amir);
+                }
+
+                use arandu_semantics::{CodegenBackend, CompiledCode};
+                let backend = arandu_backend_cranelift::CraneliftBackend::new();
+                let output = match CodegenBackend::compile(backend, &amir, &checked.type_check.symbols, &()) {
+                    Ok(out) => out,
+                    Err(diag) => print_diagnostics_and_exit(&[diag], &filepath),
+                };
+
+                unsafe {
+                    if let Some(main_fn) = CompiledCode::get_fn::<unsafe fn() -> i32>(&output, "main") {
+                        let code = main_fn();
+                        process::exit(code);
+                    } else {
+                        eprintln!("Error: 'main' function not found in compiled program");
+                        process::exit(1);
+                    }
                 }
             }
 

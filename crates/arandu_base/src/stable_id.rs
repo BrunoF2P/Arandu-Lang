@@ -374,7 +374,7 @@ pub struct StableHandle(pub u64);
 #[cfg(debug_assertions)]
 pub(crate) mod collision_registry {
     use std::sync::Mutex;
-    use fxhash::FxHashMap;
+    use rustc_hash::FxHashMap;
     use super::StableHandle;
 
     pub(crate) static REGISTRY: Mutex<Option<FxHashMap<u64, String>>> = Mutex::new(None);
@@ -408,7 +408,10 @@ impl StableHandle {
     /// In debug mode, registers the path in a collision check table to detect potential conflicts.
     #[must_use]
     pub fn from_path(path: &str) -> Self {
-        let hash = fxhash::hash64(path.as_bytes());
+        use std::hash::Hasher;
+        let mut hasher = rustc_hash::FxHasher::default();
+        hasher.write(path.as_bytes());
+        let hash = hasher.finish();
         let handle = Self(hash);
         #[cfg(debug_assertions)]
         collision_registry::register_handle(handle, path);

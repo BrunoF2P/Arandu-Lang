@@ -1,3 +1,3 @@
 T017: type 'int' cannot be indexed
-  --> tests/type_checker/invalid_index.aru:3:13
+  --> tests/ui/type_checker/invalid_index.aru:3:13
   label: 3:13-3:14 this has type 'int', expected array or slice

@@ -4,8 +4,13 @@ members = [
     "crates/arandu_lexer",
     "crates/arandu_diagnostics",
     "crates/arandu_parser",
+    "crates/arandu_middle",
+    "crates/arandu_resolve",
+    "crates/arandu_typeck",
+    "crates/arandu_mir",
     "crates/arandu_semantics",
     "crates/arandu_cli",
+    "crates/arandu_backend_cranelift",
 ]
 resolver = "3"
 

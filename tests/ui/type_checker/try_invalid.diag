@@ -1,4 +1,4 @@
 T016: the '?' operator can only be applied to Result<T,E> or Option<T>, found 'int'
-  --> tests/type_checker/try_invalid.aru:6:13
+  --> tests/ui/type_checker/try_invalid.aru:6:13
   label: 6:13-6:20 this has type 'int'
   hint: use a `Result<T, E>` or `Option<T>` value here

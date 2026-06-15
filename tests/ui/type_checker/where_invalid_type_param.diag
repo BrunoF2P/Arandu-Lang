@@ -1,2 +1,2 @@
 T011: where clause 'U' does not name a generic parameter of this declaration
-  --> tests/type_checker/where_invalid_type_param.aru:1:35
+  --> tests/ui/type_checker/where_invalid_type_param.aru:1:35
