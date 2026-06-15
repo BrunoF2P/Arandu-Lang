@@ -1,4 +1,4 @@
-use super::{Expr, StmtId, TypeExpr};
+use super::{Expr, StmtId, TypeExprId};
 use arandu_lexer::Span;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -36,7 +36,7 @@ pub enum Stmt {
     },
     Expr {
         span: Span,
-        expr: Box<Expr>,
+        expr: Expr,
     },
     If {
         span: Span,
@@ -46,7 +46,7 @@ pub enum Stmt {
     },
     For {
         span: Span,
-        clause: Box<ForClause>,
+        clause: ForClause,
         body: Block,
     },
     While {
@@ -100,12 +100,12 @@ impl Stmt {
 pub enum Condition {
     Expr {
         span: Span,
-        expr: Box<Expr>,
+        expr: Expr,
     },
     Is {
         span: Span,
-        expr: Box<Expr>,
-        pattern: Box<super::Pattern>,
+        expr: Expr,
+        pattern: super::PatternId,
     },
 }
 
@@ -114,13 +114,13 @@ pub enum ForClause {
     In {
         span: Span,
         bindings: Vec<ForBinding>,
-        iterable: Box<Expr>,
+        iterable: Expr,
     },
     CStyle {
         span: Span,
-        init: Option<Box<SimpleStmt>>,
-        condition: Option<Box<Expr>>,
-        step: Option<Box<SimpleStmt>>,
+        init: Option<SimpleStmt>,
+        condition: Option<Expr>,
+        step: Option<SimpleStmt>,
     },
 }
 
@@ -146,13 +146,13 @@ pub enum SimpleStmt {
     },
     Expr {
         span: Span,
-        expr: Box<Expr>,
+        expr: Expr,
     },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum DeferBody {
-    Expr { span: Span, expr: Box<Expr> },
+    Expr { span: Span, expr: Expr },
     Block { span: Span, block: Block },
 }
 
@@ -161,7 +161,7 @@ pub struct BindingItem {
     pub span: Span,
     pub mutable: bool,
     pub name: String,
-    pub ty: Option<TypeExpr>,
+    pub ty: Option<TypeExprId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -174,7 +174,7 @@ pub struct Place {
 #[derive(Debug, Clone, PartialEq)]
 pub enum PlaceSuffix {
     Field { span: Span, name: String },
-    Index { span: Span, expr: Box<Expr> },
+    Index { span: Span, expr: Expr },
 }
 
 #[derive(Debug, Clone, PartialEq)]

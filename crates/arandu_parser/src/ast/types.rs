@@ -1,9 +1,10 @@
 use arandu_lexer::Span;
+use super::{TypeExprId, IndexRange};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResultType {
-    Single { span: Span, ty: TypeExpr },
-    Multi { span: Span, types: Vec<TypeExpr> },
+    Single { span: Span, ty: TypeExprId },
+    Multi { span: Span, types: IndexRange },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -21,33 +22,33 @@ pub enum TypeExpr {
     Named {
         span: Span,
         name: TypeName,
-        args: Vec<TypeExpr>,
+        args: IndexRange,
     },
     Nullable {
         span: Span,
-        inner: Box<TypeExpr>,
+        inner: TypeExprId,
     },
     Pointer {
         span: Span,
-        inner: Box<TypeExpr>,
+        inner: TypeExprId,
     },
     Slice {
         span: Span,
-        inner: Box<TypeExpr>,
+        inner: TypeExprId,
     },
     Array {
         span: Span,
         size: String,
-        elem: Box<TypeExpr>,
+        elem: TypeExprId,
     },
     Func {
         span: Span,
-        params: Vec<TypeExpr>,
-        result: Option<Box<ResultType>>,
+        params: IndexRange,
+        result: Option<ResultType>,
     },
     Group {
         span: Span,
-        inner: Box<TypeExpr>,
+        inner: TypeExprId,
     },
 }
 

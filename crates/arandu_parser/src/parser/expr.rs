@@ -27,12 +27,7 @@ impl<'a> Parser<'a> {
                 TokenKind::Lt => {
                     if self.looks_like_generic_call_or_block_suffix() {
                         let generic_start = self.pool.expr_span(left);
-                        let args = self.parse_generic_args()?;
-                        let mut type_ids = Vec::new();
-                        for arg in args {
-                            type_ids.push(self.pool.alloc_type_expr(arg));
-                        }
-                        let type_range = self.pool.alloc_type_expr_list(&type_ids);
+                        let type_range = self.parse_generic_args()?;
                         let span = span_between(generic_start, self.previous().span(self.file_id));
                         left = self.pool.alloc_expr(
                             ExprKind::Generic {
@@ -172,12 +167,11 @@ impl<'a> Parser<'a> {
                     let span_start = self.pool.expr_span(left);
                     self.consume();
                     let ty = self.parse_type()?;
-                    let type_id = self.pool.alloc_type_expr(ty.clone());
-                    let span = span_between(span_start, ty.span());
+                    let span = span_between(span_start, self.pool.type_expr_span(ty));
                     left = self.pool.alloc_expr(
                         ExprKind::Cast {
                             expr: left,
-                            ty: type_id,
+                            ty,
                         },
                         span,
                     );
@@ -444,7 +438,7 @@ impl<'a> Parser<'a> {
                 span: nested_span,
                 statements: vec![self.pool.alloc_stmt(Stmt::Expr {
                     span: nested_span,
-                    expr: Box::new(nested),
+                    expr: nested,
                 })],
             }
         } else {
@@ -567,7 +561,7 @@ impl<'a> Parser<'a> {
             }
             self.expect_name("RBRACE")?;
             let range = self.pool.alloc_field_init_list(&fields);
-            let type_id = self.pool.alloc_type_expr(ty);
+            let type_id = ty;
             let span = self.span_from_mark(start);
             return Ok(self.pool.alloc_expr(
                 ExprKind::StructLiteral {
@@ -577,15 +571,16 @@ impl<'a> Parser<'a> {
                 span,
             ));
         }
-        if let TypeExpr::Named { name, args, .. } = ty
-            && args.is_empty()
-            && self.eat_name("DOT")
-        {
+        let (is_named, name, is_empty) = match self.pool.type_expr(ty) {
+            TypeExpr::Named { name, args, .. } => (true, Some(name.clone()), args.is_empty()),
+            _ => (false, None, false),
+        };
+        if is_named && is_empty && self.eat_name("DOT") {
             let member = self.expect_name_like()?;
             let span = self.span_from_mark(start);
             return Ok(self.pool.alloc_expr(
                 ExprKind::TypePath {
-                    type_name: name,
+                    type_name: name.unwrap(),
                     member,
                 },
                 span,
@@ -689,33 +684,75 @@ impl<'a> Parser<'a> {
         }
         Ok(args)
     }
+}
+
+#[derive(Clone, Copy)]
+struct BinaryOpInfo {
+    op: BinaryOp,
+    bp: u8,
+}
+
+const BINARY_OP_TABLE: [BinaryOpInfo; 21] = [
+    BinaryOpInfo { op: BinaryOp::NullCoalesce, bp: 20 },   // 0
+    BinaryOpInfo { op: BinaryOp::Or, bp: 30 },             // 1
+    BinaryOpInfo { op: BinaryOp::And, bp: 40 },            // 2
+    BinaryOpInfo { op: BinaryOp::Equal, bp: 50 },          // 3
+    BinaryOpInfo { op: BinaryOp::NotEqual, bp: 50 },       // 4
+    BinaryOpInfo { op: BinaryOp::Lt, bp: 60 },             // 5
+    BinaryOpInfo { op: BinaryOp::Gt, bp: 60 },             // 6
+    BinaryOpInfo { op: BinaryOp::LtEqual, bp: 60 },        // 7
+    BinaryOpInfo { op: BinaryOp::GtEqual, bp: 60 },        // 8
+    BinaryOpInfo { op: BinaryOp::RangeExclusive, bp: 70 }, // 9
+    BinaryOpInfo { op: BinaryOp::RangeInclusive, bp: 70 }, // 10
+    BinaryOpInfo { op: BinaryOp::BitOr, bp: 80 },          // 11
+    BinaryOpInfo { op: BinaryOp::BitXor, bp: 90 },         // 12
+    BinaryOpInfo { op: BinaryOp::BitAnd, bp: 100 },        // 13
+    BinaryOpInfo { op: BinaryOp::ShiftLeft, bp: 110 },     // 14
+    BinaryOpInfo { op: BinaryOp::ShiftRight, bp: 110 },    // 15
+    BinaryOpInfo { op: BinaryOp::Add, bp: 120 },           // 16
+    BinaryOpInfo { op: BinaryOp::Sub, bp: 120 },           // 17
+    BinaryOpInfo { op: BinaryOp::Mul, bp: 130 },           // 18
+    BinaryOpInfo { op: BinaryOp::Div, bp: 130 },           // 19
+    BinaryOpInfo { op: BinaryOp::Mod, bp: 130 },           // 20
+];
+
+const fn token_kind_index(kind: &TokenKind) -> usize {
+    match kind {
+        TokenKind::NullCoalesce => 0,
+        TokenKind::LogicalOr => 1,
+        TokenKind::LogicalAnd => 2,
+        TokenKind::EqualEqual => 3,
+        TokenKind::BangEqual => 4,
+        TokenKind::Lt => 5,
+        TokenKind::Gt => 6,
+        TokenKind::LtEqual => 7,
+        TokenKind::GtEqual => 8,
+        TokenKind::RangeExclusive => 9,
+        TokenKind::RangeInclusive => 10,
+        TokenKind::Pipe => 11,
+        TokenKind::Caret => 12,
+        TokenKind::Amp => 13,
+        TokenKind::ShiftLeft => 14,
+        TokenKind::ShiftRight => 15,
+        TokenKind::Plus => 16,
+        TokenKind::Minus => 17,
+        TokenKind::Star => 18,
+        TokenKind::Slash => 19,
+        TokenKind::Percent => 20,
+        _ => 255,
+    }
+}
+
+impl<'a> Parser<'a> {
 
     pub(super) fn current_binary(&self) -> Option<(BinaryOp, u8, u8)> {
-        let (op, bp) = match self.current().kind {
-            TokenKind::NullCoalesce => (BinaryOp::NullCoalesce, 20),
-            TokenKind::LogicalOr => (BinaryOp::Or, 30),
-            TokenKind::LogicalAnd => (BinaryOp::And, 40),
-            TokenKind::EqualEqual => (BinaryOp::Equal, 50),
-            TokenKind::BangEqual => (BinaryOp::NotEqual, 50),
-            TokenKind::Lt => (BinaryOp::Lt, 60),
-            TokenKind::Gt => (BinaryOp::Gt, 60),
-            TokenKind::LtEqual => (BinaryOp::LtEqual, 60),
-            TokenKind::GtEqual => (BinaryOp::GtEqual, 60),
-            TokenKind::RangeExclusive => (BinaryOp::RangeExclusive, 70),
-            TokenKind::RangeInclusive => (BinaryOp::RangeInclusive, 70),
-            TokenKind::Pipe => (BinaryOp::BitOr, 80),
-            TokenKind::Caret => (BinaryOp::BitXor, 90),
-            TokenKind::Amp => (BinaryOp::BitAnd, 100),
-            TokenKind::ShiftLeft => (BinaryOp::ShiftLeft, 110),
-            TokenKind::ShiftRight => (BinaryOp::ShiftRight, 110),
-            TokenKind::Plus => (BinaryOp::Add, 120),
-            TokenKind::Minus => (BinaryOp::Sub, 120),
-            TokenKind::Star => (BinaryOp::Mul, 130),
-            TokenKind::Slash => (BinaryOp::Div, 130),
-            TokenKind::Percent => (BinaryOp::Mod, 130),
-            _ => return None,
-        };
-        Some((op, bp, bp + 1))
+        let idx = token_kind_index(&self.current().kind);
+        if idx < 21 {
+            let info = BINARY_OP_TABLE[idx];
+            Some((info.op, info.bp, info.bp + 1))
+        } else {
+            None
+        }
     }
 
     pub(super) fn looks_like_lambda_expr(&self) -> bool {

@@ -1,5 +1,6 @@
+use crate::ast::{PatternId, IndexRange, FieldPattern};
 use super::{
-    Expr, FieldPattern, MatchArm, MatchArmBody, ParseError, ParseErrorCode, Parser, Pattern,
+    Expr, MatchArm, MatchArmBody, ParseError, ParseErrorCode, Parser, Pattern,
     TokenKind, TypeName,
 };
 
@@ -27,7 +28,7 @@ impl<'a> Parser<'a> {
             }
             MatchArmBody::Expr {
                 span: self.span_from_mark(body_start),
-                expr: Box::new(expr),
+                expr,
             }
         };
         Ok(MatchArm {
@@ -38,13 +39,13 @@ impl<'a> Parser<'a> {
         })
     }
 
-    pub(super) fn parse_pattern(&mut self) -> Result<Pattern, ParseError> {
+    pub(super) fn parse_pattern(&mut self) -> Result<PatternId, ParseError> {
         let start = self.mark();
         if matches!(&self.current().kind, TokenKind::IdentValue) && self.current_text() == "_" {
             self.consume();
-            return Ok(Pattern::Wildcard {
+            return Ok(self.pool.alloc_pattern(Pattern::Wildcard {
                 span: self.span_from_mark(start),
-            });
+            }));
         }
         if self.at_kind_name("LPAREN") {
             self.consume();
@@ -58,10 +59,11 @@ impl<'a> Parser<'a> {
                 items.push(self.parse_pattern()?);
             }
             self.expect_name("RPAREN")?;
-            return Ok(Pattern::Tuple {
+            let range = self.pool.alloc_pattern_list(&items);
+            return Ok(self.pool.alloc_pattern(Pattern::Tuple {
                 span: self.span_from_mark(start),
-                items,
-            });
+                items: range,
+            }));
         }
         if matches!(self.current().kind, TokenKind::IdentType) {
             let type_start_span = self.current().span(self.file_id);
@@ -71,11 +73,11 @@ impl<'a> Parser<'a> {
                 let payload = if self.eat_name("LPAREN") {
                     let payload = self.parse_pattern_list_until("RPAREN")?;
                     self.expect_name("RPAREN")?;
-                    payload
+                    self.pool.alloc_pattern_list(&payload)
                 } else {
-                    Vec::new()
+                    IndexRange::empty()
                 };
-                return Ok(Pattern::Enum {
+                return Ok(self.pool.alloc_pattern(Pattern::Enum {
                     span: self.span_from_mark(start),
                     type_name: TypeName {
                         span: type_start_span,
@@ -83,7 +85,7 @@ impl<'a> Parser<'a> {
                     },
                     variant,
                     payload,
-                });
+                }));
             }
             if self.eat_name("LBRACE") {
                 let mut fields = Vec::new();
@@ -96,11 +98,12 @@ impl<'a> Parser<'a> {
                         } else {
                             None
                         };
-                        fields.push(FieldPattern {
+                        let field_pat_id = self.pool.alloc_field_pattern(FieldPattern {
                             span: self.span_from_mark(field_start),
                             name,
                             pattern,
                         });
+                        fields.push(field_pat_id);
                         if !self.eat_name("COMMA") {
                             break;
                         }
@@ -110,58 +113,60 @@ impl<'a> Parser<'a> {
                     }
                 }
                 self.expect_name("RBRACE")?;
-                return Ok(Pattern::Struct {
+                let range = self.pool.alloc_field_pattern_list(&fields);
+                return Ok(self.pool.alloc_pattern(Pattern::Struct {
                     span: self.span_from_mark(start),
                     type_name: TypeName {
                         span: type_start_span,
                         path: vec![name],
                     },
-                    fields,
-                });
+                    fields: range,
+                }));
             }
             if self.eat_name("LPAREN") {
                 let payload = self.parse_pattern_list_until("RPAREN")?;
                 self.expect_name("RPAREN")?;
-                return Ok(Pattern::TypeTuple {
+                let range = self.pool.alloc_pattern_list(&payload);
+                return Ok(self.pool.alloc_pattern(Pattern::TypeTuple {
                     span: self.span_from_mark(start),
                     name,
-                    payload,
-                });
+                    payload: range,
+                }));
             }
-            return Ok(Pattern::TypeTuple {
+            return Ok(self.pool.alloc_pattern(Pattern::TypeTuple {
                 span: self.span_from_mark(start),
                 name,
-                payload: Vec::new(),
-            });
+                payload: IndexRange::empty(),
+            }));
         }
         if matches!(self.current().kind, TokenKind::IdentValue) {
             let name = self.expect_ident_value()?;
-            return Ok(Pattern::Bind {
+            return Ok(self.pool.alloc_pattern(Pattern::Bind {
                 span: self.span_from_mark(start),
                 name,
-            });
+            }));
         }
         let literal = self.parse_literal_pattern_expr()?;
         if self.eat_name("RANGE_EXCLUSIVE") || self.eat_name("RANGE_INCLUSIVE") {
             let inclusive = self.previous().kind.name() == "RANGE_INCLUSIVE";
             let end = self.parse_literal_pattern_expr()?;
-            return Ok(Pattern::Range {
+            return Ok(self.pool.alloc_pattern(Pattern::Range {
                 span: self.span_from_mark(start),
-                start: Box::new(literal),
+                start: literal,
                 inclusive,
-                end: Box::new(end),
-            });
+                end,
+            }));
         }
-        Ok(Pattern::Literal {
+        Ok(self.pool.alloc_pattern(Pattern::Literal {
             span: self.span_from_mark(start),
-            expr: Box::new(literal),
-        })
+            expr: literal,
+        }))
     }
 
     pub(super) fn parse_pattern_list_until(
         &mut self,
         end: &str,
-    ) -> Result<Vec<Pattern>, ParseError> {
+    ) -> Result<Vec<PatternId>, ParseError> {
         let mut patterns = Vec::new();
         if self.at_kind_name(end) {
             return Ok(patterns);

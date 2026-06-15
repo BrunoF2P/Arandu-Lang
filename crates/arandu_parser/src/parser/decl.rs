@@ -114,21 +114,21 @@ impl<'a> Parser<'a> {
             TokenKind::KwType => Ok(TopLevelDecl::TypeAlias(
                 self.parse_type_alias(attrs, visibility)?,
             )),
-            TokenKind::KwAsync | TokenKind::KwFunc => Ok(TopLevelDecl::Func(Box::new(
+            TokenKind::KwAsync | TokenKind::KwFunc => Ok(TopLevelDecl::Func(
                 self.parse_func(attrs, visibility)?,
-            ))),
-            TokenKind::KwStruct => Ok(TopLevelDecl::Struct(Box::new(
+            )),
+            TokenKind::KwStruct => Ok(TopLevelDecl::Struct(
                 self.parse_struct_decl(attrs, visibility)?,
-            ))),
-            TokenKind::KwEnum => Ok(TopLevelDecl::Enum(Box::new(
+            )),
+            TokenKind::KwEnum => Ok(TopLevelDecl::Enum(
                 self.parse_enum_decl(attrs, visibility)?,
-            ))),
-            TokenKind::KwInterface => Ok(TopLevelDecl::Interface(Box::new(
+            )),
+            TokenKind::KwInterface => Ok(TopLevelDecl::Interface(
                 self.parse_interface_decl(attrs, visibility)?,
-            ))),
-            TokenKind::KwExtern => Ok(TopLevelDecl::Extern(Box::new(
+            )),
+            TokenKind::KwExtern => Ok(TopLevelDecl::Extern(
                 self.parse_extern_decl(attrs)?,
-            ))),
+            )),
             _ => Err(ParseError::new(
                 ParseErrorCode::ExpectedTopLevelDecl,
                 "expected top-level declaration",
@@ -350,9 +350,10 @@ impl<'a> Parser<'a> {
             let payload_start = self.pos.saturating_sub(1);
             let types = self.parse_comma_separated_list("RPAREN", 0, super::Parser::parse_type)?;
             self.expect_name("RPAREN")?;
+            let range = self.pool.alloc_type_expr_list(&types);
             Some(EnumPayload::Tuple {
                 span: self.span_from_mark(payload_start),
-                types,
+                types: range,
             })
         } else if self.eat_name("LBRACE") {
             let payload_start = self.pos.saturating_sub(1);

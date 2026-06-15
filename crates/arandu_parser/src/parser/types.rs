@@ -2,19 +2,23 @@ use super::{
     GenericParam, Ownership, Param, ParseError, ParseErrorCode, Parser, ResultType, TokenKind,
     TypeExpr, TypeName, WhereItem, is_type_token, primitive_type_name,
 };
+use crate::{TypeExprId, IndexRange};
 
-fn type_expr_is_err_slot(ty: &TypeExpr) -> bool {
-    match ty {
-        TypeExpr::Nullable { inner, .. } => type_expr_is_err_slot(inner),
+fn type_expr_is_err_slot(ty_id: TypeExprId, pool: &crate::ast::ast_pool::AstPool) -> bool {
+    match pool.type_expr(ty_id) {
+        TypeExpr::Nullable { inner, .. } => type_expr_is_err_slot(*inner, pool),
         TypeExpr::Primitive { name, .. } => name == "Err",
         _ => false,
     }
 }
 
-fn result_type_must_use_result_generic(result: &ResultType) -> bool {
+fn result_type_must_use_result_generic(result: &ResultType, pool: &crate::ast::ast_pool::AstPool) -> bool {
     match result {
-        ResultType::Single { ty, .. } => type_expr_is_err_slot(ty),
-        ResultType::Multi { types, .. } => types.len() == 2 && type_expr_is_err_slot(&types[1]),
+        ResultType::Single { ty, .. } => type_expr_is_err_slot(*ty, pool),
+        ResultType::Multi { types, .. } => {
+            let list = pool.type_expr_list(*types);
+            list.len() == 2 && type_expr_is_err_slot(list[1], pool)
+        }
     }
 }
 
@@ -41,11 +45,12 @@ impl<'a> Parser<'a> {
         Ok(params)
     }
 
-    pub(super) fn parse_generic_args(&mut self) -> Result<Vec<TypeExpr>, ParseError> {
+    pub(super) fn parse_generic_args(&mut self) -> Result<IndexRange, ParseError> {
         self.expect_name("LT")?;
         let args = self.parse_comma_separated_list("GT", 1, super::Parser::parse_type)?;
         self.expect_name("GT")?;
-        Ok(args)
+        let range = self.pool.alloc_type_expr_list(&args);
+        Ok(range)
     }
 
     pub(super) fn parse_where_clause(
@@ -122,11 +127,12 @@ impl<'a> Parser<'a> {
                         parser.source,
                     )
                 })?;
-                TypeExpr::Named {
+                let empty_args = parser.pool.alloc_type_expr_list(&[]);
+                parser.pool.alloc_type_expr(TypeExpr::Named {
                     span: receiver.span,
                     name: receiver.clone(),
-                    args: Vec::new(),
-                }
+                    args: empty_args,
+                })
             } else {
                 return Err(ParseError::new(
                     ParseErrorCode::ExpectedType,
@@ -155,9 +161,10 @@ impl<'a> Parser<'a> {
         let result = if self.eat_name("LPAREN") {
             let types = self.parse_comma_separated_list("RPAREN", 2, super::Parser::parse_type)?;
             self.expect_name("RPAREN")?;
+            let range = self.pool.alloc_type_expr_list(&types);
             ResultType::Multi {
                 span: self.span_from_mark(start),
-                types,
+                types: range,
             }
         } else {
             let ty = self.parse_type()?;
@@ -166,7 +173,7 @@ impl<'a> Parser<'a> {
                 ty,
             }
         };
-        if result_type_must_use_result_generic(&result) {
+        if result_type_must_use_result_generic(&result, &self.pool) {
             let token = *self.current();
             return Err(ParseError::new(
                 ParseErrorCode::InvalidResultReturn,
@@ -179,36 +186,39 @@ impl<'a> Parser<'a> {
         Ok(result)
     }
 
-    pub(super) fn parse_type(&mut self) -> Result<TypeExpr, ParseError> {
+    pub(super) fn parse_type(&mut self) -> Result<TypeExprId, ParseError> {
         let start = self.mark();
         let mut ty = self.parse_type_primary()?;
         if self.eat_name("QUESTION") {
-            ty = TypeExpr::Nullable {
-                span: self.span_from_mark(start),
-                inner: Box::new(ty),
-            };
+            let span = self.span_from_mark(start);
+            ty = self.pool.alloc_type_expr(TypeExpr::Nullable {
+                span,
+                inner: ty,
+            });
         }
         Ok(ty)
     }
 
-    pub(super) fn parse_type_primary(&mut self) -> Result<TypeExpr, ParseError> {
+    pub(super) fn parse_type_primary(&mut self) -> Result<TypeExprId, ParseError> {
         let start = self.mark();
         if self.eat_name("KW_PTR") {
             self.expect_name("LBRACKET")?;
             let inner = self.parse_type()?;
             self.expect_name("RBRACKET")?;
-            return Ok(TypeExpr::Pointer {
-                span: self.span_from_mark(start),
-                inner: Box::new(inner),
-            });
+            let span = self.span_from_mark(start);
+            return Ok(self.pool.alloc_type_expr(TypeExpr::Pointer {
+                span,
+                inner,
+            }));
         }
         if self.eat_name("LBRACKET") {
             if self.eat_name("RBRACKET") {
                 let inner = self.parse_type_primary()?;
-                return Ok(TypeExpr::Slice {
-                    span: self.span_from_mark(start),
-                    inner: Box::new(inner),
-                });
+                let span = self.span_from_mark(start);
+                return Ok(self.pool.alloc_type_expr(TypeExpr::Slice {
+                    span,
+                    inner,
+                }));
             }
             let size = match &self.current().kind {
                 TokenKind::IntDec => {
@@ -228,11 +238,12 @@ impl<'a> Parser<'a> {
             };
             self.expect_name("RBRACKET")?;
             let elem = self.parse_type_primary()?;
-            return Ok(TypeExpr::Array {
-                span: self.span_from_mark(start),
+            let span = self.span_from_mark(start);
+            return Ok(self.pool.alloc_type_expr(TypeExpr::Array {
+                span,
                 size,
-                elem: Box::new(elem),
-            });
+                elem,
+            }));
         }
         if self.eat_name("KW_FUNC") {
             self.expect_name("LPAREN")?;
@@ -250,30 +261,34 @@ impl<'a> Parser<'a> {
             }
             self.expect_name("RPAREN")?;
             let result = if self.can_start_type() || self.at_kind_name("LPAREN") {
-                Some(Box::new(self.parse_result_type()?))
+                Some(self.parse_result_type()?)
             } else {
                 None
             };
-            return Ok(TypeExpr::Func {
-                span: self.span_from_mark(start),
-                params,
+            let span = self.span_from_mark(start);
+            let params_range = self.pool.alloc_type_expr_list(&params);
+            return Ok(self.pool.alloc_type_expr(TypeExpr::Func {
+                span,
+                params: params_range,
                 result,
-            });
+            }));
         }
         if self.eat_name("LPAREN") {
             let ty = self.parse_type()?;
             self.expect_name("RPAREN")?;
-            return Ok(TypeExpr::Group {
-                span: self.span_from_mark(start),
-                inner: Box::new(ty),
-            });
+            let span = self.span_from_mark(start);
+            return Ok(self.pool.alloc_type_expr(TypeExpr::Group {
+                span,
+                inner: ty,
+            }));
         }
         if let Some(name) = primitive_type_name(&self.current().kind) {
             self.consume();
-            return Ok(TypeExpr::Primitive {
-                span: self.span_from_mark(start),
+            let span = self.span_from_mark(start);
+            return Ok(self.pool.alloc_type_expr(TypeExpr::Primitive {
+                span,
                 name: name.to_string(),
-            });
+            }));
         }
         if matches!(
             self.current().kind,
@@ -283,13 +298,14 @@ impl<'a> Parser<'a> {
             let args = if self.at_kind_name("LT") {
                 self.parse_generic_args()?
             } else {
-                Vec::new()
+                self.pool.alloc_type_expr_list(&[])
             };
-            return Ok(TypeExpr::Named {
-                span: self.span_from_mark(start),
+            let span = self.span_from_mark(start);
+            return Ok(self.pool.alloc_type_expr(TypeExpr::Named {
+                span,
                 name,
                 args,
-            });
+            }));
         }
         Err(ParseError::new(
             ParseErrorCode::ExpectedType,

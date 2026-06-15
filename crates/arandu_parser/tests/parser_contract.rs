@@ -67,7 +67,7 @@ fn ast_program_span_covers_source_before_eof() {
 fn ast_nested_expression_spans_are_contained_by_parent() {
     let program = parse("module tests.spans\nfunc main() {\n    value = add(1 + 2, 3)\n}\n")
         .expect("parser should succeed");
-    let func = match &program.decls[0] {
+    let func = match program.pool.decl(program.decls[0]) {
         arandu_parser::TopLevelDecl::Func(func) => func,
         other => panic!("expected func, got {other:?}"),
     };
@@ -97,7 +97,7 @@ fn ast_call_with_block_span_covers_trailing_block() {
     let program =
         parse(source)
             .expect("parser should succeed");
-    let func = match &program.decls[0] {
+    let func = match program.pool.decl(program.decls[0]) {
         arandu_parser::TopLevelDecl::Func(func) => func,
         other => panic!("expected func, got {other:?}"),
     };
@@ -105,7 +105,7 @@ fn ast_call_with_block_span_covers_trailing_block() {
     let arandu_parser::Stmt::Expr { expr, .. } = stmt else {
         panic!("expected expr stmt, got {stmt:?}");
     };
-    let expr_id = **expr;
+    let expr_id = *expr;
     let call_kind = program.pool.expr(expr_id);
     let ExprKind::Call { trailing_block, .. } = call_kind else {
         panic!("expected call, got {call_kind:?}");
@@ -125,7 +125,7 @@ fn ast_multiline_string_span_covers_delimiters() {
     let source = "module tests.spans\nfunc main() {\n    text = \"\"\"\nhello\n\"\"\"\n}\n";
     let program = parse(source)
         .expect("parser should succeed");
-    let func = match &program.decls[0] {
+    let func = match program.pool.decl(program.decls[0]) {
         arandu_parser::TopLevelDecl::Func(func) => func,
         other => panic!("expected func, got {other:?}"),
     };

@@ -33,7 +33,7 @@ pub fn dump_program(program: &Program, line_index: &arandu_base::line_index::Lin
         out.push(format!("  {}", dump_import(&program.pool, import)));
     }
     for decl in &program.decls {
-        dump_top_level_decl(&program.pool, decl, &mut out);
+        dump_top_level_decl(&program.pool, program.pool.decl(*decl), &mut out);
     }
 
     CURRENT_LINE_INDEX.with(|cell| {
@@ -75,8 +75,7 @@ fn dump_const(pool: &AstPool, decl: &ConstDecl, out: &mut Vec<String>) {
     dump_attrs(pool, &decl.attrs, out, 2);
     let ty = decl
         .ty
-        .as_ref()
-        .map(|ty| format!(" {}", dump_type(ty)))
+        .map(|ty| format!(" {}", dump_type(pool.type_expr(ty), pool)))
         .unwrap_or_default();
     out.push(format!(
         "  Const {} {}{}{ty} = {}",
@@ -95,7 +94,7 @@ fn dump_type_alias(pool: &AstPool, decl: &TypeAliasDecl, out: &mut Vec<String>) 
         dump_visibility(decl.visibility),
         decl.name,
         dump_generic_params(&decl.generic_params),
-        dump_type(&decl.ty)
+        dump_type(pool.type_expr(decl.ty), pool)
     ));
 }
 
@@ -104,13 +103,13 @@ fn dump_func(pool: &AstPool, func: &FuncDecl, out: &mut Vec<String>) {
     let params = func
         .params
         .iter()
-        .map(dump_param)
+        .map(|param| dump_param(pool, param))
         .collect::<Vec<_>>()
         .join(", ");
     let result = func
         .result
         .as_ref()
-        .map_or_else(|| "void".to_string(), dump_result_type);
+        .map_or_else(|| "void".to_string(), |r| dump_result_type(r, pool));
     let mut modifiers = Vec::new();
     if func.visibility == Visibility::Public {
         modifiers.push("public");
@@ -152,7 +151,7 @@ fn dump_struct(pool: &AstPool, decl: &StructDecl, out: &mut Vec<String>) {
             dump_span(field.span),
             dump_visibility(field.visibility),
             field.name,
-            dump_type(&field.ty)
+            dump_type(pool.type_expr(field.ty), pool)
         ));
     }
 }
@@ -172,13 +171,14 @@ fn dump_enum(pool: &AstPool, decl: &EnumDecl, out: &mut Vec<String>) {
         let payload = match &variant.payload {
             None => String::new(),
             Some(EnumPayload::Tuple { types, .. }) => {
-                let types = types.iter().map(dump_type).collect::<Vec<_>>().join(", ");
-                format!("({types})")
+                let list = pool.type_expr_list(*types);
+                let types_str = list.iter().map(|&ty| dump_type(pool.type_expr(ty), pool)).collect::<Vec<_>>().join(", ");
+                format!("({types_str})")
             }
             Some(EnumPayload::Struct { fields, .. }) => {
                 let fields = fields
                     .iter()
-                    .map(|field| format!("{} {}", field.name, dump_type(&field.ty)))
+                    .map(|field| format!("{} {}", field.name, dump_type(pool.type_expr(field.ty), pool)))
                     .collect::<Vec<_>>()
                     .join(", ");
                 format!(" {{ {fields} }}")
@@ -225,13 +225,13 @@ fn dump_signature(pool: &AstPool, signature: &FuncSignature, out: &mut Vec<Strin
     let params = signature
         .params
         .iter()
-        .map(dump_param)
+        .map(|param| dump_param(pool, param))
         .collect::<Vec<_>>()
         .join(", ");
     let result = signature
         .result
         .as_ref()
-        .map_or_else(|| "void".to_string(), dump_result_type);
+        .map_or_else(|| "void".to_string(), |r| dump_result_type(r, pool));
     out.push(format!(
         "{pad}Signature {} {}{}({}) -> {}{}",
         dump_span(signature.span),
@@ -281,7 +281,7 @@ fn dump_stmt(pool: &AstPool, stmt: crate::ast_pool::StmtId, out: &mut Vec<String
         } => {
             let bindings = bindings
                 .iter()
-                .map(dump_binding)
+                .map(|b| dump_binding(pool, b))
                 .collect::<Vec<_>>()
                 .join(", ");
             out.push(format!(
@@ -333,7 +333,7 @@ fn dump_stmt(pool: &AstPool, stmt: crate::ast_pool::StmtId, out: &mut Vec<String
             out.push(format!(
                 "{pad}Expr {} {}",
                 dump_span(*span),
-                dump_expr(pool, **expr)
+                dump_expr(pool, *expr)
             ));
         }
         Stmt::If {
@@ -395,7 +395,7 @@ fn dump_stmt(pool: &AstPool, stmt: crate::ast_pool::StmtId, out: &mut Vec<String
 fn dump_condition(pool: &AstPool, condition: &Condition) -> String {
     match condition {
         Condition::Expr { span, expr } => {
-            format!("Condition {} {}", dump_span(*span), dump_expr(pool, **expr))
+            format!("Condition {} {}", dump_span(*span), dump_expr(pool, *expr))
         }
         Condition::Is {
             span,
@@ -405,8 +405,8 @@ fn dump_condition(pool: &AstPool, condition: &Condition) -> String {
             format!(
                 "Is {} ({}, {})",
                 dump_span(*span),
-                dump_expr(pool, **expr),
-                dump_pattern(pool, pattern)
+                dump_expr(pool, *expr),
+                dump_pattern(pool, pool.pattern(*pattern))
             )
         }
     }
@@ -433,7 +433,7 @@ fn dump_for_clause(pool: &AstPool, clause: &ForClause) -> String {
             format!(
                 " In {} {bindings} in {}",
                 dump_span(*span),
-                dump_expr(pool, **iterable)
+                dump_expr(pool, *iterable)
             )
         }
         ForClause::CStyle {
@@ -448,7 +448,7 @@ fn dump_for_clause(pool: &AstPool, clause: &ForClause) -> String {
                 .map_or_else(|| "none".to_string(), |stmt| dump_simple_stmt(pool, stmt)),
             condition
                 .as_ref()
-                .map_or_else(|| "none".to_string(), |expr| dump_expr(pool, **expr)),
+                .map_or_else(|| "none".to_string(), |expr| dump_expr(pool, *expr)),
             step.as_ref()
                 .map_or_else(|| "none".to_string(), |stmt| dump_simple_stmt(pool, stmt))
         ),
@@ -464,7 +464,7 @@ fn dump_simple_stmt(pool: &AstPool, stmt: &SimpleStmt) -> String {
         } => {
             let bindings = bindings
                 .iter()
-                .map(dump_binding)
+                .map(|b| dump_binding(pool, b))
                 .collect::<Vec<_>>()
                 .join(", ");
             format!(
@@ -492,7 +492,7 @@ fn dump_simple_stmt(pool: &AstPool, stmt: &SimpleStmt) -> String {
             )
         }
         SimpleStmt::Expr { span, expr } => {
-            format!("Expr {} {}", dump_span(*span), dump_expr(pool, **expr))
+            format!("Expr {} {}", dump_span(*span), dump_expr(pool, *expr))
         }
     }
 }
@@ -511,7 +511,7 @@ fn dump_defer_body(
             out.push(format!(
                 "{pad}{label} {} Expr({})",
                 dump_span(span),
-                dump_expr(pool, **expr)
+                dump_expr(pool, *expr)
             ));
         }
         DeferBody::Block { block, .. } => {
@@ -525,7 +525,7 @@ fn dump_defer_body(
     }
 }
 
-fn dump_binding(binding: &BindingItem) -> String {
+fn dump_binding(pool: &AstPool, binding: &BindingItem) -> String {
     let mut out = format!("{} ", dump_span(binding.span));
     if binding.mutable {
         out.push_str("mut ");
@@ -533,7 +533,7 @@ fn dump_binding(binding: &BindingItem) -> String {
     out.push_str(&binding.name);
     if let Some(ty) = &binding.ty {
         out.push(' ');
-        out.push_str(&dump_type(ty));
+        out.push_str(&dump_type(pool.type_expr(*ty), pool));
     }
     out
 }
@@ -548,7 +548,7 @@ fn dump_place(pool: &AstPool, place: &Place) -> String {
             }
             PlaceSuffix::Index { expr, .. } => {
                 out.push('[');
-                out.push_str(&dump_expr(pool, **expr));
+                out.push_str(&dump_expr(pool, *expr));
                 out.push(']');
             }
         }
@@ -579,7 +579,7 @@ fn dump_import(_pool: &AstPool, import: &ImportDecl) -> String {
     }
 }
 
-fn dump_param(param: &Param) -> String {
+fn dump_param(pool: &AstPool, param: &Param) -> String {
     let mut out = format!("{} ", dump_span(param.span));
     if let Some(ownership) = param.ownership {
         out.push_str(match ownership {
@@ -590,7 +590,7 @@ fn dump_param(param: &Param) -> String {
     }
     out.push_str(&param.name);
     out.push(' ');
-    out.push_str(&dump_type(&param.ty));
+    out.push_str(&dump_type(pool.type_expr(param.ty), pool));
     if param.is_variadic {
         out.push_str("...");
     }
@@ -606,58 +606,61 @@ fn dump_func_name(name: &FuncName) -> String {
     }
 }
 
-fn dump_result_type(result: &ResultType) -> String {
+fn dump_result_type(result: &ResultType, pool: &AstPool) -> String {
     match result {
-        ResultType::Single { ty, .. } => dump_type(ty),
+        ResultType::Single { ty, .. } => dump_type(pool.type_expr(*ty), pool),
         ResultType::Multi { types, .. } => {
-            let inner = types.iter().map(dump_type).collect::<Vec<_>>().join(", ");
+            let list = pool.type_expr_list(*types);
+            let inner = list.iter().map(|&t| dump_type(pool.type_expr(t), pool)).collect::<Vec<_>>().join(", ");
             format!("({inner})")
         }
     }
 }
 
-fn dump_type(ty: &TypeExpr) -> String {
+fn dump_type(ty: &TypeExpr, pool: &AstPool) -> String {
     match ty {
         TypeExpr::Primitive { span, name } => format!("Type {} {name}", dump_span(*span)),
         TypeExpr::Named { span, name, args } => {
             let mut out = format!("Type {} {}", dump_span(*span), dump_type_name(name));
-            if !args.is_empty() {
-                let args = args.iter().map(dump_type).collect::<Vec<_>>().join(", ");
-                let _ = write!(out, "<{args}>");
+            let arg_list = pool.type_expr_list(*args);
+            if !arg_list.is_empty() {
+                let args_str = arg_list.iter().map(|&arg| dump_type(pool.type_expr(arg), pool)).collect::<Vec<_>>().join(", ");
+                let _ = write!(out, "<{args_str}>");
             }
             out
         }
         TypeExpr::Nullable { span, inner } => {
-            format!("Nullable {} {}", dump_span(*span), dump_type(inner))
+            format!("Nullable {} {}", dump_span(*span), dump_type(pool.type_expr(*inner), pool))
         }
         TypeExpr::Pointer { span, inner } => {
-            format!("Ptr {} [{}]", dump_span(*span), dump_type(inner))
+            format!("Ptr {} [{}]", dump_span(*span), dump_type(pool.type_expr(*inner), pool))
         }
         TypeExpr::Slice { span, inner } => {
-            format!("Slice {} {}", dump_span(*span), dump_type(inner))
+            format!("Slice {} {}", dump_span(*span), dump_type(pool.type_expr(*inner), pool))
         }
         TypeExpr::Array { span, size, elem } => {
-            format!("ArrayType {} [{size}]{}", dump_span(*span), dump_type(elem))
+            format!("ArrayType {} [{size}]{}", dump_span(*span), dump_type(pool.type_expr(*elem), pool))
         }
         TypeExpr::Func {
             span,
             params,
             result,
         } => {
-            let params = params.iter().map(dump_type).collect::<Vec<_>>().join(", ");
+            let param_list = pool.type_expr_list(*params);
+            let params_str = param_list.iter().map(|&p| dump_type(pool.type_expr(p), pool)).collect::<Vec<_>>().join(", ");
             match result {
                 Some(result) => {
                     format!(
-                        "FuncType {} ({params}) {}",
+                        "FuncType {} ({params_str}) {}",
                         dump_span(*span),
-                        dump_result_type(result)
+                        dump_result_type(result, pool)
                     )
                 }
-                None => format!("FuncType {} ({params})", dump_span(*span)),
+                None => format!("FuncType {} ({params_str})", dump_span(*span)),
             }
         }
         TypeExpr::Group { span, inner } => {
-            format!("GroupType {} ({})", dump_span(*span), dump_type(inner))
+            format!("GroupType {} ({})", dump_span(*span), dump_type(pool.type_expr(*inner), pool))
         }
     }
 }
@@ -682,7 +685,7 @@ fn dump_expr(pool: &AstPool, expr: ExprId) -> String {
             let type_expr_ids = pool.type_expr_list(*args);
             let args_str = type_expr_ids
                 .iter()
-                .map(|id| dump_type(pool.type_expr(*id)))
+                .map(|id| dump_type(pool.type_expr(*id), pool))
                 .collect::<Vec<_>>()
                 .join(", ");
             format!(
@@ -749,7 +752,7 @@ fn dump_expr(pool: &AstPool, expr: ExprId) -> String {
             format!(
                 "StructLiteral {}({}, [{fields_str}])",
                 dump_span(span),
-                dump_type(pool.type_expr(*ty))
+                dump_type(pool.type_expr(*ty), pool)
             )
         }
         ExprKind::Array { items } => {
@@ -769,7 +772,7 @@ fn dump_expr(pool: &AstPool, expr: ExprId) -> String {
                     let param = pool.lambda_param(*id);
                     match &param.ty {
                         Some(ty) => {
-                            format!("{} {} {}", dump_span(param.span), param.name, dump_type(ty))
+                            format!("{} {} {}", dump_span(param.span), param.name, dump_type(pool.type_expr(*ty), pool))
                         }
                         None => format!("{} {}", dump_span(param.span), param.name),
                     }
@@ -838,7 +841,7 @@ fn dump_expr(pool: &AstPool, expr: ExprId) -> String {
                 "Cast {}({}, {})",
                 dump_span(span),
                 dump_expr(pool, *expr),
-                dump_type(pool.type_expr(*ty))
+                dump_type(pool.type_expr(*ty), pool)
             )
         }
         ExprKind::Group { expr } => {
@@ -949,7 +952,7 @@ fn dump_match_arm(pool: &AstPool, arm: &MatchArm) -> String {
     format!(
         "Arm {} {}{} => {}",
         dump_span(arm.span),
-        dump_pattern(pool, &arm.pattern),
+        dump_pattern(pool, pool.pattern(arm.pattern)),
         arm.guard
             .as_ref()
             .map(|guard| format!(" if {}", dump_expr(pool, *guard)))
@@ -960,7 +963,7 @@ fn dump_match_arm(pool: &AstPool, arm: &MatchArm) -> String {
 
 fn dump_match_arm_body(pool: &AstPool, body: &MatchArmBody) -> String {
     match body {
-        MatchArmBody::Expr { expr, .. } => dump_expr(pool, **expr),
+        MatchArmBody::Expr { expr, .. } => dump_expr(pool, *expr),
         MatchArmBody::Block { block, .. } => dump_block_inline(pool, block),
     }
 }
@@ -970,7 +973,7 @@ fn dump_pattern(pool: &AstPool, pattern: &Pattern) -> String {
         Pattern::Wildcard { span } => format!("Wildcard {}", dump_span(*span)),
         Pattern::Bind { span, name } => format!("Bind {}({name})", dump_span(*span)),
         Pattern::Literal { span, expr } => {
-            format!("Literal {}({})", dump_span(*span), dump_expr(pool, **expr))
+            format!("Literal {}({})", dump_span(*span), dump_expr(pool, *expr))
         }
         Pattern::Enum {
             span,
@@ -978,9 +981,9 @@ fn dump_pattern(pool: &AstPool, pattern: &Pattern) -> String {
             variant,
             payload,
         } => {
-            let payload_str = payload
+            let payload_str = pool.pattern_list(*payload)
                 .iter()
-                .map(|p| dump_pattern(pool, p))
+                .map(|&p| dump_pattern(pool, pool.pattern(p)))
                 .collect::<Vec<_>>()
                 .join(", ");
             format!(
@@ -995,9 +998,9 @@ fn dump_pattern(pool: &AstPool, pattern: &Pattern) -> String {
             name,
             payload,
         } => {
-            let payload_str = payload
+            let payload_str = pool.pattern_list(*payload)
                 .iter()
-                .map(|p| dump_pattern(pool, p))
+                .map(|&p| dump_pattern(pool, pool.pattern(p)))
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("TypePattern {}({name}, [{payload_str}])", dump_span(*span))
@@ -1007,18 +1010,21 @@ fn dump_pattern(pool: &AstPool, pattern: &Pattern) -> String {
             type_name,
             fields,
         } => {
-            let fields_str = fields
+            let fields_str = pool.field_pattern_list(*fields)
                 .iter()
-                .map(|field| match &field.pattern {
-                    Some(pat) => {
-                        format!(
-                            "{} {}: {}",
-                            dump_span(field.span),
-                            field.name,
-                            dump_pattern(pool, pat)
-                        )
+                .map(|&field_id| {
+                    let field = pool.field_pattern(field_id);
+                    match &field.pattern {
+                        Some(pat_id) => {
+                            format!(
+                                "{} {}: {}",
+                                dump_span(field.span),
+                                field.name,
+                                dump_pattern(pool, pool.pattern(*pat_id))
+                            )
+                        }
+                        None => format!("{} {}", dump_span(field.span), field.name),
                     }
-                    None => format!("{} {}", dump_span(field.span), field.name),
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
@@ -1029,9 +1035,9 @@ fn dump_pattern(pool: &AstPool, pattern: &Pattern) -> String {
             )
         }
         Pattern::Tuple { span, items } => {
-            let items_str = items
+            let items_str = pool.pattern_list(*items)
                 .iter()
-                .map(|item| dump_pattern(pool, item))
+                .map(|&item| dump_pattern(pool, pool.pattern(item)))
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("TuplePattern {}([{items_str}])", dump_span(*span))
@@ -1046,8 +1052,8 @@ fn dump_pattern(pool: &AstPool, pattern: &Pattern) -> String {
             format!(
                 "RangePattern {}({}, {op}, {})",
                 dump_span(*span),
-                dump_expr(pool, **start),
-                dump_expr(pool, **end)
+                dump_expr(pool, *start),
+                dump_expr(pool, *end)
             )
         }
     }

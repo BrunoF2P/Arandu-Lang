@@ -1,5 +1,6 @@
 use super::{
     Block, CatchHandler, FieldInit, LambdaParam, MatchArm, Pattern, Stmt, StringPart, TypeExpr,
+    FieldPattern, TopLevelDecl,
 };
 use arandu_lexer::Span;
 use std::num::NonZeroU32;
@@ -75,8 +76,18 @@ define_id!(
 );
 
 define_id!(
+    /// A type-safe identifier for pool field patterns.
+    FieldPatternId
+);
+
+define_id!(
     /// A type-safe identifier for catch handlers.
     CatchHandlerId
+);
+
+define_id!(
+    /// A type-safe identifier for declarations.
+    DeclId
 );
 
 // ─── IndexRange ────────────────────────────────────────────────────────────────
@@ -240,6 +251,10 @@ pub struct AstPool {
     pub blocks: Vec<Block>,
 
     pub patterns: Vec<Pattern>,
+    pub field_patterns: Vec<FieldPattern>,
+
+    pub decls: Vec<TopLevelDecl>,
+    pub decl_spans: Vec<Span>,
 
     pub field_inits: Vec<FieldInit>,
 
@@ -259,6 +274,8 @@ pub struct AstPool {
     pub lambda_param_ids: Vec<LambdaParamId>,
     pub string_part_ids: Vec<StringPartId>,
     pub match_arm_ids: Vec<MatchArmId>,
+    pub pattern_ids: Vec<PatternId>,
+    pub field_pattern_ids: Vec<FieldPatternId>,
 
     // ── String content (identifiers, literal values, etc.) ─────────────────
     pub string_buffer: String,
@@ -308,6 +325,12 @@ impl AstPool {
         id
     }
 
+    pub fn alloc_field_pattern(&mut self, field: FieldPattern) -> FieldPatternId {
+        let id = FieldPatternId::new(self.field_patterns.len());
+        self.field_patterns.push(field);
+        id
+    }
+
     pub fn alloc_field_init(&mut self, init: FieldInit) -> FieldInitId {
         let id = FieldInitId::new(self.field_inits.len());
         self.field_inits.push(init);
@@ -335,6 +358,14 @@ impl AstPool {
     pub fn alloc_catch_handler(&mut self, handler: CatchHandler) -> CatchHandlerId {
         let id = CatchHandlerId::new(self.catch_handlers.len());
         self.catch_handlers.push(handler);
+        id
+    }
+
+    pub fn alloc_decl(&mut self, decl: TopLevelDecl) -> DeclId {
+        let id = DeclId::new(self.decls.len());
+        let span = decl.span();
+        self.decls.push(decl);
+        self.decl_spans.push(span);
         id
     }
 
@@ -404,6 +435,24 @@ impl AstPool {
         }
     }
 
+    pub fn alloc_pattern_list(&mut self, ids: &[PatternId]) -> IndexRange {
+        let start = self.pattern_ids.len() as u32;
+        self.pattern_ids.extend_from_slice(ids);
+        IndexRange {
+            start,
+            len: ids.len() as u32,
+        }
+    }
+
+    pub fn alloc_field_pattern_list(&mut self, ids: &[FieldPatternId]) -> IndexRange {
+        let start = self.field_pattern_ids.len() as u32;
+        self.field_pattern_ids.extend_from_slice(ids);
+        IndexRange {
+            start,
+            len: ids.len() as u32,
+        }
+    }
+
     // ── Lookup helpers ─────────────────────────────────────────────────────
 
     #[must_use]
@@ -437,6 +486,11 @@ impl AstPool {
     }
 
     #[must_use]
+    pub fn field_pattern(&self, id: FieldPatternId) -> &FieldPattern {
+        &self.field_patterns[id.as_usize()]
+    }
+
+    #[must_use]
     pub fn field_init(&self, id: FieldInitId) -> &FieldInit {
         &self.field_inits[id.as_usize()]
     }
@@ -459,6 +513,20 @@ impl AstPool {
     #[must_use]
     pub fn catch_handler(&self, id: CatchHandlerId) -> &CatchHandler {
         &self.catch_handlers[id.as_usize()]
+    }
+
+    #[must_use]
+    pub fn decl(&self, id: DeclId) -> &TopLevelDecl {
+        &self.decls[id.as_usize()]
+    }
+
+    pub fn decl_mut(&mut self, id: DeclId) -> &mut TopLevelDecl {
+        &mut self.decls[id.as_usize()]
+    }
+
+    #[must_use]
+    pub fn decl_span(&self, id: DeclId) -> Span {
+        self.decl_spans[id.as_usize()]
     }
 
     #[must_use]
@@ -489,5 +557,15 @@ impl AstPool {
     #[must_use]
     pub fn match_arm_list(&self, range: IndexRange) -> &[MatchArmId] {
         &self.match_arm_ids[range.range()]
+    }
+
+    #[must_use]
+    pub fn pattern_list(&self, range: IndexRange) -> &[PatternId] {
+        &self.pattern_ids[range.range()]
+    }
+
+    #[must_use]
+    pub fn field_pattern_list(&self, range: IndexRange) -> &[FieldPatternId] {
+        &self.field_pattern_ids[range.range()]
     }
 }

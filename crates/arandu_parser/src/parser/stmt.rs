@@ -113,7 +113,7 @@ impl<'a> Parser<'a> {
         } else {
             Stmt::Expr {
                 span: self.span_from_mark(start),
-                expr: Box::new(expr),
+                expr,
             }
         }))
     }
@@ -216,7 +216,7 @@ impl<'a> Parser<'a> {
                 self.expect_name("RBRACKET")?;
                 suffixes.push(PlaceSuffix::Index {
                     span: self.span_from_mark(suffix_start),
-                    expr: Box::new(index),
+                    expr: index,
                 });
             } else {
                 break;
@@ -283,13 +283,13 @@ impl<'a> Parser<'a> {
             let pattern = self.parse_pattern()?;
             Ok(Condition::Is {
                 span: self.span_from_mark(start),
-                expr: Box::new(expr),
-                pattern: Box::new(pattern),
+                expr,
+                pattern,
             })
         } else {
             Ok(Condition::Expr {
                 span: self.span_from_mark(start),
-                expr: Box::new(expr),
+                expr,
             })
         }
     }
@@ -331,7 +331,7 @@ impl<'a> Parser<'a> {
             ForClause::In {
                 span: self.span_from_mark(clause_start),
                 bindings,
-                iterable: Box::new(iterable),
+                iterable,
             }
         } else {
             let clause_start = self.mark();
@@ -354,15 +354,15 @@ impl<'a> Parser<'a> {
             };
             ForClause::CStyle {
                 span: self.span_from_mark(clause_start),
-                init: init.map(Box::new),
-                condition: condition.map(Box::new),
-                step: step.map(Box::new),
+                init,
+                condition,
+                step,
             }
         };
         let body = self.parse_block()?;
         Ok(self.pool.alloc_stmt(Stmt::For {
             span: self.span_from_mark(start),
-            clause: Box::new(clause),
+            clause,
             body,
         }))
     }
@@ -400,7 +400,7 @@ impl<'a> Parser<'a> {
         let expr = self.parse_expr(0)?;
         Ok(SimpleStmt::Expr {
             span: self.span_from_mark(start),
-            expr: Box::new(expr),
+            expr,
         })
     }
 
@@ -436,7 +436,7 @@ impl<'a> Parser<'a> {
             self.expect_semicolon()?;
             DeferBody::Expr {
                 span: self.span_from_mark(body_start),
-                expr: Box::new(expr),
+                expr,
             }
         };
         Ok(self.pool.alloc_stmt(if is_errdefer {

@@ -1,4 +1,4 @@
-use super::{Block, TypeExpr};
+use super::{Block, TypeExprId};
 use arandu_lexer::Span;
 
 pub use super::ast_pool::ExprId as Expr;
@@ -48,7 +48,7 @@ pub struct FieldInit {
 pub struct LambdaParam {
     pub span: Span,
     pub name: String,
-    pub ty: Option<TypeExpr>,
+    pub ty: Option<TypeExprId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

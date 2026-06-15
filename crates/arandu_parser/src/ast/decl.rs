@@ -1,4 +1,4 @@
-use super::{Block, Expr, TypeExpr, TypeName};
+use super::{Block, Expr, TypeExprId, TypeName, IndexRange, DeclId};
 use arandu_lexer::Span;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -6,7 +6,7 @@ pub struct Program {
     pub span: Span,
     pub module: Option<ModuleDecl>,
     pub imports: Vec<ImportDecl>,
-    pub decls: Vec<TopLevelDecl>,
+    pub decls: Vec<DeclId>,
     pub docs: Vec<DocCommentAttachment>,
     pub pool: super::AstPool,
 }
@@ -57,11 +57,11 @@ pub struct ImportItem {
 pub enum TopLevelDecl {
     Const(ConstDecl),
     TypeAlias(TypeAliasDecl),
-    Func(Box<FuncDecl>),
-    Struct(Box<StructDecl>),
-    Enum(Box<EnumDecl>),
-    Interface(Box<InterfaceDecl>),
-    Extern(Box<ExternDecl>),
+    Func(FuncDecl),
+    Struct(StructDecl),
+    Enum(EnumDecl),
+    Interface(InterfaceDecl),
+    Extern(ExternDecl),
     Error(Span),
 }
 
@@ -114,7 +114,7 @@ pub struct ConstDecl {
     pub attrs: Vec<Attribute>,
     pub visibility: Visibility,
     pub name: String,
-    pub ty: Option<TypeExpr>,
+    pub ty: Option<TypeExprId>,
     pub value: Expr,
 }
 
@@ -125,7 +125,7 @@ pub struct TypeAliasDecl {
     pub visibility: Visibility,
     pub name: String,
     pub generic_params: Vec<GenericParam>,
-    pub ty: TypeExpr,
+    pub ty: TypeExprId,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -183,7 +183,7 @@ pub struct FieldDecl {
     pub attrs: Vec<Attribute>,
     pub visibility: Visibility,
     pub name: String,
-    pub ty: TypeExpr,
+    pub ty: TypeExprId,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -207,7 +207,7 @@ pub struct EnumVariant {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum EnumPayload {
-    Tuple { span: Span, types: Vec<TypeExpr> },
+    Tuple { span: Span, types: IndexRange },
     Struct { span: Span, fields: Vec<FieldDecl> },
 }
 
@@ -236,7 +236,7 @@ pub struct Param {
     pub attrs: Vec<Attribute>,
     pub ownership: Option<Ownership>,
     pub name: String,
-    pub ty: TypeExpr,
+    pub ty: TypeExprId,
     pub is_variadic: bool,
     /// `true` when this parameter is the method receiver (`self`).
     pub is_receiver: bool,

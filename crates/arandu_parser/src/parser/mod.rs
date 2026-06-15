@@ -12,7 +12,7 @@ use arandu_lexer::{Span, Token, TokenKind};
 use crate::{
     Attribute, BinaryOp, BindingItem, Block, CatchHandler, Condition, ConstDecl, DeferBody,
     DocCommentAttachment, EnumDecl, EnumPayload, EnumVariant, Expr, ExternDecl, FieldDecl,
-    FieldInit, FieldPattern, ForBinding, ForClause, FuncDecl, FuncName, FuncSignature,
+    FieldInit, ForBinding, ForClause, FuncDecl, FuncName, FuncSignature,
     GenericParam, ImportDecl, ImportItem, InterfaceDecl, LambdaBody, LambdaParam, MatchArm,
     MatchArmBody, ModuleDecl, Ownership, Param, Pattern, Place, PlaceSuffix, Program, ResultType,
     SetOp, SimpleStmt, Stmt, StringPart, StructDecl, TopLevelDecl, TypeAliasDecl, TypeExpr,
@@ -162,7 +162,9 @@ impl<'a> Parser<'a> {
                 imports.push(self.parse_import()?);
                 continue;
             }
-            decls.push(self.parse_top_level_decl()?);
+            let decl = self.parse_top_level_decl()?;
+            let decl_id = self.pool.alloc_decl(decl);
+            decls.push(decl_id);
         }
 
         Ok(Program {
@@ -450,34 +452,76 @@ impl<'a> Parser<'a> {
 }
 
 pub(super) fn is_type_token(kind: &TokenKind) -> bool {
-    primitive_type_name(kind).is_some()
-        || matches!(kind, TokenKind::IdentType | TokenKind::IdentValue)
+    TOKEN_INFO_TABLE[kind.index()].is_type_token
 }
 
 pub(super) fn primitive_type_name(kind: &TokenKind) -> Option<&'static str> {
-    Some(match kind {
-        TokenKind::TypeInt => "int",
-        TokenKind::TypeUint => "uint",
-        TokenKind::TypeFloat => "float",
-        TokenKind::TypeI8 => "i8",
-        TokenKind::TypeI16 => "i16",
-        TokenKind::TypeI32 => "i32",
-        TokenKind::TypeI64 => "i64",
-        TokenKind::TypeU8 => "u8",
-        TokenKind::TypeU16 => "u16",
-        TokenKind::TypeU32 => "u32",
-        TokenKind::TypeU64 => "u64",
-        TokenKind::TypeF32 => "f32",
-        TokenKind::TypeF64 => "f64",
-        TokenKind::TypeBool => "bool",
-        TokenKind::TypeByte => "byte",
-        TokenKind::TypeChar => "char",
-        TokenKind::TypeStr => "str",
-        TokenKind::TypeAny => "any",
-        TokenKind::TypeErr => "Err",
-        _ => return None,
-    })
+    TOKEN_INFO_TABLE[kind.index()].primitive_type_name
 }
+
+#[derive(Clone, Copy)]
+struct TokenInfo {
+    is_type_token: bool,
+    is_contextual_module_segment: bool,
+    primitive_type_name: Option<&'static str>,
+}
+
+static TOKEN_INFO_TABLE: [TokenInfo; 129] = {
+    let mut table = [TokenInfo {
+        is_type_token: false,
+        is_contextual_module_segment: false,
+        primitive_type_name: None,
+    }; 129];
+    let mut i = 0;
+    while i < 129 {
+        let kind = TokenKind::index_to_token_kind(i);
+        let prim = match kind {
+            TokenKind::TypeInt => Some("int"),
+            TokenKind::TypeUint => Some("uint"),
+            TokenKind::TypeFloat => Some("float"),
+            TokenKind::TypeI8 => Some("i8"),
+            TokenKind::TypeI16 => Some("i16"),
+            TokenKind::TypeI32 => Some("i32"),
+            TokenKind::TypeI64 => Some("i64"),
+            TokenKind::TypeU8 => Some("u8"),
+            TokenKind::TypeU16 => Some("u16"),
+            TokenKind::TypeU32 => Some("u32"),
+            TokenKind::TypeU64 => Some("u64"),
+            TokenKind::TypeF32 => Some("f32"),
+            TokenKind::TypeF64 => Some("f64"),
+            TokenKind::TypeBool => Some("bool"),
+            TokenKind::TypeByte => Some("byte"),
+            TokenKind::TypeChar => Some("char"),
+            TokenKind::TypeStr => Some("str"),
+            TokenKind::TypeAny => Some("any"),
+            TokenKind::TypeErr => Some("Err"),
+            _ => None,
+        };
+        let is_type = prim.is_some() || matches!(kind, TokenKind::IdentType | TokenKind::IdentValue);
+        let is_contextual = matches!(
+            kind,
+            TokenKind::KwMatch
+                | TokenKind::KwAsync
+                | TokenKind::KwExtern
+                | TokenKind::KwStruct
+                | TokenKind::KwEnum
+                | TokenKind::KwInterface
+                | TokenKind::KwFunc
+                | TokenKind::KwType
+                | TokenKind::KwConst
+                | TokenKind::KwPublic
+                | TokenKind::KwFrom
+                | TokenKind::KwAs
+        );
+        table[i] = TokenInfo {
+            is_type_token: is_type,
+            is_contextual_module_segment: is_contextual,
+            primitive_type_name: prim,
+        };
+        i += 1;
+    }
+    table
+};
 
 pub(super) fn token_expectation_names(name: &str) -> &'static [&'static str] {
     match name {
@@ -526,21 +570,7 @@ pub(super) fn merge_text_parts(parts: Vec<StringPart>) -> Vec<StringPart> {
 }
 
 pub(super) fn is_contextual_module_segment(kind: &TokenKind) -> bool {
-    matches!(
-        kind,
-        TokenKind::KwMatch
-            | TokenKind::KwAsync
-            | TokenKind::KwExtern
-            | TokenKind::KwStruct
-            | TokenKind::KwEnum
-            | TokenKind::KwInterface
-            | TokenKind::KwFunc
-            | TokenKind::KwType
-            | TokenKind::KwConst
-            | TokenKind::KwPublic
-            | TokenKind::KwFrom
-            | TokenKind::KwAs
-    )
+    TOKEN_INFO_TABLE[kind.index()].is_contextual_module_segment
 }
 
 pub(super) fn span_between(start: Span, end: Span) -> Span {

@@ -1,17 +1,17 @@
-use super::{Block, Expr, TypeName};
+use super::{Block, ExprId, TypeName, PatternId, IndexRange};
 use arandu_lexer::Span;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MatchArm {
     pub span: Span,
-    pub pattern: Pattern,
-    pub guard: Option<Expr>,
+    pub pattern: PatternId,
+    pub guard: Option<ExprId>,
     pub body: MatchArmBody,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MatchArmBody {
-    Expr { span: Span, expr: Box<Expr> },
+    Expr { span: Span, expr: ExprId },
     Block { span: Span, block: Block },
 }
 
@@ -26,33 +26,33 @@ pub enum Pattern {
     },
     Literal {
         span: Span,
-        expr: Box<Expr>,
+        expr: ExprId,
     },
     Enum {
         span: Span,
         type_name: TypeName,
         variant: String,
-        payload: Vec<Pattern>,
+        payload: IndexRange, // IndexRange referencing PatternId
     },
     TypeTuple {
         span: Span,
         name: String,
-        payload: Vec<Pattern>,
+        payload: IndexRange, // IndexRange referencing PatternId
     },
     Struct {
         span: Span,
         type_name: TypeName,
-        fields: Vec<FieldPattern>,
+        fields: IndexRange, // IndexRange referencing FieldPatternId
     },
     Tuple {
         span: Span,
-        items: Vec<Pattern>,
+        items: IndexRange, // IndexRange referencing PatternId
     },
     Range {
         span: Span,
-        start: Box<Expr>,
+        start: ExprId,
         inclusive: bool,
-        end: Box<Expr>,
+        end: ExprId,
     },
 }
 
@@ -60,7 +60,7 @@ pub enum Pattern {
 pub struct FieldPattern {
     pub span: Span,
     pub name: String,
-    pub pattern: Option<Pattern>,
+    pub pattern: Option<PatternId>,
 }
 
 impl Pattern {
