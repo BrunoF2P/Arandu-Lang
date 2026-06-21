@@ -114,21 +114,17 @@ impl<'a> Parser<'a> {
             TokenKind::KwType => Ok(TopLevelDecl::TypeAlias(
                 self.parse_type_alias(attrs, visibility)?,
             )),
-            TokenKind::KwAsync | TokenKind::KwFunc => Ok(TopLevelDecl::Func(
-                self.parse_func(attrs, visibility)?,
-            )),
+            TokenKind::KwAsync | TokenKind::KwFunc => {
+                Ok(TopLevelDecl::Func(self.parse_func(attrs, visibility)?))
+            }
             TokenKind::KwStruct => Ok(TopLevelDecl::Struct(
                 self.parse_struct_decl(attrs, visibility)?,
             )),
-            TokenKind::KwEnum => Ok(TopLevelDecl::Enum(
-                self.parse_enum_decl(attrs, visibility)?,
-            )),
+            TokenKind::KwEnum => Ok(TopLevelDecl::Enum(self.parse_enum_decl(attrs, visibility)?)),
             TokenKind::KwInterface => Ok(TopLevelDecl::Interface(
                 self.parse_interface_decl(attrs, visibility)?,
             )),
-            TokenKind::KwExtern => Ok(TopLevelDecl::Extern(
-                self.parse_extern_decl(attrs)?,
-            )),
+            TokenKind::KwExtern => Ok(TopLevelDecl::Extern(self.parse_extern_decl(attrs)?)),
             _ => Err(ParseError::new(
                 ParseErrorCode::ExpectedTopLevelDecl,
                 "expected top-level declaration",
@@ -479,7 +475,7 @@ impl<'a> Parser<'a> {
         let mut attrs = Vec::new();
         while self.eat_name("AT") {
             let start = self.pos.saturating_sub(1);
-            let name = self.expect_ident_value()?;
+            let name = self.expect_name_like()?;
             let args = if self.eat_name("LPAREN") {
                 let args = self.parse_arguments()?;
                 self.expect_name("RPAREN")?;

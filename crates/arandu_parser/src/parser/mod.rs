@@ -12,11 +12,11 @@ use arandu_lexer::{Span, Token, TokenKind};
 use crate::{
     Attribute, BinaryOp, BindingItem, Block, CatchHandler, Condition, ConstDecl, DeferBody,
     DocCommentAttachment, EnumDecl, EnumPayload, EnumVariant, Expr, ExternDecl, FieldDecl,
-    FieldInit, ForBinding, ForClause, FuncDecl, FuncName, FuncSignature,
-    GenericParam, ImportDecl, ImportItem, InterfaceDecl, LambdaBody, LambdaParam, MatchArm,
-    MatchArmBody, ModuleDecl, Ownership, Param, Pattern, Place, PlaceSuffix, Program, ResultType,
-    SetOp, SimpleStmt, Stmt, StringPart, StructDecl, TopLevelDecl, TypeAliasDecl, TypeExpr,
-    TypeName, UnaryOp, Visibility, WhereItem,
+    FieldInit, ForBinding, ForClause, FuncDecl, FuncName, FuncSignature, GenericParam, ImportDecl,
+    ImportItem, InterfaceDecl, LambdaBody, LambdaParam, MatchArm, MatchArmBody, ModuleDecl,
+    Ownership, Param, Pattern, Place, PlaceSuffix, Program, ResultType, SetOp, SimpleStmt, Stmt,
+    StringPart, StructDecl, TopLevelDecl, TypeAliasDecl, TypeExpr, TypeName, UnaryOp, Visibility,
+    WhereItem,
 };
 
 #[derive(Debug, Clone)]
@@ -181,10 +181,10 @@ impl<'a> Parser<'a> {
     }
 
     pub(super) fn span_from_mark(&self, start: usize) -> Span {
-        let start_span = self
-            .tokens
-            .get(start)
-            .map_or_else(|| self.current().span(self.file_id), |token| token.span(self.file_id));
+        let start_span = self.tokens.get(start).map_or_else(
+            || self.current().span(self.file_id),
+            |token| token.span(self.file_id),
+        );
         let end_span = if self.pos == start {
             start_span
         } else {
@@ -497,7 +497,8 @@ static TOKEN_INFO_TABLE: [TokenInfo; 129] = {
             TokenKind::TypeErr => Some("Err"),
             _ => None,
         };
-        let is_type = prim.is_some() || matches!(kind, TokenKind::IdentType | TokenKind::IdentValue);
+        let is_type =
+            prim.is_some() || matches!(kind, TokenKind::IdentType | TokenKind::IdentValue);
         let is_contextual = matches!(
             kind,
             TokenKind::KwMatch

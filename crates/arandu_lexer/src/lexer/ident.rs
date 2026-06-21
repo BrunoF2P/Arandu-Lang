@@ -7,7 +7,7 @@ pub(super) const FLAG_DIGIT: u8 = 1 << 3;
 
 pub(super) const CHAR_PROPERTIES: [u8; 128] = {
     let mut table = [0u8; 128];
-    
+
     // Fill whitespace
     table[b' ' as usize] |= FLAG_WHITESPACE;
     table[b'\t' as usize] |= FLAG_WHITESPACE;

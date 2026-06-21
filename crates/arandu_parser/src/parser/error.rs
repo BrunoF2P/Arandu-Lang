@@ -1,7 +1,7 @@
 use std::fmt;
 
-use arandu_base::span::Span;
 use arandu_base::source_registry::SourceRegistry;
+use arandu_base::span::Span;
 use arandu_lexer::Token;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,22 +72,33 @@ impl ParseError {
 impl From<ParseError> for arandu_diagnostics::Diagnostic {
     fn from(err: ParseError) -> Self {
         let diag_code = match err.code {
-            ParseErrorCode::Lex => {
-                match &*err.found {
-                    "InvalidChar" => arandu_diagnostics::DiagCode::LX002InvalidUnicodeChar,
-                    "UnterminatedString" | "UnterminatedMultilineString" | "UnterminatedRawString" | 
-                    "UnterminatedChar" | "UnterminatedBlockComment" | "UnclosedInterpolation" => arandu_diagnostics::DiagCode::LX001UnterminatedString,
-                    "InvalidNumericLiteral" | "InvalidBinaryDigit" | "InvalidOctalDigit" | 
-                    "InvalidHexDigit" | "LeadingZero" => arandu_diagnostics::DiagCode::LX003InvalidNumericLiteral,
-                    _ => arandu_diagnostics::DiagCode::LX002InvalidUnicodeChar,
-                }
-            }
+            ParseErrorCode::Lex => match &*err.found {
+                "InvalidChar" => arandu_diagnostics::DiagCode::LX002InvalidUnicodeChar,
+                "UnterminatedString"
+                | "UnterminatedMultilineString"
+                | "UnterminatedRawString"
+                | "UnterminatedChar"
+                | "UnterminatedBlockComment"
+                | "UnclosedInterpolation" => arandu_diagnostics::DiagCode::LX001UnterminatedString,
+                "InvalidNumericLiteral"
+                | "InvalidBinaryDigit"
+                | "InvalidOctalDigit"
+                | "InvalidHexDigit"
+                | "LeadingZero" => arandu_diagnostics::DiagCode::LX003InvalidNumericLiteral,
+                _ => arandu_diagnostics::DiagCode::LX002InvalidUnicodeChar,
+            },
             ParseErrorCode::ExpectedToken => arandu_diagnostics::DiagCode::P001UnexpectedToken,
-            ParseErrorCode::ExpectedTopLevelDecl => arandu_diagnostics::DiagCode::P001UnexpectedToken,
-            ParseErrorCode::ExpectedExpression => arandu_diagnostics::DiagCode::P005ExpectedExpression,
+            ParseErrorCode::ExpectedTopLevelDecl => {
+                arandu_diagnostics::DiagCode::P001UnexpectedToken
+            }
+            ParseErrorCode::ExpectedExpression => {
+                arandu_diagnostics::DiagCode::P005ExpectedExpression
+            }
             ParseErrorCode::ExpectedType => arandu_diagnostics::DiagCode::P001UnexpectedToken,
             ParseErrorCode::ExpectedPlace => arandu_diagnostics::DiagCode::P001UnexpectedToken,
-            ParseErrorCode::InvalidResultReturn => arandu_diagnostics::DiagCode::P001UnexpectedToken,
+            ParseErrorCode::InvalidResultReturn => {
+                arandu_diagnostics::DiagCode::P001UnexpectedToken
+            }
         };
         let msg = if err.expected.is_empty() {
             format!("{} (found {})", err.message, err.found)

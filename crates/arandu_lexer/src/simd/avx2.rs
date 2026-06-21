@@ -94,9 +94,18 @@ pub unsafe fn scan_identifier(bytes: &[u8]) -> usize {
         while i + 32 <= bytes.len() {
             let chunk = _mm256_loadu_si256(bytes[i..].as_ptr() as *const __m256i);
 
-            let is_lc = _mm256_and_si256(_mm256_cmpgt_epi8(chunk, lc_low), _mm256_cmpgt_epi8(lc_high, chunk));
-            let is_uc = _mm256_and_si256(_mm256_cmpgt_epi8(chunk, uc_low), _mm256_cmpgt_epi8(uc_high, chunk));
-            let is_dig = _mm256_and_si256(_mm256_cmpgt_epi8(chunk, dig_low), _mm256_cmpgt_epi8(dig_high, chunk));
+            let is_lc = _mm256_and_si256(
+                _mm256_cmpgt_epi8(chunk, lc_low),
+                _mm256_cmpgt_epi8(lc_high, chunk),
+            );
+            let is_uc = _mm256_and_si256(
+                _mm256_cmpgt_epi8(chunk, uc_low),
+                _mm256_cmpgt_epi8(uc_high, chunk),
+            );
+            let is_dig = _mm256_and_si256(
+                _mm256_cmpgt_epi8(chunk, dig_low),
+                _mm256_cmpgt_epi8(dig_high, chunk),
+            );
             let is_under = _mm256_cmpeq_epi8(chunk, under);
 
             let is_ident = _mm256_or_si256(

@@ -8,10 +8,7 @@ use std::arch::aarch64::*;
 /// The caller must ensure that the CPU supports ARM Neon instructions.
 pub unsafe fn neon_movemask(cmp_mask: uint8x16_t) -> u16 {
     unsafe {
-        let weights_data: [u8; 16] = [
-            1, 2, 4, 8, 16, 32, 64, 128,
-            1, 2, 4, 8, 16, 32, 64, 128,
-        ];
+        let weights_data: [u8; 16] = [1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128];
         let weights = vld1q_u8(weights_data.as_ptr());
         let masked = vandq_u8(cmp_mask, weights);
 
@@ -51,10 +48,7 @@ pub unsafe fn skip_whitespace(bytes: &[u8]) -> (usize, usize, Option<usize>) {
             let eq_cr = vceqq_u8(chunk, crs);
             let eq_nl = vceqq_u8(chunk, nls);
 
-            let is_whitespace = vorrq_u8(
-                vorrq_u8(eq_space, eq_tab),
-                vorrq_u8(eq_cr, eq_nl),
-            );
+            let is_whitespace = vorrq_u8(vorrq_u8(eq_space, eq_tab), vorrq_u8(eq_cr, eq_nl));
 
             let mask = neon_movemask(is_whitespace) as u32;
 
@@ -122,10 +116,7 @@ pub unsafe fn scan_identifier(bytes: &[u8]) -> usize {
             let is_dig = vandq_u8(vcgeq_u8(chunk, dig_low), vcleq_u8(chunk, dig_high));
             let is_under = vceqq_u8(chunk, under);
 
-            let is_ident = vorrq_u8(
-                vorrq_u8(is_lc, is_uc),
-                vorrq_u8(is_dig, is_under),
-            );
+            let is_ident = vorrq_u8(vorrq_u8(is_lc, is_uc), vorrq_u8(is_dig, is_under));
 
             let mask = neon_movemask(is_ident) as u32;
 

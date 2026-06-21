@@ -519,7 +519,10 @@ struct TokenFlags {
 }
 
 static TOKEN_FLAGS_TABLE: [TokenFlags; 129] = {
-    let mut table = [TokenFlags { can_end: false, prevents: false }; 129];
+    let mut table = [TokenFlags {
+        can_end: false,
+        prevents: false,
+    }; 129];
     let mut i = 0;
     while i < 129 {
         let kind = TokenKind::index_to_token_kind(i);

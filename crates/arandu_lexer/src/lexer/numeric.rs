@@ -1,7 +1,7 @@
+use super::{Lexer, Mark};
 use crate::ident::is_digit;
 use crate::ident::is_ident_start;
 use crate::{LexError, LexErrorCode, TokenKind};
-use super::{Lexer, Mark};
 
 #[derive(Clone, Copy)]
 enum Radix {
@@ -171,10 +171,7 @@ impl<'a> Lexer<'a> {
     }
 
     pub(super) fn bump_digits_or_underscores(&mut self) {
-        while self
-            .peek()
-            .is_some_and(|ch| is_digit(ch) || ch == '_')
-        {
+        while self.peek().is_some_and(|ch| is_digit(ch) || ch == '_') {
             self.bump();
         }
     }

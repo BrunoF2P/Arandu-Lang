@@ -1,8 +1,7 @@
-use crate::ast::{PatternId, IndexRange, FieldPattern};
 use super::{
-    Expr, MatchArm, MatchArmBody, ParseError, ParseErrorCode, Parser, Pattern,
-    TokenKind, TypeName,
+    Expr, MatchArm, MatchArmBody, ParseError, ParseErrorCode, Parser, Pattern, TokenKind, TypeName,
 };
+use crate::ast::{FieldPattern, IndexRange, PatternId};
 
 impl<'a> Parser<'a> {
     pub(super) fn parse_match_arm(&mut self) -> Result<MatchArm, ParseError> {

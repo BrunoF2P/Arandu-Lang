@@ -1,6 +1,6 @@
 module tests.attributes
 
-@test
+@Test
 public func main() {
     return
 }

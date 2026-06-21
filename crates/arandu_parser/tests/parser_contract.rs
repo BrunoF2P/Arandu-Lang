@@ -38,8 +38,7 @@ fn assert_contract_rejects(name: &str, expected: ParseErrorCode) {
 #[test]
 fn parse_error_reports_expected_tokens_and_found_token() {
     let source = "module tests.diagnostics\nfunc main( { }";
-    let err = parse(source)
-        .expect_err("parser should reject malformed function parameter list");
+    let err = parse(source).expect_err("parser should reject malformed function parameter list");
 
     assert_eq!(err.code, ParseErrorCode::ExpectedToken);
     assert_eq!(err.found.as_ref(), "LBRACE");
@@ -52,8 +51,7 @@ fn parse_error_reports_expected_tokens_and_found_token() {
 #[test]
 fn ast_program_span_covers_source_before_eof() {
     let source = "module tests.spans\nfunc main() {\n    value = add(1, 2)\n}\n";
-    let program = parse(source)
-        .expect("parser should succeed");
+    let program = parse(source).expect("parser should succeed");
     let line_index = arandu_base::line_index::LineIndex::new(source);
     let (start_line, start_col) = line_index.line_col(program.span.start);
     let (end_line, end_col) = line_index.line_col(program.span.end);
@@ -94,9 +92,7 @@ fn ast_nested_expression_spans_are_contained_by_parent() {
 #[test]
 fn ast_call_with_block_span_covers_trailing_block() {
     let source = "module tests.spans\nfunc main() {\n    route(\"/\") {\n        ok()\n    }\n}\n";
-    let program =
-        parse(source)
-            .expect("parser should succeed");
+    let program = parse(source).expect("parser should succeed");
     let func = match program.pool.decl(program.decls[0]) {
         arandu_parser::TopLevelDecl::Func(func) => func,
         other => panic!("expected func, got {other:?}"),
@@ -123,8 +119,7 @@ fn ast_call_with_block_span_covers_trailing_block() {
 #[test]
 fn ast_multiline_string_span_covers_delimiters() {
     let source = "module tests.spans\nfunc main() {\n    text = \"\"\"\nhello\n\"\"\"\n}\n";
-    let program = parse(source)
-        .expect("parser should succeed");
+    let program = parse(source).expect("parser should succeed");
     let func = match program.pool.decl(program.decls[0]) {
         arandu_parser::TopLevelDecl::Func(func) => func,
         other => panic!("expected func, got {other:?}"),

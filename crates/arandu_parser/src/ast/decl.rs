@@ -1,4 +1,4 @@
-use super::{Block, Expr, TypeExprId, TypeName, IndexRange, DeclId};
+use super::{Block, DeclId, Expr, IndexRange, TypeExprId, TypeName};
 use arandu_lexer::Span;
 
 #[derive(Debug, Clone, PartialEq)]

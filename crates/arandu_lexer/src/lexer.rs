@@ -151,11 +151,17 @@ impl<'a> Lexer<'a> {
     fn skip_whitespace(&mut self) {
         let (newlines, skipped, last_nl) = match self.backend {
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-            SimdBackendKind::Avx2 => unsafe { crate::simd::avx2::skip_whitespace(&self.source.as_bytes()[self.pos..]) },
+            SimdBackendKind::Avx2 => unsafe {
+                crate::simd::avx2::skip_whitespace(&self.source.as_bytes()[self.pos..])
+            },
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-            SimdBackendKind::Sse2 => unsafe { crate::simd::sse2::skip_whitespace(&self.source.as_bytes()[self.pos..]) },
+            SimdBackendKind::Sse2 => unsafe {
+                crate::simd::sse2::skip_whitespace(&self.source.as_bytes()[self.pos..])
+            },
             #[cfg(target_arch = "aarch64")]
-            SimdBackendKind::Neon => unsafe { crate::simd::neon::skip_whitespace(&self.source.as_bytes()[self.pos..]) },
+            SimdBackendKind::Neon => unsafe {
+                crate::simd::neon::skip_whitespace(&self.source.as_bytes()[self.pos..])
+            },
             _ => crate::simd::scalar::skip_whitespace(&self.source.as_bytes()[self.pos..]),
         };
 
@@ -169,7 +175,9 @@ impl<'a> Lexer<'a> {
                 .position(|&b| b == b'\n')
                 .unwrap_or(0);
 
-            if first_nl_offset > 0 && self.source.as_bytes()[self.pos + first_nl_offset - 1] == b'\r' {
+            if first_nl_offset > 0
+                && self.source.as_bytes()[self.pos + first_nl_offset - 1] == b'\r'
+            {
                 first_nl_offset -= 1;
             }
 
@@ -227,11 +235,17 @@ impl<'a> Lexer<'a> {
         self.bump();
         let len = match self.backend {
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-            SimdBackendKind::Avx2 => unsafe { crate::simd::avx2::scan_identifier(&self.source.as_bytes()[self.pos..]) },
+            SimdBackendKind::Avx2 => unsafe {
+                crate::simd::avx2::scan_identifier(&self.source.as_bytes()[self.pos..])
+            },
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-            SimdBackendKind::Sse2 => unsafe { crate::simd::sse2::scan_identifier(&self.source.as_bytes()[self.pos..]) },
+            SimdBackendKind::Sse2 => unsafe {
+                crate::simd::sse2::scan_identifier(&self.source.as_bytes()[self.pos..])
+            },
             #[cfg(target_arch = "aarch64")]
-            SimdBackendKind::Neon => unsafe { crate::simd::neon::scan_identifier(&self.source.as_bytes()[self.pos..]) },
+            SimdBackendKind::Neon => unsafe {
+                crate::simd::neon::scan_identifier(&self.source.as_bytes()[self.pos..])
+            },
             _ => crate::simd::scalar::scan_identifier(&self.source.as_bytes()[self.pos..]),
         };
         self.pos += len;

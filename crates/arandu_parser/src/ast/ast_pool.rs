@@ -1,6 +1,6 @@
 use super::{
-    Block, CatchHandler, FieldInit, LambdaParam, MatchArm, Pattern, Stmt, StringPart, TypeExpr,
-    FieldPattern, TopLevelDecl,
+    Block, CatchHandler, FieldInit, FieldPattern, LambdaParam, MatchArm, Pattern, Stmt, StringPart,
+    TopLevelDecl, TypeExpr,
 };
 use arandu_lexer::Span;
 use std::num::NonZeroU32;

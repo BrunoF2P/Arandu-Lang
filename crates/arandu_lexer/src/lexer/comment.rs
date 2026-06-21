@@ -1,5 +1,5 @@
-use crate::{LexError, LexErrorCode, TokenKind};
 use super::Lexer;
+use crate::{LexError, LexErrorCode, TokenKind};
 
 impl<'a> Lexer<'a> {
     pub(super) fn lex_line_doc_comment(&mut self) {

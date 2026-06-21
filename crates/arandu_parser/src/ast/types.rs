@@ -1,5 +1,5 @@
+use super::{IndexRange, TypeExprId};
 use arandu_lexer::Span;
-use super::{TypeExprId, IndexRange};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResultType {

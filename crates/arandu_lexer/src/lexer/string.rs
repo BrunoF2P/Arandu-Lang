@@ -1,7 +1,7 @@
+use super::{Lexer, Mark};
 use crate::ident::is_digit;
 use crate::ident::is_ident_start;
 use crate::{LexError, LexErrorCode, Span, TokenKind};
-use super::{Lexer, Mark};
 
 #[derive(Clone, Copy)]
 enum StringTerminator {
@@ -280,11 +280,7 @@ impl<'a> Lexer<'a> {
         if end_pos <= start.pos {
             return;
         }
-        let span = Span::new(
-            0,
-            start.pos as u32,
-            end_pos as u32,
-        );
+        let span = Span::new(0, start.pos as u32, end_pos as u32);
         self.push_token(TokenKind::StringText, span, false);
     }
 }

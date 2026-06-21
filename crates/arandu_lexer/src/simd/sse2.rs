@@ -28,10 +28,8 @@ pub unsafe fn skip_whitespace(bytes: &[u8]) -> (usize, usize, Option<usize>) {
             let eq_cr = _mm_cmpeq_epi8(chunk, crs);
             let eq_nl = _mm_cmpeq_epi8(chunk, nls);
 
-            let is_whitespace = _mm_or_si128(
-                _mm_or_si128(eq_space, eq_tab),
-                _mm_or_si128(eq_cr, eq_nl),
-            );
+            let is_whitespace =
+                _mm_or_si128(_mm_or_si128(eq_space, eq_tab), _mm_or_si128(eq_cr, eq_nl));
 
             let mask = _mm_movemask_epi8(is_whitespace) as u32;
 
@@ -94,15 +92,21 @@ pub unsafe fn scan_identifier(bytes: &[u8]) -> usize {
         while i + 16 <= bytes.len() {
             let chunk = _mm_loadu_si128(bytes[i..].as_ptr() as *const __m128i);
 
-            let is_lc = _mm_and_si128(_mm_cmpgt_epi8(chunk, lc_low), _mm_cmpgt_epi8(lc_high, chunk));
-            let is_uc = _mm_and_si128(_mm_cmpgt_epi8(chunk, uc_low), _mm_cmpgt_epi8(uc_high, chunk));
-            let is_dig = _mm_and_si128(_mm_cmpgt_epi8(chunk, dig_low), _mm_cmpgt_epi8(dig_high, chunk));
+            let is_lc = _mm_and_si128(
+                _mm_cmpgt_epi8(chunk, lc_low),
+                _mm_cmpgt_epi8(lc_high, chunk),
+            );
+            let is_uc = _mm_and_si128(
+                _mm_cmpgt_epi8(chunk, uc_low),
+                _mm_cmpgt_epi8(uc_high, chunk),
+            );
+            let is_dig = _mm_and_si128(
+                _mm_cmpgt_epi8(chunk, dig_low),
+                _mm_cmpgt_epi8(dig_high, chunk),
+            );
             let is_under = _mm_cmpeq_epi8(chunk, under);
 
-            let is_ident = _mm_or_si128(
-                _mm_or_si128(is_lc, is_uc),
-                _mm_or_si128(is_dig, is_under),
-            );
+            let is_ident = _mm_or_si128(_mm_or_si128(is_lc, is_uc), _mm_or_si128(is_dig, is_under));
 
             let mask = _mm_movemask_epi8(is_ident) as u32;
 

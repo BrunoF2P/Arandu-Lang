@@ -168,13 +168,9 @@ impl<'a> Parser<'a> {
                     self.consume();
                     let ty = self.parse_type()?;
                     let span = span_between(span_start, self.pool.type_expr_span(ty));
-                    left = self.pool.alloc_expr(
-                        ExprKind::Cast {
-                            expr: left,
-                            ty,
-                        },
-                        span,
-                    );
+                    left = self
+                        .pool
+                        .alloc_expr(ExprKind::Cast { expr: left, ty }, span);
                     continue;
                 }
                 _ => {}
@@ -362,13 +358,47 @@ impl<'a> Parser<'a> {
                     .pool
                     .alloc_expr(ExprKind::InterpolatedString { parts: range }, span))
             }
-            TokenKind::LParen if self.looks_like_lambda_expr() => self.parse_lambda(),
             TokenKind::LParen => {
-                self.consume();
-                let expr = self.parse_expr(0)?;
-                self.expect_name("RPAREN")?;
-                let span = self.span_from_mark(start);
-                Ok(self.pool.alloc_expr(ExprKind::Group { expr }, span))
+                let start_pos = self.pos;
+                let mut is_lambda = false;
+                if self.eat_name("LPAREN") {
+                    let mut params_ok = true;
+                    if !self.at_kind_name("RPAREN") {
+                        loop {
+                            if !matches!(self.current().kind, TokenKind::IdentValue) {
+                                params_ok = false;
+                                break;
+                            }
+                            self.consume();
+                            if self.can_start_type() {
+                                if self.parse_type().is_err() {
+                                    params_ok = false;
+                                    break;
+                                }
+                            }
+                            if !self.eat_name("COMMA") {
+                                break;
+                            }
+                            if self.at_kind_name("RPAREN") {
+                                break;
+                            }
+                        }
+                    }
+                    if params_ok && self.eat_name("RPAREN") && self.at_kind_name("FAT_ARROW") {
+                        is_lambda = true;
+                    }
+                }
+                self.pos = start_pos;
+
+                if is_lambda {
+                    self.parse_lambda()
+                } else {
+                    self.consume();
+                    let expr = self.parse_expr(0)?;
+                    self.expect_name("RPAREN")?;
+                    let span = self.span_from_mark(start);
+                    Ok(self.pool.alloc_expr(ExprKind::Group { expr }, span))
+                }
             }
             TokenKind::LBracket => self.parse_array(),
             _ => Err(ParseError::new(
@@ -693,27 +723,90 @@ struct BinaryOpInfo {
 }
 
 const BINARY_OP_TABLE: [BinaryOpInfo; 21] = [
-    BinaryOpInfo { op: BinaryOp::NullCoalesce, bp: 20 },   // 0
-    BinaryOpInfo { op: BinaryOp::Or, bp: 30 },             // 1
-    BinaryOpInfo { op: BinaryOp::And, bp: 40 },            // 2
-    BinaryOpInfo { op: BinaryOp::Equal, bp: 50 },          // 3
-    BinaryOpInfo { op: BinaryOp::NotEqual, bp: 50 },       // 4
-    BinaryOpInfo { op: BinaryOp::Lt, bp: 60 },             // 5
-    BinaryOpInfo { op: BinaryOp::Gt, bp: 60 },             // 6
-    BinaryOpInfo { op: BinaryOp::LtEqual, bp: 60 },        // 7
-    BinaryOpInfo { op: BinaryOp::GtEqual, bp: 60 },        // 8
-    BinaryOpInfo { op: BinaryOp::RangeExclusive, bp: 70 }, // 9
-    BinaryOpInfo { op: BinaryOp::RangeInclusive, bp: 70 }, // 10
-    BinaryOpInfo { op: BinaryOp::BitOr, bp: 80 },          // 11
-    BinaryOpInfo { op: BinaryOp::BitXor, bp: 90 },         // 12
-    BinaryOpInfo { op: BinaryOp::BitAnd, bp: 100 },        // 13
-    BinaryOpInfo { op: BinaryOp::ShiftLeft, bp: 110 },     // 14
-    BinaryOpInfo { op: BinaryOp::ShiftRight, bp: 110 },    // 15
-    BinaryOpInfo { op: BinaryOp::Add, bp: 120 },           // 16
-    BinaryOpInfo { op: BinaryOp::Sub, bp: 120 },           // 17
-    BinaryOpInfo { op: BinaryOp::Mul, bp: 130 },           // 18
-    BinaryOpInfo { op: BinaryOp::Div, bp: 130 },           // 19
-    BinaryOpInfo { op: BinaryOp::Mod, bp: 130 },           // 20
+    BinaryOpInfo {
+        op: BinaryOp::NullCoalesce,
+        bp: 20,
+    }, // 0
+    BinaryOpInfo {
+        op: BinaryOp::Or,
+        bp: 30,
+    }, // 1
+    BinaryOpInfo {
+        op: BinaryOp::And,
+        bp: 40,
+    }, // 2
+    BinaryOpInfo {
+        op: BinaryOp::Equal,
+        bp: 50,
+    }, // 3
+    BinaryOpInfo {
+        op: BinaryOp::NotEqual,
+        bp: 50,
+    }, // 4
+    BinaryOpInfo {
+        op: BinaryOp::Lt,
+        bp: 60,
+    }, // 5
+    BinaryOpInfo {
+        op: BinaryOp::Gt,
+        bp: 60,
+    }, // 6
+    BinaryOpInfo {
+        op: BinaryOp::LtEqual,
+        bp: 60,
+    }, // 7
+    BinaryOpInfo {
+        op: BinaryOp::GtEqual,
+        bp: 60,
+    }, // 8
+    BinaryOpInfo {
+        op: BinaryOp::RangeExclusive,
+        bp: 70,
+    }, // 9
+    BinaryOpInfo {
+        op: BinaryOp::RangeInclusive,
+        bp: 70,
+    }, // 10
+    BinaryOpInfo {
+        op: BinaryOp::BitOr,
+        bp: 80,
+    }, // 11
+    BinaryOpInfo {
+        op: BinaryOp::BitXor,
+        bp: 90,
+    }, // 12
+    BinaryOpInfo {
+        op: BinaryOp::BitAnd,
+        bp: 100,
+    }, // 13
+    BinaryOpInfo {
+        op: BinaryOp::ShiftLeft,
+        bp: 110,
+    }, // 14
+    BinaryOpInfo {
+        op: BinaryOp::ShiftRight,
+        bp: 110,
+    }, // 15
+    BinaryOpInfo {
+        op: BinaryOp::Add,
+        bp: 120,
+    }, // 16
+    BinaryOpInfo {
+        op: BinaryOp::Sub,
+        bp: 120,
+    }, // 17
+    BinaryOpInfo {
+        op: BinaryOp::Mul,
+        bp: 130,
+    }, // 18
+    BinaryOpInfo {
+        op: BinaryOp::Div,
+        bp: 130,
+    }, // 19
+    BinaryOpInfo {
+        op: BinaryOp::Mod,
+        bp: 130,
+    }, // 20
 ];
 
 const fn token_kind_index(kind: &TokenKind) -> usize {
@@ -744,7 +837,6 @@ const fn token_kind_index(kind: &TokenKind) -> usize {
 }
 
 impl<'a> Parser<'a> {
-
     pub(super) fn current_binary(&self) -> Option<(BinaryOp, u8, u8)> {
         let idx = token_kind_index(&self.current().kind);
         if idx < 21 {
@@ -753,33 +845,5 @@ impl<'a> Parser<'a> {
         } else {
             None
         }
-    }
-
-    pub(super) fn looks_like_lambda_expr(&self) -> bool {
-        self.find_matching_rparen(self.pos)
-            .and_then(|rparen| self.tokens.get(rparen + 1))
-            .is_some_and(|token| matches!(token.kind, TokenKind::FatArrow))
-    }
-
-    pub(super) fn find_matching_rparen(&self, start: usize) -> Option<usize> {
-        if !matches!(self.tokens.get(start)?.kind, TokenKind::LParen) {
-            return None;
-        }
-
-        let mut depth = 0usize;
-        for (index, token) in self.tokens.iter().enumerate().skip(start) {
-            match token.kind {
-                TokenKind::LParen => depth += 1,
-                TokenKind::RParen => {
-                    depth = depth.saturating_sub(1);
-                    if depth == 0 {
-                        return Some(index);
-                    }
-                }
-                TokenKind::Eof => return None,
-                _ => {}
-            }
-        }
-        None
     }
 }
