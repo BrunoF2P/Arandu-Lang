@@ -11,6 +11,10 @@ impl Span {
     /// Creates a new `Span` with the given file identifier, start byte offset, and end byte offset.
     #[must_use]
     pub const fn new(file_id: u32, start: u32, end: u32) -> Self {
-        Self { file_id, start, end }
+        Self {
+            file_id,
+            start,
+            end,
+        }
     }
 }

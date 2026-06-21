@@ -16,13 +16,13 @@ Func test_try() -> int
 
   bb0:
     _1 = call fn@load()
-    _2 = _1._1
+    _2 = _1.1
     _3 = ne _2, nil
     branch _3 => bb1, else bb2
   bb1:
     _0 = _2
     return
   bb2:
-    _4 = _1._0
+    _4 = _1.0
     _0 = mul _4, 2
     return

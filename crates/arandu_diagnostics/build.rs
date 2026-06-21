@@ -3,18 +3,12 @@ use std::fs;
 use std::path::Path;
 
 const CODES: &[&str] = &[
-    "LX001", "LX002", "LX003",
-    "P001", "P002", "P003", "P004", "P005", "P006",
-    "M001", "M002", "M003",
-    "N001", "N002", "N003", "N004", "N005", "N007", "N010", "N011",
-    "T001", "T002", "T003", "T004", "T005", "T006", "T007", "T008", "T009", "T010",
-    "T011", "T012", "T013", "T014", "T015", "T016", "T017", "T018", "T021", "T024", "T025",
-    "T026", "T027", "T028", "T029", "T030", "T031",
-    "L001",
-    "G001", "G002",
-    "O001", "O002", "O003", "O004", "O005", "O006", "O007", "O008", "O009", "O010", "O011",
-    "W001", "W002", "W003", "W004", "W005", "W006",
-    "U001",
+    "LX001", "LX002", "LX003", "P001", "P002", "P003", "P004", "P005", "P006", "M001", "M002",
+    "M003", "N001", "N002", "N003", "N004", "N005", "N007", "N010", "N011", "T001", "T002", "T003",
+    "T004", "T005", "T006", "T007", "T008", "T009", "T010", "T011", "T012", "T013", "T014", "T015",
+    "T016", "T017", "T018", "T021", "T024", "T025", "T026", "T027", "T028", "T029", "T030", "T031",
+    "L001", "G001", "G002", "O001", "O002", "O003", "O004", "O005", "O006", "O007", "O008", "O009",
+    "O010", "O011", "W001", "W002", "W003", "W004", "W005", "W006", "U001",
 ];
 
 #[allow(clippy::collapsible_if)]
@@ -49,13 +43,19 @@ fn main() {
         // 1. Every existing .md must be a valid code
         for doc in &existing_docs {
             if !CODES.contains(&doc.as_str()) {
-                panic!("Documentation file docs/errors/{}.md does not match any declared diagnostic code", doc);
+                panic!(
+                    "Documentation file docs/errors/{}.md does not match any declared diagnostic code",
+                    doc
+                );
             }
         }
         // 2. Every declared code must have a .md
         for code in CODES {
             if !existing_docs.contains(&code.to_string()) {
-                panic!("Missing documentation file docs/errors/{}.md for declared diagnostic code {}", code, code);
+                panic!(
+                    "Missing documentation file docs/errors/{}.md for declared diagnostic code {}",
+                    code, code
+                );
             }
         }
     }

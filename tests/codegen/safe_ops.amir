@@ -18,14 +18,14 @@ Func test_try() -> int
 
   bb0:
     _1 = call fn@load()
-    _2 = _1._1
+    _2 = _1.1
     _3 = ne _2, nil
     branch _3 => bb1, else bb2
   bb1:
     _0 = _2
     return
   bb2:
-    _4 = _1._0
+    _4 = _1.0
     s0 = _4
     _5 = s0
     _0 = mul _5, 2
@@ -50,7 +50,7 @@ Func test_safe_field(p: Point?) -> int
     _2 = nil
     goto bb3
   bb2:
-    _2 = _3.x
+    _2 = _3.0
     goto bb3
   bb3:
     _5 = ne _2, nil

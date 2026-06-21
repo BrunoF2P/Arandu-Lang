@@ -9,9 +9,7 @@ pub struct VmReservation {
     #[cfg(unix)]
     addr: *mut libc::c_void,
     #[cfg(not(unix))]
-    ptr: *mut u8,
-    #[cfg(not(unix))]
-    layout: std::alloc::Layout,
+    ptr: *mut std::ffi::c_void,
     size: usize,
 }
 
@@ -76,26 +74,39 @@ impl Drop for VmReservation {
 }
 
 #[cfg(not(unix))]
+use windows_sys::Win32::System::Memory::{
+    MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_NOACCESS, PAGE_READWRITE, VirtualAlloc, VirtualFree,
+};
+
+#[cfg(not(unix))]
 impl VmReservation {
     pub fn reserve(size: usize) -> Result<Self, &'static str> {
         let size = (size + 65535) & !65535;
-        let layout = std::alloc::Layout::from_size_align(size, 65536)
-            .map_err(|_| "Failed to create 64KB aligned layout")?;
-        let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
+        let ptr = unsafe { VirtualAlloc(std::ptr::null(), size, MEM_RESERVE, PAGE_NOACCESS) };
         if ptr.is_null() {
-            return Err("Failed to allocate virtual memory fallback block");
+            return Err("Failed to reserve virtual memory address space");
         }
-        Ok(Self { ptr, layout, size })
+        Ok(Self { ptr, size })
     }
 
-    pub fn commit(&self, _offset: usize, _len: usize) -> Result<(), &'static str> {
-        // Fallback layout is pre-allocated and committed by the OS allocator
+    pub fn commit(&self, offset: usize, len: usize) -> Result<(), &'static str> {
+        if offset + len > self.size {
+            return Err("Commit range is out of bounds");
+        }
+        let page_offset = offset & !65535;
+        let page_len = (offset + len - page_offset + 65535) & !65535;
+        let commit_addr =
+            unsafe { (self.ptr as *mut u8).add(page_offset) as *mut std::ffi::c_void };
+        let ret = unsafe { VirtualAlloc(commit_addr, page_len, MEM_COMMIT, PAGE_READWRITE) };
+        if ret.is_null() {
+            return Err("Failed to commit virtual memory pages");
+        }
         Ok(())
     }
 
     #[must_use]
     pub fn base_ptr(&self) -> *mut u8 {
-        self.ptr
+        self.ptr as *mut u8
     }
 
     #[must_use]
@@ -108,10 +119,13 @@ impl VmReservation {
 impl Drop for VmReservation {
     fn drop(&mut self) {
         unsafe {
-            std::alloc::dealloc(self.ptr, self.layout);
+            VirtualFree(self.ptr, 0, MEM_RELEASE);
         }
     }
 }
+
+unsafe impl Send for VmReservation {}
+unsafe impl Sync for VmReservation {}
 
 #[cfg(test)]
 mod tests {

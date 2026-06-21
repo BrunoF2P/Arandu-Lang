@@ -14,8 +14,8 @@ Func mutation_test() -> int
     s0.x = 30
     s0.y = 40
     _2 = s0
-    _3 = _2.x
+    _3 = _2.0
     _4 = s0
-    _5 = _4.y
+    _5 = _4.1
     _0 = add _3, _5
     return

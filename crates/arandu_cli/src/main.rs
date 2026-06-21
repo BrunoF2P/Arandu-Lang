@@ -1,5 +1,9 @@
 #![allow(clippy::collapsible_if)]
-use std::{env, fs, path::{Path, PathBuf}, process};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+    process,
+};
 
 fn print_diagnostics_and_exit(diagnostics: &[arandu_semantics::Diagnostic], filepath: &str) -> ! {
     let mut registry = arandu_base::SourceRegistry::default();
@@ -72,7 +76,9 @@ fn parse_and_check(source: &str, filepath: &str) -> CheckedProgram {
 }
 
 fn usage_and_exit() -> ! {
-    eprintln!("usage: arandu_cli <lex|parse|check|hir|amir|run> <path> [--debug] [--opt] [--parallel]");
+    eprintln!(
+        "usage: arandu_cli <lex|parse|check|hir|amir|run> <path> [--debug] [--opt] [--parallel]"
+    );
 
     process::exit(2);
 }
@@ -113,7 +119,10 @@ fn main() {
 
     let command = &args[1];
 
-    if !matches!(command.as_str(), "lex" | "parse" | "check" | "hir" | "amir" | "run") {
+    if !matches!(
+        command.as_str(),
+        "lex" | "parse" | "check" | "hir" | "amir" | "run"
+    ) {
         usage_and_exit();
     }
 
@@ -139,46 +148,51 @@ fn main() {
 
     if use_parallel {
         if matches!(command.as_str(), "lex" | "parse" | "run") {
-            eprintln!("parallel/multi-file mode is not supported for command '{}'", command);
+            eprintln!(
+                "parallel/multi-file mode is not supported for command '{}'",
+                command
+            );
             process::exit(1);
         }
 
         match arandu_semantics::compile_parallel(paths.clone()) {
-            Ok(output) => {
-                match command.as_str() {
-                    "check" => {
-                        println!("ok");
-                    }
-                    "hir" => {
-                        for (i, hir) in output.hirs.iter().enumerate() {
-                            let filepath = output.paths[i].to_string_lossy();
-                            println!("--- HIR for {} ---", filepath);
-                            if debug {
-                                println!("{hir:#?}");
-                            } else {
-                                let ctx = arandu_semantics::hir::HirPrettyCtx {
-                                    pool: &hir.pool,
-                                    symbols: &output.symbols[i],
-                                    show_spans: false,
-                                };
-                                print!("{}", hir.pretty_print(&ctx));
-                            }
-                        }
-                    }
-                    "amir" => {
-                        for (i, amir) in output.amirs.iter().enumerate() {
-                            let filepath = output.paths[i].to_string_lossy();
-                            println!("--- AMIR for {} ---", filepath);
-                            if debug {
-                                println!("{amir:#?}");
-                            } else {
-                                print!("{}", amir.pretty_print(&output.symbols[i]));
-                            }
-                        }
-                    }
-                    _ => unreachable!(),
+            Ok(output) => match command.as_str() {
+                "check" => {
+                    println!("ok");
                 }
-            }
+                "hir" => {
+                    for (i, hir) in output.hirs.iter().enumerate() {
+                        let filepath = output.paths[i].to_string_lossy();
+                        println!("--- HIR for {} ---", filepath);
+                        if debug {
+                            println!("{hir:#?}");
+                        } else {
+                            let ctx = arandu_semantics::hir::HirPrettyCtx {
+                                pool: &hir.pool,
+                                symbols: &output.symbols[i],
+                                show_spans: false,
+                                type_interner: Some(&output.type_interners[i]),
+                            };
+                            print!("{}", hir.pretty_print(&ctx));
+                        }
+                    }
+                }
+                "amir" => {
+                    for (i, amir) in output.amirs.iter().enumerate() {
+                        let filepath = output.paths[i].to_string_lossy();
+                        println!("--- AMIR for {} ---", filepath);
+                        if debug {
+                            println!("{amir:#?}");
+                        } else {
+                            print!(
+                                "{}",
+                                amir.pretty_print(&output.symbols[i], &output.type_interners[i])
+                            );
+                        }
+                    }
+                }
+                _ => unreachable!(),
+            },
             Err(diags) => {
                 let mut registry = arandu_base::SourceRegistry::default();
                 for p in &paths {
@@ -223,10 +237,11 @@ fn main() {
 
             "check" => {
                 let checked = parse_and_check(&source, &filepath);
-                let hir = match arandu_semantics::lower_to_hir(&checked.type_check, &checked.program) {
-                    Ok(hir) => hir,
-                    Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
-                };
+                let hir =
+                    match arandu_semantics::lower_to_hir(&checked.type_check, &checked.program) {
+                        Ok(hir) => hir,
+                        Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
+                    };
                 validate_hir_and_analyze(&hir, &checked.type_check, &filepath);
                 if let Err(diags) = arandu_semantics::lower_to_amir(&checked.type_check, &hir) {
                     print_diagnostics_and_exit(&diags, &filepath);
@@ -237,10 +252,11 @@ fn main() {
             "hir" => {
                 let checked = parse_and_check(&source, &filepath);
 
-                let hir = match arandu_semantics::lower_to_hir(&checked.type_check, &checked.program) {
-                    Ok(hir) => hir,
-                    Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
-                };
+                let hir =
+                    match arandu_semantics::lower_to_hir(&checked.type_check, &checked.program) {
+                        Ok(hir) => hir,
+                        Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
+                    };
 
                 validate_hir_and_analyze(&hir, &checked.type_check, &filepath);
 
@@ -251,6 +267,7 @@ fn main() {
                         pool: &hir.pool,
                         symbols: &checked.type_check.symbols,
                         show_spans: false,
+                        type_interner: Some(&checked.type_check.type_info.type_interner),
                     };
 
                     print!("{}", hir.pretty_print(&ctx));
@@ -260,10 +277,11 @@ fn main() {
             "amir" => {
                 let checked = parse_and_check(&source, &filepath);
 
-                let hir = match arandu_semantics::lower_to_hir(&checked.type_check, &checked.program) {
-                    Ok(hir) => hir,
-                    Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
-                };
+                let hir =
+                    match arandu_semantics::lower_to_hir(&checked.type_check, &checked.program) {
+                        Ok(hir) => hir,
+                        Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
+                    };
 
                 validate_hir_and_analyze(&hir, &checked.type_check, &filepath);
 
@@ -278,17 +296,24 @@ fn main() {
                 if debug {
                     println!("{amir:#?}");
                 } else {
-                    print!("{}", amir.pretty_print(&checked.type_check.symbols));
+                    print!(
+                        "{}",
+                        amir.pretty_print(
+                            &checked.type_check.symbols,
+                            &checked.type_check.type_info.type_interner
+                        )
+                    );
                 }
             }
 
             "run" => {
                 let checked = parse_and_check(&source, &filepath);
 
-                let hir = match arandu_semantics::lower_to_hir(&checked.type_check, &checked.program) {
-                    Ok(hir) => hir,
-                    Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
-                };
+                let hir =
+                    match arandu_semantics::lower_to_hir(&checked.type_check, &checked.program) {
+                        Ok(hir) => hir,
+                        Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
+                    };
 
                 validate_hir_and_analyze(&hir, &checked.type_check, &filepath);
 
@@ -302,13 +327,17 @@ fn main() {
 
                 use arandu_semantics::{CodegenBackend, CompiledCode};
                 let backend = arandu_backend_cranelift::CraneliftBackend::new();
-                let output = match CodegenBackend::compile(backend, &amir, &checked.type_check.symbols, &()) {
-                    Ok(out) => out,
-                    Err(diag) => print_diagnostics_and_exit(&[diag], &filepath),
-                };
+                let output =
+                    match CodegenBackend::compile(backend, &amir, &checked.type_check.symbols, &())
+                    {
+                        Ok(out) => out,
+                        Err(diag) => print_diagnostics_and_exit(&[diag], &filepath),
+                    };
 
                 unsafe {
-                    if let Some(main_fn) = CompiledCode::get_fn::<unsafe fn() -> i32>(&output, "main") {
+                    if let Some(main_fn) =
+                        CompiledCode::get_fn::<unsafe fn() -> i32>(&output, "main")
+                    {
                         let code = main_fn();
                         process::exit(code);
                     } else {
@@ -322,4 +351,3 @@ fn main() {
         }
     }
 }
-

@@ -547,7 +547,7 @@ mod tests {
         let mut matrix2 = BitMatrix::<usize, usize>::new(3, 130);
         matrix2.insert(0, 5);
         matrix2.insert(0, 10);
-        
+
         matrix.set_row_from_set(1, &matrix2.row_set(0));
         assert!(matrix.contains(1, 5));
         assert!(matrix.contains(1, 10));

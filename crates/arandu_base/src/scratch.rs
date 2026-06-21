@@ -14,14 +14,12 @@ thread_local! {
 /// Executes a closure passing a mutable reference to a thread-local reused scratch String buffer.
 /// Safe against reentrant borrow panics by falling back to a fresh allocation.
 pub fn with_scratch<F: FnOnce(&mut String) -> R, R>(f: F) -> R {
-    SCRATCH.with(|s| {
-        match s.try_borrow_mut() {
-            Ok(mut scratch) => {
-                scratch.buf.clear();
-                f(&mut scratch.buf)
-            }
-            Err(_) => f(&mut String::with_capacity(256)),
+    SCRATCH.with(|s| match s.try_borrow_mut() {
+        Ok(mut scratch) => {
+            scratch.buf.clear();
+            f(&mut scratch.buf)
         }
+        Err(_) => f(&mut String::with_capacity(256)),
     })
 }
 

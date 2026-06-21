@@ -21,7 +21,10 @@ impl LineIndex {
     /// Converts a byte offset into 1-based (line, column) numbers.
     #[must_use]
     pub fn line_col(&self, offset: u32) -> (u32, u32) {
-        let line = self.line_starts.partition_point(|&s| s <= offset).saturating_sub(1);
+        let line = self
+            .line_starts
+            .partition_point(|&s| s <= offset)
+            .saturating_sub(1);
         let col = offset - self.line_starts[line] + 1;
         ((line + 1) as u32, col)
     }
@@ -49,7 +52,7 @@ mod tests {
         // Third line: "ghi" (offsets 8..=10)
         assert_eq!(index.line_col(8), (3, 1));
         assert_eq!(index.line_col(10), (3, 3));
-        
+
         // Out of bounds: should saturate/cap nicely
         assert_eq!(index.line_col(20), (3, 13));
     }

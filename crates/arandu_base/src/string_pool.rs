@@ -48,10 +48,30 @@ impl fmt::Debug for StringId {
 /// A Small String Optimization (SSO) string.
 /// If the string is <= 23 bytes, it is stored inline without any heap allocation.
 /// Otherwise, it falls back to a heap-allocated `String`.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone)]
 pub enum SsoString {
     Inline { len: u8, data: [u8; 23] },
     Heap(String),
+}
+
+impl std::hash::Hash for SsoString {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.as_str().hash(state);
+    }
+}
+
+impl PartialEq for SsoString {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl Eq for SsoString {}
+
+impl std::borrow::Borrow<str> for SsoString {
+    fn borrow(&self) -> &str {
+        self.as_str()
+    }
 }
 
 impl SsoString {
@@ -135,10 +155,10 @@ impl StringPool {
 
     /// Interns a string slice, returning its canonical `StringId`.
     pub fn intern(&mut self, s: &str) -> StringId {
-        let sso = SsoString::new(s);
-        if let Some(&id) = self.map.get(&sso) {
+        if let Some(&id) = self.map.get(s) {
             return id;
         }
+        let sso = SsoString::new(s);
         let id = StringId::from_usize(self.strings.len());
         self.map.insert(sso.clone(), id);
         self.strings.push(sso);

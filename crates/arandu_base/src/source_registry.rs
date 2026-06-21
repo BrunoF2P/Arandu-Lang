@@ -1,5 +1,5 @@
-use rustc_hash::FxHashMap;
 use crate::line_index::LineIndex;
+use rustc_hash::FxHashMap;
 
 /// An entry in the `SourceRegistry` representing a loaded source file.
 // TODO: Refactor to hold &'sess str session references instead of owned String to avoid memory duplication.

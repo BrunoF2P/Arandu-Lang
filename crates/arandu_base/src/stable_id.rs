@@ -238,7 +238,7 @@ impl<T> DenseSlotMap<T> {
             slot.index_or_next_free = dense_idx;
             slot.generation += 1;
             self.free_head = next_free;
-            
+
             self.dense_to_slot.push(slot_idx);
             self.values.push(value);
             GenerationalId::new(slot_idx, slot.generation)
@@ -373,9 +373,9 @@ pub struct StableHandle(pub u64);
 
 #[cfg(debug_assertions)]
 pub(crate) mod collision_registry {
-    use std::sync::Mutex;
-    use rustc_hash::FxHashMap;
     use super::StableHandle;
+    use rustc_hash::FxHashMap;
+    use std::sync::Mutex;
 
     pub(crate) static REGISTRY: Mutex<Option<FxHashMap<u64, String>>> = Mutex::new(None);
 
@@ -476,7 +476,7 @@ mod tests {
         let key = map.insert(42u32);
         map.remove(key);
         assert!(map.get(key).is_none()); // antiga geração, deve falhar
-        
+
         let key2 = map.insert(99u32); // reutiliza o slot, geração+1
         assert!(map.get(key).is_none()); // key antigo ainda inválido
         assert_eq!(map.get(key2), Some(&99u32));

@@ -27,10 +27,10 @@ Func test_tuple_pattern() -> int
     s0 = move _1
     s1 = 0
     _2 = s0
-    _3 = _2._0
+    _3 = _2.0
     s2 = _3
     _4 = and true, true
-    _5 = _2._1
+    _5 = _2.1
     _6 = eq _5, 10
     _7 = and _4, _6
     switchInt _7 { 1 => bb1, otherwise => bb2 }

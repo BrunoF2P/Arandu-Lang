@@ -8,7 +8,7 @@ Func User.greet(shared self: User) -> str
   bb0:
     s0 = move _1
     _2 = s0
-    _0 = _2.name
+    _0 = _2.0
     return
 
 Func main() -> void

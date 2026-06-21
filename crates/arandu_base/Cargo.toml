@@ -12,3 +12,6 @@ vm = ["dep:libc"]
 [dependencies]
 rustc-hash = "2.1"
 libc = { version = "0.2", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = ["Win32_System_Memory"] }
