@@ -3,4 +3,4 @@ Program @1:1-7:2
   Enum @3:1-7:2 LoadState
     Variant @4:5-4:9 Idle
     Variant @5:5-5:16 Loaded(Type @5:12-5:15 str)
-    Variant @6:5-6:27 Failed { message Type @6:22-6:25 str }
+    Variant @6:5-6:28 Failed { message Type @6:23-6:26 str }

@@ -1,8 +1,8 @@
 Program @1:1-17:2
   Import @1:1-1:11 err
-  Func @3:1-5:2 add(@3:10-3:15 a Type @3:12-3:15 int, @3:17-3:22 b Type @3:19-3:22 int) -> Type @3:24-3:27 int
+  Func @3:1-5:2 add(@3:10-3:16 a Type @3:13-3:16 int, @3:18-3:24 b Type @3:21-3:24 int) -> Type @3:26-3:29 int
     Return @4:5-4:17 Binary @4:12-4:17(+, Path @4:12-4:13(a), Path @4:16-4:17(b))
-  Func @7:1-13:2 divide(@7:13-7:18 a Type @7:15-7:18 int, @7:20-7:25 b Type @7:22-7:25 int) -> Type @7:27-7:43 @7:27-7:33 Result<Type @7:34-7:37 int, Type @7:39-7:42 Err>
+  Func @7:1-13:2 divide(@7:13-7:19 a Type @7:16-7:19 int, @7:21-7:27 b Type @7:24-7:27 int) -> Type @7:29-7:45 @7:29-7:35 Result<Type @7:36-7:39 int, Type @7:41-7:44 Err>
     If @8:5-10:6 Condition @8:8-8:14 Binary @8:8-8:14(==, Path @8:8-8:9(b), Int @8:13-8:14(0))
       Return @9:9-9:53 Call @9:16-9:53(TypePath @9:16-9:26(@9:16-9:22 Result.Err), [Call @9:27-9:52(Field @9:27-9:34(Path @9:27-9:30(err), new), [String @9:35-9:51("divisionByZero")])])
     Return @12:5-12:28 Call @12:12-12:28(TypePath @12:12-12:21(@12:12-12:18 Result.Ok), [Binary @12:22-12:27(/, Path @12:22-12:23(a), Path @12:26-12:27(b))])

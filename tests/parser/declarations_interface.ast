@@ -1,4 +1,4 @@
 Program @1:1-5:2
   Module @1:1-1:35 tests.declarationsInterface
   Interface @3:1-5:2 Writer<@3:18-3:19 T>
-    Signature @4:5-4:42 write(@4:16-4:23 value Type @4:22-4:23 @4:22-4:23 T) -> Type @4:25-4:42 @4:25-4:31 Result<Type @4:32-4:36 @4:32-4:36 void, Type @4:38-4:41 Err>
+    Signature @4:5-4:43 write(@4:16-4:24 value Type @4:23-4:24 @4:23-4:24 T) -> Type @4:26-4:43 @4:26-4:32 Result<Type @4:33-4:37 @4:33-4:37 void, Type @4:39-4:42 Err>

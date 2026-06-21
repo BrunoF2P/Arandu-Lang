@@ -1,9 +1,9 @@
 T002: incompatible type for field 'x': expected 'int', found 'bool'
-  --> tests/ui/type_checker/struct_literal_errors.aru:7:27
-  label: 7:24-7:31 field 'x' has type 'int'
-  label: 7:27-7:31 value has type 'bool'
+  --> tests/ui/type_checker/struct_literal_errors.aru:7:28
+  label: 7:25-7:32 field 'x' has type 'int'
+  label: 7:28-7:32 value has type 'bool'
 T018: no field 'z' on type 'Point'
-  --> tests/ui/type_checker/struct_literal_errors.aru:8:36
-  label: 8:16-8:21 this has type 'Point'
-  label: 8:36-8:41 unknown field
+  --> tests/ui/type_checker/struct_literal_errors.aru:8:37
+  label: 8:17-8:22 this has type 'Point'
+  label: 8:37-8:42 unknown field
   hint: did you mean 'x'?

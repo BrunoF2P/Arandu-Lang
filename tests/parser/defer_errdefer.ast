@@ -1,4 +1,4 @@
 Program @1:1-5:2
   Import @1:1-1:11 err
-  Func @3:1-5:2 write(@3:12-3:20 path Type @3:17-3:20 str) -> Type @3:22-3:39 @3:22-3:28 Result<Type @3:29-3:33 @3:29-3:33 void, Type @3:35-3:38 Err>
+  Func @3:1-5:2 write(@3:12-3:21 path Type @3:18-3:21 str) -> Type @3:23-3:40 @3:23-3:29 Result<Type @3:30-3:34 @3:30-3:34 void, Type @3:36-3:39 Err>
     Return @4:5-4:39 Call @4:12-4:39(TypePath @4:12-4:22(@4:12-4:18 Result.Err), [Call @4:23-4:38(Field @4:23-4:30(Path @4:23-4:26(err), new), [String @4:31-4:37("fail")])])

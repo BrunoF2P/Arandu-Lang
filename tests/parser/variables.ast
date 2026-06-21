@@ -2,8 +2,8 @@ Program @1:1-16:2
   Module @1:1-1:40 examples.stable.syntax.variables
   Import @3:1-3:10 io
   Func @5:1-16:2 main() -> void
-    Var @6:5-6:23 @6:5-6:13 name Type @6:10-6:13 str = String @6:16-6:23("Bruno")
-    Var @7:5-7:21 @7:5-7:16 mut age Type @7:13-7:16 int = Int @7:19-7:21(25)
+    Var @6:5-6:24 @6:5-6:14 name Type @6:11-6:14 str = String @6:17-6:24("Bruno")
+    Var @7:5-7:22 @7:5-7:17 mut age Type @7:14-7:17 int = Int @7:20-7:22(25)
     Var @8:5-8:18 @8:5-8:10 score = Int @8:13-8:18(1_000)
     Var @9:5-9:17 @9:5-9:10 ratio = Float @9:13-9:17(3.14)
     Var @10:5-10:18 @10:5-10:11 active = Bool @10:14-10:18(true)

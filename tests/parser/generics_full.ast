@@ -1,8 +1,8 @@
 Program @1:1-13:2
   Module @1:1-1:26 tests.genericsFull
   Struct @3:1-5:2 Box<@3:12-3:22 T: @3:15-3:22 Display>
-    Field @4:5-4:12 value Type @4:11-4:12 @4:11-4:12 T
-  Func @7:1-9:2 identity<@7:15-7:16 T>(@7:18-7:25 value Type @7:24-7:25 @7:24-7:25 T) -> Type @7:27-7:28 @7:27-7:28 T where @7:35-7:45 T: @7:38-7:45 Display
+    Field @4:5-4:13 value Type @4:12-4:13 @4:12-4:13 T
+  Func @7:1-9:2 identity<@7:15-7:16 T>(@7:18-7:26 value Type @7:25-7:26 @7:25-7:26 T) -> Type @7:28-7:29 @7:28-7:29 T where @7:36-7:46 T: @7:39-7:46 Display
     Return @8:5-8:17 Path @8:12-8:17(value)
   Func @11:1-13:2 main() -> void
     Var @12:5-12:48 @12:5-12:8 box = StructLiteral @12:11-12:48(Type @12:11-12:19 @12:11-12:14 Box<Type @12:15-12:18 int>, [@12:22-12:46 value: Call @12:29-12:46(Generic @12:29-12:42(Path @12:29-12:37(identity), <Type @12:38-12:41 int>), [Int @12:43-12:45(42)])])
