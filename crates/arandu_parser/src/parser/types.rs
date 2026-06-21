@@ -118,32 +118,29 @@ impl<'a> Parser<'a> {
                 parser.expect_ident_value()?
             };
             let is_receiver = name == "self";
-            let ty = if parser.can_start_type() {
-                parser.parse_type()?
-            } else if is_receiver {
-                let receiver = method_receiver.ok_or_else(|| {
-                    ParseError::new(
-                        ParseErrorCode::ExpectedType,
-                        "receiver parameter 'self' requires an explicit type here",
-                        parser.current(),
-                        parser.file_id,
-                        parser.source,
-                    )
-                })?;
-                let empty_args = parser.pool.alloc_type_expr_list(&[]);
-                parser.pool.alloc_type_expr(TypeExpr::Named {
-                    span: receiver.span,
-                    name: receiver.clone(),
-                    args: empty_args,
-                })
+            let ty = if is_receiver {
+                if parser.eat_name("COLON") {
+                    parser.parse_type()?
+                } else {
+                    let receiver = method_receiver.ok_or_else(|| {
+                        ParseError::new(
+                            ParseErrorCode::ExpectedType,
+                            "receiver parameter 'self' requires an explicit type here",
+                            parser.current(),
+                            parser.file_id,
+                            parser.source,
+                        )
+                    })?;
+                    let empty_args = parser.pool.alloc_type_expr_list(&[]);
+                    parser.pool.alloc_type_expr(TypeExpr::Named {
+                        span: receiver.span,
+                        name: receiver.clone(),
+                        args: empty_args,
+                    })
+                }
             } else {
-                return Err(ParseError::new(
-                    ParseErrorCode::ExpectedType,
-                    "expected parameter type",
-                    parser.current(),
-                    parser.file_id,
-                    parser.source,
-                ));
+                parser.expect_name("COLON")?;
+                parser.parse_type()?
             };
             let is_variadic = parser.eat_name("ELLIPSIS");
             Ok(Param {

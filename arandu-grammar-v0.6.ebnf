@@ -115,7 +115,7 @@ func_name          = value_identifier
 
 param_list         = param { "," param } [ "," ] ;
 
-param              = attribute_list [ ownership ] value_identifier type_expr [ "..." ] ;
+param              = attribute_list [ ownership ] ( "self" [ ":" type_expr ] | value_identifier ":" type_expr ) [ "..." ] ;
                    (* semantic rule: "..." only on the last parameter. *)
                    (* semantic rule: type any is only allowed in variadic params and FFI. *)
 
@@ -137,7 +137,7 @@ struct_decl        = attribute_list [ visibility ] "struct"
                      type_identifier [ generic_params ] [ where_clause ]
                      "{" { field_decl } "}" ;
 
-field_decl         = attribute_list [ visibility ] value_identifier type_expr stmt_end ;
+field_decl         = attribute_list [ visibility ] value_identifier ":" type_expr stmt_end ;
 
 
 enum_decl          = attribute_list [ visibility ] "enum"
@@ -258,7 +258,7 @@ statement          = var_decl stmt_end
 
 var_decl           = binding_item { "," binding_item } "=" expr ;
 
-binding_item       = [ "mut" ] value_identifier [ type_expr ] ;
+binding_item       = [ "mut" ] value_identifier [ ":" type_expr ] ;
 
 set_stmt           = "set" ( place_list "=" expr
                             | place_expr compound_assign_op expr

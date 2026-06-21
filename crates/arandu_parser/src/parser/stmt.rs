@@ -143,7 +143,7 @@ impl<'a> Parser<'a> {
         let start = self.mark();
         let mutable = self.eat_name("KW_MUT");
         let name = self.expect_ident_value()?;
-        let ty = if self.can_start_type() {
+        let ty = if self.eat_name("COLON") {
             Some(self.parse_type()?)
         } else {
             None

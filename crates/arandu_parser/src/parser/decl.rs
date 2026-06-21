@@ -275,6 +275,7 @@ impl<'a> Parser<'a> {
         let attrs = self.parse_attributes()?;
         let visibility = self.parse_visibility();
         let name = self.expect_ident_value()?;
+        self.expect_name("COLON")?;
         let ty = self.parse_type()?;
         if require_semicolon || self.at_kind_name("SEMICOLON") {
             self.expect_semicolon()?;
