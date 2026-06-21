@@ -3,7 +3,7 @@ module examples.stable.semantics.errors
 import err
 import io
 
-func readName(path str) Result<str, Err> {
+func readName(path: str) Result<str, Err> {
     if path == "" {
         return Result.Err(err.new("missingPath"))
     }

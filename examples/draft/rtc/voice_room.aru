@@ -1,5 +1,5 @@
 import err
 
-async func joinRoom(roomId str) Result<void, Err> {
+async func joinRoom(roomId: str) Result<void, Err> {
     return nil
 }

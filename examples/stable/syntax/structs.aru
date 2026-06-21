@@ -3,11 +3,11 @@ module examples.stable.syntax.structs
 import io
 
 public struct User {
-    public name str
-    age int
+    public name: str
+    age: int
 }
 
-func User.greet(user User) str {
+func User.greet(user: User) str {
     return "Ola, ${user.name}"
 }
 

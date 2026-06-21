@@ -3,10 +3,10 @@ func foo() (int, bool) {
 }
 
 func main() {
-    a int = 10
-    b float = 3.14
-    c bool = true
-    d str = "hello"
+    a: int = 10
+    b: float = 3.14
+    c: bool = true
+    d: str = "hello"
     
     // Destructuring binding
     a2, b2 = foo()

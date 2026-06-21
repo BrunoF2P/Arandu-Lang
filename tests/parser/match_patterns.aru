@@ -1,6 +1,6 @@
 module tests.matchPatterns
 
-func describe(token Token) str {
+func describe(token: Token) str {
     return match token {
         Token.Number(value) if value > 0 => "positive"
         Token.Number(_) => "number"

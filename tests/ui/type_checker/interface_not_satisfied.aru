@@ -3,10 +3,10 @@ interface Writer {
 }
 
 struct Buffer {
-    data int
+    data: int
 }
 
-func send<T: Writer>(value T) void {
+func send<T: Writer>(value: T) void {
 }
 
 func main() {

@@ -1,6 +1,6 @@
 module tests.controlFlow
 
-func main(items []int) {
+func main(items: []int) {
     index = 0
     while index < 10 {
         set index += 1

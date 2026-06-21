@@ -3,7 +3,7 @@ enum Result {
     Error(str),
 }
 
-func test_payload(res Result) int {
+func test_payload(res: Result) int {
     mut val = 0
     if res is Result.Ok(x) {
         set val = x

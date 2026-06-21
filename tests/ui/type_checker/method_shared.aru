@@ -1,5 +1,5 @@
 struct User {
-    name str
+    name: str
 }
 
 func User.greet(shared self) str {
@@ -7,6 +7,6 @@ func User.greet(shared self) str {
 }
 
 func main() {
-    user User = User { name: "Ada" }
+    user: User = User { name: "Ada" }
     _ = user.greet()
 }

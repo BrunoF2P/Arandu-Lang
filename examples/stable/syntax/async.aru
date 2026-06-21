@@ -3,7 +3,7 @@ module examples.stable.syntax.async
 import err
 import io
 
-async func fetchText(path str) Result<str, Err> {
+async func fetchText(path: str) Result<str, Err> {
     if path == "" {
         return Result.Err(err.new("emptyPath"))
     }

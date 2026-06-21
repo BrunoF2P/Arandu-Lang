@@ -8,7 +8,7 @@ enum Token {
     End,
 }
 
-func describe(token Token) str {
+func describe(token: Token) str {
     return match token {
         Token.Number(value) if value > 0 => "positive number"
         Token.Number(_) => "number"

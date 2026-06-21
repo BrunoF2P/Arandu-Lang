@@ -3,8 +3,8 @@ module examples.stable.syntax.variables
 import io
 
 func main() {
-    name str = "Bruno"
-    mut age int = 25
+    name: str = "Bruno"
+    mut age: int = 25
     score = 1_000
     ratio = 3.14
     active = true

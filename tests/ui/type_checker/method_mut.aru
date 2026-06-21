@@ -1,5 +1,5 @@
 struct Counter {
-    value int
+    value: int
 }
 
 func Counter.bump(mut self) {
@@ -7,6 +7,6 @@ func Counter.bump(mut self) {
 }
 
 func main() {
-    c Counter = Counter { value: 0 }
+    c: Counter = Counter { value: 0 }
     c.bump()
 }

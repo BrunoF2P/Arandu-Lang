@@ -1,4 +1,4 @@
-func control_flow(x int) int {
+func control_flow(x: int) int {
     mut res = 0
     if x > 5 {
         set res = 10
@@ -8,7 +8,7 @@ func control_flow(x int) int {
     return res
 }
 
-func test_for_in(items []int) {
+func test_for_in(items: []int) {
     for item in items {
         item_val = item
     }

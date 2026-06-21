@@ -1,5 +1,5 @@
 struct Box {
-    payload int
+    payload: int
 }
 
 func Box.take(own self) int {
@@ -7,6 +7,6 @@ func Box.take(own self) int {
 }
 
 func main() {
-    b Box = Box { payload: 42 }
+    b: Box = Box { payload: 42 }
     _ = b.take()
 }

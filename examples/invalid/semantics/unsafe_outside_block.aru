@@ -1,7 +1,7 @@
 module examples.invalid.semantics.unsafeOutsideBlock
 
 extern "C" {
-    func rawWrite(address ptr[u8], value u8) int
+    func rawWrite(address: ptr[u8], value: u8) int
 }
 
 func main() {

@@ -1,9 +1,9 @@
 struct Point {
-    x int
-    y int
+    x: int
+    y: int
 }
 
 func main() {
-    p1 Point = Point { x: true, y: 0 }
-    p2 Point = Point { x: 0, y: 0, z: 10 }
+    p1: Point = Point { x: true, y: 0 }
+    p2: Point = Point { x: 0, y: 0, z: 10 }
 }

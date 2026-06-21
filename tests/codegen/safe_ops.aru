@@ -8,18 +8,18 @@ func test_try() int {
 }
 
 struct Point {
-    x int
-    y int
+    x: int
+    y: int
 }
 
-func test_safe_field(p Point?) int {
+func test_safe_field(p: Point?) int {
     return p?.x ?? 0
 }
 
-func test_safe_index(arr []int, idx int) int {
+func test_safe_index(arr: []int, idx: int) int {
     return arr?[idx] ?? -1
 }
 
-func test_null_coalesce(a int?, b int) int {
+func test_null_coalesce(a: int?, b: int) int {
     return a ?? b
 }

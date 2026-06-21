@@ -1,4 +1,4 @@
-func test_literal(x int) int {
+func test_literal(x: int) int {
     mut res = 0
     if x is 5 {
         set res = 10
@@ -8,7 +8,7 @@ func test_literal(x int) int {
     return res
 }
 
-func test_wildcard(x int) int {
+func test_wildcard(x: int) int {
     mut res = 0
     if x is _ {
         set res = 10

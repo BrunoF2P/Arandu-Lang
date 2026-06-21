@@ -3,5 +3,5 @@ func test() int {
 }
 
 func main() {
-    a int = test()?
+    a: int = test()?
 }

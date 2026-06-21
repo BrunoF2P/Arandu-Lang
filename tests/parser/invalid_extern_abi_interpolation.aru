@@ -1,5 +1,5 @@
 module tests.invalidExternAbiInterpolation
 
 extern "C${name}" {
-    func puts(text ptr[u8]) int
+    func puts(text: ptr[u8]) int
 }

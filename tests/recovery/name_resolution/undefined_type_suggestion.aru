@@ -1,9 +1,9 @@
 module tests.recovery.name_resolution.undefined_type_suggestion
 
 struct Person {
-    name str
+    name: str
 }
 
 func main() {
-    mut p Prson = nil
+    mut p: Prson = nil
 }

@@ -9,7 +9,7 @@ enum LoadState {
     Failed(Err),
 }
 
-func printState(state LoadState) {
+func printState(state: LoadState) {
     match state {
         LoadState.Idle => io.println("idle")
         LoadState.Loading => io.println("loading")

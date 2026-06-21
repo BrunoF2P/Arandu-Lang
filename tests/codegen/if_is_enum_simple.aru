@@ -5,7 +5,7 @@ enum LoadState {
     Failure,
 }
 
-func test_enum(state LoadState) int {
+func test_enum(state: LoadState) int {
     mut res = 0
     if state is LoadState.Idle {
         set res = 1

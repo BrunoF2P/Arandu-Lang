@@ -1,6 +1,6 @@
 struct Point {
-    x int
-    y int
+    x: int
+    y: int
 }
 
 enum LoadState {
@@ -9,23 +9,23 @@ enum LoadState {
 }
 
 func main() {
-    p Point = Point { x: 1, y: 2 }
-    x_val int = p.x
+    p: Point = Point { x: 1, y: 2 }
+    x_val: int = p.x
 
-    state LoadState = LoadState.Loaded("hello")
+    state: LoadState = LoadState.Loaded("hello")
 
-    res int = match state {
+    res: int = match state {
         LoadState.Idle => 0
         LoadState.Loaded(s) => 1
     }
 
-    val int = if res > 0 {
+    val: int = if res > 0 {
         10
     } else {
         20
     }
 
-    mut idx int = 0
+    mut idx: int = 0
     while idx < 5 {
         set idx = idx + 1
     }

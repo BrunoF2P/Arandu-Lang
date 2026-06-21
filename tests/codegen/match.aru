@@ -1,4 +1,4 @@
-func test_match_expr(x int) int {
+func test_match_expr(x: int) int {
     res = match x {
         1 => 10
         2..5 => 20
@@ -7,7 +7,7 @@ func test_match_expr(x int) int {
     return res
 }
 
-func test_match_stmt(x int) int {
+func test_match_stmt(x: int) int {
     mut res = 0
     match x {
         1 => {

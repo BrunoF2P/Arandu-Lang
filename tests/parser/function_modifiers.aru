@@ -1,5 +1,5 @@
 import err
 
-public async func fetch(path str) Result<str, Err> {
+public async func fetch(path: str) Result<str, Err> {
     return Result.Ok("ok")
 }

@@ -1,9 +1,9 @@
 struct User {
-    name str
-    age int
+    name: str
+    age: int
 }
 
-func test_struct_pattern(user User) int {
+func test_struct_pattern(user: User) int {
     mut val = 0
     if user is User { name, age: 25 } {
         set val = 1

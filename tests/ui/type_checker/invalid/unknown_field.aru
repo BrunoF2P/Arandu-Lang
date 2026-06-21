@@ -1,8 +1,8 @@
 struct User {
-    age int
+    age: int
 }
 
 func main() {
-    u User = User { age: 10 }
-    x int = u.name
+    u: User = User { age: 10 }
+    x: int = u.name
 }
