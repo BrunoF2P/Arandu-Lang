@@ -1,5 +1,6 @@
 use super::{AmirFunc, AmirTerminator, BlockId};
 use crate::BitSet;
+use smallvec::{SmallVec, smallvec};
 
 #[must_use]
 pub fn reachable_blocks_dense(func: &AmirFunc) -> BitSet<BlockId> {
@@ -23,17 +24,18 @@ pub fn reachable_blocks_dense(func: &AmirFunc) -> BitSet<BlockId> {
     reachable
 }
 
-pub fn terminator_targets(term: &AmirTerminator) -> Vec<BlockId> {
+pub fn terminator_targets(term: &AmirTerminator) -> SmallVec<[BlockId; 2]> {
     match term {
-        AmirTerminator::Return | AmirTerminator::Unreachable => Vec::new(),
-        AmirTerminator::Goto(block) => vec![*block],
+        AmirTerminator::Return | AmirTerminator::Unreachable => SmallVec::new(),
+        AmirTerminator::Goto(block) => smallvec![*block],
         AmirTerminator::Branch {
             if_true, if_false, ..
-        } => vec![*if_true, *if_false],
+        } => smallvec![*if_true, *if_false],
         AmirTerminator::SwitchInt {
             targets, otherwise, ..
         } => {
-            let mut blocks: Vec<BlockId> = targets.iter().map(|(_, block)| *block).collect();
+            let mut blocks: SmallVec<[BlockId; 2]> =
+                targets.iter().map(|(_, block)| *block).collect();
             blocks.push(*otherwise);
             blocks
         }

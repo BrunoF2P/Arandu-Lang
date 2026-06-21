@@ -17,9 +17,9 @@
 //!
 //! Interning is additive and append-only; types are never removed.
 
+use super::ar_type::ArType;
 use crate::SymbolTable;
 use crate::newtype_index;
-use super::ar_type::ArType;
 use rustc_hash::FxHashMap;
 
 newtype_index!(TypeId);
@@ -101,6 +101,79 @@ impl Default for TypeInterner {
     }
 }
 
+use std::cell::RefCell;
+
+thread_local! {
+    pub static CURRENT_INTERNER: RefCell<Option<*const TypeInterner>> = RefCell::new(None);
+    pub static CURRENT_INTERNER_MUT: RefCell<Option<*mut TypeInterner>> = RefCell::new(None);
+}
+
+pub struct InternerScope {
+    old: Option<*const TypeInterner>,
+    old_mut: Option<*mut TypeInterner>,
+}
+
+impl InternerScope {
+    pub fn new(interner: &TypeInterner) -> Self {
+        let old = CURRENT_INTERNER.with(|c| {
+            let mut slot = c.borrow_mut();
+            let old = *slot;
+            *slot = Some(interner as *const TypeInterner);
+            old
+        });
+        Self { old, old_mut: None }
+    }
+
+    pub fn new_mut(interner: &mut TypeInterner) -> Self {
+        let old = CURRENT_INTERNER.with(|c| {
+            let mut slot = c.borrow_mut();
+            let old = *slot;
+            *slot = Some(interner as *const TypeInterner);
+            old
+        });
+        let old_mut = CURRENT_INTERNER_MUT.with(|c| {
+            let mut slot = c.borrow_mut();
+            let old = *slot;
+            *slot = Some(interner as *mut TypeInterner);
+            old
+        });
+        Self { old, old_mut }
+    }
+}
+
+impl Drop for InternerScope {
+    fn drop(&mut self) {
+        CURRENT_INTERNER.with(|c| {
+            *c.borrow_mut() = self.old;
+        });
+        CURRENT_INTERNER_MUT.with(|c| {
+            *c.borrow_mut() = self.old_mut;
+        });
+    }
+}
+
+pub fn intern_type(ty: ArType) -> TypeId {
+    CURRENT_INTERNER_MUT.with(|c| {
+        if let Some(ptr) = *c.borrow() {
+            let interner = unsafe { &mut *ptr };
+            interner.intern(ty)
+        } else {
+            panic!("No active TypeInterner in CURRENT_INTERNER_MUT");
+        }
+    })
+}
+
+pub fn with_resolved_type<R, F: FnOnce(&ArType) -> R>(id: TypeId, f: F) -> R {
+    CURRENT_INTERNER.with(|c| {
+        if let Some(ptr) = *c.borrow() {
+            let interner = unsafe { &*ptr };
+            f(interner.resolve(id))
+        } else {
+            f(&ArType::Error)
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,7 +200,8 @@ mod tests {
     #[test]
     fn test_resolve_roundtrip() {
         let mut interner = TypeInterner::new();
-        let ty = ArType::Nullable(Box::new(ArType::Primitive(Primitive::Str)));
+        let str_id = interner.intern(ArType::Primitive(Primitive::Str));
+        let ty = ArType::Nullable(str_id);
         let id = interner.intern(ty.clone());
         assert_eq!(*interner.resolve(id), ty);
     }
@@ -148,26 +222,22 @@ mod tests {
     #[test]
     fn test_complex_recursive_type_dedup() {
         let mut interner = TypeInterner::new();
-        let result_ty = ArType::Result(
-            Box::new(ArType::Primitive(Primitive::Int)),
-            Box::new(ArType::Err),
-        );
+        let int_id = interner.intern(ArType::Primitive(Primitive::Int));
+        let err_id = interner.intern(ArType::Err);
+        let result_ty = ArType::Result(int_id, err_id);
         let id1 = interner.intern(result_ty.clone());
         let id2 = interner.intern(result_ty);
         assert_eq!(id1, id2);
-        assert_eq!(interner.len(), 1);
+        assert_eq!(interner.len(), 3);
     }
 
     #[test]
     fn test_func_type_interning() {
         let mut interner = TypeInterner::new();
-        let func_ty = ArType::Func(
-            vec![
-                ArType::Primitive(Primitive::Int),
-                ArType::Primitive(Primitive::Str),
-            ],
-            Box::new(ArType::Primitive(Primitive::Bool)),
-        );
+        let int_id = interner.intern(ArType::Primitive(Primitive::Int));
+        let str_id = interner.intern(ArType::Primitive(Primitive::Str));
+        let bool_id = interner.intern(ArType::Primitive(Primitive::Bool));
+        let func_ty = ArType::Func(vec![int_id, str_id], bool_id);
         let id = interner.intern(func_ty.clone());
         assert_eq!(*interner.resolve(id), func_ty);
     }

@@ -162,48 +162,45 @@ fn int_constant(value: i128, pool: &mut AmirLiteralPool) -> AmirConstant {
 fn eliminate_dead_assigns(func: &mut AmirFunc) {
     loop {
         let used = used_temps(func);
-        let (new_stmts, new_ranges, changed) = rebuild_without_dead_assigns(func, &used);
+        let mut changed = false;
+
+        for bi in 0..func.blocks.len() {
+            let block_id = func.blocks[bi].id;
+            let stmt_ids: Vec<_> = func.block_stmt_ids(block_id).collect();
+            for stmt_id in stmt_ids {
+                let stmt = func.stmt_mut(stmt_id);
+                if let AmirStmt::Assign { lhs, rhs } = stmt {
+                    if !used.contains(*lhs) && is_removable_rvalue(rhs) {
+                        *stmt = AmirStmt::Nop;
+                        changed = true;
+                    }
+                }
+            }
+        }
 
         if !changed {
             break;
         }
-        func.stmts = new_stmts;
-        for (block, range) in func.blocks.iter_mut().zip(new_ranges) {
-            block.statements = range;
-        }
     }
-}
 
-fn rebuild_without_dead_assigns(
-    func: &AmirFunc,
-    used: &BitSet<crate::amir::TempId>,
-) -> (AmirStmtTable, Vec<DenseRange>, bool) {
+    // Single post-pass to remove Nops and rebuild table/ranges
     let mut table = AmirStmtTable::new();
-    let mut ranges = Vec::with_capacity(func.blocks.len());
-    let mut changed = false;
-
+    let mut new_ranges = Vec::with_capacity(func.blocks.len());
     for block in &func.blocks {
         let start = table.len();
         let mut kept = 0usize;
-
         for stmt in func.block_stmts(block.id) {
-            let keep = match stmt {
-                AmirStmt::Assign { lhs, rhs } => used.contains(*lhs) || !is_removable_rvalue(rhs),
-                _ => true,
-            };
-
-            if keep {
+            if !matches!(stmt, AmirStmt::Nop) {
                 table.push(stmt.clone());
                 kept += 1;
-            } else {
-                changed = true;
             }
         }
-
-        ranges.push(DenseRange::new(start, kept));
+        new_ranges.push(DenseRange::new(start, kept));
     }
-
-    (table, ranges, changed)
+    func.stmts = table;
+    for (block, range) in func.blocks.iter_mut().zip(new_ranges) {
+        block.statements = range;
+    }
 }
 
 fn used_temps(func: &AmirFunc) -> BitSet<crate::amir::TempId> {
@@ -235,13 +232,14 @@ fn used_temps(func: &AmirFunc) -> BitSet<crate::amir::TempId> {
                     }
                 }
                 AmirStmt::Free(op) => collect_operand_temp(op, &mut used),
-                AmirStmt::StorageLive(_) | AmirStmt::StorageDead(_) | AmirStmt::Destroy(_) => {}
+                AmirStmt::StorageLive(_)
+                | AmirStmt::StorageDead(_)
+                | AmirStmt::Destroy(_)
+                | AmirStmt::Nop => {}
             }
         }
         match &block.terminator {
-            AmirTerminator::Branch { condition, .. } => {
-                collect_operand_temp(condition, &mut used)
-            }
+            AmirTerminator::Branch { condition, .. } => collect_operand_temp(condition, &mut used),
             AmirTerminator::SwitchInt { discriminant, .. } => {
                 collect_operand_temp(discriminant, &mut used);
             }

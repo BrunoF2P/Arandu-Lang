@@ -1,6 +1,6 @@
 use crate::amir::AmirProgram;
-use crate::symbol_table::SymbolTable;
 use crate::diagnostics::Diagnostic;
+use crate::symbol_table::SymbolTable;
 
 pub trait CompiledCode {
     /// # Safety

@@ -39,7 +39,9 @@ pub(crate) fn synth_result_ctor(
                 return Some(ArType::Error);
             }
             let ok_ty = synth_expr(checker, arg_ids[0]);
-            Some(ArType::Result(Box::new(ok_ty), Box::new(ArType::Err)))
+            let ok_id = super::super::types::intern_type(ok_ty);
+            let err_literal_id = super::super::types::intern_type(ArType::Err);
+            Some(ArType::Result(ok_id, err_literal_id))
         }
         "Err" => {
             if arg_ids.len() != 1 {
@@ -54,7 +56,9 @@ pub(crate) fn synth_result_ctor(
                 return Some(ArType::Error);
             }
             let err_ty = synth_expr(checker, arg_ids[0]);
-            Some(ArType::Result(Box::new(ArType::Error), Box::new(err_ty)))
+            let err_id = super::super::types::intern_type(ArType::Error);
+            let err_ty_id = super::super::types::intern_type(err_ty);
+            Some(ArType::Result(err_id, err_ty_id))
         }
         _ => None,
     }
@@ -85,7 +89,8 @@ pub(crate) fn synth_option_ctor(
                 return Some(ArType::Error);
             }
             let inner = synth_expr(checker, arg_ids[0]);
-            Some(ArType::Option(Box::new(inner)))
+            let inner_id = super::super::types::intern_type(inner);
+            Some(ArType::Option(inner_id))
         }
         _ => None,
     }
@@ -106,16 +111,21 @@ pub(crate) fn synth_method_call(
     }
 
     let actual_base_ty = match &base_ty {
-        ArType::Nullable(inner) => inner.as_ref().clone(),
+        ArType::Nullable(inner) => {
+            super::super::types::type_interner::with_resolved_type(*inner, |t| t.clone())
+        }
         other => other.clone(),
     };
 
     let struct_id = match &actual_base_ty {
         ArType::Named(id, _) => Some(*id),
-        ArType::Ptr(inner) => match &**inner {
-            ArType::Named(id, _) => Some(*id),
-            _ => None,
-        },
+        ArType::Ptr(inner) => super::super::types::type_interner::with_resolved_type(
+            *inner,
+            |inner_ty| match inner_ty {
+                ArType::Named(id, _) => Some(*id),
+                _ => None,
+            },
+        ),
         _ => None,
     }?;
 
@@ -133,19 +143,21 @@ pub(crate) fn synth_method_call(
         return None;
     }
 
-    let receiver_ty = &params[0];
-    if !super::super::types::unify(receiver_ty, &actual_base_ty) {
-        checker.add_constraint(
-            receiver_ty.clone(),
-            actual_base_ty.clone(),
-            ConstraintOrigin::CallArg {
-                call_span,
-                param_span: field_span,
-                arg_span: checker.pool.expr_span(base),
-                arg_index: 0,
-            },
-        );
-    }
+    let receiver_ty_id = params[0];
+    super::super::types::type_interner::with_resolved_type(receiver_ty_id, |receiver_ty| {
+        if !super::super::types::unify(receiver_ty, &actual_base_ty) {
+            checker.add_constraint(
+                receiver_ty.clone(),
+                actual_base_ty.clone(),
+                ConstraintOrigin::CallArg {
+                    call_span,
+                    param_span: field_span,
+                    arg_span: checker.pool.expr_span(base),
+                    arg_index: 0,
+                },
+            );
+        }
+    });
 
     let explicit_params = &params[1..];
     let arg_ids = checker.pool.expr_list(args).to_vec();
@@ -166,24 +178,29 @@ pub(crate) fn synth_method_call(
 
     for (i, arg_id) in arg_ids.iter().copied().enumerate() {
         let arg_ty = synth_expr(checker, arg_id);
-        if let Some(expected) = explicit_params.get(i)
-            && !super::super::types::unify(expected, &arg_ty)
-        {
-            checker.add_constraint(
-                expected.clone(),
-                arg_ty,
-                ConstraintOrigin::CallArg {
-                    call_span,
-                    param_span: field_span,
-                    arg_span: checker.pool.expr_span(arg_id),
-                    arg_index: i + 1,
-                },
-            );
+        if let Some(&expected_id) = explicit_params.get(i) {
+            super::super::types::type_interner::with_resolved_type(expected_id, |expected| {
+                if !super::super::types::unify(expected, &arg_ty) {
+                    checker.add_constraint(
+                        expected.clone(),
+                        arg_ty.clone(),
+                        ConstraintOrigin::CallArg {
+                            call_span,
+                            param_span: field_span,
+                            arg_span: checker.pool.expr_span(arg_id),
+                            arg_index: i + 1,
+                        },
+                    );
+                }
+            });
         }
     }
 
     checker.resolved.value_ref(field_span, method_sym);
     checker.record_expr_type(callee, ArType::Func(params, ret.clone()));
 
-    Some(*ret)
+    Some(super::super::types::type_interner::with_resolved_type(
+        ret,
+        |t| t.clone(),
+    ))
 }

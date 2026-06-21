@@ -1,6 +1,6 @@
-use arandu_parser::{Program, TopLevelDecl, FuncName};
+use arandu_parser::{FuncName, Program, TopLevelDecl};
 
-use crate::{ResolutionResult, ResolvedNames, SymbolTable, SymbolKind};
+use crate::{ResolutionResult, ResolvedNames, SymbolKind, SymbolTable};
 
 mod collect;
 mod decls;
@@ -31,9 +31,15 @@ pub fn resolve(program: &Program) -> ResolutionResult {
     Resolver::new(&program.pool).resolve_program(program)
 }
 
-
 #[must_use]
-pub fn collect_symbols(program: &Program) -> (SymbolTable, ResolvedNames, crate::DocCommentMap, Vec<crate::Diagnostic>) {
+pub fn collect_symbols(
+    program: &Program,
+) -> (
+    SymbolTable,
+    ResolvedNames,
+    crate::DocCommentMap,
+    Vec<crate::Diagnostic>,
+) {
     let mut resolver = Resolver {
         symbols: SymbolTable::new(),
         resolved: ResolvedNames::default(),
@@ -43,7 +49,8 @@ pub fn collect_symbols(program: &Program) -> (SymbolTable, ResolvedNames, crate:
     };
 
     for doc in &program.docs {
-        resolver.docs
+        resolver
+            .docs
             .entry(crate::NodeKey::from(doc.target_span))
             .or_default()
             .push(doc.text.clone());
@@ -71,28 +78,44 @@ pub fn collect_symbols(program: &Program) -> (SymbolTable, ResolvedNames, crate:
             let decl = program.pool.decl(*decl_id);
             match decl {
                 TopLevelDecl::Const(d) => {
-                    let _ = resolver.symbols.define_module_member(&module_name, &d.name, d.span);
+                    let _ = resolver
+                        .symbols
+                        .define_module_member(&module_name, &d.name, d.span);
                 }
                 TopLevelDecl::TypeAlias(d) => {
-                    let _ = resolver.symbols.define_module_member(&module_name, &d.name, d.span);
+                    let _ = resolver
+                        .symbols
+                        .define_module_member(&module_name, &d.name, d.span);
                 }
                 TopLevelDecl::Func(d) => {
                     if let FuncName::Free { span, name } = &d.name {
-                        let _ = resolver.symbols.define_module_member(&module_name, name, *span);
+                        let _ = resolver
+                            .symbols
+                            .define_module_member(&module_name, name, *span);
                     }
                 }
                 TopLevelDecl::Struct(d) => {
-                    let _ = resolver.symbols.define_module_member(&module_name, &d.name, d.span);
+                    let _ = resolver
+                        .symbols
+                        .define_module_member(&module_name, &d.name, d.span);
                 }
                 TopLevelDecl::Enum(d) => {
-                    let _ = resolver.symbols.define_module_member(&module_name, &d.name, d.span);
+                    let _ = resolver
+                        .symbols
+                        .define_module_member(&module_name, &d.name, d.span);
                 }
                 TopLevelDecl::Interface(d) => {
-                    let _ = resolver.symbols.define_module_member(&module_name, &d.name, d.span);
+                    let _ = resolver
+                        .symbols
+                        .define_module_member(&module_name, &d.name, d.span);
                 }
                 TopLevelDecl::Extern(d) => {
                     for member in &d.members {
-                        let _ = resolver.symbols.define_module_member(&module_name, &member.name, member.span);
+                        let _ = resolver.symbols.define_module_member(
+                            &module_name,
+                            &member.name,
+                            member.span,
+                        );
                     }
                 }
                 TopLevelDecl::Error(_) => {}
@@ -100,10 +123,13 @@ pub fn collect_symbols(program: &Program) -> (SymbolTable, ResolvedNames, crate:
         }
     }
 
-    (resolver.symbols, resolver.resolved, resolver.docs, resolver.diagnostics)
+    (
+        resolver.symbols,
+        resolver.resolved,
+        resolver.docs,
+        resolver.diagnostics,
+    )
 }
-
-
 
 #[must_use]
 pub fn resolve_with_symbols(
@@ -121,7 +147,6 @@ pub fn resolve_with_symbols(
         pool: &program.pool,
     };
 
-
     let global = resolver.symbols.global_scope();
     for decl_id in &program.decls {
         let decl = program.pool.decl(*decl_id);
@@ -135,7 +160,6 @@ pub fn resolve_with_symbols(
         diagnostics: resolver.diagnostics,
     }
 }
-
 
 struct Resolver<'a> {
     symbols: SymbolTable,

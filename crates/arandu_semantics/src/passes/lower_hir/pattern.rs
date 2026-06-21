@@ -35,7 +35,10 @@ pub(crate) fn lower_pattern(
         }
         Pattern::Literal { span, expr } => {
             let eid = super::expr::lower_expr(type_check, pool, hir_pool, *expr)?;
-            Ok(HirPattern::Literal { span: *span, expr: eid })
+            Ok(HirPattern::Literal {
+                span: *span,
+                expr: eid,
+            })
         }
         Pattern::Enum {
             span,

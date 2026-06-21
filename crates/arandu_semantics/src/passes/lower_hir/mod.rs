@@ -13,6 +13,9 @@ pub fn lower_to_hir(
     type_check: &TypeCheckResult,
     program: &Program,
 ) -> Result<HirProgram, Vec<Diagnostic>> {
+    let _scope = arandu_middle::types::type_interner::InternerScope::new(
+        &type_check.type_info.type_interner,
+    );
     if type_check
         .diagnostics
         .iter()

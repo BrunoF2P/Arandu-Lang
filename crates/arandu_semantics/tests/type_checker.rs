@@ -673,7 +673,11 @@ fn test_nullability_and_safe_access() {
 #[test]
 fn test_official_ok_suite() {
     let root = workspace_root();
-    let ok_dir = root.join("tests").join("ui").join("type_checker").join("ok");
+    let ok_dir = root
+        .join("tests")
+        .join("ui")
+        .join("type_checker")
+        .join("ok");
     assert!(ok_dir.exists(), "ok directory does not exist");
 
     let mut paths = Vec::new();
@@ -711,7 +715,11 @@ fn test_official_ok_suite() {
 #[test]
 fn test_official_invalid_suite() {
     let root = workspace_root();
-    let invalid_dir = root.join("tests").join("ui").join("type_checker").join("invalid");
+    let invalid_dir = root
+        .join("tests")
+        .join("ui")
+        .join("type_checker")
+        .join("invalid");
     assert!(invalid_dir.exists(), "invalid directory does not exist");
 
     let mut aru_files = std::collections::HashSet::new();
@@ -1069,14 +1077,27 @@ fn test_type_checker_smart_suggestions() {
     let resolution = resolve(&program);
     let result = type_check(resolution, &program);
 
-    let hints: Vec<String> = result.diagnostics
+    let hints: Vec<String> = result
+        .diagnostics
         .iter()
         .flat_map(|d| d.hints.iter().map(|h| h.message.clone()))
         .collect();
 
-    assert!(hints.contains(&"did you mean 'myfield'?".to_string()), "got hints: {:?}", hints);
-    assert!(hints.contains(&"did you mean 'get_x()'?".to_string()), "got hints: {:?}", hints);
-    assert!(hints.contains(&"did you mean 'y'?".to_string()), "got hints: {:?}", hints);
+    assert!(
+        hints.contains(&"did you mean 'myfield'?".to_string()),
+        "got hints: {:?}",
+        hints
+    );
+    assert!(
+        hints.contains(&"did you mean 'get_x()'?".to_string()),
+        "got hints: {:?}",
+        hints
+    );
+    assert!(
+        hints.contains(&"did you mean 'y'?".to_string()),
+        "got hints: {:?}",
+        hints
+    );
 }
 
 #[test]
@@ -1112,6 +1133,9 @@ fn test_interface_missing_method_suggestions() {
             }
         }
     }
-    assert!(found, "Expected note suggesting 'wrte' for missing method 'write', but got diagnostics: {:?}", result.diagnostics);
+    assert!(
+        found,
+        "Expected note suggesting 'wrte' for missing method 'write', but got diagnostics: {:?}",
+        result.diagnostics
+    );
 }
-

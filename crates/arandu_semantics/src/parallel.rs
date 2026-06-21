@@ -1,13 +1,10 @@
-use std::collections::VecDeque;
-use std::path::PathBuf;
-use std::sync::{Arc, Condvar, Mutex};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::thread;
-use arandu_parser::{Program, ParseError};
-use crate::{Diagnostic, ResolutionResult, TypeCheckResult, SymbolTable, ResolvedNames, Severity};
-use crate::hir::HirProgram;
 use crate::amir::AmirProgram;
-
+use crate::hir::HirProgram;
+use crate::{Diagnostic, ResolutionResult, ResolvedNames, Severity, SymbolTable, TypeCheckResult};
+use arandu_parser::{ParseError, Program};
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::thread;
 
 #[cfg(target_os = "linux")]
 fn pin_thread_to_core(core_id: usize) {
@@ -15,62 +12,77 @@ fn pin_thread_to_core(core_id: usize) {
         let mut cpuset: libc::cpu_set_t = std::mem::zeroed();
         libc::CPU_SET(core_id, &mut cpuset);
         let thread = libc::pthread_self();
-        let _ = libc::pthread_setaffinity_np(
-            thread,
-            std::mem::size_of::<libc::cpu_set_t>(),
-            &cpuset,
-        );
+        let _ =
+            libc::pthread_setaffinity_np(thread, std::mem::size_of::<libc::cpu_set_t>(), &cpuset);
     }
 }
 
 #[cfg(not(target_os = "linux"))]
 fn pin_thread_to_core(_core_id: usize) {}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Task {
-    Parse { file_idx: usize },
-    MergeSymbols,
-    Resolve { file_idx: usize },
-    TypeCheck { file_idx: usize },
-    LowerHir { file_idx: usize },
-    LowerAmir { file_idx: usize },
+    Parse {
+        file_idx: usize,
+        path: PathBuf,
+    },
+    Resolve {
+        file_idx: usize,
+        program: Program,
+        resolved_names: ResolvedNames,
+        symbols: Arc<SymbolTable>,
+        docs: Arc<crate::DocCommentMap>,
+        diags: Arc<Vec<Diagnostic>>,
+    },
+    TypeCheck {
+        file_idx: usize,
+        program: Program,
+        resolution: ResolutionResult,
+    },
+    LowerHir {
+        file_idx: usize,
+        program: Program,
+        type_check_result: Arc<TypeCheckResult>,
+    },
+    LowerAmir {
+        file_idx: usize,
+        hir: HirProgram,
+        type_check_result: Arc<TypeCheckResult>,
+    },
+    Shutdown,
 }
 
-struct TaskQueue {
-    tasks: Mutex<VecDeque<Task>>,
-}
-
-struct SchedulerState {
-    merge_deps: AtomicUsize,
-    resolve_deps: Vec<AtomicUsize>,
-    typecheck_deps: Vec<AtomicUsize>,
-    hir_deps: Vec<AtomicUsize>,
-    amir_deps: Vec<AtomicUsize>,
-}
-
-pub struct CompilationContext {
-    pub paths: Vec<PathBuf>,
-    pub num_files: usize,
-    
-    // Outputs & Intermediate Results
-    pub programs: Vec<Mutex<Option<Program>>>,
-    pub parse_errors: Vec<Mutex<Vec<ParseError>>>,
-    pub symbol_tables: Vec<Mutex<Option<SymbolTable>>>,
-    pub resolveds: Vec<Mutex<Option<ResolvedNames>>>,
-    pub doc_maps: Vec<Mutex<Option<crate::DocCommentMap>>>,
-    pub resolve_diags: Vec<Mutex<Vec<Diagnostic>>>,
-    pub symbol_offsets: Vec<Mutex<usize>>,
-    
-    pub merged_symbol_table: Mutex<Option<SymbolTable>>,
-    pub merged_docs: Mutex<Option<crate::DocCommentMap>>,
-    pub merged_diags: Mutex<Vec<Diagnostic>>,
-    
-    pub resolutions: Vec<Mutex<Option<ResolutionResult>>>,
-    pub type_checks: Vec<Mutex<Option<TypeCheckResult>>>,
-    pub hirs: Vec<Mutex<Option<HirProgram>>>,
-    pub amirs: Vec<Mutex<Option<AmirProgram>>>,
-    
-    pub diagnostics: Mutex<Vec<Diagnostic>>,
+pub enum WorkerMessage {
+    ParseFinished {
+        file_idx: usize,
+        program: Option<Program>,
+        parse_errors: Vec<ParseError>,
+        symbol_table: Option<SymbolTable>,
+        resolved_names: Option<ResolvedNames>,
+        doc_map: Option<crate::DocCommentMap>,
+        resolve_diags: Vec<Diagnostic>,
+        io_error: Option<Diagnostic>,
+    },
+    ResolveFinished {
+        file_idx: usize,
+        program: Program,
+        resolution: Option<ResolutionResult>,
+    },
+    TypeCheckFinished {
+        file_idx: usize,
+        program: Program,
+        type_check_result: Option<Arc<TypeCheckResult>>,
+    },
+    LowerHirFinished {
+        file_idx: usize,
+        hir: Option<HirProgram>,
+        diagnostics: Vec<Diagnostic>,
+    },
+    LowerAmirFinished {
+        file_idx: usize,
+        amir: Option<AmirProgram>,
+        hir: HirProgram,
+        diagnostics: Vec<Diagnostic>,
+    },
 }
 
 #[derive(Debug)]
@@ -79,6 +91,7 @@ pub struct ParallelOutput {
     pub hirs: Vec<HirProgram>,
     pub amirs: Vec<AmirProgram>,
     pub symbols: Vec<SymbolTable>,
+    pub type_interners: Vec<crate::passes::type_checker::types::TypeInterner>,
 }
 
 pub fn compile_parallel(paths: Vec<PathBuf>) -> Result<ParallelOutput, Vec<Diagnostic>> {
@@ -89,148 +102,274 @@ pub fn compile_parallel(paths: Vec<PathBuf>) -> Result<ParallelOutput, Vec<Diagn
             hirs: Vec::new(),
             amirs: Vec::new(),
             symbols: Vec::new(),
+            type_interners: Vec::new(),
         });
     }
 
+    let mut programs = vec![None; num_files];
+    let mut resolveds = vec![None; num_files];
+    let mut symbol_offsets = vec![0; num_files];
+    let mut resolutions = vec![None; num_files];
+    let mut type_checks = vec![None; num_files];
+    let mut hirs = Vec::new();
+    hirs.resize_with(num_files, || None);
+    let mut amirs = Vec::new();
+    amirs.resize_with(num_files, || None);
+    let mut final_diagnostics = Vec::new();
 
-    let mut programs = Vec::with_capacity(num_files);
-    let mut parse_errors = Vec::with_capacity(num_files);
-    let mut symbol_tables = Vec::with_capacity(num_files);
-    let mut resolveds = Vec::with_capacity(num_files);
-    let mut doc_maps = Vec::with_capacity(num_files);
-    let mut resolve_diags = Vec::with_capacity(num_files);
-    let mut symbol_offsets = Vec::with_capacity(num_files);
-    let mut resolutions = Vec::with_capacity(num_files);
-    let mut type_checks = Vec::with_capacity(num_files);
-    let mut hirs = Vec::with_capacity(num_files);
-    let mut amirs = Vec::with_capacity(num_files);
-    let mut resolve_deps = Vec::with_capacity(num_files);
-    let mut typecheck_deps = Vec::with_capacity(num_files);
-    let mut hir_deps = Vec::with_capacity(num_files);
-    let mut amir_deps = Vec::with_capacity(num_files);
+    let mut symbol_tables = vec![None; num_files];
+    let mut doc_maps = vec![None; num_files];
+    let mut resolve_diags = vec![Vec::new(); num_files];
 
-    for _ in 0..num_files {
-        programs.push(Mutex::new(None));
-        parse_errors.push(Mutex::new(Vec::new()));
-        symbol_tables.push(Mutex::new(None));
-        resolveds.push(Mutex::new(None));
-        doc_maps.push(Mutex::new(None));
-        resolve_diags.push(Mutex::new(Vec::new()));
-        symbol_offsets.push(Mutex::new(0));
-        resolutions.push(Mutex::new(None));
-        type_checks.push(Mutex::new(None));
-        hirs.push(Mutex::new(None));
-        amirs.push(Mutex::new(None));
-        resolve_deps.push(AtomicUsize::new(1));
-        typecheck_deps.push(AtomicUsize::new(1));
-        hir_deps.push(AtomicUsize::new(1));
-        amir_deps.push(AtomicUsize::new(1));
-    }
-
-    let ctx = Arc::new(CompilationContext {
-        paths,
-        num_files,
-        programs,
-        parse_errors,
-        symbol_tables,
-        resolveds,
-        doc_maps,
-        resolve_diags,
-        symbol_offsets,
-        merged_symbol_table: Mutex::new(None),
-        merged_docs: Mutex::new(None),
-        merged_diags: Mutex::new(Vec::new()),
-        resolutions,
-        type_checks,
-        hirs,
-        amirs,
-        diagnostics: Mutex::new(Vec::new()),
-    });
-
-    let state = Arc::new(SchedulerState {
-        merge_deps: AtomicUsize::new(num_files),
-        resolve_deps,
-        typecheck_deps,
-        hir_deps,
-        amir_deps,
-    });
-
-    // 5 tasks per file (Parse, Resolve, Typecheck, Hir, Amir) + 1 Merge task
-    let todo_count = Arc::new(AtomicUsize::new(5 * num_files + 1));
-    let condvar = Arc::new(Condvar::new());
-    let condvar_mutex = Arc::new(Mutex::new(()));
+    let (tx_to_coordinator, rx_from_workers) = std::sync::mpsc::channel();
+    let mut worker_senders = Vec::new();
+    let mut worker_handles = Vec::new();
 
     let num_workers = thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(4);
 
-    let mut queues = Vec::with_capacity(num_workers);
-    for _ in 0..num_workers {
-        queues.push(TaskQueue {
-            tasks: Mutex::new(VecDeque::new()),
-        });
-    }
-    let queues = Arc::new(queues);
-
-    // Initial load: parse tasks for all files
-    for file_idx in 0..num_files {
-        let worker = file_idx % num_workers;
-        queues[worker].tasks.lock().unwrap().push_back(Task::Parse { file_idx });
-    }
-
-    let mut handles = Vec::with_capacity(num_workers);
     for worker_id in 0..num_workers {
-        let queues = Arc::clone(&queues);
-        let state = Arc::clone(&state);
-        let ctx = Arc::clone(&ctx);
-        let todo_count = Arc::clone(&todo_count);
-        let condvar = Arc::clone(&condvar);
-        let condvar_mutex = Arc::clone(&condvar_mutex);
-
-        let worker = WorkerThread {
-            worker_id,
-            num_workers,
-            queues,
-            state,
-            ctx,
-            todo_count,
-            condvar,
-            condvar_mutex,
-        };
-
-        handles.push(thread::spawn(move || {
-            worker_thread_loop(worker);
+        let (tx, rx) = std::sync::mpsc::channel();
+        worker_senders.push(tx);
+        let tx_coordinator = tx_to_coordinator.clone();
+        worker_handles.push(thread::spawn(move || {
+            worker_thread_loop(worker_id, rx, tx_coordinator);
         }));
     }
 
-    for handle in handles {
-        let _ = handle.join();
+    // Send initial Parse tasks
+    for file_idx in 0..num_files {
+        let worker_idx = file_idx % num_workers;
+        let _ = worker_senders[worker_idx].send(Task::Parse {
+            file_idx,
+            path: paths[file_idx].clone(),
+        });
     }
 
-    // Collect all diagnostics
-    let mut final_diagnostics = std::mem::take(&mut *ctx.diagnostics.lock().unwrap());
-    
-    // Add parse errors
-    for file_idx in 0..num_files {
-        let errors = ctx.parse_errors[file_idx].lock().unwrap();
-        for err in &*errors {
-            final_diagnostics.push(Diagnostic::from(err.clone()));
+    let mut parsed_count = 0;
+    let mut resolved_count = 0;
+    let mut typechecked_count = 0;
+    let mut hir_count = 0;
+    let mut amir_count = 0;
+
+    let mut merged_symbols = None;
+    let mut merged_docs = None;
+    let mut merged_diags = Vec::new();
+
+    while let Ok(msg) = rx_from_workers.recv() {
+        match msg {
+            WorkerMessage::ParseFinished {
+                file_idx,
+                program,
+                parse_errors: errs,
+                symbol_table,
+                resolved_names,
+                doc_map,
+                resolve_diags: r_diags,
+                io_error,
+            } => {
+                if let Some(io_err) = io_error {
+                    final_diagnostics.push(io_err);
+                }
+                for err in errs {
+                    final_diagnostics.push(Diagnostic::from(err));
+                }
+                programs[file_idx] = program;
+                symbol_tables[file_idx] = symbol_table;
+                resolveds[file_idx] = resolved_names;
+                doc_maps[file_idx] = doc_map;
+                resolve_diags[file_idx] = r_diags;
+
+                parsed_count += 1;
+                if parsed_count == num_files {
+                    // All files parsed. Merge symbols!
+                    let mut combined_symbols =
+                        crate::passes::name_resolution::create_symbol_table_with_prelude();
+                    let mut combined_docs = crate::DocCommentMap::default();
+                    let mut combined_diags = Vec::new();
+
+                    for f_idx in 0..num_files {
+                        let current_offset = combined_symbols.iter().count();
+                        symbol_offsets[f_idx] = current_offset;
+
+                        if let Some(syms) = symbol_tables[f_idx].take() {
+                            combined_symbols.merge_from(syms);
+                        }
+                        if let Some(docs) = doc_maps[f_idx].take() {
+                            for (k, v) in docs {
+                                combined_docs.entry(k).or_default().extend(v);
+                            }
+                        }
+                        let diags = std::mem::take(&mut resolve_diags[f_idx]);
+                        combined_diags.extend(diags);
+                    }
+
+                    let arc_symbols = Arc::new(combined_symbols);
+                    let arc_docs = Arc::new(combined_docs);
+                    let arc_diags = Arc::new(combined_diags.clone());
+
+                    merged_symbols = Some(arc_symbols.clone());
+                    merged_docs = Some(arc_docs.clone());
+                    merged_diags = combined_diags;
+
+                    // Trigger Resolve tasks
+                    for f_idx in 0..num_files {
+                        if let Some(prog) = programs[f_idx].take()
+                            && let Some(mut resolved) = resolveds[f_idx].take()
+                        {
+                            let offset = symbol_offsets[f_idx];
+                            resolved.offset_symbols(offset as u32);
+
+                            let worker_idx = f_idx % num_workers;
+                            let _ = worker_senders[worker_idx].send(Task::Resolve {
+                                file_idx: f_idx,
+                                program: prog,
+                                resolved_names: resolved,
+                                symbols: arc_symbols.clone(),
+                                docs: arc_docs.clone(),
+                                diags: arc_diags.clone(),
+                            });
+                        } else {
+                            resolved_count += 1;
+                        }
+                    }
+
+                    if resolved_count == num_files {
+                        break;
+                    }
+                }
+            }
+            WorkerMessage::ResolveFinished {
+                file_idx,
+                program,
+                resolution,
+            } => {
+                resolutions[file_idx] = resolution;
+                programs[file_idx] = Some(program);
+
+                resolved_count += 1;
+                if resolved_count == num_files {
+                    // Start Typecheck
+                    for f_idx in 0..num_files {
+                        if let Some(prog) = programs[f_idx].take()
+                            && let Some(res) = resolutions[f_idx].take()
+                        {
+                            let worker_idx = f_idx % num_workers;
+                            let _ = worker_senders[worker_idx].send(Task::TypeCheck {
+                                file_idx: f_idx,
+                                program: prog,
+                                resolution: res,
+                            });
+                        } else {
+                            typechecked_count += 1;
+                        }
+                    }
+
+                    if typechecked_count == num_files {
+                        break;
+                    }
+                }
+            }
+            WorkerMessage::TypeCheckFinished {
+                file_idx,
+                program,
+                type_check_result,
+            } => {
+                type_checks[file_idx] = type_check_result;
+                programs[file_idx] = Some(program);
+
+                typechecked_count += 1;
+                if typechecked_count == num_files {
+                    // Start Lower HIR
+                    for f_idx in 0..num_files {
+                        if let Some(prog) = programs[f_idx].take()
+                            && let Some(tc) = type_checks[f_idx].as_ref()
+                        {
+                            let worker_idx = f_idx % num_workers;
+                            let _ = worker_senders[worker_idx].send(Task::LowerHir {
+                                file_idx: f_idx,
+                                program: prog,
+                                type_check_result: Arc::clone(tc),
+                            });
+                        } else {
+                            hir_count += 1;
+                        }
+                    }
+
+                    if hir_count == num_files {
+                        break;
+                    }
+                }
+            }
+            WorkerMessage::LowerHirFinished {
+                file_idx,
+                hir,
+                diagnostics,
+            } => {
+                final_diagnostics.extend(diagnostics);
+                hirs[file_idx] = hir;
+
+                hir_count += 1;
+                if hir_count == num_files {
+                    // Start Lower AMIR
+                    for f_idx in 0..num_files {
+                        if let Some(hir) = hirs[f_idx].take()
+                            && let Some(tc) = type_checks[f_idx].as_ref()
+                        {
+                            let worker_idx = f_idx % num_workers;
+                            let _ = worker_senders[worker_idx].send(Task::LowerAmir {
+                                file_idx: f_idx,
+                                hir,
+                                type_check_result: Arc::clone(tc),
+                            });
+                        } else {
+                            amir_count += 1;
+                        }
+                    }
+
+                    if amir_count == num_files {
+                        break;
+                    }
+                }
+            }
+            WorkerMessage::LowerAmirFinished {
+                file_idx,
+                amir,
+                hir,
+                diagnostics,
+            } => {
+                final_diagnostics.extend(diagnostics);
+                amirs[file_idx] = amir;
+                hirs[file_idx] = Some(hir);
+
+                amir_count += 1;
+                if amir_count == num_files {
+                    break;
+                }
+            }
         }
     }
 
-    // Add resolution and type check diagnostics
-    {
-        let res_diags = ctx.merged_diags.lock().unwrap();
-        final_diagnostics.extend(res_diags.clone());
+    // Shutdown workers
+    for sender in &worker_senders {
+        let _ = sender.send(Task::Shutdown);
+    }
+    for handle in worker_handles {
+        let _ = handle.join();
     }
 
+    // Collect diagnostics from type checks and name resolution
+    final_diagnostics.extend(merged_diags);
     for file_idx in 0..num_files {
-        if let Some(tc) = ctx.type_checks[file_idx].lock().unwrap().as_ref() {
+        if let Some(tc) = type_checks[file_idx].as_ref() {
             final_diagnostics.extend(tc.diagnostics.clone());
         }
     }
 
-    let has_errors = final_diagnostics.iter().any(|d| d.severity == Severity::Error);
+    let has_errors = final_diagnostics
+        .iter()
+        .any(|d| d.severity == Severity::Error);
     if has_errors {
         return Err(final_diagnostics);
     }
@@ -238,244 +377,162 @@ pub fn compile_parallel(paths: Vec<PathBuf>) -> Result<ParallelOutput, Vec<Diagn
     let mut result_hirs = Vec::with_capacity(num_files);
     let mut result_amirs = Vec::with_capacity(num_files);
     let mut result_symbols = Vec::with_capacity(num_files);
+    let mut result_interners = Vec::with_capacity(num_files);
     for file_idx in 0..num_files {
-        if let Some(hir) = ctx.hirs[file_idx].lock().unwrap().take() {
+        if let Some(hir) = hirs[file_idx].take() {
             result_hirs.push(hir);
         }
-        if let Some(amir) = ctx.amirs[file_idx].lock().unwrap().take() {
+        if let Some(amir) = amirs[file_idx].take() {
             result_amirs.push(amir);
         }
-        // Use per-file type-check symbols (includes locals, params, fields from resolve+typecheck)
-        if let Some(tc) = ctx.type_checks[file_idx].lock().unwrap().as_ref() {
+        if let Some(tc) = type_checks[file_idx].as_ref() {
             result_symbols.push(tc.symbols.clone());
+            result_interners.push(tc.type_info.type_interner.clone());
         } else {
-            // Fallback to merged table if type-check didn't run (e.g. parse error)
             result_symbols.push(
-                ctx.merged_symbol_table.lock().unwrap().clone().unwrap_or_default()
+                merged_symbols
+                    .as_ref()
+                    .map(|s| (**s).clone())
+                    .unwrap_or_default(),
             );
+            result_interners.push(crate::passes::type_checker::types::TypeInterner::default());
         }
     }
 
     Ok(ParallelOutput {
-        paths: ctx.paths.clone(),
+        paths,
         hirs: result_hirs,
         amirs: result_amirs,
         symbols: result_symbols,
+        type_interners: result_interners,
     })
 }
 
-struct WorkerThread {
+fn worker_thread_loop(
     worker_id: usize,
-    num_workers: usize,
-    queues: Arc<Vec<TaskQueue>>,
-    state: Arc<SchedulerState>,
-    ctx: Arc<CompilationContext>,
-    todo_count: Arc<AtomicUsize>,
-    condvar: Arc<Condvar>,
-    condvar_mutex: Arc<Mutex<()>>,
-}
-
-fn worker_thread_loop(worker: WorkerThread) {
-    pin_thread_to_core(worker.worker_id);
-
-    loop {
-        let mut task = None;
-
-        // Try local queue
-        if let Ok(mut q) = worker.queues[worker.worker_id].tasks.lock() {
-            task = q.pop_back();
-        }
-
-        // Steal work if local queue is empty
-        if task.is_none() {
-            for offset in 1..worker.num_workers {
-                let target_id = (worker.worker_id + offset) % worker.num_workers;
-                if let Ok(mut q) = worker.queues[target_id].tasks.lock()
-                    && let Some(t) = q.pop_front()
-                {
-                    task = Some(t);
-                    break;
-                }
-            }
-        }
-
-        if let Some(t) = task {
-            run_task(t, &worker);
-            continue;
-        }
-
-        if worker.todo_count.load(Ordering::Acquire) == 0 {
-            break;
-        }
-
-        let lock = worker.condvar_mutex.lock().unwrap();
-        if worker.todo_count.load(Ordering::Acquire) == 0 {
-            break;
-        }
-        let _unused = worker.condvar.wait(lock).unwrap();
-    }
-}
-
-fn enqueue_task(
-    task: Task,
-    target_worker: usize,
-    queues: &[TaskQueue],
-    condvar: &Condvar,
+    rx: std::sync::mpsc::Receiver<Task>,
+    tx: std::sync::mpsc::Sender<WorkerMessage>,
 ) {
-    if let Ok(mut q) = queues[target_worker].tasks.lock() {
-        q.push_back(task);
-    }
-    condvar.notify_all();
-}
+    pin_thread_to_core(worker_id);
 
-fn run_task(
-    task: Task,
-    worker: &WorkerThread,
-) {
-    match task {
-        Task::Parse { file_idx } => {
-            let path = &worker.ctx.paths[file_idx];
-            if let Ok(source) = std::fs::read_to_string(path) {
-                let output = arandu_parser::parse_recovering_with_file_id(&source, file_idx as u32);
-                *worker.ctx.programs[file_idx].lock().unwrap() = Some(output.program);
-                *worker.ctx.parse_errors[file_idx].lock().unwrap() = output.diagnostics;
-            } else {
-                worker.ctx.diagnostics.lock().unwrap().push(Diagnostic::error(
-                    crate::DiagCode::M001UnresolvedImport,
-                    format!("failed to read file {}", path.display()),
-                    arandu_lexer::Span::new(file_idx as u32, 0, 0),
-                ));
-            }
+    while let Ok(task) = rx.recv() {
+        match task {
+            Task::Parse { file_idx, path } => {
+                let mut program = None;
+                let mut parse_errors = Vec::new();
+                let mut symbol_table = None;
+                let mut resolved_names = None;
+                let mut doc_map = None;
+                let mut resolve_diags = Vec::new();
+                let mut io_error = None;
 
-            if let Some(program) = worker.ctx.programs[file_idx].lock().unwrap().as_ref() {
-                let (syms, resolved, docs, diags) = crate::passes::name_resolution::collect_symbols(program);
-                *worker.ctx.symbol_tables[file_idx].lock().unwrap() = Some(syms);
-                *worker.ctx.resolveds[file_idx].lock().unwrap() = Some(resolved);
-                *worker.ctx.doc_maps[file_idx].lock().unwrap() = Some(docs);
-                *worker.ctx.resolve_diags[file_idx].lock().unwrap() = diags;
-            }
+                match std::fs::read_to_string(&path) {
+                    Ok(source) => {
+                        let output =
+                            arandu_parser::parse_recovering_with_file_id(&source, file_idx as u32);
+                        parse_errors = output.diagnostics;
+                        let prog = output.program;
 
-            let prev = worker.state.merge_deps.fetch_sub(1, Ordering::SeqCst);
-            if prev == 1 {
-                enqueue_task(Task::MergeSymbols, worker.worker_id, &worker.queues, &worker.condvar);
-            }
-        }
-
-        Task::MergeSymbols => {
-            let mut combined_symbols = crate::passes::name_resolution::create_symbol_table_with_prelude();
-            let mut combined_docs = crate::DocCommentMap::default();
-            let mut combined_diags = Vec::new();
-
-            for file_idx in 0..worker.ctx.num_files {
-                let current_offset = combined_symbols.iter().count();
-                *worker.ctx.symbol_offsets[file_idx].lock().unwrap() = current_offset;
-
-                if let Some(syms) = worker.ctx.symbol_tables[file_idx].lock().unwrap().take() {
-                    combined_symbols.merge_from(syms);
-                }
-                if let Some(docs) = worker.ctx.doc_maps[file_idx].lock().unwrap().take() {
-                    for (k, v) in docs {
-                        combined_docs.entry(k).or_default().extend(v);
+                        let (syms, resolved, docs, diags) =
+                            crate::passes::name_resolution::collect_symbols(&prog);
+                        symbol_table = Some(syms);
+                        resolved_names = Some(resolved);
+                        doc_map = Some(docs);
+                        resolve_diags = diags;
+                        program = Some(prog);
+                    }
+                    Err(_) => {
+                        io_error = Some(Diagnostic::error(
+                            crate::DiagCode::M001UnresolvedImport,
+                            format!("failed to read file {}", path.display()),
+                            arandu_lexer::Span::new(file_idx as u32, 0, 0),
+                        ));
                     }
                 }
-                let diags = std::mem::take(&mut *worker.ctx.resolve_diags[file_idx].lock().unwrap());
-                combined_diags.extend(diags);
+
+                let _ = tx.send(WorkerMessage::ParseFinished {
+                    file_idx,
+                    program,
+                    parse_errors,
+                    symbol_table,
+                    resolved_names,
+                    doc_map,
+                    resolve_diags,
+                    io_error,
+                });
             }
-
-            *worker.ctx.merged_symbol_table.lock().unwrap() = Some(combined_symbols);
-            *worker.ctx.merged_docs.lock().unwrap() = Some(combined_docs);
-            *worker.ctx.merged_diags.lock().unwrap() = combined_diags;
-
-            for file_idx in 0..worker.ctx.num_files {
-                let prev = worker.state.resolve_deps[file_idx].fetch_sub(1, Ordering::SeqCst);
-                if prev == 1 {
-                    enqueue_task(Task::Resolve { file_idx }, worker.worker_id, &worker.queues, &worker.condvar);
+            Task::Resolve {
+                file_idx,
+                program,
+                resolved_names,
+                symbols,
+                docs,
+                diags,
+            } => {
+                let res = crate::passes::name_resolution::resolve_with_symbols(
+                    (*symbols).clone(),
+                    resolved_names,
+                    (*docs).clone(),
+                    (*diags).clone(),
+                    &program,
+                );
+                let _ = tx.send(WorkerMessage::ResolveFinished {
+                    file_idx,
+                    program,
+                    resolution: Some(res),
+                });
+            }
+            Task::TypeCheck {
+                file_idx,
+                program,
+                resolution,
+            } => {
+                let tc = crate::passes::type_checker::type_check(resolution, &program);
+                let _ = tx.send(WorkerMessage::TypeCheckFinished {
+                    file_idx,
+                    program,
+                    type_check_result: Some(Arc::new(tc)),
+                });
+            }
+            Task::LowerHir {
+                file_idx,
+                program,
+                type_check_result,
+            } => {
+                let mut hir = None;
+                let mut diagnostics = Vec::new();
+                match crate::lower_to_hir(&type_check_result, &program) {
+                    Ok(h) => hir = Some(h),
+                    Err(diags) => diagnostics = diags,
                 }
+                let _ = tx.send(WorkerMessage::LowerHirFinished {
+                    file_idx,
+                    hir,
+                    diagnostics,
+                });
             }
-        }
-
-        Task::Resolve { file_idx } => {
-            let program_lock = worker.ctx.programs[file_idx].lock().unwrap();
-            let mut resolved_lock = worker.ctx.resolveds[file_idx].lock().unwrap();
-            if let Some(program) = program_lock.as_ref()
-                && let Some(mut resolved) = resolved_lock.take()
-            {
-                let offset = *worker.ctx.symbol_offsets[file_idx].lock().unwrap();
-                resolved.offset_symbols(offset as u32);
-
-                let syms = worker.ctx.merged_symbol_table.lock().unwrap().clone().unwrap();
-                let docs = worker.ctx.merged_docs.lock().unwrap().clone().unwrap();
-                let diags = worker.ctx.merged_diags.lock().unwrap().clone();
-
-                let res = crate::passes::name_resolution::resolve_with_symbols(syms, resolved, docs, diags, program);
-                *worker.ctx.resolutions[file_idx].lock().unwrap() = Some(res);
-            }
-
-            let prev = worker.state.typecheck_deps[file_idx].fetch_sub(1, Ordering::SeqCst);
-            if prev == 1 {
-                enqueue_task(Task::TypeCheck { file_idx }, worker.worker_id, &worker.queues, &worker.condvar);
-            }
-        }
-
-        Task::TypeCheck { file_idx } => {
-            let program_lock = worker.ctx.programs[file_idx].lock().unwrap();
-            let mut res_lock = worker.ctx.resolutions[file_idx].lock().unwrap();
-            if let Some(program) = program_lock.as_ref()
-                && let Some(resolution) = res_lock.take()
-            {
-                let tc = crate::passes::type_checker::type_check(resolution, program);
-                *worker.ctx.type_checks[file_idx].lock().unwrap() = Some(tc);
-            }
-
-            let prev = worker.state.hir_deps[file_idx].fetch_sub(1, Ordering::SeqCst);
-            if prev == 1 {
-                enqueue_task(Task::LowerHir { file_idx }, worker.worker_id, &worker.queues, &worker.condvar);
-            }
-        }
-
-        Task::LowerHir { file_idx } => {
-            let program_lock = worker.ctx.programs[file_idx].lock().unwrap();
-            let tc_lock = worker.ctx.type_checks[file_idx].lock().unwrap();
-            if let Some(program) = program_lock.as_ref()
-                && let Some(tc) = tc_lock.as_ref()
-            {
-                match crate::lower_to_hir(tc, program) {
-                    Ok(hir) => {
-                        *worker.ctx.hirs[file_idx].lock().unwrap() = Some(hir);
+            Task::LowerAmir {
+                file_idx,
+                hir,
+                type_check_result,
+            } => {
+                let mut amir = None;
+                let mut diagnostics = Vec::new();
+                match crate::lower_to_amir(&type_check_result, &hir) {
+                    Ok(mut a) => {
+                        crate::optimize_amir(&mut a);
+                        amir = Some(a);
                     }
-                    Err(diags) => {
-                        worker.ctx.diagnostics.lock().unwrap().extend(diags);
-                    }
+                    Err(diags) => diagnostics = diags,
                 }
+                let _ = tx.send(WorkerMessage::LowerAmirFinished {
+                    file_idx,
+                    amir,
+                    hir,
+                    diagnostics,
+                });
             }
-
-            let prev = worker.state.amir_deps[file_idx].fetch_sub(1, Ordering::SeqCst);
-            if prev == 1 {
-                enqueue_task(Task::LowerAmir { file_idx }, worker.worker_id, &worker.queues, &worker.condvar);
-            }
+            Task::Shutdown => break,
         }
-
-        Task::LowerAmir { file_idx } => {
-            let tc_lock = worker.ctx.type_checks[file_idx].lock().unwrap();
-            let hir_lock = worker.ctx.hirs[file_idx].lock().unwrap();
-            if let Some(tc) = tc_lock.as_ref()
-                && let Some(hir) = hir_lock.as_ref()
-            {
-                match crate::lower_to_amir(tc, hir) {
-                    Ok(mut amir) => {
-                        crate::optimize_amir(&mut amir);
-                        *worker.ctx.amirs[file_idx].lock().unwrap() = Some(amir);
-                    }
-                    Err(diags) => {
-                        worker.ctx.diagnostics.lock().unwrap().extend(diags);
-                    }
-                }
-            }
-        }
-    }
-
-    let prev = worker.todo_count.fetch_sub(1, Ordering::SeqCst);
-    if prev == 1 {
-        worker.condvar.notify_all();
     }
 }

@@ -45,7 +45,8 @@ impl<'a> Resolver<'a> {
                         );
                         if let Some(methods) = self.symbols.associated_members.get(&ty) {
                             let max_distance = if member.len() <= 4 { 2 } else { 3 };
-                            let best_match = methods.keys()
+                            let best_match = methods
+                                .keys()
                                 .map(|name| {
                                     let dist = if name.to_lowercase() == member.to_lowercase() {
                                         0

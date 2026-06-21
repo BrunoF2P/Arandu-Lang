@@ -1,8 +1,8 @@
 use crate::{DiagCode, Diagnostic, SymbolId, SymbolTable};
 
+use super::TypeInfo;
 use super::constraints::{Constraint, ConstraintOrigin};
 use super::types::ArType;
-use super::TypeInfo;
 
 // ── Flow-based error message generation ─────────────────────────────
 
@@ -275,7 +275,11 @@ pub fn constraint_to_diagnostic(
             fn get_struct_id(ty: &ArType) -> Option<SymbolId> {
                 match ty {
                     ArType::Named(id, _) => Some(*id),
-                    ArType::Ptr(inner) | ArType::Nullable(inner) => get_struct_id(inner),
+                    ArType::Ptr(inner) | ArType::Nullable(inner) => {
+                        super::types::type_interner::with_resolved_type(*inner, |inner_ty| {
+                            get_struct_id(inner_ty)
+                        })
+                    }
                     _ => None,
                 }
             }

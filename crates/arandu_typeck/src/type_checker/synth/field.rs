@@ -54,7 +54,10 @@ pub(crate) fn resolve_field(
     }
 
     let (actual_base_ty, was_nullable) = match &base_ty {
-        ArType::Nullable(inner) => (inner.as_ref().clone(), true),
+        ArType::Nullable(inner) => (
+            super::super::types::type_interner::with_resolved_type(*inner, |t| t.clone()),
+            true,
+        ),
         other => (other.clone(), false),
     };
 
@@ -79,10 +82,13 @@ pub(crate) fn resolve_field(
 
     let struct_id_opt = match &actual_base_ty {
         ArType::Named(id, _) => Some(*id),
-        ArType::Ptr(inner) => match &**inner {
-            ArType::Named(id, _) => Some(*id),
-            _ => None,
-        },
+        ArType::Ptr(inner) => super::super::types::type_interner::with_resolved_type(
+            *inner,
+            |inner_ty| match inner_ty {
+                ArType::Named(id, _) => Some(*id),
+                _ => None,
+            },
+        ),
         _ => None,
     };
 
@@ -126,7 +132,8 @@ pub(crate) fn resolve_field(
     };
 
     if safe || was_nullable {
-        ArType::Nullable(Box::new(field_ty))
+        let field_id = super::super::types::intern_type(field_ty);
+        ArType::Nullable(field_id)
     } else {
         field_ty
     }
@@ -146,7 +153,10 @@ pub(crate) fn resolve_index(
     }
 
     let (actual_base_ty, was_nullable) = match &base_ty {
-        ArType::Nullable(inner) => (inner.as_ref().clone(), true),
+        ArType::Nullable(inner) => (
+            super::super::types::type_interner::with_resolved_type(*inner, |t| t.clone()),
+            true,
+        ),
         other => (other.clone(), false),
     };
 
@@ -169,7 +179,9 @@ pub(crate) fn resolve_index(
     }
 
     let elem_ty = match &actual_base_ty {
-        ArType::Array(_, inner) | ArType::Slice(inner) => inner.as_ref().clone(),
+        ArType::Array(_, inner) | ArType::Slice(inner) => {
+            super::super::types::type_interner::with_resolved_type(*inner, |t| t.clone())
+        }
         _ => {
             checker.add_constraint(
                 actual_base_ty.clone(),
@@ -197,7 +209,8 @@ pub(crate) fn resolve_index(
     }
 
     if safe || was_nullable {
-        ArType::Nullable(Box::new(elem_ty))
+        let elem_id = super::super::types::intern_type(elem_ty);
+        ArType::Nullable(elem_id)
     } else {
         elem_ty
     }

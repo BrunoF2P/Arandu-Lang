@@ -123,7 +123,9 @@ impl HirPool {
 
     #[must_use]
     pub fn field_pattern(&self, id: HirFieldPatternId) -> &super::HirFieldPattern {
-        self.field_patterns.get(id).expect("invalid HirFieldPatternId")
+        self.field_patterns
+            .get(id)
+            .expect("invalid HirFieldPatternId")
     }
 
     // List allocators for IndexRange

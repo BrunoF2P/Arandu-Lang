@@ -1,4 +1,5 @@
 use super::primitive::Primitive;
+use super::type_interner::TypeId;
 use crate::{SymbolId, SymbolTable};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -7,31 +8,31 @@ pub enum ArType {
     Primitive(Primitive),
 
     /// Named type with optional generic arguments: User, List<int>
-    Named(SymbolId, Vec<ArType>),
+    Named(SymbolId, Vec<TypeId>),
 
     /// Function type: func(int, str) bool
-    Func(Vec<ArType>, Box<ArType>),
+    Func(Vec<TypeId>, TypeId),
 
     /// Nullable wrapper: str?
-    Nullable(Box<ArType>),
+    Nullable(TypeId),
 
     /// Slice type: []int
-    Slice(Box<ArType>),
+    Slice(TypeId),
 
     /// Fixed-size array: [4]float
-    Array(u64, Box<ArType>),
+    Array(u64, TypeId),
 
     /// Pointer type: ptr[Vec2]
-    Ptr(Box<ArType>),
+    Ptr(TypeId),
 
     /// Multi-value tuple (non-`Result` returns only)
-    Tuple(Vec<ArType>),
+    Tuple(Vec<TypeId>),
 
     /// `Result<T, E>` — canonical success/error type
-    Result(Box<ArType>, Box<ArType>),
+    Result(TypeId, TypeId),
 
     /// `Option<T>` — optional value (`T?` is `Nullable`, not `Option`)
-    Option(Box<ArType>),
+    Option(TypeId),
 
     /// The `Err` type from the grammar
     Err,
@@ -105,33 +106,69 @@ impl ArType {
                 if args.is_empty() {
                     name.clone()
                 } else {
-                    let args_str: Vec<String> = args.iter().map(|a| a.display(symbols)).collect();
+                    let args_str: Vec<String> = args
+                        .iter()
+                        .map(|&a| {
+                            super::type_interner::with_resolved_type(a, |ty| ty.display(symbols))
+                        })
+                        .collect();
                     format!("{}<{}>", name, args_str.join(", "))
                 }
             }
             ArType::Func(params, ret) => {
-                let params_str: Vec<String> = params.iter().map(|p| p.display(symbols)).collect();
-                let ret_str = ret.display(symbols);
-                if **ret == ArType::Void {
+                let params_str: Vec<String> = params
+                    .iter()
+                    .map(|&p| super::type_interner::with_resolved_type(p, |ty| ty.display(symbols)))
+                    .collect();
+                let ret_str =
+                    super::type_interner::with_resolved_type(*ret, |ty| ty.display(symbols));
+                let is_void =
+                    super::type_interner::with_resolved_type(*ret, |ty| matches!(ty, ArType::Void));
+                if is_void {
                     format!("func({})", params_str.join(", "))
                 } else {
                     format!("func({}) {}", params_str.join(", "), ret_str)
                 }
             }
-            ArType::Nullable(inner) => format!("{}?", inner.display(symbols)),
-            ArType::Slice(inner) => format!("[]{}", inner.display(symbols)),
-            ArType::Array(size, inner) => {
-                format!("[{}]{}", size, inner.display(symbols))
+            ArType::Nullable(inner) => {
+                let inner_str =
+                    super::type_interner::with_resolved_type(*inner, |ty| ty.display(symbols));
+                format!("{}?", inner_str)
             }
-            ArType::Ptr(inner) => format!("ptr[{}]", inner.display(symbols)),
+            ArType::Slice(inner) => {
+                let inner_str =
+                    super::type_interner::with_resolved_type(*inner, |ty| ty.display(symbols));
+                format!("[]{}", inner_str)
+            }
+            ArType::Array(size, inner) => {
+                let inner_str =
+                    super::type_interner::with_resolved_type(*inner, |ty| ty.display(symbols));
+                format!("[{}]{}", size, inner_str)
+            }
+            ArType::Ptr(inner) => {
+                let inner_str =
+                    super::type_interner::with_resolved_type(*inner, |ty| ty.display(symbols));
+                format!("ptr[{}]", inner_str)
+            }
             ArType::Tuple(types) => {
-                let parts: Vec<String> = types.iter().map(|t| t.display(symbols)).collect();
+                let parts: Vec<String> = types
+                    .iter()
+                    .map(|&t| super::type_interner::with_resolved_type(t, |ty| ty.display(symbols)))
+                    .collect();
                 format!("({})", parts.join(", "))
             }
             ArType::Result(ok, err) => {
-                format!("Result<{}, {}>", ok.display(symbols), err.display(symbols))
+                let ok_str =
+                    super::type_interner::with_resolved_type(*ok, |ty| ty.display(symbols));
+                let err_str =
+                    super::type_interner::with_resolved_type(*err, |ty| ty.display(symbols));
+                format!("Result<{}, {}>", ok_str, err_str)
             }
-            ArType::Option(inner) => format!("Option<{}>", inner.display(symbols)),
+            ArType::Option(inner) => {
+                let inner_str =
+                    super::type_interner::with_resolved_type(*inner, |ty| ty.display(symbols));
+                format!("Option<{}>", inner_str)
+            }
             ArType::Err => "Err".to_string(),
             ArType::Void => "void".to_string(),
             ArType::IntLiteral => "int".to_string(),

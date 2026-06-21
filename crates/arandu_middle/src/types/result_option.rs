@@ -1,4 +1,4 @@
-use arandu_parser::{ResultType, TypeName, TypeExprId, ast_pool::AstPool};
+use arandu_parser::{ResultType, TypeExprId, TypeName, ast_pool::AstPool};
 
 use super::ar_type::ArType;
 use crate::{ResolvedNames, ScopeId, SymbolTable};
@@ -20,7 +20,7 @@ pub fn is_err_type(ty: &ArType) -> bool {
     matches!(ty, ArType::Err)
         || matches!(
             ty,
-            ArType::Nullable(inner) if matches!(**inner, ArType::Err)
+            ArType::Nullable(inner) if super::type_interner::with_resolved_type(*inner, |t| matches!(t, ArType::Err))
         )
 }
 
@@ -28,7 +28,11 @@ pub fn is_err_type(ty: &ArType) -> bool {
 #[must_use]
 pub fn result_ok_err(ty: &ArType) -> Option<(ArType, ArType)> {
     match ty {
-        ArType::Result(ok, err) => Some((ok.as_ref().clone(), err.as_ref().clone())),
+        ArType::Result(ok, err) => {
+            let ok_ty = super::type_interner::with_resolved_type(*ok, |t| t.clone());
+            let err_ty = super::type_interner::with_resolved_type(*err, |t| t.clone());
+            Some((ok_ty, err_ty))
+        }
         _ => None,
     }
 }
@@ -50,8 +54,14 @@ pub fn try_ok_type(ty: &ArType) -> Option<ArType> {
         return Some(ok);
     }
     match ty {
-        ArType::Option(inner) => Some(inner.as_ref().clone()),
-        ArType::Nullable(inner) if !is_err_type(ty) => Some(inner.as_ref().clone()),
+        ArType::Option(inner) => Some(super::type_interner::with_resolved_type(*inner, |t| {
+            t.clone()
+        })),
+        ArType::Nullable(inner) if !is_err_type(ty) => {
+            Some(super::type_interner::with_resolved_type(*inner, |t| {
+                t.clone()
+            }))
+        }
         _ => None,
     }
 }
@@ -75,11 +85,15 @@ pub(crate) fn lower_builtin_generic(
         .map(|&a| super::lower::lower_type_expr(a, pool, symbols, scope, resolved))
         .collect();
     match (base, lowered.len()) {
-        ("Result", 2) => Some(ArType::Result(
-            Box::new(lowered[0].clone()),
-            Box::new(lowered[1].clone()),
-        )),
-        ("Option", 1) => Some(ArType::Option(Box::new(lowered[0].clone()))),
+        ("Result", 2) => {
+            let ok_id = super::type_interner::intern_type(lowered[0].clone());
+            let err_id = super::type_interner::intern_type(lowered[1].clone());
+            Some(ArType::Result(ok_id, err_id))
+        }
+        ("Option", 1) => {
+            let id = super::type_interner::intern_type(lowered[0].clone());
+            Some(ArType::Option(id))
+        }
         _ => None,
     }
 }

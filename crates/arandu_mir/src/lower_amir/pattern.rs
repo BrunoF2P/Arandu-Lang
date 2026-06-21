@@ -50,7 +50,13 @@ impl LowerCtx<'_> {
             if let HirDecl::Enum(hir_enum) = decl
                 && hir_enum.symbol == type_symbol
             {
-                for (index, v) in self.hir.pool.enum_variants_list(hir_enum.variants).iter().enumerate() {
+                for (index, v) in self
+                    .hir
+                    .pool
+                    .enum_variants_list(hir_enum.variants)
+                    .iter()
+                    .enumerate()
+                {
                     if symbols.get(v.symbol).name == variant {
                         variant_tag = Some(index);
                         found_variant_symbol = Some(v.symbol);
@@ -193,7 +199,9 @@ impl LowerCtx<'_> {
                 )?;
                 Ok(AmirOperand::Constant(AmirConstant::Bool(true)))
             }
-            HirPattern::Literal { expr: lit_expr_id, .. } => {
+            HirPattern::Literal {
+                expr: lit_expr_id, ..
+            } => {
                 let lit_op = self.lower_expr(*lit_expr_id, None, symbols)?;
                 let dest = self.new_temp(ArType::Primitive(Primitive::Bool));
                 self.emit_assign_temp(
@@ -213,7 +221,10 @@ impl LowerCtx<'_> {
                 variant_symbol,
                 payload,
             } => {
-                let payload_patterns: Vec<HirPattern> = self.hir.pool.pattern_list(*payload)
+                let payload_patterns: Vec<HirPattern> = self
+                    .hir
+                    .pool
+                    .pattern_list(*payload)
                     .iter()
                     .map(|&pid| self.hir.pool.pattern(pid).clone())
                     .collect();
@@ -243,11 +254,18 @@ impl LowerCtx<'_> {
                         .unwrap_or(ArType::Error);
 
                     let tmp_field = self.new_temp(field_ty.clone());
+                    let field_idx = self
+                        .tc
+                        .type_info
+                        .struct_field_indices
+                        .get(struct_symbol)
+                        .and_then(|m| m.get(&field.name).copied())
+                        .unwrap_or(0);
                     self.emit_assign_temp(
                         tmp_field,
                         AmirRvalue::FieldAccess {
                             base: scrutinee.clone(),
-                            field: field.name.clone(),
+                            field: field_idx,
                         },
                     );
 
@@ -296,7 +314,13 @@ impl LowerCtx<'_> {
                 let scrutinee_ty = self.operand_type(&scrutinee);
                 let pat_ids: Vec<_> = self.hir.pool.pattern_list(*items).to_vec();
                 let item_tys = if let ArType::Tuple(tys) = scrutinee_ty {
-                    tys
+                    tys.iter()
+                        .map(|&tid| {
+                            arandu_middle::types::type_interner::with_resolved_type(tid, |t| {
+                                t.clone()
+                            })
+                        })
+                        .collect()
                 } else {
                     vec![ArType::Error; pat_ids.len()]
                 };
@@ -310,7 +334,7 @@ impl LowerCtx<'_> {
                         tmp_item,
                         AmirRvalue::FieldAccess {
                             base: scrutinee.clone(),
-                            field: format!("_{i}"),
+                            field: i,
                         },
                     );
 
@@ -344,7 +368,10 @@ impl LowerCtx<'_> {
                     ));
                 };
 
-                let payload_patterns: Vec<HirPattern> = self.hir.pool.pattern_list(*payload)
+                let payload_patterns: Vec<HirPattern> = self
+                    .hir
+                    .pool
+                    .pattern_list(*payload)
                     .iter()
                     .map(|&pid| self.hir.pool.pattern(pid).clone())
                     .collect();

@@ -9,7 +9,12 @@ use crate::ops::{BinaryOp, UnaryOp};
 
 impl AmirProgram {
     #[must_use]
-    pub fn pretty_print(&self, symbols: &SymbolTable) -> String {
+    pub fn pretty_print(
+        &self,
+        symbols: &SymbolTable,
+        interner: &crate::types::TypeInterner,
+    ) -> String {
+        let _scope = crate::types::type_interner::InternerScope::new(interner);
         let mut out = String::new();
         for (i, func) in self.funcs.iter().enumerate() {
             if i > 0 {
@@ -40,9 +45,7 @@ impl AmirFunc {
                     .temps
                     .iter()
                     .find(|t| t.id == *p)
-                    .map_or(crate::types::ArType::Void, |t| {
-                        t.ty.clone()
-                    });
+                    .map_or(crate::types::ArType::Void, |t| t.ty.clone());
                 let prefix = self
                     .receiver
                     .as_ref()
@@ -165,6 +168,9 @@ impl AmirStmt {
             AmirStmt::Destroy(place) => {
                 out.push_str("destroy ");
                 place.pretty_print_to(out, symbols, pool);
+            }
+            AmirStmt::Nop => {
+                out.push_str("nop");
             }
         }
     }

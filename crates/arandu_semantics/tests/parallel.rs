@@ -1,6 +1,8 @@
+use arandu_semantics::{
+    compile_parallel, lower_to_amir, lower_to_hir, optimize_amir, resolve, type_check,
+};
 use std::fs;
 use std::path::PathBuf;
-use arandu_semantics::{compile_parallel, resolve, type_check, lower_to_hir, lower_to_amir, optimize_amir};
 
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -30,7 +32,8 @@ fn test_parallel_compilation_multi_file_project() {
             return 100
         }
         "#,
-    ).unwrap();
+    )
+    .unwrap();
 
     // file_b: standalone module calling its own function
     fs::write(
@@ -41,7 +44,8 @@ fn test_parallel_compilation_multi_file_project() {
             return x
         }
         "#,
-    ).unwrap();
+    )
+    .unwrap();
 
     let paths = vec![file_a_path, file_b_path];
     let parallel_result = compile_parallel(paths);
@@ -63,7 +67,11 @@ fn test_parallel_compilation_multi_file_project() {
 #[test]
 fn test_parallel_compilation_individual_files_parity() {
     let root = workspace_root();
-    let ok_dir = root.join("tests").join("ui").join("type_checker").join("ok");
+    let ok_dir = root
+        .join("tests")
+        .join("ui")
+        .join("type_checker")
+        .join("ok");
     assert!(ok_dir.exists(), "ok directory does not exist");
 
     let mut paths = Vec::new();
@@ -83,7 +91,7 @@ fn test_parallel_compilation_individual_files_parity() {
         let program = arandu_parser::parse(&source).expect("parse");
         let resolution = resolve(&program);
         let tc = type_check(resolution, &program);
-        
+
         let hir_seq = lower_to_hir(&tc, &program).expect("lower_to_hir seq");
         let mut amir_seq = lower_to_amir(&tc, &hir_seq).expect("lower_to_amir seq");
         optimize_amir(&mut amir_seq);
@@ -109,25 +117,32 @@ fn test_parallel_compilation_individual_files_parity() {
             pool: &hir_seq.pool,
             symbols: &tc.symbols,
             show_spans: false,
+            type_interner: Some(&tc.type_info.type_interner),
         };
         let ctx_par = arandu_semantics::hir::HirPrettyCtx {
             pool: &hir_par.pool,
             symbols: &parallel_output.symbols[0],
             show_spans: false,
+            type_interner: Some(&parallel_output.type_interners[0]),
         };
 
         let hir_seq_str = hir_seq.pretty_print(&ctx_seq);
         let hir_par_str = hir_par.pretty_print(&ctx_par);
         assert_eq!(
-            hir_seq_str, hir_par_str,
+            hir_seq_str,
+            hir_par_str,
             "HIR mismatch for file: {}",
             path.display()
         );
 
-        let amir_seq_str = amir_seq.pretty_print(&tc.symbols);
-        let amir_par_str = amir_par.pretty_print(&parallel_output.symbols[0]);
+        let amir_seq_str = amir_seq.pretty_print(&tc.symbols, &tc.type_info.type_interner);
+        let amir_par_str = amir_par.pretty_print(
+            &parallel_output.symbols[0],
+            &parallel_output.type_interners[0],
+        );
         assert_eq!(
-            amir_seq_str, amir_par_str,
+            amir_seq_str,
+            amir_par_str,
             "AMIR mismatch for file: {}",
             path.display()
         );

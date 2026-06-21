@@ -2,10 +2,10 @@ use super::block::AmirBasicBlock;
 use super::local::{AmirLocal, AmirReceiver, AmirTemp, TempId};
 use super::stmt::{AmirStmt, AmirStmtTable, InstrId};
 use crate::SymbolId;
+use crate::cfg::ControlFlowGraph;
 use crate::layout::DenseRange;
 use crate::literal_pool::AmirLiteralPool;
 use crate::types::ArType;
-use crate::cfg::ControlFlowGraph;
 
 #[derive(Debug)]
 pub struct AmirProgram {

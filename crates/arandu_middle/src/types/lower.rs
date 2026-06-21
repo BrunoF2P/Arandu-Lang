@@ -1,5 +1,5 @@
 use arandu_lexer::Span;
-use arandu_parser::{ResultType, TypeExpr, TypeName, TypeExprId, ast_pool::AstPool};
+use arandu_parser::{ResultType, TypeExpr, TypeExprId, TypeName, ast_pool::AstPool};
 
 use super::ar_type::ArType;
 use super::primitive::Primitive;
@@ -38,32 +38,40 @@ pub fn lower_type_expr(
         }
         TypeExpr::Nullable { inner, .. } => {
             let inner_ty = lower_type_expr(*inner, pool, symbols, _scope, resolved);
-            ArType::Nullable(Box::new(inner_ty))
+            let id = super::type_interner::intern_type(inner_ty);
+            ArType::Nullable(id)
         }
         TypeExpr::Pointer { inner, .. } => {
             let inner_ty = lower_type_expr(*inner, pool, symbols, _scope, resolved);
-            ArType::Ptr(Box::new(inner_ty))
+            let id = super::type_interner::intern_type(inner_ty);
+            ArType::Ptr(id)
         }
         TypeExpr::Slice { inner, .. } => {
             let inner_ty = lower_type_expr(*inner, pool, symbols, _scope, resolved);
-            ArType::Slice(Box::new(inner_ty))
+            let id = super::type_interner::intern_type(inner_ty);
+            ArType::Slice(id)
         }
         TypeExpr::Array { size, elem, .. } => {
             let elem_ty = lower_type_expr(*elem, pool, symbols, _scope, resolved);
+            let id = super::type_interner::intern_type(elem_ty);
             let n = size.parse::<u64>().unwrap_or(0);
-            ArType::Array(n, Box::new(elem_ty))
+            ArType::Array(n, id)
         }
         TypeExpr::Func { params, result, .. } => {
             let param_ids = pool.type_expr_list(*params);
-            let param_types: Vec<ArType> = param_ids
+            let param_types: Vec<super::type_interner::TypeId> = param_ids
                 .iter()
-                .map(|&p| lower_type_expr(p, pool, symbols, _scope, resolved))
+                .map(|&p| {
+                    let ty = lower_type_expr(p, pool, symbols, _scope, resolved);
+                    super::type_interner::intern_type(ty)
+                })
                 .collect();
             let ret = match result {
                 Some(r) => lower_result_type(r, pool, symbols, _scope, resolved),
                 None => ArType::Void,
             };
-            ArType::Func(param_types, Box::new(ret))
+            let ret_id = super::type_interner::intern_type(ret);
+            ArType::Func(param_types, ret_id)
         }
         TypeExpr::Group { inner, .. } => lower_type_expr(*inner, pool, symbols, _scope, resolved),
     }
@@ -82,9 +90,12 @@ pub fn lower_result_type(
         ResultType::Single { ty, .. } => lower_type_expr(*ty, pool, symbols, scope, resolved),
         ResultType::Multi { types, .. } => {
             let list = pool.type_expr_list(*types);
-            let tys: Vec<ArType> = list
+            let tys: Vec<super::type_interner::TypeId> = list
                 .iter()
-                .map(|&t| lower_type_expr(t, pool, symbols, scope, resolved))
+                .map(|&t| {
+                    let ty = lower_type_expr(t, pool, symbols, scope, resolved);
+                    super::type_interner::intern_type(ty)
+                })
                 .collect();
             ArType::Tuple(tys)
         }
@@ -110,9 +121,12 @@ pub fn lower_named_type(
     // The name resolver already resolved this name — look up the symbol ID.
     let key = crate::NodeKey::from(name.span);
     if let Some(&symbol_id) = resolved.type_refs.get(&key) {
-        let generic_args: Vec<ArType> = args
+        let generic_args: Vec<super::type_interner::TypeId> = args
             .iter()
-            .map(|&a| lower_type_expr(a, pool, symbols, scope, resolved))
+            .map(|&a| {
+                let ty = lower_type_expr(a, pool, symbols, scope, resolved);
+                super::type_interner::intern_type(ty)
+            })
             .collect();
         ArType::Named(symbol_id, generic_args)
     } else {

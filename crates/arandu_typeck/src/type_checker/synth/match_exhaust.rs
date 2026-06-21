@@ -1,83 +1,151 @@
 use rustc_hash::FxHashSet;
 
 use arandu_lexer::Span;
-use arandu_parser::{MatchArm, Pattern, ast_pool::{AstPool, PatternId}};
+use arandu_parser::{
+    MatchArm, Pattern,
+    ast_pool::{AstPool, PatternId},
+};
 
 use super::super::TypeChecker;
-use super::super::types::ArType;
+use super::super::types::{ArType, TypeId};
 
 fn pattern_covers_all(pool: &AstPool, pat: PatternId) -> bool {
-    matches!(pool.pattern(pat), Pattern::Wildcard { .. } | Pattern::Bind { .. })
+    matches!(
+        pool.pattern(pat),
+        Pattern::Wildcard { .. } | Pattern::Bind { .. }
+    )
 }
 
-fn variant_short_name(enum_name: &str, symbol_name: &str) -> String {
-    symbol_name
-        .strip_prefix(&format!("{enum_name}."))
-        .unwrap_or(symbol_name)
-        .to_string()
+/// Collect the canonical variant `SymbolId`s for `enum_id`.
+///
+/// Uses `SymbolId` for set membership to avoid heap-allocating variant name
+/// strings on the hot exhaustiveness check path. String names are only
+/// materialised in the error message (the cold path).
+///
+/// Each enum variant is stored under **two** different `SymbolId`s in
+/// `enum_variants` (a span-derived one and an associated-member one).
+/// We only want **one** representative per variant — we choose the
+/// associated-member SymbolId because that is the one `lookup_associated_member`
+/// returns, keeping `all_variants` and `covered` in the same coordinate system.
+fn enum_variant_symbol_ids(
+    checker: &TypeChecker<'_>,
+    enum_id: crate::SymbolId,
+) -> FxHashSet<crate::SymbolId> {
+    let enum_name = checker.symbols.get(enum_id).name.clone();
+    // Walk the raw enum_variants map to find all variants for this enum.
+    // Deduplicate by short name so we get exactly one SymbolId per variant.
+    let mut seen_names: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
+    let mut ids = FxHashSet::default();
+    for (variant_id, (parent_enum, _)) in &checker.type_info.enum_variants {
+        if *parent_enum != enum_id {
+            continue;
+        }
+        let full = checker.symbols.get(*variant_id).name.clone();
+        let short = full
+            .strip_prefix(&format!("{enum_name}."))
+            .unwrap_or(&full)
+            .to_string();
+        if seen_names.insert(short.clone()) {
+            // Use the SymbolId returned by lookup_associated_member as the
+            // canonical ID, so that `all_variants` and `covered` share the
+            // same coordinate system.
+            if let Some(canonical) = checker.symbols.lookup_associated_member(&enum_name, &short) {
+                ids.insert(canonical);
+            } else {
+                // Fallback: use whatever ID we have.
+                ids.insert(*variant_id);
+            }
+        }
+    }
+    ids
 }
 
-fn pattern_variant_short_name(pool: &AstPool, pat: PatternId) -> Option<String> {
-    match pool.pattern(pat) {
-        Pattern::Enum { variant, .. } => Some(variant.clone()),
-        Pattern::TypeTuple { name, .. } => Some(
-            name.rsplit_once('.')
-                .map(|(_, short)| short.to_string())
-                .unwrap_or_else(|| name.clone()),
-        ),
+/// Resolve a match-arm pattern to the `SymbolId` of the enum variant it covers.
+///
+/// Returns `None` for wildcards, binds, and any non-variant pattern (those are
+/// handled separately via `pattern_covers_all`).
+fn pattern_to_variant_symbol_id(
+    checker: &TypeChecker<'_>,
+    enum_id: crate::SymbolId,
+    pat: PatternId,
+) -> Option<crate::SymbolId> {
+    let enum_name = &checker.symbols.get(enum_id).name;
+    match checker.pool.pattern(pat) {
+        // `Variant` or `EnumName.Variant`
+        Pattern::Enum { variant, .. } => {
+            // Try the fully-qualified form first, then the short form.
+            checker
+                .symbols
+                .lookup_associated_member(enum_name, variant)
+                .or_else(|| {
+                    checker.symbols.lookup_associated_member(
+                        enum_name,
+                        variant
+                            .rsplit_once('.')
+                            .map_or(variant.as_str(), |(_, s)| s),
+                    )
+                })
+        }
+        // `EnumName.Variant(...)` style
+        Pattern::TypeTuple { name, .. } => {
+            let short = name.rsplit_once('.').map_or(name.as_str(), |(_, s)| s);
+            checker.symbols.lookup_associated_member(enum_name, short)
+        }
         _ => None,
     }
 }
 
-fn enum_variant_short_names(
-    checker: &TypeChecker<'_>,
-    enum_id: crate::SymbolId,
-) -> FxHashSet<String> {
-    let enum_name = checker.symbols.get(enum_id).name.clone();
-    let mut names = FxHashSet::default();
-    let mut seen = FxHashSet::default();
-    for (variant_id, (parent_enum, _)) in &checker.type_info.enum_variants {
-        if *parent_enum != enum_id || !seen.insert(*variant_id) {
-            continue;
-        }
-        names.insert(variant_short_name(
-            &enum_name,
-            &checker.symbols.get(*variant_id).name,
-        ));
-    }
-    names
-}
-
 pub fn check_match_exhaustiveness(
     checker: &mut TypeChecker<'_>,
-    value_ty: &ArType,
+    value_ty: TypeId,
     arms: &[MatchArm],
     match_span: Span,
 ) {
-    let ArType::Named(enum_id, _) = value_ty else {
+    let resolved_ty = checker.type_info.resolve_type_id(value_ty);
+    let ArType::Named(enum_id, _) = resolved_ty else {
         return;
     };
-    if value_ty.is_error() {
+    if resolved_ty.is_error() {
         return;
     }
 
-    let all_variants = enum_variant_short_names(checker, *enum_id);
+    // Collect all variant SymbolIds — O(V) where V = #variants.
+    let all_variants = enum_variant_symbol_ids(checker, *enum_id);
     if all_variants.is_empty() {
         return;
     }
 
-    if arms.iter().any(|arm| pattern_covers_all(checker.pool, arm.pattern)) {
+    // Any wildcard / bind arm covers everything — short-circuit.
+    if arms
+        .iter()
+        .any(|arm| pattern_covers_all(checker.pool, arm.pattern))
+    {
         return;
     }
 
-    let mut covered = FxHashSet::default();
+    // Build the covered set using SymbolId comparisons (integer equality,
+    // no heap allocations on the hot path).
+    let mut covered: FxHashSet<crate::SymbolId> = FxHashSet::default();
     for arm in arms {
-        if let Some(name) = pattern_variant_short_name(checker.pool, arm.pattern) {
-            covered.insert(name);
+        if let Some(sym) = pattern_to_variant_symbol_id(checker, *enum_id, arm.pattern) {
+            covered.insert(sym);
         }
     }
 
-    let mut missing: Vec<_> = all_variants.difference(&covered).cloned().collect();
+    // Compute missing variants. String names are only materialised here,
+    // which is the cold (error) path.
+    let enum_name = checker.symbols.get(*enum_id).name.clone();
+    let mut missing: Vec<String> = all_variants
+        .difference(&covered)
+        .map(|&sym| {
+            let full = checker.symbols.get(sym).name.clone();
+            // Strip "EnumName." prefix to produce a short diagnostic name.
+            full.strip_prefix(&format!("{enum_name}."))
+                .unwrap_or(&full)
+                .to_string()
+        })
+        .collect();
+
     if missing.is_empty() {
         return;
     }

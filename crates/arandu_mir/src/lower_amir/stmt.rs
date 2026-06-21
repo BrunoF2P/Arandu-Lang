@@ -43,7 +43,7 @@ impl LowerCtx<'_> {
                             temp,
                             AmirRvalue::FieldAccess {
                                 base: val_op.clone(),
-                                field: format!("_{i}"),
+                                field: i,
                             },
                         );
                         self.emit_store_place(
@@ -383,7 +383,7 @@ impl LowerCtx<'_> {
                             temp,
                             AmirRvalue::FieldAccess {
                                 base: val_op.clone(),
-                                field: format!("_{i}"),
+                                field: i,
                             },
                         );
                         self.emit_store_place(
@@ -439,9 +439,9 @@ impl LowerCtx<'_> {
                             format!("cannot lower field projection `{name}`: symbol not resolved"),
                             *span,
                         )),
-                        HirPlaceSuffix::Index { expr, .. } => {
-                            Ok(AmirProjection::Index(self.lower_expr(*expr, None, symbols)?))
-                        }
+                        HirPlaceSuffix::Index { expr, .. } => Ok(AmirProjection::Index(
+                            self.lower_expr(*expr, None, symbols)?,
+                        )),
                     })
                     .collect();
                 let amir_place = AmirPlace {
@@ -513,7 +513,7 @@ impl LowerCtx<'_> {
                         temp,
                         AmirRvalue::FieldAccess {
                             base: val_op.clone(),
-                            field: format!("_{i}"),
+                            field: i,
                         },
                     );
                     self.emit_store_place(amir_place, AmirOperand::Copy(temp))?;

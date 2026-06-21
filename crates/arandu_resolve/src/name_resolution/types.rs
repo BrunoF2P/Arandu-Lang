@@ -1,4 +1,4 @@
-use arandu_parser::{ResultType, TypeExpr, TypeName, TypeExprId};
+use arandu_parser::{ResultType, TypeExpr, TypeExprId, TypeName};
 
 use crate::{DiagCode, Diagnostic, ScopeId};
 

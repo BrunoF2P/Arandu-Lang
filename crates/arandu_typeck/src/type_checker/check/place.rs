@@ -24,7 +24,12 @@ pub(crate) fn synth_place(checker: &mut TypeChecker<'_>, place: &arandu_parser::
         match suffix {
             arandu_parser::PlaceSuffix::Field { span, name } => {
                 let (actual_base_ty, was_nullable) = match &current_ty {
-                    ArType::Nullable(inner) => (inner.as_ref().clone(), true),
+                    ArType::Nullable(inner) => (
+                        super::super::types::type_interner::with_resolved_type(*inner, |t| {
+                            t.clone()
+                        }),
+                        true,
+                    ),
                     other => (other.clone(), false),
                 };
                 if was_nullable {
@@ -48,10 +53,13 @@ pub(crate) fn synth_place(checker: &mut TypeChecker<'_>, place: &arandu_parser::
                 }
                 let struct_id_opt = match &actual_base_ty {
                     ArType::Named(id, _) => Some(*id),
-                    ArType::Ptr(inner) => match &**inner {
-                        ArType::Named(id, _) => Some(*id),
-                        _ => None,
-                    },
+                    ArType::Ptr(inner) => super::super::types::type_interner::with_resolved_type(
+                        *inner,
+                        |ty| match ty {
+                            ArType::Named(id, _) => Some(*id),
+                            _ => None,
+                        },
+                    ),
                     _ => None,
                 };
                 if let Some(struct_id) = struct_id_opt
@@ -75,7 +83,12 @@ pub(crate) fn synth_place(checker: &mut TypeChecker<'_>, place: &arandu_parser::
             arandu_parser::PlaceSuffix::Index { span, expr } => {
                 let index_ty = super::super::synth::synth_expr(checker, *expr);
                 let (actual_base_ty, was_nullable) = match &current_ty {
-                    ArType::Nullable(inner) => (inner.as_ref().clone(), true),
+                    ArType::Nullable(inner) => (
+                        super::super::types::type_interner::with_resolved_type(*inner, |t| {
+                            t.clone()
+                        }),
+                        true,
+                    ),
                     other => (other.clone(), false),
                 };
                 if was_nullable {
@@ -100,7 +113,10 @@ pub(crate) fn synth_place(checker: &mut TypeChecker<'_>, place: &arandu_parser::
                 }
                 match &actual_base_ty {
                     ArType::Array(_, inner) | ArType::Slice(inner) => {
-                        current_ty = inner.as_ref().clone();
+                        current_ty =
+                            super::super::types::type_interner::with_resolved_type(*inner, |t| {
+                                t.clone()
+                            });
                     }
                     _ => {
                         checker.add_constraint(

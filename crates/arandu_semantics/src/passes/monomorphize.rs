@@ -71,6 +71,12 @@ pub struct InstantiationGraph {
     nodes: Vec<InstantiationNode>,
     /// Maps from key → node id for deduplication.
     index: FxHashMap<InstantiationKey, InstantiationNodeId>,
+    /// O(1) per-symbol instantiation counter for recursion depth limiting.
+    ///
+    /// Previously this was computed by scanning `nodes` with an O(N) `.filter()`.
+    /// This map is incremented on each successful insertion, making the recursion
+    /// limit check a constant-time lookup instead of a linear scan.
+    instantiation_counts: FxHashMap<SymbolId, usize>,
     /// Maximum recursion depth for generic instantiations.
     recursion_limit: usize,
 }
@@ -82,6 +88,7 @@ impl InstantiationGraph {
         Self {
             nodes: Vec::new(),
             index: FxHashMap::default(),
+            instantiation_counts: FxHashMap::default(),
             recursion_limit: 64,
         }
     }
@@ -92,6 +99,7 @@ impl InstantiationGraph {
         Self {
             nodes: Vec::new(),
             index: FxHashMap::default(),
+            instantiation_counts: FxHashMap::default(),
             recursion_limit: limit,
         }
     }
@@ -111,12 +119,14 @@ impl InstantiationGraph {
             return Ok(id);
         }
 
-        // Check recursion depth by counting how many nodes share the same symbol
+        // O(1) recursion depth check via pre-maintained per-symbol counter.
+        // Previously computed with an O(N) `.filter()` over all nodes, which
+        // was O(N²) overall for N generic instantiations.
         let same_symbol_count = self
-            .nodes
-            .iter()
-            .filter(|n| n.key.symbol == key.symbol)
-            .count();
+            .instantiation_counts
+            .get(&key.symbol)
+            .copied()
+            .unwrap_or(0);
         if same_symbol_count >= self.recursion_limit {
             return Err(MonoError::RecursionLimitExceeded {
                 symbol: key.symbol,
@@ -132,7 +142,9 @@ impl InstantiationGraph {
             mangled_name: mangled,
             callees: Vec::new(),
         });
-        self.index.insert(key, id);
+        self.index.insert(key.clone(), id);
+        // Increment the O(1) per-symbol counter after a successful insertion.
+        *self.instantiation_counts.entry(key.symbol).or_insert(0) += 1;
         Ok(id)
     }
 
@@ -279,52 +291,74 @@ fn mangle_type_into(out: &mut String, ty: &ArType, symbols: &SymbolTable) {
         ArType::Primitive(p) => out.push_str(p.as_str()),
         ArType::Named(id, args) => {
             out.push_str(&symbols.get(*id).name);
-            for arg in args {
+            for &arg in args {
                 out.push('_');
-                mangle_type_into(out, arg, symbols);
+                arandu_middle::types::type_interner::with_resolved_type(arg, |arg_ty| {
+                    mangle_type_into(out, arg_ty, symbols);
+                });
             }
         }
         ArType::Nullable(inner) => {
             out.push_str("opt_");
-            mangle_type_into(out, inner, symbols);
+            arandu_middle::types::type_interner::with_resolved_type(*inner, |inner_ty| {
+                mangle_type_into(out, inner_ty, symbols);
+            });
         }
         ArType::Ptr(inner) => {
             out.push_str("ptr_");
-            mangle_type_into(out, inner, symbols);
+            arandu_middle::types::type_interner::with_resolved_type(*inner, |inner_ty| {
+                mangle_type_into(out, inner_ty, symbols);
+            });
         }
         ArType::Slice(inner) => {
             out.push_str("slice_");
-            mangle_type_into(out, inner, symbols);
+            arandu_middle::types::type_interner::with_resolved_type(*inner, |inner_ty| {
+                mangle_type_into(out, inner_ty, symbols);
+            });
         }
         ArType::Array(n, inner) => {
             out.push_str(&format!("arr{n}_"));
-            mangle_type_into(out, inner, symbols);
+            arandu_middle::types::type_interner::with_resolved_type(*inner, |inner_ty| {
+                mangle_type_into(out, inner_ty, symbols);
+            });
         }
         ArType::Tuple(items) => {
             out.push_str("tup");
-            for item in items {
+            for &item in items {
                 out.push('_');
-                mangle_type_into(out, item, symbols);
+                arandu_middle::types::type_interner::with_resolved_type(item, |item_ty| {
+                    mangle_type_into(out, item_ty, symbols);
+                });
             }
         }
         ArType::Func(params, ret) => {
             out.push_str("fn");
-            for param in params {
+            for &param in params {
                 out.push('_');
-                mangle_type_into(out, param, symbols);
+                arandu_middle::types::type_interner::with_resolved_type(param, |param_ty| {
+                    mangle_type_into(out, param_ty, symbols);
+                });
             }
             out.push_str("_R_");
-            mangle_type_into(out, ret, symbols);
+            arandu_middle::types::type_interner::with_resolved_type(*ret, |ret_ty| {
+                mangle_type_into(out, ret_ty, symbols);
+            });
         }
         ArType::Result(ok, err) => {
             out.push_str("res_");
-            mangle_type_into(out, ok, symbols);
+            arandu_middle::types::type_interner::with_resolved_type(*ok, |ok_ty| {
+                mangle_type_into(out, ok_ty, symbols);
+            });
             out.push('_');
-            mangle_type_into(out, err, symbols);
+            arandu_middle::types::type_interner::with_resolved_type(*err, |err_ty| {
+                mangle_type_into(out, err_ty, symbols);
+            });
         }
         ArType::Option(inner) => {
             out.push_str("option_");
-            mangle_type_into(out, inner, symbols);
+            arandu_middle::types::type_interner::with_resolved_type(*inner, |inner_ty| {
+                mangle_type_into(out, inner_ty, symbols);
+            });
         }
         ArType::Void => out.push_str("void"),
         ArType::Err => out.push_str("err"),
@@ -405,10 +439,7 @@ impl InstantiationAnalyzer<'_> {
             .iter()
             .map(|param| self.interner.intern(ArType::Named(*param, Vec::new())))
             .collect();
-        self.insert_key(
-            InstantiationKey { symbol, type_args },
-            Span::new(0, 0, 0),
-        )
+        self.insert_key(InstantiationKey { symbol, type_args }, Span::new(0, 0, 0))
     }
 
     fn insert_key(&mut self, key: InstantiationKey, span: Span) -> Option<InstantiationNodeId> {
@@ -722,11 +753,9 @@ mod tests {
         let sym = define_symbol(&mut st, "recursive");
 
         let mut graph = InstantiationGraph::with_recursion_limit(3);
+        let int_id = interner.intern(ArType::Primitive(Primitive::Int));
         for i in 0..3 {
-            let tid = interner.intern(ArType::Array(
-                i,
-                Box::new(ArType::Primitive(Primitive::Int)),
-            ));
+            let tid = interner.intern(ArType::Array(i, int_id));
             graph
                 .get_or_insert(
                     InstantiationKey {
@@ -740,10 +769,8 @@ mod tests {
         }
 
         // 4th unique instantiation of the same symbol should fail
-        let tid = interner.intern(ArType::Array(
-            99,
-            Box::new(ArType::Primitive(Primitive::Int)),
-        ));
+        let int_id = interner.intern(ArType::Primitive(Primitive::Int));
+        let tid = interner.intern(ArType::Array(99, int_id));
         let result = graph.get_or_insert(
             InstantiationKey {
                 symbol: sym,

@@ -68,20 +68,23 @@ impl<'a> Resolver<'a> {
         for where_item in &decl.where_clause {
             self.resolve_where_item(struct_scope, where_item);
         }
-        let mut seen_fields = rustc_hash::FxHashMap::default();
+        let mut seen_fields = smallvec::SmallVec::<[(&str, arandu_lexer::Span); 8]>::new();
         for field in &decl.fields {
-            if let Some(&prev_span) = seen_fields.get(&field.name) {
+            if let Some((_, prev_span)) = seen_fields.iter().find(|(name, _)| *name == field.name) {
                 self.diagnostics.push(
                     crate::Diagnostic::error(
                         crate::DiagCode::T030DuplicateFieldDecl,
-                        format!("field '{}' is already declared in struct '{}'", field.name, decl.name),
+                        format!(
+                            "field '{}' is already declared in struct '{}'",
+                            field.name, decl.name
+                        ),
                         field.span,
                     )
-                    .with_label(prev_span, "first declaration here")
+                    .with_label(*prev_span, "first declaration here")
                     .with_label(field.span, "duplicate field"),
                 );
             } else {
-                seen_fields.insert(field.name.clone(), field.span);
+                seen_fields.push((&field.name, field.span));
                 self.resolve_field(struct_scope, field);
             }
         }
@@ -153,7 +156,13 @@ impl<'a> Resolver<'a> {
         self.resolve_type_expr(scope, param.ty);
         self.define(scope, &param.name, SymbolKind::Param, param.span);
         let is_mut = param.ownership == Some(arandu_parser::Ownership::Mut);
-        if let Some(symbol_id) = self.resolved.definitions.get(&param.span.into()).copied().filter(|_| is_mut) {
+        if let Some(symbol_id) = self
+            .resolved
+            .definitions
+            .get(&param.span.into())
+            .copied()
+            .filter(|_| is_mut)
+        {
             self.resolved.mutable_symbols.insert(symbol_id);
         }
     }

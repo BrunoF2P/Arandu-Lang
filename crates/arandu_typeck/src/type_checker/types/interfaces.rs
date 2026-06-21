@@ -4,9 +4,9 @@ use arandu_lexer::Span;
 use arandu_parser::{FuncSignature, GenericParam, TypeName, WhereItem};
 
 use super::ArType;
-use super::{lower_result_type, lower_type_expr};
-use super::{GenericSubst, build_subst, substitute_type};
 use super::unify;
+use super::{GenericSubst, build_subst, intern_type, substitute_type};
+use super::{lower_result_type, lower_type_expr};
 use crate::passes::type_checker::TypeChecker;
 use crate::{ScopeId, SymbolId, SymbolKind};
 
@@ -141,20 +141,28 @@ fn collect_interface(checker: &mut TypeChecker, decl: &arandu_parser::InterfaceD
 fn lower_func_signature(checker: &TypeChecker, sig: &FuncSignature, scope: ScopeId) -> ArType {
     let mut param_types = Vec::new();
     for param in &sig.params {
-        param_types.push(lower_type_expr(
+        let ty = lower_type_expr(
             param.ty,
             checker.pool,
             &checker.symbols,
             scope,
             &checker.resolved,
-        ));
+        );
+        param_types.push(intern_type(ty));
     }
     let ret = if let Some(result) = &sig.result {
-        lower_result_type(result, checker.pool, &checker.symbols, scope, &checker.resolved)
+        lower_result_type(
+            result,
+            checker.pool,
+            &checker.symbols,
+            scope,
+            &checker.resolved,
+        )
     } else {
         ArType::Void
     };
-    ArType::Func(param_types, Box::new(ret))
+    let ret_id = intern_type(ret);
+    ArType::Func(param_types, ret_id)
 }
 
 fn collect_decl_constraints(
@@ -305,9 +313,29 @@ pub(crate) fn type_satisfies_interface(
     iface_sym: SymbolId,
     _span: Span,
 ) -> bool {
-    missing_interface_methods(checker, concrete, iface_sym).is_empty()
+    let Some(iface) = checker.type_info.interfaces.get(&iface_sym) else {
+        return false;
+    };
+    let Some(type_name) = concrete_type_name(checker, concrete) else {
+        return false;
+    };
+
+    let iface_subst = interface_subst_for_concrete(checker, iface_sym, concrete);
+
+    for (method, required) in &iface.methods {
+        let required_inst = substitute_type(required, &iface_subst);
+        let Some(provided) = lookup_method_type(checker, &type_name, method) else {
+            return false;
+        };
+        let provided = strip_receiver(provided);
+        if !method_types_compatible(&required_inst, &provided) {
+            return false;
+        }
+    }
+    true
 }
 
+#[cold]
 fn missing_interface_methods(
     checker: &TypeChecker,
     concrete: &ArType,
@@ -341,7 +369,10 @@ fn missing_interface_methods(
                 }
             }
             if !similar.is_empty() {
-                missing.push(format!("{method} (did you mean `{}`?)", similar.join("`, `")));
+                missing.push(format!(
+                    "{method} (did you mean `{}`?)",
+                    similar.join("`, `")
+                ));
             } else {
                 missing.push(method.to_string());
             }
@@ -368,20 +399,24 @@ fn interface_subst_for_concrete(
     concrete: &ArType,
 ) -> GenericSubst {
     let Some(iface_params) = checker.type_info.generic_params.get(&iface_sym) else {
-        return FxHashMap::default();
+        return GenericSubst::default();
     };
     if iface_params.is_empty() {
-        return FxHashMap::default();
+        return GenericSubst::default();
     }
     if let ArType::Named(_, args) = concrete
         && args.len() == iface_params.len()
     {
-        return build_subst(iface_params, args);
+        let resolved_args: Vec<ArType> = args
+            .iter()
+            .map(|&a| super::type_interner::with_resolved_type(a, |t| t.clone()))
+            .collect();
+        return build_subst(iface_params, &resolved_args);
     }
     if iface_params.len() == 1 {
         return build_subst(iface_params, std::slice::from_ref(concrete));
     }
-    FxHashMap::default()
+    GenericSubst::default()
 }
 
 fn lookup_method_type(checker: &TypeChecker, type_name: &str, method: &str) -> Option<ArType> {
@@ -407,11 +442,18 @@ fn method_types_compatible(required: &ArType, provided: &ArType) -> bool {
             if req_params.len() != prov_params.len() {
                 return false;
             }
-            req_params
-                .iter()
-                .zip(prov_params.iter())
-                .all(|(a, b)| unify(a, b))
-                && unify(req_ret, prov_ret)
+            req_params.iter().zip(prov_params.iter()).all(|(&a, &b)| {
+                if a == b {
+                    return true;
+                }
+                super::type_interner::with_resolved_type(a, |ty_a| {
+                    super::type_interner::with_resolved_type(b, |ty_b| unify(ty_a, ty_b))
+                })
+            }) && (*req_ret == *prov_ret || {
+                super::type_interner::with_resolved_type(*req_ret, |ty_a| {
+                    super::type_interner::with_resolved_type(*prov_ret, |ty_b| unify(ty_a, ty_b))
+                })
+            })
         }
         _ => unify(required, provided),
     }

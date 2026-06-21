@@ -323,7 +323,10 @@ func main() {
     let diagnostic = &result.diagnostics[0];
     assert!(diagnostic.message.contains("usre"));
     assert!(
-        diagnostic.hints.iter().any(|hint| hint.message.contains("user")),
+        diagnostic
+            .hints
+            .iter()
+            .any(|hint| hint.message.contains("user")),
         "{diagnostic:#?}"
     );
 }
@@ -516,4 +519,3 @@ func main() {
         diag.hints
     );
 }
-

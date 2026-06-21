@@ -26,6 +26,7 @@ pub fn type_check(resolution: ResolutionResult, program: &Program) -> TypeCheckR
         resolution.diagnostics,
         &program.pool,
     );
+    let _scope = types::type_interner::InternerScope::new_mut(&mut checker.type_info.type_interner);
     check::check_program(&mut checker, program);
     checker.finish()
 }
@@ -125,7 +126,13 @@ pub struct TypeInfo {
     pub decl_types: FxHashMap<SymbolId, TypeId>,
     pub struct_fields: FxHashMap<SymbolId, FxHashMap<String, ArType>>,
     pub struct_field_symbols: FxHashMap<SymbolId, FxHashMap<String, SymbolId>>,
+    pub struct_field_indices: FxHashMap<SymbolId, FxHashMap<String, usize>>,
     pub enum_variants: FxHashMap<SymbolId, (SymbolId, EnumPayloadShape)>,
+    /// Pre-computed discriminant tag for each enum variant symbol.
+    ///
+    /// Populated during `collect_type_shapes` to allow the AMIR lowering pass
+    /// to resolve `variant_symbol → tag` in O(1) without scanning HIR decls.
+    pub enum_variant_tags: FxHashMap<SymbolId, usize>,
     /// Ordered type-parameter symbols for generic decls (func, struct, …).
     pub generic_params: FxHashMap<SymbolId, Vec<SymbolId>>,
     /// Type-parameter symbol → interface symbols required (`T: Display`).
@@ -143,11 +150,22 @@ impl TypeInfo {
             decl_types: FxHashMap::default(),
             struct_fields: FxHashMap::default(),
             struct_field_symbols: FxHashMap::default(),
+            struct_field_indices: FxHashMap::default(),
             enum_variants: FxHashMap::default(),
+            enum_variant_tags: FxHashMap::default(),
             generic_params: FxHashMap::default(),
             param_constraints: FxHashMap::default(),
             interfaces: FxHashMap::default(),
         }
+    }
+
+    /// Record the discriminant tag index for an enum variant.
+    ///
+    /// Called once per variant during `collect_type_shapes`. The stored tag
+    /// is the 0-based declaration order index, which matches the value emitted
+    /// by `AmirRvalue::Discriminant` and used by `SwitchInt` in the backend.
+    pub fn record_enum_variant_tag(&mut self, variant: SymbolId, tag: usize) {
+        self.enum_variant_tags.insert(variant, tag);
     }
 
     pub fn record_expr_type(&mut self, expr: ExprId, ty: ArType) -> TypeId {

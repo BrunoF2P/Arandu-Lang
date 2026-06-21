@@ -25,13 +25,13 @@
     clippy::single_match,
     clippy::collapsible_if
 )]
-use crate::{BitMatrix, BitSet, SymbolTable};
 use crate::amir::block::BlockId;
 use crate::amir::local::LocalId;
 use crate::amir::program::AmirFunc;
 use crate::amir::stmt::{AmirStmt, AmirTerminator};
 use crate::amir::value::AmirRvalue;
 use crate::diagnostics::{DiagCode, Diagnostic};
+use crate::{BitMatrix, BitSet, SymbolTable};
 
 use arandu_lexer::Span;
 
@@ -197,7 +197,7 @@ fn check_stmt_loads(
                 emit_uninit_diag(place.local, func, symbols, diagnostics);
             }
         }
-        AmirStmt::StorageLive(_) | AmirStmt::StorageDead(_) => {}
+        AmirStmt::StorageLive(_) | AmirStmt::StorageDead(_) | AmirStmt::Nop => {}
     }
 }
 
@@ -246,6 +246,7 @@ fn emit_uninit_diag(
 mod tests {
     use super::*;
     use crate::SymbolId;
+    use crate::SymbolTable;
     use crate::amir::block::AmirBasicBlock;
     use crate::amir::local::{AmirLocal, AmirTemp, TempId};
     use crate::amir::program::{AmirFunc, extend_block_range};
@@ -253,7 +254,6 @@ mod tests {
     use crate::amir::value::{AmirConstant, AmirOperand, AmirPlace, AmirRvalue};
     use crate::layout::DenseRange;
     use crate::passes::type_checker::types::ArType;
-    use crate::SymbolTable;
     use smallvec::smallvec;
 
     fn make_symbol_table() -> SymbolTable {

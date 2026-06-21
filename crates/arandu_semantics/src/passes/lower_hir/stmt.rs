@@ -89,7 +89,11 @@ fn lower_stmt_raw(
                     .cloned()
                     .or_else(|| {
                         value_ty.as_ref().and_then(|val_ty| match val_ty {
-                            ArType::Tuple(elems) => elems.get(i).cloned(),
+                            ArType::Tuple(elems) => elems.get(i).map(|&tid| {
+                                arandu_middle::types::type_interner::with_resolved_type(tid, |t| {
+                                    t.clone()
+                                })
+                            }),
                             _ if bindings.len() == 1 => Some(val_ty.clone()),
                             _ => None,
                         })
@@ -172,9 +176,8 @@ fn lower_stmt_raw(
                 ExprKind::Match { value, arms } => {
                     let arm_ids = pool.match_arm_list(*arms).to_vec();
                     let vid = super::expr::lower_expr(type_check, pool, hir_pool, *value)?;
-                    let arms_range = super::pattern::lower_match_arms(
-                        type_check, pool, hir_pool, &arm_ids,
-                    )?;
+                    let arms_range =
+                        super::pattern::lower_match_arms(type_check, pool, hir_pool, &arm_ids)?;
                     HirStmtKind::Match {
                         value: vid,
                         arms: arms_range,

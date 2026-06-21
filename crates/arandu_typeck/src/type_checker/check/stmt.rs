@@ -23,7 +23,14 @@ pub fn check_stmt(checker: &mut TypeChecker<'_>, _pool: &AstPool, stmt: &Stmt) {
                     vec![ok, err]
                 } else {
                     match &val_ty {
-                        ArType::Tuple(tys) => tys.clone(),
+                        ArType::Tuple(tys) => tys
+                            .iter()
+                            .map(|&t| {
+                                super::super::types::type_interner::with_resolved_type(t, |ty| {
+                                    ty.clone()
+                                })
+                            })
+                            .collect(),
                         ArType::Error => vec![ArType::Error; bindings.len()],
                         other => vec![other.clone(); bindings.len()],
                     }
@@ -171,7 +178,14 @@ pub fn check_stmt(checker: &mut TypeChecker<'_>, _pool: &AstPool, stmt: &Stmt) {
                     vec![ok, err]
                 } else {
                     match &val_ty {
-                        ArType::Tuple(tys) => tys.clone(),
+                        ArType::Tuple(tys) => tys
+                            .iter()
+                            .map(|&t| {
+                                super::super::types::type_interner::with_resolved_type(t, |ty| {
+                                    ty.clone()
+                                })
+                            })
+                            .collect(),
                         ArType::Error => vec![ArType::Error; places.len()],
                         other => vec![other.clone(); places.len()],
                     }
@@ -254,7 +268,10 @@ pub fn check_stmt(checker: &mut TypeChecker<'_>, _pool: &AstPool, stmt: &Stmt) {
             } else {
                 let tys = values
                     .iter()
-                    .map(|v| super::super::synth::synth_expr(checker, *v))
+                    .map(|v| {
+                        let ty = super::super::synth::synth_expr(checker, *v);
+                        super::super::types::intern_type(ty)
+                    })
                     .collect();
                 ArType::Tuple(tys)
             };
@@ -321,7 +338,11 @@ pub fn check_stmt(checker: &mut TypeChecker<'_>, _pool: &AstPool, stmt: &Stmt) {
                 } => {
                     let iterable_ty = super::super::synth::synth_expr(checker, *iterable);
                     let elem_ty = match &iterable_ty {
-                        ArType::Array(_, inner) | ArType::Slice(inner) => inner.as_ref().clone(),
+                        ArType::Array(_, inner) | ArType::Slice(inner) => {
+                            super::super::types::type_interner::with_resolved_type(*inner, |t| {
+                                t.clone()
+                            })
+                        }
                         ArType::Error => ArType::Error,
                         _ => {
                             checker.diagnostics.push(crate::Diagnostic::error(
@@ -511,7 +532,10 @@ fn validate_mutability(checker: &mut TypeChecker<'_>, place: &arandu_parser::Pla
             {
                 let name = &symbol.name;
                 let replacement = crate::Hint {
-                    message: format!("consider declaring the variable as mutable: `let mut {} = ...;`", name),
+                    message: format!(
+                        "consider declaring the variable as mutable: `mut {} = ...;`",
+                        name
+                    ),
                     replacement: Some(crate::CodeReplacement {
                         span: symbol.span,
                         new_text: format!("mut {name}"),
@@ -530,4 +554,3 @@ fn validate_mutability(checker: &mut TypeChecker<'_>, place: &arandu_parser::Pla
         }
     }
 }
-

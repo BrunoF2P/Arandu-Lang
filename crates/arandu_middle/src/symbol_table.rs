@@ -113,9 +113,8 @@ impl SymbolTable {
             }
         };
 
-        let map_symbol = |old_symbol: SymbolId| -> SymbolId {
-            SymbolId(old_symbol.0 + self_symbols_len)
-        };
+        let map_symbol =
+            |old_symbol: SymbolId| -> SymbolId { SymbolId(old_symbol.0 + self_symbols_len) };
 
         // 1. Merge other scopes (except global scope at index 0)
         for old_symbol_id in &other.scopes[0].symbols {
@@ -161,7 +160,6 @@ impl SymbolTable {
             }
         }
     }
-
 
     #[must_use]
     pub fn global_scope(&self) -> ScopeId {

@@ -1,6 +1,7 @@
 pub mod amir;
 pub mod amir_validate;
 pub mod cfg;
+pub mod codegen;
 pub mod diagnostics;
 pub mod hir;
 pub mod layout;
@@ -9,29 +10,28 @@ pub mod ops;
 pub mod resolved;
 pub mod symbol_table;
 pub mod types;
-pub mod codegen;
 
 pub use arandu_base::arena;
 pub use arandu_base::bitset;
 pub use arandu_base::index_vec;
-pub use arandu_base::stable_id;
 pub use arandu_base::span::Span;
+pub use arandu_base::stable_id;
 pub use arandu_base::string_pool;
 pub use arandu_base::vm;
 
 pub use arandu_base::arena::BumpArena;
-pub use arandu_base::bitset::{BitSet, BitMatrix};
-pub use layout::DenseRange;
-pub use arandu_base::stable_id::{GenerationalId, SlotMap, DenseSlotMap, StableHandle};
+pub use arandu_base::bitset::{BitMatrix, BitSet};
 pub use arandu_base::newtype_index;
-pub use arandu_base::string_pool::{SsoString, StringPool, StringId};
+pub use arandu_base::stable_id::{DenseSlotMap, GenerationalId, SlotMap, StableHandle};
+pub use arandu_base::string_pool::{SsoString, StringId, StringPool};
 pub use arandu_base::vm::VmReservation;
+pub use layout::DenseRange;
 
 pub use amir_validate::validate_amir_program;
-pub use diagnostics::{DiagCode, Diagnostic, Label, Severity, Hint, CodeReplacement};
+pub use codegen::{CodegenBackend, CompiledCode};
+pub use diagnostics::{CodeReplacement, DiagCode, Diagnostic, Hint, Label, Severity};
 pub use resolved::{DocCommentMap, NodeKey, ResolvedNames};
 pub use symbol_table::{ScopeId, Symbol, SymbolId, SymbolKind, SymbolTable};
-pub use codegen::{CodegenBackend, CompiledCode};
 
 #[derive(Debug, Clone)]
 pub struct ResolutionResult {

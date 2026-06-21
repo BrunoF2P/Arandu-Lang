@@ -30,7 +30,7 @@ pub enum AmirRvalue {
     },
     FieldAccess {
         base: AmirOperand,
-        field: String,
+        field: usize,
     },
     StructLiteral {
         struct_symbol: SymbolId,

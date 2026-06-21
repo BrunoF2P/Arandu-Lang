@@ -2,25 +2,27 @@ use arandu_parser::{Pattern, ast_pool::PatternId};
 
 use super::super::TypeChecker;
 use super::super::constraints::ConstraintOrigin;
-use super::super::types::ArType;
+use super::super::types::{ArType, TypeId};
 use super::expr::synth_expr;
 
-pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty: &ArType) {
+pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty: TypeId) {
     let pat = checker.pool.pattern(pattern);
     match pat {
         Pattern::Wildcard { .. } => {}
         Pattern::Bind { span, name: _ } => {
             let key = crate::NodeKey::from(*span);
             if let Some(symbol_id) = checker.resolved.definitions.get(&key) {
-                checker.ctx.bind(*symbol_id, value_ty.clone());
-                checker.record_decl_type(*symbol_id, value_ty.clone());
+                let val_ty = checker.type_info.resolve_type_id(value_ty).clone();
+                checker.ctx.bind(*symbol_id, val_ty.clone());
+                checker.record_decl_type(*symbol_id, val_ty);
             }
         }
         Pattern::Literal { expr, .. } => {
             let expr_ty = synth_expr(checker, *expr);
-            if !super::super::types::unify(value_ty, &expr_ty) {
+            let val_ty = checker.type_info.resolve_type_id(value_ty).clone();
+            if !super::super::types::unify(&val_ty, &expr_ty) {
                 checker.add_constraint(
-                    value_ty.clone(),
+                    val_ty.clone(),
                     expr_ty,
                     ConstraintOrigin::Assignment {
                         lhs_span: pat.span(),
@@ -38,10 +40,11 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
             let type_key = crate::NodeKey::from(type_name.span);
             if let Some(enum_symbol_id) = checker.resolved.type_refs.get(&type_key).copied() {
                 let expected_enum_ty = ArType::Named(enum_symbol_id, vec![]);
-                if !super::super::types::unify(value_ty, &expected_enum_ty) {
+                let val_ty = checker.type_info.resolve_type_id(value_ty).clone();
+                if !super::super::types::unify(&val_ty, &expected_enum_ty) {
                     checker.add_constraint(
                         expected_enum_ty.clone(),
-                        value_ty.clone(),
+                        val_ty.clone(),
                         ConstraintOrigin::Assignment {
                             lhs_span: *span,
                             rhs_span: type_name.span,
@@ -66,8 +69,7 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                                         crate::DiagCode::T012WrongArgCount,
                                         format!(
                                             "enum variant '{}' expects 0 payload items, found {}",
-                                            variant,
-                                            payload.len
+                                            variant, payload.len
                                         ),
                                         *span,
                                     ));
@@ -86,10 +88,14 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                                         *span,
                                     ));
                                 }
-                                for (i, &pat_id) in checker.pool.pattern_list(*payload).iter().enumerate() {
+                                for (i, &pat_id) in
+                                    checker.pool.pattern_list(*payload).iter().enumerate()
+                                {
                                     let expected_pat_ty =
                                         tys.get(i).cloned().unwrap_or(ArType::Error);
-                                    check_pattern(checker, pat_id, &expected_pat_ty);
+                                    let expected_pat_ty_id =
+                                        checker.type_info.type_interner.intern(expected_pat_ty);
+                                    check_pattern(checker, pat_id, expected_pat_ty_id);
                                 }
                             }
                         }
@@ -112,7 +118,8 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
             name,
             payload,
         } => {
-            if let ArType::Named(enum_symbol_id, _) = value_ty {
+            let val_ty = checker.type_info.resolve_type_id(value_ty).clone();
+            if let ArType::Named(enum_symbol_id, _) = &val_ty {
                 let enum_name = &checker.symbols.get(*enum_symbol_id).name.clone();
                 let variant_symbol_opt = checker.symbols.lookup_associated_member(enum_name, name);
                 if let Some(variant_symbol_id) = variant_symbol_opt {
@@ -129,8 +136,7 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                                         crate::DiagCode::T012WrongArgCount,
                                         format!(
                                             "enum variant '{}' expects 0 payload items, found {}",
-                                            name,
-                                            payload.len
+                                            name, payload.len
                                         ),
                                         *span,
                                     ));
@@ -149,10 +155,14 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                                         *span,
                                     ));
                                 }
-                                for (i, &pat_id) in checker.pool.pattern_list(*payload).iter().enumerate() {
+                                for (i, &pat_id) in
+                                    checker.pool.pattern_list(*payload).iter().enumerate()
+                                {
                                     let expected_pat_ty =
                                         tys.get(i).cloned().unwrap_or(ArType::Error);
-                                    check_pattern(checker, pat_id, &expected_pat_ty);
+                                    let expected_pat_ty_id =
+                                        checker.type_info.type_interner.intern(expected_pat_ty);
+                                    check_pattern(checker, pat_id, expected_pat_ty_id);
                                 }
                             }
                         }
@@ -169,24 +179,30 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                     crate::DiagCode::T002IncompatibleAssignment,
                     format!(
                         "cannot match type tuple pattern against non-enum type '{}'",
-                        value_ty.display(&checker.symbols)
+                        val_ty.display(&checker.symbols)
                     ),
                     *span,
                 ));
             }
         }
         Pattern::Tuple { items, span: _ } => {
-            if let ArType::Tuple(tys) = value_ty {
+            let val_ty = checker.type_info.resolve_type_id(value_ty);
+            if let ArType::Tuple(tys) = val_ty {
+                let tys_cloned = tys.clone();
                 for (i, &item_id) in checker.pool.pattern_list(*items).iter().enumerate() {
-                    let item_ty = tys.get(i).cloned().unwrap_or(ArType::Error);
-                    check_pattern(checker, item_id, &item_ty);
+                    let item_ty = tys_cloned
+                        .get(i)
+                        .copied()
+                        .unwrap_or_else(|| super::super::types::intern_type(ArType::Error));
+                    // Destructuring tuple compares purely TypeIds!
+                    check_pattern(checker, item_id, item_ty);
                 }
             } else {
                 checker.diagnostics.push(crate::Diagnostic::error(
                     crate::DiagCode::T002IncompatibleAssignment,
                     format!(
                         "cannot match tuple pattern against non-tuple type '{}'",
-                        value_ty.display(&checker.symbols)
+                        val_ty.display(&checker.symbols)
                     ),
                     pat.span(),
                 ));
@@ -200,10 +216,11 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
             let type_key = crate::NodeKey::from(type_name.span);
             if let Some(struct_symbol_id) = checker.resolved.type_refs.get(&type_key).copied() {
                 let expected_struct_ty = ArType::Named(struct_symbol_id, vec![]);
-                if !super::super::types::unify(value_ty, &expected_struct_ty) {
+                let val_ty = checker.type_info.resolve_type_id(value_ty).clone();
+                if !super::super::types::unify(&val_ty, &expected_struct_ty) {
                     checker.add_constraint(
                         expected_struct_ty.clone(),
-                        value_ty.clone(),
+                        val_ty.clone(),
                         ConstraintOrigin::Assignment {
                             lhs_span: pat.span(),
                             rhs_span: type_name.span,
@@ -218,14 +235,15 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                         .get(&struct_symbol_id)
                         .and_then(|df| df.get(&field.name).cloned());
                     if let Some(field_ty) = field_ty_opt {
+                        let field_ty_id = checker.type_info.type_interner.intern(field_ty.clone());
                         if let Some(pat_id) = field.pattern {
-                            check_pattern(checker, pat_id, &field_ty);
+                            check_pattern(checker, pat_id, field_ty_id);
                         } else {
                             let key = crate::NodeKey::from(field.span);
                             if let Some(symbol_id) = checker.resolved.definitions.get(&key).copied()
                             {
                                 checker.ctx.bind(symbol_id, field_ty.clone());
-                                checker.record_decl_type(symbol_id, field_ty.clone());
+                                checker.record_decl_type(symbol_id, field_ty);
                             }
                         }
                     } else {
@@ -250,9 +268,10 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
         } => {
             let start_ty = synth_expr(checker, *start);
             let end_ty = synth_expr(checker, *end);
-            if !super::super::types::unify(value_ty, &start_ty) {
+            let val_ty = checker.type_info.resolve_type_id(value_ty).clone();
+            if !super::super::types::unify(&val_ty, &start_ty) {
                 checker.add_constraint(
-                    value_ty.clone(),
+                    val_ty.clone(),
                     start_ty,
                     ConstraintOrigin::Assignment {
                         lhs_span: pat.span(),
@@ -260,9 +279,9 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                     },
                 );
             }
-            if !super::super::types::unify(value_ty, &end_ty) {
+            if !super::super::types::unify(&val_ty, &end_ty) {
                 checker.add_constraint(
-                    value_ty.clone(),
+                    val_ty.clone(),
                     end_ty,
                     ConstraintOrigin::Assignment {
                         lhs_span: pat.span(),

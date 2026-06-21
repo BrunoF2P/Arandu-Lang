@@ -10,8 +10,8 @@ use arandu_lexer::Span;
 use smallvec::SmallVec;
 
 pub use pool::{
-    HirBlockId, HirExprId, HirPool, HirStmtId, HirDeclId, HirParamId, HirStructFieldId,
-    HirEnumVariantId, HirFuncSignatureId, HirPatternId, HirFieldPatternId, IndexRange,
+    HirBlockId, HirDeclId, HirEnumVariantId, HirExprId, HirFieldPatternId, HirFuncSignatureId,
+    HirParamId, HirPatternId, HirPool, HirStmtId, HirStructFieldId, IndexRange,
 };
 
 #[must_use]
@@ -197,7 +197,10 @@ pub enum HirStmtKind {
 #[derive(Debug, Clone)]
 pub enum HirCondition {
     Expr(HirExprId),
-    Is { expr: HirExprId, pattern: HirPatternId },
+    Is {
+        expr: HirExprId,
+        pattern: HirPatternId,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -614,7 +617,9 @@ impl HirStmt {
                         pool.expr(*g).validate_invariants(pool, symbols)?;
                     }
                     match &arm.body {
-                        HirMatchArmBody::Expr(e) => pool.expr(*e).validate_invariants(pool, symbols)?,
+                        HirMatchArmBody::Expr(e) => {
+                            pool.expr(*e).validate_invariants(pool, symbols)?
+                        }
                         HirMatchArmBody::Block(b) => {
                             pool.block(*b).validate_invariants(pool, symbols)?
                         }
@@ -777,7 +782,9 @@ impl HirExpr {
                         pool.expr(*g).validate_invariants(pool, symbols)?;
                     }
                     match &arm.body {
-                        HirMatchArmBody::Expr(e) => pool.expr(*e).validate_invariants(pool, symbols)?,
+                        HirMatchArmBody::Expr(e) => {
+                            pool.expr(*e).validate_invariants(pool, symbols)?
+                        }
                         HirMatchArmBody::Block(b) => {
                             pool.block(*b).validate_invariants(pool, symbols)?
                         }

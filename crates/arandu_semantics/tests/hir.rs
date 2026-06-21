@@ -142,7 +142,10 @@ fn lowers_function_with_params_and_return_type() {
                 HirStmtKind::Return { values } => {
                     let exprs = hir.pool.expr_list(*values);
                     assert_eq!(exprs.len(), 1);
-                    assert!(matches!(hir.pool.expr(exprs[0]).kind, HirExprKind::Binary { .. }));
+                    assert!(matches!(
+                        hir.pool.expr(exprs[0]).kind,
+                        HirExprKind::Binary { .. }
+                    ));
                 }
                 other => panic!("expected Return, got {other:?}"),
             }
@@ -260,7 +263,10 @@ fn lowers_call_expression() {
             match &hir.pool.stmt(statements[0]).kind {
                 HirStmtKind::VarDecl { value, .. } => match &hir.pool.expr(*value).kind {
                     HirExprKind::Call { callee, args, .. } => {
-                        assert!(matches!(hir.pool.expr(*callee).kind, HirExprKind::Path { .. }));
+                        assert!(matches!(
+                            hir.pool.expr(*callee).kind,
+                            HirExprKind::Path { .. }
+                        ));
                         let args_slice = hir.pool.expr_list(*args);
                         assert_eq!(args_slice.len(), 2);
                     }
@@ -361,7 +367,11 @@ fn lowers_if_stmt() {
                     else_block,
                 } => {
                     assert!(matches!(condition, HirCondition::Expr(_)));
-                    assert!(!hir.pool.stmt_list(hir.pool.block(*then_block).statements).is_empty());
+                    assert!(
+                        !hir.pool
+                            .stmt_list(hir.pool.block(*then_block).statements)
+                            .is_empty()
+                    );
                     assert!(else_block.is_some());
                 }
                 other => panic!("expected If, got {other:?}"),
@@ -543,6 +553,7 @@ fn test_hir_golden_files() {
             pool: &hir.pool,
             symbols: &tc.symbols,
             show_spans: false,
+            type_interner: Some(&tc.type_info.type_interner),
         };
         let pretty = hir.pretty_print(&ctx);
 

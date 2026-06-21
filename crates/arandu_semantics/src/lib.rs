@@ -13,22 +13,21 @@
 )]
 
 pub use arandu_middle::{
-    amir, amir_validate, cfg, diagnostics, hir, layout, literal_pool, ops, resolved, symbol_table,
-    types, BumpArena, BitSet, BitMatrix, DenseRange, GenerationalId, SlotMap, DenseSlotMap,
-    StableHandle, SsoString, StringPool, StringId, VmReservation,
-    validate_amir_program, DiagCode, Diagnostic, Label, Severity, Hint, CodeReplacement,
-    DocCommentMap, NodeKey, ResolvedNames, ScopeId, Symbol, SymbolId, SymbolKind, SymbolTable, ResolutionResult,
-    CodegenBackend, CompiledCode,
-    arena, bitset, index_vec, stable_id, string_pool, vm, newtype_index,
+    BitMatrix, BitSet, BumpArena, CodeReplacement, CodegenBackend, CompiledCode, DenseRange,
+    DenseSlotMap, DiagCode, Diagnostic, DocCommentMap, GenerationalId, Hint, Label, NodeKey,
+    ResolutionResult, ResolvedNames, ScopeId, Severity, SlotMap, SsoString, StableHandle, StringId,
+    StringPool, Symbol, SymbolId, SymbolKind, SymbolTable, VmReservation, amir, amir_validate,
+    arena, bitset, cfg, diagnostics, hir, index_vec, layout, literal_pool, newtype_index, ops,
+    resolved, stable_id, string_pool, symbol_table, types, validate_amir_program, vm,
 };
 
 pub use arandu_middle::ops::{BinaryOp, SetOp, UnaryOp};
 
-pub mod passes;
 pub mod parallel;
+pub mod passes;
 
+pub use arandu_mir::{check_moves, lower_to_amir, optimize_amir};
 pub use arandu_resolve::resolve;
 pub use arandu_typeck::{TypeCheckResult, TypeInfo, type_check};
-pub use arandu_mir::{lower_to_amir, check_moves, optimize_amir};
-pub use passes::lower_hir::lower_to_hir;
 pub use parallel::compile_parallel;
+pub use passes::lower_hir::lower_to_hir;

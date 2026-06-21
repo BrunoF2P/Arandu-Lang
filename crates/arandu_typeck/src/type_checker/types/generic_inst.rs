@@ -5,7 +5,7 @@ use arandu_parser::ast_pool::{ExprId, ExprKind, IndexRange};
 use super::ArType;
 use super::lower_type_expr;
 use super::type_name_base;
-use super::{GenericSubst, build_subst, substitute_type};
+use super::{GenericSubst, build_subst, intern_type, substitute_type};
 use crate::SymbolId;
 use crate::passes::type_checker::TypeChecker;
 
@@ -98,17 +98,18 @@ pub fn synth_generic_instantiation(
             }
             let inner = arg_tys[0].clone();
             return match member.as_str() {
-                "Ok" => ArType::Func(
-                    vec![inner.clone()],
-                    Box::new(ArType::Result(Box::new(inner), Box::new(ArType::Err))),
-                ),
-                "Err" => ArType::Func(
-                    vec![ArType::Err],
-                    Box::new(ArType::Result(
-                        Box::new(ArType::Void),
-                        Box::new(ArType::Err),
-                    )),
-                ),
+                "Ok" => {
+                    let inner_id = intern_type(inner.clone());
+                    let err_id = intern_type(ArType::Err);
+                    let result_id = intern_type(ArType::Result(inner_id, err_id));
+                    ArType::Func(vec![inner_id], result_id)
+                }
+                "Err" => {
+                    let err_id = intern_type(ArType::Err);
+                    let void_id = intern_type(ArType::Void);
+                    let result_id = intern_type(ArType::Result(void_id, err_id));
+                    ArType::Func(vec![err_id], result_id)
+                }
                 _ => {
                     checker.diagnostics.push(crate::Diagnostic::error(
                         crate::DiagCode::T018UndefinedField,
@@ -135,10 +136,9 @@ pub fn synth_generic_instantiation(
                 return ArType::Error;
             }
             let inner = arg_tys[0].clone();
-            return ArType::Func(
-                vec![inner.clone()],
-                Box::new(ArType::Option(Box::new(inner))),
-            );
+            let inner_id = intern_type(inner);
+            let opt_id = intern_type(ArType::Option(inner_id));
+            return ArType::Func(vec![inner_id], opt_id);
         }
     }
 

@@ -1,8 +1,9 @@
 use super::{
     BinaryOp, HirBlock, HirCatchHandler, HirCondition, HirConst, HirDecl, HirEnum, HirExpr,
-    HirExprKind, HirExtern, HirForClause, HirFunc, HirInterface, HirLambdaBody, HirMatchArmBody,
-    HirParam, HirPlace, HirPlaceSuffix, HirProgram, HirSimpleStmt, HirStmt, HirStmtKind, HirStruct,
-    HirTypeAlias, ReceiverKind, SetOp, SymbolTable, UnaryOp, symbol_name, HirPattern, HirFieldPattern,
+    HirExprKind, HirExtern, HirFieldPattern, HirForClause, HirFunc, HirInterface, HirLambdaBody,
+    HirMatchArmBody, HirParam, HirPattern, HirPlace, HirPlaceSuffix, HirProgram, HirSimpleStmt,
+    HirStmt, HirStmtKind, HirStruct, HirTypeAlias, ReceiverKind, SetOp, SymbolTable, UnaryOp,
+    symbol_name,
 };
 
 // ── Pretty Printer Implementation ───────────────────────────────────
@@ -38,7 +39,9 @@ impl super::HirPatternId {
 impl super::HirFieldPatternId {
     #[allow(dead_code)]
     fn pretty_print_to(&self, out: &mut String, indent: usize, ctx: &HirPrettyCtx<'_>) {
-        ctx.pool.field_pattern(*self).pretty_print_to(out, indent, ctx);
+        ctx.pool
+            .field_pattern(*self)
+            .pretty_print_to(out, indent, ctx);
     }
 }
 
@@ -48,7 +51,10 @@ fn format_pattern_ref(pat: &HirPattern, ctx: &HirPrettyCtx<'_>) -> String {
             format!("Wildcard {{ span: {:?} }}", span)
         }
         HirPattern::Bind { span, name, symbol } => {
-            format!("Bind {{ span: {:?}, name: {:?}, symbol: {:?} }}", span, name, symbol)
+            format!(
+                "Bind {{ span: {:?}, name: {:?}, symbol: {:?} }}",
+                span, name, symbol
+            )
         }
         HirPattern::Literal { span, expr } => {
             format!("Literal {{ span: {:?}, expr: {:?} }}", span, expr)
@@ -66,17 +72,27 @@ fn format_pattern_ref(pat: &HirPattern, ctx: &HirPrettyCtx<'_>) -> String {
             }
             format!(
                 "Enum {{ span: {:?}, type_symbol: {:?}, variant: {:?}, variant_symbol: {:?}, payload: [{}] }}",
-                span, type_symbol, variant, variant_symbol, payload_strs.join(", ")
+                span,
+                type_symbol,
+                variant,
+                variant_symbol,
+                payload_strs.join(", ")
             )
         }
-        HirPattern::TypeTuple { span, name, payload } => {
+        HirPattern::TypeTuple {
+            span,
+            name,
+            payload,
+        } => {
             let mut payload_strs = Vec::new();
             for &pid in ctx.pool.pattern_list(*payload) {
                 payload_strs.push(format_pattern_ref(ctx.pool.pattern(pid), ctx));
             }
             format!(
                 "TypeTuple {{ span: {:?}, name: {:?}, payload: [{}] }}",
-                span, name, payload_strs.join(", ")
+                span,
+                name,
+                payload_strs.join(", ")
             )
         }
         HirPattern::Struct {
@@ -87,7 +103,9 @@ fn format_pattern_ref(pat: &HirPattern, ctx: &HirPrettyCtx<'_>) -> String {
             let mut field_strs = Vec::new();
             for &fid in ctx.pool.field_pattern_list(*fields) {
                 let f = ctx.pool.field_pattern(fid);
-                let pat_str = f.pattern.map_or("None".to_string(), |pid| format!("Some({})", format_pattern_ref(ctx.pool.pattern(pid), ctx)));
+                let pat_str = f.pattern.map_or("None".to_string(), |pid| {
+                    format!("Some({})", format_pattern_ref(ctx.pool.pattern(pid), ctx))
+                });
                 field_strs.push(format!(
                     "HirFieldPattern {{ span: {:?}, name: {:?}, pattern: {} }}",
                     f.span, f.name, pat_str
@@ -95,7 +113,9 @@ fn format_pattern_ref(pat: &HirPattern, ctx: &HirPrettyCtx<'_>) -> String {
             }
             format!(
                 "Struct {{ span: {:?}, struct_symbol: {:?}, fields: [{}] }}",
-                span, struct_symbol, field_strs.join(", ")
+                span,
+                struct_symbol,
+                field_strs.join(", ")
             )
         }
         HirPattern::Tuple { span, items } => {
@@ -105,10 +125,16 @@ fn format_pattern_ref(pat: &HirPattern, ctx: &HirPrettyCtx<'_>) -> String {
             }
             format!(
                 "Tuple {{ span: {:?}, items: [{}] }}",
-                span, item_strs.join(", ")
+                span,
+                item_strs.join(", ")
             )
         }
-        HirPattern::Range { span, start, inclusive, end } => {
+        HirPattern::Range {
+            span,
+            start,
+            inclusive,
+            end,
+        } => {
             format!(
                 "Range {{ span: {:?}, start: {:?}, inclusive: {:?}, end: {:?} }}",
                 span, start, inclusive, end
@@ -126,7 +152,9 @@ impl HirPattern {
 impl HirFieldPattern {
     #[allow(dead_code)]
     fn pretty_print_to(&self, out: &mut String, _indent: usize, ctx: &HirPrettyCtx<'_>) {
-        let pat_str = self.pattern.map_or("None".to_string(), |pid| format!("Some({})", format_pattern_ref(ctx.pool.pattern(pid), ctx)));
+        let pat_str = self.pattern.map_or("None".to_string(), |pid| {
+            format!("Some({})", format_pattern_ref(ctx.pool.pattern(pid), ctx))
+        });
         out.push_str(&format!(
             "HirFieldPattern {{ span: {:?}, name: {:?}, pattern: {} }}",
             self.span, self.name, pat_str
@@ -138,6 +166,7 @@ pub struct HirPrettyCtx<'a> {
     pub pool: &'a crate::hir::HirPool,
     pub symbols: &'a SymbolTable,
     pub show_spans: bool,
+    pub type_interner: Option<&'a crate::types::TypeInterner>,
 }
 
 fn format_hir_param(p: &HirParam, ctx: &HirPrettyCtx<'_>) -> String {
@@ -157,6 +186,9 @@ fn format_hir_param(p: &HirParam, ctx: &HirPrettyCtx<'_>) -> String {
 }
 
 pub fn print_program(program: &HirProgram, ctx: &HirPrettyCtx<'_>) -> String {
+    let _scope = ctx
+        .type_interner
+        .map(crate::types::type_interner::InternerScope::new);
     let mut out = String::new();
     out.push_str("Program\n");
     if let Some(ref m) = program.module {
@@ -216,7 +248,9 @@ impl HirTypeAlias {
 impl HirFunc {
     fn pretty_print_to(&self, out: &mut String, indent: usize, ctx: &HirPrettyCtx<'_>) {
         let ind = "  ".repeat(indent);
-        let params_str: Vec<String> = ctx.pool.params_list(self.params)
+        let params_str: Vec<String> = ctx
+            .pool
+            .params_list(self.params)
             .iter()
             .map(|p| format_hir_param(p, ctx))
             .collect();
@@ -229,7 +263,9 @@ impl HirFunc {
             return_ty_str
         ));
         if let Some(body_id) = self.body {
-            ctx.pool.block(body_id).pretty_print_to(out, indent + 1, ctx);
+            ctx.pool
+                .block(body_id)
+                .pretty_print_to(out, indent + 1, ctx);
         }
     }
 }
@@ -299,7 +335,9 @@ impl HirExtern {
         out.push_str(&format!("{}Extern \"{}\"\n", ind, self.abi));
         let member_ind = "  ".repeat(indent + 1);
         for m in ctx.pool.func_signatures_list(self.members) {
-            let params_str: Vec<String> = ctx.pool.params_list(m.params)
+            let params_str: Vec<String> = ctx
+                .pool
+                .params_list(m.params)
                 .iter()
                 .map(|p| format_hir_param(p, ctx))
                 .collect();
@@ -352,7 +390,12 @@ impl HirStmt {
                 value.pretty_print_to(out, indent + 1, ctx);
             }
             HirStmtKind::Set { places, op, value } => {
-                let place_strs: Vec<String> = ctx.pool.places_list(*places).iter().map(|p| p.pretty_print(ctx)).collect();
+                let place_strs: Vec<String> = ctx
+                    .pool
+                    .places_list(*places)
+                    .iter()
+                    .map(|p| p.pretty_print(ctx))
+                    .collect();
                 out.push_str(&format!(
                     "{}Set ({}) {}\n",
                     ind,
@@ -394,10 +437,14 @@ impl HirStmt {
                 condition.pretty_print_to(out, indent + 1, ctx);
                 let block_ind = "  ".repeat(indent + 1);
                 out.push_str(&format!("{block_ind}Then\n"));
-                ctx.pool.block(*then_block).pretty_print_to(out, indent + 2, ctx);
+                ctx.pool
+                    .block(*then_block)
+                    .pretty_print_to(out, indent + 2, ctx);
                 if let Some(else_blk) = else_block {
                     out.push_str(&format!("{block_ind}Else\n"));
-                    ctx.pool.block(*else_blk).pretty_print_to(out, indent + 2, ctx);
+                    ctx.pool
+                        .block(*else_blk)
+                        .pretty_print_to(out, indent + 2, ctx);
                 }
             }
             HirStmtKind::While { condition, body } => {
@@ -422,10 +469,7 @@ impl HirStmt {
                     };
                     let mut pat_str = String::new();
                     arm.pattern.pretty_print_to(&mut pat_str, 0, ctx);
-                    out.push_str(&format!(
-                        "{}Arm({}{}):\n",
-                        arm_ind, pat_str, guard_str
-                    ));
+                    out.push_str(&format!("{}Arm({}{}):\n", arm_ind, pat_str, guard_str));
                     match &arm.body {
                         HirMatchArmBody::Expr(expr) => {
                             expr.pretty_print_to(out, indent + 2, ctx);
@@ -478,7 +522,9 @@ impl HirForClause {
             HirForClause::In {
                 bindings, iterable, ..
             } => {
-                let b_strs: Vec<String> = ctx.pool.for_bindings_list(*bindings)
+                let b_strs: Vec<String> = ctx
+                    .pool
+                    .for_bindings_list(*bindings)
                     .iter()
                     .map(|b| {
                         format!(
@@ -546,7 +592,12 @@ impl HirSimpleStmt {
                 value.pretty_print_to(out, indent + 1, ctx);
             }
             HirSimpleStmt::Set { places, op, value } => {
-                let place_strs: Vec<String> = ctx.pool.places_list(*places).iter().map(|p| p.pretty_print(ctx)).collect();
+                let place_strs: Vec<String> = ctx
+                    .pool
+                    .places_list(*places)
+                    .iter()
+                    .map(|p| p.pretty_print(ctx))
+                    .collect();
                 out.push_str(&format!(
                     "{}Set ({}) {}\n",
                     ind,
@@ -742,7 +793,9 @@ impl HirExpr {
                 }
             }
             HirExprKind::Lambda { params, body } => {
-                let params_str: Vec<String> = ctx.pool.lambda_params_list(*params)
+                let params_str: Vec<String> = ctx
+                    .pool
+                    .lambda_params_list(*params)
                     .iter()
                     .map(|p| {
                         format!(
@@ -796,9 +849,13 @@ impl HirExpr {
                 condition.pretty_print_to(out, indent + 1, ctx);
                 let sub_ind = "  ".repeat(indent + 1);
                 out.push_str(&format!("{sub_ind}Then\n"));
-                ctx.pool.block(*then_block).pretty_print_to(out, indent + 2, ctx);
+                ctx.pool
+                    .block(*then_block)
+                    .pretty_print_to(out, indent + 2, ctx);
                 out.push_str(&format!("{sub_ind}Else\n"));
-                ctx.pool.block(*else_block).pretty_print_to(out, indent + 2, ctx);
+                ctx.pool
+                    .block(*else_block)
+                    .pretty_print_to(out, indent + 2, ctx);
             }
             HirExprKind::Match { value, arms } => {
                 out.push_str(&format!("{}Match: {}\n", ind, self.ty.display(ctx.symbols)));
@@ -812,10 +869,7 @@ impl HirExpr {
                     };
                     let mut pat_str = String::new();
                     arm.pattern.pretty_print_to(&mut pat_str, 0, ctx);
-                    out.push_str(&format!(
-                        "{}Arm({}{}):\n",
-                        arm_ind, pat_str, guard_str
-                    ));
+                    out.push_str(&format!("{}Arm({}{}):\n", arm_ind, pat_str, guard_str));
                     match &arm.body {
                         HirMatchArmBody::Expr(expr) => {
                             expr.pretty_print_to(out, indent + 2, ctx);

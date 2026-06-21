@@ -16,6 +16,7 @@ pub enum AmirStmtKind {
     StorageLive,
     StorageDead,
     Destroy,
+    Nop,
 }
 
 #[derive(Debug, Clone)]
@@ -42,6 +43,7 @@ pub enum AmirStmt {
     StorageDead(super::local::LocalId),
     /// Explicitly drop/destroy a value at a place.
     Destroy(AmirPlace),
+    Nop,
 }
 
 impl AmirStmt {
@@ -55,6 +57,7 @@ impl AmirStmt {
             Self::StorageLive(_) => AmirStmtKind::StorageLive,
             Self::StorageDead(_) => AmirStmtKind::StorageDead,
             Self::Destroy(_) => AmirStmtKind::Destroy,
+            Self::Nop => AmirStmtKind::Nop,
         }
     }
 }

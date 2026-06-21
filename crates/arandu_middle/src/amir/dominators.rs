@@ -8,6 +8,8 @@ pub struct Dominators {
     // The entry block dominates itself, so idoms[entry] = Some(entry).
     // Unreachable blocks will have None as their idom.
     idoms: Vec<Option<BlockId>>,
+    pre_order: Vec<u32>,
+    post_order: Vec<u32>,
 }
 
 impl Dominators {
@@ -17,7 +19,11 @@ impl Dominators {
         let mut idoms = vec![None; n];
 
         if n == 0 {
-            return Self { idoms };
+            return Self {
+                idoms,
+                pre_order: Vec::new(),
+                post_order: Vec::new(),
+            };
         }
 
         let entry = BlockId::from_usize(0);
@@ -25,11 +31,11 @@ impl Dominators {
 
         // Step 1: Compute reverse post-order of reachable blocks.
         let full_rpo = reverse_post_order(func);
-        let post_order: Vec<BlockId> = full_rpo.iter().rev().copied().collect();
+        let post_order_vec: Vec<BlockId> = full_rpo.iter().rev().copied().collect();
 
         // Map BlockId to its index in the post_order vector
         let mut post_order_indices = vec![0; n];
-        for (idx, &block_id) in post_order.iter().enumerate() {
+        for (idx, &block_id) in post_order_vec.iter().enumerate() {
             post_order_indices[block_id.as_usize()] = idx;
         }
 
@@ -43,7 +49,6 @@ impl Dominators {
         while changed {
             changed = false;
             for &b in &rpo {
-
                 // Find the first predecessor that has its dominator already set
                 let mut processed_pred = None;
                 for &p in func.predecessors(b) {
@@ -69,7 +74,47 @@ impl Dominators {
             }
         }
 
-        Self { idoms }
+        // Step 3: Compute pre-order and post-order traversals on the dominator tree
+        let mut children = vec![Vec::new(); n];
+        for (v, &idom) in idoms.iter().enumerate() {
+            if let Some(u) = idom {
+                if u.as_usize() != v {
+                    children[u.as_usize()].push(BlockId::from_usize(v));
+                }
+            }
+        }
+
+        let mut pre_order = vec![0; n];
+        let mut post_order = vec![0; n];
+        let mut pre_counter = 0u32;
+        let mut post_counter = 0u32;
+
+        if n > 0 && idoms[0].is_some() {
+            let mut stack = vec![(entry, 0)];
+            pre_counter += 1;
+            pre_order[entry.as_usize()] = pre_counter;
+
+            while let Some((curr, child_idx)) = stack.pop() {
+                let curr_idx = curr.as_usize();
+                if child_idx < children[curr_idx].len() {
+                    let next_child = children[curr_idx][child_idx];
+                    stack.push((curr, child_idx + 1));
+
+                    pre_counter += 1;
+                    pre_order[next_child.as_usize()] = pre_counter;
+                    stack.push((next_child, 0));
+                } else {
+                    post_counter += 1;
+                    post_order[curr_idx] = post_counter;
+                }
+            }
+        }
+
+        Self {
+            idoms,
+            pre_order,
+            post_order,
+        }
     }
 
     /// Returns the immediate dominator of the given block, if it is reachable.
@@ -84,22 +129,22 @@ impl Dominators {
         if a == b {
             return true;
         }
-        let mut curr = b;
-        while let Some(idom) = self.immediate_dominator(curr) {
-            if idom == curr {
-                break;
-            }
-            if idom == a {
-                return true;
-            }
-            curr = idom;
+        let a_idx = a.as_usize();
+        let b_idx = b.as_usize();
+        if a_idx >= self.idoms.len() || b_idx >= self.idoms.len() {
+            return false;
         }
-        false
+        if self.idoms[a_idx].is_none() || self.idoms[b_idx].is_none() {
+            return false;
+        }
+        self.pre_order[a_idx] <= self.pre_order[b_idx]
+            && self.post_order[b_idx] <= self.post_order[a_idx]
     }
 
     #[must_use]
     pub fn frontiers(&self, func: &AmirFunc) -> BitMatrix<BlockId, BlockId> {
-        let mut frontiers = BitMatrix::<BlockId, BlockId>::new(func.blocks.len(), func.blocks.len());
+        let mut frontiers =
+            BitMatrix::<BlockId, BlockId>::new(func.blocks.len(), func.blocks.len());
 
         for block in &func.blocks {
             if func.predecessors(block.id).len() < 2 {
@@ -160,7 +205,9 @@ mod tests {
             [] => AmirTerminator::Return,
             &[s] => AmirTerminator::Goto(BlockId::from_usize(s)),
             &[t, f] => AmirTerminator::Branch {
-                condition: crate::amir::AmirOperand::Constant(crate::amir::AmirConstant::Bool(true)),
+                condition: crate::amir::AmirOperand::Constant(crate::amir::AmirConstant::Bool(
+                    true,
+                )),
                 if_true: BlockId::from_usize(t),
                 if_false: BlockId::from_usize(f),
             },

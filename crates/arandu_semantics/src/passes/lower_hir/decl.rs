@@ -56,7 +56,9 @@ pub(crate) fn lower_decl(
                 .cloned()
                 .unwrap_or(ArType::Error);
             let return_type = match decl_ty {
-                ArType::Func(_, ret) => *ret,
+                ArType::Func(_, ret) => {
+                    arandu_middle::types::type_interner::with_resolved_type(ret, |t| t.clone())
+                }
                 other => other,
             };
             let mut params = Vec::new();
@@ -80,7 +82,9 @@ pub(crate) fn lower_decl(
                 symbol,
                 params,
                 return_type,
-                body: Some(super::stmt::lower_block(type_check, pool, hir_pool, &d.body)?),
+                body: Some(super::stmt::lower_block(
+                    type_check, pool, hir_pool, &d.body,
+                )?),
                 span: d.span,
             }))
         }
@@ -126,7 +130,15 @@ pub(crate) fn lower_decl(
                                 } else if tys.len() == 1 {
                                     Some(tys[0].clone())
                                 } else {
-                                    Some(ArType::Tuple(tys.clone()))
+                                    let tys_ids = tys
+                                        .iter()
+                                        .map(|t| {
+                                            arandu_middle::types::type_interner::intern_type(
+                                                t.clone(),
+                                            )
+                                        })
+                                        .collect();
+                                    Some(ArType::Tuple(tys_ids))
                                 }
                             }
                         });
@@ -160,7 +172,9 @@ pub(crate) fn lower_decl(
                     .cloned()
                     .unwrap_or(ArType::Error);
                 let return_type = match m_ty {
-                    ArType::Func(_, ret) => *ret,
+                    ArType::Func(_, ret) => {
+                        arandu_middle::types::type_interner::with_resolved_type(ret, |t| t.clone())
+                    }
                     other => other,
                 };
                 let mut params = Vec::new();

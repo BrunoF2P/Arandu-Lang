@@ -59,15 +59,22 @@ pub(crate) fn lower_place(
         match suffix {
             PlaceSuffix::Field { span, name } => {
                 let actual_base_ty = match &current_ty {
-                    ArType::Nullable(inner) => inner.as_ref().clone(),
+                    ArType::Nullable(inner) => {
+                        arandu_middle::types::type_interner::with_resolved_type(*inner, |t| {
+                            t.clone()
+                        })
+                    }
                     other => other.clone(),
                 };
                 let struct_id_opt = match &actual_base_ty {
                     ArType::Named(id, _) => Some(*id),
-                    ArType::Ptr(inner) => match &**inner {
-                        ArType::Named(id, _) => Some(*id),
-                        _ => None,
-                    },
+                    ArType::Ptr(inner) => arandu_middle::types::type_interner::with_resolved_type(
+                        *inner,
+                        |inner_ty| match inner_ty {
+                            ArType::Named(id, _) => Some(*id),
+                            _ => None,
+                        },
+                    ),
                     _ => None,
                 };
                 let (field_ty, field_symbol) = if let Some(struct_id) = struct_id_opt
@@ -94,11 +101,19 @@ pub(crate) fn lower_place(
             }
             PlaceSuffix::Index { span, expr } => {
                 let actual_base_ty = match &current_ty {
-                    ArType::Nullable(inner) => inner.as_ref().clone(),
+                    ArType::Nullable(inner) => {
+                        arandu_middle::types::type_interner::with_resolved_type(*inner, |t| {
+                            t.clone()
+                        })
+                    }
                     other => other.clone(),
                 };
                 let elem_ty = match &actual_base_ty {
-                    ArType::Array(_, inner) | ArType::Slice(inner) => inner.as_ref().clone(),
+                    ArType::Array(_, inner) | ArType::Slice(inner) => {
+                        arandu_middle::types::type_interner::with_resolved_type(*inner, |t| {
+                            t.clone()
+                        })
+                    }
                     _ => ArType::Error,
                 };
                 current_ty = elem_ty.clone();

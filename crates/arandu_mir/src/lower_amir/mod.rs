@@ -2,10 +2,10 @@ use crate::amir::{
     AmirBasicBlock, AmirLocal, AmirProgram, AmirStmtTable, AmirTemp, BlockId, LocalId,
 };
 use crate::amir_validate::validate_amir_func;
+use crate::definite_init::check_definite_init;
 use crate::diagnostics::{DiagCode, Diagnostic, Severity};
 use crate::hir::{HirBlock, HirDecl, HirFunc, HirProgram};
 use crate::literal_pool::AmirLiteralPool;
-use crate::definite_init::check_definite_init;
 use crate::move_checker::check_moves;
 use crate::passes::type_checker::types::ArType;
 use crate::{SymbolId, TypeCheckResult};
@@ -25,6 +25,8 @@ pub fn lower_to_amir(
     tc: &TypeCheckResult,
     hir: &HirProgram,
 ) -> Result<AmirProgram, Vec<Diagnostic>> {
+    let _scope =
+        arandu_middle::types::type_interner::InternerScope::new(&tc.type_info.type_interner);
     if tc.diagnostics.iter().any(|d| d.severity == Severity::Error) {
         return Err(tc.diagnostics.clone());
     }

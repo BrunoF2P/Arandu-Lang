@@ -7,11 +7,11 @@
 
 #![allow(clippy::collapsible_if)]
 
-use crate::{BitSet, SymbolTable};
 use crate::amir::{
     AmirFunc, AmirOperand, AmirPlace, AmirRvalue, AmirStmt, AmirTerminator, LocalId, TempId,
 };
 use crate::diagnostics::{DiagCode, Diagnostic};
+use crate::{BitSet, SymbolTable};
 use arandu_lexer::Span;
 use std::collections::VecDeque;
 
@@ -201,7 +201,7 @@ fn apply_block(
                 check_consume_place(place, func, state, &mut diagnostics, true);
                 state.set(place.local, LocalMoveState::Moved);
             }
-            AmirStmt::StorageLive(_) | AmirStmt::StorageDead(_) => {}
+            AmirStmt::StorageLive(_) | AmirStmt::StorageDead(_) | AmirStmt::Nop => {}
         }
     }
 

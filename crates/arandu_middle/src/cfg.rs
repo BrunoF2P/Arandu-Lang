@@ -1,8 +1,8 @@
 //! CFG edge computation for AMIR basic blocks (C3).
 
+use crate::DenseRange;
 use crate::amir::{AmirBasicBlock, AmirTerminator, BlockId};
 use crate::index_vec::IndexVec;
-use crate::DenseRange;
 
 #[derive(Debug, Clone, Default)]
 pub struct ControlFlowGraph {
@@ -59,17 +59,29 @@ pub fn compute_cfg_edges(blocks: &[AmirBasicBlock]) -> ControlFlowGraph {
     }
 }
 
-fn terminator_successors(term: &AmirTerminator) -> Vec<BlockId> {
+fn terminator_successors(term: &AmirTerminator) -> smallvec::SmallVec<[BlockId; 2]> {
     match term {
-        AmirTerminator::Return | AmirTerminator::Unreachable => Vec::new(),
-        AmirTerminator::Goto(b) => vec![*b],
+        AmirTerminator::Return | AmirTerminator::Unreachable => smallvec::SmallVec::new(),
+        AmirTerminator::Goto(b) => {
+            let mut s = smallvec::SmallVec::new();
+            s.push(*b);
+            s
+        }
         AmirTerminator::Branch {
             if_true, if_false, ..
-        } => vec![*if_true, *if_false],
+        } => {
+            let mut s = smallvec::SmallVec::new();
+            s.push(*if_true);
+            s.push(*if_false);
+            s
+        }
         AmirTerminator::SwitchInt {
             targets, otherwise, ..
         } => {
-            let mut out: Vec<BlockId> = targets.iter().map(|(_, b)| *b).collect();
+            let mut out = smallvec::SmallVec::new();
+            for (_, b) in targets {
+                out.push(*b);
+            }
             out.push(*otherwise);
             out
         }

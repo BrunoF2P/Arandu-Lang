@@ -1,10 +1,10 @@
 pub mod type_checker;
 
-pub use type_checker::{TypeCheckResult, TypeInfo, type_check, EnumPayloadShape};
+pub use type_checker::{EnumPayloadShape, TypeCheckResult, TypeInfo, type_check};
 
 pub use arandu_middle::{
-    SymbolId, ScopeId, SymbolTable, ResolvedNames, NodeKey, Diagnostic, Severity, SymbolKind,
-    DiagCode, Label, CodeReplacement, Span, Hint, ResolutionResult,
+    CodeReplacement, DiagCode, Diagnostic, Hint, Label, NodeKey, ResolutionResult, ResolvedNames,
+    ScopeId, Severity, Span, SymbolId, SymbolKind, SymbolTable,
 };
 
 pub mod passes {

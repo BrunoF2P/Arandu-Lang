@@ -1,7 +1,7 @@
 //! AMIR CFG invariant validation (CFG-1 … CFG-5 per `docs/arandu-amir-v0.1.md`).
 
 use crate::SymbolTable;
-use crate::amir::{reachable_blocks_dense, AmirFunc, AmirProgram, AmirTerminator, BlockId};
+use crate::amir::{AmirFunc, AmirProgram, AmirTerminator, BlockId, reachable_blocks_dense};
 use crate::diagnostics::{DiagCode, Diagnostic};
 
 /// Validate all functions in an AMIR program.

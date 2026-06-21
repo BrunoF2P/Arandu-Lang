@@ -14,7 +14,7 @@ pub fn unify_return(expected: &ArType, actual: &ArType) -> bool {
         }
         // `return nil` on `Result<void, Err>`
         if matches!(ok_exp, ArType::Void)
-            && matches!(actual, ArType::Nullable(inner) if matches!(**inner, ArType::Error))
+            && matches!(actual, ArType::Nullable(inner) if super::type_interner::with_resolved_type(*inner, |t| matches!(t, ArType::Error)))
         {
             return true;
         }
@@ -77,26 +77,89 @@ pub fn unify(a: &ArType, b: &ArType) -> bool {
         (ArType::Named(id_a, args_a), ArType::Named(id_b, args_b)) => {
             id_a == id_b
                 && args_a.len() == args_b.len()
-                && args_a.iter().zip(args_b).all(|(x, y)| unify(x, y))
+                && args_a.iter().zip(args_b).all(|(&x, &y)| {
+                    if x == y {
+                        return true;
+                    }
+                    super::type_interner::with_resolved_type(x, |ty_x| {
+                        super::type_interner::with_resolved_type(y, |ty_y| unify(ty_x, ty_y))
+                    })
+                })
         }
         (ArType::Func(params_a, ret_a), ArType::Func(params_b, ret_b)) => {
             params_a.len() == params_b.len()
-                && params_a.iter().zip(params_b).all(|(x, y)| unify(x, y))
-                && unify(ret_a, ret_b)
+                && params_a.iter().zip(params_b).all(|(&x, &y)| {
+                    if x == y {
+                        return true;
+                    }
+                    super::type_interner::with_resolved_type(x, |ty_x| {
+                        super::type_interner::with_resolved_type(y, |ty_y| unify(ty_x, ty_y))
+                    })
+                })
+                && (*ret_a == *ret_b || {
+                    super::type_interner::with_resolved_type(*ret_a, |ty_a| {
+                        super::type_interner::with_resolved_type(*ret_b, |ty_b| unify(ty_a, ty_b))
+                    })
+                })
         }
-        (ArType::Nullable(inner_a), ArType::Nullable(inner_b)) => unify(inner_a, inner_b),
-        (ArType::Slice(inner_a), ArType::Slice(inner_b)) => unify(inner_a, inner_b),
+        (ArType::Nullable(inner_a), ArType::Nullable(inner_b)) => {
+            *inner_a == *inner_b || {
+                super::type_interner::with_resolved_type(*inner_a, |ty_a| {
+                    super::type_interner::with_resolved_type(*inner_b, |ty_b| unify(ty_a, ty_b))
+                })
+            }
+        }
+        (ArType::Slice(inner_a), ArType::Slice(inner_b)) => {
+            *inner_a == *inner_b || {
+                super::type_interner::with_resolved_type(*inner_a, |ty_a| {
+                    super::type_interner::with_resolved_type(*inner_b, |ty_b| unify(ty_a, ty_b))
+                })
+            }
+        }
         (ArType::Array(n_a, elem_a), ArType::Array(n_b, elem_b)) => {
-            n_a == n_b && unify(elem_a, elem_b)
+            n_a == n_b
+                && (*elem_a == *elem_b || {
+                    super::type_interner::with_resolved_type(*elem_a, |ty_a| {
+                        super::type_interner::with_resolved_type(*elem_b, |ty_b| unify(ty_a, ty_b))
+                    })
+                })
         }
-        (ArType::Ptr(inner_a), ArType::Ptr(inner_b)) => unify(inner_a, inner_b),
+        (ArType::Ptr(inner_a), ArType::Ptr(inner_b)) => {
+            *inner_a == *inner_b || {
+                super::type_interner::with_resolved_type(*inner_a, |ty_a| {
+                    super::type_interner::with_resolved_type(*inner_b, |ty_b| unify(ty_a, ty_b))
+                })
+            }
+        }
         (ArType::Tuple(types_a), ArType::Tuple(types_b)) => {
-            types_a.len() == types_b.len() && types_a.iter().zip(types_b).all(|(x, y)| unify(x, y))
+            types_a.len() == types_b.len()
+                && types_a.iter().zip(types_b).all(|(&x, &y)| {
+                    if x == y {
+                        return true;
+                    }
+                    super::type_interner::with_resolved_type(x, |ty_x| {
+                        super::type_interner::with_resolved_type(y, |ty_y| unify(ty_x, ty_y))
+                    })
+                })
         }
         (ArType::Result(ok_a, err_a), ArType::Result(ok_b, err_b)) => {
-            unify(ok_a, ok_b) && unify(err_a, err_b)
+            (*ok_a == *ok_b || {
+                super::type_interner::with_resolved_type(*ok_a, |ty_a| {
+                    super::type_interner::with_resolved_type(*ok_b, |ty_b| unify(ty_a, ty_b))
+                })
+            }) && (*err_a == *err_b || {
+                super::type_interner::with_resolved_type(*err_a, |ty_a| {
+                    super::type_interner::with_resolved_type(*err_b, |ty_b| unify(ty_a, ty_b))
+                })
+            })
         }
-        (ArType::Option(inner_a), ArType::Option(inner_b)) => unify(inner_a, inner_b),
+        (ArType::Option(inner_a), ArType::Option(inner_b)) => {
+            *inner_a == *inner_b || {
+                super::type_interner::with_resolved_type(*inner_a, |ty_a| {
+                    super::type_interner::with_resolved_type(*inner_b, |ty_b| unify(ty_a, ty_b))
+                })
+            }
+        }
         (ArType::Err, ArType::Err) => true,
         (ArType::Void, ArType::Void) => true,
         _ => false,

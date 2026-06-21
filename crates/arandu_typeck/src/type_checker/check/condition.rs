@@ -24,7 +24,8 @@ pub fn check_condition(checker: &mut TypeChecker<'_>, condition: &Condition) {
             span: _,
         } => {
             let cond_ty = super::super::synth::synth_expr(checker, *expr);
-            super::super::synth::check_pattern(checker, *pattern, &cond_ty);
+            let cond_ty_id = checker.type_info.type_interner.intern(cond_ty);
+            super::super::synth::check_pattern(checker, *pattern, cond_ty_id);
         }
     }
 }

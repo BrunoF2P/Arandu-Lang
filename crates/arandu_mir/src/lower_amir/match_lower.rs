@@ -1,8 +1,8 @@
 use super::LowerCtx;
 use crate::amir::{AmirOperand, AmirRvalue, AmirTerminator, BlockId, TempId};
 use crate::diagnostics::{DiagCode, Diagnostic};
-use crate::hir::{HirExprId, HirMatchArm, HirMatchArmBody, HirPatternId};
 use crate::hir::IndexRange;
+use crate::hir::{HirExprId, HirMatchArm, HirMatchArmBody, HirPatternId};
 use crate::passes::type_checker::types::{ArType, Primitive};
 use crate::{SymbolId, SymbolTable};
 use arandu_lexer::Span;
@@ -59,7 +59,9 @@ impl LowerCtx<'_> {
 
         let arms = self.hir.pool.match_arms_list(*arms_range).to_vec();
 
-        if let Some(plan) = self.build_match_switch_plan_from_ty(&value_ty, &arms, scrutinee.clone(), symbols)? {
+        if let Some(plan) =
+            self.build_match_switch_plan_from_ty(&value_ty, &arms, scrutinee.clone(), symbols)?
+        {
             let disc = plan.discriminant.clone();
             self.emit_match_switch(
                 plan,
@@ -95,7 +97,9 @@ impl LowerCtx<'_> {
 
         let arms = self.hir.pool.match_arms_list(*arms_range).to_vec();
 
-        if let Some(plan) = self.build_match_switch_plan_from_ty(&value_ty, &arms, scrutinee.clone(), symbols)? {
+        if let Some(plan) =
+            self.build_match_switch_plan_from_ty(&value_ty, &arms, scrutinee.clone(), symbols)?
+        {
             let disc = plan.discriminant.clone();
             self.emit_match_switch_stmt(
                 plan,
@@ -478,19 +482,32 @@ impl LowerCtx<'_> {
         let pattern = self.hir.pool.pattern(pattern_id);
         match pattern {
             crate::hir::HirPattern::Wildcard { .. } => Ok(ArmClass::Wildcard),
+            // HirPattern::Enum carries a pre-resolved variant_symbol, enabling
+            // the O(1) fast path in enum_variant_tag.
             crate::hir::HirPattern::Enum {
-                variant, payload, ..
-            }
-            | crate::hir::HirPattern::TypeTuple {
-                name: variant,
+                variant,
+                variant_symbol,
                 payload,
                 ..
             } => {
                 if !payload.is_empty() {
                     return Ok(ArmClass::Complex);
                 }
+                Ok(ArmClass::UnitVariant(self.enum_variant_tag(
+                    enum_id,
+                    variant,
+                    *variant_symbol,
+                    symbols,
+                )?))
+            }
+            // HirPattern::TypeTuple has no pre-resolved symbol; fall back to
+            // the string-based lookup path.
+            crate::hir::HirPattern::TypeTuple { name, payload, .. } => {
+                if !payload.is_empty() {
+                    return Ok(ArmClass::Complex);
+                }
                 Ok(ArmClass::UnitVariant(
-                    self.enum_variant_tag(enum_id, variant, symbols)?,
+                    self.enum_variant_tag(enum_id, name, None, symbols)?,
                 ))
             }
             _ => Ok(ArmClass::Complex),
@@ -522,14 +539,34 @@ impl LowerCtx<'_> {
         &self,
         enum_id: SymbolId,
         variant: &str,
+        variant_symbol: Option<SymbolId>,
         symbols: &SymbolTable,
     ) -> Result<usize, Diagnostic> {
+        // Fast path: O(1) lookup via the pre-computed tag map populated during
+        // collect_type_shapes. This avoids scanning all HIR decls and doing
+        // string comparisons for every match arm.
+        if let Some(&tag) = variant_symbol
+            .as_ref()
+            .and_then(|sym| self.tc.type_info.enum_variant_tags.get(sym))
+        {
+            return Ok(tag);
+        }
+
+        // Slow fallback: resolve by name. Used when variant_symbol is None
+        // (e.g. TypeTuple patterns) or when the pre-computed map was not
+        // populated (should not happen in practice after collect_type_shapes).
         for &decl_id in &self.hir.decls {
             let decl = self.hir.pool.decl(decl_id);
             if let crate::hir::HirDecl::Enum(hir_enum) = decl
                 && hir_enum.symbol == enum_id
             {
-                for (index, v) in self.hir.pool.enum_variants_list(hir_enum.variants).iter().enumerate() {
+                for (index, v) in self
+                    .hir
+                    .pool
+                    .enum_variants_list(hir_enum.variants)
+                    .iter()
+                    .enumerate()
+                {
                     let name = &symbols.get(v.symbol).name;
                     if name == variant || name.ends_with(&format!(".{variant}")) {
                         return Ok(index);

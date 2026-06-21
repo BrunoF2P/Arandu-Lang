@@ -45,24 +45,27 @@ pub fn analyze_local_liveness(func: &AmirFunc) -> LocalLiveness {
 
     let rpo = crate::amir::reverse_post_order(func);
 
+    let mut new_out = BitSet::<LocalId>::with_capacity(num_locals);
+    let mut new_in = BitSet::<LocalId>::with_capacity(num_locals);
+
     while changed {
         changed = false;
         for &block_id in rpo.iter().rev() {
             let block = &func.blocks[block_id.as_usize()];
 
-            let mut new_out = BitSet::<LocalId>::with_capacity(num_locals);
+            new_out.clear();
             for successor in terminator_targets(&block.terminator) {
                 new_out.union_with(&live_in[successor.as_usize()]);
             }
 
-            let mut new_in = new_out.clone();
+            new_in.clone_from(&new_out);
             new_in.difference_with(&block_defs.row_set(block_id));
             new_in.union_with(&block_uses.row_set(block_id));
 
             let index = block_id.as_usize();
             if new_in != live_in[index] || new_out != live_out[index] {
-                live_in[index] = new_in;
-                live_out[index] = new_out;
+                live_in[index].clone_from(&new_in);
+                live_out[index].clone_from(&new_out);
                 changed = true;
             }
         }
@@ -95,7 +98,7 @@ fn collect_stmt_uses(
         }
         AmirStmt::Free(op) => collect_operand_uses(op, defined, uses, block),
         AmirStmt::Destroy(place) => collect_place_use(place, defined, uses, block),
-        AmirStmt::StorageLive(_) | AmirStmt::StorageDead(_) => {}
+        AmirStmt::StorageLive(_) | AmirStmt::StorageDead(_) | AmirStmt::Nop => {}
     }
 }
 

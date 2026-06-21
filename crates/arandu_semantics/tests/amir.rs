@@ -69,7 +69,7 @@ fn test_amir_golden_files() {
             amir_issues.is_empty(),
             "AMIR validation failed for {name}: {amir_issues:?}"
         );
-        let pretty = amir.pretty_print(&tc.symbols);
+        let pretty = amir.pretty_print(&tc.symbols, &tc.type_info.type_interner);
 
         let golden_path = fixtures_dir.join(format!("{name}.amir"));
         if update_golden {
@@ -172,7 +172,7 @@ func main() {
     let tc = type_check(resolution, &program);
     let hir = lower_to_hir(&tc, &program).expect("HIR lowering failed");
     let amir = lower_to_amir(&tc, &hir).expect("AMIR lowering failed");
-    let pretty = amir.pretty_print(&tc.symbols);
+    let pretty = amir.pretty_print(&tc.symbols, &tc.type_info.type_interner);
     assert!(
         !pretty.contains("move _"),
         "copy types must not emit move operands"

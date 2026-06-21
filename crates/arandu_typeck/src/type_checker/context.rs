@@ -14,7 +14,7 @@ use super::types::ArType;
 #[derive(Debug, Clone)]
 pub struct TyCtx {
     /// Map from `SymbolId` to its inferred/declared `ArType`.
-    bindings: Vec<(SymbolId, ArType)>,
+    bindings: Vec<Option<ArType>>,
 
     /// Stack of expected return types for nested functions/lambdas.
     return_stack: Vec<ArType>,
@@ -47,18 +47,19 @@ impl TyCtx {
 
     /// Record that `symbol` has type `ty`.
     pub fn bind(&mut self, symbol: SymbolId, ty: ArType) {
-        self.bindings.push((symbol, ty));
+        let idx = symbol.0 as usize;
+        if idx >= self.bindings.len() {
+            self.bindings.resize(idx + 1, None);
+        }
+        self.bindings[idx] = Some(ty);
     }
 
-    /// Look up the type for a symbol. Searches most-recent first, so
-    /// shadowing is handled correctly.
+    /// Look up the type for a symbol.
     #[must_use]
     pub fn lookup(&self, symbol: SymbolId) -> Option<&ArType> {
         self.bindings
-            .iter()
-            .rev()
-            .find(|(id, _)| *id == symbol)
-            .map(|(_, ty)| ty)
+            .get(symbol.0 as usize)
+            .and_then(|opt| opt.as_ref())
     }
 
     // ── Return type stack ───────────────────────────────────────────

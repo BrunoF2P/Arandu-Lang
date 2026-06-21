@@ -9,7 +9,8 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
         if let TopLevelDecl::Struct(struct_decl) = decl {
             let mut fields = rustc_hash::FxHashMap::default();
             let mut field_symbols = rustc_hash::FxHashMap::default();
-            for field in &struct_decl.fields {
+            let mut field_indices = rustc_hash::FxHashMap::default();
+            for (idx, field) in struct_decl.fields.iter().enumerate() {
                 let field_ty = super::super::types::lower_type_expr(
                     field.ty,
                     checker.pool,
@@ -22,6 +23,7 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
                     field_symbols.insert(field.name.clone(), *field_symbol);
                 }
                 fields.insert(field.name.clone(), field_ty);
+                field_indices.insert(field.name.clone(), idx);
             }
             let struct_key = crate::NodeKey::from(struct_decl.span);
             if let Some(symbol_id) = checker.resolved.definitions.get(&struct_key) {
@@ -30,6 +32,10 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
                     .type_info
                     .struct_field_symbols
                     .insert(*symbol_id, field_symbols);
+                checker
+                    .type_info
+                    .struct_field_indices
+                    .insert(*symbol_id, field_indices);
                 let params = super::super::types::collect_generic_param_symbols(
                     checker,
                     &struct_decl.generic_params,
@@ -41,11 +47,13 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
         } else if let TopLevelDecl::Enum(enum_decl) = decl {
             let enum_key = crate::NodeKey::from(enum_decl.span);
             if let Some(enum_symbol_id) = checker.resolved.definitions.get(&enum_key) {
-                for variant in &enum_decl.variants {
+                for (tag, variant) in enum_decl.variants.iter().enumerate() {
                     let shape = match &variant.payload {
                         None => super::super::EnumPayloadShape::Unit,
                         Some(arandu_parser::EnumPayload::Tuple { types, .. }) => {
-                            let tys = checker.pool.type_expr_list(*types)
+                            let tys = checker
+                                .pool
+                                .type_expr_list(*types)
                                 .iter()
                                 .map(|&ty_expr| {
                                     super::super::types::lower_type_expr(
@@ -68,6 +76,11 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
                             .type_info
                             .enum_variants
                             .insert(*variant_symbol_id, (*enum_symbol_id, shape.clone()));
+                        // Register the discriminant tag so the AMIR lowering pass
+                        // can resolve variant_symbol → tag in O(1).
+                        checker
+                            .type_info
+                            .record_enum_variant_tag(*variant_symbol_id, tag);
                     }
                     if let Some(assoc_symbol_id) = checker
                         .symbols
@@ -77,6 +90,11 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
                             .type_info
                             .enum_variants
                             .insert(assoc_symbol_id, (*enum_symbol_id, shape));
+                        // Also register for the associated-member SymbolId, which is
+                        // the canonical symbol used by HIR patterns and match lowering.
+                        checker
+                            .type_info
+                            .record_enum_variant_tag(assoc_symbol_id, tag);
                     }
                 }
             }
@@ -84,7 +102,8 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
     }
 
     // T029: Recursive struct size validation
-    let struct_ids: Vec<crate::SymbolId> = checker.type_info.struct_fields.keys().copied().collect();
+    let struct_ids: Vec<crate::SymbolId> =
+        checker.type_info.struct_fields.keys().copied().collect();
     for struct_id in struct_ids {
         let mut visiting = rustc_hash::FxHashSet::default();
         let mut visited = rustc_hash::FxHashSet::default();
@@ -118,7 +137,12 @@ fn check_recursive(
 
     visiting.insert(current_struct_id);
 
-    if let Some(fields) = checker.type_info.struct_fields.get(&current_struct_id).cloned() {
+    if let Some(fields) = checker
+        .type_info
+        .struct_fields
+        .get(&current_struct_id)
+        .cloned()
+    {
         for field_ty in fields.values() {
             visit_type(root_struct_id, field_ty, visiting, visited, checker);
         }
@@ -140,21 +164,31 @@ fn visit_type(
             check_recursive(root_struct_id, *id, visiting, visited, checker);
         }
         ArType::Tuple(tys) => {
-            for t in tys {
-                visit_type(root_struct_id, t, visiting, visited, checker);
+            for &t in tys {
+                super::super::types::type_interner::with_resolved_type(t, |t_ty| {
+                    visit_type(root_struct_id, t_ty, visiting, visited, checker);
+                });
             }
         }
-        ArType::Array(_, inner) | ArType::Slice(inner) | ArType::Nullable(inner) | ArType::Option(inner) => {
-            visit_type(root_struct_id, inner, visiting, visited, checker);
+        ArType::Array(_, inner)
+        | ArType::Slice(inner)
+        | ArType::Nullable(inner)
+        | ArType::Option(inner) => {
+            super::super::types::type_interner::with_resolved_type(*inner, |inner_ty| {
+                visit_type(root_struct_id, inner_ty, visiting, visited, checker);
+            });
         }
         ArType::Result(ok, err) => {
-            visit_type(root_struct_id, ok, visiting, visited, checker);
-            visit_type(root_struct_id, err, visiting, visited, checker);
+            super::super::types::type_interner::with_resolved_type(*ok, |ok_ty| {
+                visit_type(root_struct_id, ok_ty, visiting, visited, checker);
+            });
+            super::super::types::type_interner::with_resolved_type(*err, |err_ty| {
+                visit_type(root_struct_id, err_ty, visiting, visited, checker);
+            });
         }
         _ => {}
     }
 }
-
 
 pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &Program) {
     for decl_id in &program.decls {
@@ -182,7 +216,7 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &P
                         checker.symbols.global_scope(),
                         &checker.resolved,
                     );
-                    param_types.push(param_ty);
+                    param_types.push(super::super::types::intern_type(param_ty));
                 }
 
                 let name_span = match &func_decl.name {
@@ -191,7 +225,8 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &P
                 };
                 let name_key = crate::NodeKey::from(name_span);
                 if let Some(symbol_id) = checker.resolved.definitions.get(&name_key).copied() {
-                    let func_ty = ArType::Func(param_types, Box::new(ret_ty));
+                    let ret_id = super::super::types::intern_type(ret_ty);
+                    let func_ty = ArType::Func(param_types, ret_id);
                     checker.record_decl_type(symbol_id, func_ty);
                     let params = super::super::types::collect_generic_param_symbols(
                         checker,
@@ -225,12 +260,13 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &P
                             checker.symbols.global_scope(),
                             &checker.resolved,
                         );
-                        param_types.push(param_ty);
+                        param_types.push(super::super::types::intern_type(param_ty));
                     }
 
                     let name_key = crate::NodeKey::from(member.span);
                     if let Some(symbol_id) = checker.resolved.definitions.get(&name_key).copied() {
-                        let func_ty = ArType::Func(param_types, Box::new(ret_ty));
+                        let ret_id = super::super::types::intern_type(ret_ty);
+                        let func_ty = ArType::Func(param_types, ret_id);
                         checker.record_decl_type(symbol_id, func_ty);
                     }
                 }
