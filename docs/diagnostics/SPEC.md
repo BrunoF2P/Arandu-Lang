@@ -90,10 +90,10 @@ As configurações de severidade de lints locais seguem anotações no estilo Ja
 
 ```arandu
 @Suppress("shadowing")
-fn exemplo() {
-    let x = 10;
+func exemplo() {
+    x = 10
     {
-        let x = 20; // Silencia o warning W004 (shadowing)
+        x = 20 // Silencia o warning W004 (shadowing)
     }
 }
 ```

@@ -29,7 +29,7 @@ Legenda: `[x]` feito · `[/]` em andamento · `[ ]` não iniciado
 | Definite init | `[x]` | lattices, InitBits flow, O008 diagnostic |
 | Move checker | `[x]` | OSSA intraprocedural, O001/O005/O007, spans reais |
 | Middle-end opt | `[x]` | Constant folding intra-bloco + DCE denso |
-| Backend Cranelift | `[/]` | v0.2 Dev/Debug |
+| Backend Cranelift | `[x]` | v0.2 Dev/Debug |
 | Backend C | `[ ]` | Portabilidade fallback |
 | Backend LLVM | `[ ]` | v0.4+ Release Optimizer |
 
@@ -55,7 +55,7 @@ Fase 2 — A Construção da Infraestrutura & Execução (v0.2) · [EM ANDAMENTO
 [x] A9     Dense Bitset Infrastructure (dataflow, liveness, OSSA/DCE bits)
 [x] A10    Stable ID Infrastructure (generational IDs, slotmaps, stable handles)
 [x] A11    Token & String Storage Engine (packed tokens, SSO, string interning)
-[/] BC     Backend Cranelift (Dev/Debug com compilador em memória)
+[x] BC     Backend Cranelift (Dev/Debug com compilador em memória)
 [ ] C_FB   Backend C de portabilidade e bootstrapping
 [ ] DX     Diagnostics & Tooling Infrastructure (DX1-DX3, DX4 CFG visualization, IDE native LSP)
 [ ] PERF   Compiler Instrumentation & Observabilidade (pass timers, allocations, query logs, -Z flags)
@@ -540,10 +540,10 @@ O compilador do Arandu implementa um sistema moderno de diagnósticos inspirado 
 error[O002]: cannot move borrowed value
   --> src/main.aru:5:10
    |
- 3 | let x = &y;
+ 3 | x = &y;
    |         -- value borrowed here
  4 |
- 5 | let z = y;
+ 5 | z = y;
    |         ^ move occurs here
    |
 note: borrow later used here on line 7
