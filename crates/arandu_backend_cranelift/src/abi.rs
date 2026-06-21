@@ -1,7 +1,7 @@
+use crate::types::{ClifType, clif_type};
+use arandu_semantics::passes::type_checker::types::ArType;
 use cranelift_codegen::ir::{AbiParam, Signature, Type};
 use cranelift_codegen::isa::CallConv;
-use arandu_semantics::passes::type_checker::types::ArType;
-use crate::types::{clif_type, ClifType};
 
 #[must_use]
 pub fn call_conv_for_target(triple: &target_lexicon::Triple) -> CallConv {

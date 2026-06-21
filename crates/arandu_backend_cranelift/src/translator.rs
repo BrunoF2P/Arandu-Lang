@@ -1,15 +1,15 @@
-use cranelift_codegen::ir::{Block, Value, Type, TrapCode, InstBuilder};
-use cranelift_frontend::{FunctionBuilder, Variable};
-use cranelift_jit::JITModule;
-use cranelift_module::{Module, FuncId};
-use rustc_hash::FxHashMap;
+use crate::types::{ClifType, clif_type};
+use arandu_semantics::SymbolTable;
 use arandu_semantics::amir::{
-    AmirFunc, BlockId, AmirBasicBlock, AmirStmt, AmirTerminator, InstrId,
-    AmirOperand, AmirPlace, AmirRvalue, AmirConstant, TempId, LocalId
+    AmirBasicBlock, AmirConstant, AmirFunc, AmirOperand, AmirPlace, AmirRvalue, AmirStmt,
+    AmirTerminator, BlockId, InstrId, LocalId, TempId,
 };
 use arandu_semantics::ops::{BinaryOp, UnaryOp};
-use arandu_semantics::SymbolTable;
-use crate::types::{clif_type, ClifType};
+use cranelift_codegen::ir::{Block, InstBuilder, TrapCode, Type, Value};
+use cranelift_frontend::{FunctionBuilder, Switch, Variable};
+use cranelift_jit::JITModule;
+use cranelift_module::{FuncId, Module};
+use rustc_hash::FxHashMap;
 
 pub trait AmirVisitor {
     fn visit_block(&mut self, block: &AmirBasicBlock);
@@ -31,6 +31,17 @@ pub struct FunctionTranslator<'a, 'b> {
 }
 
 impl<'a, 'b> FunctionTranslator<'a, 'b> {
+    fn get_temp_clif_type(&self, temp_id: TempId) -> Option<Type> {
+        self.current_func
+            .temps
+            .iter()
+            .find(|t| t.id == temp_id)
+            .and_then(|t| match clif_type(&t.ty, self.ptr_type) {
+                ClifType::Concrete(ty) => Some(ty),
+                ClifType::Void => None,
+            })
+    }
+
     pub fn translate(&mut self) {
         // Step 1: create all blocks
         for (idx, _) in self.current_func.blocks.iter().enumerate() {
@@ -41,7 +52,8 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
 
         // Step 2: setup entry block
         let entry_clif = self.block_map[&BlockId::from_usize(0)];
-        self.builder.append_block_params_for_function_params(entry_clif);
+        self.builder
+            .append_block_params_for_function_params(entry_clif);
         self.builder.switch_to_block(entry_clif);
 
         // Step 3: declare all locals
@@ -82,22 +94,37 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
     fn translate_stmt(&mut self, stmt: &AmirStmt) {
         match stmt {
             AmirStmt::Assign { lhs, rhs } => {
-                let val = self.translate_rvalue(rhs);
+                let expected_ty = self.get_temp_clif_type(*lhs);
+                let val = self.translate_rvalue(rhs, expected_ty);
                 if let Some(&var) = self.temp_map.get(lhs) {
                     self.builder.def_var(var, val);
                 }
             }
             AmirStmt::Store { lhs, rhs } => {
-                let val = self.translate_operand(rhs);
+                let expected_ty = self
+                    .current_func
+                    .locals
+                    .iter()
+                    .find(|l| l.id == lhs.local)
+                    .and_then(|l| match clif_type(&l.ty, self.ptr_type) {
+                        ClifType::Concrete(ty) => Some(ty),
+                        ClifType::Void => None,
+                    });
+                let val = self.translate_operand(rhs, expected_ty);
                 self.translate_store_place(lhs, val);
             }
             AmirStmt::Call { lhs, callee, args } => {
-                let clif_args: Vec<Value> = args.iter().map(|arg| self.translate_operand(arg)).collect();
+                let clif_args: Vec<Value> = args
+                    .iter()
+                    .map(|arg| self.translate_operand(arg, None))
+                    .collect();
                 let call_inst = match callee {
                     AmirOperand::FunctionRef(sym_id) => {
                         let sym = self.symbol_table.get(*sym_id);
                         let func_id = self.func_ids.get(&sym.name).expect("Function not declared");
-                        let local_ref = self.module.declare_func_in_func(*func_id, self.builder.func);
+                        let local_ref = self
+                            .module
+                            .declare_func_in_func(*func_id, self.builder.func);
                         self.builder.ins().call(local_ref, &clif_args)
                     }
                     _ => unimplemented!("Indirect function calls not implemented yet"),
@@ -111,9 +138,16 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
                     }
                 }
             }
+            // Free é no-op no JIT por enquanto.
             AmirStmt::Free(_) => {}
+            // StorageLive e StorageDead são hints para tempos de vida das variáveis.
+            // O Cranelift faz a sua própria análise de liveness/regalloc na stack,
+            // então ignoramos esses hints por ora.
             AmirStmt::StorageLive(_) | AmirStmt::StorageDead(_) => {}
+            // Destroy será usado no backend C para chamar destrutores de recursos.
+            // No JIT atual, não temos destrutores, então é no-op.
             AmirStmt::Destroy(_) => {}
+            AmirStmt::Nop => {}
         }
     }
 
@@ -127,26 +161,35 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
         }
     }
 
-    fn translate_operand(&mut self, operand: &AmirOperand) -> Value {
+    fn translate_operand(&mut self, operand: &AmirOperand, expected_ty: Option<Type>) -> Value {
         match operand {
             AmirOperand::Copy(temp_id) | AmirOperand::Move(temp_id) => {
-                let var = self.temp_map.get(temp_id).expect("Use of undeclared temp variable");
+                let var = self
+                    .temp_map
+                    .get(temp_id)
+                    .expect("Use of undeclared temp variable");
                 self.builder.use_var(*var)
             }
             AmirOperand::Constant(c) => match c {
                 AmirConstant::Bool(b) => {
                     let imm = if *b { 1 } else { 0 };
-                    self.builder.ins().iconst(cranelift_codegen::ir::types::I8, imm)
+                    self.builder
+                        .ins()
+                        .iconst(cranelift_codegen::ir::types::I8, imm)
                 }
-                AmirConstant::Nil => {
-                    self.builder.ins().iconst(cranelift_codegen::ir::types::I32, 0)
-                }
+                AmirConstant::Nil => self
+                    .builder
+                    .ins()
+                    .iconst(cranelift_codegen::ir::types::I32, 0),
                 AmirConstant::Pool(lit_id) => {
                     let entry = self.literal_pool.get(*lit_id);
                     match entry {
                         arandu_semantics::literal_pool::AmirLiteralEntry::Int(s) => {
-                            let val: i64 = s.parse().unwrap();
-                            self.builder.ins().iconst(cranelift_codegen::ir::types::I32, val)
+                            let val: i64 = s.parse().unwrap_or_else(|_| {
+                                panic!("ICE: literal inteiro inválido no literal pool: '{s}'")
+                            });
+                            let ty = expected_ty.unwrap_or(cranelift_codegen::ir::types::I32);
+                            self.builder.ins().iconst(ty, val)
                         }
                         arandu_semantics::literal_pool::AmirLiteralEntry::Float(s) => {
                             let val: f64 = s.parse().unwrap();
@@ -157,32 +200,45 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
                         }
                         arandu_semantics::literal_pool::AmirLiteralEntry::Char(s) => {
                             let val = s.chars().next().unwrap() as i64;
-                            self.builder.ins().iconst(cranelift_codegen::ir::types::I32, val)
+                            self.builder
+                                .ins()
+                                .iconst(cranelift_codegen::ir::types::I32, val)
                         }
                     }
                 }
-            }
+            },
             AmirOperand::FunctionRef(_) | AmirOperand::GlobalRef(_) => {
                 unimplemented!("Refs as operands not implemented in Cranelift JIT yet");
             }
         }
     }
 
-    fn translate_rvalue(&mut self, rvalue: &AmirRvalue) -> Value {
+    fn translate_rvalue(&mut self, rvalue: &AmirRvalue, expected_ty: Option<Type>) -> Value {
         match rvalue {
-            AmirRvalue::Use(op) => self.translate_operand(op),
+            AmirRvalue::Use(op) => self.translate_operand(op, expected_ty),
             AmirRvalue::Binary { op, left, right } => {
-                let lhs = self.translate_operand(left);
-                let rhs = self.translate_operand(right);
+                let mut opt_ty = expected_ty;
+                if opt_ty.is_none() {
+                    if let AmirOperand::Copy(temp_id) | AmirOperand::Move(temp_id) = left {
+                        opt_ty = self.get_temp_clif_type(*temp_id);
+                    } else if let AmirOperand::Copy(temp_id) | AmirOperand::Move(temp_id) = right {
+                        opt_ty = self.get_temp_clif_type(*temp_id);
+                    }
+                }
+                let lhs = self.translate_operand(left, opt_ty);
+                let rhs = self.translate_operand(right, opt_ty);
                 self.translate_binary_op(*op, lhs, rhs)
             }
             AmirRvalue::Unary { op, operand } => {
-                let val = self.translate_operand(operand);
+                let val = self.translate_operand(operand, expected_ty);
                 self.translate_unary_op(*op, val)
             }
             AmirRvalue::Load(place) => {
                 if place.projections.is_empty() {
-                    let var = self.local_map.get(&place.local).expect("Use of undeclared local variable");
+                    let var = self
+                        .local_map
+                        .get(&place.local)
+                        .expect("Use of undeclared local variable");
                     self.builder.use_var(*var)
                 } else {
                     unimplemented!("Projections are not implemented in Cranelift JIT yet");
@@ -192,7 +248,10 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
                 unimplemented!("Borrowing of places is not implemented in Cranelift JIT yet");
             }
             _ => {
-                unimplemented!("Rvalue kind {:?} not implemented in Cranelift JIT yet", rvalue);
+                unimplemented!(
+                    "Rvalue kind {:?} not implemented in Cranelift JIT yet",
+                    rvalue
+                );
             }
         }
     }
@@ -244,49 +303,107 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
             BinaryOp::ShiftRight => self.builder.ins().sshr(lhs, rhs),
             BinaryOp::Equal => {
                 if is_float {
-                    self.builder.ins().fcmp(cranelift_codegen::ir::condcodes::FloatCC::Equal, lhs, rhs)
+                    self.builder.ins().fcmp(
+                        cranelift_codegen::ir::condcodes::FloatCC::Equal,
+                        lhs,
+                        rhs,
+                    )
                 } else {
-                    self.builder.ins().icmp(cranelift_codegen::ir::condcodes::IntCC::Equal, lhs, rhs)
+                    self.builder.ins().icmp(
+                        cranelift_codegen::ir::condcodes::IntCC::Equal,
+                        lhs,
+                        rhs,
+                    )
                 }
             }
             BinaryOp::NotEqual => {
                 if is_float {
-                    self.builder.ins().fcmp(cranelift_codegen::ir::condcodes::FloatCC::NotEqual, lhs, rhs)
+                    self.builder.ins().fcmp(
+                        cranelift_codegen::ir::condcodes::FloatCC::NotEqual,
+                        lhs,
+                        rhs,
+                    )
                 } else {
-                    self.builder.ins().icmp(cranelift_codegen::ir::condcodes::IntCC::NotEqual, lhs, rhs)
+                    self.builder.ins().icmp(
+                        cranelift_codegen::ir::condcodes::IntCC::NotEqual,
+                        lhs,
+                        rhs,
+                    )
                 }
             }
             BinaryOp::Lt => {
                 if is_float {
-                    self.builder.ins().fcmp(cranelift_codegen::ir::condcodes::FloatCC::LessThan, lhs, rhs)
+                    self.builder.ins().fcmp(
+                        cranelift_codegen::ir::condcodes::FloatCC::LessThan,
+                        lhs,
+                        rhs,
+                    )
                 } else {
-                    self.builder.ins().icmp(cranelift_codegen::ir::condcodes::IntCC::SignedLessThan, lhs, rhs)
+                    // TODO: tipos unsigned devem usar UnsignedLessThan
+                    self.builder.ins().icmp(
+                        cranelift_codegen::ir::condcodes::IntCC::SignedLessThan,
+                        lhs,
+                        rhs,
+                    )
                 }
             }
             BinaryOp::Gt => {
                 if is_float {
-                    self.builder.ins().fcmp(cranelift_codegen::ir::condcodes::FloatCC::GreaterThan, lhs, rhs)
+                    self.builder.ins().fcmp(
+                        cranelift_codegen::ir::condcodes::FloatCC::GreaterThan,
+                        lhs,
+                        rhs,
+                    )
                 } else {
-                    self.builder.ins().icmp(cranelift_codegen::ir::condcodes::IntCC::SignedGreaterThan, lhs, rhs)
+                    // TODO: tipos unsigned devem usar UnsignedGreaterThan
+                    self.builder.ins().icmp(
+                        cranelift_codegen::ir::condcodes::IntCC::SignedGreaterThan,
+                        lhs,
+                        rhs,
+                    )
                 }
             }
             BinaryOp::LtEqual => {
                 if is_float {
-                    self.builder.ins().fcmp(cranelift_codegen::ir::condcodes::FloatCC::LessThanOrEqual, lhs, rhs)
+                    self.builder.ins().fcmp(
+                        cranelift_codegen::ir::condcodes::FloatCC::LessThanOrEqual,
+                        lhs,
+                        rhs,
+                    )
                 } else {
-                    self.builder.ins().icmp(cranelift_codegen::ir::condcodes::IntCC::SignedLessThanOrEqual, lhs, rhs)
+                    // TODO: tipos unsigned devem usar UnsignedLessThanOrEqual
+                    self.builder.ins().icmp(
+                        cranelift_codegen::ir::condcodes::IntCC::SignedLessThanOrEqual,
+                        lhs,
+                        rhs,
+                    )
                 }
             }
             BinaryOp::GtEqual => {
                 if is_float {
-                    self.builder.ins().fcmp(cranelift_codegen::ir::condcodes::FloatCC::GreaterThanOrEqual, lhs, rhs)
+                    self.builder.ins().fcmp(
+                        cranelift_codegen::ir::condcodes::FloatCC::GreaterThanOrEqual,
+                        lhs,
+                        rhs,
+                    )
                 } else {
-                    self.builder.ins().icmp(cranelift_codegen::ir::condcodes::IntCC::SignedGreaterThanOrEqual, lhs, rhs)
+                    // TODO: tipos unsigned devem usar UnsignedGreaterThanOrEqual
+                    self.builder.ins().icmp(
+                        cranelift_codegen::ir::condcodes::IntCC::SignedGreaterThanOrEqual,
+                        lhs,
+                        rhs,
+                    )
                 }
             }
+            // Or/And são lógicos no Arandu, mas como o tipo `bool` é representado
+            // como `I8` contendo estritamente 0 ou 1, os operadores bitwise `bor`/`band`
+            // produzem o resultado correto (0 ou 1) de forma mais eficiente.
             BinaryOp::Or => self.builder.ins().bor(lhs, rhs),
             BinaryOp::And => self.builder.ins().band(lhs, rhs),
-            _ => unimplemented!("Binary operator {:?} not implemented in Cranelift JIT yet", op),
+            _ => unimplemented!(
+                "Binary operator {:?} not implemented in Cranelift JIT yet",
+                op
+            ),
         }
     }
 
@@ -299,19 +416,24 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
                 if is_float {
                     self.builder.ins().fneg(val)
                 } else {
-                    self.builder.ins().irsub_imm(val, 0)
+                    self.builder.ins().ineg(val)
                 }
             }
             UnaryOp::Not => {
                 let zero = self.builder.ins().iconst(ty, 0);
-                self.builder.ins().icmp(cranelift_codegen::ir::condcodes::IntCC::Equal, val, zero)
+                self.builder
+                    .ins()
+                    .icmp(cranelift_codegen::ir::condcodes::IntCC::Equal, val, zero)
             }
             UnaryOp::BitNot => self.builder.ins().bnot(val),
             UnaryOp::Await => {
                 unimplemented!("Unary operator Await not implemented in Cranelift JIT yet");
             }
             _ => {
-                unimplemented!("Unary operator {:?} not implemented in Cranelift JIT yet", op);
+                unimplemented!(
+                    "Unary operator {:?} not implemented in Cranelift JIT yet",
+                    op
+                );
             }
         }
     }
@@ -322,6 +444,9 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
                 let clif_ret = clif_type(&self.current_func.return_type, self.ptr_type);
                 match clif_ret {
                     ClifType::Concrete(_) => {
+                        // TempId(0) é o "return register" por convenção do AMIR lowering.
+                        // Ver: crates/arandu_mir/src/lower_amir/func.rs linha 39:
+                        // "Return register is TempId(0)"
                         let ret_temp = TempId::from_usize(0);
                         if let Some(&var) = self.temp_map.get(&ret_temp) {
                             let ret_val = self.builder.use_var(var);
@@ -339,28 +464,32 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
                 let clif_target = self.block_map[target];
                 self.builder.ins().jump(clif_target, &[]);
             }
-            AmirTerminator::Branch { condition, if_true, if_false } => {
-                let cond_val = self.translate_operand(condition);
+            AmirTerminator::Branch {
+                condition,
+                if_true,
+                if_false,
+            } => {
+                let cond_val = self.translate_operand(condition, None);
                 let true_block = self.block_map[if_true];
                 let false_block = self.block_map[if_false];
-                self.builder.ins().brif(cond_val, true_block, &[], false_block, &[]);
+                self.builder
+                    .ins()
+                    .brif(cond_val, true_block, &[], false_block, &[]);
             }
-            AmirTerminator::SwitchInt { discriminant, targets, otherwise } => {
-                let disc_val = self.translate_operand(discriminant);
+            AmirTerminator::SwitchInt {
+                discriminant,
+                targets,
+                otherwise,
+            } => {
+                let disc_val = self.translate_operand(discriminant, None);
                 let otherwise_block = self.block_map[otherwise];
-                
-                for &(val, target) in targets {
-                    let target_block = self.block_map[&target];
-                    let ty = self.builder.func.dfg.value_type(disc_val);
-                    let cmp_val = self.builder.ins().iconst(ty, val as i64);
-                    let eq = self.builder.ins().icmp(cranelift_codegen::ir::condcodes::IntCC::Equal, disc_val, cmp_val);
-                    
-                    let next_otherwise = self.builder.create_block();
-                    self.builder.ins().brif(eq, target_block, &[], next_otherwise, &[]);
-                    
-                    self.builder.switch_to_block(next_otherwise);
+
+                let mut switch = Switch::new();
+                for &(val, ref target) in targets {
+                    let target_block = self.block_map[target];
+                    switch.set_entry(val as u128, target_block);
                 }
-                self.builder.ins().jump(otherwise_block, &[]);
+                switch.emit(&mut self.builder, disc_val, otherwise_block);
             }
             AmirTerminator::Unreachable => {
                 self.builder.ins().trap(TrapCode::unwrap_user(1));

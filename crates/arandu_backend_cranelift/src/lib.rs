@@ -1,15 +1,15 @@
 #![allow(clippy::collapsible_if)]
-pub mod types;
 pub mod abi;
 pub mod jit;
 pub mod translator;
+pub mod types;
 
 pub use crate::jit::CompiledModule;
 
-use arandu_semantics::amir::AmirProgram;
-use arandu_semantics::{Diagnostic, DiagCode, SymbolTable, CodegenBackend, CompiledCode};
-use arandu_base::span::Span;
 use crate::jit::AranduJit;
+use arandu_base::span::Span;
+use arandu_semantics::amir::AmirProgram;
+use arandu_semantics::{CodegenBackend, CompiledCode, DiagCode, Diagnostic, SymbolTable};
 
 pub struct CraneliftBackend {
     jit: AranduJit,
@@ -50,9 +50,7 @@ impl CodegenBackend for CraneliftBackend {
     ) -> Result<Self::CompilationOutput, Diagnostic> {
         self.jit
             .compile_program(program, symbols)
-            .map_err(|err| {
-                Diagnostic::ice(DiagCode::ICEL001, err, Span::new(0, 0, 0))
-            })
+            .map_err(|err| Diagnostic::ice(DiagCode::ICEL001, err, Span::new(0, 0, 0)))
     }
 }
 

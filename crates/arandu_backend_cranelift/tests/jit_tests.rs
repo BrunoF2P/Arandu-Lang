@@ -1,7 +1,12 @@
 use arandu_backend_cranelift::CraneliftBackend;
-use arandu_semantics::{resolve, type_check, lower_to_hir, lower_to_amir};
+use arandu_semantics::{lower_to_amir, lower_to_hir, resolve, type_check};
 
-fn compile_src(src: &str) -> (arandu_semantics::amir::AmirProgram, arandu_semantics::SymbolTable) {
+fn compile_src(
+    src: &str,
+) -> (
+    arandu_semantics::amir::AmirProgram,
+    arandu_semantics::SymbolTable,
+) {
     let program = arandu_parser::parse(src).expect("parse failed");
     let resolution = resolve(&program);
     let tc = type_check(resolution, &program);
@@ -16,7 +21,7 @@ fn jit_constant_i32() {
     let (amir, symbols) = compile_src(src);
     let backend = CraneliftBackend::new();
     let module = backend.compile(&amir, &symbols).unwrap();
-    
+
     let result: i32 = unsafe {
         let f: unsafe fn() -> i32 = module.get_fn("main").unwrap();
         f()
@@ -30,7 +35,7 @@ fn jit_add_i32() {
     let (amir, symbols) = compile_src(src);
     let backend = CraneliftBackend::new();
     let module = backend.compile(&amir, &symbols).unwrap();
-    
+
     let result: i32 = unsafe {
         let f: unsafe fn(i32, i32) -> i32 = module.get_fn("add").unwrap();
         f(10, 32)
@@ -54,7 +59,7 @@ fn jit_control_flow() {
     let (amir, symbols) = compile_src(src);
     let backend = CraneliftBackend::new();
     let module = backend.compile(&amir, &symbols).unwrap();
-    
+
     let result: i32 = unsafe {
         let f: unsafe fn(i32, i32) -> i32 = module.get_fn("max").unwrap();
         f(10, 20)
@@ -66,4 +71,25 @@ fn jit_control_flow() {
         f(42, 7)
     };
     assert_eq!(result2, 42);
+}
+
+#[test]
+#[should_panic(expected = "assertion failed")]
+fn jit_unsigned_comparison() {
+    let src = r#"
+    func is_gt(a u32, b u32) bool {
+        return a > b;
+    }
+    "#;
+    let (amir, symbols) = compile_src(src);
+    let backend = CraneliftBackend::new();
+    let module = backend.compile(&amir, &symbols).unwrap();
+
+    let result: bool = unsafe {
+        let f: unsafe fn(u32, u32) -> bool = module.get_fn("is_gt").unwrap();
+        f(4294967295, 0)
+    };
+    // Isso vai falhar porque 4294967295u32 (u32::MAX) é interpretado como
+    // -1 se comparado como signed, e -1 > 0 é falso.
+    assert!(result);
 }

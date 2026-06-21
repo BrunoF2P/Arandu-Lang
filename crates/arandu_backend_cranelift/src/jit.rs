@@ -1,12 +1,12 @@
+use crate::abi::build_signature;
+use crate::translator::FunctionTranslator;
+use arandu_semantics::SymbolTable;
+use arandu_semantics::amir::AmirProgram;
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
-use cranelift_module::{Linkage, Module, FuncId};
+use cranelift_module::{FuncId, Linkage, Module};
 use rustc_hash::FxHashMap;
-use arandu_semantics::amir::AmirProgram;
-use arandu_semantics::SymbolTable;
-use crate::abi::build_signature;
-use crate::translator::FunctionTranslator;
 
 pub struct AranduJit {
     pub module: JITModule,
@@ -56,7 +56,8 @@ impl AranduJit {
                 .collect();
             let sig = build_signature(&param_types, &func.return_type, default_call_conv, ptr_type);
 
-            let func_id = self.module
+            let func_id = self
+                .module
                 .declare_function(&sym.name, Linkage::Export, &sig)
                 .map_err(|e| format!("Failed to declare function {}: {:?}", sym.name, e))?;
             func_ids.insert(sym.name.clone(), func_id);

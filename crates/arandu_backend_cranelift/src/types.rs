@@ -1,7 +1,7 @@
-use cranelift_codegen::ir::types::*;
-use cranelift_codegen::ir::Type;
 use arandu_semantics::passes::type_checker::types::ArType;
 use arandu_semantics::passes::type_checker::types::Primitive;
+use cranelift_codegen::ir::Type;
+use cranelift_codegen::ir::types::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClifType {
