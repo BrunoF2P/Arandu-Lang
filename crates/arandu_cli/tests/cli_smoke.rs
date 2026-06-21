@@ -107,7 +107,7 @@ fn amir_opt_flag_folds_constants_without_changing_default_command() {
     fs::write(
         &file,
         r"func main() {
-    value int = 1 + 2
+    value: int = 1 + 2
 }
 ",
     )

@@ -131,7 +131,7 @@ fn resolves_params_locals_and_set_roots() {
         r"
 module tests.locals
 
-func add(a int, b int) int {
+func add(a: int, b: int) int {
     total = a + b
     set total += 1
     return total
@@ -205,7 +205,7 @@ module tests.named_imports
 
 import { Button, Window as AppWindow, text as label } from ui
 
-func render(window AppWindow) Button {
+func render(window: AppWindow) Button {
     return label("ok")
 }
 "#,
@@ -219,14 +219,14 @@ fn resolves_type_qualified_associated_function() {
 module tests.associated
 
 struct User {
-    name str
+    name: str
 }
 
-func User.greet(user User) str {
+func User.greet(user: User) str {
     return user.name
 }
 
-func main(user User) {
+func main(user: User) {
     text = User.greet(user)
 }
 ",
@@ -240,10 +240,10 @@ fn reports_undefined_associated_function() {
 module tests.associated_missing
 
 struct User {
-    name str
+    name: str
 }
 
-func main(user User) {
+func main(user: User) {
     text = User.missing(user)
 }
 ",
@@ -288,10 +288,10 @@ fn resolves_type_names_in_params_and_struct_literals() {
 module tests.types
 
 struct User {
-    name str
+    name: str
 }
 
-func make(name str) User {
+func make(name: str) User {
     return User { name: name }
 }
 ",
@@ -337,7 +337,7 @@ fn reports_undefined_type() {
         r"
 module tests.undefined_type
 
-func main(value MissingType) {
+func main(value: MissingType) {
     return
 }
 ",
@@ -394,7 +394,7 @@ enum Token {
     Word(str)
 }
 
-func describe(token Token) str {
+func describe(token: Token) str {
     return match token {
         Token.Word(text) => text
     }
@@ -415,11 +415,11 @@ enum Token {
     Word(str)
 }
 
-func sink(value str) {
+func sink(value: str) {
     return
 }
 
-func describe(token Token) {
+func describe(token: Token) {
     match token {
         Token.Word(text) => sink(text)
     }
@@ -436,7 +436,7 @@ fn resolves_for_bindings_in_loop_scope() {
         r"
 module tests.forBindings
 
-func main(items []int) {
+func main(items: []int) {
     for item in items {
         value = item
     }
@@ -454,7 +454,7 @@ fn resolves_module_qualified_type_names() {
         module tests.qualifiedType
         import myModule
         func main() {
-            x myModule.SomeType = 0
+            x: myModule.SomeType = 0
         }
         ",
     );
@@ -470,14 +470,14 @@ fn reports_undefined_associated_function_with_suggestion() {
 module tests.associated_suggest
 
 struct User {
-    name str
+    name: str
 }
 
-func User.greet(user User) str {
+func User.greet(user: User) str {
     return user.name
 }
 
-func main(user User) {
+func main(user: User) {
     text = User.grte(user)
 }
 ",

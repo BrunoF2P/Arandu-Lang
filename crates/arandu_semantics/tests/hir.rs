@@ -93,8 +93,8 @@ func main() {
 fn lowers_struct_fields_with_types() {
     let (hir, symbols) = lower(
         "struct Point {
-            x int
-            y int
+            x: int
+            y: int
         }",
     );
     assert_eq!(hir.decls.len(), 1);
@@ -116,7 +116,7 @@ fn lowers_struct_fields_with_types() {
 #[test]
 fn lowers_function_with_params_and_return_type() {
     let (hir, symbols) = lower(
-        "func add(x int, y int) int {
+        "func add(x: int, y: int) int {
             return x + y
         }",
     );
@@ -160,7 +160,7 @@ fn lowers_function_with_params_and_return_type() {
 fn lowers_var_decl_with_type_annotation() {
     let (hir, symbols) = lower(
         "func main() {
-            x int = 42
+            x: int = 42
         }",
     );
     match hir.pool.decl(hir.decls[0]) {
@@ -194,8 +194,8 @@ fn lowers_var_decl_with_type_annotation() {
 fn expr_nodes_carry_resolved_types() {
     let (hir, _symbols) = lower(
         "func main() {
-            x int = 10
-            y int = x + 5
+            x: int = 10
+            y: int = x + 5
         }",
     );
     match hir.pool.decl(hir.decls[0]) {
@@ -222,8 +222,8 @@ fn expr_nodes_carry_resolved_types() {
 fn path_expr_resolves_symbol() {
     let (hir, _symbols) = lower(
         "func main() {
-            x int = 10
-            y int = x
+            x: int = 10
+            y: int = x
         }",
     );
     match hir.pool.decl(hir.decls[0]) {
@@ -249,11 +249,11 @@ fn path_expr_resolves_symbol() {
 #[test]
 fn lowers_call_expression() {
     let (hir, _symbols) = lower(
-        "func add(x int, y int) int {
+        "func add(x: int, y: int) int {
             return x + y
         }
         func main() {
-            result int = add(1, 2)
+            result: int = add(1, 2)
         }",
     );
     match hir.pool.decl(hir.decls[1]) {
@@ -282,11 +282,11 @@ fn lowers_call_expression() {
 #[test]
 fn lowers_call_with_trailing_block() {
     let (hir, _symbols) = lower(
-        "func foo(a int) int {
+        "func foo(a: int) int {
             return a
         }
         func main() {
-            result int = foo(1) {
+            result: int = foo(1) {
                 2
             }
         }",
@@ -348,11 +348,11 @@ fn lowers_enum_with_variants() {
 fn lowers_if_stmt() {
     let (hir, _symbols) = lower(
         "func main() {
-            x int = 10
+            x: int = 10
             if x > 5 {
-                y int = 1
+                y: int = 1
             } else {
-                y int = 2
+                y: int = 2
             }
         }",
     );
@@ -387,7 +387,7 @@ fn lowers_if_stmt() {
 fn group_expressions_unwrap() {
     let (hir, _symbols) = lower(
         "func main() {
-            x int = (42)
+            x: int = (42)
         }",
     );
     match hir.pool.decl(hir.decls[0]) {
@@ -435,11 +435,11 @@ fn lowers_const_declaration() {
 fn lowers_struct_literal() {
     let (hir, _symbols) = lower(
         "struct Point {
-            x int
-            y int
+            x: int
+            y: int
         }
         func main() {
-            p Point = Point { x: 1, y: 2 }
+            p: Point = Point { x: 1, y: 2 }
         }",
     );
     match hir.pool.decl(hir.decls[1]) {
@@ -472,7 +472,7 @@ fn lowers_struct_literal() {
 #[test]
 fn func_param_symbols_match_usage() {
     let (hir, _symbols) = lower(
-        "func identity(x int) int {
+        "func identity(x: int) int {
             return x
         }",
     );

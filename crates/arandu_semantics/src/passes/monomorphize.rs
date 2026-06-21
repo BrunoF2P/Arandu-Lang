@@ -938,12 +938,12 @@ mod tests {
     #[test]
     fn test_analyze_instantiations_collects_hir_generic_call() {
         let src = r#"
-func identity<T>(value T) T {
+func identity<T>(value: T) T {
     return value
 }
 
 func main() {
-    x int = identity<int>(42)
+    x: int = identity<int>(42)
 }
 "#;
         let program = arandu_parser::parse(src).expect("parse failed");

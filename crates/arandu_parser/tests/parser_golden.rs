@@ -222,14 +222,14 @@ fn parses_span_dump_fixture() {
 #[test]
 fn parses_trailing_commas_in_named_imports_and_generics() {
     assert_parses_source(
-        "module tests.inline\nimport { Button, } from ui\ntype Box<T,> = T\nfunc id<T,>(value T) T { return value; }\n",
+        "module tests.inline\nimport { Button, } from ui\ntype Box<T,> = T\nfunc id<T,>(value: T) T { return value; }\n",
     );
 }
 
 #[test]
 fn parses_trailing_comma_in_where_clause() {
     assert_parses_source(
-        "module tests.inline\nfunc identity<T>(value T) T where T: Display, { return value; }\ninterface Displayable { func fmt() where T: Display,; }\n",
+        "module tests.inline\nfunc identity<T>(value: T) T where T: Display, { return value; }\ninterface Displayable { func fmt() where T: Display,; }\n",
     );
 }
 
@@ -314,7 +314,7 @@ fn rejects_single_parenthesized_result_type() {
 fn rejects_v02_invalid_parser_fixtures() {
     let root = workspace_root();
     for (name, expected) in [
-        ("invalid_struct_field", ParseErrorCode::ExpectedType),
+        ("invalid_struct_field", ParseErrorCode::ExpectedToken),
         ("invalid_enum_payload", ParseErrorCode::ExpectedToken),
         (
             "invalid_extern_abi_interpolation",

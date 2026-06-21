@@ -94,12 +94,12 @@ fn test_amir_golden_files() {
 fn field_projection_uses_field_symbol_id() {
     let src = r#"
 struct Point {
-    x int
-    y int
+    x: int
+    y: int
 }
 
 func main() {
-    p Point = Point { x: 1, y: 2 }
+    p: Point = Point { x: 1, y: 2 }
     set p.x = 3
 }
 "#;
@@ -135,13 +135,13 @@ func main() {
 fn non_copy_local_use_after_move_fails_during_amir_analysis() {
     let src = r#"
 struct Boxed {
-    value int
+    value: int
 }
 
 func main() {
-    a Boxed = Boxed { value: 1 }
-    b Boxed = a
-    c Boxed = a
+    a: Boxed = Boxed { value: 1 }
+    b: Boxed = a
+    c: Boxed = a
 }
 "#;
     let program = arandu_parser::parse(src).expect("parse failed");
@@ -162,9 +162,9 @@ func main() {
 fn copy_local_can_be_reused_during_amir_lowering() {
     let src = r#"
 func main() {
-    a int = 1
-    b int = a
-    c int = a
+    a: int = 1
+    b: int = a
+    c: int = a
 }
 "#;
     let program = arandu_parser::parse(src).expect("parse failed");
@@ -183,15 +183,15 @@ func main() {
 fn branch_move_mismatch_reports_o007() {
     let src = r#"
 struct Boxed {
-    value int
+    value: int
 }
 
-func main(cond bool) {
-    a Boxed = Boxed { value: 1 }
+func main(cond: bool) {
+    a: Boxed = Boxed { value: 1 }
     if cond {
-        b Boxed = a
+        b: Boxed = a
     }
-    c Boxed = a
+    c: Boxed = a
 }
 "#;
     let program = arandu_parser::parse(src).expect("parse failed");

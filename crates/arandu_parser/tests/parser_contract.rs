@@ -154,7 +154,7 @@ func main() {
 /// User docs
 struct User {
     /// field docs
-    name str
+    name: str
 }
 
 enum Token {
@@ -164,7 +164,7 @@ enum Token {
 
 extern "C" {
     /// puts docs
-    func puts(text ptr[u8]) int
+    func puts(text: ptr[u8]) int
 }
 "#,
     )
@@ -242,7 +242,7 @@ fn list_empty_forbidden() {
 fn where_func() {
     assert_contract_ast(
         "where_func",
-        "Program @1:1-4:2\n  Module @1:1-1:34 tests.contract.constraints\n  Func @2:1-4:2 identity<@2:15-2:16 T>(@2:18-2:25 value Type @2:24-2:25 @2:24-2:25 T) -> Type @2:27-2:28 @2:27-2:28 T where @2:35-2:45 T: @2:38-2:45 Display\n    Return @3:5-3:17 Path @3:12-3:17(value)",
+        "Program @1:1-4:2\n  Module @1:1-1:34 tests.contract.constraints\n  Func @2:1-4:2 identity<@2:15-2:16 T>(@2:18-2:26 value Type @2:25-2:26 @2:25-2:26 T) -> Type @2:28-2:29 @2:28-2:29 T where @2:36-2:46 T: @2:39-2:46 Display\n    Return @3:5-3:17 Path @3:12-3:17(value)",
     );
 }
 
@@ -250,7 +250,7 @@ fn where_func() {
 fn where_struct() {
     assert_contract_ast(
         "where_struct",
-        "Program @1:1-4:2\n  Module @1:1-1:34 tests.contract.constraints\n  Struct @2:1-4:2 Box<@2:12-2:13 T> where @2:21-2:31 T: @2:24-2:31 Display\n    Field @3:5-3:12 value Type @3:11-3:12 @3:11-3:12 T",
+        "Program @1:1-4:2\n  Module @1:1-1:34 tests.contract.constraints\n  Struct @2:1-4:2 Box<@2:12-2:13 T> where @2:21-2:31 T: @2:24-2:31 Display\n    Field @3:5-3:13 value Type @3:12-3:13 @3:12-3:13 T",
     );
 }
 
@@ -282,14 +282,14 @@ fn generic_call_ambiguity() {
 fn variable_declaration_lookahead() {
     assert_contract_ast(
         "variable_declaration_lookahead",
-        "Program @1:1-5:2\n  Module @1:1-1:32 tests.contract.lookahead\n  Func @2:1-5:2 main() -> void\n    Var @3:5-3:14 @3:5-3:10 value = Int @3:13-3:14(1)\n    Var @4:5-4:18 @4:5-4:14 typed Type @4:11-4:14 int = Int @4:17-4:18(2)",
+        "Program @1:1-5:2\n  Module @1:1-1:32 tests.contract.lookahead\n  Func @2:1-5:2 main() -> void\n    Var @3:5-3:14 @3:5-3:10 value = Int @3:13-3:14(1)\n    Var @4:5-4:19 @4:5-4:15 typed Type @4:12-4:15 int = Int @4:18-4:19(2)",
     );
 }
 
 #[test]
 fn where_on_new_line() {
     let _program =
-        parse("module test\nfunc identity<T>(value T) T\nwhere T: Display {\n    return value\n}")
+        parse("module test\nfunc identity<T>(value: T) T\nwhere T: Display {\n    return value\n}")
             .expect("parser should accept where on a new line");
 }
 

@@ -40,7 +40,7 @@ fn test_parallel_compilation_multi_file_project() {
         &file_b_path,
         r#"
         func run() int {
-            x int = 42
+            x: int = 42
             return x
         }
         "#,
