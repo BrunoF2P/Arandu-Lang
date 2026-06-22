@@ -46,6 +46,7 @@ pub fn collect_symbols(
         docs: crate::DocCommentMap::default(),
         diagnostics: Vec::new(),
         pool: &program.pool,
+        import_aliases: rustc_hash::FxHashMap::default(),
     };
 
     for doc in &program.docs {
@@ -145,7 +146,14 @@ pub fn resolve_with_symbols(
         docs,
         diagnostics,
         pool: &program.pool,
+        import_aliases: rustc_hash::FxHashMap::default(),
     };
+
+    for import in &program.imports {
+        if let arandu_parser::ImportDecl::External { source, alias, .. } = import {
+            resolver.import_aliases.insert(alias.clone(), source.clone());
+        }
+    }
 
     let global = resolver.symbols.global_scope();
     for decl_id in &program.decls {
@@ -167,4 +175,5 @@ struct Resolver<'a> {
     docs: crate::DocCommentMap,
     diagnostics: Vec<crate::Diagnostic>,
     pool: &'a arandu_parser::ast_pool::AstPool,
+    import_aliases: rustc_hash::FxHashMap<String, String>,
 }

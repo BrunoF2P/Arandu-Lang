@@ -519,3 +519,45 @@ func main() {
         diag.hints
     );
 }
+
+#[test]
+fn resolves_external_import_alias() {
+    let program = arandu_parser::parse(
+        r#"
+        module tests.external
+        import "github.com/empresa/auth" as auth
+        func main() {
+            auth.userService.login()
+        }
+        "#,
+    )
+    .unwrap();
+    
+    let (mut symbols, resolved, docs, diagnostics) = arandu_resolve::name_resolution::collect_symbols(&program);
+    let span = Span::new(0, 0, 0);
+    symbols.define_module_member("github.com/empresa/auth.userService", "login", span).unwrap();
+    
+    let result = arandu_resolve::name_resolution::resolve_with_symbols(symbols, resolved, docs, diagnostics, &program);
+    assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
+}
+
+#[test]
+fn resolves_external_import_alias_type() {
+    let program = arandu_parser::parse(
+        r#"
+        module tests.external_type
+        import "github.com/empresa/auth" as auth
+        func main() {
+            x: auth.userService.User = 0
+        }
+        "#,
+    )
+    .unwrap();
+    
+    let (mut symbols, resolved, docs, diagnostics) = arandu_resolve::name_resolution::collect_symbols(&program);
+    let span = Span::new(0, 0, 0);
+    symbols.define_module_member("github.com/empresa/auth.userService", "User", span).unwrap();
+    
+    let result = arandu_resolve::name_resolution::resolve_with_symbols(symbols, resolved, docs, diagnostics, &program);
+    assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
+}

@@ -218,6 +218,14 @@ fn import_alias() {
 }
 
 #[test]
+fn import_external() {
+    assert_contract_ast(
+        "import_external",
+        "Program @1:1-2:41\n  Module @1:1-1:30 tests.contract.imports\n  Import @2:1-2:41 \"github.com/empresa/auth\" as auth",
+    );
+}
+
+#[test]
 fn list_trailing_comma() {
     assert_contract_ast(
         "list_trailing_comma",

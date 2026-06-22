@@ -63,15 +63,34 @@ impl<'a> Resolver<'a> {
     }
 
     pub(crate) fn is_namespace(&self, scope: ScopeId, name: &str) -> bool {
-        if self.symbols.lookup_module(scope, name).is_some() {
+        let root = name.split('.').next().unwrap_or(name);
+        if self.symbols.lookup_module(scope, root).is_some() {
             return true;
         }
-        self.symbols.lookup_value(scope, name).is_some_and(|id| {
+        self.symbols.lookup_value(scope, root).is_some_and(|id| {
             matches!(
                 self.symbols.get(id).kind,
                 SymbolKind::ImportValue | SymbolKind::Module
             )
         })
+    }
+
+    pub(crate) fn expand_namespace_alias(&self, namespace: &str) -> String {
+        let mut segments = namespace.split('.');
+        if let Some(first) = segments.next() {
+            if let Some(expanded) = self.import_aliases.get(first) {
+                let rest: Vec<&str> = segments.collect();
+                if rest.is_empty() {
+                    expanded.clone()
+                } else {
+                    format!("{expanded}.{}", rest.join("."))
+                }
+            } else {
+                namespace.to_string()
+            }
+        } else {
+            namespace.to_string()
+        }
     }
 
     pub(crate) fn resolve_namespace_member(
@@ -85,7 +104,8 @@ impl<'a> Resolver<'a> {
         if !self.is_namespace(scope, namespace) {
             return false;
         }
-        if let Some(symbol) = self.symbols.lookup_module_member(namespace, member) {
+        let expanded = self.expand_namespace_alias(namespace);
+        if let Some(symbol) = self.symbols.lookup_module_member(&expanded, member) {
             self.resolved.expr_ref(expr, symbol);
         } else {
             self.diagnostics.push(Diagnostic::error(

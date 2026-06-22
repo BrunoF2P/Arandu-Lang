@@ -45,15 +45,18 @@ impl<'a> Resolver<'a> {
         let Some(root) = name.path.first() else {
             return false;
         };
-        if name.path.len() > 1 && self.symbols.lookup_module(scope, root).is_some() {
-            let member = &name.path[1];
-            if let Some(symbol) = self.symbols.lookup_module_member(root, member) {
+        if name.path.len() > 1 && self.is_namespace(scope, root) {
+            let namespace_parts = &name.path[0..name.path.len() - 1];
+            let namespace = namespace_parts.join(".");
+            let member = name.path.last().unwrap();
+            let expanded_namespace = self.expand_namespace_alias(&namespace);
+            if let Some(symbol) = self.symbols.lookup_module_member(&expanded_namespace, member) {
                 self.resolved.type_ref(name.span, symbol);
                 return true;
             }
             self.diagnostics.push(Diagnostic::error(
                 DiagCode::M002UndefinedNamespaceMember,
-                format!("namespace member '{root}.{member}' is not declared"),
+                format!("namespace member '{namespace}.{member}' is not declared"),
                 name.span,
             ));
             return false;

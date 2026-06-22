@@ -35,13 +35,20 @@ pub enum ImportDecl {
         items: Vec<ImportItem>,
         from: Vec<String>,
     },
+    External {
+        span: Span,
+        source: String,
+        alias: String,
+    },
 }
 
 impl ImportDecl {
     #[must_use]
     pub fn span(&self) -> Span {
         match self {
-            ImportDecl::Module { span, .. } | ImportDecl::Named { span, .. } => *span,
+            ImportDecl::Module { span, .. }
+            | ImportDecl::Named { span, .. }
+            | ImportDecl::External { span, .. } => *span,
         }
     }
 }

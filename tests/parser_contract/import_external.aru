@@ -1,0 +1,2 @@
+module tests.contract.imports
+import "github.com/empresa/auth" as auth

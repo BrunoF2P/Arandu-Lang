@@ -30,6 +30,10 @@ impl<'a> Resolver<'a> {
                     self.define(scope, name, kind, item.span);
                 }
             }
+            ImportDecl::External { span, source, alias } => {
+                self.define(scope, alias, SymbolKind::Module, *span);
+                self.import_aliases.insert(alias.clone(), source.clone());
+            }
         }
     }
 

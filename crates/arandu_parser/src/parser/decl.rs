@@ -82,6 +82,20 @@ impl<'a> Parser<'a> {
             return Ok(import);
         }
 
+        if self.at_kind_name("STRING_START") {
+            let source = self.parse_string_literal()?;
+            self.expect_name("KW_AS")?;
+            let alias = self.expect_import_name()?;
+            self.expect_optional_semicolon_after_module_path()?;
+            let import = ImportDecl::External {
+                span: self.span_from_mark(start),
+                source,
+                alias,
+            };
+            self.attach_docs(docs, import.span());
+            return Ok(import);
+        }
+
         let path = self.parse_module_path()?;
         self.expect_optional_semicolon_after_module_path()?;
         let import = ImportDecl::Module {
@@ -90,6 +104,30 @@ impl<'a> Parser<'a> {
         };
         self.attach_docs(docs, import.span());
         Ok(import)
+    }
+
+    pub(super) fn parse_string_literal(&mut self) -> Result<String, ParseError> {
+        self.expect_name("STRING_START")?;
+        let mut text = String::new();
+        while !self.at_kind_name("STRING_END") {
+            match &self.current().kind {
+                TokenKind::StringText | TokenKind::StringEscape => {
+                    text.push_str(self.current_text());
+                    self.consume();
+                }
+                _ => {
+                    return Err(ParseError::new(
+                        ParseErrorCode::ExpectedToken,
+                        "expected string content",
+                        self.current(),
+                        self.file_id,
+                        self.source,
+                    ));
+                }
+            }
+        }
+        self.expect_name("STRING_END")?;
+        Ok(text)
     }
 
     pub(super) fn parse_top_level_decl(&mut self) -> Result<TopLevelDecl, ParseError> {

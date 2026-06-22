@@ -13,6 +13,7 @@ impl<'a> Resolver<'a> {
             docs: DocCommentMap::default(),
             diagnostics: Vec::new(),
             pool,
+            import_aliases: rustc_hash::FxHashMap::default(),
         };
         resolver.define_prelude();
         resolver

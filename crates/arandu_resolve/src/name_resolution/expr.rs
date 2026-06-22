@@ -74,13 +74,10 @@ impl<'a> Resolver<'a> {
                 }
             }
             ExprKind::Field { base, field } | ExprKind::SafeField { base, field } => {
-                let base_kind = self.pool.expr(*base);
-                if let ExprKind::Path { path } = base_kind
-                    && let Some(root) = path.first()
-                    && path.len() == 1
-                    && self.resolve_namespace_member(scope, root, field, expr, span)
-                {
-                    return;
+                if let Some((namespace, member)) = self.flatten_namespace_path(expr) {
+                    if self.resolve_namespace_member(scope, &namespace, &member, expr, span) {
+                        return;
+                    }
                 }
                 self.resolve_expr(scope, *base);
             }
@@ -283,5 +280,37 @@ impl<'a> Resolver<'a> {
         } else {
             self.define(scope, &field.name, SymbolKind::Local, field.span);
         }
+    }
+
+    fn flatten_namespace_path(
+        &self,
+        expr: arandu_parser::ast_pool::ExprId,
+    ) -> Option<(String, String)> {
+        use arandu_parser::ast_pool::{ExprId, ExprKind};
+        let mut current = expr;
+        let mut segments = Vec::new();
+        loop {
+            match self.pool.expr(current) {
+                ExprKind::Field { base, field } | ExprKind::SafeField { base, field } => {
+                    segments.push(field.clone());
+                    current = *base;
+                }
+                ExprKind::Path { path } => {
+                    if let Some(root) = path.first()
+                        && path.len() == 1
+                    {
+                        segments.push(root.clone());
+                        break;
+                    } else {
+                        return None;
+                    }
+                }
+                _ => return None,
+            }
+        }
+        segments.reverse();
+        let member = segments.pop()?;
+        let namespace = segments.join(".");
+        Some((namespace, member))
     }
 }
