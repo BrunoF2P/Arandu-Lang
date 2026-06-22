@@ -11,7 +11,7 @@ use super::types::ArType;
 /// Unlike the `SymbolTable` (which tracks names in scopes), `TyCtx` maps
 /// each `SymbolId` to its `ArType`. It also tracks the expected return
 /// type of the current function and whether we're inside a loop.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct TyCtx {
     /// Map from `SymbolId` to its inferred/declared `ArType`.
     bindings: Vec<Option<ArType>>,
@@ -55,11 +55,20 @@ impl TyCtx {
     }
 
     /// Look up the type for a symbol.
+    ///
+    /// Reports to the global perf counters when `-Zprofile-queries` is active.
     #[must_use]
     pub fn lookup(&self, symbol: SymbolId) -> Option<&ArType> {
-        self.bindings
+        let result = self
+            .bindings
             .get(symbol.0 as usize)
-            .and_then(|opt| opt.as_ref())
+            .and_then(|opt| opt.as_ref());
+        if result.is_some() {
+            arandu_base::perf::track_query_hit();
+        } else {
+            arandu_base::perf::track_query_miss();
+        }
+        result
     }
 
     // ── Return type stack ───────────────────────────────────────────

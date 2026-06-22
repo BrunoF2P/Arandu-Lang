@@ -79,6 +79,7 @@ fn usage_and_exit() -> ! {
     eprintln!(
         "usage: arandu_cli <lex|parse|check|hir|amir|run> <path> [--debug] [--opt] [--parallel]"
     );
+    eprintln!("       -Z flags: -Ztime-passes  -Zprofile-queries  -Zprint-alloc-stats  -Zdump-mir");
 
     process::exit(2);
 }
@@ -103,15 +104,20 @@ fn main() {
     let mut opt = false;
     let mut parallel = false;
     let mut args = Vec::new();
+    let mut z_flags: Vec<String> = Vec::new();
 
     for arg in env::args() {
         match arg.as_str() {
             "--debug" => debug = true,
             "--opt" => opt = true,
             "--parallel" => parallel = true,
+            s if s.starts_with("-Z") => z_flags.push(arg.clone()),
             _ => args.push(arg),
         }
     }
+
+    // Initialise global perf flags (written once, read-only afterwards).
+    arandu_base::init_z_flags(&z_flags);
 
     if args.len() != 3 {
         usage_and_exit();
@@ -236,28 +242,44 @@ fn main() {
             },
 
             "check" => {
-                let checked = parse_and_check(&source, &filepath);
-                let hir =
+                let checked = {
+                    arandu_base::time_pass!("parse+check");
+                    parse_and_check(&source, &filepath)
+                };
+                arandu_base::perf_info!("Syntax analysis and type-check completed");
+
+                let hir = {
+                    arandu_base::time_pass!("lower-hir");
                     match arandu_semantics::lower_to_hir(&checked.type_check, &checked.program) {
                         Ok(hir) => hir,
                         Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
-                    };
+                    }
+                };
+                arandu_base::perf_info!("HIR lowering completed");
+
                 validate_hir_and_analyze(&hir, &checked.type_check, &filepath);
-                if let Err(diags) = arandu_semantics::lower_to_amir(&checked.type_check, &hir) {
-                    print_diagnostics_and_exit(&diags, &filepath);
+                {
+                    arandu_base::time_pass!("lower-amir");
+                    if let Err(diags) = arandu_semantics::lower_to_amir(&checked.type_check, &hir) {
+                        print_diagnostics_and_exit(&diags, &filepath);
+                    }
                 }
+                arandu_base::perf_info!("Compilation verified successfully — no errors found");
                 println!("ok");
             }
 
             "hir" => {
-                let checked = parse_and_check(&source, &filepath);
-
-                let hir =
+                let checked = {
+                    arandu_base::time_pass!("parse+check");
+                    parse_and_check(&source, &filepath)
+                };
+                let hir = {
+                    arandu_base::time_pass!("lower-hir");
                     match arandu_semantics::lower_to_hir(&checked.type_check, &checked.program) {
                         Ok(hir) => hir,
                         Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
-                    };
-
+                    }
+                };
                 validate_hir_and_analyze(&hir, &checked.type_check, &filepath);
 
                 if debug {
@@ -269,27 +291,33 @@ fn main() {
                         show_spans: false,
                         type_interner: Some(&checked.type_check.type_info.type_interner),
                     };
-
                     print!("{}", hir.pretty_print(&ctx));
                 }
             }
 
             "amir" => {
-                let checked = parse_and_check(&source, &filepath);
-
-                let hir =
+                let checked = {
+                    arandu_base::time_pass!("parse+check");
+                    parse_and_check(&source, &filepath)
+                };
+                let hir = {
+                    arandu_base::time_pass!("lower-hir");
                     match arandu_semantics::lower_to_hir(&checked.type_check, &checked.program) {
                         Ok(hir) => hir,
                         Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
-                    };
-
+                    }
+                };
                 validate_hir_and_analyze(&hir, &checked.type_check, &filepath);
 
-                let mut amir = match arandu_semantics::lower_to_amir(&checked.type_check, &hir) {
-                    Ok(amir) => amir,
-                    Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
+                let mut amir = {
+                    arandu_base::time_pass!("lower-amir");
+                    match arandu_semantics::lower_to_amir(&checked.type_check, &hir) {
+                        Ok(amir) => amir,
+                        Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
+                    }
                 };
                 if opt {
+                    arandu_base::time_pass!("optimize-amir");
                     arandu_semantics::optimize_amir(&mut amir);
                 }
 
@@ -307,32 +335,50 @@ fn main() {
             }
 
             "run" => {
-                let checked = parse_and_check(&source, &filepath);
+                let checked = {
+                    arandu_base::time_pass!("parse+check");
+                    parse_and_check(&source, &filepath)
+                };
+                arandu_base::perf_info!("Syntax analysis and type-check completed");
 
-                let hir =
+                let hir = {
+                    arandu_base::time_pass!("lower-hir");
                     match arandu_semantics::lower_to_hir(&checked.type_check, &checked.program) {
                         Ok(hir) => hir,
                         Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
-                    };
-
+                    }
+                };
+                arandu_base::perf_info!("HIR lowering completed");
                 validate_hir_and_analyze(&hir, &checked.type_check, &filepath);
 
-                let mut amir = match arandu_semantics::lower_to_amir(&checked.type_check, &hir) {
-                    Ok(amir) => amir,
-                    Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
+                let mut amir = {
+                    arandu_base::time_pass!("lower-amir");
+                    match arandu_semantics::lower_to_amir(&checked.type_check, &hir) {
+                        Ok(amir) => amir,
+                        Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
+                    }
                 };
+                arandu_base::perf_info!("AMIR lowering completed");
+
                 if opt {
+                    arandu_base::time_pass!("optimize-amir");
                     arandu_semantics::optimize_amir(&mut amir);
+                    arandu_base::perf_info!("Optimisation passes applied");
                 }
 
                 use arandu_semantics::{CodegenBackend, CompiledCode};
-                let backend = arandu_backend_cranelift::CraneliftBackend::new();
-                let output =
+                let output = {
+                    arandu_base::time_pass!("codegen");
+                    let backend = arandu_backend_cranelift::CraneliftBackend::new();
                     match CodegenBackend::compile(backend, &amir, &checked.type_check.symbols, &())
                     {
                         Ok(out) => out,
                         Err(diag) => print_diagnostics_and_exit(&[diag], &filepath),
-                    };
+                    }
+                };
+                arandu_base::perf_info!("Machine code generated (Cranelift JIT backend)");
+
+                arandu_base::print_perf_summary();
 
                 unsafe {
                     if let Some(main_fn) =
@@ -350,4 +396,6 @@ fn main() {
             _ => unreachable!(),
         }
     }
+
+    arandu_base::print_perf_summary();
 }

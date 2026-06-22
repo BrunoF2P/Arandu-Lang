@@ -29,6 +29,7 @@ impl BumpArena {
     }
 
     /// Allocates memory with the given `Layout`. Commits pages (64KB chunks) lazily as needed.
+    /// When `-Zprint-alloc-stats` is set, records the request in `self.stats`.
     #[must_use]
     pub fn alloc_layout(&self, layout: std::alloc::Layout) -> *mut u8 {
         let align = layout.align();
@@ -64,6 +65,8 @@ impl BumpArena {
                 .compare_exchange_weak(current_bump, next_bump, Ordering::SeqCst, Ordering::Relaxed)
                 .is_ok()
             {
+                // Report to global perf counters. No-op when -Zprint-alloc-stats is off.
+                crate::perf::track_alloc(next_bump - current_bump);
                 return unsafe { self.vm.base_ptr().add(aligned_bump) };
             }
         }

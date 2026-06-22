@@ -1,6 +1,7 @@
 pub mod bitset;
 pub mod index_vec;
 pub mod line_index;
+pub mod perf;
 pub mod scratch;
 pub mod source_registry;
 pub mod span;
@@ -17,6 +18,10 @@ pub mod arena;
 pub use bitset::{BitMatrix, BitSet};
 pub use index_vec::IndexVec;
 pub use line_index::LineIndex;
+pub use perf::{
+    any_z_flag_active, emit_info, init_z_flags, print_perf_summary, track_alloc,
+    track_query_hit, track_query_miss,
+};
 pub use scratch::with_scratch;
 pub use source_registry::{SourceFile, SourceRegistry};
 pub use span::Span;
