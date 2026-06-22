@@ -360,6 +360,12 @@ fn mangle_type_into(out: &mut String, ty: &ArType, symbols: &SymbolTable) {
                 mangle_type_into(out, inner_ty, symbols);
             });
         }
+        ArType::Coroutine(inner) => {
+            out.push_str("coro_");
+            arandu_middle::types::type_interner::with_resolved_type(*inner, |inner_ty| {
+                mangle_type_into(out, inner_ty, symbols);
+            });
+        }
         ArType::Void => out.push_str("void"),
         ArType::Err => out.push_str("err"),
         ArType::IntLiteral => out.push_str("int"),

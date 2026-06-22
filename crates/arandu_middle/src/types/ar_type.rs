@@ -34,6 +34,9 @@ pub enum ArType {
     /// `Option<T>` — optional value (`T?` is `Nullable`, not `Option`)
     Option(TypeId),
 
+    /// `Coroutine[T]` — coroutine machine state type returning T
+    Coroutine(TypeId),
+
     /// The `Err` type from the grammar
     Err,
 
@@ -169,6 +172,11 @@ impl ArType {
                     super::type_interner::with_resolved_type(*inner, |ty| ty.display(symbols));
                 format!("Option<{}>", inner_str)
             }
+            ArType::Coroutine(inner) => {
+                let inner_str =
+                    super::type_interner::with_resolved_type(*inner, |ty| ty.display(symbols));
+                format!("Coroutine<{}>", inner_str)
+            }
             ArType::Err => "Err".to_string(),
             ArType::Void => "void".to_string(),
             ArType::IntLiteral => "int".to_string(),
@@ -221,7 +229,8 @@ impl ArType {
             | ArType::Array(_, _)
             | ArType::Tuple(_)
             | ArType::Result(_, _)
-            | ArType::Option(_) => false,
+            | ArType::Option(_)
+            | ArType::Coroutine(_) => false,
         }
     }
 }

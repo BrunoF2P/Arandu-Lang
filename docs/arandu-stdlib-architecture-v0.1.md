@@ -82,9 +82,9 @@ arandu_core
  ├─ math         # Operações matemáticas básicas, trig, float/integer bounds
  ├─ cmp          # Ord, Eq, PartialEq, comparação de dados
  ├─ hash         # Interfaces de hashing e algoritmos puros de hashing de bloco
- ├─ future       # Trait Future básico e primitivas para async colorless
+ ├─ future       # Trait Future básico (implementado automaticamente pelo compilador para Coroutine[T])
  ├─ task         # Context, Waker, RawWaker (abstrações de execução)
- ├─ pin          # Abstrações de pinning de memória (fixação para corrotinas/OSSA)
+ ├─ pin          # Abstrações de pinning de memória (Pin/Unpin gerais; corrotinas usam OSSA Indices livres de Pin)
  ├─ cell         # Interior mutabilidade controlada (Cell, RefCell, UnsafeCell)
  ├─ marker       # Marcadores fundamentais do compilador (Send, Sync, Copy, Sized, PhantomData)
  ├─ borrow       # Abstrações de empréstimo (Borrow, BorrowMut)
@@ -97,7 +97,7 @@ arandu_core
 ```
 
 > [!IMPORTANT]
-> **A Semântica de Async no Core**: Os blocos de controle de tarefas assíncronas (`Future`, `Waker` e `Poll`) pertencem inteiramente ao `arandu_core`. O runtime de execução assíncrona (threads, syscalls) vive em camadas superiores, mas a semântica abstrata e as máquinas de estado geradas pelo compilador para o `await` dependem exclusivamente do `arandu_core`.
+> **A Semântica de Async no Core**: Os blocos de controle de tarefas assíncronas (`Future`, `Waker` e `Poll`) e o tipo embutido `Coroutine[T]` pertencem ao ecossistema do `arandu_core`. O compilador gera corrotinas (`Coroutine[T]`) debaixo do capô e implementa automaticamente o interface `Future[T]` para elas. O runtime de execução assíncrona (threads, syscalls) vive em camadas superiores, mas a semântica abstrata e as máquinas de estado geradas pelo compilador para o `await` dependem do `arandu_core`.
 
 ---
 

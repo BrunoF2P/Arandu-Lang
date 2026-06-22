@@ -160,6 +160,13 @@ pub fn unify(a: &ArType, b: &ArType) -> bool {
                 })
             }
         }
+        (ArType::Coroutine(inner_a), ArType::Coroutine(inner_b)) => {
+            *inner_a == *inner_b || {
+                super::type_interner::with_resolved_type(*inner_a, |ty_a| {
+                    super::type_interner::with_resolved_type(*inner_b, |ty_b| unify(ty_a, ty_b))
+                })
+            }
+        }
         (ArType::Err, ArType::Err) => true,
         (ArType::Void, ArType::Void) => true,
         _ => false,

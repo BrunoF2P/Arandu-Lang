@@ -84,6 +84,9 @@ pub enum ConstraintOrigin {
     /// `expr?` applied to a type that is neither `Result` nor `Option`.
     TryInvalid { span: Span },
 
+    /// `await expr` applied to a type that is not a `Coroutine`.
+    AwaitInvalid { span: Span },
+
     /// `base[index]` applied to non-array/slice or non-int index.
     InvalidIndex {
         base_span: Span,

@@ -233,6 +233,16 @@ pub fn constraint_to_diagnostic(
         .with_label(*span, format!("this has type '{found_str}'"))
         .with_hint("use a `Result<T, E>` or `Option<T>` value here"),
 
+        ConstraintOrigin::AwaitInvalid { span } => Diagnostic::error(
+            DiagCode::T032AwaitInvalid,
+            format!(
+                "the 'await' operator can only be applied to Coroutine<T>, found '{found_str}'"
+            ),
+            *span,
+        )
+        .with_label(*span, format!("this has type '{found_str}'"))
+        .with_hint("use a `Coroutine<T>` value here"),
+
         ConstraintOrigin::InvalidIndex {
             base_span,
             index_span,

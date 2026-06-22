@@ -94,6 +94,10 @@ pub(crate) fn lower_builtin_generic(
             let id = super::type_interner::intern_type(lowered[0].clone());
             Some(ArType::Option(id))
         }
+        ("Coroutine", 1) => {
+            let id = super::type_interner::intern_type(lowered[0].clone());
+            Some(ArType::Coroutine(id))
+        }
         _ => None,
     }
 }

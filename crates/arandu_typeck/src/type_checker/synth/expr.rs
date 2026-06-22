@@ -467,7 +467,9 @@ fn synth_expr_inner(checker: &mut TypeChecker<'_>, expr: ExprId) -> ArType {
         }
         ExprKind::AsyncBlock { block } => {
             let block_id = *block;
-            super::super::check::check_block(checker, checker.pool, checker.pool.block(block_id))
+            let block_ty = super::super::check::check_block(checker, checker.pool, checker.pool.block(block_id));
+            let inner_id = super::super::types::intern_type(block_ty);
+            ArType::Coroutine(inner_id)
         }
         ExprKind::UnsafeBlock { block } => {
             let block_id = *block;
@@ -738,13 +740,18 @@ fn synth_expr_inner(checker: &mut TypeChecker<'_>, expr: ExprId) -> ArType {
                     }
                 }
                 UnaryOp::Await => {
-                    report_unsupported(
-                        checker,
-                        span,
-                        "await",
-                        "v0.3 ASYNC: effect flags and async lowering",
-                    );
-                    ArType::Error
+                    if expr_ty.is_error() {
+                        ArType::Error
+                    } else if let ArType::Coroutine(inner) = expr_ty {
+                        super::super::types::type_interner::with_resolved_type(inner, |inner_ty| inner_ty.clone())
+                    } else {
+                        checker.add_constraint(
+                            ArType::Error,
+                            expr_ty.clone(),
+                            ConstraintOrigin::AwaitInvalid { span },
+                        );
+                        ArType::Error
+                    }
                 }
             }
         }

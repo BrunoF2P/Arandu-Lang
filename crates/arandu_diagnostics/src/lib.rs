@@ -115,6 +115,7 @@ pub enum DiagCode {
     T029RecursiveStructInfiniteSize,
     T030DuplicateFieldDecl,
     T031Reserved,
+    T032AwaitInvalid,
 
     // ── Lowering (L) ──
     L001LoweringUnresolvedSymbol,
@@ -208,6 +209,7 @@ impl DiagCode {
             DiagCode::T029RecursiveStructInfiniteSize => "T029",
             DiagCode::T030DuplicateFieldDecl => "T030",
             DiagCode::T031Reserved => "T031",
+            DiagCode::T032AwaitInvalid => "T032",
             DiagCode::L001LoweringUnresolvedSymbol => "L001",
             DiagCode::G001GenericInstantiationCycle => "G001",
             DiagCode::G002GenericInstantiationLimit => "G002",

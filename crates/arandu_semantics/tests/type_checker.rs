@@ -1139,3 +1139,27 @@ fn test_interface_missing_method_suggestions() {
         result.diagnostics
     );
 }
+
+#[test]
+fn test_async_block_and_await_typecheck() {
+    let source = "
+        func main() void {
+            x: Coroutine<int> = async { 42; };
+            y: int = await x;
+        }
+    ";
+    let program = parse(source).expect("Failed to parse");
+    let resolution = resolve(&program);
+    let result = type_check(resolution, &program);
+    assert!(result.diagnostics.is_empty(), "Expected no type errors, but got {:?}", result.diagnostics);
+}
+
+#[test]
+fn test_await_invalid_type() {
+    let source = "
+        func main() void {
+            x: int = await 42;
+        }
+    ";
+    assert_type_errors!(source, [T032AwaitInvalid]);
+}
