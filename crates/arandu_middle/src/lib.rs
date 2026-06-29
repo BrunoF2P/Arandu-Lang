@@ -8,8 +8,11 @@ pub mod layout;
 pub mod literal_pool;
 pub mod ops;
 pub mod resolved;
+pub mod session;
 pub mod symbol_table;
 pub mod types;
+
+pub use session::CompileSession;
 
 pub use arandu_base::arena;
 pub use arandu_base::bitset;

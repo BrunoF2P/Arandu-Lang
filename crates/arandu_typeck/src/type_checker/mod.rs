@@ -18,17 +18,32 @@ use types::{ArType, TypeId, TypeInterner};
 
 // ── Entry point ─────────────────────────────────────────────────────
 
+use arandu_middle::CompileSession;
+
 #[must_use]
-pub fn type_check(resolution: ResolutionResult, program: &Program) -> TypeCheckResult {
-    let mut checker = TypeChecker::new(
+pub fn type_check_with_session(
+    resolution: ResolutionResult,
+    program: &Program,
+    session: &mut CompileSession,
+) -> TypeCheckResult {
+    let mut checker = TypeChecker::new_with_interner(
         resolution.symbols,
         resolution.resolved,
         resolution.diagnostics,
         &program.pool,
+        std::mem::take(&mut session.type_interner),
     );
     let _scope = types::type_interner::InternerScope::new_mut(&mut checker.type_info.type_interner);
     check::check_program(&mut checker, program);
-    checker.finish()
+    let res = checker.finish();
+    session.type_interner = res.type_info.type_interner.clone();
+    res
+}
+
+#[must_use]
+pub fn type_check(resolution: ResolutionResult, program: &Program) -> TypeCheckResult {
+    let mut session = CompileSession::new();
+    type_check_with_session(resolution, program, &mut session)
 }
 
 // ── TypeChecker state ───────────────────────────────────────────────
@@ -52,15 +67,35 @@ impl<'a> TypeChecker<'a> {
         diagnostics: Vec<Diagnostic>,
         pool: &'a AstPool,
     ) -> Self {
+        Self::new_with_interner(symbols, resolved, diagnostics, pool, TypeInterner::new())
+    }
+
+    #[must_use]
+    pub fn new_with_interner(
+        symbols: SymbolTable,
+        resolved: ResolvedNames,
+        diagnostics: Vec<Diagnostic>,
+        pool: &'a AstPool,
+        type_interner: TypeInterner,
+    ) -> Self {
         Self {
             symbols,
             resolved,
             ctx: TyCtx::new(),
-            type_info: TypeInfo::new(),
+            type_info: TypeInfo::with_interner(type_interner),
             diagnostics,
             type_scope_id: None,
             pool,
         }
+    }
+
+    pub fn intern(&mut self, ty: ArType) -> TypeId {
+        self.type_info.type_interner.intern(ty)
+    }
+
+    #[must_use]
+    pub fn resolve(&self, id: TypeId) -> &ArType {
+        self.type_info.type_interner.resolve(id)
     }
 
     /// Scope used when lowering type expressions in the current context.
@@ -144,8 +179,13 @@ pub struct TypeInfo {
 impl TypeInfo {
     #[must_use]
     pub fn new() -> Self {
+        Self::with_interner(TypeInterner::new())
+    }
+
+    #[must_use]
+    pub fn with_interner(type_interner: TypeInterner) -> Self {
         Self {
-            type_interner: TypeInterner::new(),
+            type_interner,
             expr_types: Vec::new(),
             decl_types: FxHashMap::default(),
             struct_fields: FxHashMap::default(),

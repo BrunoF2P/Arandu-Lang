@@ -93,6 +93,13 @@ impl TypeInterner {
     pub fn display(&self, id: TypeId, symbols: &SymbolTable) -> String {
         self.resolve(id).display(symbols)
     }
+
+    /// Merge all types from another interner into self.
+    pub fn merge_from(&mut self, other: &Self) {
+        for ty in &other.types {
+            self.intern(ty.clone());
+        }
+    }
 }
 
 impl Default for TypeInterner {
@@ -102,39 +109,48 @@ impl Default for TypeInterner {
 }
 
 use std::cell::RefCell;
+use std::ptr::NonNull;
 
 thread_local! {
-    pub static CURRENT_INTERNER: RefCell<Option<*const TypeInterner>> = const { RefCell::new(None) };
-    pub static CURRENT_INTERNER_MUT: RefCell<Option<*mut TypeInterner>> = const { RefCell::new(None) };
+    pub static CURRENT_INTERNER: RefCell<Option<NonNull<TypeInterner>>> = const { RefCell::new(None) };
+    pub static CURRENT_INTERNER_MUT: RefCell<Option<NonNull<TypeInterner>>> = const { RefCell::new(None) };
 }
 
 pub struct InternerScope {
-    old: Option<*const TypeInterner>,
-    old_mut: Option<*mut TypeInterner>,
+    old: Option<NonNull<TypeInterner>>,
+    old_mut: Option<NonNull<TypeInterner>>,
 }
 
 impl InternerScope {
+    #[must_use]
+    pub fn is_active() -> bool {
+        CURRENT_INTERNER.with(|c| c.borrow().is_some())
+    }
+
     pub fn new(interner: &TypeInterner) -> Self {
+        let nn = NonNull::from(interner).cast::<TypeInterner>();
         let old = CURRENT_INTERNER.with(|c| {
             let mut slot = c.borrow_mut();
             let old = *slot;
-            *slot = Some(interner as *const TypeInterner);
+            *slot = Some(nn);
             old
         });
         Self { old, old_mut: None }
     }
 
     pub fn new_mut(interner: &mut TypeInterner) -> Self {
+        let nn = NonNull::from(interner as &TypeInterner);
+        let nn_mut = NonNull::from(&mut *interner);
         let old = CURRENT_INTERNER.with(|c| {
             let mut slot = c.borrow_mut();
             let old = *slot;
-            *slot = Some(interner as *const TypeInterner);
+            *slot = Some(nn);
             old
         });
         let old_mut = CURRENT_INTERNER_MUT.with(|c| {
             let mut slot = c.borrow_mut();
             let old = *slot;
-            *slot = Some(interner as *mut TypeInterner);
+            *slot = Some(nn_mut);
             old
         });
         Self { old, old_mut }
@@ -154,8 +170,8 @@ impl Drop for InternerScope {
 
 pub fn intern_type(ty: ArType) -> TypeId {
     CURRENT_INTERNER_MUT.with(|c| {
-        if let Some(ptr) = *c.borrow() {
-            let interner = unsafe { &mut *ptr };
+        if let Some(mut ptr) = *c.borrow() {
+            let interner = unsafe { ptr.as_mut() };
             interner.intern(ty)
         } else {
             panic!("No active TypeInterner in CURRENT_INTERNER_MUT");
@@ -166,7 +182,7 @@ pub fn intern_type(ty: ArType) -> TypeId {
 pub fn with_resolved_type<R, F: FnOnce(&ArType) -> R>(id: TypeId, f: F) -> R {
     CURRENT_INTERNER.with(|c| {
         if let Some(ptr) = *c.borrow() {
-            let interner = unsafe { &*ptr };
+            let interner = unsafe { ptr.as_ref() };
             f(interner.resolve(id))
         } else {
             f(&ArType::Error)
