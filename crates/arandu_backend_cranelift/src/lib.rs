@@ -7,9 +7,8 @@ pub mod types;
 pub use crate::jit::CompiledModule;
 
 use crate::jit::AranduJit;
-use arandu_base::span::Span;
 use arandu_semantics::amir::AmirProgram;
-use arandu_semantics::{CodegenBackend, CompiledCode, DiagCode, Diagnostic, SymbolTable};
+use arandu_semantics::{CodegenBackend, CompiledCode, Diagnostic, SymbolTable};
 
 pub struct CraneliftBackend {
     jit: AranduJit,
@@ -48,9 +47,7 @@ impl CodegenBackend for CraneliftBackend {
         symbols: &SymbolTable,
         _config: &Self::TargetConfig,
     ) -> Result<Self::CompilationOutput, Diagnostic> {
-        self.jit
-            .compile_program(program, symbols)
-            .map_err(|err| Diagnostic::ice(DiagCode::ICEL001, err, Span::new(0, 0, 0)))
+        self.jit.compile_program(program, symbols)
     }
 }
 

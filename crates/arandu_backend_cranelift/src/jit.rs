@@ -1,12 +1,17 @@
 use crate::abi::build_signature;
 use crate::translator::FunctionTranslator;
-use arandu_semantics::SymbolTable;
+use arandu_base::span::Span;
+use arandu_semantics::{DiagCode, Diagnostic, SymbolTable};
 use arandu_semantics::amir::AmirProgram;
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{FuncId, Linkage, Module};
 use rustc_hash::FxHashMap;
+
+fn codegen_ice(message: impl Into<String>) -> Diagnostic {
+    Diagnostic::ice(DiagCode::ICEGEN001, message, Span::new(0, 0, 0))
+}
 
 pub struct AranduJit {
     pub module: JITModule,
@@ -41,7 +46,7 @@ impl AranduJit {
         mut self,
         program: &AmirProgram,
         symbols: &SymbolTable,
-    ) -> Result<CompiledModule, String> {
+    ) -> Result<CompiledModule, Diagnostic> {
         let mut func_ids = FxHashMap::default();
         let default_call_conv = self.module.isa().default_call_conv();
         let ptr_type = self.module.target_config().pointer_type();
@@ -60,7 +65,9 @@ impl AranduJit {
             let func_id = self
                 .module
                 .declare_function(&sym.name, Linkage::Export, &sig)
-                .map_err(|e| format!("Failed to declare function {}: {:?}", sym.name, e))?;
+                .map_err(|err| {
+                    codegen_ice(format!("failed to declare function '{}': {err:?}", sym.name))
+                })?;
             func_ids.insert(sym.name.clone(), func_id);
 
             // Also find all NamespaceMember symbols that refer to this function (by matching name ending and span)
@@ -89,7 +96,12 @@ impl AranduJit {
                 let sig = build_signature(param_types, return_type, default_call_conv, ptr_type);
                 self.module
                     .declare_function(c_name, Linkage::Import, &sig)
-                    .map_err(|e| format!("Failed to declare extern function {}: {:?}", c_name, e))?
+                    .map_err(|err| {
+                        codegen_ice(format!(
+                            "failed to declare extern function '{}': {err:?}",
+                            c_name
+                        ))
+                    })?
             };
             func_ids.insert(sym.name.clone(), func_id);
             if c_name != sym.name {
@@ -115,31 +127,30 @@ impl AranduJit {
 
             {
                 let builder = FunctionBuilder::new(&mut context.func, &mut builder_context);
-                let mut translator = FunctionTranslator {
+                let mut translator = FunctionTranslator::new(
                     builder,
-                    module: &mut self.module,
-                    symbol_table: symbols,
-                    func_ids: &func_ids,
-                    block_map: FxHashMap::default(),
-                    temp_map: FxHashMap::default(),
-                    local_map: FxHashMap::default(),
+                    &mut self.module,
+                    symbols,
+                    &func_ids,
                     ptr_type,
-                    literal_pool: &program.literal_pool,
-                    current_func: func,
-                };
-                translator.translate();
+                    &program.literal_pool,
+                    func,
+                );
+                translator.translate()?;
             }
 
             self.module
                 .define_function(func_id, &mut context)
-                .map_err(|e| format!("Failed to define function {}: {:?}", sym.name, e))?;
+                .map_err(|err| {
+                    codegen_ice(format!("failed to define function '{}': {err:?}", sym.name))
+                })?;
             self.module.clear_context(&mut context);
         }
 
         // 3. Finalize in-memory compilation
         self.module
             .finalize_definitions()
-            .map_err(|e| format!("Failed to finalize JIT definitions: {:?}", e))?;
+            .map_err(|err| codegen_ice(format!("failed to finalize JIT definitions: {err:?}")))?;
 
         Ok(CompiledModule {
             module: self.module,

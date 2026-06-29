@@ -1,5 +1,6 @@
 use arandu_backend_cranelift::CraneliftBackend;
-use arandu_semantics::{lower_to_amir, lower_to_hir, resolve, type_check};
+use arandu_semantics::literal_pool::AmirLiteralEntry;
+use arandu_semantics::{DiagCode, lower_to_amir, lower_to_hir, resolve, type_check};
 
 fn compile_src(
     src: &str,
@@ -145,4 +146,27 @@ fn jit_unsigned_shift_right() {
     };
     // Logical shift: 0xFFFF_FFFF >> 1 = 0x7FFF_FFFF
     assert_eq!(result, 2_147_483_647);
+}
+
+#[test]
+fn jit_returns_ice_on_invalid_literal_pool() {
+    let (mut amir, symbols) = compile_src("func main(): int { return 42; }");
+    for entry in &mut amir.literal_pool.entries {
+        if let AmirLiteralEntry::Int(value) = entry {
+            *value = "not_an_int".to_string();
+            break;
+        }
+    }
+
+    let backend = CraneliftBackend::new();
+    let err = match backend.compile(&amir, &symbols) {
+        Err(err) => err,
+        Ok(_) => panic!("expected codegen ICE for invalid literal pool"),
+    };
+    assert_eq!(err.code, DiagCode::ICEGEN001);
+    assert!(
+        err.message.contains("invalid integer literal"),
+        "unexpected ICE message: {}",
+        err.message
+    );
 }

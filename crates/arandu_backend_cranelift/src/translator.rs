@@ -1,5 +1,6 @@
 use crate::types::{ClifType, ar_type_is_unsigned_integer, clif_type};
-use arandu_semantics::SymbolTable;
+use arandu_base::span::Span;
+use arandu_semantics::{DiagCode, Diagnostic, SymbolTable};
 use arandu_semantics::amir::{
     AmirBasicBlock, AmirConstant, AmirFunc, AmirOperand, AmirPlace, AmirProjection, AmirRvalue, AmirStmt,
     AmirTerminator, BlockId, InstrId, LocalId, TempId,
@@ -28,6 +29,34 @@ pub struct FunctionTranslator<'a, 'b> {
     pub ptr_type: Type,
     pub literal_pool: &'b arandu_semantics::literal_pool::AmirLiteralPool,
     pub current_func: &'b AmirFunc,
+    error: Option<Diagnostic>,
+}
+
+impl<'a, 'b> FunctionTranslator<'a, 'b> {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        builder: FunctionBuilder<'a>,
+        module: &'b mut JITModule,
+        symbol_table: &'b SymbolTable,
+        func_ids: &'b FxHashMap<String, FuncId>,
+        ptr_type: Type,
+        literal_pool: &'b arandu_semantics::literal_pool::AmirLiteralPool,
+        current_func: &'b AmirFunc,
+    ) -> Self {
+        Self {
+            builder,
+            module,
+            symbol_table,
+            func_ids,
+            block_map: FxHashMap::default(),
+            temp_map: FxHashMap::default(),
+            local_map: FxHashMap::default(),
+            ptr_type,
+            literal_pool,
+            current_func,
+            error: None,
+        }
+    }
 }
 
 impl<'a, 'b> FunctionTranslator<'a, 'b> {
@@ -42,7 +71,39 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
             })
     }
 
-    pub fn translate(&mut self) {
+    fn func_span(&self) -> Span {
+        self.symbol_table.get(self.current_func.symbol).span
+    }
+
+    fn record_ice(&mut self, message: impl Into<String>, span: Span) {
+        if self.error.is_none() {
+            self.error = Some(Diagnostic::ice(DiagCode::ICEGEN001, message, span));
+        }
+    }
+
+    fn poison_i32(&mut self) -> Value {
+        self.builder.ins().iconst(cranelift_codegen::ir::types::I32, 0)
+    }
+
+    fn temp_span(&self, temp_id: TempId) -> Span {
+        self.current_func
+            .temps
+            .iter()
+            .find(|temp| temp.id == temp_id)
+            .map(|temp| temp.span)
+            .unwrap_or_else(|| self.func_span())
+    }
+
+    fn local_span(&self, local_id: LocalId) -> Span {
+        self.current_func
+            .locals
+            .iter()
+            .find(|local| local.id == local_id)
+            .map(|local| local.span)
+            .unwrap_or_else(|| self.func_span())
+    }
+
+    pub fn translate(&mut self) -> Result<(), Diagnostic> {
         // Step 1: create all blocks
         for (idx, _) in self.current_func.blocks.iter().enumerate() {
             let block_id = BlockId::from_usize(idx);
@@ -89,9 +150,17 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
 
         // Step 7: seal all blocks
         self.builder.seal_all_blocks();
+
+        if let Some(error) = self.error.take() {
+            return Err(error);
+        }
+        Ok(())
     }
 
     fn translate_stmt(&mut self, stmt: &AmirStmt) {
+        if self.error.is_some() {
+            return;
+        }
         match stmt {
             AmirStmt::Assign { lhs, rhs } => {
                 let expected_ty = self.get_temp_clif_type(*lhs);
@@ -139,12 +208,22 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
                 let call_inst = match callee {
                     AmirOperand::FunctionRef(sym_id) => {
                         let sym = self.symbol_table.get(*sym_id);
-                        let func_id = self.func_ids.get(&sym.name).unwrap_or_else(|| {
-                            panic!("Function not declared: {}", sym.name);
-                        });
+                        let func_id = match self.func_ids.get(&sym.name) {
+                            Some(func_id) => *func_id,
+                            None => {
+                                self.record_ice(
+                                    format!(
+                                        "function '{}' was not declared in the JIT module",
+                                        sym.name
+                                    ),
+                                    sym.span,
+                                );
+                                return;
+                            }
+                        };
                         let local_ref = self
                             .module
-                            .declare_func_in_func(*func_id, self.builder.func);
+                            .declare_func_in_func(func_id, self.builder.func);
                         
                         let sig_id = self.builder.func.dfg.ext_funcs[local_ref].signature;
                         let expected_tys: Vec<Type> = self.builder.func.dfg.signatures[sig_id]
@@ -189,15 +268,27 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
     }
 
     fn translate_store_place(&mut self, lhs: &AmirPlace, val: Value) {
+        if self.error.is_some() {
+            return;
+        }
         if lhs.projections.is_empty() {
             if let Some(&var) = self.local_map.get(&lhs.local) {
                 self.builder.def_var(var, val);
+            } else {
+                self.record_ice(
+                    "use of undeclared AMIR local in codegen",
+                    self.local_span(lhs.local),
+                );
             }
         } else {
             let mut ptr_val = if let Some(&var) = self.local_map.get(&lhs.local) {
                 self.builder.use_var(var)
             } else {
-                panic!("Use of undeclared local variable");
+                self.record_ice(
+                    "use of undeclared AMIR local in codegen",
+                    self.local_span(lhs.local),
+                );
+                return;
             };
 
             for i in 0..lhs.projections.len() - 1 {
@@ -209,7 +300,13 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
                             "buf" => 0,
                             "len" => 8,
                             "cap" => 16,
-                            _ => panic!("Unsupported field: {}", name),
+                            _ => {
+                                self.record_ice(
+                                    format!("unsupported struct field '{}' in codegen", name),
+                                    self.symbol_table.get(*symbol_id).span,
+                                );
+                                return;
+                            }
                         };
                         ptr_val = self.builder.ins().load(self.ptr_type, cranelift_codegen::ir::MemFlags::new(), ptr_val, offset);
                     }
@@ -233,7 +330,13 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
                         "buf" => 0,
                         "len" => 8,
                         "cap" => 16,
-                        _ => panic!("Unsupported field: {}", name),
+                        _ => {
+                            self.record_ice(
+                                format!("unsupported struct field '{}' in codegen", name),
+                                self.symbol_table.get(*symbol_id).span,
+                            );
+                            return;
+                        }
                     };
                     self.builder.ins().store(cranelift_codegen::ir::MemFlags::new(), val, ptr_val, offset);
                 }
@@ -248,14 +351,33 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
         }
     }
 
+    fn malloc_func_id(&mut self) -> Option<FuncId> {
+        match self.func_ids.get("malloc") {
+            Some(func_id) => Some(*func_id),
+            None => {
+                self.record_ice("malloc was not declared in the JIT module", self.func_span());
+                None
+            }
+        }
+    }
+
     fn translate_operand(&mut self, operand: &AmirOperand, expected_ty: Option<Type>) -> Value {
+        if self.error.is_some() {
+            return self.poison_i32();
+        }
+
         let mut val = match operand {
             AmirOperand::Copy(temp_id) | AmirOperand::Move(temp_id) => {
-                let var = self
-                    .temp_map
-                    .get(temp_id)
-                    .expect("Use of undeclared temp variable");
-                self.builder.use_var(*var)
+                match self.temp_map.get(temp_id) {
+                    Some(var) => self.builder.use_var(*var),
+                    None => {
+                        self.record_ice(
+                            "use of undeclared AMIR temp in codegen",
+                            self.temp_span(*temp_id),
+                        );
+                        return self.poison_i32();
+                    }
+                }
             }
             AmirOperand::Constant(c) => match c {
                 AmirConstant::Bool(b) => {
@@ -272,23 +394,56 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
                     let entry = self.literal_pool.get(*lit_id);
                     match entry {
                         arandu_semantics::literal_pool::AmirLiteralEntry::Int(s) => {
-                            let val: i64 = s.parse().unwrap_or_else(|_| {
-                                panic!("ICE: literal inteiro inválido no literal pool: '{s}'")
-                            });
+                            let parsed = s.parse::<i64>();
+                            let val = match parsed {
+                                Ok(val) => val,
+                                Err(_) => {
+                                    self.record_ice(
+                                        format!("invalid integer literal in AMIR literal pool: '{s}'"),
+                                        self.func_span(),
+                                    );
+                                    return self.poison_i32();
+                                }
+                            };
                             let ty = expected_ty.unwrap_or(cranelift_codegen::ir::types::I32);
                             self.builder.ins().iconst(ty, val)
                         }
                         arandu_semantics::literal_pool::AmirLiteralEntry::Float(s) => {
-                            let val: f64 = s.parse().unwrap_or_else(|_| {
-                                panic!("ICE: literal float inválido no literal pool: '{s}'")
-                            });
+                            let parsed = s.parse::<f64>();
+                            let val = match parsed {
+                                Ok(val) => val,
+                                Err(_) => {
+                                    self.record_ice(
+                                        format!("invalid float literal in AMIR literal pool: '{s}'"),
+                                        self.func_span(),
+                                    );
+                                    return self.poison_i32();
+                                }
+                            };
                             self.builder.ins().f64const(val)
                         }
                         arandu_semantics::literal_pool::AmirLiteralEntry::Str(s) => {
                             let str_bytes = s.as_bytes();
-                            let data_id = self.module.declare_data(&format!("str_lit_{}", lit_id.0), cranelift_module::Linkage::Local, false, false).unwrap_or_else(|err| {
-                                panic!("ICE: falha ao declarar data no JIT module: {:?}", err)
-                            });
+                            let data_id = match self
+                                .module
+                                .declare_data(
+                                    &format!("str_lit_{}", lit_id.0),
+                                    cranelift_module::Linkage::Local,
+                                    false,
+                                    false,
+                                )
+                            {
+                                Ok(data_id) => data_id,
+                                Err(err) => {
+                                    self.record_ice(
+                                        format!(
+                                            "failed to declare string literal in JIT module: {err:?}"
+                                        ),
+                                        self.func_span(),
+                                    );
+                                    return self.poison_i32();
+                                }
+                            };
                             let mut data_ctx = cranelift_module::DataDescription::new();
                             data_ctx.define(str_bytes.to_vec().into_boxed_slice());
                             let _ = self.module.define_data(data_id, &data_ctx);
@@ -324,6 +479,10 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
     }
 
     fn translate_rvalue(&mut self, rvalue: &AmirRvalue, expected_ty: Option<Type>) -> Value {
+        if self.error.is_some() {
+            return self.poison_i32();
+        }
+
         match rvalue {
             AmirRvalue::Use(op) => self.translate_operand(op, expected_ty),
             AmirRvalue::Binary { op, left, right } => {
@@ -345,16 +504,25 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
             }
             AmirRvalue::Load(place) => {
                 if place.projections.is_empty() {
-                    let var = self
-                        .local_map
-                        .get(&place.local)
-                        .expect("Use of undeclared local variable");
-                    self.builder.use_var(*var)
+                    match self.local_map.get(&place.local) {
+                        Some(var) => self.builder.use_var(*var),
+                        None => {
+                            self.record_ice(
+                                "use of undeclared AMIR local in codegen",
+                                self.local_span(place.local),
+                            );
+                            self.poison_i32()
+                        }
+                    }
                 } else {
                     let mut ptr_val = if let Some(&var) = self.local_map.get(&place.local) {
                         self.builder.use_var(var)
                     } else {
-                        panic!("Use of undeclared local variable");
+                        self.record_ice(
+                            "use of undeclared AMIR local in codegen",
+                            self.local_span(place.local),
+                        );
+                        return self.poison_i32();
                     };
 
                     for proj in &place.projections {
@@ -365,7 +533,13 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
                                     "buf" => 0,
                                     "len" => 8,
                                     "cap" => 16,
-                                    _ => panic!("Unsupported field: {}", name),
+                                    _ => {
+                                        self.record_ice(
+                                            format!("unsupported struct field '{}' in codegen", name),
+                                            self.symbol_table.get(*symbol_id).span,
+                                        );
+                                        return self.poison_i32();
+                                    }
                                 };
                                 let clif_ty = expected_ty.unwrap_or(self.ptr_type);
                                 ptr_val = self.builder.ins().load(clif_ty, cranelift_codegen::ir::MemFlags::new(), ptr_val, offset);
@@ -384,9 +558,9 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
                 }
             }
             AmirRvalue::StructLiteral { struct_symbol: _, fields } => {
-                let malloc_func_id = *self.func_ids.get("malloc").unwrap_or_else(|| {
-                    panic!("malloc not declared in JIT module");
-                });
+                let Some(malloc_func_id) = self.malloc_func_id() else {
+                    return self.poison_i32();
+                };
                 let local_ref = self.module.declare_func_in_func(malloc_func_id, self.builder.func);
                 let size_val = self.builder.ins().iconst(self.ptr_type, (fields.len() * 8) as i64);
                 let call_inst = self.builder.ins().call(local_ref, &[size_val]);
@@ -628,9 +802,9 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
             BinaryOp::Or => self.builder.ins().bor(lhs, rhs),
             BinaryOp::And => self.builder.ins().band(lhs, rhs),
             BinaryOp::RangeExclusive | BinaryOp::RangeInclusive => {
-                let malloc_func_id = *self.func_ids.get("malloc").unwrap_or_else(|| {
-                    panic!("malloc not declared in JIT module");
-                });
+                let Some(malloc_func_id) = self.malloc_func_id() else {
+                    return self.poison_i32();
+                };
                 let local_ref = self.module.declare_func_in_func(malloc_func_id, self.builder.func);
                 let size_val = self.builder.ins().iconst(self.ptr_type, 16);
                 let call_inst = self.builder.ins().call(local_ref, &[size_val]);
@@ -740,6 +914,9 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
 
 impl<'a, 'b> AmirVisitor for FunctionTranslator<'a, 'b> {
     fn visit_block(&mut self, block: &AmirBasicBlock) {
+        if self.error.is_some() {
+            return;
+        }
         let clif_block = self.block_map[&block.id];
         self.builder.switch_to_block(clif_block);
 
