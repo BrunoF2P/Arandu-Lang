@@ -4,10 +4,10 @@ struct Box<T: Display> {
     value: T
 }
 
-func identity<T>(value: T) T where T: Display {
+func identity<T>(value: T): T where T: Display {
     return value
 }
 
 func main() {
-    box = Box<int> { value: identity<int>(42) }
+    let box = Box<int> { value: identity<int>(42) }
 }

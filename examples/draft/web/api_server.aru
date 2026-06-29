@@ -3,7 +3,7 @@ module examples.draft.web.apiServer
 import web
 
 func main() {
-    app = web.server()
+    let app = web.server()
 
     app.get("/health") {
         return web.json({ status: "ok" })

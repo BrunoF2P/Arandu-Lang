@@ -5,6 +5,6 @@ public struct User<T> where T: Display {
     value: T
 }
 
-func User.greet(user: User<str>) str {
+func User.greet(user: User<str>): str {
     return user.name
 }

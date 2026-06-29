@@ -2,8 +2,8 @@ module examples.stable.semantics.deferErrdefer
 
 import io
 
-func writeReport(path: str) Result<void, Err> {
-    file, err = io.create(path)
+func writeReport(path: str) : Result<void, Err> {
+    let file, err = io.create(path)
     if err != nil {
         return Result.Err(err)
     }
@@ -11,7 +11,7 @@ func writeReport(path: str) Result<void, Err> {
     defer file.close()
     errdefer io.remove(path)
 
-    writeErr = file.write("ok")
+    let writeErr = file.write("ok")
     if writeErr != nil {
         return Result.Err(writeErr)
     }

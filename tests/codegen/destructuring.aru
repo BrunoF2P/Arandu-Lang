@@ -1,10 +1,10 @@
 import io
 
-func foo() (int, bool) {
+func foo(): (int, bool) {
     return 42, true
 }
 
 func main() {
-    pair = foo()
+    let pair = foo()
     io.println("done")
 }

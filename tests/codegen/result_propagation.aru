@@ -1,7 +1,7 @@
-func load() Result<int, Err> {
+func load(): Result<int, Err> {
     return Result.Ok(10)
 }
 
-func test_try() int {
+func test_try(): int {
     return load()? * 2
 }

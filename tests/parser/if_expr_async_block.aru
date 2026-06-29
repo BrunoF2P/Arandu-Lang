@@ -1,12 +1,12 @@
 module tests.ifExprAsyncBlock
 
 async func main() {
-    status = if ok {
+    let status = if ok {
         "ok"
     } else {
         "fail"
     }
-    task = async {
+    let task = async {
         await fetch()
     }
 }

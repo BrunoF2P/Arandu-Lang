@@ -1,2 +1,2 @@
 N001: value 'frobnicate' is not declared
-  --> tests/ui/semantics/undefined_value.aru:5:13
+  --> tests/ui/semantics/undefined_value.aru:5:17

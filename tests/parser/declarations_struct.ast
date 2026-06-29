@@ -3,5 +3,5 @@ Program @1:1-10:2
   Struct @3:8-6:2 public User<@3:20-3:21 T> where @3:29-3:39 T: @3:32-3:39 Display
     Field @4:5-4:21 public name Type @4:18-4:21 str
     Field @5:5-5:13 value Type @5:12-5:13 @5:12-5:13 T
-  Func @8:1-10:2 @8:6-8:10 User.greet(@8:17-8:32 user Type @8:23-8:32 @8:23-8:27 User<Type @8:28-8:31 str>) -> Type @8:34-8:37 str
+  Func @8:1-10:2 @8:6-8:10 User.greet(@8:17-8:32 user Type @8:23-8:32 @8:23-8:27 User<Type @8:28-8:31 str>) -> Type @8:35-8:38 str
     Return @9:5-9:21 Field @9:12-9:21(Path @9:12-9:16(user), name)

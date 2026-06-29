@@ -3,7 +3,7 @@ module examples.stable.syntax.async
 import err
 import io
 
-async func fetchText(path: str) Result<str, Err> {
+async func fetchText(path: str) : Result<str, Err> {
     if path == "" {
         return Result.Err(err.new("emptyPath"))
     }
@@ -12,7 +12,7 @@ async func fetchText(path: str) Result<str, Err> {
 }
 
 async func main() {
-    text, err = await fetchText("data.txt")
+    let text, err = await fetchText("data.txt")
     if err != nil {
         io.println("error: ${err}")
         return

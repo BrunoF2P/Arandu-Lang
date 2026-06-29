@@ -1,14 +1,14 @@
 module tests.compoundAssignments
 
 func main() {
-    set value += 1
-    set value -= 1
-    set value *= 2
-    set value /= 2
-    set value %= 2
-    set value &= mask
-    set value |= mask
-    set value ^= mask
-    set value <<= 1
-    set value >>= 1
+    value += 1
+    value -= 1
+    value *= 2
+    value /= 2
+    value %= 2
+    value &= mask
+    value |= mask
+    value ^= mask
+    value <<= 1
+    value >>= 1
 }

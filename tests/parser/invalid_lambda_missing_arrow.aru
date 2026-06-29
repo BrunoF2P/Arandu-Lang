@@ -1,5 +1,5 @@
 module tests.invalidLambdaMissingArrow
 
 func main() {
-    mapper = (value int) value
+    let mapper = (value int) value
 }

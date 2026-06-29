@@ -1,11 +1,11 @@
 module tests.unsafeFreeAlloc
 
 func main() {
-    buffer = alloc 64
+    let buffer = alloc 64
     unsafe {
         raw.write(buffer, 1)
     }
-    value = unsafe {
+    let value = unsafe {
         raw.read(buffer)
     }
     free buffer

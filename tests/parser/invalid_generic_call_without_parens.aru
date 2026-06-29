@@ -1,5 +1,5 @@
 module tests.invalidGenericCallWithoutParens
 
 func main() {
-    value = identity<int>
+    let value = identity<int>
 }

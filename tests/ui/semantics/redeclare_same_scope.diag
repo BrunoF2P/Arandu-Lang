@@ -1,3 +1,3 @@
 N003: name 'value' is already declared in this scope
-  --> tests/ui/semantics/redeclare_same_scope.aru:5:5
-  label: 4:5-4:10 previous declaration is here
+  --> tests/ui/semantics/redeclare_same_scope.aru:5:9
+  label: 4:9-4:14 previous declaration is here

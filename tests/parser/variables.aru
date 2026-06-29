@@ -3,14 +3,14 @@ module examples.stable.syntax.variables
 import io
 
 func main() {
-    name: str = "Bruno"
-    mut age: int = 25
-    score = 1_000
-    ratio = 3.14
-    active = true
+    let name: str = "Bruno"
+    let mut age: int = 25
+    let score = 1_000
+    let ratio = 3.14
+    let active = true
 
-    set age = age + 1
-    set score += 50
+    age = age + 1
+    score += 50
 
     io.println("${name}: ${age}, ${score}, ${ratio}, ${active}")
 }

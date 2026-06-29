@@ -1,4 +1,4 @@
 func main() {
-    a: int = 10
-    b: float = a
+    let a: int = 10
+    let b: float = a
 }

@@ -1,6 +1,6 @@
 module tests.recovery.name_resolution.undefined_value_suggestion
 
 func main() {
-    my_variable = 10
-    other = my_variabl
+    let my_variable = 10
+    let other = my_variabl
 }

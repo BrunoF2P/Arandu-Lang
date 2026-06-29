@@ -3,39 +3,39 @@ enum Result {
     Error(str),
 }
 
-func make_pair() (int, int) {
+func make_pair(): (int, int) {
     return 1, 10
 }
 
-func test_tuple_pattern() int {
-    pair = make_pair()
-    mut val = 0
+func test_tuple_pattern(): int {
+    let pair = make_pair()
+    let mut val = 0
     if pair is (x, 10) {
-        set val = x
+        val = x
     }
     return val
 }
 
-func test_typetuple_pattern(res: Result) int {
-    mut val = 0
+func test_typetuple_pattern(res: Result): int {
+    let mut val = 0
     if res is Ok(x) {
-        set val = x
+        val = x
     }
     return val
 }
 
-func test_range_pattern(x: int) bool {
-    mut res = false
+func test_range_pattern(x: int): bool {
+    let mut res = false
     if x is 1..=10 {
-        set res = true
+        res = true
     }
     return res
 }
 
-func test_range_exclusive(x: int) bool {
-    mut res = false
+func test_range_exclusive(x: int): bool {
+    let mut res = false
     if x is 1..10 {
-        set res = true
+        res = true
     }
     return res
 }

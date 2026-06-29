@@ -1,5 +1,5 @@
 module tests.invalidTupleErrReturn
 
-func load() (int, Err?) {
+func load(): (int, Err?) {
     return 0
 }

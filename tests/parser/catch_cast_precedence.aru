@@ -1,11 +1,11 @@
 module tests.catchCastPrecedence
 
 func main() {
-    a = read() catch 0
-    b = read() catch |err| {
+    let a = read() catch 0
+    let b = read() catch |err| {
         io.println(err)
         return 0
     }
-    c = value as i32 + 1 * 2
-    d = left ?? right catch fallback
+    let c = value as i32 + 1 * 2
+    let d = left ?? right catch fallback
 }

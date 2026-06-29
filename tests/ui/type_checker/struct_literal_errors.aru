@@ -4,6 +4,6 @@ struct Point {
 }
 
 func main() {
-    p1: Point = Point { x: true, y: 0 }
-    p2: Point = Point { x: 0, y: 0, z: 10 }
+    let p1: Point = Point { x: true, y: 0 }
+    let p2: Point = Point { x: 0, y: 0, z: 10 }
 }

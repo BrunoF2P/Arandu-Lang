@@ -1,7 +1,7 @@
 Program @1:1-11:2
   Module @1:1-1:33 tests.catchCastPrecedence
   Func @3:1-11:2 main() -> void
-    Var @4:5-4:23 @4:5-4:6 a = Catch @4:9-4:23(Call @4:9-4:15(Path @4:9-4:13(read), []), Expr(Int @4:22-4:23(0)))
-    Var @5:5-8:6 @5:5-5:6 b = Catch @5:9-8:6(Call @5:9-5:15(Path @5:9-5:13(read), []), Handler(err, Block @5:28-8:6[Expr @6:9-6:24 Call @6:9-6:24(Field @6:9-6:19(Path @6:9-6:11(io), println), [Path @6:20-6:23(err)]); Return @7:9-7:17 Int @7:16-7:17(0)]))
-    Var @9:5-9:29 @9:5-9:6 c = Binary @9:9-9:29(+, Cast @9:9-9:21(Path @9:9-9:14(value), Type @9:18-9:21 i32), Binary @9:24-9:29(*, Int @9:24-9:25(1), Int @9:28-9:29(2)))
-    Var @10:5-10:37 @10:5-10:6 d = Catch @10:9-10:37(NullCoalesce @10:9-10:22(Path @10:9-10:13(left), Path @10:17-10:22(right)), Expr(Path @10:29-10:37(fallback)))
+    Var @4:5-4:27 @4:9-4:10 a = Catch @4:13-4:27(Call @4:13-4:19(Path @4:13-4:17(read), []), Expr(Int @4:26-4:27(0)))
+    Var @5:5-8:6 @5:9-5:10 b = Catch @5:13-8:6(Call @5:13-5:19(Path @5:13-5:17(read), []), Handler(err, Block @5:32-8:6[Expr @6:9-6:24 Call @6:9-6:24(Field @6:9-6:19(Path @6:9-6:11(io), println), [Path @6:20-6:23(err)]); Return @7:9-7:17 Int @7:16-7:17(0)]))
+    Var @9:5-9:33 @9:9-9:10 c = Binary @9:13-9:33(+, Cast @9:13-9:25(Path @9:13-9:18(value), Type @9:22-9:25 i32), Binary @9:28-9:33(*, Int @9:28-9:29(1), Int @9:32-9:33(2)))
+    Var @10:5-10:41 @10:9-10:10 d = Catch @10:13-10:41(NullCoalesce @10:13-10:26(Path @10:13-10:17(left), Path @10:21-10:26(right)), Expr(Path @10:33-10:41(fallback)))

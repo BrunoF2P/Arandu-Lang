@@ -6,7 +6,7 @@ func on_err() {
 func on_ok() {
 }
 
-func test_success() Result<void, Err> {
+func test_success(): Result<void, Err> {
     errdefer {
         on_err()
     }
@@ -16,7 +16,7 @@ func test_success() Result<void, Err> {
     return nil
 }
 
-func test_error() Result<void, Err> {
+func test_error(): Result<void, Err> {
     errdefer {
         on_err()
     }

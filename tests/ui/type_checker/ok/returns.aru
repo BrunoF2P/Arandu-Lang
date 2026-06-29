@@ -1,4 +1,4 @@
-func getFloat() float {
+func getFloat(): float {
     return 10
 }
 

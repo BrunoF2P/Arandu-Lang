@@ -3,12 +3,12 @@ struct User {
     age: int
 }
 
-func test_struct_pattern(user: User) int {
-    mut val = 0
+func test_struct_pattern(user: User): int {
+    let mut val = 0
     if user is User { name, age: 25 } {
-        set val = 1
+        val = 1
     } else {
-        set val = -1
+        val = -1
     }
     return val
 }

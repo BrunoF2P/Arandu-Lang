@@ -1,12 +1,12 @@
-func foo() (int, bool) {
+func foo(): (int, bool) {
     return 10, true
 }
 
 func main() {
-    a: int = 10
-    b: float = 3.14
-    c: bool = true
-    d: str = "hello"
+    let a: int = 10
+    let b: float = 3.14
+    let c: bool = true
+    let d: str = "hello"
     
-    a2, b2 = foo()
+    let a2, b2 = foo()
 }

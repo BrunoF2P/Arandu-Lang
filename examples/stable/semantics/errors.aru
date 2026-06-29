@@ -3,7 +3,7 @@ module examples.stable.semantics.errors
 import err
 import io
 
-func readName(path: str) Result<str, Err> {
+func readName(path: str) : Result<str, Err> {
     if path == "" {
         return Result.Err(err.new("missingPath"))
     }
@@ -12,7 +12,7 @@ func readName(path: str) Result<str, Err> {
 }
 
 func main() {
-    name, err = readName("user.txt")
+    let name, err = readName("user.txt")
     if err != nil {
         io.println("error: ${err}")
         return

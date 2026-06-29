@@ -4,15 +4,15 @@ struct User {
 }
 
 extern "C" {
-    func sin(value: f64) f64
+    func sin(value: f64): f64
 }
 
-func add(a: int, b: int) int {
+func add(a: int, b: int): int {
     return a + b
 }
 
-func continued() int {
-    value = 1 +
+func continued(): int {
+    let value = 1 +
         2
     call(
         value,

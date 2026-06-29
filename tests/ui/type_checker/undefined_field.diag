@@ -1,5 +1,5 @@
 T018: no field 'z' on type 'Point'
-  --> tests/ui/type_checker/undefined_field.aru:8:14
-  label: 8:14-8:15 this has type 'Point'
-  label: 8:14-8:17 unknown field
+  --> tests/ui/type_checker/undefined_field.aru:8:18
+  label: 8:18-8:19 this has type 'Point'
+  label: 8:18-8:21 unknown field
   hint: did you mean 'x'?

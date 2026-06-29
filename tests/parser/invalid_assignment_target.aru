@@ -1,6 +1,6 @@
 module tests.invalidAssignmentTarget
 
 func main() {
-    value = 10
-    set 1 = value
+    let value = 10
+    1 = value
 }

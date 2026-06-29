@@ -1,5 +1,5 @@
 module parser.invalidGenericBareWithoutBlock
 
 func main() {
-    value = identity<int> value
+    let value = identity<int> value
 }

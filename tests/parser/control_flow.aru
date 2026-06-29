@@ -1,9 +1,9 @@
 module tests.controlFlow
 
 func main(items: []int) {
-    index = 0
+    let index = 0
     while index < 10 {
-        set index += 1
+        index += 1
         if index == 3 {
             continue
         }
@@ -16,7 +16,7 @@ func main(items: []int) {
         io.println(item)
     }
 
-    for i = 0; i < 3; set i += 1 {
+    for i = 0; i < 3; i += 1 {
         io.println(i)
     }
 }

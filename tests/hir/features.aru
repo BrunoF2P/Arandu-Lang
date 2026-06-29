@@ -9,24 +9,24 @@ enum LoadState {
 }
 
 func main() {
-    p: Point = Point { x: 1, y: 2 }
-    x_val: int = p.x
+    let p: Point = Point { x: 1, y: 2 }
+    let x_val: int = p.x
 
-    state: LoadState = LoadState.Loaded("hello")
+    let state: LoadState = LoadState.Loaded("hello")
 
-    res: int = match state {
+    let res: int = match state {
         LoadState.Idle => 0
         LoadState.Loaded(s) => 1
     }
 
-    val: int = if res > 0 {
+    let val: int = if res > 0 {
         10
     } else {
         20
     }
 
-    mut idx: int = 0
+    let mut idx: int = 0
     while idx < 5 {
-        set idx = idx + 1
+        idx = idx + 1
     }
 }

@@ -3,6 +3,6 @@ struct User {
 }
 
 func main() {
-    u: User = User { age: 20 }
-    x: int = u.age
+    let u: User = User { age: 20 }
+    let x: int = u.age
 }

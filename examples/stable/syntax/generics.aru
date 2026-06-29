@@ -6,15 +6,15 @@ struct Box<T> {
     value: T
 }
 
-func identity<T>(value: T) T {
+func identity<T>(value: T) : T {
     return value
 }
 
-func unwrap<T>(box: Box<T>) T {
+func unwrap<T>(box: Box<T>) : T {
     return box.value
 }
 
 func main() {
-    box = Box<int> { value: identity<int>(42) }
+    let box = Box<int> { value: identity<int>(42) }
     io.println("${unwrap<int>(box)}")
 }

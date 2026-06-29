@@ -1,5 +1,5 @@
 module parser.spanDump
 
 func main() {
-    value = add(1, 2)
+    let value = add(1, 2)
 }

@@ -1,4 +1,4 @@
 module tests.contract.constraints
-func identity<T>(value: T) T where T: Display {
+func identity<T>(value: T): T where T: Display {
     return value
 }

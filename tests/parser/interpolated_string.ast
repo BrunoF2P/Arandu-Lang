@@ -1,4 +1,4 @@
 Program @1:1-5:2
   Module @1:1-1:32 tests.interpolatedString
   Func @3:1-5:2 main() -> void
-    Var @4:5-4:47 @4:5-4:12 message = InterpolatedString @4:15-4:47([Text @4:16-4:19("Oi "), Expr @4:19-4:26(Path @4:21-4:25(name)), Text @4:26-4:34(", total="), Expr @4:34-4:46(Binary @4:36-4:45(+, Path @4:36-4:41(count), Int @4:44-4:45(1)))])
+    Var @4:5-4:51 @4:9-4:16 message = InterpolatedString @4:19-4:51([Text @4:20-4:23("Oi "), Expr @4:23-4:30(Path @4:25-4:29(name)), Text @4:30-4:38(", total="), Expr @4:38-4:50(Binary @4:40-4:49(+, Path @4:40-4:45(count), Int @4:48-4:49(1)))])

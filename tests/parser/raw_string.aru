@@ -1,5 +1,5 @@
 module parser.rawString
 
 func main() {
-    text = r"raw ${notInterpolated}"
+    let text = r"raw ${notInterpolated}"
 }

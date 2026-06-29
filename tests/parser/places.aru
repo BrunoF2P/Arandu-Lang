@@ -1,7 +1,7 @@
 module tests.places
 
 func main() {
-    set user.name = "Ana"
-    set items[0] = 10
-    set matrix[i][j] = 2
+    user.name = "Ana"
+    items[0] = 10
+    matrix[i][j] = 2
 }

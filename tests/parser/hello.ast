@@ -2,5 +2,5 @@ Program @1:1-8:2
   Module @1:1-1:36 examples.stable.syntax.hello
   Import @3:1-3:10 io
   Func @5:1-8:2 main() -> void
-    Var @6:5-6:19 @6:5-6:9 name = String @6:12-6:19("Bruno")
+    Var @6:5-6:23 @6:9-6:13 name = String @6:16-6:23("Bruno")
     Expr @7:5-7:31 Call @7:5-7:31(Field @7:5-7:15(Path @7:5-7:7(io), println), [InterpolatedString @7:16-7:30([Text @7:17-7:22("Ola, "), Expr @7:22-7:29(Path @7:24-7:28(name))])])

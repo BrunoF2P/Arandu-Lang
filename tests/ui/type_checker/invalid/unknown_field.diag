@@ -1,5 +1,5 @@
 T018: no field 'name' on type 'User'
-  --> tests/ui/type_checker/invalid/unknown_field.aru:7:14
-  label: 7:14-7:15 this has type 'User'
-  label: 7:14-7:20 unknown field
+  --> tests/ui/type_checker/invalid/unknown_field.aru:7:18
+  label: 7:18-7:19 this has type 'User'
+  label: 7:18-7:24 unknown field
   hint: did you mean 'age'?

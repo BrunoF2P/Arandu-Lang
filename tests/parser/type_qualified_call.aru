@@ -1,5 +1,5 @@
 module tests.typeQualifiedCall
 
 func main() {
-    greeting = User.greet(user)
+    let greeting = User.greet(user)
 }

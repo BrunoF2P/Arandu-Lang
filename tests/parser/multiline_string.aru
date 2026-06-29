@@ -1,8 +1,8 @@
 module parser.multilineString
 
 func main() {
-    name = "Ana"
-    text = """
+    let name = "Ana"
+    let text = """
 Hello ${name}
 line two
 """

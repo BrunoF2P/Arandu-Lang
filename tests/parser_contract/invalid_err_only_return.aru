@@ -1,4 +1,4 @@
 module tests.invalidErrOnlyReturn
 
-func fail() Err? {
+func fail(): Err? {
 }

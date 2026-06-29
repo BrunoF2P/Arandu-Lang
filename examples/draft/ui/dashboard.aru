@@ -2,7 +2,7 @@ module examples.draft.ui.dashboard
 
 import ui
 
-func Dashboard() ui.View {
+func Dashboard() : ui.View {
     return ui.window(title: "Dashboard") {
         ui.sidebar {
             ui.button("Contratos") {

@@ -1,5 +1,5 @@
 module parser.invalidMultilineUnterminated
 
 func main() {
-    text = """
+    let text = """
 unterminated

@@ -1,5 +1,5 @@
 T004: incompatible return type: expected 'int', found 'str'
   --> tests/ui/type_checker/invalid/wrong_return_type.aru:2:5
-  label: 1:12-1:15 return type 'int' declared here
+  label: 1:13-1:16 return type 'int' declared here
   label: 2:5-2:19 returns 'str'
   hint: convert the return value with 'as int' or change the function's return type

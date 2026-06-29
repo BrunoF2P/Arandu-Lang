@@ -3,6 +3,6 @@ module examples.stable.syntax.hello
 import io
 
 func main() {
-    name = "Bruno"
+    let name = "Bruno"
     io.println("Ola, ${name}")
 }

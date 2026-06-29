@@ -1,9 +1,9 @@
 func main() {
-    simple = "Oi"
-    escaped = "linha\n"
-    interp = "Ola, ${name}"
-    raw = r"C:\tmp\file.txt"
-    multi = """
+    let simple = "Oi"
+    let escaped = "linha\n"
+    let interp = "Ola, ${name}"
+    let raw = r"C:\tmp\file.txt"
+    let multi = """
 linha 1
 ${value}
 """

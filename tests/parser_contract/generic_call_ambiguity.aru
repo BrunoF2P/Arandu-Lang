@@ -1,5 +1,5 @@
 module tests.contract.lookahead
 func main() {
-    ok = identity<int>(42)
-    compare = a < b > c
+    let ok = identity<int>(42)
+    let compare = a < b > c
 }

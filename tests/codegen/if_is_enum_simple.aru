@@ -5,14 +5,14 @@ enum LoadState {
     Failure,
 }
 
-func test_enum(state: LoadState) int {
-    mut res = 0
+func test_enum(state: LoadState): int {
+    let mut res = 0
     if state is LoadState.Idle {
-        set res = 1
+        res = 1
     } else if state is LoadState.Loading {
-        set res = 2
+        res = 2
     } else {
-        set res = 3
+        res = 3
     }
     return res
 }

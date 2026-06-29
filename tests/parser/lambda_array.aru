@@ -1,10 +1,10 @@
 module tests.lambdaArray
 
 func main() {
-    nums = [1, 2, 3]
-    empty = []
-    inc = (value int) => value + 1
-    printer = (value) => {
+    let nums = [1, 2, 3]
+    let empty = []
+    let inc = (value int) => value + 1
+    let printer = (value) => {
         io.println(value)
     }
 }

@@ -1,9 +1,9 @@
-func test_bind(x: int) int {
-    mut res = 0
+func test_bind(x: int): int {
+    let mut res = 0
     if x is y {
-        set res = y
+        res = y
     } else {
-        set res = 20
+        res = 20
     }
     return res
 }

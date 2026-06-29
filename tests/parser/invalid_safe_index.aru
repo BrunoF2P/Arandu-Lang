@@ -1,5 +1,5 @@
 module tests.invalidSafeIndex
 
 func main() {
-    value = items?[0
+    let value = items?[0
 }

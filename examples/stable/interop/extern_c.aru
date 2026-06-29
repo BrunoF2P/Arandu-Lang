@@ -2,10 +2,10 @@ module examples.stable.interop.externC
 
 @Link("m")
 extern "C" {
-    func cos(value: f64) f64
-    func sin(value: f64) f64
+    func cos(value: f64): f64
+    func sin(value: f64): f64
 }
 
-func length(x: f64, y: f64) f64 {
+func length(x: f64, y: f64): f64 {
     return cos(x) + sin(y)
 }

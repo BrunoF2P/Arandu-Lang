@@ -1,6 +1,6 @@
 module tests.recovery.lexer.unterminated_string
 
 func main() {
-    name = "Bruno
-    age = 25
+    let name = "Bruno
+    let age = 25
 }

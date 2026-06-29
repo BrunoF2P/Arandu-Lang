@@ -1,5 +1,5 @@
-func test_match_expr(x: int) int {
-    res = match x {
+func test_match_expr(x: int): int {
+    let res = match x {
         1 => 10
         2..5 => 20
         _ => 30
@@ -7,17 +7,17 @@ func test_match_expr(x: int) int {
     return res
 }
 
-func test_match_stmt(x: int) int {
-    mut res = 0
+func test_match_stmt(x: int): int {
+    let mut res = 0
     match x {
         1 => {
-            set res = 10
+            res = 10
         }
         2..5 => {
-            set res = 20
+            res = 20
         }
         _ => {
-            set res = 30
+            res = 30
         }
     }
     return res

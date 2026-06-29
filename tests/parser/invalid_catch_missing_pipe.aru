@@ -1,7 +1,7 @@
 module tests.invalidCatchMissingPipe
 
 func main() {
-    value = read() catch |err {
+    let value = read() catch |err {
         return 0
     }
 }

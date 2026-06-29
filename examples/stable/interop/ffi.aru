@@ -1,10 +1,10 @@
 module examples.stable.interop.ffi
 
 extern "C" {
-    func puts(text: ptr[u8]) int
-    func strlen(text: ptr[u8]) uint
+    func puts(text: ptr[u8]) : int
+    func strlen(text: ptr[u8]) : uint
 }
 
-func writeLine(text: ptr[u8]) int {
+func writeLine(text: ptr[u8]) : int {
     return puts(text)
 }

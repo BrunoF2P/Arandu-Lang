@@ -1,5 +1,5 @@
 module tests.interpolatedString
 
 func main() {
-    message = "Oi ${name}, total=${count + 1}"
+    let message = "Oi ${name}, total=${count + 1}"
 }

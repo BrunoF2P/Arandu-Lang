@@ -1,8 +1,8 @@
 module examples.invalid.semantics.redeclareSameScope
 
 func main() {
-    count = 1
+    let count = 1
 
     // expected: semantic error; `count` is already declared in this scope.
-    count = 2
+    let count = 2
 }

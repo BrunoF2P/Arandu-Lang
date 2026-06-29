@@ -1,7 +1,7 @@
 module tests.safeAccessTry
 
 func main() {
-    name = user?.profile?.name
-    first = users?[0]?.name
-    value = load()?
+    let name = user?.profile?.name
+    let first = users?[0]?.name
+    let value = load()?
 }

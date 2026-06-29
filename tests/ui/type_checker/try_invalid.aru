@@ -1,7 +1,7 @@
-func test() int {
+func test(): int {
     return 10
 }
 
 func main() {
-    a: int = test()?
+    let a: int = test()?
 }

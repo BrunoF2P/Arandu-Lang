@@ -4,7 +4,7 @@ enum Color {
     Blue,
 }
 
-func pick(c: Color) int {
+func pick(c: Color): int {
     return match c {
         Color.Red => 1
         Color.Green => 2

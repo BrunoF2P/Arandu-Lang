@@ -1,7 +1,7 @@
-func openConfig() Result<str, Err> {
+func openConfig(): Result<str, Err> {
     return Result.Ok("config")
 }
 
 func main() {
-    config = openConfig()
+    let config = openConfig()
 }

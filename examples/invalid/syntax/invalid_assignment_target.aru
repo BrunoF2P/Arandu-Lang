@@ -1,8 +1,8 @@
 module examples.invalid.syntax.invalidAssignmentTarget
 
 func main() {
-    value = 10
+    let value = 10
 
     // expected: syntax error; assignment target must be a place expression.
-    set 1 = value
+    1 = value
 }

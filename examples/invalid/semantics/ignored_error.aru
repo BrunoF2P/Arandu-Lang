@@ -1,10 +1,10 @@
 module examples.invalid.semantics.ignoredError
 
-func openConfig(path: str) Result<str, Err> {
+func openConfig(path: str) : Result<str, Err> {
     return Result.Ok("config")
 }
 
 func main() {
     // expected: semantic error; Result must be handled.
-    config = openConfig("app.toml")
+    let config = openConfig("app.toml")
 }

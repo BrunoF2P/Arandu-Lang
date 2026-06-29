@@ -1,12 +1,12 @@
 interface Writer {
-    func write() void
+    func write(): void
 }
 
 struct Buffer {
     data: int
 }
 
-func send<T: Writer>(value: T) void {
+func send<T: Writer>(value: T): void {
 }
 
 func main() {

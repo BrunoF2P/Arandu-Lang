@@ -2,5 +2,5 @@ module examples.invalid.syntax.invalidExternAbi
 
 // expected: syntax error; extern ABI must be a quoted ABI literal.
 extern C {
-    func puts(text: ptr[u8]) int
+    func puts(text: ptr[u8]) : int
 }

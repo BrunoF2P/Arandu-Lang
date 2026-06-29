@@ -5,5 +5,5 @@ struct Person {
 }
 
 func main() {
-    mut p: Prson = nil
+    let mut p: Prson = nil
 }

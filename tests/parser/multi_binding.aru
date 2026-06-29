@@ -1,6 +1,6 @@
 module tests.multiBinding
 
 func main() {
-    text, err = read()
-    set file, err = open()
+    let text, err = read()
+    file, err = open()
 }

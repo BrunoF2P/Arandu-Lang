@@ -1,6 +1,6 @@
 module tests.recovery.lexer.invalid_escape
 
 func main() {
-    name = "Bruno \p"
-    age = 25
+    let name = "Bruno \p"
+    let age = 25
 }

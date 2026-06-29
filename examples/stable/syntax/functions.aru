@@ -3,11 +3,11 @@ module examples.stable.syntax.functions
 import err
 import io
 
-func add(a: int, b: int) int {
+func add(a: int, b: int) : int {
     return a + b
 }
 
-func divide(a: int, b: int) Result<int, Err> {
+func divide(a: int, b: int) : Result<int, Err> {
     if b == 0 {
         return Result.Err(err.new("divisionByZero"))
     }
@@ -16,6 +16,6 @@ func divide(a: int, b: int) Result<int, Err> {
 }
 
 func main() {
-    value = add(20, 22)
+    let value = add(20, 22)
     io.println("value=${value}")
 }

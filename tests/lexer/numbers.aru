@@ -1,11 +1,11 @@
 func main() {
-    zero = 0
-    dec = 25
-    grouped = 1_000
-    hex = 0xff
-    bin = 0b1010_0011
-    oct = 0o755
-    ratio = 3.14
-    exp = 1e9
-    small = 1.0e-3
+    let zero = 0
+    let dec = 25
+    let grouped = 1_000
+    let hex = 0xff
+    let bin = 0b1010_0011
+    let oct = 0o755
+    let ratio = 3.14
+    let exp = 1e9
+    let small = 1.0e-3
 }

@@ -1,5 +1,5 @@
 module tests.contract.lookahead
 func main() {
-    value = 1
-    typed: int = 2
+    let value = 1
+    let typed: int = 2
 }

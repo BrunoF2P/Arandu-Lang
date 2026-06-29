@@ -2,11 +2,11 @@ struct Box {
     payload: int
 }
 
-func Box.take(own self) int {
+func Box.take(own self): int {
     return self.payload
 }
 
 func main() {
-    b: Box = Box { payload: 42 }
-    _ = b.take()
+    let b: Box = Box { payload: 42 }
+    let _ = b.take()
 }

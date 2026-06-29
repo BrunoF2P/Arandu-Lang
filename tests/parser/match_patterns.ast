@@ -1,4 +1,4 @@
 Program @1:1-10:2
   Module @1:1-1:27 tests.matchPatterns
-  Func @3:1-10:2 describe(@3:15-3:27 token Type @3:22-3:27 @3:22-3:27 Token) -> Type @3:29-3:32 str
+  Func @3:1-10:2 describe(@3:15-3:27 token Type @3:22-3:27 @3:22-3:27 Token) -> Type @3:30-3:33 str
     Return @4:5-9:6 Match @4:12-9:6(Path @4:18-4:23(token), [Arm @5:9-5:55 EnumPattern @5:9-5:28(@5:9-5:14 Token.Number, [Bind @5:22-5:27(value)]) if Binary @5:32-5:41(>, Path @5:32-5:37(value), Int @5:40-5:41(0)) => String @5:45-5:55("positive"), Arm @6:9-6:36 EnumPattern @6:9-6:24(@6:9-6:14 Token.Number, [Wildcard @6:22-6:23]) => String @6:28-6:36("number"), Arm @7:9-7:43 EnumPattern @7:9-7:25(@7:9-7:14 Token.Word, [Bind @7:20-7:24(text)]) => InterpolatedString @7:29-7:43([Text @7:30-7:35("word "), Expr @7:35-7:42(Path @7:37-7:41(text))]), Arm @8:9-8:27 EnumPattern @8:9-8:18(@8:9-8:14 Token.End, []) => String @8:22-8:27("end")])

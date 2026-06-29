@@ -1,4 +1,4 @@
 Program @1:1-5:2
   Module @1:1-1:31 tests.typeQualifiedCall
   Func @3:1-5:2 main() -> void
-    Var @4:5-4:32 @4:5-4:13 greeting = Call @4:16-4:32(TypePath @4:16-4:26(@4:16-4:20 User.greet), [Path @4:27-4:31(user)])
+    Var @4:5-4:36 @4:9-4:17 greeting = Call @4:20-4:36(TypePath @4:20-4:30(@4:20-4:24 User.greet), [Path @4:31-4:35(user)])
