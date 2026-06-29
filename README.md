@@ -19,18 +19,19 @@ Implemented:
 - Semantics crate with v0.2 name resolution, hierarchical symbol tables, namespace imports, prelude members, doc comment mapping, diagnostics, and CLI `check`.
 - Type checker v0.1 core with primitive types, assignments, returns, fields, indexing, generics constraints, interface satisfaction, `Result<T,E>`, `Option<T>`, nullable/safe operations, and diagnostics.
 - AHIR lowering and pretty-printing with golden tests (`tests/hir/`).
-- AMIR lowering v0.1 (experimental) with CFG, locals, match, defer/errdefer, `?`/safe ops, for-in, alloc/free, and golden tests (`tests/amir/`).
+- AMIR lowering v0.1 (experimental) with CFG, locals, match, defer/errdefer, `?`/safe ops, for-in, alloc/free, and golden tests (`tests/codegen/`).
 - Method receivers with `shared self`, `mut self`, and `own self`.
 - Definite initialization analysis with O008 diagnostics.
 - OSSA foundation in AMIR: move/copy operands, storage lifetime markers, and destroy statements.
 - Intraprocedural move checker with O001/O005/O007 diagnostics.
 - Opt-in AMIR optimizer (`amir --opt`) with constant folding and DCE.
 - Type interning and monomorphization graph infrastructure.
+- Cranelift JIT backend (experimental, dev/debug) with `run` CLI support.
 
 Not implemented yet:
 
 - Memory checker / generational fallback
-- Backend
+- Production backends (C portability, LLVM release optimizer)
 
 **Compiler roadmap (single source of truth):** [docs/arandu-compiler-roadmap-v0.1.md](docs/arandu-compiler-roadmap-v0.1.md)
 
@@ -100,9 +101,9 @@ cargo run -p arandu_cli -- hir examples/stable/syntax/hello.aru --debug
 Print the AMIR (mid-level IR / CFG):
 
 ```bash
-cargo run -p arandu_cli -- amir tests/amir/add.aru
-cargo run -p arandu_cli -- amir tests/amir/add.aru --debug
-cargo run -p arandu_cli -- amir tests/amir/add.aru --opt
+cargo run -p arandu_cli -- amir tests/codegen/add.aru
+cargo run -p arandu_cli -- amir tests/codegen/add.aru --debug
+cargo run -p arandu_cli -- amir tests/codegen/add.aru --opt
 ```
 
 Update golden test files (after intentional IR changes):
@@ -124,10 +125,11 @@ cargo run -p arandu_cli -- parse examples/stable/syntax/match.aru
 
 ```text
 crates/
-  arandu_lexer/     Rust lexer library
-  arandu_parser/    Rust parser library
-  arandu_semantics/ Name resolution, type checking, HIR, and AMIR
-  arandu_cli/       Debug CLI for compiler experiments
+  arandu_lexer/              Rust lexer library
+  arandu_parser/             Rust parser library
+  arandu_semantics/          Name resolution, type checking, HIR, and AMIR
+  arandu_backend_cranelift/  Experimental Cranelift JIT backend
+  arandu_cli/                Debug CLI for compiler experiments
 
 docs/             Language and compiler design notes
 examples/         Official stable, invalid, and draft examples
@@ -135,12 +137,13 @@ tests/lexer/      Lexer golden fixtures
 tests/parser/     Parser golden fixtures
 tests/semantics/  Semantics diagnostic fixtures
 tests/hir/        AHIR golden fixtures (.aru → .hir)
-tests/amir/       AMIR golden fixtures (.aru → .amir)
+tests/codegen/    AMIR golden fixtures (.aru → .amir)
+tests/ui/         UI diagnostic fixtures (.aru → .diag)
 ```
 
 ## Next Steps
 
-See [docs/arandu-compiler-roadmap-v0.1.md](docs/arandu-compiler-roadmap-v0.1.md). Documentation is now aligned with the current v0.1 compiler state; the next recommended technical milestone is the memory checker / generational fallback, followed by backend work.
+See [docs/arandu-compiler-roadmap-v0.1.md](docs/arandu-compiler-roadmap-v0.1.md). The next recommended technical milestones are the memory checker / generational fallback and production backends (C, LLVM).
 
 ## License
 

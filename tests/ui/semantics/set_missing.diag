@@ -1,0 +1,3 @@
+N007: assignment target 'missing' is not declared
+  --> tests/ui/semantics/set_missing.aru:4:5
+  hint: declare it first with `missing = ...`, then mutate with `set missing = ...`

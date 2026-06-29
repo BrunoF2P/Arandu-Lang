@@ -74,7 +74,6 @@ fn jit_control_flow() {
 }
 
 #[test]
-#[should_panic(expected = "assertion failed")]
 fn jit_unsigned_comparison() {
     let src = r#"
     func is_gt(a: u32, b: u32): bool {
@@ -89,7 +88,61 @@ fn jit_unsigned_comparison() {
         let f: unsafe fn(u32, u32) -> bool = module.get_fn("is_gt").unwrap();
         f(4294967295, 0)
     };
-    // Isso vai falhar porque 4294967295u32 (u32::MAX) é interpretado como
-    // -1 se comparado como signed, e -1 > 0 é falso.
     assert!(result);
+}
+
+#[test]
+fn jit_unsigned_div() {
+    let src = r#"
+    func half(a: u32): u32 {
+        return a / 2;
+    }
+    "#;
+    let (amir, symbols) = compile_src(src);
+    let backend = CraneliftBackend::new();
+    let module = backend.compile(&amir, &symbols).unwrap();
+
+    let result: u32 = unsafe {
+        let f: unsafe fn(u32) -> u32 = module.get_fn("half").unwrap();
+        f(4_294_967_295)
+    };
+    // u32::MAX / 2 = 2_147_483_647; signed interpretation (-1 / 2) would be 0.
+    assert_eq!(result, 2_147_483_647);
+}
+
+#[test]
+fn jit_unsigned_mod() {
+    let src = r#"
+    func rem(a: u32, b: u32): u32 {
+        return a % b;
+    }
+    "#;
+    let (amir, symbols) = compile_src(src);
+    let backend = CraneliftBackend::new();
+    let module = backend.compile(&amir, &symbols).unwrap();
+
+    let result: u32 = unsafe {
+        let f: unsafe fn(u32, u32) -> u32 = module.get_fn("rem").unwrap();
+        f(4_294_967_295, 4_294_967_294)
+    };
+    assert_eq!(result, 1);
+}
+
+#[test]
+fn jit_unsigned_shift_right() {
+    let src = r#"
+    func shr(a: u32): u32 {
+        return a >> 1;
+    }
+    "#;
+    let (amir, symbols) = compile_src(src);
+    let backend = CraneliftBackend::new();
+    let module = backend.compile(&amir, &symbols).unwrap();
+
+    let result: u32 = unsafe {
+        let f: unsafe fn(u32) -> u32 = module.get_fn("shr").unwrap();
+        f(4_294_967_295)
+    };
+    // Logical shift: 0xFFFF_FFFF >> 1 = 0x7FFF_FFFF
+    assert_eq!(result, 2_147_483_647);
 }

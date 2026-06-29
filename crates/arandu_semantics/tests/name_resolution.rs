@@ -1,5 +1,8 @@
 #![allow(clippy::format_collect)]
 
+#[path = "support/golden.rs"]
+mod golden;
+
 use arandu_lexer::Span;
 use arandu_semantics::{DiagCode, SymbolKind, SymbolTable, resolve};
 use std::{fs, path::PathBuf};
@@ -44,8 +47,7 @@ fn assert_diagnostic_golden(name: &str) {
         .join(format!("{name}.diag"));
     let source = fs::read_to_string(&source_path)
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", source_path.display()));
-    let expected = fs::read_to_string(&expected_path)
-        .unwrap_or_else(|err| panic!("failed to read {}: {err}", expected_path.display()));
+    let expected = golden::read_golden_text(&expected_path);
     let result = resolve_source(&source);
     let rel_filepath = source_path
         .strip_prefix(&root)

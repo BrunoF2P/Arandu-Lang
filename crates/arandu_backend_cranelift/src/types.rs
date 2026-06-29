@@ -20,6 +20,22 @@ impl ClifType {
 }
 
 #[must_use]
+pub fn ar_type_is_unsigned_integer(ty: &ArType) -> bool {
+    matches!(
+        ty,
+        ArType::Primitive(p) if matches!(
+            p,
+            Primitive::Uint
+                | Primitive::U8
+                | Primitive::U16
+                | Primitive::U32
+                | Primitive::U64
+                | Primitive::Byte
+        )
+    )
+}
+
+#[must_use]
 pub fn clif_type(ty: &ArType, ptr_type: Type) -> ClifType {
     match ty {
         ArType::Primitive(p) => match p {

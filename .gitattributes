@@ -1,0 +1,6 @@
+# Golden diagnostic fixtures must remain UTF-8 text with LF line endings.
+*.diag text eol=lf
+*.hir text eol=lf
+*.amir text eol=lf
+*.ast text eol=lf
+*.tokens text eol=lf

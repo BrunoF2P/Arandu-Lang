@@ -1,5 +1,8 @@
 #![allow(clippy::format_collect)]
 
+#[path = "support/golden.rs"]
+mod golden;
+
 use arandu_parser::parse;
 use arandu_semantics::{resolve, type_check};
 use std::{fs, path::PathBuf};
@@ -26,8 +29,7 @@ fn assert_diagnostic_golden(name: &str) {
         .join(format!("{name}.diag"));
     let source = fs::read_to_string(&source_path)
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", source_path.display()));
-    let expected = fs::read_to_string(&expected_path)
-        .unwrap_or_else(|err| panic!("failed to read {}: {err}", expected_path.display()));
+    let expected = golden::read_golden_text(&expected_path);
 
     let program = parse(&source).expect("Failed to parse");
     let resolution = resolve(&program);
