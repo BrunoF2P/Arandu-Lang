@@ -149,6 +149,79 @@ fn jit_unsigned_shift_right() {
 }
 
 #[test]
+fn jit_signed_div() {
+    let src = r#"
+    func div(a: int, b: int): int {
+        return a / b;
+    }
+    "#;
+    let (amir, symbols) = compile_src(src);
+    let backend = CraneliftBackend::new();
+    let module = backend.compile(&amir, &symbols).unwrap();
+
+    let result: i32 = unsafe {
+        let f: unsafe fn(i32, i32) -> i32 = module.get_fn("div").unwrap();
+        f(-1, 2)
+    };
+    assert_eq!(result, 0);
+}
+
+#[test]
+fn jit_signed_mod() {
+    let src = r#"
+    func rem(a: int, b: int): int {
+        return a % b;
+    }
+    "#;
+    let (amir, symbols) = compile_src(src);
+    let backend = CraneliftBackend::new();
+    let module = backend.compile(&amir, &symbols).unwrap();
+
+    let result: i32 = unsafe {
+        let f: unsafe fn(i32, i32) -> i32 = module.get_fn("rem").unwrap();
+        f(-7, 3)
+    };
+    assert_eq!(result, -1);
+}
+
+#[test]
+fn jit_signed_comparison() {
+    let src = r#"
+    func is_gt(a: int, b: int): bool {
+        return a > b;
+    }
+    "#;
+    let (amir, symbols) = compile_src(src);
+    let backend = CraneliftBackend::new();
+    let module = backend.compile(&amir, &symbols).unwrap();
+
+    let result: bool = unsafe {
+        let f: unsafe fn(i32, i32) -> bool = module.get_fn("is_gt").unwrap();
+        f(-1, 0)
+    };
+    assert!(!result);
+}
+
+#[test]
+fn jit_signed_shift_right() {
+    let src = r#"
+    func shr(a: int): int {
+        return a >> 1;
+    }
+    "#;
+    let (amir, symbols) = compile_src(src);
+    let backend = CraneliftBackend::new();
+    let module = backend.compile(&amir, &symbols).unwrap();
+
+    let result: i32 = unsafe {
+        let f: unsafe fn(i32) -> i32 = module.get_fn("shr").unwrap();
+        f(-1)
+    };
+    // Arithmetic shift: -1 >> 1 = -1
+    assert_eq!(result, -1);
+}
+
+#[test]
 fn jit_returns_ice_on_invalid_literal_pool() {
     let (mut amir, symbols) = compile_src("func main(): int { return 42; }");
     for entry in &mut amir.literal_pool.entries {
