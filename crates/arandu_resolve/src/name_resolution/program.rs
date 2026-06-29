@@ -6,7 +6,11 @@ use crate::{DocCommentMap, NodeKey, ResolutionResult, ResolvedNames, SymbolKind,
 use super::Resolver;
 
 impl<'a> Resolver<'a> {
-    pub(crate) fn new(pool: &'a arandu_parser::ast_pool::AstPool) -> Self {
+    pub(crate) fn new(
+        pool: &'a arandu_parser::ast_pool::AstPool,
+        program: Option<&Program>,
+    ) -> Self {
+        let current_module = program.and_then(|p| p.module.as_ref().map(|m| m.path.join(".")));
         let mut resolver = Self {
             symbols: SymbolTable::new(),
             resolved: ResolvedNames::default(),
@@ -14,8 +18,12 @@ impl<'a> Resolver<'a> {
             diagnostics: Vec::new(),
             pool,
             import_aliases: rustc_hash::FxHashMap::default(),
+            current_module,
+            imported_symbols: rustc_hash::FxHashMap::default(),
+            used_symbols: rustc_hash::FxHashSet::default(),
         };
-        resolver.define_prelude();
+        resolver.define_prelude(program);
+        resolver.symbols.setup_prelude_scope();
         resolver
     }
 
@@ -48,6 +56,8 @@ impl<'a> Resolver<'a> {
             self.resolve_top_level(global, decl);
         }
 
+        self.check_unused_imports();
+
         ResolutionResult {
             symbols: self.symbols,
             resolved: self.resolved,
@@ -56,7 +66,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    pub(crate) fn define_prelude(&mut self) {
+    pub(crate) fn define_prelude(&mut self, program: Option<&Program>) {
         let span = Span::new(0, 0, 0);
         for (module, members) in [
             ("io", ["println", "create", "remove"].as_slice()),
@@ -66,5 +76,20 @@ impl<'a> Resolver<'a> {
                 let _ = self.symbols.define_module_member(module, member, span);
             }
         }
+        let current_module = program.and_then(|p| p.module.as_ref().map(|m| m.path.join(".")));
+        super::load_stdlib_transitively(
+            &mut self.symbols,
+            "stdlib/core/prelude.aru",
+            current_module.as_deref(),
+            program,
+        );
+        let global = self.symbols.global_scope();
+        let has_result = self.symbols.lookup_type(global, "Result").is_some();
+        let has_option = self.symbols.lookup_type(global, "Option").is_some();
+        eprintln!("[define_prelude] Result in scope: {has_result}, Option in scope: {has_option}");
+        eprintln!(
+            "[define_prelude] Total symbols: {}",
+            self.symbols.iter().count()
+        );
     }
 }

@@ -46,12 +46,18 @@ impl<'a> Resolver<'a> {
             return false;
         };
         if name.path.len() > 1 && self.is_namespace(scope, root) {
+            let _ = self.lookup_and_record_module(scope, root);
             let namespace_parts = &name.path[0..name.path.len() - 1];
             let namespace = namespace_parts.join(".");
-            let member = name.path.last().unwrap();
+            let Some(member) = name.path.last() else {
+                return false;
+            };
             let expanded_namespace = self.expand_namespace_alias(&namespace);
-            if let Some(symbol) = self.symbols.lookup_module_member(&expanded_namespace, member) {
-                self.resolved.type_ref(name.span, symbol);
+            if let Some(symbol) = self
+                .symbols
+                .lookup_module_member(&expanded_namespace, member)
+            {
+                self.record_type_ref(name.span, symbol);
                 return true;
             }
             self.diagnostics.push(Diagnostic::error(
@@ -61,8 +67,13 @@ impl<'a> Resolver<'a> {
             ));
             return false;
         }
+        if let Some(ref cur_mod) = self.current_module
+            && let Some(symbol) = self.symbols.lookup_module_member(cur_mod, root) {
+                self.record_type_ref(name.span, symbol);
+                return true;
+            }
         if let Some(symbol) = self.symbols.lookup_type(scope, root) {
-            self.resolved.type_ref(name.span, symbol);
+            self.record_type_ref(name.span, symbol);
             return true;
         }
         if let Some(symbol) = self.symbols.lookup_any(scope, root)
@@ -75,7 +86,7 @@ impl<'a> Resolver<'a> {
             ));
             return false;
         }
-        if matches!(root.as_str(), "Result" | "Option" | "Coroutine" | "void") {
+        if matches!(root.as_str(), "Coroutine" | "void") {
             return true;
         }
         let mut diagnostic = Diagnostic::error(

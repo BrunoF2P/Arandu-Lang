@@ -10,7 +10,9 @@ impl<'a> Resolver<'a> {
         match import {
             ImportDecl::Module { span, path } => {
                 if let Some(root) = path.first() {
-                    self.define(scope, root, SymbolKind::Module, *span);
+                    if let Some(sym) = self.define(scope, root, SymbolKind::Module, *span) {
+                        self.record_import_symbol(sym, root.to_string(), *span);
+                    }
                 } else {
                     self.diagnostics.push(Diagnostic::error(
                         DiagCode::M001UnresolvedImport,
@@ -27,11 +29,19 @@ impl<'a> Resolver<'a> {
                     } else {
                         SymbolKind::ImportValue
                     };
-                    self.define(scope, name, kind, item.span);
+                    if let Some(sym) = self.define(scope, name, kind, item.span) {
+                        self.record_import_symbol(sym, name.to_string(), item.span);
+                    }
                 }
             }
-            ImportDecl::External { span, source, alias } => {
-                self.define(scope, alias, SymbolKind::Module, *span);
+            ImportDecl::External {
+                span,
+                source,
+                alias,
+            } => {
+                if let Some(sym) = self.define(scope, alias, SymbolKind::Module, *span) {
+                    self.record_import_symbol(sym, alias.to_string(), *span);
+                }
                 self.import_aliases.insert(alias.clone(), source.clone());
             }
         }

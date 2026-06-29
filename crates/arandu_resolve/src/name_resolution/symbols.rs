@@ -13,11 +13,16 @@ impl<'a> Resolver<'a> {
         expr: ExprId,
         span: Span,
     ) {
+        if let Some(ref cur_mod) = self.current_module
+            && let Some(symbol) = self.symbols.lookup_module_member(cur_mod, name) {
+                self.record_expr_ref(expr, symbol);
+                return;
+            }
         if let Some(symbol) = self.symbols.lookup_value(scope, name) {
-            self.resolved.expr_ref(expr, symbol);
+            self.record_expr_ref(expr, symbol);
             return;
         }
-        if self.symbols.lookup_module(scope, name).is_some() {
+        if self.lookup_and_record_module(scope, name).is_some() {
             self.diagnostics.push(Diagnostic::error(
                 DiagCode::M003NamespaceUsedAsValue,
                 format!("namespace '{name}' cannot be used as a value"),
@@ -47,8 +52,13 @@ impl<'a> Resolver<'a> {
     }
 
     pub(crate) fn resolve_assignment_target(&mut self, scope: ScopeId, name: &str, span: Span) {
+        if let Some(ref cur_mod) = self.current_module
+            && let Some(symbol) = self.symbols.lookup_module_member(cur_mod, name) {
+                self.record_value_ref(span, symbol);
+                return;
+            }
         if let Some(symbol) = self.symbols.lookup_value(scope, name) {
-            self.resolved.value_ref(span, symbol);
+            self.record_value_ref(span, symbol);
             return;
         }
         let diagnostic = Diagnostic::error(
@@ -104,9 +114,10 @@ impl<'a> Resolver<'a> {
         if !self.is_namespace(scope, namespace) {
             return false;
         }
+        let _ = self.lookup_and_record_module(scope, namespace);
         let expanded = self.expand_namespace_alias(namespace);
         if let Some(symbol) = self.symbols.lookup_module_member(&expanded, member) {
-            self.resolved.expr_ref(expr, symbol);
+            self.record_expr_ref(expr, symbol);
         } else {
             self.diagnostics.push(Diagnostic::error(
                 DiagCode::M002UndefinedNamespaceMember,
@@ -117,11 +128,18 @@ impl<'a> Resolver<'a> {
         true
     }
 
-    pub(crate) fn define(&mut self, scope: ScopeId, name: &str, kind: SymbolKind, span: Span) {
+    pub(crate) fn define(&mut self, scope: ScopeId, name: &str, kind: SymbolKind, span: Span) -> Option<crate::SymbolId> {
         match self.symbols.define(scope, name, kind, span) {
-            Ok(symbol) => self.resolved.define(span, symbol),
+            Ok(symbol) => {
+                self.resolved.define(span, symbol);
+                Some(symbol)
+            }
             Err(previous) => {
                 let previous_symbol = self.symbols.get(previous);
+                if kind == SymbolKind::Module && previous_symbol.kind == SymbolKind::Module {
+                    self.resolved.define(span, previous);
+                    return Some(previous);
+                }
                 self.diagnostics.push(
                     Diagnostic::error(
                         DiagCode::N003RedefinedName,
@@ -130,6 +148,7 @@ impl<'a> Resolver<'a> {
                     )
                     .with_label(previous_symbol.span, "previous declaration is here"),
                 );
+                None
             }
         }
     }

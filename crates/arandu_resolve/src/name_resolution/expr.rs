@@ -36,7 +36,7 @@ impl<'a> Resolver<'a> {
                 if type_resolved {
                     let ty = type_name.path.join(".");
                     if let Some(symbol) = self.symbols.lookup_associated_member(&ty, member) {
-                        self.resolved.expr_ref(expr, symbol);
+                        self.record_expr_ref(expr, symbol);
                     } else {
                         let mut diag = Diagnostic::error(
                             DiagCode::N010UndefinedAssociatedFunction,
@@ -73,11 +73,11 @@ impl<'a> Resolver<'a> {
                     self.resolve_type_expr(scope, *arg_id);
                 }
             }
-            ExprKind::Field { base, field } | ExprKind::SafeField { base, field } => {
-                if let Some((namespace, member)) = self.flatten_namespace_path(expr) {
-                    if self.resolve_namespace_member(scope, &namespace, &member, expr, span) {
-                        return;
-                    }
+            ExprKind::Field { base, field: _ } | ExprKind::SafeField { base, field: _ } => {
+                if let Some((namespace, member)) = self.flatten_namespace_path(expr)
+                    && self.resolve_namespace_member(scope, &namespace, &member, expr, span)
+                {
+                    return;
                 }
                 self.resolve_expr(scope, *base);
             }
@@ -286,7 +286,7 @@ impl<'a> Resolver<'a> {
         &self,
         expr: arandu_parser::ast_pool::ExprId,
     ) -> Option<(String, String)> {
-        use arandu_parser::ast_pool::{ExprId, ExprKind};
+        use arandu_parser::ast_pool::ExprKind;
         let mut current = expr;
         let mut segments = Vec::new();
         loop {
