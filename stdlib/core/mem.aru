@@ -1,0 +1,9 @@
+module std.core.mem
+
+extern "arandu-intrinsic" {
+    func size_of<T>() : u64
+    func align_of<T>() : u64
+    func ptr_offset<T>(base: ptr[T], offset: i32) : ptr[T]
+    func ptr_read<T>(p: ptr[T]) : T
+    func ptr_write<T>(p: ptr[T], val: T) : void
+}

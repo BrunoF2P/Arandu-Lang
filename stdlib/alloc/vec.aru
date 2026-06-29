@@ -1,0 +1,100 @@
+module std.alloc.vec
+
+import "std.core.mem" as mem
+import "std.alloc.allocator_api" as alloc_api
+
+struct Vec<T> {
+    buf: ptr[T]
+    len: u64
+    cap: u64
+}
+
+func new<T>() : Vec<T> {
+    return Vec<T> {
+        buf: nil,
+        len: 0,
+        cap: 0,
+    }
+}
+
+func with_capacity<T>(capacity: u64) : Vec<T> {
+    if capacity == 0 {
+        return new<T>()
+    }
+    let size = capacity * mem.size_of<T>()
+    let align = mem.align_of<T>()
+    let p = (alloc_api.SystemAllocator {}).alloc(size, align) as ptr[T]
+    return Vec<T> {
+        buf: p,
+        len: 0,
+        cap: capacity,
+    }
+}
+
+func Vec.push<T>(mut self, value: T) : void {
+    if self.len == self.cap {
+        let mut new_cap = 4 as u64
+        if self.cap > 0 {
+            let new_cap = self.cap * 2
+        }
+        let new_size = new_cap * mem.size_of<T>()
+        let align = mem.align_of<T>()
+        let new_ptr = (alloc_api.SystemAllocator {}).alloc(new_size, align) as ptr[T]
+        if self.len > 0 {
+            for i in 0..self.len {
+                let old_elem_ptr = mem.ptr_offset<T>(self.buf, i as i32)
+                let val = mem.ptr_read<T>(old_elem_ptr)
+                let new_elem_ptr = mem.ptr_offset<T>(new_ptr, i as i32)
+                mem.ptr_write<T>(new_elem_ptr, val)
+            }
+            let old_size = self.cap * mem.size_of<T>()
+            (alloc_api.SystemAllocator {}).free(self.buf as ptr[u8], old_size, align)
+        }
+        self.buf = new_ptr
+        self.cap = new_cap
+    }
+    let dest_ptr = mem.ptr_offset<T>(self.buf, self.len as i32)
+    mem.ptr_write<T>(dest_ptr, value)
+    self.len = self.len + 1
+}
+
+func Vec.pop<T>(mut self) : T? {
+    if self.len == 0 {
+        return nil
+    }
+    self.len = self.len - 1
+    let elem_ptr = mem.ptr_offset<T>(self.buf, self.len as i32)
+    return mem.ptr_read<T>(elem_ptr)
+}
+
+func Vec.get<T>(shared self, index: u64) : T? {
+    if index >= self.len {
+        return nil
+    }
+    let elem_ptr = mem.ptr_offset<T>(self.buf, index as i32)
+    return mem.ptr_read<T>(elem_ptr)
+}
+
+func Vec.put<T>(mut self, index: u64, value: T) : bool {
+    if index >= self.len {
+        return false
+    }
+    let elem_ptr = mem.ptr_offset<T>(self.buf, index as i32)
+    mem.ptr_write<T>(elem_ptr, value)
+    return true
+}
+
+func Vec.clear<T>(mut self) : void {
+    self.len = 0
+}
+
+func Vec.free<T>(mut self) : void {
+    if self.cap > 0 {
+        let size = self.cap * mem.size_of<T>()
+        let align = mem.align_of<T>()
+        (alloc_api.SystemAllocator {}).free(self.buf as ptr[u8], size, align)
+        self.buf = nil
+        self.cap = 0
+        self.len = 0
+    }
+}

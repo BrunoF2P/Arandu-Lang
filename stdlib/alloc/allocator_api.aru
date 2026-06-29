@@ -1,0 +1,21 @@
+module std.alloc.allocator_api
+
+extern "C" {
+    func malloc(size: u64) : ptr[u8];
+    func free(p: ptr[u8]) : void;
+}
+
+interface Allocator {
+    func alloc(size: u64, align: u64) : ptr[u8];
+    func free(p: ptr[u8], size: u64, align: u64) : void;
+}
+
+struct SystemAllocator {}
+
+func SystemAllocator.alloc(shared self, size: u64, align: u64) : ptr[u8] {
+    return malloc(size)
+}
+
+func SystemAllocator.free(shared self, p: ptr[u8], size: u64, align: u64) : void {
+    free(p)
+}

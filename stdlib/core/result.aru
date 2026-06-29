@@ -1,0 +1,6 @@
+module std.core.result
+
+enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
