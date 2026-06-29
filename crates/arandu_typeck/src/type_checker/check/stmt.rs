@@ -9,516 +9,526 @@ use super::block::check_block;
 use super::condition::check_condition;
 use super::place::synth_place;
 
-pub fn check_stmt(checker: &mut TypeChecker<'_>, _pool: &AstPool, stmt: &Stmt) {
+/// Roteador principal de checagem de tipo de instruções.
+pub fn check_stmt(checker: &mut TypeChecker<'_>, pool: &AstPool, stmt: &Stmt) {
     match stmt {
-        Stmt::VarDecl {
-            span: _,
-            bindings,
-            value,
-        } => {
-            let val_ty = super::super::synth::synth_expr(checker, *value);
-
-            if bindings.len() > 1 {
-                let val_tys = if let Some((ok, err)) = super::super::types::result_ok_err(&val_ty) {
-                    vec![ok, err]
-                } else {
-                    match &val_ty {
-                        ArType::Tuple(tys) => tys
-                            .iter()
-                            .map(|&t| {
-                                super::super::types::type_interner::with_resolved_type(t, |ty| {
-                                    ty.clone()
-                                })
-                            })
-                            .collect(),
-                        ArType::Error => vec![ArType::Error; bindings.len()],
-                        other => vec![other.clone(); bindings.len()],
-                    }
-                };
-
-                for (i, binding) in bindings.iter().enumerate() {
-                    let binding_key = crate::NodeKey::from(binding.span);
-                    if let Some(symbol_id) = checker.resolved.definitions.get(&binding_key).copied()
-                    {
-                        let elem_ty = val_tys.get(i).cloned().unwrap_or(ArType::Error);
-                        let mut bind_ty = elem_ty.clone();
-
-                        if let Some(ty_expr) = &binding.ty {
-                            let expected = super::super::types::lower_type_expr(
-                                *ty_expr,
-                                checker.pool,
-                                &checker.symbols,
-                                checker.type_scope(),
-                                &checker.resolved,
-                            );
-
-                            if !elem_ty.is_literal()
-                                && elem_ty.clone().default_literal()
-                                    != expected.clone().default_literal()
-                                && expected.is_numeric()
-                                && elem_ty.is_numeric()
-                            {
-                                checker.add_constraint(
-                                    expected.clone(),
-                                    elem_ty.clone(),
-                                    ConstraintOrigin::ImplicitWidening {
-                                        source_span: checker.pool.expr_span(*value),
-                                        target_span: binding.span,
-                                    },
-                                );
-                            } else if !super::super::types::unify(&expected, &elem_ty) {
-                                checker.add_constraint(
-                                    expected.clone(),
-                                    elem_ty.clone(),
-                                    ConstraintOrigin::Assignment {
-                                        lhs_span: binding.span,
-                                        rhs_span: checker.pool.expr_span(*value),
-                                    },
-                                );
-                            }
-                            bind_ty = expected;
-                        }
-
-                        checker.ctx.bind(symbol_id, bind_ty.clone());
-                        checker.record_decl_type(symbol_id, bind_ty);
-                    }
-                }
-            } else if let Some(binding) = bindings.first() {
-                let binding_key = crate::NodeKey::from(binding.span);
-                if let Some(symbol_id) = checker.resolved.definitions.get(&binding_key).copied() {
-                    let mut bind_ty = val_ty.clone();
-                    if matches!(checker.pool.expr(*value), ExprKind::Nil)
-                        && let Some(ty_expr) = &binding.ty
-                    {
-                        let expected = super::super::types::lower_type_expr(
-                            *ty_expr,
-                            checker.pool,
-                            &checker.symbols,
-                            checker.type_scope(),
-                            &checker.resolved,
-                        );
-                        if !expected.is_error() {
-                            checker.type_info.record_expr_type(*value, expected.clone());
-                            bind_ty = expected;
-                        }
-                    }
-
-                    let annotated_as_result = binding.ty.as_ref().is_some_and(|ty_expr| {
-                        let expected = super::super::types::lower_type_expr(
-                            *ty_expr,
-                            checker.pool,
-                            &checker.symbols,
-                            checker.type_scope(),
-                            &checker.resolved,
-                        );
-                        super::super::types::result_ok_err(&expected).is_some()
-                    });
-                    if super::super::types::result_ok_err(&val_ty).is_some() && !annotated_as_result
-                    {
-                        checker.diagnostics.push(crate::Diagnostic::warning(
-                            crate::DiagCode::W006UnhandledResult,
-                            "Result value must be handled with `?` or `value, err = f()`",
-                            checker.pool.expr_span(*value),
-                        ));
-                    }
-
-                    if let Some(ty_expr) = &binding.ty {
-                        let expected = super::super::types::lower_type_expr(
-                            *ty_expr,
-                            checker.pool,
-                            &checker.symbols,
-                            checker.type_scope(),
-                            &checker.resolved,
-                        );
-
-                        if !val_ty.is_literal()
-                            && val_ty.clone().default_literal()
-                                != expected.clone().default_literal()
-                            && expected.is_numeric()
-                            && val_ty.is_numeric()
-                        {
-                            checker.add_constraint(
-                                expected.clone(),
-                                val_ty.clone(),
-                                ConstraintOrigin::ImplicitWidening {
-                                    source_span: checker.pool.expr_span(*value),
-                                    target_span: binding.span,
-                                },
-                            );
-                        } else if !super::super::types::unify(&expected, &bind_ty) {
-                            checker.add_constraint(
-                                expected.clone(),
-                                bind_ty.clone(),
-                                ConstraintOrigin::Assignment {
-                                    lhs_span: binding.span,
-                                    rhs_span: checker.pool.expr_span(*value),
-                                },
-                            );
-                        }
-                        bind_ty = expected;
-                    }
-
-                    checker.ctx.bind(symbol_id, bind_ty.clone());
-                    checker.record_decl_type(symbol_id, bind_ty);
-                }
-            }
+        Stmt::VarDecl { span: _, bindings, value } => {
+            check_var_decl_stmt(checker, bindings, *value);
         }
-        Stmt::Set {
-            span: _,
-            places,
-            op: _,
-            value,
-        } => {
-            for place in places {
-                validate_mutability(checker, place);
-            }
-            let val_ty = super::super::synth::synth_expr(checker, *value);
-            if places.len() > 1 {
-                let val_tys = if let Some((ok, err)) = super::super::types::result_ok_err(&val_ty) {
-                    vec![ok, err]
-                } else {
-                    match &val_ty {
-                        ArType::Tuple(tys) => tys
-                            .iter()
-                            .map(|&t| {
-                                super::super::types::type_interner::with_resolved_type(t, |ty| {
-                                    ty.clone()
-                                })
-                            })
-                            .collect(),
-                        ArType::Error => vec![ArType::Error; places.len()],
-                        other => vec![other.clone(); places.len()],
-                    }
-                };
-                for (i, place) in places.iter().enumerate() {
-                    let expected_ty = synth_place(checker, place);
-                    let elem_ty = val_tys.get(i).cloned().unwrap_or(ArType::Error);
-                    if !super::super::types::unify(&expected_ty, &elem_ty) {
-                        checker.add_constraint(
-                            expected_ty.clone(),
-                            elem_ty.clone(),
-                            ConstraintOrigin::SetTarget {
-                                place_span: place.span,
-                                value_span: checker.pool.expr_span(*value),
-                            },
-                        );
-                    } else if !elem_ty.is_literal()
-                        && elem_ty.clone().default_literal()
-                            != expected_ty.clone().default_literal()
-                        && expected_ty.is_numeric()
-                        && elem_ty.is_numeric()
-                    {
-                        checker.add_constraint(
-                            expected_ty,
-                            elem_ty.clone(),
-                            ConstraintOrigin::ImplicitWidening {
-                                source_span: checker.pool.expr_span(*value),
-                                target_span: place.span,
-                            },
-                        );
-                    }
-                }
-            } else if let Some(place) = places.first() {
-                let expected_ty = synth_place(checker, place);
-                if super::super::types::result_ok_err(&val_ty).is_some()
-                    && super::super::types::result_ok_err(&expected_ty).is_none()
-                {
-                    checker.diagnostics.push(crate::Diagnostic::warning(
-                        crate::DiagCode::W006UnhandledResult,
-                        "Result value must be handled with `?` or `value, err = f()`",
-                        checker.pool.expr_span(*value),
-                    ));
-                }
-                if !super::super::types::unify(&expected_ty, &val_ty) {
-                    checker.add_constraint(
-                        expected_ty.clone(),
-                        val_ty.clone(),
-                        ConstraintOrigin::SetTarget {
-                            place_span: place.span,
-                            value_span: checker.pool.expr_span(*value),
-                        },
-                    );
-                } else if !val_ty.is_literal()
-                    && val_ty.clone().default_literal() != expected_ty.clone().default_literal()
-                    && expected_ty.is_numeric()
-                    && val_ty.is_numeric()
-                {
-                    checker.add_constraint(
-                        expected_ty,
-                        val_ty.clone(),
-                        ConstraintOrigin::ImplicitWidening {
-                            source_span: checker.pool.expr_span(*value),
-                            target_span: place.span,
-                        },
-                    );
-                }
-            }
+        Stmt::Set { span: _, places, op: _, value } => {
+            check_set_stmt(checker, places, *value);
         }
         Stmt::Return { span, values } => {
-            let current_ret = checker
-                .ctx
-                .current_return()
-                .cloned()
-                .unwrap_or(ArType::Void);
-
-            let val_ty = if values.is_empty() {
-                ArType::Void
-            } else if values.len() == 1 {
-                super::super::synth::synth_expr(checker, values[0])
-            } else {
-                let tys = values
-                    .iter()
-                    .map(|v| {
-                        let ty = super::super::synth::synth_expr(checker, *v);
-                        super::super::types::intern_type(ty)
-                    })
-                    .collect();
-                ArType::Tuple(tys)
-            };
-
-            if !super::super::types::unify_return(&current_ret, &val_ty) {
-                checker.add_constraint(
-                    current_ret,
-                    val_ty,
-                    ConstraintOrigin::ReturnType {
-                        return_span: *span,
-                        declared_span: checker.ctx.current_return_decl_span().unwrap_or(*span),
-                    },
-                );
-            } else if !val_ty.is_literal()
-                && val_ty.clone().default_literal() != current_ret.clone().default_literal()
-                && current_ret.is_numeric()
-                && val_ty.is_numeric()
-            {
-                checker.add_constraint(
-                    current_ret,
-                    val_ty.clone(),
-                    ConstraintOrigin::ImplicitWidening {
-                        source_span: values.first().map_or(*span, |v| checker.pool.expr_span(*v)),
-                        target_span: *span,
-                    },
-                );
-            }
+            check_return_stmt(checker, *span, values);
         }
         Stmt::Expr { expr, .. } => {
             super::super::synth::synth_expr(checker, *expr);
         }
-        Stmt::If {
-            span: _,
-            condition,
-            then_block,
-            else_block,
-        } => {
-            check_condition(checker, condition);
-            check_block(checker, _pool, then_block);
-            if let Some(eb) = else_block {
-                check_block(checker, _pool, eb);
-            }
+        Stmt::If { span: _, condition, then_block, else_block } => {
+            check_if_stmt(checker, pool, condition, then_block, else_block.as_ref());
         }
-        Stmt::While {
-            span: _,
-            condition,
-            body,
-        } => {
-            check_condition(checker, condition);
-            checker.ctx.enter_loop();
-            check_block(checker, _pool, body);
-            checker.ctx.exit_loop();
+        Stmt::While { span: _, condition, body } => {
+            check_while_stmt(checker, pool, condition, body);
         }
-        Stmt::For {
-            span: _,
-            clause,
-            body,
-        } => {
-            match clause {
-                arandu_parser::ForClause::In {
-                    span: _,
-                    bindings,
-                    iterable,
-                } => {
-                    let iterable_ty = super::super::synth::synth_expr(checker, *iterable);
-                    let elem_ty = match &iterable_ty {
-                        ArType::Array(_, inner) | ArType::Slice(inner) => {
-                            super::super::types::type_interner::with_resolved_type(*inner, |t| {
-                                t.clone()
-                            })
-                        }
-                        ArType::Error => ArType::Error,
-                        _ => {
-                            checker.diagnostics.push(crate::Diagnostic::error(
-                                crate::DiagCode::T005OperatorNotApplicable,
-                                format!(
-                                    "expected array or slice, found '{}'",
-                                    iterable_ty.display(&checker.symbols)
-                                ),
-                                checker.pool.expr_span(*iterable),
-                            ));
-                            ArType::Error
-                        }
-                    };
-                    if let Some(binding) = bindings.first() {
-                        let binding_key = crate::NodeKey::from(binding.span);
-                        if let Some(symbol_id) =
-                            checker.resolved.definitions.get(&binding_key).copied()
-                        {
-                            checker.ctx.bind(symbol_id, elem_ty.clone());
-                            checker.record_decl_type(symbol_id, elem_ty);
-                        }
-                    }
-                }
-                arandu_parser::ForClause::CStyle {
-                    init,
-                    condition,
-                    step,
-                    ..
-                } => {
-                    if let Some(init_stmt) = init {
-                        match init_stmt {
-                            arandu_parser::SimpleStmt::VarDecl {
-                                span,
-                                bindings,
-                                value,
-                            } => {
-                                check_stmt(
-                                    checker,
-                                    _pool,
-                                    &Stmt::VarDecl {
-                                        span: *span,
-                                        bindings: bindings.clone(),
-                                        value: *value,
-                                    },
-                                );
-                            }
-                            arandu_parser::SimpleStmt::Set {
-                                span,
-                                places,
-                                op,
-                                value,
-                            } => {
-                                check_stmt(
-                                    checker,
-                                    _pool,
-                                    &Stmt::Set {
-                                        span: *span,
-                                        places: places.clone(),
-                                        op: op.clone(),
-                                        value: *value,
-                                    },
-                                );
-                            }
-                            arandu_parser::SimpleStmt::Expr { expr, span: _ } => {
-                                super::super::synth::synth_expr(checker, *expr);
-                            }
-                        }
-                    }
-                    if let Some(cond_expr) = condition {
-                        let cond_ty = super::super::synth::synth_expr(checker, *cond_expr);
-                        if !cond_ty.is_error()
-                            && !super::super::types::unify(
-                                &cond_ty,
-                                &ArType::Primitive(Primitive::Bool),
-                            )
-                        {
-                            checker.add_constraint(
-                                ArType::Primitive(Primitive::Bool),
-                                cond_ty,
-                                ConstraintOrigin::Condition {
-                                    span: checker.pool.expr_span(*cond_expr),
-                                },
-                            );
-                        }
-                    }
-                    if let Some(step_stmt) = step {
-                        match step_stmt {
-                            arandu_parser::SimpleStmt::VarDecl {
-                                span,
-                                bindings,
-                                value,
-                            } => {
-                                check_stmt(
-                                    checker,
-                                    _pool,
-                                    &Stmt::VarDecl {
-                                        span: *span,
-                                        bindings: bindings.clone(),
-                                        value: *value,
-                                    },
-                                );
-                            }
-                            arandu_parser::SimpleStmt::Set {
-                                span,
-                                places,
-                                op,
-                                value,
-                            } => {
-                                check_stmt(
-                                    checker,
-                                    _pool,
-                                    &Stmt::Set {
-                                        span: *span,
-                                        places: places.clone(),
-                                        op: op.clone(),
-                                        value: *value,
-                                    },
-                                );
-                            }
-                            arandu_parser::SimpleStmt::Expr { expr, span: _ } => {
-                                super::super::synth::synth_expr(checker, *expr);
-                            }
-                        }
-                    }
-                }
-            }
-            checker.ctx.enter_loop();
-            check_block(checker, _pool, body);
-            checker.ctx.exit_loop();
+        Stmt::For { span: _, clause, body } => {
+            check_for_stmt(checker, pool, clause, body);
         }
         Stmt::Match { span: _, expr } => {
             super::super::synth::synth_expr(checker, *expr);
         }
         Stmt::Free { span, expr } => {
-            let ty = super::super::synth::synth_expr(checker, *expr);
-            if !ty.is_error() && !matches!(ty, ArType::Ptr(_)) {
-                checker.diagnostics.push(
-                    crate::Diagnostic::error(
-                        crate::DiagCode::O011FreeRequiresPtr,
-                        format!(
-                            "`free` requires a pointer type (`ptr[T]`), found '{}'",
-                            ty.display(&checker.symbols)
-                        ),
-                        *span,
-                    )
-                    .with_label(
-                        checker.pool.expr_span(*expr),
-                        format!("expression has type '{}'", ty.display(&checker.symbols)),
-                    ),
-                );
-            }
+            check_free_stmt(checker, *span, *expr);
         }
-        Stmt::Defer { span: _, body } | Stmt::ErrDefer { span: _, body } => match body {
-            arandu_parser::DeferBody::Block { block, .. } => {
-                check_block(checker, _pool, block);
-            }
-            arandu_parser::DeferBody::Expr { expr, .. } => {
-                super::super::synth::synth_expr(checker, *expr);
-            }
-        },
-        Stmt::Break { span } if !checker.ctx.is_in_loop() => {
-            checker.diagnostics.push(crate::Diagnostic::error(
-                crate::DiagCode::N011BreakContinueOutsideLoop,
-                "`break` is only allowed inside a loop",
-                *span,
-            ));
+        Stmt::Defer { span: _, body } | Stmt::ErrDefer { span: _, body } => {
+            check_defer_stmt(checker, pool, body);
         }
-        Stmt::Continue { span } if !checker.ctx.is_in_loop() => {
-            checker.diagnostics.push(crate::Diagnostic::error(
-                crate::DiagCode::N011BreakContinueOutsideLoop,
-                "`continue` is only allowed inside a loop",
-                *span,
-            ));
+        Stmt::Break { span } | Stmt::Continue { span } => {
+            check_loop_control_stmt(checker, stmt, *span);
         }
-        Stmt::Break { .. } | Stmt::Continue { .. } => {}
         _ => {}
+    }
+}fn check_var_decl_stmt(
+    checker: &mut TypeChecker<'_>,
+    bindings: &[arandu_parser::BindingItem],
+    value: arandu_parser::ast_pool::ExprId,
+) {
+    let val_ty = super::super::synth::synth_expr(checker, value);
+
+    if bindings.len() > 1 {
+        check_multi_var_decl(checker, bindings, value, &val_ty);
+    } else if let Some(binding) = bindings.first() {
+        check_single_var_decl(checker, binding, value, &val_ty);
+    }
+}
+
+fn check_multi_var_decl(
+    checker: &mut TypeChecker<'_>,
+    bindings: &[arandu_parser::BindingItem],
+    value: arandu_parser::ast_pool::ExprId,
+    val_ty: &ArType,
+) {
+    let val_tys = if let Some((ok, err)) = super::super::types::result_ok_err(val_ty) {
+        vec![ok, err]
+    } else {
+        match val_ty {
+            ArType::Tuple(tys) => tys
+                .iter()
+                .map(|&t| {
+                    super::super::types::type_interner::with_resolved_type(t, |ty| ty.clone())
+                })
+                .collect(),
+            ArType::Error => vec![ArType::Error; bindings.len()],
+            other => vec![other.clone(); bindings.len()],
+        }
+    };
+
+    for (i, binding) in bindings.iter().enumerate() {
+        let binding_key = crate::NodeKey::from(binding.span);
+        if let Some(symbol_id) = checker.resolved.definitions.get(&binding_key).copied() {
+            let elem_ty = val_tys.get(i).cloned().unwrap_or(ArType::Error);
+            let mut bind_ty = elem_ty.clone();
+
+            if let Some(ty_expr) = &binding.ty {
+                let expected = super::super::types::lower_type_expr(
+                    *ty_expr,
+                    checker.pool,
+                    &checker.symbols,
+                    checker.type_scope(),
+                    &checker.resolved,
+                );
+
+                apply_assignment_constraints(
+                    checker,
+                    &expected,
+                    &elem_ty,
+                    binding.span,
+                    checker.pool.expr_span(value),
+                );
+                bind_ty = expected;
+            }
+
+            checker.ctx.bind(symbol_id, bind_ty.clone());
+            checker.record_decl_type(symbol_id, bind_ty);
+        }
+    }
+}
+
+fn check_single_var_decl(
+    checker: &mut TypeChecker<'_>,
+    binding: &arandu_parser::BindingItem,
+    value: arandu_parser::ast_pool::ExprId,
+    val_ty: &ArType,
+) {
+    let binding_key = crate::NodeKey::from(binding.span);
+    if let Some(symbol_id) = checker.resolved.definitions.get(&binding_key).copied() {
+        let mut bind_ty = val_ty.clone();
+
+        if matches!(checker.pool.expr(value), ExprKind::Nil)
+            && let Some(ty_expr) = &binding.ty
+        {
+            let expected = super::super::types::lower_type_expr(
+                *ty_expr,
+                checker.pool,
+                &checker.symbols,
+                checker.type_scope(),
+                &checker.resolved,
+            );
+            if !expected.is_error() {
+                checker.type_info.record_expr_type(value, expected.clone());
+                bind_ty = expected;
+            }
+        }
+
+        let annotated_as_result = binding.ty.as_ref().is_some_and(|ty_expr| {
+            let expected = super::super::types::lower_type_expr(
+                *ty_expr,
+                checker.pool,
+                &checker.symbols,
+                checker.type_scope(),
+                &checker.resolved,
+            );
+            super::super::types::result_ok_err(&expected).is_some()
+        });
+
+        if super::super::types::result_ok_err(val_ty).is_some() && !annotated_as_result {
+            checker.diagnostics.push(crate::Diagnostic::warning(
+                crate::DiagCode::W006UnhandledResult,
+                "Result value must be handled with `?` or `value, err = f()`",
+                checker.pool.expr_span(value),
+            ));
+        }
+
+        if let Some(ty_expr) = &binding.ty {
+            let expected = super::super::types::lower_type_expr(
+                *ty_expr,
+                checker.pool,
+                &checker.symbols,
+                checker.type_scope(),
+                &checker.resolved,
+            );
+
+            apply_assignment_constraints(
+                checker,
+                &expected,
+                &bind_ty,
+                binding.span,
+                checker.pool.expr_span(value),
+            );
+            bind_ty = expected;
+        }
+
+        checker.ctx.bind(symbol_id, bind_ty.clone());
+        checker.record_decl_type(symbol_id, bind_ty);
+    }
+}
+
+fn check_set_stmt(
+    checker: &mut TypeChecker<'_>,
+    places: &[arandu_parser::Place],
+    value: arandu_parser::ast_pool::ExprId,
+) {
+    for place in places {
+        validate_mutability(checker, place);
+    }
+    let val_ty = super::super::synth::synth_expr(checker, value);
+
+    if places.len() > 1 {
+        let val_tys = if let Some((ok, err)) = super::super::types::result_ok_err(&val_ty) {
+            vec![ok, err]
+        } else {
+            match &val_ty {
+                ArType::Tuple(tys) => tys
+                    .iter()
+                    .map(|&t| {
+                        super::super::types::type_interner::with_resolved_type(t, |ty| ty.clone())
+                    })
+                    .collect(),
+                ArType::Error => vec![ArType::Error; places.len()],
+                other => vec![other.clone(); places.len()],
+            }
+        };
+
+        for (i, place) in places.iter().enumerate() {
+            let expected_ty = synth_place(checker, place);
+            let elem_ty = val_tys.get(i).cloned().unwrap_or(ArType::Error);
+            apply_set_constraints(checker, &expected_ty, &elem_ty, place.span, checker.pool.expr_span(value));
+        }
+    } else if let Some(place) = places.first() {
+        let expected_ty = synth_place(checker, place);
+        let mut final_val_ty = val_ty.clone();
+
+        if matches!(checker.pool.expr(value), arandu_parser::ExprKind::Nil) && !expected_ty.is_error() {
+            checker.type_info.record_expr_type(value, expected_ty.clone());
+            final_val_ty = expected_ty.clone();
+        }
+
+        if super::super::types::result_ok_err(&final_val_ty).is_some()
+            && super::super::types::result_ok_err(&expected_ty).is_none()
+        {
+            checker.diagnostics.push(crate::Diagnostic::warning(
+                crate::DiagCode::W006UnhandledResult,
+                "Result value must be handled with `?` or `value, err = f()`",
+                checker.pool.expr_span(value),
+            ));
+        }
+
+        apply_set_constraints(checker, &expected_ty, &final_val_ty, place.span, checker.pool.expr_span(value));
+    }
+}
+
+fn check_return_stmt(
+    checker: &mut TypeChecker<'_>,
+    span: arandu_base::Span,
+    values: &[arandu_parser::ast_pool::ExprId],
+) {
+    let current_ret = checker
+        .ctx
+        .current_return()
+        .cloned()
+        .unwrap_or(ArType::Void);
+
+    let val_ty = if values.is_empty() {
+        ArType::Void
+    } else if values.len() == 1 {
+        super::super::synth::synth_expr(checker, values[0])
+    } else {
+        let tys = values
+            .iter()
+            .map(|v| {
+                let ty = super::super::synth::synth_expr(checker, *v);
+                super::super::types::intern_type(ty)
+            })
+            .collect();
+        ArType::Tuple(tys)
+    };
+
+    if !super::super::types::unify_return(&current_ret, &val_ty) {
+        checker.add_constraint(
+            current_ret,
+            val_ty,
+            ConstraintOrigin::ReturnType {
+                return_span: span,
+                declared_span: checker.ctx.current_return_decl_span().unwrap_or(span),
+            },
+        );
+    } else if !val_ty.is_literal()
+        && val_ty.clone().default_literal() != current_ret.clone().default_literal()
+        && current_ret.is_numeric()
+        && val_ty.is_numeric()
+    {
+        checker.add_constraint(
+            current_ret,
+            val_ty.clone(),
+            ConstraintOrigin::ImplicitWidening {
+                source_span: values.first().map_or(span, |v| checker.pool.expr_span(*v)),
+                target_span: span,
+            },
+        );
+    }
+}
+
+fn check_if_stmt(
+    checker: &mut TypeChecker<'_>,
+    pool: &AstPool,
+    condition: &arandu_parser::Condition,
+    then_block: &arandu_parser::Block,
+    else_block: Option<&arandu_parser::Block>,
+) {
+    check_condition(checker, condition);
+    check_block(checker, pool, then_block);
+    if let Some(eb) = else_block {
+        check_block(checker, pool, eb);
+    }
+}
+
+fn check_while_stmt(
+    checker: &mut TypeChecker<'_>,
+    pool: &AstPool,
+    condition: &arandu_parser::Condition,
+    body: &arandu_parser::Block,
+) {
+    check_condition(checker, condition);
+    checker.ctx.enter_loop();
+    check_block(checker, pool, body);
+    checker.ctx.exit_loop();
+}
+
+fn check_for_stmt(
+    checker: &mut TypeChecker<'_>,
+    pool: &AstPool,
+    clause: &arandu_parser::ForClause,
+    body: &arandu_parser::Block,
+) {
+    match clause {
+        arandu_parser::ForClause::In {
+            span: _,
+            bindings,
+            iterable,
+        } => {
+            let iterable_ty = super::super::synth::synth_expr(checker, *iterable);
+            let elem_ty = match &iterable_ty {
+                ArType::Array(_, inner) | ArType::Slice(inner) | ArType::Range(inner) => {
+                    super::super::types::type_interner::with_resolved_type(*inner, |t| t.clone())
+                }
+                ArType::Error => ArType::Error,
+                _ => {
+                    checker.diagnostics.push(crate::Diagnostic::error(
+                        crate::DiagCode::T005OperatorNotApplicable,
+                        format!(
+                            "expected array, slice, or range, found '{}'",
+                            iterable_ty.display(&checker.symbols)
+                        ),
+                        checker.pool.expr_span(*iterable),
+                    ));
+                    ArType::Error
+                }
+            };
+            if let Some(binding) = bindings.first() {
+                let binding_key = crate::NodeKey::from(binding.span);
+                if let Some(symbol_id) = checker.resolved.definitions.get(&binding_key).copied() {
+                    checker.ctx.bind(symbol_id, elem_ty.clone());
+                    checker.record_decl_type(symbol_id, elem_ty);
+                }
+            }
+        }
+        arandu_parser::ForClause::CStyle {
+            init,
+            condition,
+            step,
+            ..
+        } => {
+            if let Some(init_stmt) = init {
+                check_simple_stmt(checker, pool, init_stmt);
+            }
+            if let Some(cond_expr) = condition {
+                let cond_ty = super::super::synth::synth_expr(checker, *cond_expr);
+                if !cond_ty.is_error()
+                    && !super::super::types::unify(
+                        &cond_ty,
+                        &ArType::Primitive(Primitive::Bool),
+                    )
+                {
+                    checker.add_constraint(
+                        ArType::Primitive(Primitive::Bool),
+                        cond_ty,
+                        ConstraintOrigin::Condition {
+                            span: checker.pool.expr_span(*cond_expr),
+                        },
+                    );
+                }
+            }
+            if let Some(step_stmt) = step {
+                check_simple_stmt(checker, pool, step_stmt);
+            }
+        }
+    }
+    checker.ctx.enter_loop();
+    check_block(checker, pool, body);
+    checker.ctx.exit_loop();
+}
+
+fn check_simple_stmt(
+    checker: &mut TypeChecker<'_>,
+    pool: &AstPool,
+    stmt: &arandu_parser::SimpleStmt,
+) {
+    match stmt {
+        arandu_parser::SimpleStmt::VarDecl { span, bindings, value } => {
+            check_stmt(
+                checker,
+                pool,
+                &Stmt::VarDecl {
+                    span: *span,
+                    bindings: bindings.clone(),
+                    value: *value,
+                },
+            );
+        }
+        arandu_parser::SimpleStmt::Set { span, places, op, value } => {
+            check_stmt(
+                checker,
+                pool,
+                &Stmt::Set {
+                    span: *span,
+                    places: places.clone(),
+                    op: op.clone(),
+                    value: *value,
+                },
+            );
+        }
+        arandu_parser::SimpleStmt::Expr { expr, span: _ } => {
+            super::super::synth::synth_expr(checker, *expr);
+        }
+    }
+}
+
+fn check_free_stmt(checker: &mut TypeChecker<'_>, span: arandu_base::Span, expr: arandu_parser::ast_pool::ExprId) {
+    let ty = super::super::synth::synth_expr(checker, expr);
+    if !ty.is_error() && !matches!(ty, ArType::Ptr(_)) {
+        checker.diagnostics.push(
+            crate::Diagnostic::error(
+                crate::DiagCode::O011FreeRequiresPtr,
+                format!(
+                    "`free` requires a pointer type (`ptr[T]`), found '{}'",
+                    ty.display(&checker.symbols)
+                ),
+                span,
+            )
+            .with_label(
+                checker.pool.expr_span(expr),
+                format!("expression has type '{}'", ty.display(&checker.symbols)),
+            ),
+        );
+    }
+}
+
+fn check_defer_stmt(checker: &mut TypeChecker<'_>, pool: &AstPool, body: &arandu_parser::DeferBody) {
+    match body {
+        arandu_parser::DeferBody::Block { block, .. } => {
+            check_block(checker, pool, block);
+        }
+        arandu_parser::DeferBody::Expr { expr, .. } => {
+            super::super::synth::synth_expr(checker, *expr);
+        }
+    }
+}
+
+fn check_loop_control_stmt(checker: &mut TypeChecker<'_>, stmt: &Stmt, span: arandu_base::Span) {
+    if !checker.ctx.is_in_loop() {
+        let msg = match stmt {
+            Stmt::Break { .. } => "`break` is only allowed inside a loop",
+            Stmt::Continue { .. } => "`continue` is only allowed inside a loop",
+            _ => unreachable!(),
+        };
+        checker.diagnostics.push(crate::Diagnostic::error(
+            crate::DiagCode::N011BreakContinueOutsideLoop,
+            msg,
+            span,
+        ));
+    }
+}
+
+fn apply_assignment_constraints(
+    checker: &mut TypeChecker<'_>,
+    expected: &ArType,
+    actual: &ArType,
+    lhs_span: arandu_base::Span,
+    rhs_span: arandu_base::Span,
+) {
+    if !actual.is_literal()
+        && actual.clone().default_literal() != expected.clone().default_literal()
+        && expected.is_numeric()
+        && actual.is_numeric()
+    {
+        checker.add_constraint(
+            expected.clone(),
+            actual.clone(),
+            ConstraintOrigin::ImplicitWidening {
+                source_span: rhs_span,
+                target_span: lhs_span,
+            },
+        );
+    } else if !super::super::types::unify(expected, actual) {
+        checker.add_constraint(
+            expected.clone(),
+            actual.clone(),
+            ConstraintOrigin::Assignment {
+                lhs_span,
+                rhs_span,
+            },
+        );
+    }
+}
+
+fn apply_set_constraints(
+    checker: &mut TypeChecker<'_>,
+    expected: &ArType,
+    actual: &ArType,
+    place_span: arandu_base::Span,
+    value_span: arandu_base::Span,
+) {
+    if !super::super::types::unify(expected, actual) {
+        checker.add_constraint(
+            expected.clone(),
+            actual.clone(),
+            ConstraintOrigin::SetTarget {
+                place_span,
+                value_span,
+            },
+        );
+    } else if !actual.is_literal()
+        && actual.clone().default_literal() != expected.clone().default_literal()
+        && expected.is_numeric()
+        && actual.is_numeric()
+    {
+        checker.add_constraint(
+            expected.clone(),
+            actual.clone(),
+            ConstraintOrigin::ImplicitWidening {
+                source_span: value_span,
+                target_span: place_span,
+            },
+        );
     }
 }
 

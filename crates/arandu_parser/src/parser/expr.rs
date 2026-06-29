@@ -303,11 +303,17 @@ impl<'a> Parser<'a> {
                 ))
             }
             TokenKind::IdentValue => {
-                let name = self.expect_ident_value()?;
-                let span = self.span_from_mark(start);
-                Ok(self
-                    .pool
-                    .alloc_expr(ExprKind::Path { path: vec![name] }, span))
+                if self.tokens.get(self.pos + 1).is_some_and(|t| matches!(t.kind, TokenKind::Dot))
+                    && self.tokens.get(self.pos + 2).is_some_and(|t| matches!(t.kind, TokenKind::IdentType))
+                {
+                    self.parse_type_led_expr()
+                } else {
+                    let name = self.expect_ident_value()?;
+                    let span = self.span_from_mark(start);
+                    Ok(self
+                        .pool
+                        .alloc_expr(ExprKind::Path { path: vec![name] }, span))
+                }
             }
             TokenKind::IdentType => self.parse_type_led_expr(),
             TokenKind::IntDec | TokenKind::IntHex | TokenKind::IntBin | TokenKind::IntOct => {
@@ -370,11 +376,9 @@ impl<'a> Parser<'a> {
                                 break;
                             }
                             self.consume();
-                            if self.can_start_type() {
-                                if self.parse_type().is_err() {
-                                    params_ok = false;
-                                    break;
-                                }
+                            if self.can_start_type() && self.parse_type().is_err() {
+                                params_ok = false;
+                                break;
                             }
                             if !self.eat_name("COMMA") {
                                 break;
@@ -601,16 +605,18 @@ impl<'a> Parser<'a> {
                 span,
             ));
         }
-        let (is_named, name, is_empty) = match self.pool.type_expr(ty) {
-            TypeExpr::Named { name, args, .. } => (true, Some(name.clone()), args.is_empty()),
-            _ => (false, None, false),
+        let named_info = match self.pool.type_expr(ty) {
+            TypeExpr::Named { name, args, .. } if args.is_empty() => Some(name.clone()),
+            _ => None,
         };
-        if is_named && is_empty && self.eat_name("DOT") {
+        if let Some(type_name) = named_info
+            && self.eat_name("DOT")
+        {
             let member = self.expect_name_like()?;
             let span = self.span_from_mark(start);
             return Ok(self.pool.alloc_expr(
                 ExprKind::TypePath {
-                    type_name: name.unwrap(),
+                    type_name,
                     member,
                 },
                 span,
