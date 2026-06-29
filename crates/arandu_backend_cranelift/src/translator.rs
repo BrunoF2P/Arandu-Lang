@@ -1,7 +1,7 @@
 use crate::types::{ClifType, clif_type};
 use arandu_semantics::SymbolTable;
 use arandu_semantics::amir::{
-    AmirBasicBlock, AmirConstant, AmirFunc, AmirOperand, AmirPlace, AmirRvalue, AmirStmt,
+    AmirBasicBlock, AmirConstant, AmirFunc, AmirOperand, AmirPlace, AmirProjection, AmirRvalue, AmirStmt,
     AmirTerminator, BlockId, InstrId, LocalId, TempId,
 };
 use arandu_semantics::ops::{BinaryOp, UnaryOp};
@@ -114,17 +114,54 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
                 self.translate_store_place(lhs, val);
             }
             AmirStmt::Call { lhs, callee, args } => {
-                let clif_args: Vec<Value> = args
-                    .iter()
-                    .map(|arg| self.translate_operand(arg, None))
-                    .collect();
+                if let AmirOperand::FunctionRef(sym_id) = callee {
+                    let sym = self.symbol_table.get(*sym_id);
+                    if sym.name.starts_with("std.core.mem.ptr_read") {
+                        let ptr_val = self.translate_operand(&args[0], Some(self.ptr_type));
+                        let clif_ty = lhs.and_then(|temp| self.get_temp_clif_type(temp))
+                            .unwrap_or(self.ptr_type);
+                        let loaded_val = self.builder.ins().load(clif_ty, cranelift_codegen::ir::MemFlags::new(), ptr_val, 0);
+                        if let Some(lhs_temp) = lhs {
+                            if let Some(&var) = self.temp_map.get(lhs_temp) {
+                                self.builder.def_var(var, loaded_val);
+                            }
+                        }
+                        return;
+                    }
+                    if sym.name.starts_with("std.core.mem.ptr_write") {
+                        let ptr_val = self.translate_operand(&args[0], Some(self.ptr_type));
+                        let val_to_store = self.translate_operand(&args[1], None);
+                        self.builder.ins().store(cranelift_codegen::ir::MemFlags::new(), val_to_store, ptr_val, 0);
+                        return;
+                    }
+                }
+
                 let call_inst = match callee {
                     AmirOperand::FunctionRef(sym_id) => {
                         let sym = self.symbol_table.get(*sym_id);
-                        let func_id = self.func_ids.get(&sym.name).expect("Function not declared");
+                        let func_id = self.func_ids.get(&sym.name).unwrap_or_else(|| {
+                            panic!("Function not declared: {}", sym.name);
+                        });
                         let local_ref = self
                             .module
                             .declare_func_in_func(*func_id, self.builder.func);
+                        
+                        let sig_id = self.builder.func.dfg.ext_funcs[local_ref].signature;
+                        let expected_tys: Vec<Type> = self.builder.func.dfg.signatures[sig_id]
+                            .params
+                            .iter()
+                            .map(|param| param.value_type)
+                            .collect();
+
+                        let clif_args: Vec<Value> = args
+                            .iter()
+                            .enumerate()
+                            .map(|(i, arg)| {
+                                let expected = expected_tys.get(i).copied();
+                                self.translate_operand(arg, expected)
+                            })
+                            .collect();
+
                         self.builder.ins().call(local_ref, &clif_args)
                     }
                     _ => unimplemented!("Indirect function calls not implemented yet"),
@@ -157,12 +194,62 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
                 self.builder.def_var(var, val);
             }
         } else {
-            unimplemented!("Projections are not implemented in Cranelift JIT yet");
+            let mut ptr_val = if let Some(&var) = self.local_map.get(&lhs.local) {
+                self.builder.use_var(var)
+            } else {
+                panic!("Use of undeclared local variable");
+            };
+
+            for i in 0..lhs.projections.len() - 1 {
+                let proj = &lhs.projections[i];
+                match proj {
+                    AmirProjection::Field(symbol_id) => {
+                        let name = &self.symbol_table.get(*symbol_id).name;
+                        let offset = match name.as_str() {
+                            "buf" => 0,
+                            "len" => 8,
+                            "cap" => 16,
+                            _ => panic!("Unsupported field: {}", name),
+                        };
+                        ptr_val = self.builder.ins().load(self.ptr_type, cranelift_codegen::ir::MemFlags::new(), ptr_val, offset);
+                    }
+                    AmirProjection::Index(op) => {
+                        let idx_val = self.translate_operand(op, Some(self.ptr_type));
+                        let elem_size = self.builder.ins().iconst(self.ptr_type, 8);
+                        let offset_val = self.builder.ins().imul(idx_val, elem_size);
+                        let elem_ptr = self.builder.ins().iadd(ptr_val, offset_val);
+                        ptr_val = self.builder.ins().load(self.ptr_type, cranelift_codegen::ir::MemFlags::new(), elem_ptr, 0);
+                    }
+                }
+            }
+
+            let Some(last_proj) = lhs.projections.last() else {
+                return;
+            };
+            match last_proj {
+                AmirProjection::Field(symbol_id) => {
+                    let name = &self.symbol_table.get(*symbol_id).name;
+                    let offset = match name.as_str() {
+                        "buf" => 0,
+                        "len" => 8,
+                        "cap" => 16,
+                        _ => panic!("Unsupported field: {}", name),
+                    };
+                    self.builder.ins().store(cranelift_codegen::ir::MemFlags::new(), val, ptr_val, offset);
+                }
+                AmirProjection::Index(op) => {
+                    let idx_val = self.translate_operand(op, Some(self.ptr_type));
+                    let elem_size = self.builder.ins().iconst(self.ptr_type, 8);
+                    let offset_val = self.builder.ins().imul(idx_val, elem_size);
+                    let target_ptr = self.builder.ins().iadd(ptr_val, offset_val);
+                    self.builder.ins().store(cranelift_codegen::ir::MemFlags::new(), val, target_ptr, 0);
+                }
+            }
         }
     }
 
     fn translate_operand(&mut self, operand: &AmirOperand, expected_ty: Option<Type>) -> Value {
-        match operand {
+        let mut val = match operand {
             AmirOperand::Copy(temp_id) | AmirOperand::Move(temp_id) => {
                 let var = self
                     .temp_map
@@ -192,14 +279,24 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
                             self.builder.ins().iconst(ty, val)
                         }
                         arandu_semantics::literal_pool::AmirLiteralEntry::Float(s) => {
-                            let val: f64 = s.parse().unwrap();
+                            let val: f64 = s.parse().unwrap_or_else(|_| {
+                                panic!("ICE: literal float inválido no literal pool: '{s}'")
+                            });
                             self.builder.ins().f64const(val)
                         }
-                        arandu_semantics::literal_pool::AmirLiteralEntry::Str(_) => {
-                            unimplemented!("String literals in JIT are not implemented yet");
+                        arandu_semantics::literal_pool::AmirLiteralEntry::Str(s) => {
+                            let str_bytes = s.as_bytes();
+                            let data_id = self.module.declare_data(&format!("str_lit_{}", lit_id.0), cranelift_module::Linkage::Local, false, false).unwrap_or_else(|err| {
+                                panic!("ICE: falha ao declarar data no JIT module: {:?}", err)
+                            });
+                            let mut data_ctx = cranelift_module::DataDescription::new();
+                            data_ctx.define(str_bytes.to_vec().into_boxed_slice());
+                            let _ = self.module.define_data(data_id, &data_ctx);
+                            let local_data_ref = self.module.declare_data_in_func(data_id, self.builder.func);
+                            self.builder.ins().symbol_value(self.ptr_type, local_data_ref)
                         }
                         arandu_semantics::literal_pool::AmirLiteralEntry::Char(s) => {
-                            let val = s.chars().next().unwrap() as i64;
+                            let val = s.chars().next().unwrap_or('\0') as i64;
                             self.builder
                                 .ins()
                                 .iconst(cranelift_codegen::ir::types::I32, val)
@@ -210,7 +307,20 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
             AmirOperand::FunctionRef(_) | AmirOperand::GlobalRef(_) => {
                 unimplemented!("Refs as operands not implemented in Cranelift JIT yet");
             }
+        };
+
+        if let Some(target_ty) = expected_ty {
+            let val_ty = self.builder.func.dfg.value_type(val);
+            if val_ty != target_ty && val_ty.is_int() && target_ty.is_int() {
+                if val_ty.bits() < target_ty.bits() {
+                    val = self.builder.ins().sextend(target_ty, val);
+                } else if val_ty.bits() > target_ty.bits() {
+                    val = self.builder.ins().ireduce(target_ty, val);
+                }
+            }
         }
+
+        val
     }
 
     fn translate_rvalue(&mut self, rvalue: &AmirRvalue, expected_ty: Option<Type>) -> Value {
@@ -241,8 +351,65 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
                         .expect("Use of undeclared local variable");
                     self.builder.use_var(*var)
                 } else {
-                    unimplemented!("Projections are not implemented in Cranelift JIT yet");
+                    let mut ptr_val = if let Some(&var) = self.local_map.get(&place.local) {
+                        self.builder.use_var(var)
+                    } else {
+                        panic!("Use of undeclared local variable");
+                    };
+
+                    for proj in &place.projections {
+                        match proj {
+                            AmirProjection::Field(symbol_id) => {
+                                let name = &self.symbol_table.get(*symbol_id).name;
+                                let offset = match name.as_str() {
+                                    "buf" => 0,
+                                    "len" => 8,
+                                    "cap" => 16,
+                                    _ => panic!("Unsupported field: {}", name),
+                                };
+                                let clif_ty = expected_ty.unwrap_or(self.ptr_type);
+                                ptr_val = self.builder.ins().load(clif_ty, cranelift_codegen::ir::MemFlags::new(), ptr_val, offset);
+                            }
+                            AmirProjection::Index(op) => {
+                                let idx_val = self.translate_operand(op, Some(self.ptr_type));
+                                let elem_size = self.builder.ins().iconst(self.ptr_type, 8);
+                                let offset_val = self.builder.ins().imul(idx_val, elem_size);
+                                let elem_ptr = self.builder.ins().iadd(ptr_val, offset_val);
+                                let clif_ty = expected_ty.unwrap_or(self.ptr_type);
+                                ptr_val = self.builder.ins().load(clif_ty, cranelift_codegen::ir::MemFlags::new(), elem_ptr, 0);
+                            }
+                        }
+                    }
+                    ptr_val
                 }
+            }
+            AmirRvalue::StructLiteral { struct_symbol: _, fields } => {
+                let malloc_func_id = *self.func_ids.get("malloc").unwrap_or_else(|| {
+                    panic!("malloc not declared in JIT module");
+                });
+                let local_ref = self.module.declare_func_in_func(malloc_func_id, self.builder.func);
+                let size_val = self.builder.ins().iconst(self.ptr_type, (fields.len() * 8) as i64);
+                let call_inst = self.builder.ins().call(local_ref, &[size_val]);
+                let ptr_val = self.builder.inst_results(call_inst)[0];
+
+                for (i, (name, op)) in fields.iter().enumerate() {
+                    let field_idx = match name.as_str() {
+                        "buf" => 0,
+                        "len" => 1,
+                        "cap" => 2,
+                        _ => i,
+                    };
+                    let val = self.translate_operand(op, None);
+                    let offset = (field_idx * 8) as i32;
+                    self.builder.ins().store(cranelift_codegen::ir::MemFlags::new(), val, ptr_val, offset);
+                }
+                ptr_val
+            }
+            AmirRvalue::FieldAccess { base, field } => {
+                let ptr_val = self.translate_operand(base, Some(self.ptr_type));
+                let offset = (field * 8) as i32;
+                let clif_ty = expected_ty.unwrap_or(self.ptr_type);
+                self.builder.ins().load(clif_ty, cranelift_codegen::ir::MemFlags::new(), ptr_val, offset)
             }
             AmirRvalue::Borrow(_) | AmirRvalue::BorrowMut(_) => {
                 unimplemented!("Borrowing of places is not implemented in Cranelift JIT yet");
@@ -400,6 +567,19 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
             // produzem o resultado correto (0 ou 1) de forma mais eficiente.
             BinaryOp::Or => self.builder.ins().bor(lhs, rhs),
             BinaryOp::And => self.builder.ins().band(lhs, rhs),
+            BinaryOp::RangeExclusive | BinaryOp::RangeInclusive => {
+                let malloc_func_id = *self.func_ids.get("malloc").unwrap_or_else(|| {
+                    panic!("malloc not declared in JIT module");
+                });
+                let local_ref = self.module.declare_func_in_func(malloc_func_id, self.builder.func);
+                let size_val = self.builder.ins().iconst(self.ptr_type, 16);
+                let call_inst = self.builder.ins().call(local_ref, &[size_val]);
+                let ptr_val = self.builder.inst_results(call_inst)[0];
+
+                self.builder.ins().store(cranelift_codegen::ir::MemFlags::new(), lhs, ptr_val, 0);
+                self.builder.ins().store(cranelift_codegen::ir::MemFlags::new(), rhs, ptr_val, 8);
+                ptr_val
+            }
             _ => unimplemented!(
                 "Binary operator {:?} not implemented in Cranelift JIT yet",
                 op

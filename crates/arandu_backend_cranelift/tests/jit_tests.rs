@@ -17,7 +17,7 @@ fn compile_src(
 
 #[test]
 fn jit_constant_i32() {
-    let src = "func main() int { return 42; }";
+    let src = "func main(): int { return 42; }";
     let (amir, symbols) = compile_src(src);
     let backend = CraneliftBackend::new();
     let module = backend.compile(&amir, &symbols).unwrap();
@@ -31,7 +31,7 @@ fn jit_constant_i32() {
 
 #[test]
 fn jit_add_i32() {
-    let src = "func add(a: int, b: int) int { return a + b; }";
+    let src = "func add(a: int, b: int): int { return a + b; }";
     let (amir, symbols) = compile_src(src);
     let backend = CraneliftBackend::new();
     let module = backend.compile(&amir, &symbols).unwrap();
@@ -46,12 +46,12 @@ fn jit_add_i32() {
 #[test]
 fn jit_control_flow() {
     let src = r#"
-    func max(a: int, b: int) int {
-        mut res = 0
+    func max(a: int, b: int): int {
+        let mut res = 0
         if a > b {
-            set res = a
+            res = a
         } else {
-            set res = b
+            res = b
         }
         return res
     }
@@ -77,7 +77,7 @@ fn jit_control_flow() {
 #[should_panic(expected = "assertion failed")]
 fn jit_unsigned_comparison() {
     let src = r#"
-    func is_gt(a: u32, b: u32) bool {
+    func is_gt(a: u32, b: u32): bool {
         return a > b;
     }
     "#;

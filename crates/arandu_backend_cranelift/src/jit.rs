@@ -47,6 +47,7 @@ impl AranduJit {
         let ptr_type = self.module.target_config().pointer_type();
 
         // 1. Declare all functions first to support cross-calls
+        // 1. Declare all functions first to support cross-calls
         for func in &program.funcs {
             let sym = symbols.get(func.symbol);
             let param_types: Vec<_> = func
@@ -61,13 +62,46 @@ impl AranduJit {
                 .declare_function(&sym.name, Linkage::Export, &sig)
                 .map_err(|e| format!("Failed to declare function {}: {:?}", sym.name, e))?;
             func_ids.insert(sym.name.clone(), func_id);
+
+            // Also find all NamespaceMember symbols that refer to this function (by matching name ending and span)
+            // and map them to the same func_id!
+            use arandu_semantics::SymbolKind;
+            for s in symbols.iter() {
+                if s.kind == SymbolKind::NamespaceMember
+                    && s.name.ends_with(&format!(".{}", sym.name))
+                    && s.span == sym.span
+                {
+                    func_ids.insert(s.name.clone(), func_id);
+                }
+            }
+        }
+
+        // Declare all extern functions as imports
+        for (&symbol_id, (param_types, return_type)) in &program.extern_funcs {
+            let sym = symbols.get(symbol_id);
+            if func_ids.contains_key(&sym.name) {
+                continue;
+            }
+            let c_name = sym.name.split('.').next_back().unwrap_or(&sym.name);
+            let func_id = if let Some(&existing_id) = func_ids.get(c_name) {
+                existing_id
+            } else {
+                let sig = build_signature(param_types, return_type, default_call_conv, ptr_type);
+                self.module
+                    .declare_function(c_name, Linkage::Import, &sig)
+                    .map_err(|e| format!("Failed to declare extern function {}: {:?}", c_name, e))?
+            };
+            func_ids.insert(sym.name.clone(), func_id);
+            if c_name != sym.name {
+                func_ids.insert(c_name.to_string(), func_id);
+            }
         }
 
         // 2. Define/compile each function
-        let mut builder_context = FunctionBuilderContext::new();
         let mut context = self.module.make_context();
 
         for func in &program.funcs {
+            let mut builder_context = FunctionBuilderContext::new();
             let sym = symbols.get(func.symbol);
             let func_id = func_ids[&sym.name];
 
