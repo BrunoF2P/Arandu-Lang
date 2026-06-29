@@ -1,35 +1,10 @@
-use std::fs;
-use std::path::PathBuf;
-
 use arandu_lexer::lex_to_string;
-
-fn workspace_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(|path| path.parent())
-        .expect("crate should be under workspace/crates")
-        .to_path_buf()
-}
+use arandu_test_support::{assert_golden_text, read_golden_text};
 
 fn assert_golden(name: &str) {
-    let root = workspace_root();
-    let source_path = root.join("tests").join("lexer").join(format!("{name}.aru"));
-    let expected_path = root
-        .join("tests")
-        .join("lexer")
-        .join(format!("{name}.tokens"));
-
-    let source = fs::read_to_string(&source_path)
-        .unwrap_or_else(|err| panic!("failed to read {}: {err}", source_path.display()));
+    let source = read_golden_text("lexer", name, "aru");
     let actual = lex_to_string(&source).expect("lexer should succeed");
-
-    if std::env::var("UPDATE_GOLDEN").is_ok() {
-        fs::write(&expected_path, &actual).unwrap();
-    } else {
-        let expected = fs::read_to_string(&expected_path)
-            .unwrap_or_else(|err| panic!("failed to read {}: {err}", expected_path.display()));
-        assert_eq!(actual.trim_end(), expected.trim_end());
-    }
+    assert_golden_text("lexer", name, "tokens", &actual);
 }
 
 #[test]

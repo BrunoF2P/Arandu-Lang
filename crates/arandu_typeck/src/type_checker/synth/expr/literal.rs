@@ -1,0 +1,195 @@
+use arandu_lexer::Span;
+use arandu_parser::ast_pool::{ExprId, ExprKind};
+use smallvec::SmallVec;
+
+use crate::type_checker::TypeChecker;
+use crate::type_checker::constraints::ConstraintOrigin;
+use crate::type_checker::types::{self, ArType, Primitive};
+use super::synth_expr;
+
+/// Stricter than `unify` for array literals: int and float literals must not mix.
+pub(super) fn array_element_types_compatible(a: &ArType, b: &ArType) -> bool {
+    if matches!(
+        (a, b),
+        (ArType::IntLiteral, ArType::FloatLiteral) | (ArType::FloatLiteral, ArType::IntLiteral)
+    ) {
+        return false;
+    }
+    types::unify(a, b)
+}
+
+pub(super) fn synth_literal_expr(
+    checker: &mut TypeChecker<'_>,
+    _expr: ExprId,
+    kind: &ExprKind,
+    span: Span,
+) -> Option<ArType> {
+    match kind {
+        ExprKind::Int { .. } => Some(ArType::IntLiteral),
+        ExprKind::Float { .. } => Some(ArType::FloatLiteral),
+        ExprKind::Bool { .. } => Some(ArType::Primitive(Primitive::Bool)),
+        ExprKind::Char { .. } => Some(ArType::Primitive(Primitive::Char)),
+        ExprKind::InterpolatedString { parts } => {
+            let part_ids = checker.pool.string_part_list(*parts).to_vec();
+            for part_id in part_ids {
+                if let arandu_parser::StringPart::Expr {
+                    expr: inner_expr, ..
+                } = checker.pool.string_part(part_id)
+                {
+                    let _ = synth_expr(checker, *inner_expr);
+                }
+            }
+            Some(ArType::Primitive(Primitive::Str))
+        }
+        ExprKind::Nil => {
+            if let Some(ret) = checker.ctx.current_return() {
+                if types::is_result_type(ret)
+                    || types::is_option_type(ret)
+                    || matches!(ret, ArType::Nullable(_))
+                {
+                    return Some(ret.clone());
+                }
+                if let Some((ok, _)) = types::result_ok_err(ret) {
+                    return Some(ok);
+                }
+            }
+            let err_id = types::intern_type(ArType::Error);
+            Some(ArType::Nullable(err_id))
+        }
+        ExprKind::StructLiteral { ty, fields } => {
+            let ty_id = *ty;
+            let fields_range = *fields;
+            let struct_ty = types::lower_type_expr(
+                ty_id,
+                checker.pool,
+                &checker.symbols,
+                checker.type_scope(),
+                &checker.resolved,
+            );
+            if let ArType::Named(symbol_id, generic_args) = &struct_ty {
+                let resolved_args: Vec<ArType> = generic_args
+                    .iter()
+                    .map(|&arg_id| {
+                        types::type_interner::with_resolved_type(arg_id, |t| {
+                            t.clone()
+                        })
+                    })
+                    .collect();
+                let field_map = types::struct_fields_instantiated(
+                    checker,
+                    *symbol_id,
+                    &resolved_args,
+                )
+                .or_else(|| checker.type_info.struct_fields.get(symbol_id).cloned());
+                let field_ids = checker.pool.field_init_list(fields_range).to_vec();
+
+                let mut seen_fields = SmallVec::<[(&str, Span); 8]>::new();
+                for &fid in &field_ids {
+                    let field = checker.pool.field_init(fid);
+                    if let Some((_, prev_span)) =
+                        seen_fields.iter().find(|(name, _)| *name == field.name)
+                    {
+                        let diag = crate::Diagnostic::error(
+                            crate::DiagCode::T028DuplicateFieldInit,
+                            format!("field '{}' initialized more than once", field.name),
+                            field.span,
+                        )
+                        .with_label(*prev_span, "first initialization here")
+                        .with_label(field.span, "duplicate initialization");
+                        checker.diagnostics.push(diag);
+                    } else {
+                        seen_fields.push((&field.name, field.span));
+                    }
+                }
+
+                if let Some(fields_def) = field_map {
+                    for fid in &field_ids {
+                        let field = checker.pool.field_init(*fid);
+                        let field_val_ty = synth_expr(checker, field.value);
+                        let defined_field_ty = fields_def.get(&field.name).cloned();
+                        if let Some(defined_field_ty) = defined_field_ty {
+                            if !types::unify(&defined_field_ty, &field_val_ty) {
+                                checker.add_constraint(
+                                    defined_field_ty,
+                                    field_val_ty,
+                                    ConstraintOrigin::FieldInit {
+                                        struct_span: span,
+                                        field_name: field.name.clone(),
+                                        field_span: field.span,
+                                        value_span: checker.pool.expr_span(field.value),
+                                    },
+                                );
+                            }
+                        } else {
+                            checker.add_constraint(
+                                struct_ty.clone(),
+                                ArType::Error,
+                                ConstraintOrigin::UndefinedField {
+                                    base_span: checker.pool.type_expr_span(ty_id),
+                                    field_span: field.span,
+                                    field_name: field.name.clone(),
+                                },
+                            );
+                        }
+                    }
+
+                    let mut missing_fields = Vec::new();
+                    for def_name in fields_def.keys() {
+                        if !seen_fields.iter().any(|(name, _)| name == def_name) {
+                            missing_fields.push(format!("`{def_name}`"));
+                        }
+                    }
+                    if !missing_fields.is_empty() {
+                        missing_fields.sort();
+                        let missing_str = missing_fields.join(", ");
+                        let struct_name = checker.symbols.get(*symbol_id).name.clone();
+                        let diag = crate::Diagnostic::error(
+                            crate::DiagCode::T027MissingStructFields,
+                            format!("missing fields {missing_str} in struct initializer"),
+                            span,
+                        )
+                        .with_label(span, format!("instantiating struct '{struct_name}' here"));
+                        checker.diagnostics.push(diag);
+                    }
+                } else {
+                    for fid in field_ids {
+                        let field = checker.pool.field_init(fid);
+                        let _ = synth_expr(checker, field.value);
+                    }
+                }
+            } else {
+                let field_ids = checker.pool.field_init_list(fields_range).to_vec();
+                for fid in field_ids {
+                    let field = checker.pool.field_init(fid);
+                    let _ = synth_expr(checker, field.value);
+                }
+            }
+            Some(struct_ty)
+        }
+        ExprKind::Array { items } => {
+            let items_range = *items;
+            let mut elem_ty = ArType::Error;
+            let item_ids = checker.pool.expr_list(items_range).to_vec();
+            for (i, item_id) in item_ids.iter().copied().enumerate() {
+                let item_ty = synth_expr(checker, item_id);
+                if elem_ty.is_error() {
+                    elem_ty = item_ty;
+                } else if !array_element_types_compatible(&elem_ty, &item_ty) {
+                    checker.add_constraint(
+                        elem_ty.clone(),
+                        item_ty,
+                        ConstraintOrigin::ArrayLiteral {
+                            array_span: span,
+                            item_span: checker.pool.expr_span(item_id),
+                            item_index: i,
+                        },
+                    );
+                    elem_ty = ArType::Error;
+                }
+            }
+            let elem_id = types::intern_type(elem_ty);
+            Some(ArType::Array(items_range.len as u64, elem_id))
+        }
+        _ => None,
+    }
+}

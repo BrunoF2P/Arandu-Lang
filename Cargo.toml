@@ -11,6 +11,7 @@ members = [
     "crates/arandu_semantics",
     "crates/arandu_cli",
     "crates/arandu_backend_cranelift",
+    "crates/arandu_test_support",
 ]
 resolver = "3"
 

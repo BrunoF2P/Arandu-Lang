@@ -63,6 +63,7 @@ name = "arandu_lexer"
 version = "0.1.0"
 dependencies = [
  "arandu_base",
+ "arandu_test_support",
 ]
 
 [[package]]
@@ -131,6 +132,10 @@ dependencies = [
  "smallvec",
  "strsim",
 ]
+
+[[package]]
+name = "arandu_test_support"
+version = "0.1.0"
 
 [[package]]
 name = "arandu_typeck"

@@ -13,3 +13,6 @@ path = "src/lib.rs"
 
 [dependencies]
 arandu_base = { path = "../arandu_base" }
+
+[dev-dependencies]
+arandu_test_support = { path = "../arandu_test_support" }
