@@ -1,19 +1,21 @@
+use std::sync::Arc;
 use crate::line_index::LineIndex;
 use rustc_hash::FxHashMap;
 
 /// An entry in the `SourceRegistry` representing a loaded source file.
-// TODO: Refactor to hold &'sess str session references instead of owned String to avoid memory duplication.
+/// Uses `Arc<str>` for zero-copy memory interning and lock-free thread safety across compilation sessions.
+#[derive(Clone, Debug)]
 pub struct SourceFile {
-    pub path: String,
-    pub source: String,
+    pub path: Arc<str>,
+    pub source: Arc<str>,
     pub line_index: LineIndex,
 }
 
 /// A registry mapping file identifiers to file paths, contents, and line indices.
-#[derive(Default)]
+#[derive(Default, Clone, Debug)]
 pub struct SourceRegistry {
     files: Vec<SourceFile>,
-    path_to_id: FxHashMap<String, u32>,
+    path_to_id: FxHashMap<Arc<str>, u32>,
 }
 
 impl SourceRegistry {
@@ -34,12 +36,14 @@ impl SourceRegistry {
         }
         let id = self.files.len() as u32;
         let line_index = LineIndex::new(source);
+        let path_arc: Arc<str> = Arc::from(path);
+        let source_arc: Arc<str> = Arc::from(source);
         self.files.push(SourceFile {
-            path: path.to_string(),
-            source: source.to_string(),
+            path: path_arc.clone(),
+            source: source_arc,
             line_index,
         });
-        self.path_to_id.insert(path.to_string(), id);
+        self.path_to_id.insert(path_arc, id);
         id
     }
 

@@ -144,6 +144,7 @@ pub enum DiagCode {
     W004VariableShadowing,
     W005UnnecessaryMutability,
     W006UnhandledResult,
+    W007UnusedImport,
 
     // ── Unimplemented (U) ──
     U001FeatureNotSupported,
@@ -230,6 +231,7 @@ impl DiagCode {
             DiagCode::W004VariableShadowing => "W004",
             DiagCode::W005UnnecessaryMutability => "W005",
             DiagCode::W006UnhandledResult => "W006",
+            DiagCode::W007UnusedImport => "W007",
             DiagCode::U001FeatureNotSupported => "U001",
             DiagCode::ICELX001 => "ICE-LX-001",
             DiagCode::ICEP001 => "ICE-P-001",
@@ -374,7 +376,7 @@ impl Diagnostic {
         let (filepath, start_line, start_col) =
             if let Some(file) = registry.get_file(self.span.file_id) {
                 let (line, col) = file.line_index.line_col(self.span.start);
-                (file.path.as_str(), line, col)
+                (&file.path[..], line, col)
             } else {
                 ("", 1, 1)
             };
