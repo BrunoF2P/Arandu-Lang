@@ -397,8 +397,9 @@ impl LowerCtx<'_> {
                 Ok(AmirOperand::Copy(dest))
             }
             HirExprKind::Array { items } => {
-                let mut item_ops = Vec::new();
-                for &item in self.hir.pool.expr_list(*items) {
+                let items_slice = self.hir.pool.expr_list(*items);
+                let mut item_ops = Vec::with_capacity(items_slice.len());
+                for &item in items_slice {
                     item_ops.push(self.lower_expr(item, None, symbols)?);
                 }
                 let dest = target.unwrap_or_else(|| self.new_temp(expr.ty.clone()));
@@ -413,7 +414,8 @@ impl LowerCtx<'_> {
                 } else {
                     self.lower_expr(*callee, None, symbols)?
                 };
-                let mut arg_ops = Vec::new();
+                let args_slice = self.hir.pool.expr_list(*args);
+                let mut arg_ops = Vec::with_capacity(args_slice.len() + 1);
                 if method_target.is_some()
                     && let HirExprKind::Field { base, .. } | HirExprKind::SafeField { base, .. } =
                         &callee_expr.kind
@@ -421,7 +423,7 @@ impl LowerCtx<'_> {
                     let base_op = self.lower_expr(*base, None, symbols)?;
                     arg_ops.push(base_op);
                 }
-                for &arg in self.hir.pool.expr_list(*args) {
+                for &arg in args_slice {
                     let arg_op = self.lower_expr(arg, None, symbols)?;
                     arg_ops.push(self.consume_operand(arg_op)?);
                 }
@@ -441,8 +443,9 @@ impl LowerCtx<'_> {
                 struct_symbol,
                 fields,
             } => {
-                let mut field_ops = Vec::new();
-                for f in self.hir.pool.field_inits_list(*fields) {
+                let fields_slice = self.hir.pool.field_inits_list(*fields);
+                let mut field_ops = Vec::with_capacity(fields_slice.len());
+                for f in fields_slice {
                     field_ops.push((f.name.clone(), self.lower_expr(f.value, None, symbols)?));
                 }
                 let dest = target.unwrap_or_else(|| self.new_temp(expr.ty.clone()));
