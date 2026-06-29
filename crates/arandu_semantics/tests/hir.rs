@@ -518,8 +518,6 @@ fn test_hir_golden_files() {
         return;
     }
 
-    let update_golden = std::env::var("UPDATE_GOLDEN").is_ok();
-
     let mut entries = Vec::new();
     for entry in std::fs::read_dir(&fixtures_dir).unwrap() {
         let entry = entry.unwrap();
@@ -557,21 +555,6 @@ fn test_hir_golden_files() {
         };
         let pretty = hir.pretty_print(&ctx);
 
-        let golden_path = fixtures_dir.join(format!("{name}.hir"));
-        if update_golden {
-            std::fs::write(&golden_path, &pretty).unwrap();
-        } else {
-            assert!(
-                golden_path.exists(),
-                "Golden file missing for {name}. Run with UPDATE_GOLDEN=1 to create it."
-            );
-            let expected = std::fs::read_to_string(&golden_path).unwrap();
-            let expected_normalized = expected.replace("\r\n", "\n");
-            let pretty_normalized = pretty.replace("\r\n", "\n");
-            assert_eq!(
-                pretty_normalized, expected_normalized,
-                "HIR mismatch for {name}. Run with UPDATE_GOLDEN=1 to update."
-            );
-        }
+        arandu_test_support::assert_golden_text("hir", name, "hir", &pretty);
     }
 }

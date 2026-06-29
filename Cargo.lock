@@ -99,6 +99,7 @@ dependencies = [
  "arandu_base",
  "arandu_diagnostics",
  "arandu_lexer",
+ "arandu_test_support",
 ]
 
 [[package]]
@@ -126,6 +127,7 @@ dependencies = [
  "arandu_mir",
  "arandu_parser",
  "arandu_resolve",
+ "arandu_test_support",
  "arandu_typeck",
  "libc",
  "rustc-hash",
@@ -136,6 +138,10 @@ dependencies = [
 [[package]]
 name = "arandu_test_support"
 version = "0.1.0"
+dependencies = [
+ "arandu_base",
+ "arandu_diagnostics",
+]
 
 [[package]]
 name = "arandu_typeck"

@@ -5,3 +5,5 @@ edition = "2024"
 publish = false
 
 [dependencies]
+arandu_diagnostics = { path = "../arandu_diagnostics" }
+arandu_base = { path = "../arandu_base" }

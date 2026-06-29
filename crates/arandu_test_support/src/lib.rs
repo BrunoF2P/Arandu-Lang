@@ -2,6 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 
 pub mod ui;
+pub use ui::assert_diagnostic_golden;
 
 /// Returns the absolute path to the workspace root directory.
 #[must_use]
@@ -40,9 +41,11 @@ pub fn assert_golden_text(phase: &str, name: &str, ext: &str, actual: &str) {
         );
         let expected = fs::read_to_string(&file_path)
             .unwrap_or_else(|err| panic!("failed to read {}: {err}", file_path.display()));
+        let actual_norm = actual.replace("\r\n", "\n");
+        let expected_norm = expected.replace("\r\n", "\n");
         assert_eq!(
-            actual.trim(),
-            expected.trim(),
+            actual_norm.trim(),
+            expected_norm.trim(),
             "Golden output mismatch for {name}. Run with UPDATE_GOLDEN=1 to update."
         );
     }

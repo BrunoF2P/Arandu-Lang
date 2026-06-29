@@ -1,34 +1,12 @@
 use std::fs;
-use std::path::PathBuf;
 
 use arandu_parser::{ParseErrorCode, parse_to_string};
-
-fn workspace_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(|path| path.parent())
-        .expect("crate should be under workspace/crates")
-        .to_path_buf()
-}
+use arandu_test_support::{assert_golden_text, read_golden_text, workspace_root};
 
 fn assert_golden(name: &str) {
-    let root = workspace_root();
-    let source_path = root
-        .join("tests")
-        .join("parser")
-        .join(format!("{name}.aru"));
-    let expected_path = root
-        .join("tests")
-        .join("parser")
-        .join(format!("{name}.ast"));
-
-    let source = fs::read_to_string(&source_path)
-        .unwrap_or_else(|err| panic!("failed to read {}: {err}", source_path.display()));
-    let expected = fs::read_to_string(&expected_path)
-        .unwrap_or_else(|err| panic!("failed to read {}: {err}", expected_path.display()));
-
+    let source = read_golden_text("parser", name, "aru");
     let actual = parse_to_string(&source).expect("parser should succeed");
-    assert_eq!(actual.trim_end(), expected.replace("\r\n", "\n").trim_end());
+    assert_golden_text("parser", name, "ast", &actual);
 }
 
 fn assert_parses_example(path: &str) {

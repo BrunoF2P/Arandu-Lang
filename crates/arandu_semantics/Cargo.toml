@@ -24,3 +24,6 @@ rustc-hash = "2.1"
 
 [lib]
 path = "src/lib.rs"
+
+[dev-dependencies]
+arandu_test_support = { path = "../arandu_test_support" }

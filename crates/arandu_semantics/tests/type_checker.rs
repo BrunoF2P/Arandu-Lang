@@ -1,77 +1,15 @@
-#![allow(clippy::format_collect)]
-
-#[path = "support/golden.rs"]
-mod golden;
+use std::fs;
 
 use arandu_parser::parse;
 use arandu_semantics::{resolve, type_check};
-use std::{fs, path::PathBuf};
-
-fn workspace_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(|path| path.parent())
-        .expect("crate should be under workspace/crates")
-        .to_path_buf()
-}
+use arandu_test_support::workspace_root;
 
 fn assert_diagnostic_golden(name: &str) {
-    let root = workspace_root();
-    let source_path = root
-        .join("tests")
-        .join("ui")
-        .join("type_checker")
-        .join(format!("{name}.aru"));
-    let expected_path = root
-        .join("tests")
-        .join("ui")
-        .join("type_checker")
-        .join(format!("{name}.diag"));
-    let source = fs::read_to_string(&source_path)
-        .unwrap_or_else(|err| panic!("failed to read {}: {err}", source_path.display()));
-    let expected = golden::read_golden_text(&expected_path);
-
+    let source = arandu_test_support::read_golden_text("ui/type_checker", name, "aru");
     let program = parse(&source).expect("Failed to parse");
     let resolution = resolve(&program);
     let result = type_check(resolution, &program);
-
-    let rel_filepath = source_path
-        .strip_prefix(&root)
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .replace('\\', "/");
-
-    let mut registry = arandu_base::source_registry::SourceRegistry::default();
-    registry.register(&rel_filepath, &source);
-
-    let actual = result
-        .diagnostics
-        .iter()
-        .filter(|d| format!("{}", d.code).starts_with('T'))
-        .map(|d| format!("{}\n", d.format_for_cli(&registry)))
-        .collect::<String>();
-
-    let actual_lines: Vec<&str> = actual
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .collect();
-    let update_golden = std::env::var("UPDATE_GOLDEN").is_ok();
-    if update_golden {
-        fs::write(&expected_path, actual).unwrap();
-    } else {
-        let expected_lines: Vec<&str> = expected
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .collect();
-
-        assert_eq!(
-            actual_lines, expected_lines,
-            "Mismatch in golden diagnostic test output.\nActual:\n{actual}\nExpected:\n{expected}"
-        );
-    }
+    arandu_test_support::assert_diagnostic_golden("ui/type_checker", name, &result.diagnostics);
 }
 
 macro_rules! assert_type_errors {

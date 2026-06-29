@@ -1,19 +1,5 @@
-#![allow(clippy::format_collect)]
-
-#[path = "support/golden.rs"]
-mod golden;
-
 use arandu_lexer::Span;
 use arandu_semantics::{DiagCode, SymbolKind, SymbolTable, resolve};
-use std::{fs, path::PathBuf};
-
-fn workspace_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(|path| path.parent())
-        .expect("crate should be under workspace/crates")
-        .to_path_buf()
-}
 
 fn resolve_source(source: &str) -> arandu_semantics::ResolutionResult {
     let program = arandu_parser::parse(source).expect("parser should accept fixture");
@@ -34,57 +20,9 @@ fn assert_no_diagnostics(source: &str) {
 }
 
 fn assert_diagnostic_golden(name: &str) {
-    let root = workspace_root();
-    let source_path = root
-        .join("tests")
-        .join("ui")
-        .join("semantics")
-        .join(format!("{name}.aru"));
-    let expected_path = root
-        .join("tests")
-        .join("ui")
-        .join("semantics")
-        .join(format!("{name}.diag"));
-    let source = fs::read_to_string(&source_path)
-        .unwrap_or_else(|err| panic!("failed to read {}: {err}", source_path.display()));
-    let expected = golden::read_golden_text(&expected_path);
+    let source = arandu_test_support::read_golden_text("ui/semantics", name, "aru");
     let result = resolve_source(&source);
-    let rel_filepath = source_path
-        .strip_prefix(&root)
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .replace('\\', "/");
-
-    let mut registry = arandu_base::source_registry::SourceRegistry::default();
-    registry.register(&rel_filepath, &source);
-
-    let actual = result
-        .diagnostics
-        .iter()
-        .map(|d| format!("{}\n", d.format_for_cli(&registry)))
-        .collect::<String>();
-
-    let update_golden = std::env::var("UPDATE_GOLDEN").is_ok();
-    if update_golden {
-        fs::write(&expected_path, &actual).unwrap();
-    } else {
-        let actual_lines: Vec<&str> = actual
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .collect();
-        let expected_lines: Vec<&str> = expected
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .collect();
-
-        assert_eq!(
-            actual_lines, expected_lines,
-            "Mismatch in golden diagnostic test output.\nActual:\n{actual}\nExpected:\n{expected}"
-        );
-    }
+    arandu_test_support::assert_diagnostic_golden("ui/semantics", name, &result.diagnostics);
 }
 
 #[test]

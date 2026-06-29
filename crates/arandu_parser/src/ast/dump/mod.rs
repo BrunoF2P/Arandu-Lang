@@ -1,0 +1,185 @@
+mod decl;
+mod expr;
+mod stmt;
+
+use std::cell::RefCell;
+
+use arandu_lexer::Span;
+
+use super::ast_pool::AstPool;
+use super::{
+    Attribute, BinaryOp, GenericParam, Program, SetOp, UnaryOp, Visibility, WhereItem,
+};
+use decl::{dump_import, dump_top_level_decl};
+
+thread_local! {
+    static CURRENT_LINE_INDEX: RefCell<Option<arandu_base::line_index::LineIndex>> = const { RefCell::new(None) };
+}
+
+pub fn dump_program(program: &Program, line_index: &arandu_base::line_index::LineIndex) -> String {
+    CURRENT_LINE_INDEX.with(|cell| {
+        *cell.borrow_mut() = Some(line_index.clone());
+    });
+
+    let mut out = Vec::new();
+    out.push(format!("Program {}", dump_span(program.span)));
+    if let Some(module) = &program.module {
+        out.push(format!(
+            "  Module {} {}",
+            dump_span(module.span),
+            module.path.join(".")
+        ));
+    }
+    for import in &program.imports {
+        out.push(format!("  {}", dump_import(&program.pool, import)));
+    }
+    for decl in &program.decls {
+        dump_top_level_decl(&program.pool, program.pool.decl(*decl), &mut out);
+    }
+
+    CURRENT_LINE_INDEX.with(|cell| {
+        *cell.borrow_mut() = None;
+    });
+
+    out.join("\n")
+}
+
+pub(super) fn dump_span(span: Span) -> String {
+    CURRENT_LINE_INDEX.with(|cell| {
+        if let Some(line_index) = &*cell.borrow() {
+            let (start_line, start_col) = line_index.line_col(span.start);
+            let (end_line, end_col) = line_index.line_col(span.end);
+            format!("@{}:{}-{}:{}", start_line, start_col, end_line, end_col)
+        } else {
+            format!("@{}:{}-{}:{}", 1, span.start, 1, span.end)
+        }
+    })
+}
+
+pub(super) fn dump_attrs(
+    pool: &AstPool,
+    attrs: &[Attribute],
+    out: &mut Vec<String>,
+    indent: usize,
+) {
+    let pad = " ".repeat(indent);
+    for attr in attrs {
+        if attr.args.is_empty() {
+            out.push(format!("{pad}Attr {} {}", dump_span(attr.span), attr.name));
+        } else {
+            let args = attr
+                .args
+                .iter()
+                .map(|arg| expr::dump_expr(pool, *arg))
+                .collect::<Vec<_>>()
+                .join(", ");
+            out.push(format!(
+                "{pad}Attr {} {}({args})",
+                dump_span(attr.span),
+                attr.name
+            ));
+        }
+    }
+}
+
+pub(super) fn dump_generic_params(params: &[GenericParam]) -> String {
+    if params.is_empty() {
+        return String::new();
+    }
+    let params_str = params
+        .iter()
+        .map(|param| {
+            if param.constraints.is_empty() {
+                format!("{} {}", dump_span(param.span), param.name)
+            } else {
+                let constraints = param
+                    .constraints
+                    .iter()
+                    .map(decl::dump_type_name)
+                    .collect::<Vec<_>>()
+                    .join(" + ");
+                format!("{} {}: {constraints}", dump_span(param.span), param.name)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("<{params_str}>")
+}
+
+pub(super) fn dump_where_clause(where_clause: &[WhereItem]) -> String {
+    if where_clause.is_empty() {
+        return String::new();
+    }
+    let items = where_clause
+        .iter()
+        .map(|item| {
+            let constraints = item
+                .constraints
+                .iter()
+                .map(decl::dump_type_name)
+                .collect::<Vec<_>>()
+                .join(" + ");
+            format!("{} {}: {constraints}", dump_span(item.span), item.name)
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(" where {items}")
+}
+
+pub(super) fn dump_visibility(visibility: Visibility) -> &'static str {
+    match visibility {
+        Visibility::Private => "",
+        Visibility::Public => "public ",
+    }
+}
+
+pub(super) fn dump_set_op(op: &SetOp) -> &'static str {
+    match op {
+        SetOp::Assign => "=",
+        SetOp::AddAssign => "+=",
+        SetOp::SubAssign => "-=",
+        SetOp::MulAssign => "*=",
+        SetOp::DivAssign => "/=",
+        SetOp::ModAssign => "%=",
+        SetOp::BitAndAssign => "&=",
+        SetOp::BitOrAssign => "|=",
+        SetOp::BitXorAssign => "^=",
+        SetOp::ShiftLeftAssign => "<<=",
+        SetOp::ShiftRightAssign => ">>=",
+    }
+}
+
+pub(super) fn dump_unary(op: UnaryOp) -> &'static str {
+    match op {
+        UnaryOp::Neg => "-",
+        UnaryOp::Not => "!",
+        UnaryOp::BitNot => "~",
+        UnaryOp::Await => "await",
+    }
+}
+
+pub(super) fn dump_binary(op: BinaryOp) -> &'static str {
+    match op {
+        BinaryOp::Or => "||",
+        BinaryOp::And => "&&",
+        BinaryOp::Equal => "==",
+        BinaryOp::NotEqual => "!=",
+        BinaryOp::Lt => "<",
+        BinaryOp::Gt => ">",
+        BinaryOp::LtEqual => "<=",
+        BinaryOp::GtEqual => ">=",
+        BinaryOp::Add => "+",
+        BinaryOp::Sub => "-",
+        BinaryOp::Mul => "*",
+        BinaryOp::Div => "/",
+        BinaryOp::Mod => "%",
+        BinaryOp::BitOr => "|",
+        BinaryOp::BitXor => "^",
+        BinaryOp::BitAnd => "&",
+        BinaryOp::ShiftLeft => "<<",
+        BinaryOp::ShiftRight => ">>",
+        BinaryOp::NullCoalesce => "??",
+        BinaryOp::RangeExclusive => "..",
+        BinaryOp::RangeInclusive => "..=",
+    }
+}
