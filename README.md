@@ -112,6 +112,24 @@ Run a program via the Cranelift JIT backend (exit code = `main` return value):
 cargo run -p arandu_cli -- run tests/codegen/add.aru
 ```
 
+### Compiler instrumentation (`-Z` flags)
+
+Unstable developer flags for profiling and debugging the compiler itself. Pass them before the subcommand:
+
+```bash
+cargo run -p arandu_cli -- -Ztime-passes check examples/stable/syntax/variables.aru
+cargo run -p arandu_cli -- -Ztime-passes -Zprint-alloc-stats run tests/codegen/add.aru
+```
+
+| Flag | Effect |
+|------|--------|
+| `-Ztime-passes` | Print elapsed time per compiler pass (`parse+check`, `lower-hir`, `codegen`, …) |
+| `-Zprofile-queries` | Print `TyCtx` binding cache hit/miss summary at the end |
+| `-Zprint-alloc-stats` | Print `BumpArena` allocation totals at the end |
+| `-Zdump-mir` | Dump MIR after passes (when wired in the pass pipeline) |
+
+Output goes to **stderr** with `[arandu][perf]`, `[stat]`, `[mem]`, and `[info]` tags. See [docs/arandu-compiler-instrumentation-v0.1.md](docs/arandu-compiler-instrumentation-v0.1.md) for details.
+
 Update golden test files (after intentional IR changes):
 
 ```bash
