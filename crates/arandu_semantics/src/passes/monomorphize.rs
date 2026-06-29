@@ -549,7 +549,7 @@ impl InstantiationAnalyzer<'_> {
             | HirStmtKind::Unsafe(block) => {
                 self.visit_block(*block, current);
             }
-            HirStmtKind::Break | HirStmtKind::Continue => {}
+            HirStmtKind::Break | HirStmtKind::Continue | HirStmtKind::Error => {}
         }
     }
 
@@ -668,7 +668,8 @@ impl InstantiationAnalyzer<'_> {
             | HirExprKind::Bool(_)
             | HirExprKind::Char(_)
             | HirExprKind::Str(_)
-            | HirExprKind::Nil => {}
+            | HirExprKind::Nil
+            | HirExprKind::Error => {}
         }
     }
 }

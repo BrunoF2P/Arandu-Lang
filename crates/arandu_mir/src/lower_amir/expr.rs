@@ -701,6 +701,10 @@ impl LowerCtx<'_> {
                 "unsafe block expression",
                 "v0.2 UNSAFE: unsafe legality and lowering",
             )),
+            HirExprKind::Error => {
+                let dest = self.new_temp(ArType::Error);
+                Ok(AmirOperand::Copy(dest))
+            }
         }
     }
 }

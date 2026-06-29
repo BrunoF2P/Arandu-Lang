@@ -232,7 +232,7 @@ fn lower_stmt_raw(
         Stmt::Unsafe { block, .. } => {
             HirStmtKind::Unsafe(super::stmt::lower_block(type_check, pool, hir_pool, block)?)
         }
-        Stmt::Error(_) => unreachable!("syntax error in HIR lowering"),
+        Stmt::Error(_) => HirStmtKind::Error,
     };
     Ok(HirStmt {
         kind,

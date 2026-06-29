@@ -14,7 +14,7 @@ pub(crate) fn lower_decl(
     pool: &AstPool,
     hir_pool: &mut crate::hir::HirPool,
     decl: &TopLevelDecl,
-) -> Result<HirDecl, Diagnostic> {
+) -> Result<Option<HirDecl>, Diagnostic> {
     match decl {
         TopLevelDecl::Const(d) => {
             let symbol = require_def_symbol(&type_check.resolved, d.span)?;
@@ -24,12 +24,12 @@ pub(crate) fn lower_decl(
                 .cloned()
                 .unwrap_or(ArType::Error);
             let value_vid = super::expr::lower_expr(type_check, pool, hir_pool, d.value)?;
-            Ok(HirDecl::Const(HirConst {
+            Ok(Some(HirDecl::Const(HirConst {
                 symbol,
                 ty,
                 value: value_vid,
                 span: d.span,
-            }))
+            })))
         }
         TopLevelDecl::TypeAlias(d) => {
             let symbol = require_def_symbol(&type_check.resolved, d.span)?;
@@ -38,11 +38,11 @@ pub(crate) fn lower_decl(
                 .decl_type(symbol)
                 .cloned()
                 .unwrap_or(ArType::Error);
-            Ok(HirDecl::TypeAlias(HirTypeAlias {
+            Ok(Some(HirDecl::TypeAlias(HirTypeAlias {
                 symbol,
                 target,
                 span: d.span,
-            }))
+            })))
         }
         TopLevelDecl::Func(d) => {
             let name_span = match &d.name {
@@ -78,7 +78,7 @@ pub(crate) fn lower_decl(
                 });
             }
             let params = hir_pool.alloc_param_list(&params);
-            Ok(HirDecl::Func(HirFunc {
+            Ok(Some(HirDecl::Func(HirFunc {
                 symbol,
                 params,
                 return_type,
@@ -86,7 +86,7 @@ pub(crate) fn lower_decl(
                     type_check, pool, hir_pool, &d.body,
                 )?),
                 span: d.span,
-            }))
+            })))
         }
         TopLevelDecl::Struct(d) => {
             let symbol = require_def_symbol(&type_check.resolved, d.span)?;
@@ -106,11 +106,11 @@ pub(crate) fn lower_decl(
                 }
             }
             let fields = hir_pool.alloc_struct_field_list(&fields);
-            Ok(HirDecl::Struct(HirStruct {
+            Ok(Some(HirDecl::Struct(HirStruct {
                 symbol,
                 fields,
                 span: d.span,
-            }))
+            })))
         }
         TopLevelDecl::Enum(d) => {
             let symbol = require_def_symbol(&type_check.resolved, d.span)?;
@@ -149,18 +149,18 @@ pub(crate) fn lower_decl(
                 });
             }
             let variants = hir_pool.alloc_enum_variant_list(&variants);
-            Ok(HirDecl::Enum(HirEnum {
+            Ok(Some(HirDecl::Enum(HirEnum {
                 symbol,
                 variants,
                 span: d.span,
-            }))
+            })))
         }
         TopLevelDecl::Interface(d) => {
             let symbol = require_def_symbol(&type_check.resolved, d.span)?;
-            Ok(HirDecl::Interface(HirInterface {
+            Ok(Some(HirDecl::Interface(HirInterface {
                 symbol,
                 span: d.span,
-            }))
+            })))
         }
         TopLevelDecl::Extern(d) => {
             let mut members = Vec::new();
@@ -202,12 +202,12 @@ pub(crate) fn lower_decl(
                 });
             }
             let members = hir_pool.alloc_func_signature_list(&members);
-            Ok(HirDecl::Extern(HirExtern {
+            Ok(Some(HirDecl::Extern(HirExtern {
                 abi: d.abi.clone(),
                 members,
                 span: d.span,
-            }))
+            })))
         }
-        TopLevelDecl::Error(_) => unreachable!("syntax error in HIR lowering"),
+        TopLevelDecl::Error(_) => Ok(None),
     }
 }

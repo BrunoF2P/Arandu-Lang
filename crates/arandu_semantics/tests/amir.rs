@@ -391,3 +391,34 @@ fn dce_tracks_used_temps_with_dense_bitsets() {
     assert_eq!(remaining.len(), 1);
     assert_eq!(remaining[0], first);
 }
+
+#[test]
+fn validate_amir_rejects_poison_temp_with_icegen002() {
+    use arandu_semantics::DiagCode;
+
+    let func_block = AmirBasicBlock {
+        id: BlockId::from_usize(0),
+        statements: DenseRange::new(0, 0),
+        terminator: AmirTerminator::Return,
+    };
+    let mut poison_temp = test_temp(0);
+    poison_temp.ty = arandu_middle::types::ArType::Error;
+    let func = test_func(
+        Vec::new(),
+        vec![poison_temp],
+        vec![func_block],
+        AmirStmtTable::new(),
+    );
+    let mut symbols = arandu_semantics::SymbolTable::new();
+    symbols
+        .define(
+            symbols.global_scope(),
+            "test_fn",
+            SymbolKind::Func,
+            dummy_span(),
+        )
+        .unwrap();
+    let issues = arandu_middle::amir_validate::validate_amir_func(&func, &symbols);
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0].code, DiagCode::ICEGEN002);
+}

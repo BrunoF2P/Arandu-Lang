@@ -192,6 +192,7 @@ pub enum HirStmtKind {
     Defer(HirBlockId),
     ErrDefer(HirBlockId),
     Unsafe(HirBlockId),
+    Error,
 }
 
 #[derive(Debug, Clone)]
@@ -381,6 +382,7 @@ pub enum HirExprKind {
     Char(String),
     Str(String),
     Nil,
+    Error,
 }
 
 #[derive(Debug, Clone)]
@@ -629,6 +631,7 @@ impl HirStmt {
             HirStmtKind::Defer(b) | HirStmtKind::ErrDefer(b) | HirStmtKind::Unsafe(b) => {
                 pool.block(*b).validate_invariants(pool, symbols)?;
             }
+            HirStmtKind::Error => {}
         }
         Ok(())
     }
@@ -679,6 +682,9 @@ impl HirSimpleStmt {
 impl HirExpr {
     pub fn validate_invariants(&self, pool: &HirPool, symbols: &SymbolTable) -> Result<(), String> {
         check_span(self.span)?;
+        if matches!(self.kind, HirExprKind::Error) {
+            return Ok(());
+        }
         if matches!(self.ty, ArType::Error) {
             return Err(format!(
                 "Expression has Error type at byte {}",
@@ -819,7 +825,8 @@ impl HirExpr {
             | HirExprKind::Bool(_)
             | HirExprKind::Char(_)
             | HirExprKind::Str(_)
-            | HirExprKind::Nil => {}
+            | HirExprKind::Nil
+            | HirExprKind::Error => {}
         }
         Ok(())
     }

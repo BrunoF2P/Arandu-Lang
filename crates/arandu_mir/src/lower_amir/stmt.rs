@@ -348,6 +348,7 @@ impl LowerCtx<'_> {
                 let op = self.lower_expr(*expr, None, symbols)?;
                 self.push_stmt(AmirStmt::Free(op));
             }
+            HirStmtKind::Error => {}
         }
         Ok(())
     }

@@ -492,6 +492,9 @@ impl HirStmt {
                 out.push_str(&format!("{ind}Unsafe\n"));
                 ctx.pool.block(*block).pretty_print_to(out, indent + 1, ctx);
             }
+            HirStmtKind::Error => {
+                out.push_str(&format!("{ind}<ErrorStmt>\n"));
+            }
         }
     }
 }
@@ -639,6 +642,7 @@ impl HirExpr {
             HirExprKind::Char(v) => format!("'{v}'"),
             HirExprKind::Str(v) => format!("\"{v}\""),
             HirExprKind::Nil => "nil".to_string(),
+            HirExprKind::Error => "<ErrorExpr>".to_string(),
             HirExprKind::Path { symbol } => ctx.symbols.get(*symbol).name.clone(),
             HirExprKind::Binary { op, left, right } => {
                 format!(
@@ -977,6 +981,9 @@ impl HirExpr {
             }
             HirExprKind::Nil => {
                 out.push_str(&format!("{}Nil: {}\n", ind, self.ty.display(ctx.symbols)));
+            }
+            HirExprKind::Error => {
+                out.push_str(&format!("{}Error: {}\n", ind, self.ty.display(ctx.symbols)));
             }
         }
     }

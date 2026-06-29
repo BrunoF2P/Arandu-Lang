@@ -69,8 +69,8 @@ pub fn validate_amir_func(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagnos
 
     for local in &func.locals {
         if local.ty.is_error() {
-            diags.push(Diagnostic::error(
-                DiagCode::U001FeatureNotSupported,
+            diags.push(Diagnostic::ice(
+                DiagCode::ICEGEN002,
                 format!(
                     "local s{} has poison type Error (TYP-1)",
                     local.id.as_usize()
@@ -82,8 +82,8 @@ pub fn validate_amir_func(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagnos
 
     for temp in &func.temps {
         if temp.ty.is_error() {
-            diags.push(Diagnostic::error(
-                DiagCode::U001FeatureNotSupported,
+            diags.push(Diagnostic::ice(
+                DiagCode::ICEGEN002,
                 format!("temp _{} has poison type Error (TYP-1)", temp.id.as_usize()),
                 span,
             ));

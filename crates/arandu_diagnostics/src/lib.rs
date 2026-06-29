@@ -157,6 +157,7 @@ pub enum DiagCode {
     ICEO001,
     ICEL001,
     ICEGEN001,
+    ICEGEN002,
 }
 
 impl DiagCode {
@@ -240,6 +241,7 @@ impl DiagCode {
             DiagCode::ICEO001 => "ICE-O-001",
             DiagCode::ICEL001 => "ICE-L-001",
             DiagCode::ICEGEN001 => "ICE-GEN-001",
+            DiagCode::ICEGEN002 => "ICE-GEN-002",
         }
     }
 }

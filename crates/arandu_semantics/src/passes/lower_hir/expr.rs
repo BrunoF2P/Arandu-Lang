@@ -58,6 +58,7 @@ fn expr_type_for_kind(
     use crate::passes::type_checker::types::Primitive;
 
     match kind {
+        HirExprKind::Error => ArType::Error,
         HirExprKind::Str(_) => ArType::Primitive(Primitive::Str),
         HirExprKind::Int(_) => ArType::IntLiteral,
         HirExprKind::Float(_) => ArType::FloatLiteral,
@@ -460,7 +461,7 @@ pub(crate) fn lower_expr_raw(
         ExprKind::Char { value } => HirExprKind::Char(value.clone()),
         ExprKind::InterpolatedString { .. } => HirExprKind::Str("interpolated".to_string()),
         ExprKind::Nil => HirExprKind::Nil,
-        ExprKind::Error => unreachable!("syntax error in HIR lowering"),
+        ExprKind::Error => HirExprKind::Error,
     };
 
     let ty = expr_type_for_kind(type_check, hir_pool, &kind, fallback_ty);
