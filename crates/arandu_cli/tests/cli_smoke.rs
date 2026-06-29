@@ -125,3 +125,100 @@ fn amir_opt_flag_folds_constants_without_changing_default_command() {
     assert!(!optimized_stdout.contains("add 1, 2"));
     assert!(optimized_stdout.contains("_1 = 3"));
 }
+
+#[test]
+fn run_returns_main_exit_code() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_run_return.aru");
+    fs::write(
+        &file,
+        r"func main(): int {
+    return 42
+}
+",
+    )
+    .expect("fixture should be writable");
+
+    let path = file.to_string_lossy();
+    let output = run_cli(&["run", &path]);
+
+    assert_eq!(output.status.code(), Some(42));
+}
+
+#[test]
+fn run_signed_integer_arithmetic_exits_successfully() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_run_signed.aru");
+    fs::write(
+        &file,
+        r"func main(): int {
+    let div = -1 / 2
+    let rem = -7 % 3
+    if div != 0 {
+        return 1
+    }
+    if rem != -1 {
+        return 2
+    }
+    return 0
+}
+",
+    )
+    .expect("fixture should be writable");
+
+    let path = file.to_string_lossy();
+    let output = run_cli(&["run", &path]);
+
+    assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
+fn run_control_flow_returns_expected_code() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_run_control_flow.aru");
+    fs::write(
+        &file,
+        r"func main(): int {
+    let mut res = 0
+    let a: int = 10
+    let b: int = 20
+    if a > b {
+        res = a
+    } else {
+        res = b
+    }
+    return res
+}
+",
+    )
+    .expect("fixture should be writable");
+
+    let path = file.to_string_lossy();
+    let output = run_cli(&["run", &path]);
+
+    assert_eq!(output.status.code(), Some(20));
+}
+
+#[test]
+fn run_with_ztime_passes_emits_perf_timings() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_run_perf.aru");
+    fs::write(
+        &file,
+        r"func main(): int {
+    return 0
+}
+",
+    )
+    .expect("fixture should be writable");
+
+    let path = file.to_string_lossy();
+    let output = run_cli(&["-Ztime-passes", "run", &path]);
+
+    assert_eq!(output.status.code(), Some(0));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("parse+check") || stderr.contains("[perf]"),
+        "expected perf output in stderr, got:\n{stderr}"
+    );
+}

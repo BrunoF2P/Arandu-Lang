@@ -106,6 +106,12 @@ cargo run -p arandu_cli -- amir tests/codegen/add.aru --debug
 cargo run -p arandu_cli -- amir tests/codegen/add.aru --opt
 ```
 
+Run a program via the Cranelift JIT backend (exit code = `main` return value):
+
+```bash
+cargo run -p arandu_cli -- run tests/codegen/add.aru
+```
+
 Update golden test files (after intentional IR changes):
 
 ```bash
