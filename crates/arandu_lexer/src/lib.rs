@@ -58,7 +58,7 @@ mod tests {
 
     #[test]
     fn classifies_keywords_and_primitive_types() {
-        let dump = lex_to_string("func main() int { return 1 }").unwrap();
+        let dump = lex_to_string("func main(): int { return 1 }").unwrap();
         assert!(dump.contains("KW_FUNC"));
         assert!(dump.contains("TYPE_INT"));
         assert!(dump.contains("KW_RETURN"));

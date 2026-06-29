@@ -14,6 +14,7 @@ arandu_lexer = { path = "../arandu_lexer" }
 arandu_middle = { path = "../arandu_middle" }
 arandu_parser = { path = "../arandu_parser" }
 arandu_diagnostics = { path = "../arandu_diagnostics" }
+arandu_resolve = { path = "../arandu_resolve" }
 rustc-hash = "2.1"
 smallvec = "1.14"
 strsim = "0.11.1"

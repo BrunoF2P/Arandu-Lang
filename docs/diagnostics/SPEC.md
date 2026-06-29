@@ -304,6 +304,7 @@ Abaixo estão listados todos os diagnósticos mapeados para o compilador Arandu.
 | **W004** | `variable shadowing: '{name}' shadows a variable defined in an outer scope` | Warning | `0.1.0` | Re-declaração de uma variável em um escopo filho que oculta a variável homônima do escopo pai. |
 | **W005** | `unnecessary mutability: variable '{name}' does not need to be mutable` | Warning | `0.1.0` | Variável declarada como `mut` mas que nunca sofreu reatribuições ou modificações mutáveis. |
 | **W006** | `unhandled result: value of type 'Result' must be checked or propagated` | Warning | `0.1.0` | Uma chamada que retorna `Result<T, E>` foi descartada silenciosamente. (Movido do antigo `T019`). |
+| **W007** | `unused import: '{name}'` | Warning | `0.1.0` | Um módulo ou símbolo foi importado no topo do arquivo mas nunca foi referenciado ou consumido no código. |
 
 > [!NOTE]
 > **Decisão de Design sobre Shadows (`W004`)**: O shadowing de variáveis é classificado como um `Warning` (e não `Error`) no Arandu para permitir flexibilidade de escrita em escopos muito curtos de closures e lambdas iteradoras. No entanto, é fortemente alertado por padrão para evitar que desenvolvedores ocultem nomes acidentais em escopos maiores do compilador. Pode ser silenciado localmente com `@Suppress("shadowing")`.

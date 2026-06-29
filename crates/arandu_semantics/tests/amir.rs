@@ -99,8 +99,8 @@ struct Point {
 }
 
 func main() {
-    p: Point = Point { x: 1, y: 2 }
-    set p.x = 3
+    let p: Point = Point { x: 1, y: 2 }
+    p.x = 3
 }
 "#;
     let program = arandu_parser::parse(src).expect("parse failed");
@@ -139,9 +139,9 @@ struct Boxed {
 }
 
 func main() {
-    a: Boxed = Boxed { value: 1 }
-    b: Boxed = a
-    c: Boxed = a
+    let a: Boxed = Boxed { value: 1 }
+    let b: Boxed = a
+    let c: Boxed = a
 }
 "#;
     let program = arandu_parser::parse(src).expect("parse failed");
@@ -162,9 +162,9 @@ func main() {
 fn copy_local_can_be_reused_during_amir_lowering() {
     let src = r#"
 func main() {
-    a: int = 1
-    b: int = a
-    c: int = a
+    let a: int = 1
+    let b: int = a
+    let c: int = a
 }
 "#;
     let program = arandu_parser::parse(src).expect("parse failed");
@@ -187,11 +187,11 @@ struct Boxed {
 }
 
 func main(cond: bool) {
-    a: Boxed = Boxed { value: 1 }
+    let a: Boxed = Boxed { value: 1 }
     if cond {
-        b: Boxed = a
+        let b: Boxed = a
     }
-    c: Boxed = a
+    let c: Boxed = a
 }
 "#;
     let program = arandu_parser::parse(src).expect("parse failed");

@@ -5,11 +5,19 @@ use super::super::constraints::ConstraintOrigin;
 use super::super::types::ArType;
 use super::block::check_block;
 
+fn func_name_key(decl: &FuncDecl) -> crate::NodeKey {
+    let name_span = match &decl.name {
+        arandu_parser::FuncName::Free { span, .. } => *span,
+        arandu_parser::FuncName::Method { span, .. } => *span,
+    };
+    crate::NodeKey::from(name_span)
+}
+
 fn validate_method_receiver(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
     let arandu_parser::FuncName::Method { receiver, span, .. } = &decl.name else {
         return;
     };
-    let recv_ty = super::super::types::lower_named_type(
+    let mut recv_ty = super::super::types::lower_named_type(
         receiver.span,
         receiver,
         &[],
@@ -18,6 +26,19 @@ fn validate_method_receiver(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
         checker.symbols.global_scope(),
         &checker.resolved,
     );
+    if let ArType::Named(struct_id, ref args) = recv_ty
+        && args.is_empty() {
+            let func_key = func_name_key(decl);
+            if let Some(method_sym) = checker.resolved.definitions.get(&func_key).copied()
+                && let Some(method_params) = checker.type_info.generic_params.get(&method_sym).cloned() {
+                    let mut new_args = Vec::new();
+                    for &param_sym in &method_params {
+                        let arg_ty = ArType::Named(param_sym, vec![]);
+                        new_args.push(super::super::types::intern_type(arg_ty));
+                    }
+                    recv_ty = ArType::Named(struct_id, new_args);
+                }
+        }
     let Some(first) = decl.params.first() else {
         checker.diagnostics.push(crate::Diagnostic::error(
             crate::DiagCode::T021MethodSelfRequired,
@@ -41,13 +62,26 @@ fn validate_method_receiver(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
             first.span,
         ));
     }
-    let self_ty = super::super::types::lower_type_expr(
+    let mut self_ty = super::super::types::lower_type_expr(
         first.ty,
         checker.pool,
         &checker.symbols,
         checker.symbols.global_scope(),
         &checker.resolved,
     );
+    if let ArType::Named(struct_id, ref args) = self_ty
+        && args.is_empty() {
+            let func_key = func_name_key(decl);
+            if let Some(method_sym) = checker.resolved.definitions.get(&func_key).copied()
+                && let Some(method_params) = checker.type_info.generic_params.get(&method_sym).cloned() {
+                    let mut new_args = Vec::new();
+                    for &param_sym in &method_params {
+                        let arg_ty = ArType::Named(param_sym, vec![]);
+                        new_args.push(super::super::types::intern_type(arg_ty));
+                    }
+                    self_ty = ArType::Named(struct_id, new_args);
+                }
+        }
     if !super::super::types::unify(&recv_ty, &self_ty) {
         checker.add_constraint(
             recv_ty,
@@ -67,7 +101,7 @@ fn func_type_scope(checker: &TypeChecker<'_>, decl: &FuncDecl) -> crate::ScopeId
             return checker.symbols.get(*symbol_id).scope;
         }
     }
-    let func_key = crate::NodeKey::from(decl.span);
+    let func_key = func_name_key(decl);
     if let Some(symbol_id) = checker.resolved.definitions.get(&func_key) {
         return checker.symbols.get(*symbol_id).scope;
     }
@@ -98,13 +132,28 @@ pub fn check_func_body(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
     };
 
     for param in &decl.params {
-        let param_ty = super::super::types::lower_type_expr(
+        let mut param_ty = super::super::types::lower_type_expr(
             param.ty,
             checker.pool,
             &checker.symbols,
             type_scope,
             &checker.resolved,
         );
+
+        if param.is_receiver
+            && let ArType::Named(struct_id, ref args) = param_ty
+                && args.is_empty() {
+                    let func_key = func_name_key(decl);
+                    if let Some(method_sym) = checker.resolved.definitions.get(&func_key).copied()
+                        && let Some(method_params) = checker.type_info.generic_params.get(&method_sym).cloned() {
+                            let mut new_args = Vec::new();
+                            for &param_sym in &method_params {
+                                let arg_ty = ArType::Named(param_sym, vec![]);
+                                new_args.push(super::super::types::intern_type(arg_ty));
+                            }
+                            param_ty = ArType::Named(struct_id, new_args);
+                        }
+                }
 
         let param_key = crate::NodeKey::from(param.span);
         if let Some(symbol_id) = checker.resolved.definitions.get(&param_key) {

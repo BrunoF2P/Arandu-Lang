@@ -21,11 +21,15 @@ fn assert_golden(name: &str) {
 
     let source = fs::read_to_string(&source_path)
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", source_path.display()));
-    let expected = fs::read_to_string(&expected_path)
-        .unwrap_or_else(|err| panic!("failed to read {}: {err}", expected_path.display()));
-
     let actual = lex_to_string(&source).expect("lexer should succeed");
-    assert_eq!(actual.trim_end(), expected.trim_end());
+
+    if std::env::var("UPDATE_GOLDEN").is_ok() {
+        fs::write(&expected_path, &actual).unwrap();
+    } else {
+        let expected = fs::read_to_string(&expected_path)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", expected_path.display()));
+        assert_eq!(actual.trim_end(), expected.trim_end());
+    }
 }
 
 #[test]

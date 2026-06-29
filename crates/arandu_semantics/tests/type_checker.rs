@@ -105,9 +105,9 @@ fn test_mixed_operator_mismatch() {
     assert_type_errors!(
         "
         func main() {
-            x: int = 10
-            y: float = 3.14
-            z: int = x + y
+            let x: int = 10
+            let y: float = 3.14
+            let z: int = x + y
         }
         ",
         [T005OperatorNotApplicable]
@@ -119,8 +119,8 @@ fn test_implicit_widening_error() {
     assert_type_errors!(
         "
         func main() {
-            a: int = 10
-            b: float = a
+            let a: int = 10
+            let b: float = a
         }
         ",
         [T015ImplicitWidening]
@@ -251,11 +251,11 @@ fn test_option_some() {
 fn test_result_not_handled() {
     assert_type_errors!(
         "
-        func openConfig() Result<str, Err> {
+        func openConfig(): Result<str, Err>  {
             return Result.Ok(\"x\")
         }
         func main() {
-            config = openConfig()
+            let config = openConfig()
         }
         ",
         [W006UnhandledResult]
@@ -267,8 +267,8 @@ fn test_result_try_invalid() {
     assert_type_errors!(
         "
         func main() {
-            x: int = 10
-            y = x?
+            let x: int = 10
+            let y = x?
         }
         ",
         [T016TryInvalid]
@@ -281,8 +281,8 @@ fn test_literal_absorption_ok() {
     assert_type_errors!(
         "
         func main() {
-            a: float = 10
-            b: int = 10
+            let a: float = 10
+            let b: int = 10
         }
         ",
         []
@@ -294,8 +294,8 @@ fn test_incompatible_assignment() {
     assert_type_errors!(
         "
         func main() {
-            mut x: bool = true
-            set x = 10
+            let mut x: bool = true
+            x = 10
         }
         ",
         [T002IncompatibleAssignment]
@@ -333,13 +333,13 @@ fn test_multi_binding_destructuring() {
     // receive their correct individual types.
     assert_type_errors!(
         "
-        func foo() (int, bool) {
+        func foo(): (int, bool)  {
             return 10, true
         }
         func main() {
-            a, b = foo()
-            x: int = a   // Ok if destructuring works
-            y: bool = b  // Ok if destructuring works
+            let a, b = foo()
+            let x: int = a   // Ok if destructuring works
+            let y: bool = b  // Ok if destructuring works
         }
         ",
         []
@@ -348,12 +348,12 @@ fn test_multi_binding_destructuring() {
     // Also verify mismatch is correctly identified on assignment to wrong type
     assert_type_errors!(
         "
-        func foo() (int, bool) {
+        func foo(): (int, bool)  {
             return 10, true
         }
         func main() {
-            a, b = foo()
-            x: bool = a  // Mismatch: a is int, not bool
+            let a, b = foo()
+            let x: bool = a  // Mismatch: a is int, not bool
         }
         ",
         [T002IncompatibleAssignment]
@@ -366,13 +366,13 @@ fn test_multi_assignment_destructuring() {
     // correctly validate types of individual tuple elements.
     assert_type_errors!(
         "
-        func foo() (int, bool) {
+        func foo(): (int, bool)  {
             return 10, true
         }
         func main() {
-            mut a: int = 0
-            mut b: bool = false
-            set a, b = foo() // Ok if assignment destructuring works
+            let mut a: int = 0
+            let mut b: bool = false
+            a, b = foo() // Ok if assignment destructuring works
         }
         ",
         []
@@ -380,13 +380,13 @@ fn test_multi_assignment_destructuring() {
 
     assert_type_errors!(
         "
-        func foo() (int, bool) {
+        func foo(): (int, bool)  {
             return 10, true
         }
         func main() {
-            mut a: bool = false
-            mut b: bool = false
-            set a, b = foo() // Mismatch: a is bool, LHS is int
+            let mut a: bool = false
+            let mut b: bool = false
+            a, b = foo() // Mismatch: a is bool, LHS is int
         }
         ",
         [T002IncompatibleAssignment]
@@ -400,11 +400,11 @@ fn test_generic_type_resolution() {
         struct Box<T> {
             value: T
         }
-        func get_box() Box<int> {
+        func get_box(): Box<int>  {
             return get_box()
         }
         func main() {
-            b: Box<int> = get_box()
+            let b: Box<int> = get_box()
         }
         ",
         []
@@ -415,7 +415,7 @@ fn test_generic_type_resolution() {
 fn test_expr_types_population() {
     let source = "
     func main() {
-        x: int = 10 + 20
+        let x: int = 10 + 20
     }
     ";
     let program = parse(source).expect("Failed to parse");
@@ -430,8 +430,8 @@ fn test_expr_types_population() {
 fn test_type_info_uses_interned_type_ids() {
     let source = "
     func main() {
-        a: int = 10
-        b: int = 20
+        let a: int = 10
+        let b: int = 20
     }
     ";
     let program = parse(source).expect("Failed to parse");
@@ -455,11 +455,11 @@ fn test_forward_declarations() {
         "
         func entry() {
             // Forward ref to Struct and Function:
-            s: MyStruct = MyStruct { val: 42 }
-            val: int = getVal(s)
+            let s: MyStruct = MyStruct { val: 42 }
+            let val: int = getVal(s)
         }
 
-        func getVal(s: MyStruct) int {
+        func getVal(s: MyStruct): int  {
             return s.val
         }
 
@@ -476,9 +476,9 @@ fn test_byte_arithmetic() {
     assert_type_errors!(
         "
         func main() {
-            a: byte = 10
-            b: byte = 20
-            c: byte = a + b
+            let a: byte = 10
+            let b: byte = 20
+            let c: byte = a + b
         }
         ",
         []
@@ -491,7 +491,7 @@ fn test_any_validation() {
     assert_type_errors!(
         "
         func main() {
-            a: any = 10
+            let a: any = 10
         }
         ",
         [T014InvalidVariadicType]
@@ -533,9 +533,9 @@ fn test_enum_variant_resolution() {
             Loaded(str),
         }
         func main() {
-            a: LoadState = LoadState.Idle
-            b: func(str) LoadState = LoadState.Loaded
-            c: LoadState = LoadState.Loaded(\"hello\")
+            let a: LoadState = LoadState.Idle
+            let b: func(str) LoadState = LoadState.Loaded
+            let c: LoadState = LoadState.Loaded(\"hello\")
         }
         ",
         []
@@ -550,11 +550,11 @@ fn test_match_pattern_typecheck() {
             Idle,
             Loaded(str),
         }
-        func check_state(state: LoadState) int {
+        func check_state(state: LoadState): int  {
             match state {
                 LoadState.Idle => { return 0; }
                 LoadState.Loaded(s) => {
-                    val: str = s
+                    let val: str = s
                     return 1;
                 }
             }
@@ -570,7 +570,7 @@ fn test_match_pattern_typecheck() {
             Idle,
             Loaded(str),
         }
-        func check_state(state: LoadState) int {
+        func check_state(state: LoadState): int  {
             match state {
                 LoadState.Loaded(123) => { return 1; }
             }
@@ -597,7 +597,7 @@ fn test_call_validation() {
     assert_type_errors!(
         "
         func main() {
-            x: int = 10
+            let x: int = 10
             x()
         }
         ",
@@ -610,7 +610,7 @@ fn test_cast_validation() {
     assert_type_errors!(
         r#"
         func main() {
-            x: int ="hello" as int
+            let x: int ="hello" as int
         }
         "#,
         [T010InvalidCast]
@@ -626,8 +626,8 @@ fn test_nullability_and_safe_access() {
             age: int
         }
         func main() {
-            u: User? = nil
-            a: int = u.age
+            let u: User? = nil
+            let a: int = u.age
         }
         ",
         [T006NotNullable]
@@ -640,8 +640,8 @@ fn test_nullability_and_safe_access() {
             age: int
         }
         func main() {
-            u: User? = nil
-            a: int? = u?.age
+            let u: User? = nil
+            let a: int? = u?.age
         }
         ",
         []
@@ -651,8 +651,8 @@ fn test_nullability_and_safe_access() {
     assert_type_errors!(
         "
         func main() {
-            arr: []int? = nil
-            x: int = arr[0]
+            let arr: []int? = nil
+            let x: int = arr[0]
         }
         ",
         [T006NotNullable]
@@ -662,8 +662,8 @@ fn test_nullability_and_safe_access() {
     assert_type_errors!(
         "
         func main() {
-            arr: []int? = nil
-            x: int? = arr?[0]
+            let arr: []int? = nil
+            let x: int? = arr?[0]
         }
         ",
         []
@@ -835,7 +835,7 @@ fn test_free_requires_ptr() {
     assert_type_errors!(
         "
         func main() {
-            x: int = 10
+            let x: int = 10
             free x
         }
         ",
@@ -848,8 +848,8 @@ fn test_null_coalesce_type_mismatch() {
     assert_type_errors!(
         "
         func main() {
-            a: int? = nil
-            b = a ?? \"text\"
+            let a: int? = nil
+            let b =a ?? \"text\"
         }
         ",
         [T002IncompatibleAssignment]
@@ -861,7 +861,7 @@ fn test_array_literal_element_mismatch() {
     assert_type_errors!(
         "
         func main() {
-            xs = [1, 2.5, 3]
+            let xs =[1, 2.5, 3]
         }
         ",
         [T002IncompatibleAssignment]
@@ -873,7 +873,7 @@ fn test_array_literal_element_mismatch_string() {
     assert_type_errors!(
         "
         func main() {
-            xs = [1, \"dois\", 3]
+            let xs =[1, \"dois\", 3]
         }
         ",
         [T002IncompatibleAssignment]
@@ -883,11 +883,11 @@ fn test_array_literal_element_mismatch_string() {
 #[test]
 fn test_catch_result_ok_type() {
     let source = r#"
-        func ok() Result<int, Err> {
+        func ok(): Result<int, Err>  {
             return Result.Ok(1)
         }
         func main() {
-            x = ok() catch 0
+            let x = ok() catch 0
         }
     "#;
     let program = parse(source).expect("Failed to parse");
@@ -910,8 +910,8 @@ fn test_catch_requires_result() {
     assert_type_errors!(
         "
         func main() {
-            x: int = 1
-            y = x catch 0
+            let x: int = 1
+            let y =x catch 0
         }
         ",
         [T005OperatorNotApplicable]
@@ -923,7 +923,7 @@ fn test_non_exhaustive_enum_match() {
     assert_type_errors!(
         "
         enum Color { Red, Green, Blue }
-        func pick(c: Color) int {
+        func pick(c: Color): int  {
             return match c {
                 Color.Red => 1
                 Color.Green => 2
@@ -938,11 +938,11 @@ fn test_non_exhaustive_enum_match() {
 fn test_generic_identity_call() {
     assert_type_errors!(
         "
-        func identity<T>(value: T) T {
+        func identity<T>(value: T): T  {
             return value
         }
         func main() {
-            x: int = identity<int>(42)
+            let x: int = identity<int>(42)
         }
         ",
         []
@@ -957,7 +957,7 @@ fn test_generic_box_struct_literal() {
             value: T
         }
         func main() {
-            b: Box<int> = Box<int> { value: 42 }
+            let b: Box<int> = Box<int> { value: 42 }
         }
         ",
         []
@@ -968,11 +968,11 @@ fn test_generic_box_struct_literal() {
 fn test_result_ok_generic() {
     assert_type_errors!(
         "
-        func ok() Result<int, Err> {
+        func ok(): Result<int, Err>  {
             return Result.Ok<int>(1)
         }
         func main() {
-            x = ok()
+            let x = ok()
         }
         ",
         [W006UnhandledResult]
@@ -984,14 +984,14 @@ fn test_generic_where_interface_ok() {
     assert_type_errors!(
         "
         interface Show {
-            func show() void
+            func show(): void
         }
         struct Counter {
             n: int
         }
-        func Counter.show(shared self) void {
+        func Counter.show(shared self): void  {
         }
-        func emit<T: Show>(value: T) void {
+        func emit<T: Show>(value: T): void  {
         }
         func main() {
             emit<Counter>(Counter { n: 1 })
@@ -1006,12 +1006,12 @@ fn test_generic_where_constraint_violation() {
     assert_type_errors!(
         "
         interface Show {
-            func show() void
+            func show(): void
         }
         struct Silent {
             n: int
         }
-        func emit<T: Show>(value: T) void {
+        func emit<T: Show>(value: T): void  {
         }
         func main() {
             emit<Silent>(Silent { n: 0 })
@@ -1026,7 +1026,7 @@ fn test_struct_generic_param_constraint() {
     assert_type_errors!(
         "
         interface Show {
-            func show() void
+            func show(): void
         }
         struct Box<T: Show> {
             value: T
@@ -1035,7 +1035,7 @@ fn test_struct_generic_param_constraint() {
             n: int
         }
         func main() {
-            b: Box<Silent> = Box<Silent> { value: Silent { n: 0 } }
+            let b: Box<Silent> = Box<Silent> { value: Silent { n: 0 } }
         }
         ",
         [T025InterfaceNotSatisfied]
@@ -1059,18 +1059,18 @@ fn test_type_checker_smart_suggestions() {
             myfield: int
             y: int
         }
-        func Point.get_x(self) int {
+        func Point.get_x(self): int  {
             return self.myfield
         }
         func main() {
-            p: Point = Point { myfield: 0, y: 0 }
+            let p: Point = Point { myfield: 0, y: 0 }
             // Case-insensitive match on field
-            a: int = p.myField
+            let a: int = p.myField
             // Method suggestion
-            b: int = p.get_
+            let b: int = p.get_
             // Pointer to struct suggestion
-            ptr_p: ptr[Point] = alloc Point { myfield: 1, y: 2 }
-            c: int = ptr_p.y_
+            let ptr_p: ptr[Point] = alloc Point { myfield: 1, y: 2 }
+            let c: int = ptr_p.y_
         }
     ";
     let program = parse(source).expect("Failed to parse");
@@ -1104,15 +1104,15 @@ fn test_type_checker_smart_suggestions() {
 fn test_interface_missing_method_suggestions() {
     let source = "
         interface Writer {
-            func write() void
+            func write(): void
         }
         struct Buffer {
             data: int
         }
         // Buffer implements a typo-ed method wrte instead of write
-        func Buffer.wrte(self) void {
+        func Buffer.wrte(shared self): void  {
         }
-        func send<T: Writer>(value: T) void {
+        func send<T: Writer>(value: T): void  {
         }
         func main() {
             send<Buffer>(Buffer { data: 1 })
@@ -1143,9 +1143,9 @@ fn test_interface_missing_method_suggestions() {
 #[test]
 fn test_async_block_and_await_typecheck() {
     let source = "
-        func main() void {
-            x: Coroutine<int> = async { 42; };
-            y: int = await x;
+        func main(): void  {
+            let x: Coroutine<int> = async { 42; };
+            let y: int = await x;
         }
     ";
     let program = parse(source).expect("Failed to parse");
@@ -1157,8 +1157,8 @@ fn test_async_block_and_await_typecheck() {
 #[test]
 fn test_await_invalid_type() {
     let source = "
-        func main() void {
-            x: int = await 42;
+        func main(): void  {
+            let x: int = await 42;
         }
     ";
     assert_type_errors!(source, [T032AwaitInvalid]);

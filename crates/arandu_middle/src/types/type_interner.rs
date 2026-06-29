@@ -104,8 +104,8 @@ impl Default for TypeInterner {
 use std::cell::RefCell;
 
 thread_local! {
-    pub static CURRENT_INTERNER: RefCell<Option<*const TypeInterner>> = RefCell::new(None);
-    pub static CURRENT_INTERNER_MUT: RefCell<Option<*mut TypeInterner>> = RefCell::new(None);
+    pub static CURRENT_INTERNER: RefCell<Option<*const TypeInterner>> = const { RefCell::new(None) };
+    pub static CURRENT_INTERNER_MUT: RefCell<Option<*mut TypeInterner>> = const { RefCell::new(None) };
 }
 
 pub struct InternerScope {

@@ -240,7 +240,7 @@ impl<'a> Parser<'a> {
         };
         let params = self.parse_params(method_receiver)?;
         self.expect_name("RPAREN")?;
-        let result = if self.can_start_type() || self.at_kind_name("LPAREN") {
+        let result = if self.eat_name("COLON") {
             Some(self.parse_result_type()?)
         } else {
             None
@@ -491,7 +491,7 @@ impl<'a> Parser<'a> {
         self.expect_name("LPAREN")?;
         let params = self.parse_params(None)?;
         self.expect_name("RPAREN")?;
-        let result = if self.can_start_type() || self.at_kind_name("LPAREN") {
+        let result = if self.eat_name("COLON") {
             Some(self.parse_result_type()?)
         } else {
             None

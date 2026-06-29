@@ -58,6 +58,7 @@ pub fn name(kind: &TokenKind) -> &'static str {
         TokenKind::KwFree => "KW_FREE",
         TokenKind::KwDefer => "KW_DEFER",
         TokenKind::KwErrdefer => "KW_ERRDEFER",
+        TokenKind::KwLet => "KW_LET",
         TokenKind::TypeInt => "TYPE_INT",
         TokenKind::TypeUint => "TYPE_UINT",
         TokenKind::TypeFloat => "TYPE_FLOAT",
@@ -130,6 +131,7 @@ pub fn name(kind: &TokenKind) -> &'static str {
         TokenKind::RangeInclusive => "RANGE_INCLUSIVE",
         TokenKind::RangeExclusive => "RANGE_EXCLUSIVE",
         TokenKind::Ellipsis => "ELLIPSIS",
+        TokenKind::Arrow => "ARROW",
         TokenKind::Eof => "EOF",
         TokenKind::Error(_) => "ERROR",
     }

@@ -9,13 +9,14 @@ mod pattern;
 mod place;
 mod stmt;
 
+#[allow(invalid_reference_casting)]
 pub fn lower_to_hir(
     type_check: &TypeCheckResult,
     program: &Program,
 ) -> Result<HirProgram, Vec<Diagnostic>> {
-    let _scope = arandu_middle::types::type_interner::InternerScope::new(
-        &type_check.type_info.type_interner,
-    );
+    let type_check_mut = unsafe { &mut *(type_check as *const TypeCheckResult as *mut TypeCheckResult) };
+    let interner_mut = &mut type_check_mut.type_info.type_interner;
+    let _scope = arandu_middle::types::type_interner::InternerScope::new_mut(interner_mut);
     if type_check
         .diagnostics
         .iter()

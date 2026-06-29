@@ -27,7 +27,10 @@ fn cast_types_compatible(found: &ArType, target: &ArType) -> bool {
     if super::super::types::unify(found, target) {
         return true;
     }
-    found.is_numeric() && target.is_numeric()
+    if found.is_numeric() && target.is_numeric() {
+        return true;
+    }
+    matches!(found, ArType::Ptr(_)) && matches!(target, ArType::Ptr(_))
 }
 
 #[cold]
@@ -70,13 +73,15 @@ fn synth_expr_inner(checker: &mut TypeChecker<'_>, expr: ExprId) -> ArType {
         }
         ExprKind::Nil => {
             if let Some(ret) = checker.ctx.current_return() {
-                if super::super::types::is_result_type(ret) {
+                if super::super::types::is_result_type(ret)
+                    || super::super::types::is_option_type(ret)
+                    || matches!(ret, ArType::Nullable(_))
+                {
                     return ret.clone();
                 }
                 if let Some((ok, _)) = super::super::types::result_ok_err(ret) {
                     return ok;
                 }
-                return ret.clone();
             }
             let err_id = super::super::types::intern_type(ArType::Error);
             ArType::Nullable(err_id)
@@ -237,6 +242,87 @@ fn synth_expr_inner(checker: &mut TypeChecker<'_>, expr: ExprId) -> ArType {
                     return ret;
                 }
             }
+            if let ExprKind::Generic { callee: gen_callee, args: gen_args } = checker.pool.expr(callee_id)
+                && let ExprKind::Field { base, field } = checker.pool.expr(*gen_callee) {
+                    let base_id = *base;
+                    let gen_callee_id = *gen_callee;
+                    let gen_args_range = *gen_args;
+                    let field_span = checker.pool.expr_span(gen_callee_id);
+                    
+                    let base_ty = synth_expr(checker, base_id);
+                    if !base_ty.is_error() {
+                        let instantiated_method_ty = super::super::types::synth_generic_instantiation(
+                            checker, gen_callee_id, gen_args_range, field_span
+                        );
+                        if let ArType::Func(params, ret) = instantiated_method_ty
+                            && !params.is_empty() {
+                                let actual_base_ty = match &base_ty {
+                                    ArType::Nullable(inner) => {
+                                        super::super::types::type_interner::with_resolved_type(*inner, |t| t.clone())
+                                    }
+                                    other => other.clone(),
+                                };
+                                let receiver_ty_id = params[0];
+                                super::super::types::type_interner::with_resolved_type(receiver_ty_id, |receiver_ty| {
+                                    if !super::super::types::unify(receiver_ty, &actual_base_ty) {
+                                        checker.add_constraint(
+                                            receiver_ty.clone(),
+                                            actual_base_ty.clone(),
+                                            ConstraintOrigin::CallArg {
+                                                call_span: span,
+                                                param_span: field_span,
+                                                arg_span: checker.pool.expr_span(base_id),
+                                                arg_index: 0,
+                                            },
+                                        );
+                                    }
+                                });
+                                let explicit_params = &params[1..];
+                                let arg_ids = checker.pool.expr_list(args_range).to_vec();
+                                if explicit_params.len() != arg_ids.len() {
+                                    let struct_id = match &actual_base_ty {
+                                        ArType::Named(id, _) => Some(*id),
+                                        _ => None,
+                                    };
+                                    let struct_name = struct_id.map_or("Struct".to_string(), |id| checker.symbols.get(id).name.clone());
+                                    let diag = crate::Diagnostic::error(
+                                        crate::DiagCode::T012WrongArgCount,
+                                        format!(
+                                            "method '{struct_name}.{field}' expects {} argument(s), found {}",
+                                            explicit_params.len(),
+                                            arg_ids.len()
+                                        ),
+                                        span,
+                                    )
+                                    .with_label(field_span, "call target is here")
+                                    .with_label(span, format!("{} arguments provided", arg_ids.len()));
+                                    checker.diagnostics.push(diag);
+                                }
+                                for (i, arg_id) in arg_ids.iter().copied().enumerate() {
+                                    let arg_ty = synth_expr(checker, arg_id);
+                                    if let Some(&expected_id) = explicit_params.get(i) {
+                                        super::super::types::type_interner::with_resolved_type(expected_id, |expected| {
+                                            if !super::super::types::unify(expected, &arg_ty) {
+                                                checker.add_constraint(
+                                                    expected.clone(),
+                                                    arg_ty.clone(),
+                                                    ConstraintOrigin::CallArg {
+                                                        call_span: span,
+                                                        param_span: field_span,
+                                                        arg_span: checker.pool.expr_span(arg_id),
+                                                        arg_index: i + 1,
+                                                    },
+                                                );
+                                            }
+                                        });
+                                    }
+                                }
+                                checker.record_expr_type(callee_id, ArType::Func(params, ret));
+                                let resolved_ret = super::super::types::type_interner::with_resolved_type(ret, |t| t.clone());
+                                return resolved_ret;
+                            }
+                    }
+                }
 
             let callee_ty = synth_expr(checker, callee_id);
             let arg_ids = checker.pool.expr_list(args_range).to_vec();
@@ -467,7 +553,11 @@ fn synth_expr_inner(checker: &mut TypeChecker<'_>, expr: ExprId) -> ArType {
         }
         ExprKind::AsyncBlock { block } => {
             let block_id = *block;
-            let block_ty = super::super::check::check_block(checker, checker.pool, checker.pool.block(block_id));
+            let block_ty = super::super::check::check_block(
+                checker,
+                checker.pool,
+                checker.pool.block(block_id),
+            );
             let inner_id = super::super::types::intern_type(block_ty);
             ArType::Coroutine(inner_id)
         }
@@ -743,7 +833,9 @@ fn synth_expr_inner(checker: &mut TypeChecker<'_>, expr: ExprId) -> ArType {
                     if expr_ty.is_error() {
                         ArType::Error
                     } else if let ArType::Coroutine(inner) = expr_ty {
-                        super::super::types::type_interner::with_resolved_type(inner, |inner_ty| inner_ty.clone())
+                        super::super::types::type_interner::with_resolved_type(inner, |inner_ty| {
+                            inner_ty.clone()
+                        })
                     } else {
                         checker.add_constraint(
                             ArType::Error,
@@ -801,6 +893,25 @@ fn synth_expr_inner(checker: &mut TypeChecker<'_>, expr: ExprId) -> ArType {
                         );
                     }
                     ArType::Primitive(Primitive::Bool)
+                }
+                BinaryOp::RangeExclusive | BinaryOp::RangeInclusive => {
+                    if !super::super::types::unify(&left_ty, &right_ty)
+                        || (!left_ty.is_integer() && !right_ty.is_integer())
+                    {
+                        checker.add_constraint(
+                            left_ty.clone(),
+                            right_ty.clone(),
+                            ConstraintOrigin::BinaryOp {
+                                op_span: span,
+                                left_span: checker.pool.expr_span(left_id),
+                                right_span: checker.pool.expr_span(right_id),
+                            },
+                        );
+                        return ArType::Error;
+                    }
+                    let inner_ty = super::super::types::resolve_literal_pair(&left_ty, &right_ty).default_literal();
+                    let inner_id = super::super::types::intern_type(inner_ty);
+                    ArType::Range(inner_id)
                 }
                 _ => ArType::Error,
             }

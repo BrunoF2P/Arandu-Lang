@@ -132,11 +132,38 @@ pub(crate) fn synth_method_call(
     let struct_name = checker.symbols.get(struct_id).name.clone();
     let method_sym = checker
         .symbols
-        .lookup_associated_member(&struct_name, method)?;
-    let method_ty = checker.decl_type(method_sym)?;
-    let (params, ret) = match &method_ty {
-        ArType::Func(params, ret) => (params.clone(), ret.clone()),
-        _ => return None,
+        .lookup_associated_member(&struct_name, method);
+
+    let mut resolved_method = None;
+    if method_sym.is_none()
+        && let Some(constraints) = checker.type_info.param_constraints.get(&struct_id)
+    {
+        for &iface_sym in constraints {
+            if let Some(iface_info) = checker.type_info.interfaces.get(&iface_sym)
+                && let Some((_, method_sig)) = iface_info.methods.iter().find(|(m, _)| m == method)
+            {
+                resolved_method = Some(method_sig.clone());
+                break;
+            }
+        }
+    }
+
+    let (params, ret, method_sym_recorded) = if let Some(method_sig) = resolved_method {
+        if let ArType::Func(params, ret) = method_sig {
+            let mut new_params = vec![super::super::types::intern_type(actual_base_ty.clone())];
+            new_params.extend(params);
+            (new_params, ret, None)
+        } else {
+            return None;
+        }
+    } else {
+        let sym = method_sym?;
+        let method_ty = checker.decl_type(sym)?;
+        let (params, ret) = match &method_ty {
+            ArType::Func(params, ret) => (params.clone(), *ret),
+            _ => return None,
+        };
+        (params, ret, Some(sym))
     };
 
     if params.is_empty() {
@@ -196,8 +223,10 @@ pub(crate) fn synth_method_call(
         }
     }
 
-    checker.resolved.value_ref(field_span, method_sym);
-    checker.record_expr_type(callee, ArType::Func(params, ret.clone()));
+    if let Some(sym) = method_sym_recorded {
+        checker.resolved.value_ref(field_span, sym);
+    }
+    checker.record_expr_type(callee, ArType::Func(params, ret));
 
     Some(super::super::types::type_interner::with_resolved_type(
         ret,

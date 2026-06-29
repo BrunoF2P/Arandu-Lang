@@ -79,6 +79,7 @@ pub struct SymbolTable {
     symbols: Vec<Symbol>,
     module_members: FxHashMap<String, FxHashMap<String, SymbolId>>,
     pub associated_members: FxHashMap<String, FxHashMap<String, SymbolId>>,
+    global_scope_id: ScopeId,
 }
 
 impl Default for SymbolTable {
@@ -98,6 +99,7 @@ impl SymbolTable {
             symbols: Vec::new(),
             module_members: FxHashMap::default(),
             associated_members: FxHashMap::default(),
+            global_scope_id: ScopeId(0),
         }
     }
 
@@ -105,9 +107,12 @@ impl SymbolTable {
         let self_symbols_len = self.symbols.len() as u32;
         let self_scopes_len = self.scopes.len() as u32;
 
+        let other_global = other.global_scope();
+        let self_global = self.global_scope();
+
         let map_scope = |old_scope: ScopeId| -> ScopeId {
-            if old_scope.0 == 0 {
-                ScopeId(0)
+            if old_scope == other_global {
+                self_global
             } else {
                 ScopeId(old_scope.0 + self_scopes_len - 1)
             }
@@ -116,12 +121,17 @@ impl SymbolTable {
         let map_symbol =
             |old_symbol: SymbolId| -> SymbolId { SymbolId(old_symbol.0 + self_symbols_len) };
 
-        // 1. Merge other scopes (except global scope at index 0)
-        for old_symbol_id in &other.scopes[0].symbols {
-            self.scopes[0].symbols.push(map_symbol(*old_symbol_id));
+        // 1. Merge other's global scope symbols into self's global scope symbols
+        for old_symbol_id in &other.scopes[other_global.0 as usize].symbols {
+            self.scopes[self_global.0 as usize]
+                .symbols
+                .push(map_symbol(*old_symbol_id));
         }
 
-        for i in 1..other.scopes.len() {
+        for i in 0..other.scopes.len() {
+            if i == other_global.0 as usize {
+                continue;
+            }
             let old_scope = &other.scopes[i];
             let new_parent = old_scope.parent.map(map_scope);
             let new_symbols = old_scope.symbols.iter().map(|id| map_symbol(*id)).collect();
@@ -161,9 +171,44 @@ impl SymbolTable {
         }
     }
 
+    /// Extend `self` with the symbols from `other` that have index >= `base_count`.
+    ///
+    /// Used after typechecking a stdlib file whose resolver was given
+    /// `self.clone()` as the starting symbol table and then added new symbols
+    /// (e.g. TypeParams). The new symbols preserve the same `SymbolId`s they
+    /// were assigned in `other`, so all `type_info` references remain valid.
+    ///
+    /// Note: the new symbols are only added to `self.symbols` for `get(id)`
+    /// lookup. They are NOT added to any scope because they belong to specific
+    /// function/enum scopes in the stdlib files and polluting the global scope
+    /// would cause `N003RedefinedName` errors for user code with same-named
+    /// type parameters.
+    pub fn merge_from_extending(&mut self, other: &SymbolTable, base_count: usize) {
+        for symbol in other.symbols.iter().skip(base_count) {
+            // Sanity: the ID must match the current length.
+            assert_eq!(
+                symbol.id.0 as usize,
+                self.symbols.len(),
+                "symbol ID mismatch during extend: expected {} got {}",
+                self.symbols.len(),
+                symbol.id.0
+            );
+            // Only add to the symbols vector for get(id) access.
+            // Do NOT add to any scope to avoid polluting name lookup.
+            self.symbols.push(symbol.clone());
+        }
+    }
+
+    pub fn setup_prelude_scope(&mut self) {
+        if self.global_scope_id == ScopeId(0) {
+            let new_global = self.new_scope(ScopeId(0));
+            self.global_scope_id = new_global;
+        }
+    }
+
     #[must_use]
     pub fn global_scope(&self) -> ScopeId {
-        ScopeId(0)
+        self.global_scope_id
     }
 
     pub fn new_scope(&mut self, parent: ScopeId) -> ScopeId {
@@ -292,14 +337,15 @@ impl SymbolTable {
         member: &str,
         span: Span,
     ) -> Result<SymbolId, SymbolId> {
+        let base_ty = ty.split('.').next_back().unwrap_or(ty);
         let id = self.define(
             self.global_scope(),
-            &format!("{ty}.{member}"),
+            &format!("{base_ty}.{member}"),
             SymbolKind::AssociatedFunc,
             span,
         )?;
         self.associated_members
-            .entry(ty.to_string())
+            .entry(base_ty.to_string())
             .or_default()
             .insert(member.to_string(), id);
         Ok(id)
@@ -307,8 +353,9 @@ impl SymbolTable {
 
     #[must_use]
     pub fn lookup_associated_member(&self, ty: &str, member: &str) -> Option<SymbolId> {
+        let base_ty = ty.split('.').next_back().unwrap_or(ty);
         self.associated_members
-            .get(ty)
+            .get(base_ty)
             .and_then(|m| m.get(member))
             .copied()
     }

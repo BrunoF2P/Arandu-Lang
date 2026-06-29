@@ -139,11 +139,11 @@ pub fn compile_parallel(paths: Vec<PathBuf>) -> Result<ParallelOutput, Vec<Diagn
     }
 
     // Send initial Parse tasks
-    for file_idx in 0..num_files {
+    for (file_idx, path) in paths.iter().enumerate().take(num_files) {
         let worker_idx = file_idx % num_workers;
         let _ = worker_senders[worker_idx].send(Task::Parse {
             file_idx,
-            path: paths[file_idx].clone(),
+            path: path.clone(),
         });
     }
 
@@ -154,7 +154,7 @@ pub fn compile_parallel(paths: Vec<PathBuf>) -> Result<ParallelOutput, Vec<Diagn
     let mut amir_count = 0;
 
     let mut merged_symbols = None;
-    let mut merged_docs = None;
+    let mut _merged_docs = None;
     let mut merged_diags = Vec::new();
 
     while let Ok(msg) = rx_from_workers.recv() {
@@ -210,7 +210,7 @@ pub fn compile_parallel(paths: Vec<PathBuf>) -> Result<ParallelOutput, Vec<Diagn
                     let arc_diags = Arc::new(combined_diags.clone());
 
                     merged_symbols = Some(arc_symbols.clone());
-                    merged_docs = Some(arc_docs.clone());
+                    _merged_docs = Some(arc_docs.clone());
                     merged_diags = combined_diags;
 
                     // Trigger Resolve tasks
@@ -361,8 +361,8 @@ pub fn compile_parallel(paths: Vec<PathBuf>) -> Result<ParallelOutput, Vec<Diagn
 
     // Collect diagnostics from type checks and name resolution
     final_diagnostics.extend(merged_diags);
-    for file_idx in 0..num_files {
-        if let Some(tc) = type_checks[file_idx].as_ref() {
+    for tc_opt in type_checks.iter().take(num_files) {
+        if let Some(tc) = tc_opt.as_ref() {
             final_diagnostics.extend(tc.diagnostics.clone());
         }
     }

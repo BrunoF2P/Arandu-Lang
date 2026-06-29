@@ -58,6 +58,7 @@ pub fn lower_to_amir(
         Ok(AmirProgram {
             funcs,
             literal_pool,
+            extern_funcs: rustc_hash::FxHashMap::default(),
         })
     } else {
         Err(diagnostics)

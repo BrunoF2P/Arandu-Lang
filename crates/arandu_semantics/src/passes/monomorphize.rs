@@ -366,6 +366,12 @@ fn mangle_type_into(out: &mut String, ty: &ArType, symbols: &SymbolTable) {
                 mangle_type_into(out, inner_ty, symbols);
             });
         }
+        ArType::Range(inner) => {
+            out.push_str("range_");
+            arandu_middle::types::type_interner::with_resolved_type(*inner, |inner_ty| {
+                mangle_type_into(out, inner_ty, symbols);
+            });
+        }
         ArType::Void => out.push_str("void"),
         ArType::Err => out.push_str("err"),
         ArType::IntLiteral => out.push_str("int"),
@@ -944,12 +950,12 @@ mod tests {
     #[test]
     fn test_analyze_instantiations_collects_hir_generic_call() {
         let src = r#"
-func identity<T>(value: T) T {
+func identity<T>(value: T): T {
     return value
 }
 
 func main() {
-    x: int = identity<int>(42)
+    let x: int = identity<int>(42)
 }
 "#;
         let program = arandu_parser::parse(src).expect("parse failed");

@@ -43,6 +43,12 @@ pub fn substitute_type(ty: &ArType, subst: &GenericSubst) -> ArType {
             let id = super::type_interner::intern_type(substituted);
             ArType::Option(id)
         }
+        ArType::Range(inner) => {
+            let resolved = super::type_interner::with_resolved_type(*inner, |t| t.clone());
+            let substituted = substitute_type(&resolved, subst);
+            let id = super::type_interner::intern_type(substituted);
+            ArType::Range(id)
+        }
         ArType::Result(ok, err) => {
             let resolved_ok = super::type_interner::with_resolved_type(*ok, |t| t.clone());
             let resolved_err = super::type_interner::with_resolved_type(*err, |t| t.clone());

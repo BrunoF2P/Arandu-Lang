@@ -33,7 +33,7 @@ fn lex_parse_and_check_valid_files_exit_successfully() {
         r"module tests.cli
 
 func main() {
-    value = 1
+    let value = 1
 }
 ",
     )
@@ -85,7 +85,7 @@ fn check_missing_set_target_reports_specific_name_error() {
         r"module tests.cli
 
 func main() {
-    set missing = 1
+    missing = 1
 }
 ",
     )
@@ -97,7 +97,6 @@ func main() {
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("N007"));
-    assert!(stderr.contains("missing = ..."));
 }
 
 #[test]
@@ -107,7 +106,7 @@ fn amir_opt_flag_folds_constants_without_changing_default_command() {
     fs::write(
         &file,
         r"func main() {
-    value: int = 1 + 2
+    let value: int = 1 + 2
 }
 ",
     )

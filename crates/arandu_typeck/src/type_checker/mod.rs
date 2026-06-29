@@ -167,6 +167,175 @@ impl TypeInfo {
     pub fn record_enum_variant_tag(&mut self, variant: SymbolId, tag: usize) {
         self.enum_variant_tags.insert(variant, tag);
     }
+}
+
+fn translate_type(ty: &ArType, from: &TypeInterner, to: &mut TypeInterner) -> ArType {
+    match ty {
+        ArType::Primitive(p) => ArType::Primitive(*p),
+        ArType::Named(id, args) => {
+            let new_args = args
+                .iter()
+                .map(|&arg_id| {
+                    let resolved = from.resolve(arg_id);
+                    let translated = translate_type(resolved, from, to);
+                    to.intern(translated)
+                })
+                .collect();
+            ArType::Named(*id, new_args)
+        }
+        ArType::Func(params, ret) => {
+            let new_params = params
+                .iter()
+                .map(|&param_id| {
+                    let resolved = from.resolve(param_id);
+                    let translated = translate_type(resolved, from, to);
+                    to.intern(translated)
+                })
+                .collect();
+            let resolved_ret = from.resolve(*ret);
+            let translated_ret = translate_type(resolved_ret, from, to);
+            let new_ret = to.intern(translated_ret);
+            ArType::Func(new_params, new_ret)
+        }
+        ArType::Nullable(inner) => {
+            let resolved = from.resolve(*inner);
+            let translated = translate_type(resolved, from, to);
+            let new_inner = to.intern(translated);
+            ArType::Nullable(new_inner)
+        }
+        ArType::Slice(inner) => {
+            let resolved = from.resolve(*inner);
+            let translated = translate_type(resolved, from, to);
+            let new_inner = to.intern(translated);
+            ArType::Slice(new_inner)
+        }
+        ArType::Array(n, inner) => {
+            let resolved = from.resolve(*inner);
+            let translated = translate_type(resolved, from, to);
+            let new_inner = to.intern(translated);
+            ArType::Array(*n, new_inner)
+        }
+        ArType::Ptr(inner) => {
+            let resolved = from.resolve(*inner);
+            let translated = translate_type(resolved, from, to);
+            let new_inner = to.intern(translated);
+            ArType::Ptr(new_inner)
+        }
+        ArType::Tuple(items) => {
+            let new_items = items
+                .iter()
+                .map(|&item_id| {
+                    let resolved = from.resolve(item_id);
+                    let translated = translate_type(resolved, from, to);
+                    to.intern(translated)
+                })
+                .collect();
+            ArType::Tuple(new_items)
+        }
+        ArType::Result(ok, err) => {
+            let resolved_ok = from.resolve(*ok);
+            let translated_ok = translate_type(resolved_ok, from, to);
+            let new_ok = to.intern(translated_ok);
+
+            let resolved_err = from.resolve(*err);
+            let translated_err = translate_type(resolved_err, from, to);
+            let new_err = to.intern(translated_err);
+
+            ArType::Result(new_ok, new_err)
+        }
+        ArType::Option(inner) => {
+            let resolved = from.resolve(*inner);
+            let translated = translate_type(resolved, from, to);
+            let new_inner = to.intern(translated);
+            ArType::Option(new_inner)
+        }
+        ArType::Coroutine(inner) => {
+            let resolved = from.resolve(*inner);
+            let translated = translate_type(resolved, from, to);
+            let new_inner = to.intern(translated);
+            ArType::Coroutine(new_inner)
+        }
+        ArType::Range(inner) => {
+            let resolved = from.resolve(*inner);
+            let translated = translate_type(resolved, from, to);
+            let new_inner = to.intern(translated);
+            ArType::Range(new_inner)
+        }
+        ArType::Err => ArType::Err,
+        ArType::Void => ArType::Void,
+        ArType::Error => ArType::Error,
+        ArType::IntLiteral => ArType::IntLiteral,
+        ArType::FloatLiteral => ArType::FloatLiteral,
+    }
+}
+
+impl TypeInfo {
+    pub fn merge_from(&mut self, other: &TypeInfo) {
+        // We cannot use a closure that borrows `self` mutably and also references `other`
+        // due to borrow checker rules. Instead, pass other and self to a helper function.
+        for (&symbol, &other_type_id) in &other.decl_types {
+            let other_type = other.type_interner.resolve(other_type_id);
+            let translated =
+                translate_type(other_type, &other.type_interner, &mut self.type_interner);
+            self.record_decl_type(symbol, translated);
+        }
+        for (symbol, fields) in &other.struct_fields {
+            let mut translated_fields = FxHashMap::default();
+            for (name, ty) in fields {
+                let translated = translate_type(ty, &other.type_interner, &mut self.type_interner);
+                translated_fields.insert(name.clone(), translated);
+            }
+            self.struct_fields.insert(*symbol, translated_fields);
+        }
+        for (symbol, field_symbols) in &other.struct_field_symbols {
+            self.struct_field_symbols
+                .insert(*symbol, field_symbols.clone());
+        }
+        for (symbol, field_indices) in &other.struct_field_indices {
+            self.struct_field_indices
+                .insert(*symbol, field_indices.clone());
+        }
+        for (symbol, (enum_id, shape)) in &other.enum_variants {
+            let translated_shape = match shape {
+                EnumPayloadShape::Unit => EnumPayloadShape::Unit,
+                EnumPayloadShape::Tuple(tys) => {
+                    let mut new_tys = Vec::new();
+                    for ty in tys {
+                        new_tys.push(translate_type(
+                            ty,
+                            &other.type_interner,
+                            &mut self.type_interner,
+                        ));
+                    }
+                    EnumPayloadShape::Tuple(new_tys)
+                }
+            };
+            self.enum_variants
+                .insert(*symbol, (*enum_id, translated_shape));
+        }
+        for (&symbol, &tag) in &other.enum_variant_tags {
+            self.enum_variant_tags.insert(symbol, tag);
+        }
+        for (symbol, params) in &other.generic_params {
+            self.generic_params.insert(*symbol, params.clone());
+        }
+        for (symbol, constraints) in &other.param_constraints {
+            self.param_constraints.insert(*symbol, constraints.clone());
+        }
+        for (symbol, interface_info) in &other.interfaces {
+            let mut translated_methods = Vec::new();
+            for (name, ty) in &interface_info.methods {
+                let translated = translate_type(ty, &other.type_interner, &mut self.type_interner);
+                translated_methods.push((name.clone(), translated));
+            }
+            self.interfaces.insert(
+                *symbol,
+                types::InterfaceInfo {
+                    methods: translated_methods,
+                },
+            );
+        }
+    }
 
     pub fn record_expr_type(&mut self, expr: ExprId, ty: ArType) -> TypeId {
         let id = self.type_interner.intern(ty);

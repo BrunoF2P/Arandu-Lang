@@ -583,7 +583,11 @@ fn dump_import(_pool: &AstPool, import: &ImportDecl) -> String {
                 from.join(".")
             )
         }
-        ImportDecl::External { span, source, alias } => {
+        ImportDecl::External {
+            span,
+            source,
+            alias,
+        } => {
             format!("Import {} \"{}\" as {}", dump_span(*span), source, alias)
         }
     }

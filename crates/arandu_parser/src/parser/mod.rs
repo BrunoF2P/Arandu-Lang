@@ -254,7 +254,7 @@ impl<'a> Parser<'a> {
 
     pub(super) fn expect_ident_type(&mut self) -> Result<String, ParseError> {
         match &self.current().kind {
-            TokenKind::IdentType => {
+            TokenKind::IdentType | TokenKind::TypeErr => {
                 let name = self.current_text().to_string();
                 self.consume();
                 Ok(name)
@@ -466,14 +466,14 @@ struct TokenInfo {
     primitive_type_name: Option<&'static str>,
 }
 
-static TOKEN_INFO_TABLE: [TokenInfo; 129] = {
+static TOKEN_INFO_TABLE: [TokenInfo; TokenKind::COUNT] = {
     let mut table = [TokenInfo {
         is_type_token: false,
         is_contextual_module_segment: false,
         primitive_type_name: None,
-    }; 129];
+    }; TokenKind::COUNT];
     let mut i = 0;
-    while i < 129 {
+    while i < TokenKind::COUNT {
         let kind = TokenKind::index_to_token_kind(i);
         let prim = match kind {
             TokenKind::TypeInt => Some("int"),
@@ -501,18 +501,64 @@ static TOKEN_INFO_TABLE: [TokenInfo; 129] = {
             prim.is_some() || matches!(kind, TokenKind::IdentType | TokenKind::IdentValue);
         let is_contextual = matches!(
             kind,
-            TokenKind::KwMatch
+            TokenKind::IdentType
+                | TokenKind::KwIf
+                | TokenKind::KwElse
+                | TokenKind::KwFor
+                | TokenKind::KwIn
+                | TokenKind::KwWhile
+                | TokenKind::KwMatch
+                | TokenKind::KwReturn
+                | TokenKind::KwBreak
+                | TokenKind::KwContinue
+                | TokenKind::KwFunc
                 | TokenKind::KwAsync
-                | TokenKind::KwExtern
+                | TokenKind::KwAwait
                 | TokenKind::KwStruct
                 | TokenKind::KwEnum
                 | TokenKind::KwInterface
-                | TokenKind::KwFunc
-                | TokenKind::KwType
                 | TokenKind::KwConst
-                | TokenKind::KwPublic
+                | TokenKind::KwType
+                | TokenKind::KwModule
+                | TokenKind::KwImport
                 | TokenKind::KwFrom
                 | TokenKind::KwAs
+                | TokenKind::KwPublic
+                | TokenKind::KwExtern
+                | TokenKind::KwUnsafe
+                | TokenKind::KwWhere
+                | TokenKind::KwCatch
+                | TokenKind::KwIs
+                | TokenKind::KwSet
+                | TokenKind::KwOwn
+                | TokenKind::KwMut
+                | TokenKind::KwShared
+                | TokenKind::KwSelf
+                | TokenKind::KwPtr
+                | TokenKind::KwAlloc
+                | TokenKind::KwFree
+                | TokenKind::KwDefer
+                | TokenKind::KwErrdefer
+                | TokenKind::KwLet
+                | TokenKind::TypeInt
+                | TokenKind::TypeUint
+                | TokenKind::TypeFloat
+                | TokenKind::TypeI8
+                | TokenKind::TypeI16
+                | TokenKind::TypeI32
+                | TokenKind::TypeI64
+                | TokenKind::TypeU8
+                | TokenKind::TypeU16
+                | TokenKind::TypeU32
+                | TokenKind::TypeU64
+                | TokenKind::TypeF32
+                | TokenKind::TypeF64
+                | TokenKind::TypeBool
+                | TokenKind::TypeByte
+                | TokenKind::TypeChar
+                | TokenKind::TypeStr
+                | TokenKind::TypeAny
+                | TokenKind::TypeErr
         );
         table[i] = TokenInfo {
             is_type_token: is_type,

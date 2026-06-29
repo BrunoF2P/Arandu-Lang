@@ -28,7 +28,7 @@ fn test_parallel_compilation_multi_file_project() {
         r#"
         module myModule
 
-        func helper() int {
+        func helper(): int {
             return 100
         }
         "#,
@@ -39,8 +39,8 @@ fn test_parallel_compilation_multi_file_project() {
     fs::write(
         &file_b_path,
         r#"
-        func run() int {
-            x: int = 42
+        func run(): int {
+            let x: int = 42
             return x
         }
         "#,

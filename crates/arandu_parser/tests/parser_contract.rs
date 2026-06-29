@@ -50,7 +50,7 @@ fn parse_error_reports_expected_tokens_and_found_token() {
 
 #[test]
 fn ast_program_span_covers_source_before_eof() {
-    let source = "module tests.spans\nfunc main() {\n    value = add(1, 2)\n}\n";
+    let source = "module tests.spans\nfunc main() {\n    let value = add(1, 2)\n}\n";
     let program = parse(source).expect("parser should succeed");
     let line_index = arandu_base::line_index::LineIndex::new(source);
     let (start_line, start_col) = line_index.line_col(program.span.start);
@@ -63,7 +63,7 @@ fn ast_program_span_covers_source_before_eof() {
 
 #[test]
 fn ast_nested_expression_spans_are_contained_by_parent() {
-    let program = parse("module tests.spans\nfunc main() {\n    value = add(1 + 2, 3)\n}\n")
+    let program = parse("module tests.spans\nfunc main() {\n    let value = add(1 + 2, 3)\n}\n")
         .expect("parser should succeed");
     let func = match program.pool.decl(program.decls[0]) {
         arandu_parser::TopLevelDecl::Func(func) => func,
@@ -118,7 +118,7 @@ fn ast_call_with_block_span_covers_trailing_block() {
 
 #[test]
 fn ast_multiline_string_span_covers_delimiters() {
-    let source = "module tests.spans\nfunc main() {\n    text = \"\"\"\nhello\n\"\"\"\n}\n";
+    let source = "module tests.spans\nfunc main() {\n    let text = \"\"\"\nhello\n\"\"\"\n}\n";
     let program = parse(source).expect("parser should succeed");
     let func = match program.pool.decl(program.decls[0]) {
         arandu_parser::TopLevelDecl::Func(func) => func,
@@ -134,7 +134,7 @@ fn ast_multiline_string_span_covers_delimiters() {
     let (start_line, start_col) = line_index.line_col(span.start);
     let (end_line, end_col) = line_index.line_col(span.end);
     assert_eq!(start_line, 3);
-    assert_eq!(start_col, 12);
+    assert_eq!(start_col, 16);
     assert_eq!(end_line, 5);
     assert_eq!(end_col, 4);
 }
@@ -148,7 +148,7 @@ fn doc_comments_attach_to_documentable_nodes_and_preserve_order() {
 /// second
 func main() {
     /// ignored inside block
-    value = 1
+    let value = 1
 }
 
 /// User docs
@@ -164,7 +164,7 @@ enum Token {
 
 extern "C" {
     /// puts docs
-    func puts(text: ptr[u8]) int
+    func puts(text: ptr[u8]): int
 }
 "#,
     )
@@ -250,7 +250,7 @@ fn list_empty_forbidden() {
 fn where_func() {
     assert_contract_ast(
         "where_func",
-        "Program @1:1-4:2\n  Module @1:1-1:34 tests.contract.constraints\n  Func @2:1-4:2 identity<@2:15-2:16 T>(@2:18-2:26 value Type @2:25-2:26 @2:25-2:26 T) -> Type @2:28-2:29 @2:28-2:29 T where @2:36-2:46 T: @2:39-2:46 Display\n    Return @3:5-3:17 Path @3:12-3:17(value)",
+        "Program @1:1-4:2\n  Module @1:1-1:34 tests.contract.constraints\n  Func @2:1-4:2 identity<@2:15-2:16 T>(@2:18-2:26 value Type @2:25-2:26 @2:25-2:26 T) -> Type @2:29-2:30 @2:29-2:30 T where @2:37-2:47 T: @2:40-2:47 Display\n    Return @3:5-3:17 Path @3:12-3:17(value)",
     );
 }
 
@@ -282,7 +282,7 @@ fn semicolon_before_else() {
 fn generic_call_ambiguity() {
     assert_contract_ast(
         "generic_call_ambiguity",
-        "Program @1:1-5:2\n  Module @1:1-1:32 tests.contract.lookahead\n  Func @2:1-5:2 main() -> void\n    Var @3:5-3:27 @3:5-3:7 ok = Call @3:10-3:27(Generic @3:10-3:23(Path @3:10-3:18(identity), <Type @3:19-3:22 int>), [Int @3:24-3:26(42)])\n    Var @4:5-4:24 @4:5-4:12 compare = Binary @4:15-4:24(>, Binary @4:15-4:20(<, Path @4:15-4:16(a), Path @4:19-4:20(b)), Path @4:23-4:24(c))",
+        "Program @1:1-5:2\n  Module @1:1-1:32 tests.contract.lookahead\n  Func @2:1-5:2 main() -> void\n    Var @3:5-3:31 @3:9-3:11 ok = Call @3:14-3:31(Generic @3:14-3:27(Path @3:14-3:22(identity), <Type @3:23-3:26 int>), [Int @3:28-3:30(42)])\n    Var @4:5-4:28 @4:9-4:16 compare = Binary @4:19-4:28(>, Binary @4:19-4:24(<, Path @4:19-4:20(a), Path @4:23-4:24(b)), Path @4:27-4:28(c))",
     );
 }
 
@@ -290,14 +290,14 @@ fn generic_call_ambiguity() {
 fn variable_declaration_lookahead() {
     assert_contract_ast(
         "variable_declaration_lookahead",
-        "Program @1:1-5:2\n  Module @1:1-1:32 tests.contract.lookahead\n  Func @2:1-5:2 main() -> void\n    Var @3:5-3:14 @3:5-3:10 value = Int @3:13-3:14(1)\n    Var @4:5-4:19 @4:5-4:15 typed Type @4:12-4:15 int = Int @4:18-4:19(2)",
+        "Program @1:1-5:2\n  Module @1:1-1:32 tests.contract.lookahead\n  Func @2:1-5:2 main() -> void\n    Var @3:5-3:18 @3:9-3:14 value = Int @3:17-3:18(1)\n    Var @4:5-4:23 @4:9-4:19 typed Type @4:16-4:19 int = Int @4:22-4:23(2)",
     );
 }
 
 #[test]
 fn where_on_new_line() {
     let _program =
-        parse("module test\nfunc identity<T>(value: T) T\nwhere T: Display {\n    return value\n}")
+        parse("module test\nfunc identity<T>(value: T): T\nwhere T: Display {\n    return value\n}")
             .expect("parser should accept where on a new line");
 }
 

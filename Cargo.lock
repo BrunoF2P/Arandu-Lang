@@ -141,6 +141,7 @@ dependencies = [
  "arandu_lexer",
  "arandu_middle",
  "arandu_parser",
+ "arandu_resolve",
  "rustc-hash",
  "smallvec",
  "strsim",

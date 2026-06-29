@@ -118,6 +118,7 @@ pub enum TokenKind {
     KwFree,
     KwDefer,
     KwErrdefer,
+    KwLet,
     TypeInt,
     TypeUint,
     TypeFloat,
@@ -190,6 +191,7 @@ pub enum TokenKind {
     RangeInclusive,
     RangeExclusive,
     Ellipsis,
+    Arrow,
     Eof,
     Error(LexErrorCode),
 }
@@ -204,6 +206,8 @@ impl fmt::Display for TokenKind {
 }
 
 impl TokenKind {
+    pub const COUNT: usize = 131;
+
     #[must_use]
     pub const fn index(&self) -> usize {
         match self {
@@ -262,6 +266,7 @@ impl TokenKind {
             TokenKind::KwFree => 52,
             TokenKind::KwDefer => 53,
             TokenKind::KwErrdefer => 54,
+            TokenKind::KwLet => 129,
             TokenKind::TypeInt => 55,
             TokenKind::TypeUint => 56,
             TokenKind::TypeFloat => 57,
@@ -334,8 +339,9 @@ impl TokenKind {
             TokenKind::RangeInclusive => 124,
             TokenKind::RangeExclusive => 125,
             TokenKind::Ellipsis => 126,
-            TokenKind::Eof => 127,
-            TokenKind::Error(_) => 128,
+            TokenKind::Arrow => 127,
+            TokenKind::Eof => 128,
+            TokenKind::Error(_) => 130,
         }
     }
 
@@ -469,7 +475,9 @@ impl TokenKind {
             124 => TokenKind::RangeInclusive,
             125 => TokenKind::RangeExclusive,
             126 => TokenKind::Ellipsis,
-            127 => TokenKind::Eof,
+            127 => TokenKind::Arrow,
+            128 => TokenKind::Eof,
+            129 => TokenKind::KwLet,
             _ => TokenKind::Error(crate::LexErrorCode::InvalidChar),
         }
     }
@@ -518,13 +526,13 @@ struct TokenFlags {
     prevents: bool,
 }
 
-static TOKEN_FLAGS_TABLE: [TokenFlags; 129] = {
+static TOKEN_FLAGS_TABLE: [TokenFlags; 131] = {
     let mut table = [TokenFlags {
         can_end: false,
         prevents: false,
-    }; 129];
+    }; 131];
     let mut i = 0;
-    while i < 129 {
+    while i < 131 {
         let kind = TokenKind::index_to_token_kind(i);
         let can_end = matches!(
             kind,
@@ -601,6 +609,7 @@ static TOKEN_FLAGS_TABLE: [TokenFlags; 129] = {
                 | TokenKind::RangeExclusive
                 | TokenKind::RangeInclusive
                 | TokenKind::FatArrow
+                | TokenKind::Arrow
                 | TokenKind::KwElse
                 | TokenKind::KwCatch
                 | TokenKind::KwAs

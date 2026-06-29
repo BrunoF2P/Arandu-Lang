@@ -39,77 +39,157 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
         } => {
             let type_key = crate::NodeKey::from(type_name.span);
             if let Some(enum_symbol_id) = checker.resolved.type_refs.get(&type_key).copied() {
-                let expected_enum_ty = ArType::Named(enum_symbol_id, vec![]);
                 let val_ty = checker.type_info.resolve_type_id(value_ty).clone();
-                if !super::super::types::unify(&val_ty, &expected_enum_ty) {
-                    checker.add_constraint(
-                        expected_enum_ty.clone(),
-                        val_ty.clone(),
-                        ConstraintOrigin::Assignment {
-                            lhs_span: *span,
-                            rhs_span: type_name.span,
-                        },
-                    );
-                }
 
-                let variant_symbol_opt = checker
-                    .symbols
-                    .lookup_associated_member(&type_name.path.join("."), variant);
-                if let Some(variant_symbol_id) = variant_symbol_opt {
-                    let shape_opt = checker
-                        .type_info
-                        .enum_variants
-                        .get(&variant_symbol_id)
-                        .cloned();
-                    if let Some((_, shape)) = shape_opt {
-                        match shape {
-                            super::super::EnumPayloadShape::Unit => {
-                                if !payload.is_empty() {
-                                    checker.diagnostics.push(crate::Diagnostic::error(
-                                        crate::DiagCode::T012WrongArgCount,
-                                        format!(
-                                            "enum variant '{}' expects 0 payload items, found {}",
-                                            variant, payload.len
-                                        ),
-                                        *span,
-                                    ));
-                                }
+                if let ArType::Result(ok_id, err_id) = &val_ty {
+                    match variant.as_str() {
+                        "Ok" => {
+                            if payload.len != 1 {
+                                checker.diagnostics.push(crate::Diagnostic::error(
+                                    crate::DiagCode::T012WrongArgCount,
+                                    format!(
+                                        "enum variant 'Ok' expects 1 payload item, found {}",
+                                        payload.len
+                                    ),
+                                    *span,
+                                ));
                             }
-                            super::super::EnumPayloadShape::Tuple(tys) => {
-                                if tys.len() != payload.len as usize {
-                                    checker.diagnostics.push(crate::Diagnostic::error(
-                                        crate::DiagCode::T012WrongArgCount,
-                                        format!(
-                                            "enum variant '{}' expects {} payload items, found {}",
-                                            variant,
-                                            tys.len(),
-                                            payload.len
-                                        ),
-                                        *span,
-                                    ));
-                                }
-                                for (i, &pat_id) in
-                                    checker.pool.pattern_list(*payload).iter().enumerate()
-                                {
-                                    let expected_pat_ty =
-                                        tys.get(i).cloned().unwrap_or(ArType::Error);
-                                    let expected_pat_ty_id =
-                                        checker.type_info.type_interner.intern(expected_pat_ty);
-                                    check_pattern(checker, pat_id, expected_pat_ty_id);
-                                }
+                            if let Some(&pat_id) = checker.pool.pattern_list(*payload).first() {
+                                check_pattern(checker, pat_id, *ok_id);
                             }
+                        }
+                        "Err" => {
+                            if payload.len != 1 {
+                                checker.diagnostics.push(crate::Diagnostic::error(
+                                    crate::DiagCode::T012WrongArgCount,
+                                    format!(
+                                        "enum variant 'Err' expects 1 payload item, found {}",
+                                        payload.len
+                                    ),
+                                    *span,
+                                ));
+                            }
+                            if let Some(&pat_id) = checker.pool.pattern_list(*payload).first() {
+                                check_pattern(checker, pat_id, *err_id);
+                            }
+                        }
+                        _ => {
+                            checker.diagnostics.push(crate::Diagnostic::error(
+                                crate::DiagCode::T018UndefinedField,
+                                format!("variant '{variant}' is not defined on Result"),
+                                *span,
+                            ));
+                        }
+                    }
+                } else if let ArType::Option(inner_id) = &val_ty {
+                    match variant.as_str() {
+                        "Some" => {
+                            if payload.len != 1 {
+                                checker.diagnostics.push(crate::Diagnostic::error(
+                                    crate::DiagCode::T012WrongArgCount,
+                                    format!(
+                                        "enum variant 'Some' expects 1 payload item, found {}",
+                                        payload.len
+                                    ),
+                                    *span,
+                                ));
+                            }
+                            if let Some(&pat_id) = checker.pool.pattern_list(*payload).first() {
+                                check_pattern(checker, pat_id, *inner_id);
+                            }
+                        }
+                        "None" => {
+                            if !payload.is_empty() {
+                                checker.diagnostics.push(crate::Diagnostic::error(
+                                    crate::DiagCode::T012WrongArgCount,
+                                    format!(
+                                        "enum variant 'None' expects 0 payload items, found {}",
+                                        payload.len
+                                    ),
+                                    *span,
+                                ));
+                            }
+                        }
+                        _ => {
+                            checker.diagnostics.push(crate::Diagnostic::error(
+                                crate::DiagCode::T018UndefinedField,
+                                format!("variant '{variant}' is not defined on Option"),
+                                *span,
+                            ));
                         }
                     }
                 } else {
-                    checker.diagnostics.push(crate::Diagnostic::error(
-                        crate::DiagCode::T018UndefinedField,
-                        format!(
-                            "variant '{}' is not defined on enum '{}'",
-                            variant,
-                            type_name.path.join(".")
-                        ),
-                        *span,
-                    ));
+                    let expected_enum_ty = ArType::Named(enum_symbol_id, vec![]);
+                    if !super::super::types::unify(&val_ty, &expected_enum_ty) {
+                        checker.add_constraint(
+                            expected_enum_ty.clone(),
+                            val_ty.clone(),
+                            ConstraintOrigin::Assignment {
+                                lhs_span: *span,
+                                rhs_span: type_name.span,
+                            },
+                        );
+                    }
+
+                    let variant_symbol_opt = checker
+                        .symbols
+                        .lookup_associated_member(&type_name.path.join("."), variant);
+                    if let Some(variant_symbol_id) = variant_symbol_opt {
+                        let shape_opt = checker
+                            .type_info
+                            .enum_variants
+                            .get(&variant_symbol_id)
+                            .cloned();
+                        if let Some((_, shape)) = shape_opt {
+                            match shape {
+                                super::super::EnumPayloadShape::Unit => {
+                                    if !payload.is_empty() {
+                                        checker.diagnostics.push(crate::Diagnostic::error(
+                                            crate::DiagCode::T012WrongArgCount,
+                                            format!(
+                                                "enum variant '{}' expects 0 payload items, found {}",
+                                                variant, payload.len
+                                            ),
+                                            *span,
+                                        ));
+                                    }
+                                }
+                                super::super::EnumPayloadShape::Tuple(tys) => {
+                                    if tys.len() != payload.len as usize {
+                                        checker.diagnostics.push(crate::Diagnostic::error(
+                                            crate::DiagCode::T012WrongArgCount,
+                                            format!(
+                                                "enum variant '{}' expects {} payload items, found {}",
+                                                variant,
+                                                tys.len(),
+                                                payload.len
+                                            ),
+                                            *span,
+                                        ));
+                                    }
+                                    for (i, &pat_id) in
+                                        checker.pool.pattern_list(*payload).iter().enumerate()
+                                    {
+                                        let expected_pat_ty =
+                                            tys.get(i).cloned().unwrap_or(ArType::Error);
+                                        let expected_pat_ty_id =
+                                            checker.type_info.type_interner.intern(expected_pat_ty);
+                                        check_pattern(checker, pat_id, expected_pat_ty_id);
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        checker.diagnostics.push(crate::Diagnostic::error(
+                            crate::DiagCode::T018UndefinedField,
+                            format!(
+                                "variant '{}' is not defined on enum '{}'",
+                                variant,
+                                type_name.path.join(".")
+                            ),
+                            *span,
+                        ));
+                    }
                 }
             }
         }
@@ -119,70 +199,149 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
             payload,
         } => {
             let val_ty = checker.type_info.resolve_type_id(value_ty).clone();
-            if let ArType::Named(enum_symbol_id, _) = &val_ty {
-                let enum_name = &checker.symbols.get(*enum_symbol_id).name.clone();
-                let variant_symbol_opt = checker.symbols.lookup_associated_member(enum_name, name);
-                if let Some(variant_symbol_id) = variant_symbol_opt {
-                    let shape_opt = checker
-                        .type_info
-                        .enum_variants
-                        .get(&variant_symbol_id)
-                        .cloned();
-                    if let Some((_, shape)) = shape_opt {
-                        match shape {
-                            super::super::EnumPayloadShape::Unit => {
-                                if !payload.is_empty() {
-                                    checker.diagnostics.push(crate::Diagnostic::error(
-                                        crate::DiagCode::T012WrongArgCount,
-                                        format!(
-                                            "enum variant '{}' expects 0 payload items, found {}",
-                                            name, payload.len
-                                        ),
-                                        *span,
-                                    ));
+            match &val_ty {
+                ArType::Named(enum_symbol_id, _) => {
+                    let enum_name = &checker.symbols.get(*enum_symbol_id).name.clone();
+                    let variant_symbol_opt =
+                        checker.symbols.lookup_associated_member(enum_name, name);
+                    if let Some(variant_symbol_id) = variant_symbol_opt {
+                        let shape_opt = checker
+                            .type_info
+                            .enum_variants
+                            .get(&variant_symbol_id)
+                            .cloned();
+                        if let Some((_, shape)) = shape_opt {
+                            match shape {
+                                super::super::EnumPayloadShape::Unit => {
+                                    if !payload.is_empty() {
+                                        checker.diagnostics.push(crate::Diagnostic::error(
+                                            crate::DiagCode::T012WrongArgCount,
+                                            format!(
+                                                "enum variant '{}' expects 0 payload items, found {}",
+                                                name, payload.len
+                                            ),
+                                            *span,
+                                        ));
+                                    }
                                 }
-                            }
-                            super::super::EnumPayloadShape::Tuple(tys) => {
-                                if tys.len() != payload.len as usize {
-                                    checker.diagnostics.push(crate::Diagnostic::error(
-                                        crate::DiagCode::T012WrongArgCount,
-                                        format!(
-                                            "enum variant '{}' expects {} payload items, found {}",
-                                            name,
-                                            tys.len(),
-                                            payload.len
-                                        ),
-                                        *span,
-                                    ));
-                                }
-                                for (i, &pat_id) in
-                                    checker.pool.pattern_list(*payload).iter().enumerate()
-                                {
-                                    let expected_pat_ty =
-                                        tys.get(i).cloned().unwrap_or(ArType::Error);
-                                    let expected_pat_ty_id =
-                                        checker.type_info.type_interner.intern(expected_pat_ty);
-                                    check_pattern(checker, pat_id, expected_pat_ty_id);
+                                super::super::EnumPayloadShape::Tuple(tys) => {
+                                    if tys.len() != payload.len as usize {
+                                        checker.diagnostics.push(crate::Diagnostic::error(
+                                            crate::DiagCode::T012WrongArgCount,
+                                            format!(
+                                                "enum variant '{}' expects {} payload items, found {}",
+                                                name,
+                                                tys.len(),
+                                                payload.len
+                                            ),
+                                            *span,
+                                        ));
+                                    }
+                                    for (i, &pat_id) in
+                                        checker.pool.pattern_list(*payload).iter().enumerate()
+                                    {
+                                        let expected_pat_ty =
+                                            tys.get(i).cloned().unwrap_or(ArType::Error);
+                                        let expected_pat_ty_id =
+                                            checker.type_info.type_interner.intern(expected_pat_ty);
+                                        check_pattern(checker, pat_id, expected_pat_ty_id);
+                                    }
                                 }
                             }
                         }
+                    } else {
+                        checker.diagnostics.push(crate::Diagnostic::error(
+                            crate::DiagCode::T018UndefinedField,
+                            format!("variant '{name}' is not defined on enum '{enum_name}'"),
+                            *span,
+                        ));
                     }
-                } else {
+                }
+                ArType::Result(ok_id, err_id) => match name.as_str() {
+                    "Ok" => {
+                        if payload.len != 1 {
+                            checker.diagnostics.push(crate::Diagnostic::error(
+                                crate::DiagCode::T012WrongArgCount,
+                                format!(
+                                    "variant 'Ok' expects 1 payload item, found {}",
+                                    payload.len
+                                ),
+                                *span,
+                            ));
+                        }
+                        if let Some(&pat_id) = checker.pool.pattern_list(*payload).first() {
+                            check_pattern(checker, pat_id, *ok_id);
+                        }
+                    }
+                    "Err" => {
+                        if payload.len != 1 {
+                            checker.diagnostics.push(crate::Diagnostic::error(
+                                crate::DiagCode::T012WrongArgCount,
+                                format!(
+                                    "variant 'Err' expects 1 payload item, found {}",
+                                    payload.len
+                                ),
+                                *span,
+                            ));
+                        }
+                        if let Some(&pat_id) = checker.pool.pattern_list(*payload).first() {
+                            check_pattern(checker, pat_id, *err_id);
+                        }
+                    }
+                    _ => {
+                        checker.diagnostics.push(crate::Diagnostic::error(
+                            crate::DiagCode::T018UndefinedField,
+                            format!("variant '{name}' is not defined on Result"),
+                            *span,
+                        ));
+                    }
+                },
+                ArType::Option(inner_id) => match name.as_str() {
+                    "Some" => {
+                        if payload.len != 1 {
+                            checker.diagnostics.push(crate::Diagnostic::error(
+                                crate::DiagCode::T012WrongArgCount,
+                                format!(
+                                    "variant 'Some' expects 1 payload item, found {}",
+                                    payload.len
+                                ),
+                                *span,
+                            ));
+                        }
+                        if let Some(&pat_id) = checker.pool.pattern_list(*payload).first() {
+                            check_pattern(checker, pat_id, *inner_id);
+                        }
+                    }
+                    "None" => {
+                        if !payload.is_empty() {
+                            checker.diagnostics.push(crate::Diagnostic::error(
+                                crate::DiagCode::T012WrongArgCount,
+                                format!(
+                                    "variant 'None' expects 0 payload items, found {}",
+                                    payload.len
+                                ),
+                                *span,
+                            ));
+                        }
+                    }
+                    _ => {
+                        checker.diagnostics.push(crate::Diagnostic::error(
+                            crate::DiagCode::T018UndefinedField,
+                            format!("variant '{name}' is not defined on Option"),
+                            *span,
+                        ));
+                    }
+                },
+                _ => {
                     checker.diagnostics.push(crate::Diagnostic::error(
-                        crate::DiagCode::T018UndefinedField,
-                        format!("variant '{name}' is not defined on enum '{enum_name}'"),
+                        crate::DiagCode::T002IncompatibleAssignment,
+                        format!(
+                            "cannot match type tuple pattern against non-enum type '{}'",
+                            val_ty.display(&checker.symbols)
+                        ),
                         *span,
                     ));
                 }
-            } else {
-                checker.diagnostics.push(crate::Diagnostic::error(
-                    crate::DiagCode::T002IncompatibleAssignment,
-                    format!(
-                        "cannot match type tuple pattern against non-enum type '{}'",
-                        val_ty.display(&checker.symbols)
-                    ),
-                    *span,
-                ));
             }
         }
         Pattern::Tuple { items, span: _ } => {

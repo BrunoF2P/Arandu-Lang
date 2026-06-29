@@ -196,7 +196,7 @@ pub fn synth_generic_instantiation(
     instantiate_type(&template, &subst)
 }
 
-fn resolve_generic_callee_symbol(checker: &TypeChecker<'_>, callee: ExprId) -> Option<SymbolId> {
+fn resolve_generic_callee_symbol(checker: &mut TypeChecker<'_>, callee: ExprId) -> Option<SymbolId> {
     match checker.pool.expr(callee) {
         ExprKind::Path { .. } => checker.resolved.expr_symbol(callee),
         ExprKind::TypePath { .. } => checker.resolved.expr_symbol(callee).or_else(|| {
@@ -207,15 +207,36 @@ fn resolve_generic_callee_symbol(checker: &TypeChecker<'_>, callee: ExprId) -> O
                 .copied()
         }),
         ExprKind::Field { base, field } => {
-            let base_ty = checker.expr_type(*base)?;
-            let ArType::Named(struct_id, _) = base_ty else {
-                return None;
+            let base_ty = checker.expr_type(*base).unwrap_or_else(|| {
+                crate::passes::type_checker::synth::synth_expr(checker, *base)
+            });
+            let actual_base_ty = match &base_ty {
+                ArType::Nullable(inner) => {
+                    super::super::types::type_interner::with_resolved_type(*inner, |t| t.clone())
+                }
+                other => other.clone(),
             };
-            let struct_name = checker.symbols.get(struct_id).name.clone();
-            checker
-                .symbols
-                .lookup_associated_member(&struct_name, field)
-                .or_else(|| checker.resolved.expr_symbol(callee))
+            let struct_id = match &actual_base_ty {
+                ArType::Named(id, _) => Some(*id),
+                ArType::Ptr(inner) => super::super::types::type_interner::with_resolved_type(
+                    *inner,
+                    |inner_ty| match inner_ty {
+                        ArType::Named(id, _) => Some(*id),
+                        _ => None,
+                    },
+                ),
+                _ => None,
+            };
+            if let Some(struct_id) = struct_id {
+                let struct_name = checker.symbols.get(struct_id).name.clone();
+                if let Some(sym) = checker
+                    .symbols
+                    .lookup_associated_member(&struct_name, field)
+                {
+                    return Some(sym);
+                }
+            }
+            checker.resolved.expr_symbol(callee)
         }
         _ => None,
     }

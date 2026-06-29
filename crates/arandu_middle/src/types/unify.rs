@@ -109,6 +109,9 @@ pub fn unify(a: &ArType, b: &ArType) -> bool {
                 })
             }
         }
+        (ArType::Nullable(inner), other) | (other, ArType::Nullable(inner)) => {
+            super::type_interner::with_resolved_type(*inner, |ty| unify(ty, other))
+        }
         (ArType::Slice(inner_a), ArType::Slice(inner_b)) => {
             *inner_a == *inner_b || {
                 super::type_interner::with_resolved_type(*inner_a, |ty_a| {
@@ -161,6 +164,13 @@ pub fn unify(a: &ArType, b: &ArType) -> bool {
             }
         }
         (ArType::Coroutine(inner_a), ArType::Coroutine(inner_b)) => {
+            *inner_a == *inner_b || {
+                super::type_interner::with_resolved_type(*inner_a, |ty_a| {
+                    super::type_interner::with_resolved_type(*inner_b, |ty_b| unify(ty_a, ty_b))
+                })
+            }
+        }
+        (ArType::Range(inner_a), ArType::Range(inner_b)) => {
             *inner_a == *inner_b || {
                 super::type_interner::with_resolved_type(*inner_a, |ty_a| {
                     super::type_interner::with_resolved_type(*inner_b, |ty_b| unify(ty_a, ty_b))

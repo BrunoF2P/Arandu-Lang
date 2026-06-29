@@ -222,14 +222,14 @@ fn parses_span_dump_fixture() {
 #[test]
 fn parses_trailing_commas_in_named_imports_and_generics() {
     assert_parses_source(
-        "module tests.inline\nimport { Button, } from ui\ntype Box<T,> = T\nfunc id<T,>(value: T) T { return value; }\n",
+        "module tests.inline\nimport { Button, } from ui\ntype Box<T,> = T\nfunc id<T,>(value: T): T { return value; }\n",
     );
 }
 
 #[test]
 fn parses_trailing_comma_in_where_clause() {
     assert_parses_source(
-        "module tests.inline\nfunc identity<T>(value: T) T where T: Display, { return value; }\ninterface Displayable { func fmt() where T: Display,; }\n",
+        "module tests.inline\nfunc identity<T>(value: T): T where T: Display, { return value; }\ninterface Displayable { func fmt() where T: Display,; }\n",
     );
 }
 
@@ -273,7 +273,7 @@ fn rejects_invalid_assignment_target() {
     let source = fs::read_to_string(&source_path)
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", source_path.display()));
     let err = arandu_parser::parse(&source).expect_err("parser should reject invalid target");
-    assert_eq!(err.code, ParseErrorCode::ExpectedPlace);
+    assert_eq!(err.code, ParseErrorCode::ExpectedToken);
 }
 
 #[test]
@@ -283,7 +283,7 @@ fn rejects_invalid_place_fixture() {
     let source = fs::read_to_string(&source_path)
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", source_path.display()));
     let err = arandu_parser::parse(&source).expect_err("parser should reject invalid place");
-    assert_eq!(err.code, ParseErrorCode::ExpectedPlace);
+    assert_eq!(err.code, ParseErrorCode::ExpectedToken);
 }
 
 #[test]

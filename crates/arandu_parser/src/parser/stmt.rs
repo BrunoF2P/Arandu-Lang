@@ -95,11 +95,11 @@ impl<'a> Parser<'a> {
                 block,
             }));
         }
-        if self.at_kind_name("KW_SET") {
-            return self.parse_set();
-        }
-        if self.at_kind_name("KW_MUT") || self.looks_like_var_decl() {
+        if self.at_kind_name("KW_LET") {
             return self.parse_var_decl();
+        }
+        if let Some(res) = self.try_parse_assignment() {
+            return res;
         }
         let start = self.mark();
         let expr = self.parse_expr(0)?;
@@ -118,8 +118,53 @@ impl<'a> Parser<'a> {
         }))
     }
 
+    pub(super) fn try_parse_assignment(&mut self) -> Option<Result<crate::ast_pool::StmtId, ParseError>> {
+        let start = self.mark();
+        let mut places = Vec::new();
+        match self.parse_place() {
+            Ok(place) => {
+                places.push(place);
+                while self.eat_name("COMMA") {
+                    match self.parse_place() {
+                        Ok(p) => places.push(p),
+                        Err(_) => {
+                            self.pos = start;
+                            return None;
+                        }
+                    }
+                }
+                match self.parse_set_op() {
+                    Ok(op) => {
+                        let value = match self.parse_expr(0) {
+                            Ok(val) => val,
+                            Err(e) => return Some(Err(e)),
+                        };
+                        if let Err(e) = self.expect_semicolon() {
+                            return Some(Err(e));
+                        }
+                        Some(Ok(self.pool.alloc_stmt(Stmt::Set {
+                            span: self.span_from_mark(start),
+                            places,
+                            op,
+                            value,
+                        })))
+                    }
+                    Err(_) => {
+                        self.pos = start;
+                        None
+                    }
+                }
+            }
+            Err(_) => {
+                self.pos = start;
+                None
+            }
+        }
+    }
+
     pub(super) fn parse_var_decl(&mut self) -> Result<crate::ast_pool::StmtId, ParseError> {
         let start = self.mark();
+        self.expect_name("KW_LET")?;
         let (bindings, value) = self.parse_var_decl_parts()?;
         self.expect_semicolon()?;
         Ok(self.pool.alloc_stmt(Stmt::VarDecl {
@@ -154,29 +199,6 @@ impl<'a> Parser<'a> {
             name,
             ty,
         })
-    }
-
-    pub(super) fn parse_set(&mut self) -> Result<crate::ast_pool::StmtId, ParseError> {
-        let start = self.mark();
-        let (places, op, value) = self.parse_set_parts()?;
-        self.expect_semicolon()?;
-        Ok(self.pool.alloc_stmt(Stmt::Set {
-            span: self.span_from_mark(start),
-            places,
-            op,
-            value,
-        }))
-    }
-
-    pub(super) fn parse_set_parts(&mut self) -> Result<(Vec<Place>, SetOp, Expr), ParseError> {
-        self.expect_name("KW_SET")?;
-        let mut places = vec![self.parse_place()?];
-        while self.eat_name("COMMA") {
-            places.push(self.parse_place()?);
-        }
-        let op = self.parse_set_op()?;
-        let value = self.parse_expr(0)?;
-        Ok((places, op, value))
     }
 
     pub(super) fn parse_place(&mut self) -> Result<Place, ParseError> {
@@ -378,24 +400,60 @@ impl<'a> Parser<'a> {
         })
     }
 
+    pub(super) fn try_parse_simple_assignment(&mut self) -> Option<Result<SimpleStmt, ParseError>> {
+        let start = self.mark();
+        let mut places = Vec::new();
+        match self.parse_place() {
+            Ok(place) => {
+                places.push(place);
+                while self.eat_name("COMMA") {
+                    match self.parse_place() {
+                        Ok(p) => places.push(p),
+                        Err(_) => {
+                            self.pos = start;
+                            return None;
+                        }
+                    }
+                }
+                match self.parse_set_op() {
+                    Ok(op) => {
+                        let value = match self.parse_expr(0) {
+                            Ok(val) => val,
+                            Err(e) => return Some(Err(e)),
+                        };
+                        Some(Ok(SimpleStmt::Set {
+                            span: self.span_from_mark(start),
+                            places,
+                            op,
+                            value,
+                        }))
+                    }
+                    Err(_) => {
+                        self.pos = start;
+                        None
+                    }
+                }
+            }
+            Err(_) => {
+                self.pos = start;
+                None
+            }
+        }
+    }
+
     pub(super) fn parse_simple_stmt(&mut self) -> Result<SimpleStmt, ParseError> {
         let start = self.mark();
-        if self.at_kind_name("KW_SET") {
-            let (places, op, value) = self.parse_set_parts()?;
-            return Ok(SimpleStmt::Set {
-                span: self.span_from_mark(start),
-                places,
-                op,
-                value,
-            });
-        }
-        if self.at_kind_name("KW_MUT") || self.looks_like_var_decl() {
+        if self.at_kind_name("KW_LET") {
+            self.consume();
             let (bindings, value) = self.parse_var_decl_parts()?;
             return Ok(SimpleStmt::VarDecl {
                 span: self.span_from_mark(start),
                 bindings,
                 value,
             });
+        }
+        if let Some(res) = self.try_parse_simple_assignment() {
+            return res;
         }
         let expr = self.parse_expr(0)?;
         Ok(SimpleStmt::Expr {
@@ -482,21 +540,6 @@ impl<'a> Parser<'a> {
         Ok(op)
     }
 
-    pub(super) fn looks_like_var_decl(&self) -> bool {
-        if !matches!(self.current().kind, TokenKind::IdentValue) {
-            return false;
-        }
-
-        let mut index = self.pos + 1;
-        while let Some(token) = self.tokens.get(index) {
-            match token.kind {
-                TokenKind::Equal => return true,
-                TokenKind::Semicolon | TokenKind::LBrace | TokenKind::RBrace => return false,
-                _ => index += 1,
-            }
-        }
-        false
-    }
 
     pub(super) fn looks_like_for_in_clause(&self) -> bool {
         let mut index = self.pos;

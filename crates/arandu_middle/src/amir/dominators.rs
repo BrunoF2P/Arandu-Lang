@@ -77,10 +77,10 @@ impl Dominators {
         // Step 3: Compute pre-order and post-order traversals on the dominator tree
         let mut children = vec![Vec::new(); n];
         for (v, &idom) in idoms.iter().enumerate() {
-            if let Some(u) = idom {
-                if u.as_usize() != v {
-                    children[u.as_usize()].push(BlockId::from_usize(v));
-                }
+            if let Some(u) = idom
+                && u.as_usize() != v
+            {
+                children[u.as_usize()].push(BlockId::from_usize(v));
             }
         }
 

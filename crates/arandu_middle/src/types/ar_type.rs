@@ -37,6 +37,9 @@ pub enum ArType {
     /// `Coroutine[T]` — coroutine machine state type returning T
     Coroutine(TypeId),
 
+    /// `Range<T>` — representing ranges like 0..n
+    Range(TypeId),
+
     /// The `Err` type from the grammar
     Err,
 
@@ -177,6 +180,11 @@ impl ArType {
                     super::type_interner::with_resolved_type(*inner, |ty| ty.display(symbols));
                 format!("Coroutine<{}>", inner_str)
             }
+            ArType::Range(inner) => {
+                let inner_str =
+                    super::type_interner::with_resolved_type(*inner, |ty| ty.display(symbols));
+                format!("Range<{}>", inner_str)
+            }
             ArType::Err => "Err".to_string(),
             ArType::Void => "void".to_string(),
             ArType::IntLiteral => "int".to_string(),
@@ -230,7 +238,8 @@ impl ArType {
             | ArType::Tuple(_)
             | ArType::Result(_, _)
             | ArType::Option(_)
-            | ArType::Coroutine(_) => false,
+            | ArType::Coroutine(_)
+            | ArType::Range(_) => false,
         }
     }
 }

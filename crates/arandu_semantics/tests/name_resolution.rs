@@ -92,10 +92,10 @@ fn resolves_forward_function_reference() {
 module tests.forward
 
 func main() {
-    value = later()
+    let value = later()
 }
 
-func later() int {
+func later(): int {
     return 1
 }
 ",
@@ -131,9 +131,9 @@ fn resolves_params_locals_and_set_roots() {
         r"
 module tests.locals
 
-func add(a: int, b: int) int {
-    total = a + b
-    set total += 1
+func add(a: int, b: int): int {
+    let mut total = a + b
+    total += 1
     return total
 }
 ",
@@ -172,7 +172,7 @@ module tests.namespace_as_value
 import io
 
 func main() {
-    value = io
+    let value = io
 }
 ",
     );
@@ -205,7 +205,7 @@ module tests.named_imports
 
 import { Button, Window as AppWindow, text as label } from ui
 
-func render(window: AppWindow) Button {
+func render(window: AppWindow): Button {
     return label("ok")
 }
 "#,
@@ -222,12 +222,12 @@ struct User {
     name: str
 }
 
-func User.greet(user: User) str {
+func User.greet(user: User): str {
     return user.name
 }
 
 func main(user: User) {
-    text = User.greet(user)
+    let text = User.greet(user)
 }
 ",
     );
@@ -244,7 +244,7 @@ struct User {
 }
 
 func main(user: User) {
-    text = User.missing(user)
+    let text = User.missing(user)
 }
 ",
     );
@@ -262,7 +262,7 @@ fn reports_undefined_assignment_target_with_set_specific_hint() {
 module tests.set_missing
 
 func main() {
-    set missing = 1
+    missing = 1
 }
 ",
     );
@@ -291,7 +291,7 @@ struct User {
     name: str
 }
 
-func make(name: str) User {
+func make(name: str): User {
     return User { name: name }
 }
 ",
@@ -313,8 +313,8 @@ fn reports_undefined_value_with_suggestion() {
 module tests.suggest
 
 func main() {
-    user = 1
-    value = usre
+    let user = 1
+    let value = usre
 }
 ",
     );
@@ -353,11 +353,11 @@ fn reports_redeclare_same_scope_but_allows_nested_shadowing() {
 module tests.redeclare
 
 func main() {
-    value = 1
+    let value = 1
     if value > 0 {
         value = 2
     }
-    value = 3
+    let value = 3
 }
 ",
     );
@@ -394,7 +394,7 @@ enum Token {
     Word(str)
 }
 
-func describe(token: Token) str {
+func describe(token: Token): str {
     return match token {
         Token.Word(text) => text
     }
@@ -438,7 +438,7 @@ module tests.forBindings
 
 func main(items: []int) {
     for item in items {
-        value = item
+        let value = item
     }
 }
 ",
@@ -454,7 +454,7 @@ fn resolves_module_qualified_type_names() {
         module tests.qualifiedType
         import myModule
         func main() {
-            x: myModule.SomeType = 0
+            let x: myModule.SomeType = 0
         }
         ",
     );
@@ -473,12 +473,12 @@ struct User {
     name: str
 }
 
-func User.greet(user: User) str {
+func User.greet(user: User): str {
     return user.name
 }
 
 func main(user: User) {
-    text = User.grte(user)
+    let text = User.grte(user)
 }
 ",
     );
@@ -502,11 +502,11 @@ fn test_case_insensitive_suggestion_priority() {
 module tests.suggest_priority
 
 func main() {
-    myva = 1
-    myVar = 2
+    let myva = 1
+    let myVar = 2
     // 'myvar' has distance 1 from 'myva' (c -> a) and case-insensitive distance 0 from 'myVar'.
     // We want 'myVar' to be suggested because case-insensitive matches are prioritized (dist = 0).
-    value = myvar
+    let value = myvar
 }
 ",
     );
@@ -548,7 +548,7 @@ fn resolves_external_import_alias_type() {
         module tests.external_type
         import "github.com/empresa/auth" as auth
         func main() {
-            x: auth.userService.User = 0
+            let x: auth.userService.User = 0
         }
         "#,
     )
@@ -560,4 +560,19 @@ fn resolves_external_import_alias_type() {
     
     let result = arandu_resolve::name_resolution::resolve_with_symbols(symbols, resolved, docs, diagnostics, &program);
     assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
+}
+
+#[test]
+fn reports_unused_import_warning() {
+    let result = resolve_source(
+        r"
+        module tests.unused
+        import unusedModule
+        func main() {
+            let x = 42
+        }
+        ",
+    );
+    let diagnostics = codes(&result);
+    assert_eq!(diagnostics, vec![DiagCode::W007UnusedImport]);
 }

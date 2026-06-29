@@ -11,6 +11,7 @@ use crate::types::ArType;
 pub struct AmirProgram {
     pub funcs: Vec<AmirFunc>,
     pub literal_pool: AmirLiteralPool,
+    pub extern_funcs: rustc_hash::FxHashMap<crate::SymbolId, (Vec<crate::types::ArType>, crate::types::ArType)>,
 }
 
 #[derive(Debug)]

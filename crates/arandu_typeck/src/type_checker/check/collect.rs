@@ -47,6 +47,17 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
         } else if let TopLevelDecl::Enum(enum_decl) = decl {
             let enum_key = crate::NodeKey::from(enum_decl.span);
             if let Some(enum_symbol_id) = checker.resolved.definitions.get(&enum_key) {
+                let params = super::super::types::collect_generic_param_symbols(
+                    checker,
+                    &enum_decl.generic_params,
+                );
+                if !params.is_empty() {
+                    checker
+                        .type_info
+                        .generic_params
+                        .insert(*enum_symbol_id, params);
+                }
+
                 for (tag, variant) in enum_decl.variants.iter().enumerate() {
                     let shape = match &variant.payload {
                         None => super::super::EnumPayloadShape::Unit,
@@ -173,6 +184,7 @@ fn visit_type(
         ArType::Array(_, inner)
         | ArType::Slice(inner)
         | ArType::Nullable(inner)
+        | ArType::Range(inner)
         | ArType::Option(inner) => {
             super::super::types::type_interner::with_resolved_type(*inner, |inner_ty| {
                 visit_type(root_struct_id, inner_ty, visiting, visited, checker);
@@ -225,16 +237,32 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &P
                 };
                 let name_key = crate::NodeKey::from(name_span);
                 if let Some(symbol_id) = checker.resolved.definitions.get(&name_key).copied() {
-                    let ret_id = super::super::types::intern_type(ret_ty);
-                    let func_ty = ArType::Func(param_types, ret_id);
-                    checker.record_decl_type(symbol_id, func_ty);
                     let params = super::super::types::collect_generic_param_symbols(
                         checker,
                         &func_decl.generic_params,
                     );
                     if !params.is_empty() {
-                        checker.type_info.generic_params.insert(symbol_id, params);
+                        checker.type_info.generic_params.insert(symbol_id, params.clone());
                     }
+                    if let arandu_parser::FuncName::Method { .. } = &func_decl.name
+                        && let Some(first_param) = func_decl.params.first()
+                            && first_param.name.as_str() == "self"
+                                && let Some(first_ty_id) = param_types.first_mut() {
+                                    let lowered_first_ty = super::super::types::type_interner::with_resolved_type(*first_ty_id, |t| t.clone());
+                                    if let ArType::Named(struct_id, ref args) = lowered_first_ty
+                                        && args.is_empty() && !params.is_empty() {
+                                            let mut new_args = Vec::new();
+                                            for &param_sym in &params {
+                                                let arg_ty = ArType::Named(param_sym, vec![]);
+                                                new_args.push(super::super::types::intern_type(arg_ty));
+                                            }
+                                            let new_first_ty = ArType::Named(struct_id, new_args);
+                                            *first_ty_id = super::super::types::intern_type(new_first_ty);
+                                        }
+                                }
+                    let ret_id = super::super::types::intern_type(ret_ty);
+                    let func_ty = ArType::Func(param_types, ret_id);
+                    checker.record_decl_type(symbol_id, func_ty);
                 }
             }
             TopLevelDecl::Extern(extern_decl) => {
@@ -268,6 +296,13 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &P
                         let ret_id = super::super::types::intern_type(ret_ty);
                         let func_ty = ArType::Func(param_types, ret_id);
                         checker.record_decl_type(symbol_id, func_ty);
+                        let params = super::super::types::collect_generic_param_symbols(
+                            checker,
+                            &member.generic_params,
+                        );
+                        if !params.is_empty() {
+                            checker.type_info.generic_params.insert(symbol_id, params);
+                        }
                     }
                 }
             }

@@ -8,10 +8,12 @@ use super::prelude::register_prelude;
 use super::validate::validate_top_level_any;
 
 pub fn check_program(checker: &mut TypeChecker<'_>, program: &Program) {
-    register_prelude(checker);
+    register_prelude(checker, program);
     collect_type_shapes(checker, program);
     collect_signature_types(checker, program);
     collect_interfaces_and_constraints(checker, program);
+
+    duplicate_module_member_info(checker, program);
 
     for decl_id in &program.decls {
         let decl = checker.pool.decl(*decl_id);
@@ -28,7 +30,102 @@ pub fn check_program(checker: &mut TypeChecker<'_>, program: &Program) {
                     checker.record_decl_type(*symbol_id, val_ty);
                 }
             }
+            TopLevelDecl::Extern(extern_decl)
+                if extern_decl.abi == "arandu-intrinsic" => {
+                    let module_name = program
+                        .module
+                        .as_ref()
+                        .map(|m| m.path.join("."))
+                        .unwrap_or_default();
+                    if !module_name.starts_with("std.core") {
+                        checker.diagnostics.push(crate::Diagnostic::error(
+                            crate::DiagCode::U001FeatureNotSupported,
+                            "the 'arandu-intrinsic' ABI is restricted to the std.core module"
+                                .to_string(),
+                            extern_decl.span,
+                        ));
+                    }
+                }
             _ => {}
         }
+    }
+}
+
+fn duplicate_module_member_info(checker: &mut TypeChecker<'_>, program: &Program) {
+    let Some(module) = &program.module else {
+        return;
+    };
+    let module_name = module.path.join(".");
+
+    for decl_id in &program.decls {
+        let decl = checker.pool.decl(*decl_id);
+        let (name, span) = match decl {
+            TopLevelDecl::Struct(d) => (&d.name, d.span),
+            TopLevelDecl::Enum(d) => (&d.name, d.span),
+            TopLevelDecl::TypeAlias(d) => (&d.name, d.span),
+            TopLevelDecl::Func(d) => match &d.name {
+                arandu_parser::FuncName::Free { name, span } => (name, *span),
+                _ => continue,
+            },
+            TopLevelDecl::Extern(d) => {
+                for member in &d.members {
+                    let name = &member.name;
+                    let span = member.span;
+                    let name_key = crate::NodeKey::from(span);
+                    if let Some(&free_id) = checker.resolved.definitions.get(&name_key)
+                        && let Some(member_id) =
+                            checker.symbols.lookup_module_member(&module_name, name)
+                            && free_id != member_id {
+                                if let Some(ty) = checker.decl_type(free_id) {
+                                    checker.record_decl_type(member_id, ty);
+                                }
+                                if let Some(params) =
+                                    checker.type_info.generic_params.get(&free_id).cloned()
+                                {
+                                    checker.type_info.generic_params.insert(member_id, params);
+                                }
+                            }
+                }
+                continue;
+            }
+            _ => continue,
+        };
+
+        let name_key = crate::NodeKey::from(span);
+        if let Some(&free_id) = checker.resolved.definitions.get(&name_key)
+            && let Some(member_id) = checker.symbols.lookup_module_member(&module_name, name)
+                && free_id != member_id {
+                    if let Some(ty) = checker.decl_type(free_id) {
+                        checker.record_decl_type(member_id, ty);
+                    }
+                    if let Some(params) = checker.type_info.generic_params.get(&free_id).cloned() {
+                        checker.type_info.generic_params.insert(member_id, params);
+                    }
+                    if let Some(fields) = checker.type_info.struct_fields.get(&free_id).cloned() {
+                        checker.type_info.struct_fields.insert(member_id, fields);
+                    }
+                    if let Some(field_syms) = checker
+                        .type_info
+                        .struct_field_symbols
+                        .get(&free_id)
+                        .cloned()
+                    {
+                        checker
+                            .type_info
+                            .struct_field_symbols
+                            .insert(member_id, field_syms);
+                    }
+                    if let Some(field_idxs) = checker
+                        .type_info
+                        .struct_field_indices
+                        .get(&free_id)
+                        .cloned()
+                    {
+                        checker
+                            .type_info
+                            .struct_field_indices
+                            .insert(member_id, field_idxs);
+                    }
+                }
     }
 }

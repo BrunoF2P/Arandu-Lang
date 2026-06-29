@@ -80,23 +80,31 @@ pub(crate) fn resolve_field(
         return ArType::Error;
     }
 
-    let struct_id_opt = match &actual_base_ty {
-        ArType::Named(id, _) => Some(*id),
+    let struct_info_opt = match &actual_base_ty {
+        ArType::Named(id, args) => Some((*id, args.clone())),
         ArType::Ptr(inner) => super::super::types::type_interner::with_resolved_type(
             *inner,
             |inner_ty| match inner_ty {
-                ArType::Named(id, _) => Some(*id),
+                ArType::Named(id, args) => Some((*id, args.clone())),
                 _ => None,
             },
         ),
         _ => None,
     };
 
-    let field_ty = if let Some(struct_id) = struct_id_opt {
-        if let Some(fields) = checker.type_info.struct_fields.get(&struct_id)
-            && let Some(field_ty) = fields.get(field)
-        {
-            field_ty.clone()
+    let field_ty = if let Some((struct_id, args)) = struct_info_opt {
+        let resolved_args: Vec<ArType> = args
+            .iter()
+            .map(|&a| super::super::types::type_interner::with_resolved_type(a, |t| t.clone()))
+            .collect();
+        let field_from_struct = if let Some(fields_map) = super::super::types::struct_fields_instantiated(checker, struct_id, &resolved_args) {
+            fields_map.get(field).cloned()
+        } else {
+            checker.type_info.struct_fields.get(&struct_id).and_then(|fields| fields.get(field).cloned())
+        };
+
+        if let Some(field_ty) = field_from_struct {
+            field_ty
         } else {
             let struct_name = checker.symbols.get(struct_id).name.clone();
             if let Some(method_sym) = checker
@@ -105,6 +113,35 @@ pub(crate) fn resolve_field(
                 && let Some(ArType::Func(params, ret)) = checker.decl_type(method_sym)
             {
                 ArType::Func(params, ret)
+            } else if let Some(constraints) = checker.type_info.param_constraints.get(&struct_id) {
+                let mut found_method_ty = None;
+                for &iface_sym in constraints {
+                    if let Some(iface_info) = checker.type_info.interfaces.get(&iface_sym)
+                        && let Some((_, method_sig)) = iface_info.methods.iter().find(|(m, _)| m == field) {
+                            found_method_ty = Some(method_sig.clone());
+                            break;
+                        }
+                }
+                if let Some(method_ty) = found_method_ty {
+                    if let ArType::Func(params, ret) = method_ty {
+                        let mut new_params = vec![super::super::types::intern_type(actual_base_ty.clone())];
+                        new_params.extend(params);
+                        ArType::Func(new_params, ret)
+                    } else {
+                        method_ty
+                    }
+                } else {
+                    checker.add_constraint(
+                        actual_base_ty.clone(),
+                        ArType::Error,
+                        ConstraintOrigin::UndefinedField {
+                            base_span: checker.pool.expr_span(base),
+                            field_span,
+                            field_name: field.clone(),
+                        },
+                    );
+                    return ArType::Error;
+                }
             } else {
                 checker.add_constraint(
                     actual_base_ty.clone(),

@@ -51,22 +51,33 @@ pub(crate) fn synth_place(checker: &mut TypeChecker<'_>, place: &arandu_parser::
                     current_ty = ArType::Error;
                     break;
                 }
-                let struct_id_opt = match &actual_base_ty {
-                    ArType::Named(id, _) => Some(*id),
+                let struct_info_opt = match &actual_base_ty {
+                    ArType::Named(id, args) => Some((*id, args.clone())),
                     ArType::Ptr(inner) => super::super::types::type_interner::with_resolved_type(
                         *inner,
                         |ty| match ty {
-                            ArType::Named(id, _) => Some(*id),
+                            ArType::Named(id, args) => Some((*id, args.clone())),
                             _ => None,
                         },
                     ),
                     _ => None,
                 };
-                if let Some(struct_id) = struct_id_opt
-                    && let Some(fields) = checker.type_info.struct_fields.get(&struct_id)
-                    && let Some(field_ty) = fields.get(name)
-                {
-                    current_ty = field_ty.clone();
+                let field_from_struct = if let Some((struct_id, args)) = struct_info_opt {
+                    let resolved_args: Vec<ArType> = args
+                        .iter()
+                        .map(|&a| super::super::types::type_interner::with_resolved_type(a, |t| t.clone()))
+                        .collect();
+                    if let Some(fields_map) = super::super::types::struct_fields_instantiated(checker, struct_id, &resolved_args) {
+                        fields_map.get(name).cloned()
+                    } else {
+                        checker.type_info.struct_fields.get(&struct_id).and_then(|fields| fields.get(name).cloned())
+                    }
+                } else {
+                    None
+                };
+
+                if let Some(field_ty) = field_from_struct {
+                    current_ty = field_ty;
                 } else {
                     checker.add_constraint(
                         actual_base_ty.clone(),
