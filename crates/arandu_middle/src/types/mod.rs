@@ -14,5 +14,5 @@ pub use result_option::{
     result_type_decl_span, try_ok_type, type_name_base,
 };
 pub use subst::{GenericSubst, build_subst, substitute_type};
-pub use type_interner::{TypeId, TypeInterner, intern_type};
+pub use type_interner::{InternerGeneration, TypeId, TypeInterner};
 pub use unify::{resolve_literal_pair, unify, unify_return};

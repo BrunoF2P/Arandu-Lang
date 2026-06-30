@@ -1,19 +1,21 @@
 use rustc_hash::FxHashMap;
 
-use arandu_parser::ast_pool::{ExprId, ExprKind, IndexRange};
+use arandu_middle::SymbolId;
+use arandu_parser::{GenericParam, IndexRange};
+use arandu_parser::ast_pool::{ExprId, ExprKind};
 
-use super::ArType;
-use super::lower_type_expr;
-use super::type_name_base;
-use super::{GenericSubst, build_subst, intern_type, substitute_type};
-use crate::SymbolId;
-use crate::passes::type_checker::TypeChecker;
+use crate::type_checker::TypeChecker;
+use crate::type_checker::types::{
+    ArType, GenericSubst, TypeInterner, build_subst, lower_type_expr,
+    substitute_type, type_name_base,
+};
 
-pub fn collect_generic_param_symbols(
+#[must_use]
+pub fn extract_generic_param_symbols(
     checker: &TypeChecker<'_>,
-    generic_params: &[arandu_parser::GenericParam],
+    params: &[GenericParam],
 ) -> Vec<SymbolId> {
-    generic_params
+    params
         .iter()
         .filter_map(|param| {
             checker
@@ -26,8 +28,12 @@ pub fn collect_generic_param_symbols(
 }
 
 #[must_use]
-pub(crate) fn instantiate_type(ty: &ArType, subst: &GenericSubst) -> ArType {
-    substitute_type(ty, subst)
+pub(crate) fn instantiate_type(
+    ty: &ArType,
+    subst: &GenericSubst,
+    interner: &mut TypeInterner,
+) -> ArType {
+    substitute_type(ty, subst, interner)
 }
 
 #[must_use]
@@ -50,12 +56,14 @@ pub fn struct_fields_instantiated(
         span,
     );
     let subst = build_subst(&params, generic_args);
-    Some(
-        fields
-            .into_iter()
-            .map(|(name, ty)| (name, instantiate_type(&ty, &subst)))
-            .collect(),
-    )
+    let res: FxHashMap<String, ArType> = fields
+        .into_iter()
+        .map(|(name, ty)| {
+            let inst = instantiate_type(&ty, &subst, &mut checker.type_info.type_interner);
+            (name, inst)
+        })
+        .collect();
+    Some(res)
 }
 
 /// Instantiate a generic callee (`identity<int>`, `Result.Ok<int>`, …) to its value type.
@@ -66,6 +74,7 @@ pub fn synth_generic_instantiation(
     span: arandu_lexer::Span,
 ) -> ArType {
     let arg_ids = checker.pool.type_expr_list(type_args).to_vec();
+    let scope = checker.type_scope();
     let arg_tys: Vec<ArType> = arg_ids
         .iter()
         .map(|a| {
@@ -73,15 +82,16 @@ pub fn synth_generic_instantiation(
                 *a,
                 checker.pool,
                 &checker.symbols,
-                checker.type_scope(),
+                scope,
                 &checker.resolved,
+                &mut checker.type_info.type_interner,
             )
         })
         .collect();
 
     if let ExprKind::TypePath { type_name, member } = checker.pool.expr(callee) {
-        let base = type_name_base(type_name);
-        if base == "Result" {
+        let base_name = type_name_base(&type_name);
+        if base_name == "Result" {
             if arg_tys.len() != 1 {
                 let diag = crate::Diagnostic::error(
                     crate::DiagCode::T012WrongArgCount,
@@ -99,15 +109,15 @@ pub fn synth_generic_instantiation(
             let inner = arg_tys[0].clone();
             return match member.as_str() {
                 "Ok" => {
-                    let inner_id = intern_type(inner.clone());
-                    let err_id = intern_type(ArType::Err);
-                    let result_id = intern_type(ArType::Result(inner_id, err_id));
+                    let inner_id = checker.intern(inner);
+                    let err_id = checker.intern(ArType::Err);
+                    let result_id = checker.intern(ArType::Result(inner_id, err_id));
                     ArType::Func(vec![inner_id], result_id)
                 }
                 "Err" => {
-                    let err_id = intern_type(ArType::Err);
-                    let void_id = intern_type(ArType::Void);
-                    let result_id = intern_type(ArType::Result(void_id, err_id));
+                    let err_id = checker.intern(ArType::Err);
+                    let void_id = checker.intern(ArType::Void);
+                    let result_id = checker.intern(ArType::Result(void_id, err_id));
                     ArType::Func(vec![err_id], result_id)
                 }
                 _ => {
@@ -120,7 +130,7 @@ pub fn synth_generic_instantiation(
                 }
             };
         }
-        if base == "Option" && member == "Some" {
+        if base_name == "Option" && member == "Some" {
             if arg_tys.len() != 1 {
                 let diag = crate::Diagnostic::error(
                     crate::DiagCode::T012WrongArgCount,
@@ -136,8 +146,8 @@ pub fn synth_generic_instantiation(
                 return ArType::Error;
             }
             let inner = arg_tys[0].clone();
-            let inner_id = intern_type(inner);
-            let opt_id = intern_type(ArType::Option(inner_id));
+            let inner_id = checker.intern(inner);
+            let opt_id = checker.intern(ArType::Option(inner_id));
             return ArType::Func(vec![inner_id], opt_id);
         }
     }
@@ -193,7 +203,7 @@ pub fn synth_generic_instantiation(
         &arg_tys,
         span,
     );
-    instantiate_type(&template, &subst)
+    instantiate_type(&template, &subst, &mut checker.type_info.type_interner)
 }
 
 fn resolve_generic_callee_symbol(checker: &mut TypeChecker<'_>, callee: ExprId) -> Option<SymbolId> {
@@ -211,20 +221,15 @@ fn resolve_generic_callee_symbol(checker: &mut TypeChecker<'_>, callee: ExprId) 
                 crate::passes::type_checker::synth::synth_expr(checker, *base)
             });
             let actual_base_ty = match &base_ty {
-                ArType::Nullable(inner) => {
-                    super::super::types::type_interner::with_resolved_type(*inner, |t| t.clone())
-                }
+                ArType::Nullable(inner) => checker.resolve(*inner).clone(),
                 other => other.clone(),
             };
             let struct_id = match &actual_base_ty {
                 ArType::Named(id, _) => Some(*id),
-                ArType::Ptr(inner) => super::super::types::type_interner::with_resolved_type(
-                    *inner,
-                    |inner_ty| match inner_ty {
-                        ArType::Named(id, _) => Some(*id),
-                        _ => None,
-                    },
-                ),
+                ArType::Ptr(inner) => match checker.resolve(*inner) {
+                    ArType::Named(id, _) => Some(*id),
+                    _ => None,
+                },
                 _ => None,
             };
             if let Some(struct_id) = struct_id {

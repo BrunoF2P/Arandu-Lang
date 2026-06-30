@@ -55,7 +55,7 @@ pub(crate) fn resolve_field(
 
     let (actual_base_ty, was_nullable) = match &base_ty {
         ArType::Nullable(inner) => (
-            super::super::types::type_interner::with_resolved_type(*inner, |t| t.clone()),
+            checker.type_info.type_interner.resolve(*inner).clone(),
             true,
         ),
         other => (other.clone(), false),
@@ -67,13 +67,13 @@ pub(crate) fn resolve_field(
             format!(
                 "cannot access field '{}' on nullable type '{}'",
                 field,
-                base_ty.display(&checker.symbols)
+                base_ty.display(&checker.symbols, &checker.type_info.type_interner)
             ),
             field_span,
         )
         .with_label(
             checker.pool.expr_span(base),
-            format!("this has type '{}'", base_ty.display(&checker.symbols)),
+            format!("this has type '{}'", base_ty.display(&checker.symbols, &checker.type_info.type_interner)),
         )
         .with_hint("use safe access `?.` or make the value non-nullable".to_string());
         checker.diagnostics.push(diag);
@@ -82,20 +82,17 @@ pub(crate) fn resolve_field(
 
     let struct_info_opt = match &actual_base_ty {
         ArType::Named(id, args) => Some((*id, args.clone())),
-        ArType::Ptr(inner) => super::super::types::type_interner::with_resolved_type(
-            *inner,
-            |inner_ty| match inner_ty {
-                ArType::Named(id, args) => Some((*id, args.clone())),
-                _ => None,
-            },
-        ),
+        ArType::Ptr(inner) => match checker.type_info.type_interner.resolve(*inner) {
+            ArType::Named(id, args) => Some((*id, args.clone())),
+            _ => None,
+        },
         _ => None,
     };
 
     let field_ty = if let Some((struct_id, args)) = struct_info_opt {
         let resolved_args: Vec<ArType> = args
             .iter()
-            .map(|&a| super::super::types::type_interner::with_resolved_type(a, |t| t.clone()))
+            .map(|&a| checker.type_info.type_interner.resolve(a).clone())
             .collect();
         let field_from_struct = if let Some(fields_map) = super::super::types::struct_fields_instantiated(checker, struct_id, &resolved_args) {
             fields_map.get(field).cloned()
@@ -124,7 +121,7 @@ pub(crate) fn resolve_field(
                 }
                 if let Some(method_ty) = found_method_ty {
                     if let ArType::Func(params, ret) = method_ty {
-                        let mut new_params = vec![super::super::types::intern_type(actual_base_ty.clone())];
+                        let mut new_params = vec![checker.intern(actual_base_ty.clone())];
                         new_params.extend(params);
                         ArType::Func(new_params, ret)
                     } else {
@@ -169,7 +166,7 @@ pub(crate) fn resolve_field(
     };
 
     if safe || was_nullable {
-        let field_id = super::super::types::intern_type(field_ty);
+        let field_id = checker.intern(field_ty);
         ArType::Nullable(field_id)
     } else {
         field_ty
@@ -191,7 +188,7 @@ pub(crate) fn resolve_index(
 
     let (actual_base_ty, was_nullable) = match &base_ty {
         ArType::Nullable(inner) => (
-            super::super::types::type_interner::with_resolved_type(*inner, |t| t.clone()),
+            checker.type_info.type_interner.resolve(*inner).clone(),
             true,
         ),
         other => (other.clone(), false),
@@ -202,13 +199,13 @@ pub(crate) fn resolve_index(
             crate::DiagCode::T006NotNullable,
             format!(
                 "cannot index nullable type '{}'",
-                base_ty.display(&checker.symbols)
+                base_ty.display(&checker.symbols, &checker.type_info.type_interner)
             ),
             checker.pool.expr_span(index),
         )
         .with_label(
             checker.pool.expr_span(base),
-            format!("this has type '{}'", base_ty.display(&checker.symbols)),
+            format!("this has type '{}'", base_ty.display(&checker.symbols, &checker.type_info.type_interner)),
         )
         .with_hint("use safe index `?[...]` or make the value non-nullable".to_string());
         checker.diagnostics.push(diag);
@@ -217,7 +214,7 @@ pub(crate) fn resolve_index(
 
     let elem_ty = match &actual_base_ty {
         ArType::Array(_, inner) | ArType::Slice(inner) => {
-            super::super::types::type_interner::with_resolved_type(*inner, |t| t.clone())
+            checker.type_info.type_interner.resolve(*inner).clone()
         }
         _ => {
             checker.add_constraint(
@@ -246,7 +243,7 @@ pub(crate) fn resolve_index(
     }
 
     if safe || was_nullable {
-        let elem_id = super::super::types::intern_type(elem_ty);
+        let elem_id = checker.intern(elem_ty);
         ArType::Nullable(elem_id)
     } else {
         elem_ty

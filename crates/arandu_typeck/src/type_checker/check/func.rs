@@ -17,14 +17,11 @@ fn validate_method_receiver(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
     let arandu_parser::FuncName::Method { receiver, span, .. } = &decl.name else {
         return;
     };
-    let mut recv_ty = super::super::types::lower_named_type(
+    let mut recv_ty = checker.lower_named_type(
         receiver.span,
         receiver,
         &[],
-        checker.pool,
-        &checker.symbols,
         checker.symbols.global_scope(),
-        &checker.resolved,
     );
     if let ArType::Named(struct_id, ref args) = recv_ty
         && args.is_empty() {
@@ -34,7 +31,7 @@ fn validate_method_receiver(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
                     let mut new_args = Vec::new();
                     for &param_sym in &method_params {
                         let arg_ty = ArType::Named(param_sym, vec![]);
-                        new_args.push(super::super::types::intern_type(arg_ty));
+                        new_args.push(checker.intern(arg_ty));
                     }
                     recv_ty = ArType::Named(struct_id, new_args);
                 }
@@ -62,13 +59,7 @@ fn validate_method_receiver(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
             first.span,
         ));
     }
-    let mut self_ty = super::super::types::lower_type_expr(
-        first.ty,
-        checker.pool,
-        &checker.symbols,
-        checker.symbols.global_scope(),
-        &checker.resolved,
-    );
+    let mut self_ty = checker.lower_type_expr(first.ty, checker.symbols.global_scope());
     if let ArType::Named(struct_id, ref args) = self_ty
         && args.is_empty() {
             let func_key = func_name_key(decl);
@@ -77,12 +68,12 @@ fn validate_method_receiver(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
                     let mut new_args = Vec::new();
                     for &param_sym in &method_params {
                         let arg_ty = ArType::Named(param_sym, vec![]);
-                        new_args.push(super::super::types::intern_type(arg_ty));
+                        new_args.push(checker.intern(arg_ty));
                     }
                     self_ty = ArType::Named(struct_id, new_args);
                 }
         }
-    if !super::super::types::unify(&recv_ty, &self_ty) {
+    if !super::super::types::unify(&recv_ty, &self_ty, &checker.type_info.type_interner) {
         checker.add_constraint(
             recv_ty,
             self_ty,
@@ -118,13 +109,7 @@ pub fn check_func_body(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
 
     let (ret_ty, return_decl_span) = if let Some(result) = &decl.result {
         (
-            super::super::types::lower_result_type(
-                result,
-                checker.pool,
-                &checker.symbols,
-                type_scope,
-                &checker.resolved,
-            ),
+            checker.lower_result_type(result, type_scope),
             super::super::types::result_type_decl_span(result),
         )
     } else {
@@ -132,13 +117,7 @@ pub fn check_func_body(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
     };
 
     for param in &decl.params {
-        let mut param_ty = super::super::types::lower_type_expr(
-            param.ty,
-            checker.pool,
-            &checker.symbols,
-            type_scope,
-            &checker.resolved,
-        );
+        let mut param_ty = checker.lower_type_expr(param.ty, type_scope);
 
         if param.is_receiver
             && let ArType::Named(struct_id, ref args) = param_ty
@@ -149,7 +128,7 @@ pub fn check_func_body(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
                             let mut new_args = Vec::new();
                             for &param_sym in &method_params {
                                 let arg_ty = ArType::Named(param_sym, vec![]);
-                                new_args.push(super::super::types::intern_type(arg_ty));
+                                new_args.push(checker.intern(arg_ty));
                             }
                             param_ty = ArType::Named(struct_id, new_args);
                         }

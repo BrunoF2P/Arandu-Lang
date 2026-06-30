@@ -20,7 +20,7 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
         Pattern::Literal { expr, .. } => {
             let expr_ty = synth_expr(checker, *expr);
             let val_ty = checker.type_info.resolve_type_id(value_ty).clone();
-            if !super::super::types::unify(&val_ty, &expr_ty) {
+            if !super::super::types::unify(&val_ty, &expr_ty, &checker.type_info.type_interner) {
                 checker.add_constraint(
                     val_ty.clone(),
                     expr_ty,
@@ -120,7 +120,7 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                     }
                 } else {
                     let expected_enum_ty = ArType::Named(enum_symbol_id, vec![]);
-                    if !super::super::types::unify(&val_ty, &expected_enum_ty) {
+                    if !super::super::types::unify(&val_ty, &expected_enum_ty, &checker.type_info.type_interner) {
                         checker.add_constraint(
                             expected_enum_ty.clone(),
                             val_ty.clone(),
@@ -131,9 +131,16 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                         );
                     }
 
-                    let variant_symbol_opt = checker
-                        .symbols
-                        .lookup_associated_member(&type_name.path.join("."), variant);
+                    let mut variant_symbol_opt = None;
+                    for (&var_id, &(parent_id, _)) in &checker.type_info.enum_variants {
+                        if parent_id == enum_symbol_id {
+                            let var_name = &checker.symbols.get(var_id).name;
+                            if var_name == variant || var_name.ends_with(&format!(".{}", variant)) {
+                                variant_symbol_opt = Some(var_id);
+                                break;
+                            }
+                        }
+                    }
                     if let Some(variant_symbol_id) = variant_symbol_opt {
                         let shape_opt = checker
                             .type_info
@@ -201,9 +208,17 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
             let val_ty = checker.type_info.resolve_type_id(value_ty).clone();
             match &val_ty {
                 ArType::Named(enum_symbol_id, _) => {
-                    let enum_name = &checker.symbols.get(*enum_symbol_id).name.clone();
-                    let variant_symbol_opt =
-                        checker.symbols.lookup_associated_member(enum_name, name);
+                    let enum_name = &checker.symbols.get(*enum_symbol_id).name;
+                    let mut variant_symbol_opt = None;
+                    for (&var_id, &(parent_id, _)) in &checker.type_info.enum_variants {
+                        if parent_id == *enum_symbol_id {
+                            let var_name = &checker.symbols.get(var_id).name;
+                            if var_name == name || var_name.ends_with(&format!(".{}", name)) {
+                                variant_symbol_opt = Some(var_id);
+                                break;
+                            }
+                        }
+                    }
                     if let Some(variant_symbol_id) = variant_symbol_opt {
                         let shape_opt = checker
                             .type_info
@@ -333,11 +348,12 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                     }
                 },
                 _ => {
+                    let interner = &checker.type_info.type_interner;
                     checker.diagnostics.push(crate::Diagnostic::error(
                         crate::DiagCode::T002IncompatibleAssignment,
                         format!(
                             "cannot match type tuple pattern against non-enum type '{}'",
-                            val_ty.display(&checker.symbols)
+                            val_ty.display(&checker.symbols, interner)
                         ),
                         *span,
                     ));
@@ -352,16 +368,17 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                     let item_ty = tys_cloned
                         .get(i)
                         .copied()
-                        .unwrap_or_else(|| super::super::types::intern_type(ArType::Error));
+                        .unwrap_or_else(|| checker.intern(ArType::Error));
                     // Destructuring tuple compares purely TypeIds!
                     check_pattern(checker, item_id, item_ty);
                 }
             } else {
+                let interner = &checker.type_info.type_interner;
                 checker.diagnostics.push(crate::Diagnostic::error(
                     crate::DiagCode::T002IncompatibleAssignment,
                     format!(
                         "cannot match tuple pattern against non-tuple type '{}'",
-                        val_ty.display(&checker.symbols)
+                        val_ty.display(&checker.symbols, interner)
                     ),
                     pat.span(),
                 ));
@@ -376,7 +393,7 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
             if let Some(struct_symbol_id) = checker.resolved.type_refs.get(&type_key).copied() {
                 let expected_struct_ty = ArType::Named(struct_symbol_id, vec![]);
                 let val_ty = checker.type_info.resolve_type_id(value_ty).clone();
-                if !super::super::types::unify(&val_ty, &expected_struct_ty) {
+                if !super::super::types::unify(&val_ty, &expected_struct_ty, &checker.type_info.type_interner) {
                     checker.add_constraint(
                         expected_struct_ty.clone(),
                         val_ty.clone(),
@@ -428,7 +445,7 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
             let start_ty = synth_expr(checker, *start);
             let end_ty = synth_expr(checker, *end);
             let val_ty = checker.type_info.resolve_type_id(value_ty).clone();
-            if !super::super::types::unify(&val_ty, &start_ty) {
+            if !super::super::types::unify(&val_ty, &start_ty, &checker.type_info.type_interner) {
                 checker.add_constraint(
                     val_ty.clone(),
                     start_ty,
@@ -438,7 +455,7 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                     },
                 );
             }
-            if !super::super::types::unify(&val_ty, &end_ty) {
+            if !super::super::types::unify(&val_ty, &end_ty, &checker.type_info.type_interner) {
                 checker.add_constraint(
                     val_ty.clone(),
                     end_ty,

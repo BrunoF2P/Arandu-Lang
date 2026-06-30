@@ -8,14 +8,14 @@ use crate::type_checker::types::{self, ArType, Primitive};
 use super::synth_expr;
 
 /// Stricter than `unify` for array literals: int and float literals must not mix.
-pub(super) fn array_element_types_compatible(a: &ArType, b: &ArType) -> bool {
+pub(super) fn array_element_types_compatible(a: &ArType, b: &ArType, interner: &arandu_middle::types::TypeInterner) -> bool {
     if matches!(
         (a, b),
         (ArType::IntLiteral, ArType::FloatLiteral) | (ArType::FloatLiteral, ArType::IntLiteral)
     ) {
         return false;
     }
-    types::unify(a, b)
+    types::unify(a, b, interner)
 }
 
 pub(super) fn synth_literal_expr(
@@ -43,37 +43,27 @@ pub(super) fn synth_literal_expr(
         }
         ExprKind::Nil => {
             if let Some(ret) = checker.ctx.current_return() {
-                if types::is_result_type(ret)
+                if checker.is_result_type(ret)
                     || types::is_option_type(ret)
                     || matches!(ret, ArType::Nullable(_))
                 {
                     return Some(ret.clone());
                 }
-                if let Some((ok, _)) = types::result_ok_err(ret) {
+                if let Some((ok, _)) = checker.result_ok_err(ret) {
                     return Some(ok);
                 }
             }
-            let err_id = types::intern_type(ArType::Error);
+            let err_id = checker.intern(ArType::Error);
             Some(ArType::Nullable(err_id))
         }
         ExprKind::StructLiteral { ty, fields } => {
             let ty_id = *ty;
             let fields_range = *fields;
-            let struct_ty = types::lower_type_expr(
-                ty_id,
-                checker.pool,
-                &checker.symbols,
-                checker.type_scope(),
-                &checker.resolved,
-            );
+            let struct_ty = checker.lower_type_expr(ty_id, checker.type_scope());
             if let ArType::Named(symbol_id, generic_args) = &struct_ty {
                 let resolved_args: Vec<ArType> = generic_args
                     .iter()
-                    .map(|&arg_id| {
-                        types::type_interner::with_resolved_type(arg_id, |t| {
-                            t.clone()
-                        })
-                    })
+                    .map(|&arg_id| checker.resolve(arg_id).clone())
                     .collect();
                 let field_map = types::struct_fields_instantiated(
                     checker,
@@ -108,7 +98,7 @@ pub(super) fn synth_literal_expr(
                         let field_val_ty = synth_expr(checker, field.value);
                         let defined_field_ty = fields_def.get(&field.name).cloned();
                         if let Some(defined_field_ty) = defined_field_ty {
-                            if !types::unify(&defined_field_ty, &field_val_ty) {
+                            if !types::unify(&defined_field_ty, &field_val_ty, &checker.type_info.type_interner) {
                                 checker.add_constraint(
                                     defined_field_ty,
                                     field_val_ty,
@@ -174,7 +164,7 @@ pub(super) fn synth_literal_expr(
                 let item_ty = synth_expr(checker, item_id);
                 if elem_ty.is_error() {
                     elem_ty = item_ty;
-                } else if !array_element_types_compatible(&elem_ty, &item_ty) {
+                } else if !array_element_types_compatible(&elem_ty, &item_ty, &checker.type_info.type_interner) {
                     checker.add_constraint(
                         elem_ty.clone(),
                         item_ty,
@@ -187,7 +177,7 @@ pub(super) fn synth_literal_expr(
                     elem_ty = ArType::Error;
                 }
             }
-            let elem_id = types::intern_type(elem_ty);
+            let elem_id = checker.intern(elem_ty);
             Some(ArType::Array(items_range.len as u64, elem_id))
         }
         _ => None,

@@ -33,17 +33,17 @@ pub(super) fn synth_call_expr(
             if types::type_name_base(type_name) == "Result" {
                 return Some(match member.as_str() {
                     "Ok" => {
-                        let err_id = types::intern_type(ArType::Error);
-                        let err_literal_id = types::intern_type(ArType::Err);
+                        let err_id = checker.intern(ArType::Error);
+                        let err_literal_id = checker.intern(ArType::Err);
                         let res_ty = ArType::Result(err_id, err_literal_id);
-                        let res_id = types::intern_type(res_ty);
+                        let res_id = checker.intern(res_ty);
                         ArType::Func(vec![err_id], res_id)
                     }
                     "Err" => {
-                        let err_id = types::intern_type(ArType::Error);
-                        let err_literal_id = types::intern_type(ArType::Err);
+                        let err_id = checker.intern(ArType::Error);
+                        let err_literal_id = checker.intern(ArType::Err);
                         let res_ty = ArType::Result(err_id, err_literal_id);
-                        let res_id = types::intern_type(res_ty);
+                        let res_id = checker.intern(res_ty);
                         ArType::Func(vec![err_id], res_id)
                     }
                     _ => ArType::Error,
@@ -52,13 +52,13 @@ pub(super) fn synth_call_expr(
             if types::type_name_base(type_name) == "Option" {
                 return Some(match member.as_str() {
                     "Some" => {
-                        let err_id = types::intern_type(ArType::Error);
+                        let err_id = checker.intern(ArType::Error);
                         let opt_ty = ArType::Option(err_id);
-                        let opt_id = types::intern_type(opt_ty);
+                        let opt_id = checker.intern(opt_ty);
                         ArType::Func(vec![err_id], opt_id)
                     }
                     "None" => {
-                        let err_id = types::intern_type(ArType::Error);
+                        let err_id = checker.intern(ArType::Error);
                         ArType::Option(err_id)
                     }
                     _ => ArType::Error,
@@ -67,12 +67,19 @@ pub(super) fn synth_call_expr(
 
             let type_key = crate::NodeKey::from(type_name.span);
             if let Some(enum_symbol_id) = checker.resolved.type_refs.get(&type_key) {
-                let variant_symbol_opt = checker
-                    .symbols
-                    .lookup_associated_member(&type_name.path.join("."), member);
+                let mut variant_symbol_opt = None;
+                for (&var_id, &(parent_id, _)) in &checker.type_info.enum_variants {
+                    if parent_id == *enum_symbol_id {
+                        let var_name = &checker.symbols.get(var_id).name;
+                        if var_name == member || var_name.ends_with(&format!(".{}", member)) {
+                            variant_symbol_opt = Some(var_id);
+                            break;
+                        }
+                    }
+                }
                 if let Some(variant_symbol_id) = variant_symbol_opt
                     && let Some((_, shape)) =
-                        checker.type_info.enum_variants.get(&variant_symbol_id)
+                        checker.type_info.enum_variants.get(&variant_symbol_id).cloned()
                 {
                     let enum_ty = ArType::Named(*enum_symbol_id, vec![]);
                     match shape {
@@ -82,9 +89,9 @@ pub(super) fn synth_call_expr(
                         crate::type_checker::EnumPayloadShape::Tuple(tys) => {
                             let param_ids = tys
                                 .iter()
-                                .map(|t| types::intern_type(t.clone()))
+                                .map(|t| checker.intern(t.clone()))
                                 .collect();
-                            let enum_id = types::intern_type(enum_ty);
+                            let enum_id = checker.intern(enum_ty);
                             return Some(ArType::Func(param_ids, enum_id));
                         }
                     }
@@ -147,7 +154,7 @@ pub(super) fn synth_call_expr(
             let inner_id = *inner_expr;
             let inner_ty = synth_expr(checker, inner_id);
             Some(
-                if let Some(ok_ty) = types::try_ok_type(&inner_ty) {
+                if let Some(ok_ty) = checker.try_ok_type(&inner_ty) {
                     ok_ty
                 } else if inner_ty.is_error() {
                     ArType::Error
@@ -208,28 +215,24 @@ pub(super) fn synth_call_expr(
                         {
                             let actual_base_ty = match &base_ty {
                                 ArType::Nullable(inner) => {
-                                    types::type_interner::with_resolved_type(*inner, |t| t.clone())
+                                    checker.type_info.type_interner.resolve(*inner).clone()
                                 }
                                 other => other.clone(),
                             };
                             let receiver_ty_id = params[0];
-                            types::type_interner::with_resolved_type(
-                                receiver_ty_id,
-                                |receiver_ty| {
-                                    if !types::unify(receiver_ty, &actual_base_ty) {
-                                        checker.add_constraint(
-                                            receiver_ty.clone(),
-                                            actual_base_ty.clone(),
-                                            ConstraintOrigin::CallArg {
-                                                call_span: span,
-                                                param_span: field_span,
-                                                arg_span: checker.pool.expr_span(base_id),
-                                                arg_index: 0,
-                                            },
-                                        );
-                                    }
-                                },
-                            );
+                            let receiver_ty = checker.type_info.type_interner.resolve(receiver_ty_id).clone();
+                            if !types::unify(&receiver_ty, &actual_base_ty, &checker.type_info.type_interner) {
+                                checker.add_constraint(
+                                    receiver_ty.clone(),
+                                    actual_base_ty.clone(),
+                                    ConstraintOrigin::CallArg {
+                                        call_span: span,
+                                        param_span: field_span,
+                                        arg_span: checker.pool.expr_span(base_id),
+                                        arg_index: 0,
+                                    },
+                                );
+                            }
                             let explicit_params = &params[1..];
                             let arg_ids = checker.pool.expr_list(args_range).to_vec();
                             if explicit_params.len() != arg_ids.len() {
@@ -256,28 +259,24 @@ pub(super) fn synth_call_expr(
                             for (i, arg_id) in arg_ids.iter().copied().enumerate() {
                                 let arg_ty = synth_expr(checker, arg_id);
                                 if let Some(&expected_id) = explicit_params.get(i) {
-                                    types::type_interner::with_resolved_type(
-                                        expected_id,
-                                        |expected| {
-                                            if !types::unify(expected, &arg_ty) {
-                                                checker.add_constraint(
-                                                    expected.clone(),
-                                                    arg_ty.clone(),
-                                                    ConstraintOrigin::CallArg {
-                                                        call_span: span,
-                                                        param_span: field_span,
-                                                        arg_span: checker.pool.expr_span(arg_id),
-                                                        arg_index: i + 1,
-                                                    },
-                                                );
-                                            }
-                                        },
-                                    );
+                                    let expected = checker.type_info.type_interner.resolve(expected_id).clone();
+                                    if !types::unify(&expected, &arg_ty, &checker.type_info.type_interner) {
+                                        checker.add_constraint(
+                                            expected.clone(),
+                                            arg_ty.clone(),
+                                            ConstraintOrigin::CallArg {
+                                                call_span: span,
+                                                param_span: field_span,
+                                                arg_span: checker.pool.expr_span(arg_id),
+                                                arg_index: i + 1,
+                                            },
+                                        );
+                                    }
                                 }
                             }
                             checker.record_expr_type(callee_id, ArType::Func(params, ret));
                             let resolved_ret =
-                                types::type_interner::with_resolved_type(ret, |t| t.clone());
+                                checker.type_info.type_interner.resolve(ret).clone();
                             return Some(resolved_ret);
                         }
                     }
@@ -306,50 +305,50 @@ pub(super) fn synth_call_expr(
                         let arg_ty = synth_expr(checker, arg_id);
                         if i < params.len() {
                             let param_id = params[i];
-                            types::type_interner::with_resolved_type(param_id, |param_ty| {
-                                if !types::unify(param_ty, &arg_ty) {
-                                    checker.add_constraint(
-                                        param_ty.clone(),
-                                        arg_ty.clone(),
-                                        ConstraintOrigin::CallArg {
-                                            call_span: span,
-                                            param_span: checker.pool.expr_span(callee_id),
-                                            arg_span: checker.pool.expr_span(arg_id),
-                                            arg_index: i,
-                                        },
-                                    );
-                                } else if !arg_ty.is_literal()
-                                    && &arg_ty != param_ty
-                                    && param_ty.is_numeric()
-                                    && arg_ty.is_numeric()
-                                {
-                                    checker.add_constraint(
-                                        param_ty.clone(),
-                                        arg_ty,
-                                        ConstraintOrigin::ImplicitWidening {
-                                            source_span: checker.pool.expr_span(arg_id),
-                                            target_span: span,
-                                        },
-                                    );
-                                }
-                            });
+                            let param_ty = checker.type_info.type_interner.resolve(param_id).clone();
+                            if !types::unify(&param_ty, &arg_ty, &checker.type_info.type_interner) {
+                                checker.add_constraint(
+                                    param_ty.clone(),
+                                    arg_ty.clone(),
+                                    ConstraintOrigin::CallArg {
+                                        call_span: span,
+                                        param_span: checker.pool.expr_span(callee_id),
+                                        arg_span: checker.pool.expr_span(arg_id),
+                                        arg_index: i,
+                                    },
+                                );
+                            } else if !arg_ty.is_literal()
+                                && arg_ty != param_ty
+                                && param_ty.is_numeric()
+                                && arg_ty.is_numeric()
+                            {
+                                checker.add_constraint(
+                                    param_ty.clone(),
+                                    arg_ty,
+                                    ConstraintOrigin::ImplicitWidening {
+                                        source_span: checker.pool.expr_span(arg_id),
+                                        target_span: span,
+                                    },
+                                );
+                            }
                         }
                     }
-                    types::type_interner::with_resolved_type(ret, |t| t.clone())
+                    checker.type_info.type_interner.resolve(ret).clone()
                 }
                 ArType::Error => ArType::Error,
                 other => {
+                    let interner = &checker.type_info.type_interner;
                     let diag = crate::Diagnostic::error(
                         crate::DiagCode::T003IncompatibleCallArg,
                         format!(
                             "cannot call non-function type '{}'",
-                            other.display(&checker.symbols)
+                            other.display(&checker.symbols, interner)
                         ),
                         span,
                     )
                     .with_label(
                         checker.pool.expr_span(callee_id),
-                        format!("type is '{}'", other.display(&checker.symbols)),
+                        format!("type is '{}'", other.display(&checker.symbols, interner)),
                     )
                     .with_label(span, "call site");
                     checker.diagnostics.push(diag);
@@ -387,8 +386,8 @@ pub(super) fn synth_call_expr(
                 }
             };
             Some(
-                if let Some((ok_ty, _)) = types::result_ok_err(&inner_ty) {
-                    if !types::unify(&ok_ty, &handler_ty.1) {
+                if let Some((ok_ty, _)) = checker.result_ok_err(&inner_ty) {
+                    if !types::unify(&ok_ty, &handler_ty.1, &checker.type_info.type_interner) {
                         checker.add_constraint(
                             ok_ty.clone(),
                             handler_ty.1.clone(),
@@ -407,7 +406,7 @@ pub(super) fn synth_call_expr(
                             crate::DiagCode::T005OperatorNotApplicable,
                             format!(
                                 "`catch` requires a `Result` expression, found '{}'",
-                                inner_ty.display(&checker.symbols)
+                                inner_ty.display(&checker.symbols, &checker.type_info.type_interner)
                             ),
                             span,
                         )

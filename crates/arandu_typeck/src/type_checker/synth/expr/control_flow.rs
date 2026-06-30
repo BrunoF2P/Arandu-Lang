@@ -44,7 +44,7 @@ pub(super) fn synth_control_flow_expr(
         ExprKind::Alloc { expr: inner_expr } => {
             let inner_id = *inner_expr;
             let inner_ty = synth_expr(checker, inner_id);
-            let inner_id = types::intern_type(inner_ty);
+            let inner_id = checker.intern(inner_ty);
             Some(ArType::Ptr(inner_id))
         }
         ExprKind::AsyncBlock { block } => {
@@ -54,7 +54,7 @@ pub(super) fn synth_control_flow_expr(
                 checker.pool,
                 checker.pool.block(block_id),
             );
-            let inner_id = types::intern_type(block_ty);
+            let inner_id = checker.intern(block_ty);
             Some(ArType::Coroutine(inner_id))
         }
         ExprKind::UnsafeBlock { block } => {
@@ -84,7 +84,7 @@ pub(super) fn synth_control_flow_expr(
                 checker.pool,
                 checker.pool.block(else_id),
             );
-            if !types::unify(&then_ty, &else_ty) {
+            if !types::unify(&then_ty, &else_ty, &checker.type_info.type_interner) {
                 checker.add_constraint(
                     then_ty.clone(),
                     else_ty.clone(),
@@ -136,7 +136,7 @@ pub(super) fn synth_control_flow_expr(
                 if i == 0 {
                     expected_arm_ty = arm_ty;
                     first_arm_span = arm.span;
-                } else if !types::unify(&expected_arm_ty, &arm_ty) {
+                } else if !types::unify(&expected_arm_ty, &arm_ty, &checker.type_info.type_interner) {
                     checker.add_constraint(
                         expected_arm_ty.clone(),
                         arm_ty.clone(),

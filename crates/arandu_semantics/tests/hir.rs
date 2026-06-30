@@ -5,13 +5,13 @@ use arandu_semantics::{SymbolTable, lower_to_hir, resolve, type_check};
 fn lower(src: &str) -> (HirProgram, SymbolTable) {
     let program = arandu_parser::parse(src).expect("parse failed");
     let resolution = resolve(&program);
-    let tc = type_check(resolution, &program);
+    let mut tc = type_check(resolution, &program);
     assert!(
         tc.diagnostics.is_empty(),
         "type check errors: {:?}",
         tc.diagnostics
     );
-    let hir = lower_to_hir(&tc, &program).expect("HIR lowering failed");
+    let hir = lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
     hir.validate_invariants(&hir.pool, &tc.symbols)
         .expect("HIR invariant validation failed");
     (hir, tc.symbols)
@@ -56,7 +56,7 @@ func main() {
     )
     .expect("parse");
     let resolution = resolve(&program);
-    let tc = type_check(resolution, &program);
+    let mut tc = type_check(resolution, &program);
     let scope = tc.symbols.global_scope();
     assert!(
         tc.symbols.lookup_module(scope, "err").is_some(),
@@ -537,14 +537,14 @@ fn test_hir_golden_files() {
             panic!("failed to parse {name}: {err:?}");
         });
         let resolution = resolve(&program);
-        let tc = type_check(resolution, &program);
+        let mut tc = type_check(resolution, &program);
         assert!(
             tc.diagnostics.is_empty(),
             "type check failed for {}: {:?}",
             name,
             tc.diagnostics
         );
-        let hir = lower_to_hir(&tc, &program).expect("HIR lowering failed");
+        let hir = lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
         hir.validate_invariants(&hir.pool, &tc.symbols)
             .expect("HIR invariant validation failed");
         let ctx = HirPrettyCtx {

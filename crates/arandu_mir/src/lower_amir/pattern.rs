@@ -32,8 +32,17 @@ impl LowerCtx<'_> {
             symbols,
         } = input;
         let enum_name = &symbols.get(type_symbol).name;
-        let variant_symbol_id =
-            variant_symbol.or_else(|| symbols.lookup_associated_member(enum_name, variant));
+        let variant_symbol_id = variant_symbol.or_else(|| {
+            for (&var_id, &(parent_id, _)) in &self.tc.type_info.enum_variants {
+                if parent_id == type_symbol {
+                    let var_name = &symbols.get(var_id).name;
+                    if var_name == variant || var_name.ends_with(&format!(".{}", variant)) {
+                        return Some(var_id);
+                    }
+                }
+            }
+            None
+        });
 
         let Some(variant_symbol_id) = variant_symbol_id else {
             return Err(Diagnostic::error(
@@ -314,12 +323,9 @@ impl LowerCtx<'_> {
                 let scrutinee_ty = self.operand_type(&scrutinee);
                 let pat_ids: Vec<_> = self.hir.pool.pattern_list(*items).to_vec();
                 let item_tys = if let ArType::Tuple(tys) = scrutinee_ty {
+                    let interner = &self.tc.type_info.type_interner;
                     tys.iter()
-                        .map(|&tid| {
-                            arandu_middle::types::type_interner::with_resolved_type(tid, |t| {
-                                t.clone()
-                            })
-                        })
+                        .map(|&tid| interner.resolve(tid).clone())
                         .collect()
                 } else {
                     vec![ArType::Error; pat_ids.len()]

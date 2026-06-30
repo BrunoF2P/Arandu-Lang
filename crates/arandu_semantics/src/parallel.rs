@@ -497,11 +497,12 @@ fn worker_thread_loop(
             Task::LowerHir {
                 file_idx,
                 program,
-                type_check_result,
+                mut type_check_result,
             } => {
                 let mut hir = None;
                 let mut diagnostics = Vec::new();
-                match crate::lower_to_hir(&type_check_result, &program) {
+                let tc_mut = Arc::make_mut(&mut type_check_result);
+                match crate::lower_to_hir(tc_mut, &program) {
                     Ok(h) => hir = Some(h),
                     Err(diags) => diagnostics = diags,
                 }

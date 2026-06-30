@@ -14,13 +14,12 @@ impl AmirProgram {
         symbols: &SymbolTable,
         interner: &crate::types::TypeInterner,
     ) -> String {
-        let _scope = crate::types::type_interner::InternerScope::new(interner);
         let mut out = String::new();
         for (i, func) in self.funcs.iter().enumerate() {
             if i > 0 {
                 out.push('\n');
             }
-            func.pretty_print_to(&mut out, symbols, &self.literal_pool);
+            func.pretty_print_to(&mut out, symbols, &self.literal_pool, interner);
         }
         out
     }
@@ -35,7 +34,7 @@ fn receiver_kind_prefix(kind: ReceiverKind) -> &'static str {
 }
 
 impl AmirFunc {
-    fn pretty_print_to(&self, out: &mut String, symbols: &SymbolTable, pool: &AmirLiteralPool) {
+    fn pretty_print_to(&self, out: &mut String, symbols: &SymbolTable, pool: &AmirLiteralPool, interner: &crate::types::TypeInterner) {
         let param_strs: Vec<String> = self
             .params
             .iter()
@@ -57,14 +56,14 @@ impl AmirFunc {
                     .get(i)
                     .and_then(|l| l.symbol)
                     .map_or("param", |s| symbols.get(s).name.as_str());
-                format!("{prefix}{name_str}: {}", ty.display(symbols))
+                format!("{prefix}{name_str}: {}", ty.display(symbols, interner))
             })
             .collect();
         out.push_str(&format!(
             "Func {}({}) -> {}\n",
             symbols.get(self.symbol).name,
             param_strs.join(", "),
-            self.return_type.display(symbols)
+            self.return_type.display(symbols, interner)
         ));
 
         out.push_str("  locals:\n");
@@ -78,7 +77,7 @@ impl AmirFunc {
             out.push_str(&format!(
                 "    _{}: {}{}\n",
                 temp.id.0,
-                temp.ty.display(symbols),
+                temp.ty.display(symbols, interner),
                 comment
             ));
         }
@@ -92,7 +91,7 @@ impl AmirFunc {
             out.push_str(&format!(
                 "    s{}: {}{}\n",
                 local.id.0,
-                local.ty.display(symbols),
+                local.ty.display(symbols, interner),
                 comment
             ));
         }

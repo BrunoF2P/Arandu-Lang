@@ -20,7 +20,7 @@ use arandu_parser::ast_pool::{AstPool, ExprKind, StmtId};
 use arandu_parser::{Block, Condition, DeferBody, ForClause, Ownership, SimpleStmt, Stmt};
 
 pub(crate) fn lower_block_raw(
-    type_check: &TypeCheckResult,
+    type_check: &mut TypeCheckResult,
     pool: &AstPool,
     hir_pool: &mut crate::hir::HirPool,
     block: &Block,
@@ -37,7 +37,7 @@ pub(crate) fn lower_block_raw(
 }
 
 pub(crate) fn lower_block(
-    type_check: &TypeCheckResult,
+    type_check: &mut TypeCheckResult,
     pool: &AstPool,
     hir_pool: &mut crate::hir::HirPool,
     block: &Block,
@@ -69,7 +69,7 @@ fn stmt_span(pool: &AstPool, stmt: StmtId) -> Span {
 }
 
 fn lower_stmt_raw(
-    type_check: &TypeCheckResult,
+    type_check: &mut TypeCheckResult,
     pool: &AstPool,
     hir_pool: &mut crate::hir::HirPool,
     stmt: StmtId,
@@ -90,9 +90,7 @@ fn lower_stmt_raw(
                     .or_else(|| {
                         value_ty.as_ref().and_then(|val_ty| match val_ty {
                             ArType::Tuple(elems) => elems.get(i).map(|&tid| {
-                                arandu_middle::types::type_interner::with_resolved_type(tid, |t| {
-                                    t.clone()
-                                })
+                                type_check.type_info.type_interner.resolve(tid).clone()
                             }),
                             _ if bindings.len() == 1 => Some(val_ty.clone()),
                             _ => None,
@@ -241,7 +239,7 @@ fn lower_stmt_raw(
 }
 
 pub(crate) fn lower_stmt(
-    type_check: &TypeCheckResult,
+    type_check: &mut TypeCheckResult,
     pool: &AstPool,
     hir_pool: &mut crate::hir::HirPool,
     stmt: StmtId,
@@ -251,7 +249,7 @@ pub(crate) fn lower_stmt(
 }
 
 pub(crate) fn lower_condition(
-    type_check: &TypeCheckResult,
+    type_check: &mut TypeCheckResult,
     pool: &AstPool,
     hir_pool: &mut crate::hir::HirPool,
     cond: &Condition,
@@ -273,7 +271,7 @@ pub(crate) fn lower_condition(
 }
 
 pub(crate) fn lower_for_clause(
-    type_check: &TypeCheckResult,
+    type_check: &mut TypeCheckResult,
     pool: &AstPool,
     hir_pool: &mut crate::hir::HirPool,
     clause: &ForClause,
@@ -335,7 +333,7 @@ pub(crate) fn lower_for_clause(
 }
 
 pub(crate) fn lower_simple_stmt(
-    type_check: &TypeCheckResult,
+    type_check: &mut TypeCheckResult,
     pool: &AstPool,
     hir_pool: &mut crate::hir::HirPool,
     stmt: &SimpleStmt,

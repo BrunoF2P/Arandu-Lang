@@ -175,13 +175,13 @@ fn load_stdlib_signatures(
 }
 
 pub(crate) fn register_prelude(checker: &mut TypeChecker<'_>, program: &Program) {
-    let any_id = super::super::types::intern_type(ArType::Primitive(Primitive::Any));
-    let void_id = super::super::types::intern_type(ArType::Void);
-    let str_id = super::super::types::intern_type(ArType::Primitive(Primitive::Str));
-    let err_literal_id = super::super::types::intern_type(ArType::Err);
+    let any_id = checker.intern(ArType::Primitive(Primitive::Any));
+    let void_id = checker.intern(ArType::Void);
+    let str_id = checker.intern(ArType::Primitive(Primitive::Str));
+    let err_literal_id = checker.intern(ArType::Err);
 
-    let result_any_err = super::super::types::intern_type(ArType::Result(any_id, err_literal_id));
-    let result_void_err = super::super::types::intern_type(ArType::Result(void_id, err_literal_id));
+    let result_any_err = checker.intern(ArType::Result(any_id, err_literal_id));
+    let result_void_err = checker.intern(ArType::Result(void_id, err_literal_id));
 
     let println_ty = ArType::Func(vec![any_id], void_id);
     let create_ty = ArType::Func(vec![str_id], result_any_err);

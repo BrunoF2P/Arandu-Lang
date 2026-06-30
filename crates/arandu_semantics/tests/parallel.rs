@@ -90,9 +90,9 @@ fn test_parallel_compilation_individual_files_parity() {
         let source = fs::read_to_string(&path).unwrap();
         let program = arandu_parser::parse(&source).expect("parse");
         let resolution = resolve(&program);
-        let tc = type_check(resolution, &program);
+        let mut tc = type_check(resolution, &program);
 
-        let hir_seq = lower_to_hir(&tc, &program).expect("lower_to_hir seq");
+        let hir_seq = lower_to_hir(&mut tc, &program).expect("lower_to_hir seq");
         let mut amir_seq = lower_to_amir(&tc, &hir_seq).expect("lower_to_amir seq");
         optimize_amir(&mut amir_seq);
 

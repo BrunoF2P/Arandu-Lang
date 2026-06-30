@@ -15,7 +15,7 @@ pub fn mangle_symbol(
             mangled.push('_');
         }
         mangled.push('_');
-        mangle_type_into(&mut mangled, interner.resolve(tid), symbols);
+        mangle_type_into(&mut mangled, interner.resolve(tid), symbols, interner);
     }
     mangled.push_str("_$E");
     mangled
@@ -34,91 +34,65 @@ pub fn demangle_symbol(mangled: &str) -> Option<String> {
     }
 }
 
-fn mangle_type_into(out: &mut String, ty: &ArType, symbols: &SymbolTable) {
+fn mangle_type_into(out: &mut String, ty: &ArType, symbols: &SymbolTable, interner: &TypeInterner) {
     match ty {
         ArType::Primitive(p) => out.push_str(p.as_str()),
         ArType::Named(id, args) => {
             out.push_str(&symbols.get(*id).name);
             for &arg in args {
                 out.push('_');
-                arandu_middle::types::type_interner::with_resolved_type(arg, |arg_ty| {
-                    mangle_type_into(out, arg_ty, symbols);
-                });
+                mangle_type_into(out, interner.resolve(arg), symbols, interner);
             }
         }
         ArType::Nullable(inner) => {
             out.push_str("opt_");
-            arandu_middle::types::type_interner::with_resolved_type(*inner, |inner_ty| {
-                mangle_type_into(out, inner_ty, symbols);
-            });
+            mangle_type_into(out, interner.resolve(*inner), symbols, interner);
         }
         ArType::Ptr(inner) => {
             out.push_str("ptr_");
-            arandu_middle::types::type_interner::with_resolved_type(*inner, |inner_ty| {
-                mangle_type_into(out, inner_ty, symbols);
-            });
+            mangle_type_into(out, interner.resolve(*inner), symbols, interner);
         }
         ArType::Slice(inner) => {
             out.push_str("slice_");
-            arandu_middle::types::type_interner::with_resolved_type(*inner, |inner_ty| {
-                mangle_type_into(out, inner_ty, symbols);
-            });
+            mangle_type_into(out, interner.resolve(*inner), symbols, interner);
         }
         ArType::Array(n, inner) => {
             out.push_str(&format!("arr{n}_"));
-            arandu_middle::types::type_interner::with_resolved_type(*inner, |inner_ty| {
-                mangle_type_into(out, inner_ty, symbols);
-            });
+            mangle_type_into(out, interner.resolve(*inner), symbols, interner);
         }
         ArType::Tuple(items) => {
             out.push_str("tup");
             for &item in items {
                 out.push('_');
-                arandu_middle::types::type_interner::with_resolved_type(item, |item_ty| {
-                    mangle_type_into(out, item_ty, symbols);
-                });
+                mangle_type_into(out, interner.resolve(item), symbols, interner);
             }
         }
         ArType::Func(params, ret) => {
             out.push_str("fn");
             for &param in params {
                 out.push('_');
-                arandu_middle::types::type_interner::with_resolved_type(param, |param_ty| {
-                    mangle_type_into(out, param_ty, symbols);
-                });
+                mangle_type_into(out, interner.resolve(param), symbols, interner);
             }
             out.push_str("_R_");
-            arandu_middle::types::type_interner::with_resolved_type(*ret, |ret_ty| {
-                mangle_type_into(out, ret_ty, symbols);
-            });
+            mangle_type_into(out, interner.resolve(*ret), symbols, interner);
         }
         ArType::Result(ok, err) => {
             out.push_str("res_");
-            arandu_middle::types::type_interner::with_resolved_type(*ok, |ok_ty| {
-                mangle_type_into(out, ok_ty, symbols);
-            });
+            mangle_type_into(out, interner.resolve(*ok), symbols, interner);
             out.push('_');
-            arandu_middle::types::type_interner::with_resolved_type(*err, |err_ty| {
-                mangle_type_into(out, err_ty, symbols);
-            });
+            mangle_type_into(out, interner.resolve(*err), symbols, interner);
         }
         ArType::Option(inner) => {
             out.push_str("option_");
-            arandu_middle::types::type_interner::with_resolved_type(*inner, |inner_ty| {
-                mangle_type_into(out, inner_ty, symbols);
-            });
+            mangle_type_into(out, interner.resolve(*inner), symbols, interner);
         }
         ArType::Coroutine(inner) => {
             out.push_str("coro_");
-            arandu_middle::types::type_interner::with_resolved_type(*inner, |inner_ty| {
-                mangle_type_into(out, inner_ty, symbols);
-            });
+            mangle_type_into(out, interner.resolve(*inner), symbols, interner);
         }
         ArType::Range(inner) => {
             out.push_str("range_");
-            arandu_middle::types::type_interner::with_resolved_type(*inner, |inner_ty| {
-                mangle_type_into(out, inner_ty, symbols);
-            });
+            mangle_type_into(out, interner.resolve(*inner), symbols, interner);
         }
         ArType::Void => out.push_str("void"),
         ArType::Err => out.push_str("err"),

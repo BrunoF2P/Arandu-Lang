@@ -10,7 +10,7 @@ use arandu_parser::TopLevelDecl;
 use arandu_parser::ast_pool::AstPool;
 
 pub(crate) fn lower_decl(
-    type_check: &TypeCheckResult,
+    type_check: &mut TypeCheckResult,
     pool: &AstPool,
     hir_pool: &mut crate::hir::HirPool,
     decl: &TopLevelDecl,
@@ -57,7 +57,7 @@ pub(crate) fn lower_decl(
                 .unwrap_or(ArType::Error);
             let return_type = match decl_ty {
                 ArType::Func(_, ret) => {
-                    arandu_middle::types::type_interner::with_resolved_type(ret, |t| t.clone())
+                    type_check.type_info.type_interner.resolve(ret).clone()
                 }
                 other => other,
             };
@@ -130,13 +130,10 @@ pub(crate) fn lower_decl(
                                 } else if tys.len() == 1 {
                                     Some(tys[0].clone())
                                 } else {
+                                    let mut interner = type_check.type_info.type_interner.clone();
                                     let tys_ids = tys
                                         .iter()
-                                        .map(|t| {
-                                            arandu_middle::types::type_interner::intern_type(
-                                                t.clone(),
-                                            )
-                                        })
+                                        .map(|t| interner.intern(t.clone()))
                                         .collect();
                                     Some(ArType::Tuple(tys_ids))
                                 }
@@ -173,7 +170,7 @@ pub(crate) fn lower_decl(
                     .unwrap_or(ArType::Error);
                 let return_type = match m_ty {
                     ArType::Func(_, ret) => {
-                        arandu_middle::types::type_interner::with_resolved_type(ret, |t| t.clone())
+                        type_check.type_info.type_interner.resolve(ret).clone()
                     }
                     other => other,
                 };

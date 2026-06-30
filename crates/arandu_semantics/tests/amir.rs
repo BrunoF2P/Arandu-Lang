@@ -48,7 +48,7 @@ fn test_amir_golden_files() {
             panic!("failed to parse {name}: {err:?}");
         });
         let resolution = resolve(&program);
-        let tc = type_check(resolution, &program);
+        let mut tc = type_check(resolution, &program);
         let errors: Vec<_> = tc
             .diagnostics
             .iter()
@@ -58,9 +58,9 @@ fn test_amir_golden_files() {
             errors.is_empty(),
             "type check failed for {name}: {errors:?}"
         );
-        let hir = lower_to_hir(&tc, &program).expect("HIR lowering failed");
+        let hir = lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
         hir.validate_invariants(&hir.pool, &tc.symbols)
-            .expect("HIR invariant validation failed");
+            .unwrap_or_else(|err| panic!("HIR invariant validation failed for {name}: {err:?}"));
         let amir = lower_to_amir(&tc, &hir).expect("AMIR lowering failed");
         let amir_issues = validate_amir_program(&amir, &tc.symbols);
         assert!(
@@ -88,14 +88,14 @@ func main() {
 "#;
     let program = arandu_parser::parse(src).expect("parse failed");
     let resolution = resolve(&program);
-    let tc = type_check(resolution, &program);
+    let mut tc = type_check(resolution, &program);
     let x_symbol = tc
         .symbols
         .iter()
         .find(|symbol| symbol.kind == SymbolKind::Field && symbol.name == "x")
         .map(|symbol| symbol.id)
         .expect("missing field symbol");
-    let hir = lower_to_hir(&tc, &program).expect("HIR lowering failed");
+    let hir = lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
     let amir = lower_to_amir(&tc, &hir).expect("AMIR lowering failed");
 
     let func = &amir.funcs[0];
@@ -129,8 +129,8 @@ func main() {
 "#;
     let program = arandu_parser::parse(src).expect("parse failed");
     let resolution = resolve(&program);
-    let tc = type_check(resolution, &program);
-    let hir = lower_to_hir(&tc, &program).expect("HIR lowering failed");
+    let mut tc = type_check(resolution, &program);
+    let hir = lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
     let diagnostics = lower_to_amir(&tc, &hir).expect_err("expected use after move diagnostic");
 
     assert!(
@@ -152,8 +152,8 @@ func main() {
 "#;
     let program = arandu_parser::parse(src).expect("parse failed");
     let resolution = resolve(&program);
-    let tc = type_check(resolution, &program);
-    let hir = lower_to_hir(&tc, &program).expect("HIR lowering failed");
+    let mut tc = type_check(resolution, &program);
+    let hir = lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
     let amir = lower_to_amir(&tc, &hir).expect("AMIR lowering failed");
     let pretty = amir.pretty_print(&tc.symbols, &tc.type_info.type_interner);
     assert!(
@@ -179,8 +179,8 @@ func main(cond: bool) {
 "#;
     let program = arandu_parser::parse(src).expect("parse failed");
     let resolution = resolve(&program);
-    let tc = type_check(resolution, &program);
-    let hir = lower_to_hir(&tc, &program).expect("HIR lowering failed");
+    let mut tc = type_check(resolution, &program);
+    let hir = lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
     let diagnostics = lower_to_amir(&tc, &hir).expect_err("expected branch move diagnostic");
 
     assert!(

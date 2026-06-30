@@ -10,8 +10,8 @@ fn compile_src(
 ) {
     let program = arandu_parser::parse(src).expect("parse failed");
     let resolution = resolve(&program);
-    let tc = type_check(resolution, &program);
-    let hir = lower_to_hir(&tc, &program).expect("HIR lowering failed");
+    let mut tc = type_check(resolution, &program);
+    let hir = lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
     let amir = lower_to_amir(&tc, &hir).expect("AMIR lowering failed");
     (amir, tc.symbols)
 }

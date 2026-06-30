@@ -1,6 +1,7 @@
 use arandu_parser::{ResultType, TypeExprId, TypeName, ast_pool::AstPool};
 
 use super::ar_type::ArType;
+use super::type_interner::TypeInterner;
 use crate::{ResolvedNames, ScopeId, SymbolTable};
 
 #[must_use]
@@ -16,21 +17,21 @@ pub fn type_name_base(name: &TypeName) -> &str {
 }
 
 #[must_use]
-pub fn is_err_type(ty: &ArType) -> bool {
+pub fn is_err_type(ty: &ArType, interner: &TypeInterner) -> bool {
     matches!(ty, ArType::Err)
         || matches!(
             ty,
-            ArType::Nullable(inner) if super::type_interner::with_resolved_type(*inner, |t| matches!(t, ArType::Err))
+            ArType::Nullable(inner) if matches!(interner.resolve(*inner), ArType::Err)
         )
 }
 
 /// Extract ok/err from `Result<T,E>`.
 #[must_use]
-pub fn result_ok_err(ty: &ArType) -> Option<(ArType, ArType)> {
+pub fn result_ok_err(ty: &ArType, interner: &TypeInterner) -> Option<(ArType, ArType)> {
     match ty {
         ArType::Result(ok, err) => {
-            let ok_ty = super::type_interner::with_resolved_type(*ok, |t| t.clone());
-            let err_ty = super::type_interner::with_resolved_type(*err, |t| t.clone());
+            let ok_ty = interner.resolve(*ok).clone();
+            let err_ty = interner.resolve(*err).clone();
             Some((ok_ty, err_ty))
         }
         _ => None,
@@ -38,8 +39,8 @@ pub fn result_ok_err(ty: &ArType) -> Option<(ArType, ArType)> {
 }
 
 #[must_use]
-pub fn is_result_type(ty: &ArType) -> bool {
-    result_ok_err(ty).is_some()
+pub fn is_result_type(ty: &ArType, interner: &TypeInterner) -> bool {
+    result_ok_err(ty, interner).is_some()
 }
 
 #[must_use]
@@ -49,26 +50,22 @@ pub fn is_option_type(ty: &ArType) -> bool {
 
 /// Types that support the `?` operator.
 #[must_use]
-pub fn try_ok_type(ty: &ArType) -> Option<ArType> {
-    if let Some((ok, _)) = result_ok_err(ty) {
+pub fn try_ok_type(ty: &ArType, interner: &TypeInterner) -> Option<ArType> {
+    if let Some((ok, _)) = result_ok_err(ty, interner) {
         return Some(ok);
     }
     match ty {
-        ArType::Option(inner) => Some(super::type_interner::with_resolved_type(*inner, |t| {
-            t.clone()
-        })),
-        ArType::Nullable(inner) if !is_err_type(ty) => {
-            Some(super::type_interner::with_resolved_type(*inner, |t| {
-                t.clone()
-            }))
+        ArType::Option(inner) => Some(interner.resolve(*inner).clone()),
+        ArType::Nullable(inner) if !is_err_type(ty, interner) => {
+            Some(interner.resolve(*inner).clone())
         }
         _ => None,
     }
 }
 
 #[must_use]
-pub fn is_tryable_type(ty: &ArType) -> bool {
-    try_ok_type(ty).is_some()
+pub fn is_tryable_type(ty: &ArType, interner: &TypeInterner) -> bool {
+    try_ok_type(ty, interner).is_some()
 }
 
 pub(crate) fn lower_builtin_generic(
@@ -78,24 +75,25 @@ pub(crate) fn lower_builtin_generic(
     symbols: &SymbolTable,
     scope: ScopeId,
     resolved: &ResolvedNames,
+    interner: &mut TypeInterner,
 ) -> Option<ArType> {
     let base = type_name_base(name);
     let lowered: Vec<ArType> = args
         .iter()
-        .map(|&a| super::lower::lower_type_expr(a, pool, symbols, scope, resolved))
+        .map(|&a| super::lower::lower_type_expr(a, pool, symbols, scope, resolved, interner))
         .collect();
     match (base, lowered.len()) {
         ("Result", 2) => {
-            let ok_id = super::type_interner::intern_type(lowered[0].clone());
-            let err_id = super::type_interner::intern_type(lowered[1].clone());
+            let ok_id = interner.intern(lowered[0].clone());
+            let err_id = interner.intern(lowered[1].clone());
             Some(ArType::Result(ok_id, err_id))
         }
         ("Option", 1) => {
-            let id = super::type_interner::intern_type(lowered[0].clone());
+            let id = interner.intern(lowered[0].clone());
             Some(ArType::Option(id))
         }
         ("Coroutine", 1) => {
-            let id = super::type_interner::intern_type(lowered[0].clone());
+            let id = interner.intern(lowered[0].clone());
             Some(ArType::Coroutine(id))
         }
         _ => None,

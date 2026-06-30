@@ -14,6 +14,7 @@ fn resolve_method_target(
     callee: &HirExpr,
     pool: &crate::hir::HirPool,
     symbols: &SymbolTable,
+    interner: &crate::types::TypeInterner,
 ) -> Option<crate::SymbolId> {
     let (base_id, field) = match &callee.kind {
         HirExprKind::Field { base, field } | HirExprKind::SafeField { base, field } => {
@@ -26,30 +27,26 @@ fn resolve_method_target(
     let base_ty = &base_expr.ty;
     let struct_id = match base_ty {
         ArType::Nullable(inner) => {
-            arandu_middle::types::type_interner::with_resolved_type(*inner, |inner_ty| {
-                match inner_ty {
-                    ArType::Named(id, _) => Some(*id),
-                    ArType::Ptr(ptr_inner) => {
-                        arandu_middle::types::type_interner::with_resolved_type(
-                            *ptr_inner,
-                            |ptr_inner_ty| match ptr_inner_ty {
-                                ArType::Named(id, _) => Some(*id),
-                                _ => None,
-                            },
-                        )
+            let inner_ty = interner.resolve(*inner);
+            match inner_ty {
+                ArType::Named(id, _) => Some(*id),
+                ArType::Ptr(ptr_inner) => {
+                    let ptr_inner_ty = interner.resolve(*ptr_inner);
+                    match ptr_inner_ty {
+                        ArType::Named(id, _) => Some(*id),
+                        _ => None,
                     }
-                    _ => None,
                 }
-            })
+                _ => None,
+            }
         }
         ArType::Named(id, _) => Some(*id),
         ArType::Ptr(inner) => {
-            arandu_middle::types::type_interner::with_resolved_type(*inner, |inner_ty| {
-                match inner_ty {
-                    ArType::Named(id, _) => Some(*id),
-                    _ => None,
-                }
-            })
+            let inner_ty = interner.resolve(*inner);
+            match inner_ty {
+                ArType::Named(id, _) => Some(*id),
+                _ => None,
+            }
         }
         _ => None,
     }?;
@@ -68,32 +65,29 @@ impl LowerCtx<'_> {
         {
             return idx;
         }
+        let interner = &self.tc.type_info.type_interner;
         let struct_id = match base_ty {
             ArType::Nullable(inner) => {
-                arandu_middle::types::type_interner::with_resolved_type(*inner, |inner_ty| {
-                    match inner_ty {
-                        ArType::Named(id, _) => Some(*id),
-                        ArType::Ptr(ptr_inner) => {
-                            arandu_middle::types::type_interner::with_resolved_type(
-                                *ptr_inner,
-                                |ptr_inner_ty| match ptr_inner_ty {
-                                    ArType::Named(id, _) => Some(*id),
-                                    _ => None,
-                                },
-                            )
+                let inner_ty = interner.resolve(*inner);
+                match inner_ty {
+                    ArType::Named(id, _) => Some(*id),
+                    ArType::Ptr(ptr_inner) => {
+                        let ptr_inner_ty = interner.resolve(*ptr_inner);
+                        match ptr_inner_ty {
+                            ArType::Named(id, _) => Some(*id),
+                            _ => None,
                         }
-                        _ => None,
                     }
-                })
+                    _ => None,
+                }
             }
             ArType::Named(id, _) => Some(*id),
             ArType::Ptr(inner) => {
-                arandu_middle::types::type_interner::with_resolved_type(*inner, |inner_ty| {
-                    match inner_ty {
-                        ArType::Named(id, _) => Some(*id),
-                        _ => None,
-                    }
-                })
+                let inner_ty = interner.resolve(*inner);
+                match inner_ty {
+                    ArType::Named(id, _) => Some(*id),
+                    _ => None,
+                }
             }
             _ => None,
         };
@@ -123,7 +117,7 @@ impl LowerCtx<'_> {
     }
 
     pub(crate) fn is_error_return(&self, values: &[HirExprId]) -> bool {
-        if result_ok_err(&self.func_return_type).is_none() {
+        if result_ok_err(&self.func_return_type, &self.tc.type_info.type_interner).is_none() {
             return false;
         }
         match values.len() {
@@ -155,7 +149,7 @@ impl LowerCtx<'_> {
         symbols: &SymbolTable,
     ) -> Result<AmirOperand, Diagnostic> {
         let inner = self.hir.pool.expr(inner_id);
-        let (_, err_ty) = result_ok_err(&inner.ty).expect("try_result on non-result");
+        let (_, err_ty) = result_ok_err(&inner.ty, &self.tc.type_info.type_interner).expect("try_result on non-result");
         let base = self.lower_expr(inner_id, None, symbols)?;
         if self.current_block.is_none() {
             let dest = target.unwrap_or_else(|| self.new_temp(expr_ty));
@@ -408,7 +402,7 @@ impl LowerCtx<'_> {
             }
             HirExprKind::Call { callee, args, .. } => {
                 let callee_expr = self.hir.pool.expr(*callee);
-                let method_target = resolve_method_target(callee_expr, &self.hir.pool, symbols);
+                let method_target = resolve_method_target(callee_expr, &self.hir.pool, symbols, &self.tc.type_info.type_interner);
                 let callee_op = if let Some(method_symbol) = method_target {
                     AmirOperand::FunctionRef(method_symbol)
                 } else {
@@ -532,7 +526,7 @@ impl LowerCtx<'_> {
             }
             HirExprKind::Try { expr: inner } => {
                 let inner_expr = self.hir.pool.expr(*inner);
-                if result_ok_err(&inner_expr.ty).is_some() {
+                if result_ok_err(&inner_expr.ty, &self.tc.type_info.type_interner).is_some() {
                     self.lower_try_result(*inner, target, expr.ty.clone(), symbols)
                 } else if is_option_type(&inner_expr.ty)
                     || matches!(inner_expr.ty, ArType::Nullable(_))

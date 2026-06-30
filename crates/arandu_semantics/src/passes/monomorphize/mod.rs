@@ -271,14 +271,14 @@ func main() {
 "#;
         let program = arandu_parser::parse(src).expect("parse failed");
         let resolution = crate::passes::name_resolution::resolve(&program);
-        let tc = crate::passes::type_checker::type_check(resolution, &program);
+        let mut tc = crate::passes::type_checker::type_check(resolution, &program);
         assert!(
             tc.diagnostics.is_empty(),
             "type check failed: {:?}",
             tc.diagnostics
         );
         let hir =
-            crate::passes::lower_hir::lower_to_hir(&tc, &program).expect("HIR lowering failed");
+            crate::passes::lower_hir::lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
 
         let graph = analyze_instantiations(&tc, &hir).expect("analysis failed");
 

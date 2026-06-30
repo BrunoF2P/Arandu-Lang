@@ -17,8 +17,8 @@ pub fn constraint_to_diagnostic(
     symbols: &SymbolTable,
     type_info: &TypeInfo,
 ) -> Diagnostic {
-    let expected_str = constraint.expected.display(symbols);
-    let found_str = constraint.found.display(symbols);
+    let expected_str = constraint.expected.display(symbols, &type_info.type_interner);
+    let found_str = constraint.found.display(symbols, &type_info.type_interner);
 
     match &constraint.origin {
         ConstraintOrigin::Assignment { lhs_span, rhs_span } => Diagnostic::error(
@@ -141,7 +141,7 @@ pub fn constraint_to_diagnostic(
             .with_label(*left_span, format!("type '{expected_str}'"))
             .with_label(*right_span, format!("type '{found_str}'"));
 
-            add_operator_hint(diag, &constraint.expected, &constraint.found, symbols)
+            add_operator_hint(diag, &constraint.expected, &constraint.found, symbols, &type_info.type_interner)
         }
 
         ConstraintOrigin::UnaryOp {
@@ -282,19 +282,18 @@ pub fn constraint_to_diagnostic(
             .with_label(*field_span, "unknown field".to_string());
 
             // Helper to recursively find structure ID
-            fn get_struct_id(ty: &ArType) -> Option<SymbolId> {
+            fn get_struct_id(ty: &ArType, interner: &super::types::TypeInterner) -> Option<SymbolId> {
                 match ty {
                     ArType::Named(id, _) => Some(*id),
                     ArType::Ptr(inner) | ArType::Nullable(inner) => {
-                        super::types::type_interner::with_resolved_type(*inner, |inner_ty| {
-                            get_struct_id(inner_ty)
-                        })
+                        let inner_ty = interner.resolve(*inner);
+                        get_struct_id(inner_ty, interner)
                     }
                     _ => None,
                 }
             }
 
-            if let Some(struct_id) = get_struct_id(&constraint.expected) {
+            if let Some(struct_id) = get_struct_id(&constraint.expected, &type_info.type_interner) {
                 struct Candidate {
                     name: String,
                     is_method: bool,
@@ -407,9 +406,10 @@ fn add_operator_hint(
     left: &ArType,
     right: &ArType,
     symbols: &SymbolTable,
+    interner: &super::types::TypeInterner,
 ) -> Diagnostic {
-    let left_str = left.display(symbols);
-    let right_str = right.display(symbols);
+    let left_str = left.display(symbols, interner);
+    let right_str = right.display(symbols, interner);
 
     // str + something → suggest interpolation
     if is_string_type(left) || is_string_type(right) {

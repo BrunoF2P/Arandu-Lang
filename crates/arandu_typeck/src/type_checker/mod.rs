@@ -33,7 +33,6 @@ pub fn type_check_with_session(
         &program.pool,
         std::mem::take(&mut session.type_interner),
     );
-    let _scope = types::type_interner::InternerScope::new_mut(&mut checker.type_info.type_interner);
     check::check_program(&mut checker, program);
     let res = checker.finish();
     session.type_interner = res.type_info.type_interner.clone();
@@ -96,6 +95,49 @@ impl<'a> TypeChecker<'a> {
     #[must_use]
     pub fn resolve(&self, id: TypeId) -> &ArType {
         self.type_info.type_interner.resolve(id)
+    }
+
+    #[must_use]
+    pub fn is_result_type(&self, ty: &ArType) -> bool {
+        types::is_result_type(ty, &self.type_info.type_interner)
+    }
+
+    #[must_use]
+    pub fn result_ok_err(&self, ty: &ArType) -> Option<(ArType, ArType)> {
+        types::result_ok_err(ty, &self.type_info.type_interner)
+    }
+
+    #[must_use]
+    pub fn try_ok_type(&self, ty: &ArType) -> Option<ArType> {
+        types::try_ok_type(ty, &self.type_info.type_interner)
+    }
+
+    #[must_use]
+    pub fn is_err_type(&self, ty: &ArType) -> bool {
+        types::is_err_type(ty, &self.type_info.type_interner)
+    }
+
+    #[must_use]
+    pub fn unify_return(&self, expected: &ArType, actual: &ArType) -> bool {
+        types::unify_return(expected, actual, &self.type_info.type_interner)
+    }
+
+    pub fn lower_type_expr(&mut self, expr_id: arandu_parser::TypeExprId, scope: ScopeId) -> ArType {
+        types::lower_type_expr(expr_id, self.pool, &self.symbols, scope, &self.resolved, &mut self.type_info.type_interner)
+    }
+
+    pub fn lower_result_type(&mut self, result: &arandu_parser::ResultType, scope: ScopeId) -> ArType {
+        types::lower_result_type(result, self.pool, &self.symbols, scope, &self.resolved, &mut self.type_info.type_interner)
+    }
+
+    pub fn lower_named_type(
+        &mut self,
+        span: arandu_lexer::Span,
+        name: &arandu_parser::TypeName,
+        args: &[arandu_parser::TypeExprId],
+        scope: ScopeId,
+    ) -> ArType {
+        types::lower_named_type(span, name, args, self.pool, &self.symbols, scope, &self.resolved, &mut self.type_info.type_interner)
     }
 
     /// Scope used when lowering type expressions in the current context.
@@ -413,6 +455,7 @@ impl TypeInfo {
     }
 }
 
+#[derive(Clone)]
 pub struct TypeCheckResult {
     pub symbols: SymbolTable,
     pub resolved: ResolvedNames,

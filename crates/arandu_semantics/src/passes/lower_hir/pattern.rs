@@ -7,7 +7,7 @@ use arandu_parser::Pattern;
 use arandu_parser::ast_pool::{AstPool, MatchArmId, PatternId};
 
 pub(crate) fn lower_pattern_to_id(
-    type_check: &TypeCheckResult,
+    type_check: &mut TypeCheckResult,
     pool: &AstPool,
     hir_pool: &mut crate::hir::HirPool,
     pattern: PatternId,
@@ -17,7 +17,7 @@ pub(crate) fn lower_pattern_to_id(
 }
 
 pub(crate) fn lower_pattern(
-    type_check: &TypeCheckResult,
+    type_check: &mut TypeCheckResult,
     pool: &AstPool,
     hir_pool: &mut crate::hir::HirPool,
     pattern: PatternId,
@@ -139,7 +139,7 @@ pub(crate) fn lower_pattern(
 }
 
 pub(crate) fn lower_match_arms(
-    type_check: &TypeCheckResult,
+    type_check: &mut TypeCheckResult,
     pool: &AstPool,
     hir_pool: &mut crate::hir::HirPool,
     arms: &[MatchArmId],

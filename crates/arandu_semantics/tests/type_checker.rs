@@ -380,7 +380,7 @@ fn test_type_info_uses_interned_type_ids() {
 
     let mut int_ids = result.type_info.decl_types.values().filter_map(|type_id| {
         let ty = result.type_info.resolve_type_id(*type_id);
-        (ty.display(&result.symbols) == "int").then_some(*type_id)
+        (ty.display(&result.symbols, &result.type_info.type_interner) == "int").then_some(*type_id)
     });
     let first = int_ids.next().expect("expected at least one int type id");
     assert!(

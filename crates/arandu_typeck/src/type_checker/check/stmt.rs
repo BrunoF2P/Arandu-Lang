@@ -67,15 +67,13 @@ fn check_multi_var_decl(
     value: arandu_parser::ast_pool::ExprId,
     val_ty: &ArType,
 ) {
-    let val_tys = if let Some((ok, err)) = super::super::types::result_ok_err(val_ty) {
+    let val_tys = if let Some((ok, err)) = checker.result_ok_err(val_ty) {
         vec![ok, err]
     } else {
         match val_ty {
             ArType::Tuple(tys) => tys
                 .iter()
-                .map(|&t| {
-                    super::super::types::type_interner::with_resolved_type(t, |ty| ty.clone())
-                })
+                .map(|&t| checker.resolve(t).clone())
                 .collect(),
             ArType::Error => vec![ArType::Error; bindings.len()],
             other => vec![other.clone(); bindings.len()],
@@ -89,13 +87,7 @@ fn check_multi_var_decl(
             let mut bind_ty = elem_ty.clone();
 
             if let Some(ty_expr) = &binding.ty {
-                let expected = super::super::types::lower_type_expr(
-                    *ty_expr,
-                    checker.pool,
-                    &checker.symbols,
-                    checker.type_scope(),
-                    &checker.resolved,
-                );
+                let expected = checker.lower_type_expr(*ty_expr, checker.type_scope());
 
                 apply_assignment_constraints(
                     checker,
@@ -126,13 +118,7 @@ fn check_single_var_decl(
         if matches!(checker.pool.expr(value), ExprKind::Nil)
             && let Some(ty_expr) = &binding.ty
         {
-            let expected = super::super::types::lower_type_expr(
-                *ty_expr,
-                checker.pool,
-                &checker.symbols,
-                checker.type_scope(),
-                &checker.resolved,
-            );
+            let expected = checker.lower_type_expr(*ty_expr, checker.type_scope());
             if !expected.is_error() {
                 checker.type_info.record_expr_type(value, expected.clone());
                 bind_ty = expected;
@@ -140,17 +126,11 @@ fn check_single_var_decl(
         }
 
         let annotated_as_result = binding.ty.as_ref().is_some_and(|ty_expr| {
-            let expected = super::super::types::lower_type_expr(
-                *ty_expr,
-                checker.pool,
-                &checker.symbols,
-                checker.type_scope(),
-                &checker.resolved,
-            );
-            super::super::types::result_ok_err(&expected).is_some()
+            let expected = checker.lower_type_expr(*ty_expr, checker.type_scope());
+            checker.result_ok_err(&expected).is_some()
         });
 
-        if super::super::types::result_ok_err(val_ty).is_some() && !annotated_as_result {
+        if checker.result_ok_err(val_ty).is_some() && !annotated_as_result {
             checker.diagnostics.push(crate::Diagnostic::warning(
                 crate::DiagCode::W006UnhandledResult,
                 "Result value must be handled with `?` or `value, err = f()`",
@@ -159,13 +139,7 @@ fn check_single_var_decl(
         }
 
         if let Some(ty_expr) = &binding.ty {
-            let expected = super::super::types::lower_type_expr(
-                *ty_expr,
-                checker.pool,
-                &checker.symbols,
-                checker.type_scope(),
-                &checker.resolved,
-            );
+            let expected = checker.lower_type_expr(*ty_expr, checker.type_scope());
 
             apply_assignment_constraints(
                 checker,
@@ -193,15 +167,13 @@ fn check_set_stmt(
     let val_ty = super::super::synth::synth_expr(checker, value);
 
     if places.len() > 1 {
-        let val_tys = if let Some((ok, err)) = super::super::types::result_ok_err(&val_ty) {
+        let val_tys = if let Some((ok, err)) = checker.result_ok_err(&val_ty) {
             vec![ok, err]
         } else {
             match &val_ty {
                 ArType::Tuple(tys) => tys
                     .iter()
-                    .map(|&t| {
-                        super::super::types::type_interner::with_resolved_type(t, |ty| ty.clone())
-                    })
+                    .map(|&t| checker.resolve(t).clone())
                     .collect(),
                 ArType::Error => vec![ArType::Error; places.len()],
                 other => vec![other.clone(); places.len()],
@@ -222,8 +194,8 @@ fn check_set_stmt(
             final_val_ty = expected_ty.clone();
         }
 
-        if super::super::types::result_ok_err(&final_val_ty).is_some()
-            && super::super::types::result_ok_err(&expected_ty).is_none()
+        if checker.result_ok_err(&final_val_ty).is_some()
+            && checker.result_ok_err(&expected_ty).is_none()
         {
             checker.diagnostics.push(crate::Diagnostic::warning(
                 crate::DiagCode::W006UnhandledResult,
@@ -256,13 +228,13 @@ fn check_return_stmt(
             .iter()
             .map(|v| {
                 let ty = super::super::synth::synth_expr(checker, *v);
-                super::super::types::intern_type(ty)
+                checker.intern(ty)
             })
             .collect();
         ArType::Tuple(tys)
     };
 
-    if !super::super::types::unify_return(&current_ret, &val_ty) {
+    if !checker.unify_return(&current_ret, &val_ty) {
         checker.add_constraint(
             current_ret,
             val_ty,
@@ -328,7 +300,7 @@ fn check_for_stmt(
             let iterable_ty = super::super::synth::synth_expr(checker, *iterable);
             let elem_ty = match &iterable_ty {
                 ArType::Array(_, inner) | ArType::Slice(inner) | ArType::Range(inner) => {
-                    super::super::types::type_interner::with_resolved_type(*inner, |t| t.clone())
+                    checker.type_info.type_interner.resolve(*inner).clone()
                 }
                 ArType::Error => ArType::Error,
                 _ => {
@@ -336,7 +308,7 @@ fn check_for_stmt(
                         crate::DiagCode::T005OperatorNotApplicable,
                         format!(
                             "expected array, slice, or range, found '{}'",
-                            iterable_ty.display(&checker.symbols)
+                            iterable_ty.display(&checker.symbols, &checker.type_info.type_interner)
                         ),
                         checker.pool.expr_span(*iterable),
                     ));
@@ -366,6 +338,7 @@ fn check_for_stmt(
                     && !super::super::types::unify(
                         &cond_ty,
                         &ArType::Primitive(Primitive::Bool),
+                        &checker.type_info.type_interner,
                     )
                 {
                     checker.add_constraint(
@@ -425,18 +398,19 @@ fn check_simple_stmt(
 fn check_free_stmt(checker: &mut TypeChecker<'_>, span: arandu_base::Span, expr: arandu_parser::ast_pool::ExprId) {
     let ty = super::super::synth::synth_expr(checker, expr);
     if !ty.is_error() && !matches!(ty, ArType::Ptr(_)) {
+        let interner = &checker.type_info.type_interner;
         checker.diagnostics.push(
             crate::Diagnostic::error(
                 crate::DiagCode::O011FreeRequiresPtr,
                 format!(
                     "`free` requires a pointer type (`ptr[T]`), found '{}'",
-                    ty.display(&checker.symbols)
+                    ty.display(&checker.symbols, interner)
                 ),
                 span,
             )
             .with_label(
                 checker.pool.expr_span(expr),
-                format!("expression has type '{}'", ty.display(&checker.symbols)),
+                format!("expression has type '{}'", ty.display(&checker.symbols, interner)),
             ),
         );
     }
@@ -488,7 +462,7 @@ fn apply_assignment_constraints(
                 target_span: lhs_span,
             },
         );
-    } else if !super::super::types::unify(expected, actual) {
+    } else if !super::super::types::unify(expected, actual, &checker.type_info.type_interner) {
         checker.add_constraint(
             expected.clone(),
             actual.clone(),
@@ -507,7 +481,7 @@ fn apply_set_constraints(
     place_span: arandu_base::Span,
     value_span: arandu_base::Span,
 ) {
-    if !super::super::types::unify(expected, actual) {
+    if !super::super::types::unify(expected, actual, &checker.type_info.type_interner) {
         checker.add_constraint(
             expected.clone(),
             actual.clone(),

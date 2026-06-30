@@ -1,10 +1,10 @@
 use super::primitive::Primitive;
-use super::type_interner::TypeId;
+use super::type_interner::{TypeId, TypeInterner};
 use crate::{SymbolId, SymbolTable};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ArType {
-    /// Primitive types: int, float, bool, str, ...
+    /// Primitive types: int, float, bool, str, ...\
     Primitive(Primitive),
 
     /// Named type with optional generic arguments: User, List<int>
@@ -104,7 +104,7 @@ impl ArType {
 
     /// Produce a human-readable name for this type.
     #[must_use]
-    pub fn display(&self, symbols: &SymbolTable) -> String {
+    pub fn display(&self, symbols: &SymbolTable, interner: &TypeInterner) -> String {
         match self {
             ArType::Primitive(p) => p.to_string(),
             ArType::Named(id, args) => {
@@ -114,9 +114,7 @@ impl ArType {
                 } else {
                     let args_str: Vec<String> = args
                         .iter()
-                        .map(|&a| {
-                            super::type_interner::with_resolved_type(a, |ty| ty.display(symbols))
-                        })
+                        .map(|&a| interner.resolve(a).display(symbols, interner))
                         .collect();
                     format!("{}<{}>", name, args_str.join(", "))
                 }
@@ -124,12 +122,11 @@ impl ArType {
             ArType::Func(params, ret) => {
                 let params_str: Vec<String> = params
                     .iter()
-                    .map(|&p| super::type_interner::with_resolved_type(p, |ty| ty.display(symbols)))
+                    .map(|&p| interner.resolve(p).display(symbols, interner))
                     .collect();
-                let ret_str =
-                    super::type_interner::with_resolved_type(*ret, |ty| ty.display(symbols));
-                let is_void =
-                    super::type_interner::with_resolved_type(*ret, |ty| matches!(ty, ArType::Void));
+                let ret_ty = interner.resolve(*ret);
+                let is_void = matches!(ret_ty, ArType::Void);
+                let ret_str = ret_ty.display(symbols, interner);
                 if is_void {
                     format!("func({})", params_str.join(", "))
                 } else {
@@ -137,52 +134,43 @@ impl ArType {
                 }
             }
             ArType::Nullable(inner) => {
-                let inner_str =
-                    super::type_interner::with_resolved_type(*inner, |ty| ty.display(symbols));
+                let inner_str = interner.resolve(*inner).display(symbols, interner);
                 format!("{}?", inner_str)
             }
             ArType::Slice(inner) => {
-                let inner_str =
-                    super::type_interner::with_resolved_type(*inner, |ty| ty.display(symbols));
+                let inner_str = interner.resolve(*inner).display(symbols, interner);
                 format!("[]{}", inner_str)
             }
             ArType::Array(size, inner) => {
-                let inner_str =
-                    super::type_interner::with_resolved_type(*inner, |ty| ty.display(symbols));
+                let inner_str = interner.resolve(*inner).display(symbols, interner);
                 format!("[{}]{}", size, inner_str)
             }
             ArType::Ptr(inner) => {
-                let inner_str =
-                    super::type_interner::with_resolved_type(*inner, |ty| ty.display(symbols));
+                let inner_str = interner.resolve(*inner).display(symbols, interner);
                 format!("ptr[{}]", inner_str)
             }
             ArType::Tuple(types) => {
                 let parts: Vec<String> = types
                     .iter()
-                    .map(|&t| super::type_interner::with_resolved_type(t, |ty| ty.display(symbols)))
+                    .map(|&t| interner.resolve(t).display(symbols, interner))
                     .collect();
                 format!("({})", parts.join(", "))
             }
             ArType::Result(ok, err) => {
-                let ok_str =
-                    super::type_interner::with_resolved_type(*ok, |ty| ty.display(symbols));
-                let err_str =
-                    super::type_interner::with_resolved_type(*err, |ty| ty.display(symbols));
+                let ok_str = interner.resolve(*ok).display(symbols, interner);
+                let err_str = interner.resolve(*err).display(symbols, interner);
                 format!("Result<{}, {}>", ok_str, err_str)
             }
             ArType::Option(inner) => {
-                let inner_str =
-                    super::type_interner::with_resolved_type(*inner, |ty| ty.display(symbols));
+                let inner_str = interner.resolve(*inner).display(symbols, interner);
                 format!("Option<{}>", inner_str)
             }
             ArType::Coroutine(inner) => {
-                let inner_str =
-                    super::type_interner::with_resolved_type(*inner, |ty| ty.display(symbols));
+                let inner_str = interner.resolve(*inner).display(symbols, interner);
                 format!("Coroutine<{}>", inner_str)
             }
             ArType::Range(inner) => {
-                let inner_str =
-                    super::type_interner::with_resolved_type(*inner, |ty| ty.display(symbols));
+                let inner_str = interner.resolve(*inner).display(symbols, interner);
                 format!("Range<{}>", inner_str)
             }
             ArType::Err => "Err".to_string(),

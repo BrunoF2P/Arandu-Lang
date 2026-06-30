@@ -25,8 +25,6 @@ pub fn lower_to_amir(
     tc: &TypeCheckResult,
     hir: &HirProgram,
 ) -> Result<AmirProgram, Vec<Diagnostic>> {
-    let _scope =
-        arandu_middle::types::type_interner::InternerScope::new(&tc.type_info.type_interner);
     if tc.diagnostics.iter().any(|d| d.severity == Severity::Error) {
         return Err(tc.diagnostics.clone());
     }

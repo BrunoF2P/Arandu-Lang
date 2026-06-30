@@ -24,6 +24,10 @@ use rustc_hash::FxHashMap;
 
 newtype_index!(TypeId);
 
+/// Generation counter for Salsa query cache invalidation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct InternerGeneration(pub u32);
+
 /// A global interner that assigns a unique `TypeId` to every structural `ArType`.
 #[derive(Debug, Clone)]
 pub struct TypeInterner {
@@ -31,6 +35,8 @@ pub struct TypeInterner {
     map: FxHashMap<ArType, TypeId>,
     /// Reverse map: TypeId → ArType  (resolution).
     types: Vec<ArType>,
+    /// Incremental compilation generation index for query invalidation.
+    pub generation: InternerGeneration,
 }
 
 impl TypeInterner {
@@ -39,6 +45,7 @@ impl TypeInterner {
         Self {
             map: FxHashMap::default(),
             types: Vec::new(),
+            generation: InternerGeneration(0),
         }
     }
 
@@ -91,7 +98,7 @@ impl TypeInterner {
     /// Display a `TypeId` using the symbol table for named types.
     #[must_use]
     pub fn display(&self, id: TypeId, symbols: &SymbolTable) -> String {
-        self.resolve(id).display(symbols)
+        self.resolve(id).display(symbols, self)
     }
 
     /// Merge all types from another interner into self.
@@ -106,88 +113,6 @@ impl Default for TypeInterner {
     fn default() -> Self {
         Self::new()
     }
-}
-
-use std::cell::RefCell;
-use std::ptr::NonNull;
-
-thread_local! {
-    pub static CURRENT_INTERNER: RefCell<Option<NonNull<TypeInterner>>> = const { RefCell::new(None) };
-    pub static CURRENT_INTERNER_MUT: RefCell<Option<NonNull<TypeInterner>>> = const { RefCell::new(None) };
-}
-
-pub struct InternerScope {
-    old: Option<NonNull<TypeInterner>>,
-    old_mut: Option<NonNull<TypeInterner>>,
-}
-
-impl InternerScope {
-    #[must_use]
-    pub fn is_active() -> bool {
-        CURRENT_INTERNER.with(|c| c.borrow().is_some())
-    }
-
-    pub fn new(interner: &TypeInterner) -> Self {
-        let nn = NonNull::from(interner).cast::<TypeInterner>();
-        let old = CURRENT_INTERNER.with(|c| {
-            let mut slot = c.borrow_mut();
-            let old = *slot;
-            *slot = Some(nn);
-            old
-        });
-        Self { old, old_mut: None }
-    }
-
-    pub fn new_mut(interner: &mut TypeInterner) -> Self {
-        let nn = NonNull::from(interner as &TypeInterner);
-        let nn_mut = NonNull::from(&mut *interner);
-        let old = CURRENT_INTERNER.with(|c| {
-            let mut slot = c.borrow_mut();
-            let old = *slot;
-            *slot = Some(nn);
-            old
-        });
-        let old_mut = CURRENT_INTERNER_MUT.with(|c| {
-            let mut slot = c.borrow_mut();
-            let old = *slot;
-            *slot = Some(nn_mut);
-            old
-        });
-        Self { old, old_mut }
-    }
-}
-
-impl Drop for InternerScope {
-    fn drop(&mut self) {
-        CURRENT_INTERNER.with(|c| {
-            *c.borrow_mut() = self.old;
-        });
-        CURRENT_INTERNER_MUT.with(|c| {
-            *c.borrow_mut() = self.old_mut;
-        });
-    }
-}
-
-pub fn intern_type(ty: ArType) -> TypeId {
-    CURRENT_INTERNER_MUT.with(|c| {
-        if let Some(mut ptr) = *c.borrow() {
-            let interner = unsafe { ptr.as_mut() };
-            interner.intern(ty)
-        } else {
-            panic!("No active TypeInterner in CURRENT_INTERNER_MUT");
-        }
-    })
-}
-
-pub fn with_resolved_type<R, F: FnOnce(&ArType) -> R>(id: TypeId, f: F) -> R {
-    CURRENT_INTERNER.with(|c| {
-        if let Some(ptr) = *c.borrow() {
-            let interner = unsafe { ptr.as_ref() };
-            f(interner.resolve(id))
-        } else {
-            f(&ArType::Error)
-        }
-    })
 }
 
 #[cfg(test)]
@@ -275,7 +200,6 @@ mod tests {
             .iter()
             .map(|&p| interner.intern(ArType::Primitive(p)))
             .collect();
-        // All IDs should be unique
         for (i, a) in ids.iter().enumerate() {
             for (j, b) in ids.iter().enumerate() {
                 if i != j {

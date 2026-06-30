@@ -242,7 +242,7 @@ fn main() {
             },
 
             "check" => {
-                let checked = {
+                let mut checked = {
                     arandu_base::time_pass!("parse+check");
                     parse_and_check(&source, &filepath)
                 };
@@ -250,7 +250,7 @@ fn main() {
 
                 let hir = {
                     arandu_base::time_pass!("lower-hir");
-                    match arandu_semantics::lower_to_hir(&checked.type_check, &checked.program) {
+                    match arandu_semantics::lower_to_hir(&mut checked.type_check, &checked.program) {
                         Ok(hir) => hir,
                         Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
                     }
@@ -269,13 +269,13 @@ fn main() {
             }
 
             "hir" => {
-                let checked = {
+                let mut checked = {
                     arandu_base::time_pass!("parse+check");
                     parse_and_check(&source, &filepath)
                 };
                 let hir = {
                     arandu_base::time_pass!("lower-hir");
-                    match arandu_semantics::lower_to_hir(&checked.type_check, &checked.program) {
+                    match arandu_semantics::lower_to_hir(&mut checked.type_check, &checked.program) {
                         Ok(hir) => hir,
                         Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
                     }
@@ -296,13 +296,13 @@ fn main() {
             }
 
             "amir" => {
-                let checked = {
+                let mut checked = {
                     arandu_base::time_pass!("parse+check");
                     parse_and_check(&source, &filepath)
                 };
                 let hir = {
                     arandu_base::time_pass!("lower-hir");
-                    match arandu_semantics::lower_to_hir(&checked.type_check, &checked.program) {
+                    match arandu_semantics::lower_to_hir(&mut checked.type_check, &checked.program) {
                         Ok(hir) => hir,
                         Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
                     }
@@ -335,7 +335,7 @@ fn main() {
             }
 
             "run" => {
-                let checked = {
+                let mut checked = {
                     arandu_base::time_pass!("parse+check");
                     parse_and_check(&source, &filepath)
                 };
@@ -343,7 +343,7 @@ fn main() {
 
                 let hir = {
                     arandu_base::time_pass!("lower-hir");
-                    match arandu_semantics::lower_to_hir(&checked.type_check, &checked.program) {
+                    match arandu_semantics::lower_to_hir(&mut checked.type_check, &checked.program) {
                         Ok(hir) => hir,
                         Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
                     }

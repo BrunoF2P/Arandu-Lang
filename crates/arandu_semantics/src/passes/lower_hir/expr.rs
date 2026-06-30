@@ -9,7 +9,7 @@ use arandu_parser::CatchHandler;
 use arandu_parser::ast_pool::{AstPool, ExprId, ExprKind};
 
 fn get_resolved_value_ref(
-    type_check: &TypeCheckResult,
+    type_check: &mut TypeCheckResult,
     expr: ExprId,
 ) -> Option<crate::symbol_table::SymbolId> {
     type_check.resolved.expr_symbol(expr)
@@ -19,7 +19,7 @@ fn lookup_namespace_field(
     pool: &AstPool,
     base: ExprId,
     field: &str,
-    type_check: &TypeCheckResult,
+    type_check: &mut TypeCheckResult,
 ) -> Option<crate::symbol_table::SymbolId> {
     let ExprKind::Path { path, .. } = pool.expr(base) else {
         return None;
@@ -50,7 +50,7 @@ fn builtin_ctor_variant(pool: &AstPool, callee: ExprId) -> Option<crate::hir::Re
 }
 
 fn expr_type_for_kind(
-    type_check: &TypeCheckResult,
+    type_check: &mut TypeCheckResult,
     hir_pool: &crate::hir::HirPool,
     kind: &HirExprKind,
     fallback: ArType,
@@ -66,7 +66,8 @@ fn expr_type_for_kind(
         HirExprKind::Char(_) => ArType::Primitive(Primitive::Char),
         HirExprKind::Nil => {
             if fallback.is_error() {
-                let err_id = arandu_middle::types::type_interner::intern_type(ArType::Error);
+                let interner = &mut type_check.type_info.type_interner;
+                let err_id = interner.intern(ArType::Error);
                 ArType::Nullable(err_id)
             } else {
                 fallback
@@ -78,15 +79,13 @@ fn expr_type_for_kind(
             .cloned()
             .filter(|ty| !ty.is_error())
             .unwrap_or(fallback),
-        HirExprKind::Call { callee, .. } => {
+         HirExprKind::Call { callee, .. } => {
             let callee_expr = hir_pool.expr(*callee);
+            let interner = &type_check.type_info.type_interner;
             if !callee_expr.ty.is_error() {
                 match &callee_expr.ty {
                     ArType::Func(_, ret) => {
-                        return arandu_middle::types::type_interner::with_resolved_type(
-                            *ret,
-                            |t| t.clone(),
-                        );
+                        return interner.resolve(*ret).clone();
                     }
                     other => return other.clone(),
                 }
@@ -97,9 +96,7 @@ fn expr_type_for_kind(
                     .decl_type(*symbol)
                     .and_then(|ty| match ty {
                         ArType::Func(_, ret) => Some(
-                            arandu_middle::types::type_interner::with_resolved_type(*ret, |t| {
-                                t.clone()
-                            }),
+                            interner.resolve(*ret).clone()
                         ),
                         _ => None,
                     })
@@ -113,7 +110,7 @@ fn expr_type_for_kind(
 }
 
 pub(crate) fn lower_expr_raw(
-    type_check: &TypeCheckResult,
+    type_check: &mut TypeCheckResult,
     pool: &AstPool,
     hir_pool: &mut crate::hir::HirPool,
     expr: ExprId,
@@ -146,6 +143,7 @@ pub(crate) fn lower_expr_raw(
             let callee_id = lower_expr(type_check, pool, hir_pool, *callee)?;
             let mut hir_args = Vec::new();
             let arg_ids = pool.type_expr_list(*args).to_vec();
+            let interner = &mut type_check.type_info.type_interner;
             for arg_id in arg_ids {
                 hir_args.push(crate::passes::type_checker::types::lower_type_expr(
                     arg_id,
@@ -153,6 +151,7 @@ pub(crate) fn lower_expr_raw(
                     &type_check.symbols,
                     crate::ScopeId(0),
                     &type_check.resolved,
+                    interner,
                 ));
             }
             HirExprKind::Generic {
@@ -415,12 +414,14 @@ pub(crate) fn lower_expr_raw(
             ty: cast_ty,
             ..
         } => {
+            let interner = &mut type_check.type_info.type_interner;
             let target_ty = crate::passes::type_checker::types::lower_type_expr(
                 *cast_ty,
                 pool,
                 &type_check.symbols,
                 crate::ScopeId(0),
                 &type_check.resolved,
+                interner,
             );
             let inner_id = lower_expr(type_check, pool, hir_pool, *inner_expr)?;
             HirExprKind::Cast {
@@ -472,7 +473,7 @@ pub(crate) fn lower_expr_raw(
 
 /// Lower expression and allocate into a `HirPool`, returning a `HirExprId`.
 pub(crate) fn lower_expr(
-    type_check: &TypeCheckResult,
+    type_check: &mut TypeCheckResult,
     pool: &AstPool,
     hir_pool: &mut crate::hir::HirPool,
     expr: ExprId,

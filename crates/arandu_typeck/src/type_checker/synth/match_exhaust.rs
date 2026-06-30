@@ -46,13 +46,19 @@ fn enum_variant_symbol_ids(
             .unwrap_or(&full)
             .to_string();
         if seen_names.insert(short.clone()) {
-            // Use the SymbolId returned by lookup_associated_member as the
-            // canonical ID, so that `all_variants` and `covered` share the
-            // same coordinate system.
-            if let Some(canonical) = checker.symbols.lookup_associated_member(&enum_name, &short) {
+            let mut canonical_opt = None;
+            for (&var_id, &(parent_id, _)) in &checker.type_info.enum_variants {
+                if parent_id == enum_id {
+                    let var_name = &checker.symbols.get(var_id).name;
+                    if var_name == &short || var_name.ends_with(&format!(".{}", short)) {
+                        canonical_opt = Some(var_id);
+                        break;
+                    }
+                }
+            }
+            if let Some(canonical) = canonical_opt {
                 ids.insert(canonical);
             } else {
-                // Fallback: use whatever ID we have.
                 ids.insert(*variant_id);
             }
         }
@@ -69,27 +75,32 @@ fn pattern_to_variant_symbol_id(
     enum_id: crate::SymbolId,
     pat: PatternId,
 ) -> Option<crate::SymbolId> {
-    let enum_name = &checker.symbols.get(enum_id).name;
     match checker.pool.pattern(pat) {
         // `Variant` or `EnumName.Variant`
         Pattern::Enum { variant, .. } => {
-            // Try the fully-qualified form first, then the short form.
-            checker
-                .symbols
-                .lookup_associated_member(enum_name, variant)
-                .or_else(|| {
-                    checker.symbols.lookup_associated_member(
-                        enum_name,
-                        variant
-                            .rsplit_once('.')
-                            .map_or(variant.as_str(), |(_, s)| s),
-                    )
-                })
+            let short = variant.rsplit_once('.').map_or(variant.as_str(), |(_, s)| s);
+            for (&var_id, &(parent_id, _)) in &checker.type_info.enum_variants {
+                if parent_id == enum_id {
+                    let var_name = &checker.symbols.get(var_id).name;
+                    if var_name == short || var_name.ends_with(&format!(".{}", short)) {
+                        return Some(var_id);
+                    }
+                }
+            }
+            None
         }
         // `EnumName.Variant(...)` style
         Pattern::TypeTuple { name, .. } => {
             let short = name.rsplit_once('.').map_or(name.as_str(), |(_, s)| s);
-            checker.symbols.lookup_associated_member(enum_name, short)
+            for (&var_id, &(parent_id, _)) in &checker.type_info.enum_variants {
+                if parent_id == enum_id {
+                    let var_name = &checker.symbols.get(var_id).name;
+                    if var_name == short || var_name.ends_with(&format!(".{}", short)) {
+                        return Some(var_id);
+                    }
+                }
+            }
+            None
         }
         _ => None,
     }

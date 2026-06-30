@@ -162,6 +162,11 @@ impl HirFieldPattern {
     }
 }
 
+
+fn display_type(ty: &crate::types::ArType, ctx: &HirPrettyCtx<'_>) -> String {
+    ctx.display_ty(ty)
+}
+
 pub struct HirPrettyCtx<'a> {
     pub pool: &'a crate::hir::HirPool,
     pub symbols: &'a SymbolTable,
@@ -169,9 +174,19 @@ pub struct HirPrettyCtx<'a> {
     pub type_interner: Option<&'a crate::types::TypeInterner>,
 }
 
+impl HirPrettyCtx<'_> {
+    /// Display an `ArType` using the interner if available, or a placeholder.
+    fn display_ty(&self, ty: &crate::types::ArType) -> String {
+        static EMPTY: std::sync::LazyLock<crate::types::TypeInterner> =
+            std::sync::LazyLock::new(crate::types::TypeInterner::new);
+        let interner = self.type_interner.unwrap_or(&EMPTY);
+        ty.display(self.symbols, interner)
+    }
+}
+
 fn format_hir_param(p: &HirParam, ctx: &HirPrettyCtx<'_>) -> String {
     let name = symbol_name(ctx.symbols, p.symbol);
-    let ty = p.ty.display(ctx.symbols);
+    let ty = ctx.display_ty(&p.ty);
     if p.is_receiver {
         let prefix = match p.receiver_kind {
             Some(ReceiverKind::Shared) => "shared ",
@@ -186,9 +201,6 @@ fn format_hir_param(p: &HirParam, ctx: &HirPrettyCtx<'_>) -> String {
 }
 
 pub fn print_program(program: &HirProgram, ctx: &HirPrettyCtx<'_>) -> String {
-    let _scope = ctx
-        .type_interner
-        .map(crate::types::type_interner::InternerScope::new);
     let mut out = String::new();
     out.push_str("Program\n");
     if let Some(ref m) = program.module {
@@ -227,7 +239,7 @@ impl HirConst {
             "{}Const {}: {} =\n",
             ind,
             symbol_name(ctx.symbols, self.symbol),
-            self.ty.display(ctx.symbols)
+            ctx.display_ty(&self.ty)
         ));
         self.value.pretty_print_to(out, indent + 1, ctx);
     }
@@ -240,7 +252,7 @@ impl HirTypeAlias {
             "{}TypeAlias {} = {}\n",
             ind,
             symbol_name(ctx.symbols, self.symbol),
-            self.target.display(ctx.symbols)
+            ctx.display_ty(&self.target)
         ));
     }
 }
@@ -254,7 +266,7 @@ impl HirFunc {
             .iter()
             .map(|p| format_hir_param(p, ctx))
             .collect();
-        let return_ty_str = self.return_type.display(ctx.symbols);
+        let return_ty_str = ctx.display_ty(&self.return_type);
         out.push_str(&format!(
             "{}Func {}({}) -> {}\n",
             ind,
@@ -284,7 +296,7 @@ impl HirStruct {
                 "{}{}: {}\n",
                 field_ind,
                 symbol_name(ctx.symbols, f.symbol),
-                f.ty.display(ctx.symbols)
+                ctx.display_ty(&f.ty)
             ));
         }
     }
@@ -305,7 +317,7 @@ impl HirEnum {
                     "{}{}({})\n",
                     variant_ind,
                     symbol_name(ctx.symbols, v.symbol),
-                    payload.display(ctx.symbols)
+                    ctx.display_ty(payload)
                 ));
             } else {
                 out.push_str(&format!(
@@ -346,7 +358,7 @@ impl HirExtern {
                 member_ind,
                 symbol_name(ctx.symbols, m.symbol),
                 params_str.join(", "),
-                m.return_type.display(ctx.symbols)
+                ctx.display_ty(&m.return_type)
             ));
         }
     }
@@ -372,7 +384,7 @@ impl HirStmt {
                         "{}Var {}: {} =\n",
                         ind,
                         symbol_name(ctx.symbols, b.symbol),
-                        b.ty.display(ctx.symbols)
+                        display_type(&b.ty, ctx)
                     ));
                 } else {
                     let b_strs: Vec<String> = bindings_slice
@@ -381,7 +393,7 @@ impl HirStmt {
                             format!(
                                 "{}: {}",
                                 symbol_name(ctx.symbols, b.symbol),
-                                b.ty.display(ctx.symbols)
+                                display_type(&b.ty, ctx)
                             )
                         })
                         .collect();
@@ -533,7 +545,7 @@ impl HirForClause {
                         format!(
                             "{}: {}",
                             super::symbol_name(ctx.symbols, b.symbol),
-                            b.ty.display(ctx.symbols)
+                            display_type(&b.ty, ctx)
                         )
                     })
                     .collect();
@@ -577,7 +589,7 @@ impl HirSimpleStmt {
                         "{}Var {}: {} =\n",
                         ind,
                         symbol_name(ctx.symbols, b.symbol),
-                        b.ty.display(ctx.symbols)
+                        display_type(&b.ty, ctx)
                     ));
                 } else {
                     let b_strs: Vec<String> = bindings_slice
@@ -586,7 +598,7 @@ impl HirSimpleStmt {
                             format!(
                                 "{}: {}",
                                 symbol_name(ctx.symbols, b.symbol),
-                                b.ty.display(ctx.symbols)
+                                display_type(&b.ty, ctx)
                             )
                         })
                         .collect();
@@ -686,7 +698,7 @@ impl HirExpr {
                     ind,
                     prefix,
                     name,
-                    self.ty.display(ctx.symbols)
+                    display_type(&self.ty, ctx)
                 ));
             }
             HirExprKind::TypePath { member_symbol, .. } => {
@@ -694,16 +706,16 @@ impl HirExpr {
                     "{}TypePath({}): {}\n",
                     ind,
                     symbol_name(ctx.symbols, *member_symbol),
-                    self.ty.display(ctx.symbols)
+                    display_type(&self.ty, ctx)
                 ));
             }
             HirExprKind::Generic { callee, args } => {
-                let args_strs: Vec<String> = args.iter().map(|a| a.display(ctx.symbols)).collect();
+                let args_strs: Vec<String> = args.iter().map(|a| display_type(&a, ctx)).collect();
                 out.push_str(&format!(
                     "{}Generic<{}>: {}\n",
                     ind,
                     args_strs.join(", "),
-                    self.ty.display(ctx.symbols)
+                    display_type(&self.ty, ctx)
                 ));
                 callee.pretty_print_to(out, indent + 1, ctx);
             }
@@ -712,7 +724,7 @@ impl HirExpr {
                     "{}Field({}): {}\n",
                     ind,
                     field,
-                    self.ty.display(ctx.symbols)
+                    display_type(&self.ty, ctx)
                 ));
                 base.pretty_print_to(out, indent + 1, ctx);
             }
@@ -721,12 +733,12 @@ impl HirExpr {
                     "{}SafeField({}): {}\n",
                     ind,
                     field,
-                    self.ty.display(ctx.symbols)
+                    display_type(&self.ty, ctx)
                 ));
                 base.pretty_print_to(out, indent + 1, ctx);
             }
             HirExprKind::Index { base, index } => {
-                out.push_str(&format!("{}Index: {}\n", ind, self.ty.display(ctx.symbols)));
+                out.push_str(&format!("{}Index: {}\n", ind, display_type(&self.ty, ctx)));
                 base.pretty_print_to(out, indent + 1, ctx);
                 index.pretty_print_to(out, indent + 1, ctx);
             }
@@ -734,13 +746,13 @@ impl HirExpr {
                 out.push_str(&format!(
                     "{}SafeIndex: {}\n",
                     ind,
-                    self.ty.display(ctx.symbols)
+                    display_type(&self.ty, ctx)
                 ));
                 base.pretty_print_to(out, indent + 1, ctx);
                 index.pretty_print_to(out, indent + 1, ctx);
             }
             HirExprKind::Try { expr } => {
-                out.push_str(&format!("{}Try: {}\n", ind, self.ty.display(ctx.symbols)));
+                out.push_str(&format!("{}Try: {}\n", ind, display_type(&self.ty, ctx)));
                 expr.pretty_print_to(out, indent + 1, ctx);
             }
             HirExprKind::Call {
@@ -748,7 +760,7 @@ impl HirExpr {
                 args,
                 trailing_block,
             } => {
-                out.push_str(&format!("{}Call: {}\n", ind, self.ty.display(ctx.symbols)));
+                out.push_str(&format!("{}Call: {}\n", ind, display_type(&self.ty, ctx)));
                 callee.pretty_print_to(out, indent + 1, ctx);
                 for &a in ctx.pool.expr_list(*args) {
                     a.pretty_print_to(out, indent + 1, ctx);
@@ -769,7 +781,7 @@ impl HirExpr {
                     "{}{}: {}\n",
                     ind,
                     name,
-                    self.ty.display(ctx.symbols)
+                    display_type(&self.ty, ctx)
                 ));
                 value.pretty_print_to(out, indent + 1, ctx);
             }
@@ -782,7 +794,7 @@ impl HirExpr {
                     "{}StructLiteral({}): {}\n",
                     ind,
                     name,
-                    self.ty.display(ctx.symbols)
+                    display_type(&self.ty, ctx)
                 ));
                 let field_ind = "  ".repeat(indent + 1);
                 for f in ctx.pool.field_inits_list(*fields) {
@@ -791,7 +803,7 @@ impl HirExpr {
                 }
             }
             HirExprKind::Array { items } => {
-                out.push_str(&format!("{}Array: {}\n", ind, self.ty.display(ctx.symbols)));
+                out.push_str(&format!("{}Array: {}\n", ind, display_type(&self.ty, ctx)));
                 for &item in ctx.pool.expr_list(*items) {
                     item.pretty_print_to(out, indent + 1, ctx);
                 }
@@ -805,7 +817,7 @@ impl HirExpr {
                         format!(
                             "{}: {}",
                             symbol_name(ctx.symbols, p.symbol),
-                            p.ty.display(ctx.symbols)
+                            display_type(&p.ty, ctx)
                         )
                     })
                     .collect();
@@ -813,7 +825,7 @@ impl HirExpr {
                     "{}Lambda({}): {}\n",
                     ind,
                     params_str.join(", "),
-                    self.ty.display(ctx.symbols)
+                    display_type(&self.ty, ctx)
                 ));
                 match body {
                     HirLambdaBody::Expr(expr) => {
@@ -825,14 +837,14 @@ impl HirExpr {
                 }
             }
             HirExprKind::Alloc { expr } => {
-                out.push_str(&format!("{}Alloc: {}\n", ind, self.ty.display(ctx.symbols)));
+                out.push_str(&format!("{}Alloc: {}\n", ind, display_type(&self.ty, ctx)));
                 expr.pretty_print_to(out, indent + 1, ctx);
             }
             HirExprKind::AsyncBlock { block } => {
                 out.push_str(&format!(
                     "{}AsyncBlock: {}\n",
                     ind,
-                    self.ty.display(ctx.symbols)
+                    display_type(&self.ty, ctx)
                 ));
                 ctx.pool.block(*block).pretty_print_to(out, indent + 1, ctx);
             }
@@ -840,7 +852,7 @@ impl HirExpr {
                 out.push_str(&format!(
                     "{}UnsafeBlock: {}\n",
                     ind,
-                    self.ty.display(ctx.symbols)
+                    display_type(&self.ty, ctx)
                 ));
                 ctx.pool.block(*block).pretty_print_to(out, indent + 1, ctx);
             }
@@ -849,7 +861,7 @@ impl HirExpr {
                 then_block,
                 else_block,
             } => {
-                out.push_str(&format!("{}If: {}\n", ind, self.ty.display(ctx.symbols)));
+                out.push_str(&format!("{}If: {}\n", ind, display_type(&self.ty, ctx)));
                 condition.pretty_print_to(out, indent + 1, ctx);
                 let sub_ind = "  ".repeat(indent + 1);
                 out.push_str(&format!("{sub_ind}Then\n"));
@@ -862,7 +874,7 @@ impl HirExpr {
                     .pretty_print_to(out, indent + 2, ctx);
             }
             HirExprKind::Match { value, arms } => {
-                out.push_str(&format!("{}Match: {}\n", ind, self.ty.display(ctx.symbols)));
+                out.push_str(&format!("{}Match: {}\n", ind, display_type(&self.ty, ctx)));
                 value.pretty_print_to(out, indent + 1, ctx);
                 let arm_ind = "  ".repeat(indent + 1);
                 for arm in ctx.pool.match_arms_list(*arms) {
@@ -885,7 +897,7 @@ impl HirExpr {
                 }
             }
             HirExprKind::Catch { expr, handler } => {
-                out.push_str(&format!("{}Catch: {}\n", ind, self.ty.display(ctx.symbols)));
+                out.push_str(&format!("{}Catch: {}\n", ind, display_type(&self.ty, ctx)));
                 expr.pretty_print_to(out, indent + 1, ctx);
                 let sub_ind = "  ".repeat(indent + 1);
                 match handler {
@@ -906,7 +918,7 @@ impl HirExpr {
                 out.push_str(&format!(
                     "{}NullCoalesce: {}\n",
                     ind,
-                    self.ty.display(ctx.symbols)
+                    display_type(&self.ty, ctx)
                 ));
                 left.pretty_print_to(out, indent + 1, ctx);
                 right.pretty_print_to(out, indent + 1, ctx);
@@ -915,8 +927,8 @@ impl HirExpr {
                 out.push_str(&format!(
                     "{}Cast({}): {}\n",
                     ind,
-                    target_ty.display(ctx.symbols),
-                    self.ty.display(ctx.symbols)
+                    display_type(&target_ty, ctx),
+                    display_type(&self.ty, ctx)
                 ));
                 expr.pretty_print_to(out, indent + 1, ctx);
             }
@@ -925,7 +937,7 @@ impl HirExpr {
                     "{}Unary({}): {}\n",
                     ind,
                     unary_op_str(op),
-                    self.ty.display(ctx.symbols)
+                    display_type(&self.ty, ctx)
                 ));
                 expr.pretty_print_to(out, indent + 1, ctx);
             }
@@ -934,7 +946,7 @@ impl HirExpr {
                     "{}Binary({}): {}\n",
                     ind,
                     op_str(op),
-                    self.ty.display(ctx.symbols)
+                    display_type(&self.ty, ctx)
                 ));
                 left.pretty_print_to(out, indent + 1, ctx);
                 right.pretty_print_to(out, indent + 1, ctx);
@@ -944,7 +956,7 @@ impl HirExpr {
                     "{}Int({}): {}\n",
                     ind,
                     v,
-                    self.ty.display(ctx.symbols)
+                    display_type(&self.ty, ctx)
                 ));
             }
             HirExprKind::Float(v) => {
@@ -952,7 +964,7 @@ impl HirExpr {
                     "{}Float({}): {}\n",
                     ind,
                     v,
-                    self.ty.display(ctx.symbols)
+                    display_type(&self.ty, ctx)
                 ));
             }
             HirExprKind::Bool(v) => {
@@ -960,7 +972,7 @@ impl HirExpr {
                     "{}Bool({}): {}\n",
                     ind,
                     v,
-                    self.ty.display(ctx.symbols)
+                    display_type(&self.ty, ctx)
                 ));
             }
             HirExprKind::Char(v) => {
@@ -968,7 +980,7 @@ impl HirExpr {
                     "{}Char({}): {}\n",
                     ind,
                     v,
-                    self.ty.display(ctx.symbols)
+                    display_type(&self.ty, ctx)
                 ));
             }
             HirExprKind::Str(v) => {
@@ -976,14 +988,14 @@ impl HirExpr {
                     "{}Str({}): {}\n",
                     ind,
                     v,
-                    self.ty.display(ctx.symbols)
+                    display_type(&self.ty, ctx)
                 ));
             }
             HirExprKind::Nil => {
-                out.push_str(&format!("{}Nil: {}\n", ind, self.ty.display(ctx.symbols)));
+                out.push_str(&format!("{}Nil: {}\n", ind, display_type(&self.ty, ctx)));
             }
             HirExprKind::Error => {
-                out.push_str(&format!("{}Error: {}\n", ind, self.ty.display(ctx.symbols)));
+                out.push_str(&format!("{}Error: {}\n", ind, display_type(&self.ty, ctx)));
             }
         }
     }
