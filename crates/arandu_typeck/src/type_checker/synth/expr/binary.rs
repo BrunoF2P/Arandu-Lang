@@ -5,6 +5,7 @@ use arandu_parser::{BinaryOp, UnaryOp};
 use crate::type_checker::TypeChecker;
 use crate::type_checker::constraints::ConstraintOrigin;
 use crate::type_checker::types::{self, ArType, Primitive};
+use arandu_middle::types::type_interner::TypeId;
 use super::synth_expr;
 
 pub(super) fn cast_types_compatible(found: &ArType, target: &ArType, interner: &arandu_middle::types::TypeInterner) -> bool {
@@ -25,18 +26,20 @@ pub(super) fn synth_binary_unary_expr(
     _expr: ExprId,
     kind: &ExprKind,
     span: Span,
-) -> Option<ArType> {
+) -> Option<TypeId> {
     match kind {
         ExprKind::NullCoalesce { left, right } => {
             let left_id = *left;
             let right_id = *right;
-            let left_ty = synth_expr(checker, left_id);
-            let right_ty = synth_expr(checker, right_id);
+            let left_ty_id = synth_expr(checker, left_id);
+            let right_ty_id = synth_expr(checker, right_id);
             let interner = &checker.type_info.type_interner;
-            match &left_ty {
+            let left_ty = interner.resolve(left_ty_id);
+            let right_ty = interner.resolve(right_ty_id);
+            match left_ty {
                 ArType::Nullable(inner) => {
                     let inner_ty = interner.resolve(*inner);
-                    if !types::unify(inner_ty, &right_ty, interner) {
+                    if !types::unify(inner_ty, right_ty, interner) {
                         checker.add_constraint(
                             inner_ty.clone(),
                             right_ty.clone(),
@@ -46,9 +49,9 @@ pub(super) fn synth_binary_unary_expr(
                             },
                         );
                     }
-                    Some(right_ty)
+                    Some(right_ty_id)
                 }
-                ArType::Error => Some(right_ty),
+                ArType::Error => Some(right_ty_id),
                 other => {
                     checker.diagnostics.push(
                         crate::Diagnostic::error(
@@ -67,7 +70,7 @@ pub(super) fn synth_binary_unary_expr(
                             "use a nullable value on the left or make it nullable".to_string(),
                         ),
                     );
-                    Some(right_ty)
+                    Some(right_ty_id)
                 }
             }
         }
@@ -77,35 +80,37 @@ pub(super) fn synth_binary_unary_expr(
         } => {
             let inner_id = *inner_expr;
             let ty_id = *ty;
-            let found_ty = synth_expr(checker, inner_id);
+            let found_ty_id = synth_expr(checker, inner_id);
             let target_ty = checker.lower_type_expr(ty_id, checker.type_scope());
             let interner = &checker.type_info.type_interner;
-            if !cast_types_compatible(&found_ty, &target_ty, interner) {
+            let found_ty = interner.resolve(found_ty_id);
+            if !cast_types_compatible(found_ty, &target_ty, interner) {
                 checker.add_constraint(
                     target_ty.clone(),
-                    found_ty,
+                    found_ty.clone(),
                     ConstraintOrigin::CastExpr {
                         expr_span: checker.pool.expr_span(inner_id),
                         target_span: checker.pool.type_expr_span(ty_id),
                     },
                 );
             }
-            Some(target_ty)
+            Some(checker.intern(target_ty))
         }
         ExprKind::Unary {
             op,
             expr: inner_expr,
         } => {
             let inner_id = *inner_expr;
-            let expr_ty = synth_expr(checker, inner_id);
+            let expr_ty_id = synth_expr(checker, inner_id);
             let interner = &checker.type_info.type_interner;
+            let expr_ty = interner.resolve(expr_ty_id);
             if expr_ty.is_error() {
-                return Some(ArType::Error);
+                return Some(checker.intern(ArType::Error));
             }
             match op {
                 UnaryOp::Neg => {
                     if expr_ty.is_numeric() {
-                        Some(expr_ty)
+                        Some(expr_ty_id)
                     } else {
                         checker.add_constraint(
                             ArType::Primitive(Primitive::Int),
@@ -115,12 +120,12 @@ pub(super) fn synth_binary_unary_expr(
                                 operand_span: checker.pool.expr_span(inner_id),
                             },
                         );
-                        Some(ArType::Error)
+                        Some(checker.intern(ArType::Error))
                     }
                 }
                 UnaryOp::Not => {
-                    if types::unify(&expr_ty, &ArType::Primitive(Primitive::Bool), interner) {
-                        Some(ArType::Primitive(Primitive::Bool))
+                    if types::unify(expr_ty, &ArType::Primitive(Primitive::Bool), interner) {
+                        Some(checker.intern(ArType::Primitive(Primitive::Bool)))
                     } else {
                         checker.add_constraint(
                             ArType::Primitive(Primitive::Bool),
@@ -130,12 +135,12 @@ pub(super) fn synth_binary_unary_expr(
                                 operand_span: checker.pool.expr_span(inner_id),
                             },
                         );
-                        Some(ArType::Error)
+                        Some(checker.intern(ArType::Error))
                     }
                 }
                 UnaryOp::BitNot => {
                     if expr_ty.is_integer() {
-                        Some(expr_ty)
+                        Some(expr_ty_id)
                     } else {
                         checker.add_constraint(
                             ArType::Primitive(Primitive::Int),
@@ -145,21 +150,21 @@ pub(super) fn synth_binary_unary_expr(
                                 operand_span: checker.pool.expr_span(inner_id),
                             },
                         );
-                        Some(ArType::Error)
+                        Some(checker.intern(ArType::Error))
                     }
                 }
                 UnaryOp::Await => {
                     if expr_ty.is_error() {
-                        Some(ArType::Error)
+                        Some(checker.intern(ArType::Error))
                     } else if let ArType::Coroutine(inner) = expr_ty {
-                        Some(checker.type_info.type_interner.resolve(inner).clone())
+                        Some(*inner)
                     } else {
                         checker.add_constraint(
                             ArType::Error,
                             expr_ty.clone(),
                             ConstraintOrigin::AwaitInvalid { span },
                         );
-                        Some(ArType::Error)
+                        Some(checker.intern(ArType::Error))
                     }
                 }
             }
@@ -167,17 +172,19 @@ pub(super) fn synth_binary_unary_expr(
         ExprKind::Binary { op, left, right } => {
             let left_id = *left;
             let right_id = *right;
-            let left_ty = synth_expr(checker, left_id);
-            let right_ty = synth_expr(checker, right_id);
+            let left_ty_id = synth_expr(checker, left_id);
+            let right_ty_id = synth_expr(checker, right_id);
             let interner = &checker.type_info.type_interner;
+            let left_ty = interner.resolve(left_ty_id);
+            let right_ty = interner.resolve(right_ty_id);
 
             if left_ty.is_error() || right_ty.is_error() {
-                return Some(ArType::Error);
+                return Some(checker.intern(ArType::Error));
             }
 
             match op {
                 BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
-                    if !types::unify(&left_ty, &right_ty, interner)
+                    if !types::unify(left_ty, right_ty, interner)
                         || (!left_ty.is_numeric() && !right_ty.is_numeric())
                     {
                         checker.add_constraint(
@@ -189,9 +196,9 @@ pub(super) fn synth_binary_unary_expr(
                                 right_span: checker.pool.expr_span(right_id),
                             },
                         );
-                        return Some(ArType::Error);
+                        return Some(checker.intern(ArType::Error));
                     }
-                    Some(types::resolve_literal_pair(&left_ty, &right_ty))
+                    Some(checker.intern(types::resolve_literal_pair(left_ty, right_ty)))
                 }
                 BinaryOp::Equal
                 | BinaryOp::NotEqual
@@ -199,7 +206,7 @@ pub(super) fn synth_binary_unary_expr(
                 | BinaryOp::Gt
                 | BinaryOp::LtEqual
                 | BinaryOp::GtEqual => {
-                    if !types::unify(&left_ty, &right_ty, interner) {
+                    if !types::unify(left_ty, right_ty, interner) {
                         checker.add_constraint(
                             left_ty.clone(),
                             right_ty.clone(),
@@ -210,10 +217,10 @@ pub(super) fn synth_binary_unary_expr(
                             },
                         );
                     }
-                    Some(ArType::Primitive(Primitive::Bool))
+                    Some(checker.intern(ArType::Primitive(Primitive::Bool)))
                 }
                 BinaryOp::RangeExclusive | BinaryOp::RangeInclusive => {
-                    if !types::unify(&left_ty, &right_ty, interner)
+                    if !types::unify(left_ty, right_ty, interner)
                         || (!left_ty.is_integer() && !right_ty.is_integer())
                     {
                         checker.add_constraint(
@@ -225,14 +232,14 @@ pub(super) fn synth_binary_unary_expr(
                                 right_span: checker.pool.expr_span(right_id),
                             },
                         );
-                        return Some(ArType::Error);
+                        return Some(checker.intern(ArType::Error));
                     }
-                    let inner_ty = types::resolve_literal_pair(&left_ty, &right_ty)
+                    let inner_ty = types::resolve_literal_pair(left_ty, right_ty)
                         .default_literal();
                     let inner_id = checker.intern(inner_ty);
-                    Some(ArType::Range(inner_id))
+                    Some(checker.intern(ArType::Range(inner_id)))
                 }
-                _ => Some(ArType::Error),
+                _ => Some(checker.intern(ArType::Error)),
             }
         }
         _ => None,

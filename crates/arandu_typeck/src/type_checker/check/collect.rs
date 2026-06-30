@@ -87,7 +87,8 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
                     let const_ty = checker.lower_type_expr(ty_expr, checker.symbols.global_scope());
                     let const_key = crate::NodeKey::from(const_decl.span);
                     if let Some(symbol_id) = checker.resolved.definitions.get(&const_key).copied() {
-                        checker.record_decl_type(symbol_id, const_ty);
+                        let const_id = checker.intern(const_ty);
+                        checker.record_decl_type(symbol_id, const_id);
                     }
                 }
             }
@@ -95,7 +96,8 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
                 let alias_ty = checker.lower_type_expr(alias_decl.ty, checker.symbols.global_scope());
                 let alias_key = crate::NodeKey::from(alias_decl.span);
                 if let Some(symbol_id) = checker.resolved.definitions.get(&alias_key).copied() {
-                    checker.record_decl_type(symbol_id, alias_ty);
+                    let alias_id = checker.intern(alias_ty);
+                    checker.record_decl_type(symbol_id, alias_id);
                     let params = super::super::types::extract_generic_param_symbols(
                         checker,
                         &alias_decl.generic_params,
@@ -174,7 +176,8 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &P
                                 }
                     let ret_id = checker.intern(ret_ty);
                     let func_ty = ArType::Func(param_types, ret_id);
-                    checker.record_decl_type(symbol_id, func_ty);
+                    let func_id = checker.intern(func_ty);
+                    checker.record_decl_type(symbol_id, func_id);
                 }
             }
             TopLevelDecl::Extern(extern_decl) => {
@@ -195,7 +198,8 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &P
                     if let Some(symbol_id) = checker.resolved.definitions.get(&name_key).copied() {
                         let ret_id = checker.intern(ret_ty);
                         let func_ty = ArType::Func(param_types, ret_id);
-                        checker.record_decl_type(symbol_id, func_ty);
+                        let func_id = checker.intern(func_ty);
+                        checker.record_decl_type(symbol_id, func_id);
                         let params = super::super::types::extract_generic_param_symbols(
                             checker,
                             &member.generic_params,

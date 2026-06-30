@@ -108,8 +108,30 @@ impl<'a> TypeChecker<'a> {
     }
 
     #[must_use]
+    pub fn result_ok_err_ids(&self, id: TypeId) -> Option<(TypeId, TypeId)> {
+        match self.type_info.type_interner.resolve(id) {
+            ArType::Result(ok, err) => Some((*ok, *err)),
+            _ => None,
+        }
+    }
+
+    #[must_use]
     pub fn try_ok_type(&self, ty: &ArType) -> Option<ArType> {
         types::try_ok_type(ty, &self.type_info.type_interner)
+    }
+
+    #[must_use]
+    pub fn try_ok_type_id(&self, id: TypeId) -> Option<TypeId> {
+        match self.type_info.type_interner.resolve(id) {
+            ArType::Result(ok, _) => Some(*ok),
+            ArType::Option(inner) => Some(*inner),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn is_result_type_id(&self, id: TypeId) -> bool {
+        self.is_result_type(self.resolve(id))
     }
 
     #[must_use]
@@ -159,22 +181,37 @@ impl<'a> TypeChecker<'a> {
         self.diagnostics.push(diag);
     }
 
-    pub(crate) fn record_expr_type(&mut self, expr: ExprId, ty: ArType) -> TypeId {
-        self.type_info.record_expr_type(expr, ty)
+    pub(crate) fn record_expr_type(&mut self, expr: ExprId, id: TypeId) {
+        self.type_info.record_expr_type(expr, id);
     }
 
-    pub(crate) fn record_decl_type(&mut self, symbol: SymbolId, ty: ArType) -> TypeId {
-        self.type_info.record_decl_type(symbol, ty)
+    pub(crate) fn record_decl_type(&mut self, symbol: SymbolId, id: TypeId) {
+        self.type_info.record_decl_type(symbol, id);
     }
+
 
     #[must_use]
-    pub(crate) fn expr_type(&self, expr: ExprId) -> Option<ArType> {
-        self.type_info.expr_type(expr).cloned()
+    pub(crate) fn expr_type_id(&self, expr: ExprId) -> Option<TypeId> {
+        self.type_info.expr_type_id(expr)
     }
 
     #[must_use]
     pub(crate) fn decl_type(&self, symbol: SymbolId) -> Option<ArType> {
         self.type_info.decl_type(symbol).cloned()
+    }
+
+    #[must_use]
+    pub(crate) fn decl_type_id(&self, symbol: SymbolId) -> Option<TypeId> {
+        self.type_info.decl_type_id(symbol)
+    }
+
+    pub(crate) fn unify_ids(&self, a: TypeId, b: TypeId) -> bool {
+        if a == b {
+            return true;
+        }
+        let a_ty = self.type_info.resolve_type_id(a);
+        let b_ty = self.type_info.resolve_type_id(b);
+        types::unify(a_ty, b_ty, &self.type_info.type_interner)
     }
 
     #[must_use]
@@ -359,7 +396,8 @@ impl TypeInfo {
             let other_type = other.type_interner.resolve(other_type_id);
             let translated =
                 translate_type(other_type, &other.type_interner, &mut self.type_interner);
-            self.record_decl_type(symbol, translated);
+            let id = self.type_interner.intern(translated);
+            self.record_decl_type(symbol, id);
         }
         for (symbol, fields) in &other.struct_fields {
             let mut translated_fields = FxHashMap::default();
@@ -419,20 +457,16 @@ impl TypeInfo {
         }
     }
 
-    pub fn record_expr_type(&mut self, expr: ExprId, ty: ArType) -> TypeId {
-        let id = self.type_interner.intern(ty);
+    pub fn record_expr_type(&mut self, expr: ExprId, id: TypeId) {
         let idx = expr.as_usize();
         if self.expr_types.len() <= idx {
             self.expr_types.resize(idx + 1, None);
         }
         self.expr_types[idx] = Some(id);
-        id
     }
 
-    pub fn record_decl_type(&mut self, symbol: SymbolId, ty: ArType) -> TypeId {
-        let id = self.type_interner.intern(ty);
+    pub fn record_decl_type(&mut self, symbol: SymbolId, id: TypeId) {
         self.decl_types.insert(symbol, id);
-        id
     }
 
     #[must_use]
@@ -443,10 +477,20 @@ impl TypeInfo {
     }
 
     #[must_use]
+    pub fn expr_type_id(&self, expr: ExprId) -> Option<TypeId> {
+        self.expr_types.get(expr.as_usize()).copied().flatten()
+    }
+
+    #[must_use]
     pub fn decl_type(&self, symbol: SymbolId) -> Option<&ArType> {
         self.decl_types
             .get(&symbol)
             .map(|id| self.type_interner.resolve(*id))
+    }
+
+    #[must_use]
+    pub fn decl_type_id(&self, symbol: SymbolId) -> Option<TypeId> {
+        self.decl_types.get(&symbol).copied()
     }
 
     #[must_use]

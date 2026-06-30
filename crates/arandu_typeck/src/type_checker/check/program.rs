@@ -76,8 +76,8 @@ fn duplicate_module_member_info(checker: &mut TypeChecker<'_>, program: &Program
                         && let Some(member_id) =
                             checker.symbols.lookup_module_member(&module_name, name)
                             && free_id != member_id {
-                                if let Some(ty) = checker.decl_type(free_id) {
-                                    checker.record_decl_type(member_id, ty);
+                                if let Some(ty_id) = checker.decl_type_id(free_id) {
+                                    checker.record_decl_type(member_id, ty_id);
                                 }
                                 if let Some(params) =
                                     checker.type_info.generic_params.get(&free_id).cloned()
@@ -95,8 +95,8 @@ fn duplicate_module_member_info(checker: &mut TypeChecker<'_>, program: &Program
         if let Some(&free_id) = checker.resolved.definitions.get(&name_key)
             && let Some(member_id) = checker.symbols.lookup_module_member(&module_name, name)
                 && free_id != member_id {
-                    if let Some(ty) = checker.decl_type(free_id) {
-                        checker.record_decl_type(member_id, ty);
+                    if let Some(ty_id) = checker.decl_type_id(free_id) {
+                        checker.record_decl_type(member_id, ty_id);
                     }
                     if let Some(params) = checker.type_info.generic_params.get(&free_id).cloned() {
                         checker.type_info.generic_params.insert(member_id, params);

@@ -52,7 +52,8 @@ pub fn check_stmt(checker: &mut TypeChecker<'_>, pool: &AstPool, stmt: &Stmt) {
     bindings: &[arandu_parser::BindingItem],
     value: arandu_parser::ast_pool::ExprId,
 ) {
-    let val_ty = super::super::synth::synth_expr(checker, value);
+    let val_ty_id = super::super::synth::synth_expr(checker, value);
+    let val_ty = checker.resolve(val_ty_id).clone();
 
     if bindings.len() > 1 {
         check_multi_var_decl(checker, bindings, value, &val_ty);
@@ -99,8 +100,9 @@ fn check_multi_var_decl(
                 bind_ty = expected;
             }
 
-            checker.ctx.bind(symbol_id, bind_ty.clone());
-            checker.record_decl_type(symbol_id, bind_ty);
+            let bind_ty_id = checker.intern(bind_ty.clone());
+            checker.ctx.bind(symbol_id, bind_ty);
+            checker.record_decl_type(symbol_id, bind_ty_id);
         }
     }
 }
@@ -120,7 +122,8 @@ fn check_single_var_decl(
         {
             let expected = checker.lower_type_expr(*ty_expr, checker.type_scope());
             if !expected.is_error() {
-                checker.type_info.record_expr_type(value, expected.clone());
+                let expected_id = checker.intern(expected.clone());
+                checker.type_info.record_expr_type(value, expected_id);
                 bind_ty = expected;
             }
         }
@@ -151,8 +154,9 @@ fn check_single_var_decl(
             bind_ty = expected;
         }
 
-        checker.ctx.bind(symbol_id, bind_ty.clone());
-        checker.record_decl_type(symbol_id, bind_ty);
+        let bind_ty_id = checker.intern(bind_ty.clone());
+        checker.ctx.bind(symbol_id, bind_ty);
+        checker.record_decl_type(symbol_id, bind_ty_id);
     }
 }
 
@@ -164,7 +168,8 @@ fn check_set_stmt(
     for place in places {
         validate_mutability(checker, place);
     }
-    let val_ty = super::super::synth::synth_expr(checker, value);
+    let val_ty_id = super::super::synth::synth_expr(checker, value);
+    let val_ty = checker.resolve(val_ty_id).clone();
 
     if places.len() > 1 {
         let val_tys = if let Some((ok, err)) = checker.result_ok_err(&val_ty) {
@@ -190,7 +195,8 @@ fn check_set_stmt(
         let mut final_val_ty = val_ty.clone();
 
         if matches!(checker.pool.expr(value), arandu_parser::ExprKind::Nil) && !expected_ty.is_error() {
-            checker.type_info.record_expr_type(value, expected_ty.clone());
+            let expected_ty_id = checker.intern(expected_ty.clone());
+            checker.type_info.record_expr_type(value, expected_ty_id);
             final_val_ty = expected_ty.clone();
         }
 
@@ -219,20 +225,21 @@ fn check_return_stmt(
         .cloned()
         .unwrap_or(ArType::Void);
 
-    let val_ty = if values.is_empty() {
-        ArType::Void
+    let val_ty_id = if values.is_empty() {
+        checker.intern(ArType::Void)
     } else if values.len() == 1 {
         super::super::synth::synth_expr(checker, values[0])
     } else {
         let tys = values
             .iter()
             .map(|v| {
-                let ty = super::super::synth::synth_expr(checker, *v);
-                checker.intern(ty)
+                let ty_id = super::super::synth::synth_expr(checker, *v);
+                ty_id
             })
             .collect();
-        ArType::Tuple(tys)
+        checker.intern(ArType::Tuple(tys))
     };
+    let val_ty = checker.resolve(val_ty_id).clone();
 
     if !checker.unify_return(&current_ret, &val_ty) {
         checker.add_constraint(
@@ -297,7 +304,8 @@ fn check_for_stmt(
             bindings,
             iterable,
         } => {
-            let iterable_ty = super::super::synth::synth_expr(checker, *iterable);
+            let iterable_ty_id = super::super::synth::synth_expr(checker, *iterable);
+            let iterable_ty = checker.resolve(iterable_ty_id).clone();
             let elem_ty = match &iterable_ty {
                 ArType::Array(_, inner) | ArType::Slice(inner) | ArType::Range(inner) => {
                     checker.type_info.type_interner.resolve(*inner).clone()
@@ -319,7 +327,8 @@ fn check_for_stmt(
                 let binding_key = crate::NodeKey::from(binding.span);
                 if let Some(symbol_id) = checker.resolved.definitions.get(&binding_key).copied() {
                     checker.ctx.bind(symbol_id, elem_ty.clone());
-                    checker.record_decl_type(symbol_id, elem_ty);
+                    let elem_ty_id = checker.intern(elem_ty.clone());
+                    checker.record_decl_type(symbol_id, elem_ty_id);
                 }
             }
         }
@@ -333,7 +342,8 @@ fn check_for_stmt(
                 check_simple_stmt(checker, pool, init_stmt);
             }
             if let Some(cond_expr) = condition {
-                let cond_ty = super::super::synth::synth_expr(checker, *cond_expr);
+                let cond_ty_id = super::super::synth::synth_expr(checker, *cond_expr);
+                let cond_ty = checker.resolve(cond_ty_id).clone();
                 if !cond_ty.is_error()
                     && !super::super::types::unify(
                         &cond_ty,
@@ -396,7 +406,8 @@ fn check_simple_stmt(
 }
 
 fn check_free_stmt(checker: &mut TypeChecker<'_>, span: arandu_base::Span, expr: arandu_parser::ast_pool::ExprId) {
-    let ty = super::super::synth::synth_expr(checker, expr);
+    let ty_id = super::super::synth::synth_expr(checker, expr);
+    let ty = checker.resolve(ty_id).clone();
     if !ty.is_error() && !matches!(ty, ArType::Ptr(_)) {
         let interner = &checker.type_info.type_interner;
         checker.diagnostics.push(

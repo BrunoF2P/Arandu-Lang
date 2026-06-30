@@ -14,11 +14,12 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
             if let Some(symbol_id) = checker.resolved.definitions.get(&key) {
                 let val_ty = checker.type_info.resolve_type_id(value_ty).clone();
                 checker.ctx.bind(*symbol_id, val_ty.clone());
-                checker.record_decl_type(*symbol_id, val_ty);
+                checker.record_decl_type(*symbol_id, value_ty);
             }
         }
         Pattern::Literal { expr, .. } => {
-            let expr_ty = synth_expr(checker, *expr);
+            let expr_ty_id = synth_expr(checker, *expr);
+            let expr_ty = checker.resolve(expr_ty_id).clone();
             let val_ty = checker.type_info.resolve_type_id(value_ty).clone();
             if !super::super::types::unify(&val_ty, &expr_ty, &checker.type_info.type_interner) {
                 checker.add_constraint(
@@ -419,7 +420,7 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                             if let Some(symbol_id) = checker.resolved.definitions.get(&key).copied()
                             {
                                 checker.ctx.bind(symbol_id, field_ty.clone());
-                                checker.record_decl_type(symbol_id, field_ty);
+                                checker.record_decl_type(symbol_id, field_ty_id);
                             }
                         }
                     } else {
@@ -442,8 +443,10 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
             span: _,
             ..
         } => {
-            let start_ty = synth_expr(checker, *start);
-            let end_ty = synth_expr(checker, *end);
+            let start_ty_id = synth_expr(checker, *start);
+            let end_ty_id = synth_expr(checker, *end);
+            let start_ty = checker.resolve(start_ty_id).clone();
+            let end_ty = checker.resolve(end_ty_id).clone();
             let val_ty = checker.type_info.resolve_type_id(value_ty).clone();
             if !super::super::types::unify(&val_ty, &start_ty, &checker.type_info.type_interner) {
                 checker.add_constraint(

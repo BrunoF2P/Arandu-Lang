@@ -48,7 +48,8 @@ pub(crate) fn resolve_field(
     field_span: arandu_lexer::Span,
     safe: bool,
 ) -> ArType {
-    let base_ty = synth_expr(checker, base);
+    let base_ty_id = synth_expr(checker, base);
+    let base_ty = checker.resolve(base_ty_id).clone();
     if base_ty.is_error() {
         return ArType::Error;
     }
@@ -179,8 +180,10 @@ pub(crate) fn resolve_index(
     index: ExprId,
     safe: bool,
 ) -> ArType {
-    let base_ty = synth_expr(checker, base);
-    let index_ty = synth_expr(checker, index);
+    let base_ty_id = synth_expr(checker, base);
+    let index_ty_id = synth_expr(checker, index);
+    let base_ty = checker.resolve(base_ty_id).clone();
+    let index_ty = checker.resolve(index_ty_id).clone();
 
     if base_ty.is_error() {
         return ArType::Error;

@@ -25,12 +25,14 @@ pub(super) fn report_unsupported(
     );
 }
 
+use arandu_middle::types::type_interner::TypeId;
+
 pub(super) fn synth_control_flow_expr(
     checker: &mut TypeChecker<'_>,
     _expr: ExprId,
     kind: &ExprKind,
     span: Span,
-) -> Option<ArType> {
+) -> Option<TypeId> {
     match kind {
         ExprKind::Lambda { .. } => {
             report_unsupported(
@@ -39,13 +41,12 @@ pub(super) fn synth_control_flow_expr(
                 "lambda/closure",
                 "v0.3 LAMBDA: closure type checking and lowering",
             );
-            Some(ArType::Error)
+            Some(checker.intern(ArType::Error))
         }
         ExprKind::Alloc { expr: inner_expr } => {
             let inner_id = *inner_expr;
-            let inner_ty = synth_expr(checker, inner_id);
-            let inner_id = checker.intern(inner_ty);
-            Some(ArType::Ptr(inner_id))
+            let inner_ty_id = synth_expr(checker, inner_id);
+            Some(checker.intern(ArType::Ptr(inner_ty_id)))
         }
         ExprKind::AsyncBlock { block } => {
             let block_id = *block;
@@ -55,15 +56,16 @@ pub(super) fn synth_control_flow_expr(
                 checker.pool.block(block_id),
             );
             let inner_id = checker.intern(block_ty);
-            Some(ArType::Coroutine(inner_id))
+            Some(checker.intern(ArType::Coroutine(inner_id)))
         }
         ExprKind::UnsafeBlock { block } => {
             let block_id = *block;
-            Some(crate::type_checker::check::check_block(
+            let block_ty = crate::type_checker::check::check_block(
                 checker,
                 checker.pool,
                 checker.pool.block(block_id),
-            ))
+            );
+            Some(checker.intern(block_ty))
         }
         ExprKind::If {
             condition,
@@ -94,19 +96,18 @@ pub(super) fn synth_control_flow_expr(
                     },
                 );
             }
-            Some(then_ty)
+            Some(checker.intern(then_ty))
         }
         ExprKind::Match { value, arms } => {
             let value_id = *value;
             let arms_range = *arms;
-            let value_ty = synth_expr(checker, value_id);
+            let value_ty_id = synth_expr(checker, value_id);
             let arm_ids = checker.pool.match_arm_list(arms_range).to_vec();
 
             let resolved_arms: Vec<arandu_parser::MatchArm> = arm_ids
                 .iter()
                 .map(|id| checker.pool.match_arm(*id).clone())
                 .collect();
-            let value_ty_id = checker.type_info.type_interner.intern(value_ty.clone());
             crate::type_checker::synth::match_exhaust::check_match_exhaustiveness(
                 checker,
                 value_ty_id,
@@ -114,32 +115,35 @@ pub(super) fn synth_control_flow_expr(
                 span,
             );
 
-            let mut expected_arm_ty = ArType::Error;
+            let mut expected_arm_ty_id = checker.intern(ArType::Error);
             let mut first_arm_span = span;
 
             for (i, arm_id) in arm_ids.iter().copied().enumerate() {
                 let arm = checker.pool.match_arm(arm_id);
                 check_pattern(checker, arm.pattern, value_ty_id);
-                let arm_ty = match &arm.body {
+                let arm_ty_id = match &arm.body {
                     arandu_parser::MatchArmBody::Expr {
                         expr: inner_expr, ..
                     } => synth_expr(checker, *inner_expr),
                     arandu_parser::MatchArmBody::Block { block, .. } => {
-                        crate::type_checker::check::check_block(
+                        let block_ty = crate::type_checker::check::check_block(
                             checker,
                             checker.pool,
                             block,
-                        )
+                        );
+                        checker.intern(block_ty)
                     }
                 };
 
                 if i == 0 {
-                    expected_arm_ty = arm_ty;
+                    expected_arm_ty_id = arm_ty_id;
                     first_arm_span = arm.span;
-                } else if !types::unify(&expected_arm_ty, &arm_ty, &checker.type_info.type_interner) {
+                } else if !checker.unify_ids(expected_arm_ty_id, arm_ty_id) {
+                    let expected_arm_ty = checker.resolve(expected_arm_ty_id).clone();
+                    let arm_ty = checker.resolve(arm_ty_id).clone();
                     checker.add_constraint(
-                        expected_arm_ty.clone(),
-                        arm_ty.clone(),
+                        expected_arm_ty,
+                        arm_ty,
                         ConstraintOrigin::MatchArms {
                             first_span: first_arm_span,
                             mismatch_span: arm.span,
@@ -148,7 +152,7 @@ pub(super) fn synth_control_flow_expr(
                     );
                 }
             }
-            Some(expected_arm_ty)
+            Some(expected_arm_ty_id)
         }
         _ => None,
     }

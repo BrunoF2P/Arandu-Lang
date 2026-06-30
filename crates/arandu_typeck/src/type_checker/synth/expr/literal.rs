@@ -5,6 +5,7 @@ use smallvec::SmallVec;
 use crate::type_checker::TypeChecker;
 use crate::type_checker::constraints::ConstraintOrigin;
 use crate::type_checker::types::{self, ArType, Primitive};
+use arandu_middle::types::type_interner::TypeId;
 use super::synth_expr;
 
 /// Stricter than `unify` for array literals: int and float literals must not mix.
@@ -23,12 +24,12 @@ pub(super) fn synth_literal_expr(
     _expr: ExprId,
     kind: &ExprKind,
     span: Span,
-) -> Option<ArType> {
+) -> Option<TypeId> {
     match kind {
-        ExprKind::Int { .. } => Some(ArType::IntLiteral),
-        ExprKind::Float { .. } => Some(ArType::FloatLiteral),
-        ExprKind::Bool { .. } => Some(ArType::Primitive(Primitive::Bool)),
-        ExprKind::Char { .. } => Some(ArType::Primitive(Primitive::Char)),
+        ExprKind::Int { .. } => Some(checker.intern(ArType::IntLiteral)),
+        ExprKind::Float { .. } => Some(checker.intern(ArType::FloatLiteral)),
+        ExprKind::Bool { .. } => Some(checker.intern(ArType::Primitive(Primitive::Bool))),
+        ExprKind::Char { .. } => Some(checker.intern(ArType::Primitive(Primitive::Char))),
         ExprKind::InterpolatedString { parts } => {
             let part_ids = checker.pool.string_part_list(*parts).to_vec();
             for part_id in part_ids {
@@ -39,22 +40,24 @@ pub(super) fn synth_literal_expr(
                     let _ = synth_expr(checker, *inner_expr);
                 }
             }
-            Some(ArType::Primitive(Primitive::Str))
+            Some(checker.intern(ArType::Primitive(Primitive::Str)))
         }
         ExprKind::Nil => {
             if let Some(ret) = checker.ctx.current_return() {
-                if checker.is_result_type(ret)
-                    || types::is_option_type(ret)
-                    || matches!(ret, ArType::Nullable(_))
-                {
-                    return Some(ret.clone());
+                // If it is nil, it can fallback to return type or nullable/option
+                if types::is_err_type(&ret, &checker.type_info.type_interner) {
+                    let err_id = checker.intern(ArType::Error);
+                    Some(checker.intern(ArType::Nullable(err_id)))
+                } else if types::is_tryable_type(&ret, &checker.type_info.type_interner) {
+                    Some(checker.intern(ret.clone()))
+                } else {
+                    let id = checker.intern(ret.clone());
+                    Some(checker.intern(ArType::Nullable(id)))
                 }
-                if let Some((ok, _)) = checker.result_ok_err(ret) {
-                    return Some(ok);
-                }
+            } else {
+                let err_id = checker.intern(ArType::Error);
+                Some(checker.intern(ArType::Nullable(err_id)))
             }
-            let err_id = checker.intern(ArType::Error);
-            Some(ArType::Nullable(err_id))
         }
         ExprKind::StructLiteral { ty, fields } => {
             let ty_id = *ty;
@@ -95,7 +98,8 @@ pub(super) fn synth_literal_expr(
                 if let Some(fields_def) = field_map {
                     for fid in &field_ids {
                         let field = checker.pool.field_init(*fid);
-                        let field_val_ty = synth_expr(checker, field.value);
+                        let field_val_ty_id = synth_expr(checker, field.value);
+                        let field_val_ty = checker.resolve(field_val_ty_id).clone();
                         let defined_field_ty = fields_def.get(&field.name).cloned();
                         if let Some(defined_field_ty) = defined_field_ty {
                             if !types::unify(&defined_field_ty, &field_val_ty, &checker.type_info.type_interner) {
@@ -154,14 +158,15 @@ pub(super) fn synth_literal_expr(
                     let _ = synth_expr(checker, field.value);
                 }
             }
-            Some(struct_ty)
+            Some(checker.intern(struct_ty))
         }
         ExprKind::Array { items } => {
             let items_range = *items;
             let mut elem_ty = ArType::Error;
             let item_ids = checker.pool.expr_list(items_range).to_vec();
             for (i, item_id) in item_ids.iter().copied().enumerate() {
-                let item_ty = synth_expr(checker, item_id);
+                let item_ty_id = synth_expr(checker, item_id);
+                let item_ty = checker.resolve(item_ty_id).clone();
                 if elem_ty.is_error() {
                     elem_ty = item_ty;
                 } else if !array_element_types_compatible(&elem_ty, &item_ty, &checker.type_info.type_interner) {
@@ -178,7 +183,7 @@ pub(super) fn synth_literal_expr(
                 }
             }
             let elem_id = checker.intern(elem_ty);
-            Some(ArType::Array(items_range.len as u64, elem_id))
+            Some(checker.intern(ArType::Array(items_range.len as u64, elem_id)))
         }
         _ => None,
     }

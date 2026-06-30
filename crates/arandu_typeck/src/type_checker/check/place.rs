@@ -88,7 +88,8 @@ pub(crate) fn synth_place(checker: &mut TypeChecker<'_>, place: &arandu_parser::
                 }
             }
             arandu_parser::PlaceSuffix::Index { span, expr } => {
-                let index_ty = super::super::synth::synth_expr(checker, *expr);
+                let index_ty_id = super::super::synth::synth_expr(checker, *expr);
+                let index_ty = checker.resolve(index_ty_id).clone();
                 let interner = &checker.type_info.type_interner;
                 let (actual_base_ty, was_nullable) = match &current_ty {
                     ArType::Nullable(inner) => (

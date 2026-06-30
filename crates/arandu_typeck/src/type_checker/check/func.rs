@@ -135,9 +135,10 @@ pub fn check_func_body(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
                 }
 
         let param_key = crate::NodeKey::from(param.span);
-        if let Some(symbol_id) = checker.resolved.definitions.get(&param_key) {
-            checker.ctx.bind(*symbol_id, param_ty.clone());
-            checker.record_decl_type(*symbol_id, param_ty);
+        if let Some(&symbol_id) = checker.resolved.definitions.get(&param_key) {
+            let param_ty_id = checker.intern(param_ty.clone());
+            checker.ctx.bind(symbol_id, param_ty);
+            checker.record_decl_type(symbol_id, param_ty_id);
         }
     }
 

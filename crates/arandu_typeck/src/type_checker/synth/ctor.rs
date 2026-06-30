@@ -38,10 +38,9 @@ pub(crate) fn synth_result_ctor(
                 checker.diagnostics.push(diag);
                 return Some(ArType::Error);
             }
-            let ok_ty = synth_expr(checker, arg_ids[0]);
-            let ok_id = checker.intern(ok_ty);
+            let ok_ty_id = synth_expr(checker, arg_ids[0]);
             let err_literal_id = checker.intern(ArType::Err);
-            Some(ArType::Result(ok_id, err_literal_id))
+            Some(ArType::Result(ok_ty_id, err_literal_id))
         }
         "Err" => {
             if arg_ids.len() != 1 {
@@ -55,9 +54,8 @@ pub(crate) fn synth_result_ctor(
                 checker.diagnostics.push(diag);
                 return Some(ArType::Error);
             }
-            let err_ty = synth_expr(checker, arg_ids[0]);
+            let err_ty_id = synth_expr(checker, arg_ids[0]);
             let err_id = checker.intern(ArType::Error);
-            let err_ty_id = checker.intern(err_ty);
             Some(ArType::Result(err_id, err_ty_id))
         }
         _ => None,
@@ -88,8 +86,7 @@ pub(crate) fn synth_option_ctor(
                 checker.diagnostics.push(diag);
                 return Some(ArType::Error);
             }
-            let inner = synth_expr(checker, arg_ids[0]);
-            let inner_id = checker.intern(inner);
+            let inner_id = synth_expr(checker, arg_ids[0]);
             Some(ArType::Option(inner_id))
         }
         _ => None,
@@ -105,14 +102,15 @@ pub(crate) fn synth_method_call(
     args: IndexRange,
     call_span: arandu_lexer::Span,
 ) -> Option<ArType> {
-    let base_ty = synth_expr(checker, base);
+    let base_ty_id = synth_expr(checker, base);
+    let base_ty = checker.resolve(base_ty_id).clone();
     if base_ty.is_error() {
         return Some(ArType::Error);
     }
 
-    let actual_base_ty = match &base_ty {
-        ArType::Nullable(inner) => checker.resolve(*inner).clone(),
-        other => other.clone(),
+    let actual_base_ty = match base_ty {
+        ArType::Nullable(inner) => checker.resolve(inner).clone(),
+        other => other,
     };
 
     let struct_id = match &actual_base_ty {
@@ -198,13 +196,14 @@ pub(crate) fn synth_method_call(
     }
 
     for (i, arg_id) in arg_ids.iter().copied().enumerate() {
-        let arg_ty = synth_expr(checker, arg_id);
+        let arg_ty_id = synth_expr(checker, arg_id);
         if let Some(&expected_id) = explicit_params.get(i) {
             let expected = checker.resolve(expected_id).clone();
+            let arg_ty = checker.resolve(arg_ty_id).clone();
             if !super::super::types::unify(&expected, &arg_ty, &checker.type_info.type_interner) {
                 checker.add_constraint(
                     expected.clone(),
-                    arg_ty.clone(),
+                    arg_ty,
                     ConstraintOrigin::CallArg {
                         call_span,
                         param_span: field_span,
@@ -219,7 +218,8 @@ pub(crate) fn synth_method_call(
     if let Some(sym) = method_sym_recorded {
         checker.resolved.value_ref(field_span, sym);
     }
-    checker.record_expr_type(callee, ArType::Func(params, ret));
+    let func_id = checker.intern(ArType::Func(params, ret));
+    checker.record_expr_type(callee, func_id);
 
     Some(checker.resolve(ret).clone())
 }

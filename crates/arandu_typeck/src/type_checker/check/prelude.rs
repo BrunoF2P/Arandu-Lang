@@ -201,7 +201,8 @@ pub(crate) fn register_prelude(checker: &mut TypeChecker<'_>, program: &Program)
     ] {
         for (member, ty) in members_with_types {
             if let Some(symbol_id) = checker.symbols.lookup_module_member(module, member) {
-                checker.record_decl_type(symbol_id, ty);
+                let ty_id = checker.intern(ty);
+                checker.record_decl_type(symbol_id, ty_id);
             }
         }
     }
