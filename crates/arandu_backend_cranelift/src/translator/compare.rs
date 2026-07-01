@@ -219,12 +219,18 @@ impl FunctionTranslator<'_, '_> {
                 let call_inst = self.builder.ins().call(local_ref, &[size_val]);
                 let ptr_val = self.builder.inst_results(call_inst)[0];
 
-                self.builder
-                    .ins()
-                    .store(cranelift_codegen::ir::MemFlagsData::new(), lhs, ptr_val, 0);
-                self.builder
-                    .ins()
-                    .store(cranelift_codegen::ir::MemFlagsData::new(), rhs, ptr_val, 8);
+                self.builder.ins().store(
+                    cranelift_codegen::ir::MemFlagsData::new(),
+                    lhs,
+                    ptr_val,
+                    0,
+                );
+                self.builder.ins().store(
+                    cranelift_codegen::ir::MemFlagsData::new(),
+                    rhs,
+                    ptr_val,
+                    8,
+                );
                 ptr_val
             }
             _ => unimplemented!(
