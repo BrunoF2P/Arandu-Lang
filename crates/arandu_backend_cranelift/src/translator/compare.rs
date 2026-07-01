@@ -212,13 +212,19 @@ impl FunctionTranslator<'_, '_> {
                 let Some(malloc_func_id) = self.malloc_func_id() else {
                     return self.poison_i32();
                 };
-                let local_ref = self.module.declare_func_in_func(malloc_func_id, self.builder.func);
+                let local_ref = self
+                    .module
+                    .declare_func_in_func(malloc_func_id, self.builder.func);
                 let size_val = self.builder.ins().iconst(self.ptr_type, 16);
                 let call_inst = self.builder.ins().call(local_ref, &[size_val]);
                 let ptr_val = self.builder.inst_results(call_inst)[0];
 
-                self.builder.ins().store(cranelift_codegen::ir::MemFlags::new(), lhs, ptr_val, 0);
-                self.builder.ins().store(cranelift_codegen::ir::MemFlags::new(), rhs, ptr_val, 8);
+                self.builder
+                    .ins()
+                    .store(cranelift_codegen::ir::MemFlagsData::new(), lhs, ptr_val, 0);
+                self.builder
+                    .ins()
+                    .store(cranelift_codegen::ir::MemFlagsData::new(), rhs, ptr_val, 8);
                 ptr_val
             }
             _ => unimplemented!(

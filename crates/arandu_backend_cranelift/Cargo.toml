@@ -8,13 +8,13 @@ authors.workspace = true
 [dependencies]
 arandu_base = { path = "../arandu_base" }
 arandu_semantics = { path = "../arandu_semantics" }
-cranelift-codegen = "0.132.1"
-cranelift-frontend = "0.132.1"
-cranelift-jit = "0.132.1"
-cranelift-module = "0.132.1"
-cranelift-native = "0.132.1"
+cranelift-codegen = "0.133.1"
+cranelift-frontend = "0.133.1"
+cranelift-jit = "0.133.1"
+cranelift-module = "0.133.1"
+cranelift-native = "0.133.1"
 target-lexicon = "0.13.5"
-rustc-hash = "2.1"
+rustc-hash = "2.1.2"
 
 [dev-dependencies]
 arandu_parser = { path = "../arandu_parser" }

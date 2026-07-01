@@ -99,7 +99,9 @@ impl FunctionTranslator<'_, '_> {
                             let _ = self.module.define_data(data_id, &data_ctx);
                             let local_data_ref =
                                 self.module.declare_data_in_func(data_id, self.builder.func);
-                            self.builder.ins().symbol_value(self.ptr_type, local_data_ref)
+                            self.builder
+                                .ins()
+                                .symbol_value(self.ptr_type, local_data_ref)
                         }
                         arandu_semantics::literal_pool::AmirLiteralEntry::Char(s) => {
                             let val = s.chars().next().unwrap_or('\0') as i64;
@@ -133,6 +135,7 @@ impl FunctionTranslator<'_, '_> {
         &mut self,
         rvalue: &AmirRvalue,
         expected_ty: Option<Type>,
+        expected_ar_type: Option<&arandu_semantics::types::ArType>,
     ) -> Value {
         if self.error.is_some() {
             return self.poison_i32();
@@ -202,7 +205,7 @@ impl FunctionTranslator<'_, '_> {
                                 let clif_ty = expected_ty.unwrap_or(self.ptr_type);
                                 ptr_val = self.builder.ins().load(
                                     clif_ty,
-                                    cranelift_codegen::ir::MemFlags::new(),
+                                    cranelift_codegen::ir::MemFlagsData::new(),
                                     ptr_val,
                                     offset,
                                 );
@@ -215,7 +218,7 @@ impl FunctionTranslator<'_, '_> {
                                 let clif_ty = expected_ty.unwrap_or(self.ptr_type);
                                 ptr_val = self.builder.ins().load(
                                     clif_ty,
-                                    cranelift_codegen::ir::MemFlags::new(),
+                                    cranelift_codegen::ir::MemFlagsData::new(),
                                     elem_ptr,
                                     0,
                                 );
@@ -226,7 +229,7 @@ impl FunctionTranslator<'_, '_> {
                 }
             }
             AmirRvalue::StructLiteral {
-                struct_symbol: _,
+                struct_symbol,
                 fields,
             } => {
                 let Some(malloc_func_id) = self.malloc_func_id() else {
@@ -235,24 +238,33 @@ impl FunctionTranslator<'_, '_> {
                 let local_ref = self
                     .module
                     .declare_func_in_func(malloc_func_id, self.builder.func);
-                let size_val = self
-                    .builder
-                    .ins()
-                    .iconst(self.ptr_type, (fields.len() * 8) as i64);
+
+                let pointer_width = self.ptr_type.bytes() as u64;
+                let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
+                let struct_ty = expected_ar_type.cloned().unwrap_or_else(|| {
+                    arandu_semantics::types::ArType::Named(*struct_symbol, Vec::new())
+                });
+                let layout = engine.layout_of_type(
+                    &struct_ty,
+                    &self.type_info.type_interner,
+                    self.type_info,
+                );
+
+                let size_val = self.builder.ins().iconst(self.ptr_type, layout.size as i64);
                 let call_inst = self.builder.ins().call(local_ref, &[size_val]);
                 let ptr_val = self.builder.inst_results(call_inst)[0];
 
                 for (i, (name, op)) in fields.iter().enumerate() {
-                    let field_idx = match name.as_str() {
-                        "buf" => 0,
-                        "len" => 1,
-                        "cap" => 2,
-                        _ => i,
-                    };
+                    let field_idx = self
+                        .type_info
+                        .struct_field_indices
+                        .get(struct_symbol)
+                        .and_then(|m| m.get(name.as_str()).copied())
+                        .unwrap_or(i);
                     let val = self.translate_operand(op, None);
-                    let offset = (field_idx * 8) as i32;
+                    let offset = layout.field_offsets[field_idx] as i32;
                     self.builder.ins().store(
-                        cranelift_codegen::ir::MemFlags::new(),
+                        cranelift_codegen::ir::MemFlagsData::new(),
                         val,
                         ptr_val,
                         offset,
@@ -262,11 +274,28 @@ impl FunctionTranslator<'_, '_> {
             }
             AmirRvalue::FieldAccess { base, field } => {
                 let ptr_val = self.translate_operand(base, Some(self.ptr_type));
-                let offset = (field * 8) as i32;
+                let base_ty = match base {
+                    AmirOperand::Copy(temp_id) | AmirOperand::Move(temp_id) => {
+                        &self.current_func.temps[temp_id.as_usize()].ty
+                    }
+                    _ => &arandu_semantics::types::ArType::Error,
+                };
+                let struct_ty = match base_ty {
+                    arandu_semantics::types::ArType::Ptr(inner) => {
+                        self.type_info.resolve_type_id(*inner)
+                    }
+                    other => other,
+                };
+                let pointer_width = self.ptr_type.bytes() as u64;
+                let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
+                let layout =
+                    engine.layout_of_type(struct_ty, &self.type_info.type_interner, self.type_info);
+                let offset = layout.field_offsets[*field] as i32;
+
                 let clif_ty = expected_ty.unwrap_or(self.ptr_type);
                 self.builder.ins().load(
                     clif_ty,
-                    cranelift_codegen::ir::MemFlags::new(),
+                    cranelift_codegen::ir::MemFlagsData::new(),
                     ptr_val,
                     offset,
                 )

@@ -10,8 +10,8 @@ default = ["vm"]
 vm = ["dep:libc"]
 
 [dependencies]
-rustc-hash = "2.1"
-libc = { version = "0.2", optional = true }
+rustc-hash = "2.1.2"
+libc = { version = "0.2.186", optional = true }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_System_Memory"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Memory"] }
