@@ -63,14 +63,12 @@ impl AmirFunc {
 
     #[must_use]
     pub fn successors(&self, block: super::block::BlockId) -> &[super::block::BlockId] {
-        let range = self.cfg.successor_ranges[block];
-        &self.cfg.successors[range.as_range()]
+        &self.cfg.successors[block.as_usize()]
     }
 
     #[must_use]
     pub fn predecessors(&self, block: super::block::BlockId) -> &[super::block::BlockId] {
-        let range = self.cfg.predecessor_ranges[block];
-        &self.cfg.predecessors[range.as_range()]
+        &self.cfg.predecessors[block.as_usize()]
     }
 
     pub fn append_stmt_to_block(

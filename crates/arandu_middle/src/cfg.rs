@@ -1,63 +1,85 @@
 //! CFG edge computation for AMIR basic blocks (C3).
 
-use crate::DenseRange;
 use crate::amir::{AmirBasicBlock, AmirTerminator, BlockId};
-use crate::index_vec::IndexVec;
 
 #[derive(Debug, Clone, Default)]
 pub struct ControlFlowGraph {
-    pub successors: Vec<BlockId>,
-    pub successor_ranges: IndexVec<BlockId, DenseRange>,
-    pub predecessors: Vec<BlockId>,
-    pub predecessor_ranges: IndexVec<BlockId, DenseRange>,
+    pub successors: Vec<Vec<BlockId>>,
+    pub predecessors: Vec<Vec<BlockId>>,
 }
 
+/// Build predecessor and successor edges for every block.
+///
+/// Runs in O(N + E) by walking each terminator's successors once.
 pub fn compute_cfg_edges(blocks: &[AmirBasicBlock]) -> ControlFlowGraph {
     let num_blocks = blocks.len();
-    let mut successors = Vec::new();
-    let mut successor_ranges = IndexVec::from(vec![DenseRange::empty(); num_blocks]);
+    let mut successors: Vec<Vec<BlockId>> = vec![Vec::new(); num_blocks];
+    let mut predecessors: Vec<Vec<BlockId>> = vec![Vec::new(); num_blocks];
 
     for (i, block) in blocks.iter().enumerate() {
         let bid = BlockId::from_usize(i);
         let succs = terminator_successors(&block.terminator);
-
-        let start = successors.len();
         for succ in succs {
             if succ.as_usize() < num_blocks {
-                successors.push(succ);
+                successors[bid.as_usize()].push(succ);
+                predecessors[succ.as_usize()].push(bid);
             }
         }
-        let len = successors.len() - start;
-        successor_ranges[bid] = DenseRange::new(start, len);
-    }
-
-    let mut predecessors = Vec::new();
-    let mut predecessor_ranges = IndexVec::from(vec![DenseRange::empty(); num_blocks]);
-
-    for i in 0..num_blocks {
-        let target_bid = BlockId::from_usize(i);
-        let start = predecessors.len();
-
-        for source_idx in 0..num_blocks {
-            let source_bid = BlockId::from_usize(source_idx);
-            let range = successor_ranges[source_bid];
-            let source_succs = &successors[range.as_range()];
-            if source_succs.contains(&target_bid) {
-                predecessors.push(source_bid);
-            }
-        }
-
-        let len = predecessors.len() - start;
-        predecessor_ranges[target_bid] = DenseRange::new(start, len);
     }
 
     ControlFlowGraph {
         successors,
-        successor_ranges,
         predecessors,
-        predecessor_ranges,
     }
 }
+
+// ---------------------------------------------------------------------------
+// Incremental helpers (used by simplify_cfg pass)
+// ---------------------------------------------------------------------------
+
+/// When block `from`'s terminator changes so that its edge to `old` becomes
+/// an edge to `new`, update both successor and predecessor lists in place.
+///
+/// Panics if `old` is not currently a successor of `from`.
+pub fn retarget_successor(cfg: &mut ControlFlowGraph, from: BlockId, old: BlockId, new: BlockId) {
+    let succs = &mut cfg.successors[from.as_usize()];
+    let pos = succs
+        .iter()
+        .position(|&s| s == old)
+        .expect("retarget_successor: old must be a current successor");
+    succs[pos] = new;
+
+    cfg.predecessors[old.as_usize()].retain(|&p| p != from);
+    cfg.predecessors[new.as_usize()].push(from);
+}
+
+/// Remove all CFG entries for `block` and remove `block` from every
+/// successor's predecessor list.  Does NOT remove the block itself from
+/// the blocks vec — caller must handle that.
+pub fn clear_block(cfg: &mut ControlFlowGraph, block: BlockId) {
+    for &succ in &cfg.successors[block.as_usize()] {
+        cfg.predecessors[succ.as_usize()].retain(|&p| p != block);
+    }
+    cfg.successors[block.as_usize()].clear();
+    cfg.predecessors[block.as_usize()].clear();
+}
+
+/// Transfer all edges from `from` to `into`: every successor of `from`
+/// now has `into` as a predecessor instead of `from`.  `from`'s successor
+/// list is cleared after the transfer.
+pub fn transfer_edges(cfg: &mut ControlFlowGraph, into: BlockId, from: BlockId) {
+    let from_succs: Vec<BlockId> = cfg.successors[from.as_usize()].clone();
+    for succ in &from_succs {
+        cfg.predecessors[succ.as_usize()].retain(|&p| p != from);
+        cfg.predecessors[succ.as_usize()].push(into);
+    }
+    cfg.successors[into.as_usize()] = from_succs;
+    cfg.successors[from.as_usize()].clear();
+}
+
+// ---------------------------------------------------------------------------
+// Private helpers
+// ---------------------------------------------------------------------------
 
 fn terminator_successors(term: &AmirTerminator) -> smallvec::SmallVec<[BlockId; 2]> {
     match term {
@@ -96,7 +118,7 @@ mod tests {
     fn block(id: usize, terminator: AmirTerminator) -> AmirBasicBlock {
         AmirBasicBlock {
             id: BlockId::from_usize(id),
-            statements: DenseRange::empty(),
+            statements: crate::layout::DenseRange::empty(),
             terminator,
         }
     }
@@ -112,8 +134,8 @@ mod tests {
     fn cfg_single_return_block() {
         let blocks = vec![block(0, AmirTerminator::Return)];
         let cfg = compute_cfg_edges(&blocks);
-        assert_eq!(cfg.successor_ranges[BlockId::from_usize(0)].len, 0);
-        assert_eq!(cfg.predecessor_ranges[BlockId::from_usize(0)].len, 0);
+        assert!(cfg.successors[0].is_empty());
+        assert!(cfg.predecessors[0].is_empty());
     }
 
     #[test]
@@ -123,14 +145,8 @@ mod tests {
             block(1, AmirTerminator::Return),
         ];
         let cfg = compute_cfg_edges(&blocks);
-        assert_eq!(
-            cfg.successors[cfg.successor_ranges[BlockId::from_usize(0)].as_range()],
-            vec![BlockId::from_usize(1)]
-        );
-        assert_eq!(
-            cfg.predecessors[cfg.predecessor_ranges[BlockId::from_usize(1)].as_range()],
-            vec![BlockId::from_usize(0)]
-        );
+        assert_eq!(cfg.successors[0], vec![BlockId::from_usize(1)]);
+        assert_eq!(cfg.predecessors[1], vec![BlockId::from_usize(0)]);
     }
 
     #[test]
@@ -149,15 +165,14 @@ mod tests {
             block(2, AmirTerminator::Return),
         ];
         let cfg = compute_cfg_edges(&blocks);
-        let b0_succs: Vec<BlockId> =
-            cfg.successors[cfg.successor_ranges[BlockId::from_usize(0)].as_range()].to_vec();
-        assert_eq!(b0_succs.len(), 2);
-        assert!(b0_succs.contains(&BlockId::from_usize(1)));
-        assert!(b0_succs.contains(&BlockId::from_usize(2)));
+        assert_eq!(cfg.successors[0].len(), 2);
+        assert!(cfg.successors[0].contains(&BlockId::from_usize(1)));
+        assert!(cfg.successors[0].contains(&BlockId::from_usize(2)));
         for target in &[BlockId::from_usize(1), BlockId::from_usize(2)] {
-            let preds: Vec<BlockId> =
-                cfg.predecessors[cfg.predecessor_ranges[*target].as_range()].to_vec();
-            assert_eq!(preds, vec![BlockId::from_usize(0)]);
+            assert_eq!(
+                cfg.predecessors[target.as_usize()],
+                vec![BlockId::from_usize(0)]
+            );
         }
     }
 
@@ -182,12 +197,10 @@ mod tests {
             block(3, AmirTerminator::Return),
         ];
         let cfg = compute_cfg_edges(&blocks);
-        let b0_succs: Vec<BlockId> =
-            cfg.successors[cfg.successor_ranges[BlockId::from_usize(0)].as_range()].to_vec();
-        assert_eq!(b0_succs.len(), 3);
-        assert!(b0_succs.contains(&BlockId::from_usize(1)));
-        assert!(b0_succs.contains(&BlockId::from_usize(2)));
-        assert!(b0_succs.contains(&BlockId::from_usize(3)));
+        assert_eq!(cfg.successors[0].len(), 3);
+        assert!(cfg.successors[0].contains(&BlockId::from_usize(1)));
+        assert!(cfg.successors[0].contains(&BlockId::from_usize(2)));
+        assert!(cfg.successors[0].contains(&BlockId::from_usize(3)));
     }
 
     #[test]
@@ -197,16 +210,16 @@ mod tests {
             block(1, AmirTerminator::Return),
         ];
         let cfg = compute_cfg_edges(&blocks);
-        assert_eq!(cfg.successor_ranges[BlockId::from_usize(0)].len, 0);
-        assert_eq!(cfg.predecessor_ranges[BlockId::from_usize(0)].len, 0);
-        assert_eq!(cfg.predecessor_ranges[BlockId::from_usize(1)].len, 0);
+        assert!(cfg.successors[0].is_empty());
+        assert!(cfg.predecessors[0].is_empty());
+        assert!(cfg.predecessors[1].is_empty());
     }
 
     #[test]
     fn cfg_out_of_bounds_target_is_skipped() {
         let blocks = vec![block(0, AmirTerminator::Goto(BlockId::from_usize(5)))];
         let cfg = compute_cfg_edges(&blocks);
-        assert_eq!(cfg.successor_ranges[BlockId::from_usize(0)].len, 0);
+        assert!(cfg.successors[0].is_empty());
     }
 
     #[test]
@@ -226,10 +239,52 @@ mod tests {
             block(3, AmirTerminator::Return),
         ];
         let cfg = compute_cfg_edges(&blocks);
-        let b3_preds: Vec<BlockId> =
-            cfg.predecessors[cfg.predecessor_ranges[BlockId::from_usize(3)].as_range()].to_vec();
-        assert_eq!(b3_preds.len(), 2);
-        assert!(b3_preds.contains(&BlockId::from_usize(1)));
-        assert!(b3_preds.contains(&BlockId::from_usize(2)));
+        assert_eq!(cfg.predecessors[3].len(), 2);
+        assert!(cfg.predecessors[3].contains(&BlockId::from_usize(1)));
+        assert!(cfg.predecessors[3].contains(&BlockId::from_usize(2)));
+    }
+
+    #[test]
+    fn retarget_successor_updates_both_lists() {
+        let mut cfg = compute_cfg_edges(&[
+            block(0, AmirTerminator::Goto(BlockId::from_usize(1))),
+            block(1, AmirTerminator::Return),
+            block(2, AmirTerminator::Return),
+        ]);
+        retarget_successor(
+            &mut cfg,
+            BlockId::from_usize(0),
+            BlockId::from_usize(1),
+            BlockId::from_usize(2),
+        );
+        assert_eq!(cfg.successors[0], vec![BlockId::from_usize(2)]);
+        assert!(cfg.predecessors[1].is_empty());
+        assert_eq!(cfg.predecessors[2], vec![BlockId::from_usize(0)]);
+    }
+
+    #[test]
+    fn clear_block_removes_all_edges() {
+        let mut cfg = compute_cfg_edges(&[
+            block(0, AmirTerminator::Goto(BlockId::from_usize(1))),
+            block(1, AmirTerminator::Return),
+        ]);
+        clear_block(&mut cfg, BlockId::from_usize(0));
+        assert!(cfg.successors[0].is_empty());
+        assert!(cfg.predecessors[0].is_empty());
+        assert!(cfg.predecessors[1].is_empty());
+    }
+
+    #[test]
+    fn transfer_edges_moves_all_edges() {
+        let mut cfg = compute_cfg_edges(&[
+            block(0, AmirTerminator::Goto(BlockId::from_usize(2))),
+            block(1, AmirTerminator::Return),
+            block(2, AmirTerminator::Return),
+        ]);
+        // Block 0 goes to 2. Transfer edges from 0 to 1.
+        transfer_edges(&mut cfg, BlockId::from_usize(1), BlockId::from_usize(0));
+        assert_eq!(cfg.successors[1], vec![BlockId::from_usize(2)]);
+        assert!(cfg.successors[0].is_empty());
+        assert_eq!(cfg.predecessors[2], vec![BlockId::from_usize(1)]);
     }
 }
