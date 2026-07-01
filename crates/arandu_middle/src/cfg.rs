@@ -87,3 +87,149 @@ fn terminator_successors(term: &AmirTerminator) -> smallvec::SmallVec<[BlockId; 
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::amir::{AmirConstant, AmirOperand, AmirTerminator};
+
+    fn block(id: usize, terminator: AmirTerminator) -> AmirBasicBlock {
+        AmirBasicBlock {
+            id: BlockId::from_usize(id),
+            statements: DenseRange::empty(),
+            terminator,
+        }
+    }
+
+    #[test]
+    fn cfg_empty_no_blocks() {
+        let cfg = compute_cfg_edges(&[]);
+        assert!(cfg.successors.is_empty());
+        assert!(cfg.predecessors.is_empty());
+    }
+
+    #[test]
+    fn cfg_single_return_block() {
+        let blocks = vec![block(0, AmirTerminator::Return)];
+        let cfg = compute_cfg_edges(&blocks);
+        assert_eq!(cfg.successor_ranges[BlockId::from_usize(0)].len, 0);
+        assert_eq!(cfg.predecessor_ranges[BlockId::from_usize(0)].len, 0);
+    }
+
+    #[test]
+    fn cfg_two_blocks_with_goto() {
+        let blocks = vec![
+            block(0, AmirTerminator::Goto(BlockId::from_usize(1))),
+            block(1, AmirTerminator::Return),
+        ];
+        let cfg = compute_cfg_edges(&blocks);
+        assert_eq!(
+            cfg.successors[cfg.successor_ranges[BlockId::from_usize(0)].as_range()],
+            vec![BlockId::from_usize(1)]
+        );
+        assert_eq!(
+            cfg.predecessors[cfg.predecessor_ranges[BlockId::from_usize(1)].as_range()],
+            vec![BlockId::from_usize(0)]
+        );
+    }
+
+    #[test]
+    fn cfg_branch_has_two_successors() {
+        let cond = AmirOperand::Constant(AmirConstant::Bool(true));
+        let blocks = vec![
+            block(
+                0,
+                AmirTerminator::Branch {
+                    condition: cond,
+                    if_true: BlockId::from_usize(1),
+                    if_false: BlockId::from_usize(2),
+                },
+            ),
+            block(1, AmirTerminator::Return),
+            block(2, AmirTerminator::Return),
+        ];
+        let cfg = compute_cfg_edges(&blocks);
+        let b0_succs: Vec<BlockId> =
+            cfg.successors[cfg.successor_ranges[BlockId::from_usize(0)].as_range()].to_vec();
+        assert_eq!(b0_succs.len(), 2);
+        assert!(b0_succs.contains(&BlockId::from_usize(1)));
+        assert!(b0_succs.contains(&BlockId::from_usize(2)));
+        for target in &[BlockId::from_usize(1), BlockId::from_usize(2)] {
+            let preds: Vec<BlockId> =
+                cfg.predecessors[cfg.predecessor_ranges[*target].as_range()].to_vec();
+            assert_eq!(preds, vec![BlockId::from_usize(0)]);
+        }
+    }
+
+    #[test]
+    fn cfg_switch_int_multiple_targets() {
+        let disc = AmirOperand::Constant(AmirConstant::Bool(false));
+        let targets = vec![
+            (1i128, BlockId::from_usize(1)),
+            (2i128, BlockId::from_usize(2)),
+        ];
+        let blocks = vec![
+            block(
+                0,
+                AmirTerminator::SwitchInt {
+                    discriminant: disc,
+                    targets,
+                    otherwise: BlockId::from_usize(3),
+                },
+            ),
+            block(1, AmirTerminator::Return),
+            block(2, AmirTerminator::Return),
+            block(3, AmirTerminator::Return),
+        ];
+        let cfg = compute_cfg_edges(&blocks);
+        let b0_succs: Vec<BlockId> =
+            cfg.successors[cfg.successor_ranges[BlockId::from_usize(0)].as_range()].to_vec();
+        assert_eq!(b0_succs.len(), 3);
+        assert!(b0_succs.contains(&BlockId::from_usize(1)));
+        assert!(b0_succs.contains(&BlockId::from_usize(2)));
+        assert!(b0_succs.contains(&BlockId::from_usize(3)));
+    }
+
+    #[test]
+    fn cfg_unreachable_has_no_successors() {
+        let blocks = vec![
+            block(0, AmirTerminator::Unreachable),
+            block(1, AmirTerminator::Return),
+        ];
+        let cfg = compute_cfg_edges(&blocks);
+        assert_eq!(cfg.successor_ranges[BlockId::from_usize(0)].len, 0);
+        assert_eq!(cfg.predecessor_ranges[BlockId::from_usize(0)].len, 0);
+        assert_eq!(cfg.predecessor_ranges[BlockId::from_usize(1)].len, 0);
+    }
+
+    #[test]
+    fn cfg_out_of_bounds_target_is_skipped() {
+        let blocks = vec![block(0, AmirTerminator::Goto(BlockId::from_usize(5)))];
+        let cfg = compute_cfg_edges(&blocks);
+        assert_eq!(cfg.successor_ranges[BlockId::from_usize(0)].len, 0);
+    }
+
+    #[test]
+    fn cfg_diamond_merge() {
+        let cond = AmirOperand::Constant(AmirConstant::Bool(true));
+        let blocks = vec![
+            block(
+                0,
+                AmirTerminator::Branch {
+                    condition: cond,
+                    if_true: BlockId::from_usize(1),
+                    if_false: BlockId::from_usize(2),
+                },
+            ),
+            block(1, AmirTerminator::Goto(BlockId::from_usize(3))),
+            block(2, AmirTerminator::Goto(BlockId::from_usize(3))),
+            block(3, AmirTerminator::Return),
+        ];
+        let cfg = compute_cfg_edges(&blocks);
+        let b3_preds: Vec<BlockId> =
+            cfg.predecessors[cfg.predecessor_ranges[BlockId::from_usize(3)].as_range()].to_vec();
+        assert_eq!(b3_preds.len(), 2);
+        assert!(b3_preds.contains(&BlockId::from_usize(1)));
+        assert!(b3_preds.contains(&BlockId::from_usize(2)));
+    }
+}

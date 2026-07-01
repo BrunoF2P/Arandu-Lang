@@ -1,5 +1,69 @@
 //! HIR pattern types (B7): stable IR decoupled from parser `Pattern`.
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    const S: Span = Span::new(0, 0, 0);
+
+    #[test]
+    fn wildcard_span() {
+        let p = HirPattern::Wildcard { span: S };
+        assert_eq!(p.span(), S);
+    }
+
+    #[test]
+    fn bind_span() {
+        let p = HirPattern::Bind {
+            span: S,
+            name: "x".into(),
+            symbol: SymbolId(1),
+        };
+        assert_eq!(p.span(), S);
+    }
+
+    #[test]
+    fn literal_span() {
+        let p = HirPattern::Literal {
+            span: S,
+            expr: super::super::pool::HirExprId::from_usize(0),
+        };
+        assert_eq!(p.span(), S);
+    }
+
+    #[test]
+    fn enum_span() {
+        let p = HirPattern::Enum {
+            span: S,
+            type_symbol: SymbolId(0),
+            variant: "V".into(),
+            variant_symbol: Some(SymbolId(1)),
+            payload: super::super::pool::IndexRange::empty(),
+        };
+        assert_eq!(p.span(), S);
+    }
+
+    #[test]
+    fn struct_span() {
+        let p = HirPattern::Struct {
+            span: S,
+            struct_symbol: SymbolId(0),
+            fields: super::super::pool::IndexRange::empty(),
+        };
+        assert_eq!(p.span(), S);
+    }
+
+    #[test]
+    fn field_pattern_basic() {
+        let fp = HirFieldPattern {
+            span: S,
+            name: "f".into(),
+            pattern: None,
+        };
+        assert_eq!(fp.name, "f");
+        assert!(fp.pattern.is_none());
+    }
+}
+
 use crate::SymbolId;
 use arandu_lexer::Span;
 

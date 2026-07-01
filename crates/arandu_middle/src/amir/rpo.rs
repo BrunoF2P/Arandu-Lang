@@ -31,3 +31,118 @@ fn post_order_walk(
     }
     post_order.push(block_id);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SymbolId;
+    use crate::amir::block::AmirBasicBlock;
+    use crate::amir::stmt::{AmirStmtTable, AmirTerminator};
+    use crate::cfg::compute_cfg_edges;
+    use crate::layout::DenseRange;
+    use crate::types::ArType;
+
+    fn make_block(id: usize, successors: &[usize]) -> AmirBasicBlock {
+        let term = match successors {
+            [] => AmirTerminator::Return,
+            &[s] => AmirTerminator::Goto(BlockId::from_usize(s)),
+            &[t, f] => AmirTerminator::Branch {
+                condition: crate::amir::AmirOperand::Constant(crate::amir::AmirConstant::Bool(
+                    true,
+                )),
+                if_true: BlockId::from_usize(t),
+                if_false: BlockId::from_usize(f),
+            },
+            _ => panic!("too many successors"),
+        };
+        AmirBasicBlock {
+            id: BlockId::from_usize(id),
+            statements: DenseRange::empty(),
+            terminator: term,
+        }
+    }
+
+    fn make_func(blocks: Vec<AmirBasicBlock>) -> AmirFunc {
+        let cfg = compute_cfg_edges(&blocks);
+        AmirFunc {
+            symbol: SymbolId(0),
+            return_type: ArType::Void,
+            receiver: None,
+            params: Vec::new(),
+            locals: Vec::new(),
+            temps: Vec::new(),
+            blocks,
+            stmts: AmirStmtTable::new(),
+            cfg,
+        }
+    }
+
+    #[test]
+    fn rpo_empty_func() {
+        let func = make_func(vec![]);
+        assert!(reverse_post_order(&func).is_empty());
+    }
+
+    #[test]
+    fn rpo_single_block() {
+        let func = make_func(vec![make_block(0, &[])]);
+        let rpo = reverse_post_order(&func);
+        assert_eq!(rpo, vec![BlockId::from_usize(0)]);
+    }
+
+    #[test]
+    fn rpo_linear_chain() {
+        let func = make_func(vec![
+            make_block(0, &[1]),
+            make_block(1, &[2]),
+            make_block(2, &[]),
+        ]);
+        let rpo = reverse_post_order(&func);
+        assert_eq!(
+            rpo,
+            vec![
+                BlockId::from_usize(0),
+                BlockId::from_usize(1),
+                BlockId::from_usize(2),
+            ]
+        );
+    }
+
+    #[test]
+    fn rpo_branch() {
+        let func = make_func(vec![
+            make_block(0, &[1, 2]),
+            make_block(1, &[]),
+            make_block(2, &[]),
+        ]);
+        let rpo = reverse_post_order(&func);
+        assert_eq!(rpo[0], BlockId::from_usize(0));
+        assert_eq!(rpo.len(), 3);
+        assert!(rpo.contains(&BlockId::from_usize(1)));
+        assert!(rpo.contains(&BlockId::from_usize(2)));
+    }
+
+    #[test]
+    fn rpo_skips_unreachable() {
+        let func = make_func(vec![
+            make_block(0, &[1]),
+            make_block(1, &[]),
+            make_block(2, &[3]),
+            make_block(3, &[]),
+        ]);
+        let rpo = reverse_post_order(&func);
+        assert_eq!(rpo, vec![BlockId::from_usize(0), BlockId::from_usize(1)]);
+    }
+
+    #[test]
+    fn rpo_loop() {
+        let func = make_func(vec![
+            make_block(0, &[1]),
+            make_block(1, &[2]),
+            make_block(2, &[1]),
+        ]);
+        let rpo = reverse_post_order(&func);
+        assert_eq!(rpo.len(), 3);
+        assert!(rpo.contains(&BlockId::from_usize(2)));
+    }
+}

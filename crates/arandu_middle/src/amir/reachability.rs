@@ -41,3 +41,153 @@ pub fn terminator_targets(term: &AmirTerminator) -> SmallVec<[BlockId; 2]> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::DenseRange;
+    use crate::SymbolId;
+    use crate::amir::AmirBasicBlock;
+    use crate::amir::stmt::AmirStmtTable;
+    use crate::cfg::compute_cfg_edges;
+    use crate::types::ArType;
+
+    fn func_with_blocks(blocks: Vec<AmirBasicBlock>) -> AmirFunc {
+        let cfg = compute_cfg_edges(&blocks);
+        AmirFunc {
+            symbol: SymbolId(0),
+            return_type: ArType::Void,
+            receiver: None,
+            params: Vec::new(),
+            locals: Vec::new(),
+            temps: Vec::new(),
+            blocks,
+            stmts: AmirStmtTable::new(),
+            cfg,
+        }
+    }
+
+    #[test]
+    fn empty_func_none_reachable() {
+        let func = func_with_blocks(vec![]);
+        let r = reachable_blocks_dense(&func);
+        assert_eq!(r.len(), 0);
+    }
+
+    #[test]
+    fn single_block_always_reachable() {
+        let b = AmirBasicBlock {
+            id: BlockId::from_usize(0),
+            statements: DenseRange::empty(),
+            terminator: AmirTerminator::Return,
+        };
+        let func = func_with_blocks(vec![b]);
+        let r = reachable_blocks_dense(&func);
+        assert_eq!(r.len(), 1);
+        assert!(r.contains(BlockId::from_usize(0)));
+    }
+
+    #[test]
+    fn unreachable_block_skipped() {
+        let b0 = AmirBasicBlock {
+            id: BlockId::from_usize(0),
+            statements: DenseRange::empty(),
+            terminator: AmirTerminator::Goto(BlockId::from_usize(1)),
+        };
+        let b1 = AmirBasicBlock {
+            id: BlockId::from_usize(1),
+            statements: DenseRange::empty(),
+            terminator: AmirTerminator::Return,
+        };
+        let b2 = AmirBasicBlock {
+            id: BlockId::from_usize(2),
+            statements: DenseRange::empty(),
+            terminator: AmirTerminator::Return,
+        };
+        let func = func_with_blocks(vec![b0, b1, b2]);
+        let r = reachable_blocks_dense(&func);
+        assert_eq!(r.len(), 2);
+        assert!(r.contains(BlockId::from_usize(0)));
+        assert!(r.contains(BlockId::from_usize(1)));
+        assert!(!r.contains(BlockId::from_usize(2)));
+    }
+
+    #[test]
+    fn branch_makes_both_reachable() {
+        let b0 = AmirBasicBlock {
+            id: BlockId::from_usize(0),
+            statements: DenseRange::empty(),
+            terminator: AmirTerminator::Branch {
+                condition: crate::amir::value::AmirOperand::Constant(
+                    crate::amir::value::AmirConstant::Bool(true),
+                ),
+                if_true: BlockId::from_usize(1),
+                if_false: BlockId::from_usize(2),
+            },
+        };
+        let b1 = AmirBasicBlock {
+            id: BlockId::from_usize(1),
+            statements: DenseRange::empty(),
+            terminator: AmirTerminator::Return,
+        };
+        let b2 = AmirBasicBlock {
+            id: BlockId::from_usize(2),
+            statements: DenseRange::empty(),
+            terminator: AmirTerminator::Return,
+        };
+        let func = func_with_blocks(vec![b0, b1, b2]);
+        let r = reachable_blocks_dense(&func);
+        assert_eq!(r.len(), 3);
+    }
+
+    #[test]
+    fn switch_int_reachable() {
+        use crate::amir::value::AmirOperand;
+        let b0 = AmirBasicBlock {
+            id: BlockId::from_usize(0),
+            statements: DenseRange::empty(),
+            terminator: AmirTerminator::SwitchInt {
+                discriminant: AmirOperand::Constant(crate::amir::value::AmirConstant::Bool(true)),
+                targets: vec![],
+                otherwise: BlockId::from_usize(1),
+            },
+        };
+        let b1 = AmirBasicBlock {
+            id: BlockId::from_usize(1),
+            statements: DenseRange::empty(),
+            terminator: AmirTerminator::Return,
+        };
+        let func = func_with_blocks(vec![b0, b1]);
+        let r = reachable_blocks_dense(&func);
+        assert_eq!(r.len(), 2);
+    }
+
+    #[test]
+    fn terminator_targets_return_empty() {
+        assert!(terminator_targets(&AmirTerminator::Return).is_empty());
+    }
+
+    #[test]
+    fn terminator_targets_unreachable_empty() {
+        assert!(terminator_targets(&AmirTerminator::Unreachable).is_empty());
+    }
+
+    #[test]
+    fn terminator_targets_goto() {
+        let t = terminator_targets(&AmirTerminator::Goto(BlockId::from_usize(3)));
+        assert_eq!(t.len(), 1);
+        assert_eq!(t[0], BlockId::from_usize(3));
+    }
+
+    #[test]
+    fn terminator_targets_branch() {
+        let t = terminator_targets(&AmirTerminator::Branch {
+            condition: crate::amir::value::AmirOperand::Constant(
+                crate::amir::value::AmirConstant::Bool(false),
+            ),
+            if_true: BlockId::from_usize(1),
+            if_false: BlockId::from_usize(2),
+        });
+        assert_eq!(t.len(), 2);
+    }
+}

@@ -1050,3 +1050,132 @@ fn unary_op_str(op: &UnaryOp) -> &str {
         UnaryOp::Await => "await ",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hir::pool::HirPool;
+    use crate::hir::{
+        HirBlock, HirConst, HirDecl, HirExpr, HirExprKind, HirFunc, HirStmt, HirStmtKind,
+        IndexRange,
+    };
+    use crate::types::{ArType, Primitive};
+    use crate::{ScopeId, SymbolKind, SymbolTable};
+    use arandu_lexer::Span;
+
+    fn make_ctx<'a>(pool: &'a HirPool, symbols: &'a SymbolTable) -> HirPrettyCtx<'a> {
+        HirPrettyCtx {
+            pool,
+            symbols,
+            show_spans: false,
+            type_interner: None,
+        }
+    }
+
+    #[test]
+    fn pretty_print_empty_program() {
+        let pool = HirPool::new();
+        let symbols = SymbolTable::new();
+        let program = HirProgram {
+            span: Span::new(0, 0, 0),
+            module: None,
+            decls: Vec::new(),
+            pool,
+        };
+        let ctx = make_ctx(&program.pool, &symbols);
+        let out = program.pretty_print(&ctx);
+        assert_eq!(out, "Program\n");
+    }
+
+    #[test]
+    fn pretty_print_func_with_body() {
+        let mut symbols = SymbolTable::new();
+        let main_sym = symbols
+            .define(ScopeId(0), "main", SymbolKind::Func, Span::new(0, 0, 0))
+            .unwrap();
+        let _x_sym = symbols
+            .define(ScopeId(0), "x", SymbolKind::Param, Span::new(0, 0, 0))
+            .unwrap();
+
+        let mut pool = HirPool::new();
+        let int_expr = pool.alloc_expr(HirExpr {
+            kind: HirExprKind::Int("42".into()),
+            ty: ArType::Primitive(Primitive::Int),
+            span: Span::new(0, 0, 0),
+        });
+        let values = pool.alloc_expr_list(&[int_expr]);
+        let ret_stmt = pool.alloc_stmt(HirStmt {
+            kind: HirStmtKind::Return { values },
+            span: Span::new(0, 0, 0),
+        });
+        let stmts = pool.alloc_stmt_list(&[ret_stmt]);
+        let body = pool.alloc_block(HirBlock {
+            statements: stmts,
+            span: Span::new(0, 0, 0),
+        });
+        let func_decl = pool.alloc_decl(HirDecl::Func(HirFunc {
+            symbol: main_sym,
+            params: IndexRange::empty(),
+            return_type: ArType::Primitive(Primitive::Int),
+            body: Some(body),
+            span: Span::new(0, 0, 0),
+        }));
+
+        let program = HirProgram {
+            span: Span::new(0, 0, 0),
+            module: None,
+            decls: vec![func_decl],
+            pool,
+        };
+        let ctx = make_ctx(&program.pool, &symbols);
+        let out = program.pretty_print(&ctx);
+        assert!(out.contains("Func main"));
+        assert!(out.contains("Return"));
+        assert!(out.contains("Int(42)"));
+    }
+
+    #[test]
+    fn pretty_print_with_module() {
+        let pool = HirPool::new();
+        let symbols = SymbolTable::new();
+        let program = HirProgram {
+            span: Span::new(0, 0, 0),
+            module: Some("mymod".into()),
+            decls: Vec::new(),
+            pool,
+        };
+        let ctx = make_ctx(&program.pool, &symbols);
+        let out = program.pretty_print(&ctx);
+        assert!(out.contains("Module mymod"));
+    }
+
+    #[test]
+    fn pretty_print_multiple_decls() {
+        let mut symbols = SymbolTable::new();
+        let _a = symbols
+            .define(ScopeId(0), "A", SymbolKind::Const, Span::new(0, 0, 0))
+            .unwrap();
+        let mut pool = HirPool::new();
+        let val = pool.alloc_expr(HirExpr {
+            kind: HirExprKind::Bool(true),
+            ty: ArType::Primitive(Primitive::Bool),
+            span: Span::new(0, 0, 0),
+        });
+        let decl_a = pool.alloc_decl(HirDecl::Const(HirConst {
+            symbol: _a,
+            ty: ArType::Primitive(Primitive::Bool),
+            value: val,
+            span: Span::new(0, 0, 0),
+        }));
+        let program = HirProgram {
+            span: Span::new(0, 0, 0),
+            module: None,
+            decls: vec![decl_a],
+            pool,
+        };
+        let ctx = make_ctx(&program.pool, &symbols);
+        let out = program.pretty_print(&ctx);
+        assert!(out.contains("Const A"));
+        assert!(out.contains("Bool(true)"));
+    }
+}

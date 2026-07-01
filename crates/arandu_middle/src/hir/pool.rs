@@ -1,3 +1,136 @@
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SymbolId;
+    use crate::hir::{HirBlock, HirConst, HirDecl, HirExpr, HirExprKind, HirStmt, HirStmtKind};
+    use crate::types::{ArType, Primitive};
+    use arandu_base::span::Span;
+    const S: Span = Span::new(0, 0, 0);
+    const INT: ArType = ArType::Primitive(Primitive::Int);
+    const BOOL: ArType = ArType::Primitive(Primitive::Bool);
+    const FLOAT: ArType = ArType::Primitive(Primitive::Float);
+
+    #[test]
+    fn alloc_and_get_expr() {
+        let mut pool = HirPool::new();
+        let expr = HirExpr {
+            kind: HirExprKind::Int("42".into()),
+            ty: INT.clone(),
+            span: S,
+        };
+        let id = pool.alloc_expr(expr);
+        assert_eq!(id, HirExprId::from_usize(0));
+        assert_eq!(pool.expr(id).ty, INT);
+    }
+
+    #[test]
+    fn alloc_and_get_stmt() {
+        let mut pool = HirPool::new();
+        let stmt = HirStmt {
+            kind: HirStmtKind::Break,
+            span: S,
+        };
+        let id = pool.alloc_stmt(stmt);
+        assert_eq!(id, HirStmtId::from_usize(0));
+        assert!(matches!(pool.stmt(id).kind, HirStmtKind::Break));
+    }
+
+    #[test]
+    fn alloc_and_get_block() {
+        let mut pool = HirPool::new();
+        let block = HirBlock {
+            statements: IndexRange::empty(),
+            span: S,
+        };
+        let id = pool.alloc_block(block);
+        assert_eq!(id, HirBlockId::from_usize(0));
+        assert!(pool.block(id).statements.is_empty());
+    }
+
+    #[test]
+    fn alloc_and_get_decl() {
+        let mut pool = HirPool::new();
+        let decl = HirDecl::Const(HirConst {
+            symbol: SymbolId(0),
+            ty: INT.clone(),
+            value: HirExprId::from_usize(0),
+            span: S,
+        });
+        let id = pool.alloc_decl(decl);
+        assert_eq!(id, HirDeclId::from_usize(0));
+    }
+
+    #[test]
+    fn alloc_expr_list() {
+        let mut pool = HirPool::new();
+        let e1 = pool.alloc_expr(HirExpr {
+            kind: HirExprKind::Bool(true),
+            ty: BOOL.clone(),
+            span: S,
+        });
+        let e2 = pool.alloc_expr(HirExpr {
+            kind: HirExprKind::Bool(false),
+            ty: BOOL.clone(),
+            span: S,
+        });
+        let range = pool.alloc_expr_list(&[e1, e2]);
+        assert_eq!(range.len, 2);
+        assert_eq!(pool.expr_list(range), &[e1, e2]);
+    }
+
+    #[test]
+    fn alloc_param_list() {
+        let mut pool = HirPool::new();
+        let params = vec![crate::hir::HirParam {
+            symbol: SymbolId(0),
+            ty: INT.clone(),
+            span: S,
+            is_receiver: false,
+            receiver_kind: None,
+        }];
+        let range = pool.alloc_param_list(&params);
+        assert_eq!(pool.params_list(range).len(), 1);
+    }
+
+    #[test]
+    fn alloc_struct_field_list() {
+        let mut pool = HirPool::new();
+        let fields = vec![crate::hir::HirStructField {
+            symbol: SymbolId(1),
+            ty: FLOAT.clone(),
+            span: S,
+        }];
+        let range = pool.alloc_struct_field_list(&fields);
+        assert_eq!(pool.struct_fields_list(range).len(), 1);
+    }
+
+    #[test]
+    fn alloc_binding_list_and_place_list() {
+        let mut pool = HirPool::new();
+        let b_range = pool.alloc_binding_list(&[crate::hir::HirBindingItem {
+            symbol: SymbolId(2),
+            ty: INT.clone(),
+            span: S,
+        }]);
+        assert_eq!(pool.bindings_list(b_range).len(), 1);
+        let p_range = pool.alloc_place_list(&[crate::hir::HirPlace {
+            root_symbol: SymbolId(3),
+            suffixes: smallvec::SmallVec::new(),
+            ty: INT.clone(),
+            span: S,
+        }]);
+        assert_eq!(pool.places_list(p_range).len(), 1);
+    }
+
+    #[test]
+    fn empty_pool() {
+        let pool = HirPool::new();
+        assert!(pool.exprs.is_empty());
+        assert!(pool.stmts.is_empty());
+        assert!(pool.blocks.is_empty());
+    }
+}
+
 use crate::index_vec::IndexVec;
 
 crate::newtype_index!(HirExprId);

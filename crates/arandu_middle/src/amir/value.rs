@@ -73,6 +73,126 @@ pub enum AmirOperand {
     GlobalRef(SymbolId),
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn operand_copy_vs_move() {
+        let t = TempId::from_usize(42);
+        match AmirOperand::Copy(t) {
+            AmirOperand::Copy(id) => assert_eq!(id, t),
+            _ => panic!("expected Copy"),
+        }
+        match AmirOperand::Move(t) {
+            AmirOperand::Move(id) => assert_eq!(id, t),
+            _ => panic!("expected Move"),
+        }
+    }
+
+    #[test]
+    fn constant_bool() {
+        assert_eq!(AmirConstant::Bool(true), AmirConstant::Bool(true));
+        assert_ne!(AmirConstant::Bool(true), AmirConstant::Bool(false));
+    }
+
+    #[test]
+    fn constant_pool() {
+        let id = LiteralId(7);
+        assert_eq!(AmirConstant::Pool(id), AmirConstant::Pool(id));
+        assert_ne!(AmirConstant::Pool(id), AmirConstant::Nil);
+    }
+
+    #[test]
+    fn place_no_projections() {
+        let p = AmirPlace {
+            local: LocalId::from_usize(0),
+            projections: SmallVec::new(),
+        };
+        assert!(p.projections.is_empty());
+        assert_eq!(p.local, LocalId::from_usize(0));
+    }
+
+    #[test]
+    fn place_with_field_projection() {
+        let sym = SymbolId(99);
+        let proj = AmirProjection::Field(sym);
+        let mut projections = SmallVec::new();
+        projections.push(proj);
+        let p = AmirPlace {
+            local: LocalId::from_usize(1),
+            projections,
+        };
+        assert_eq!(p.projections.len(), 1);
+        match &p.projections[0] {
+            AmirProjection::Field(s) => assert_eq!(*s, sym),
+            _ => panic!("expected Field"),
+        }
+    }
+
+    #[test]
+    fn place_with_index_projection() {
+        let idx = AmirOperand::Constant(AmirConstant::Bool(true));
+        let proj = AmirProjection::Index(idx);
+        let mut projections = SmallVec::new();
+        projections.push(proj);
+        let p = AmirPlace {
+            local: LocalId::from_usize(2),
+            projections,
+        };
+        assert_eq!(p.projections.len(), 1);
+        match &p.projections[0] {
+            AmirProjection::Index(_) => {}
+            _ => panic!("expected Index"),
+        }
+    }
+
+    #[test]
+    fn rvalue_use_operand() {
+        let op = AmirOperand::Constant(AmirConstant::Nil);
+        let rv = AmirRvalue::Use(op);
+        match rv {
+            AmirRvalue::Use(_) => {}
+            _ => panic!("expected Use"),
+        }
+    }
+
+    #[test]
+    fn rvalue_unary() {
+        let rv = AmirRvalue::Unary {
+            op: crate::ops::UnaryOp::Neg,
+            operand: AmirOperand::Constant(AmirConstant::Bool(false)),
+        };
+        match rv {
+            AmirRvalue::Unary { op: _, operand: _ } => {}
+            _ => panic!("expected Unary"),
+        }
+    }
+
+    #[test]
+    fn rvalue_field_access() {
+        let rv = AmirRvalue::FieldAccess {
+            base: AmirOperand::Copy(TempId::from_usize(5)),
+            field: 1,
+        };
+        match rv {
+            AmirRvalue::FieldAccess { base: _, field } => assert_eq!(field, 1),
+            _ => panic!("expected FieldAccess"),
+        }
+    }
+
+    #[test]
+    fn rvalue_discriminant() {
+        let rv = AmirRvalue::Discriminant {
+            value: AmirOperand::Copy(TempId::from_usize(3)),
+        };
+        match rv {
+            AmirRvalue::Discriminant { value: _ } => {}
+            _ => panic!("expected Discriminant"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AmirConstant {
     Pool(LiteralId),
