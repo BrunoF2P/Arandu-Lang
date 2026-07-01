@@ -1,8 +1,11 @@
+pub(crate) mod dce;
 pub mod definite_init;
 pub mod liveness;
 pub mod lower_amir;
 pub mod move_checker;
 pub mod optimize;
+pub(crate) mod sccp;
+pub(crate) mod simplify_cfg;
 
 pub use lower_amir::lower_to_amir;
 pub use move_checker::check_moves;

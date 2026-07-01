@@ -1,19 +1,14 @@
-//! Basic AMIR optimizer (O1).
+//! AMIR optimization pipeline (O1).
 //!
-//! The pass is intentionally small and semantics-preserving for v0.1:
-//! constant folding runs first, then DCE removes unused pure temp assignments.
-//! Note: Constant folding is currently intra-block only. Constants defined in one
-//! block are not propagated to other blocks (cross-block propagation is planned for v0.2+).
-#![allow(clippy::collapsible_if)]
+//! Runs SCCP → Mark-Sweep DCE → CFG Simplification in a fixpoint loop so
+//! each pass feeds the next.  The loop terminates when no pass changes
+//! anything.
 
-use crate::BitSet;
-use crate::amir::{
-    AmirConstant, AmirFunc, AmirOperand, AmirProgram, AmirRvalue, AmirStmt, AmirStmtTable,
-    AmirTerminator,
-};
-use crate::layout::DenseRange;
-use crate::literal_pool::{AmirLiteralEntry, AmirLiteralPool};
-use crate::ops::{BinaryOp, UnaryOp};
+use crate::amir::{AmirFunc, AmirProgram};
+use crate::dce::mark_sweep_dce;
+use crate::literal_pool::AmirLiteralPool;
+use crate::sccp::sccp;
+use crate::simplify_cfg::simplify_cfg;
 
 pub fn optimize_amir(program: &mut AmirProgram) {
     for func in &mut program.funcs {
@@ -22,301 +17,14 @@ pub fn optimize_amir(program: &mut AmirProgram) {
 }
 
 pub fn optimize_amir_func(func: &mut AmirFunc, literal_pool: &mut AmirLiteralPool) {
-    fold_constants(func, literal_pool);
-    eliminate_dead_assigns(func);
-}
-
-/// Folds constants intra-block. Note: Constants are currently not propagated across basic blocks.
-fn fold_constants(func: &mut AmirFunc, pool: &mut AmirLiteralPool) {
-    for bi in 0..func.blocks.len() {
-        let block_id = func.blocks[bi].id;
-        let stmt_ids: Vec<_> = func.block_stmt_ids(block_id).collect();
-        let mut constants = vec![None; func.temps.len()];
-        for stmt_id in stmt_ids {
-            let stmt = func.stmt_mut(stmt_id);
-            let AmirStmt::Assign { lhs, rhs } = stmt else {
-                continue;
-            };
-
-            if let Some(folded) = fold_rvalue(rhs, &constants, pool) {
-                *rhs = AmirRvalue::Use(AmirOperand::Constant(folded));
-            }
-
-            constants[lhs.as_usize()] = match rhs {
-                AmirRvalue::Use(AmirOperand::Constant(value)) => Some(*value),
-                _ => None,
-            };
-        }
-    }
-}
-
-fn fold_rvalue(
-    rvalue: &AmirRvalue,
-    constants: &[Option<AmirConstant>],
-    pool: &mut AmirLiteralPool,
-) -> Option<AmirConstant> {
-    match rvalue {
-        AmirRvalue::Unary { op, operand } => {
-            let value = operand_const(operand, constants)?;
-            fold_unary(*op, value, pool)
-        }
-        AmirRvalue::Binary { op, left, right } => {
-            let left = operand_const(left, constants)?;
-            let right = operand_const(right, constants)?;
-            fold_binary(*op, left, right, pool)
-        }
-        _ => None,
-    }
-}
-
-fn operand_const(op: &AmirOperand, constants: &[Option<AmirConstant>]) -> Option<AmirConstant> {
-    match op {
-        AmirOperand::Constant(value) => Some(*value),
-        AmirOperand::Copy(temp) | AmirOperand::Move(temp) => {
-            constants.get(temp.as_usize()).copied().flatten()
-        }
-        AmirOperand::FunctionRef(_) | AmirOperand::GlobalRef(_) => None,
-    }
-}
-
-fn fold_unary(
-    op: UnaryOp,
-    value: AmirConstant,
-    pool: &mut AmirLiteralPool,
-) -> Option<AmirConstant> {
-    match (op, value) {
-        (UnaryOp::Not, AmirConstant::Bool(value)) => Some(AmirConstant::Bool(!value)),
-        (UnaryOp::Neg, value) => {
-            let value = int_value(value, pool)?;
-            Some(int_constant(-value, pool))
-        }
-        (UnaryOp::BitNot, value) => {
-            let value = int_value(value, pool)?;
-            Some(int_constant(!value, pool))
-        }
-        (UnaryOp::Await, _) => None,
-        _ => None,
-    }
-}
-
-fn fold_binary(
-    op: BinaryOp,
-    left: AmirConstant,
-    right: AmirConstant,
-    pool: &mut AmirLiteralPool,
-) -> Option<AmirConstant> {
-    match (left, right) {
-        (AmirConstant::Bool(left), AmirConstant::Bool(right)) => match op {
-            BinaryOp::And => Some(AmirConstant::Bool(left && right)),
-            BinaryOp::Or => Some(AmirConstant::Bool(left || right)),
-            BinaryOp::Equal => Some(AmirConstant::Bool(left == right)),
-            BinaryOp::NotEqual => Some(AmirConstant::Bool(left != right)),
-            _ => None,
-        },
-        (left, right) => {
-            let left = int_value(left, pool)?;
-            let right = int_value(right, pool)?;
-            match op {
-                BinaryOp::Add => Some(int_constant(left.checked_add(right)?, pool)),
-                BinaryOp::Sub => Some(int_constant(left.checked_sub(right)?, pool)),
-                BinaryOp::Mul => Some(int_constant(left.checked_mul(right)?, pool)),
-                BinaryOp::Div if right != 0 => Some(int_constant(left.checked_div(right)?, pool)),
-                BinaryOp::Mod if right != 0 => Some(int_constant(left.checked_rem(right)?, pool)),
-                BinaryOp::BitOr => Some(int_constant(left | right, pool)),
-                BinaryOp::BitXor => Some(int_constant(left ^ right, pool)),
-                BinaryOp::BitAnd => Some(int_constant(left & right, pool)),
-                BinaryOp::ShiftLeft if (0..128).contains(&right) => {
-                    Some(int_constant(left.checked_shl(right as u32)?, pool))
-                }
-                BinaryOp::ShiftRight if (0..128).contains(&right) => {
-                    Some(int_constant(left.checked_shr(right as u32)?, pool))
-                }
-                BinaryOp::Equal => Some(AmirConstant::Bool(left == right)),
-                BinaryOp::NotEqual => Some(AmirConstant::Bool(left != right)),
-                BinaryOp::Lt => Some(AmirConstant::Bool(left < right)),
-                BinaryOp::Gt => Some(AmirConstant::Bool(left > right)),
-                BinaryOp::LtEqual => Some(AmirConstant::Bool(left <= right)),
-                BinaryOp::GtEqual => Some(AmirConstant::Bool(left >= right)),
-                _ => None,
-            }
-        }
-    }
-}
-
-fn int_value(value: AmirConstant, pool: &AmirLiteralPool) -> Option<i128> {
-    match value {
-        AmirConstant::Pool(id) => match pool.get(id) {
-            AmirLiteralEntry::Int(value) => value.parse().ok(),
-            AmirLiteralEntry::Float(_) | AmirLiteralEntry::Str(_) | AmirLiteralEntry::Char(_) => {
-                None
-            }
-        },
-        AmirConstant::Bool(_) | AmirConstant::Nil => None,
-    }
-}
-
-fn int_constant(value: i128, pool: &mut AmirLiteralPool) -> AmirConstant {
-    AmirConstant::Pool(pool.intern(AmirLiteralEntry::Int(value.to_string())))
-}
-
-fn eliminate_dead_assigns(func: &mut AmirFunc) {
     loop {
-        let used = used_temps(func);
         let mut changed = false;
-
-        for bi in 0..func.blocks.len() {
-            let block_id = func.blocks[bi].id;
-            let stmt_ids: Vec<_> = func.block_stmt_ids(block_id).collect();
-            for stmt_id in stmt_ids {
-                let stmt = func.stmt_mut(stmt_id);
-                if let AmirStmt::Assign { lhs, rhs } = stmt {
-                    if !used.contains(*lhs) && is_removable_rvalue(rhs) {
-                        *stmt = AmirStmt::Nop;
-                        changed = true;
-                    }
-                }
-            }
-        }
-
+        changed |= sccp(func, literal_pool);
+        changed |= mark_sweep_dce(func);
+        changed |= simplify_cfg(func);
         if !changed {
             break;
         }
-    }
-
-    // Single post-pass to remove Nops and rebuild table/ranges
-    let mut table = AmirStmtTable::new();
-    let mut new_ranges = Vec::with_capacity(func.blocks.len());
-    for block in &func.blocks {
-        let start = table.len();
-        let mut kept = 0usize;
-        for stmt in func.block_stmts(block.id) {
-            if !matches!(stmt, AmirStmt::Nop) {
-                table.push(stmt.clone());
-                kept += 1;
-            }
-        }
-        new_ranges.push(DenseRange::new(start, kept));
-    }
-    func.stmts = table;
-    for (block, range) in func.blocks.iter_mut().zip(new_ranges) {
-        block.statements = range;
-    }
-}
-
-fn used_temps(func: &AmirFunc) -> BitSet<crate::amir::TempId> {
-    let mut used = BitSet::with_capacity(func.temps.len());
-    if !func.temps.is_empty() {
-        // AMIR `return` reads the conventional return register `_0`.
-        used.insert(crate::amir::TempId::from_usize(0));
-    }
-    for block in &func.blocks {
-        for stmt in func.block_stmts(block.id) {
-            match stmt {
-                AmirStmt::Assign { rhs, .. } => collect_rvalue_temps(rhs, &mut used),
-                AmirStmt::Store { rhs, lhs } => {
-                    collect_operand_temp(rhs, &mut used);
-                    for projection in &lhs.projections {
-                        if let crate::amir::AmirProjection::Index(op) = projection {
-                            collect_operand_temp(op, &mut used);
-                        }
-                    }
-                }
-                AmirStmt::Call {
-                    lhs: _,
-                    callee,
-                    args,
-                } => {
-                    collect_operand_temp(callee, &mut used);
-                    for arg in args {
-                        collect_operand_temp(arg, &mut used);
-                    }
-                }
-                AmirStmt::Free(op) => collect_operand_temp(op, &mut used),
-                AmirStmt::StorageLive(_)
-                | AmirStmt::StorageDead(_)
-                | AmirStmt::Destroy(_)
-                | AmirStmt::Nop => {}
-            }
-        }
-        match &block.terminator {
-            AmirTerminator::Branch { condition, .. } => collect_operand_temp(condition, &mut used),
-            AmirTerminator::SwitchInt { discriminant, .. } => {
-                collect_operand_temp(discriminant, &mut used);
-            }
-            AmirTerminator::Return | AmirTerminator::Goto(_) | AmirTerminator::Unreachable => {}
-        }
-    }
-    used
-}
-
-fn collect_rvalue_temps(rvalue: &AmirRvalue, used: &mut BitSet<crate::amir::TempId>) {
-    match rvalue {
-        AmirRvalue::Use(op)
-        | AmirRvalue::Unary { operand: op, .. }
-        | AmirRvalue::FieldAccess { base: op, .. }
-        | AmirRvalue::Discriminant { value: op }
-        | AmirRvalue::EnumPayload { value: op, .. }
-        | AmirRvalue::Len(op)
-        | AmirRvalue::Alloc(op) => collect_operand_temp(op, used),
-        AmirRvalue::Binary { left, right, .. }
-        | AmirRvalue::IndexAccess {
-            base: left,
-            index: right,
-        } => {
-            collect_operand_temp(left, used);
-            collect_operand_temp(right, used);
-        }
-        AmirRvalue::StructLiteral { fields, .. } => {
-            for (_, op) in fields {
-                collect_operand_temp(op, used);
-            }
-        }
-        AmirRvalue::Array { items } | AmirRvalue::Tuple { items } => {
-            for op in items {
-                collect_operand_temp(op, used);
-            }
-        }
-        AmirRvalue::Load(place) | AmirRvalue::Borrow(place) | AmirRvalue::BorrowMut(place) => {
-            for projection in &place.projections {
-                if let crate::amir::AmirProjection::Index(op) = projection {
-                    collect_operand_temp(op, used);
-                }
-            }
-        }
-    }
-}
-
-fn collect_operand_temp(op: &AmirOperand, used: &mut BitSet<crate::amir::TempId>) {
-    if let AmirOperand::Copy(temp) | AmirOperand::Move(temp) = op {
-        used.insert(*temp);
-    }
-}
-
-fn is_removable_rvalue(rvalue: &AmirRvalue) -> bool {
-    !rvalue_contains_move(rvalue) && !matches!(rvalue, AmirRvalue::Alloc(_))
-}
-
-fn rvalue_contains_move(rvalue: &AmirRvalue) -> bool {
-    match rvalue {
-        AmirRvalue::Use(op)
-        | AmirRvalue::Unary { operand: op, .. }
-        | AmirRvalue::FieldAccess { base: op, .. }
-        | AmirRvalue::Discriminant { value: op }
-        | AmirRvalue::EnumPayload { value: op, .. }
-        | AmirRvalue::Len(op)
-        | AmirRvalue::Alloc(op) => matches!(op, AmirOperand::Move(_)),
-        AmirRvalue::Binary { left, right, .. }
-        | AmirRvalue::IndexAccess {
-            base: left,
-            index: right,
-        } => matches!(left, AmirOperand::Move(_)) || matches!(right, AmirOperand::Move(_)),
-        AmirRvalue::StructLiteral { fields, .. } => fields
-            .iter()
-            .any(|(_, op)| matches!(op, AmirOperand::Move(_))),
-        AmirRvalue::Array { items } | AmirRvalue::Tuple { items } => {
-            items.iter().any(|op| matches!(op, AmirOperand::Move(_)))
-        }
-        AmirRvalue::Load(_) | AmirRvalue::Borrow(_) | AmirRvalue::BorrowMut(_) => false,
     }
 }
 
@@ -324,27 +32,33 @@ fn rvalue_contains_move(rvalue: &AmirRvalue) -> bool {
 mod tests {
     use super::*;
     use crate::amir::program::extend_block_range;
-    use crate::amir::{AmirBasicBlock, AmirStmtTable, BlockId, LocalId, TempId};
+    use crate::amir::{
+        AmirBasicBlock, AmirConstant, AmirOperand, AmirRvalue, AmirStmt, AmirStmtTable, AmirTemp,
+        AmirTerminator, BlockId, TempId,
+    };
+    use crate::cfg::compute_cfg_edges;
     use crate::layout::DenseRange;
+    use crate::literal_pool::AmirLiteralEntry;
+    use crate::ops::{BinaryOp, UnaryOp};
     use crate::passes::type_checker::types::{ArType, Primitive};
 
-    fn int_temp(id: usize) -> crate::amir::AmirTemp {
-        crate::amir::AmirTemp {
+    fn int_temp(id: usize) -> AmirTemp {
+        AmirTemp {
             id: TempId::from_usize(id),
             ty: ArType::Primitive(Primitive::Int),
             span: arandu_lexer::Span::new(0, 0, 0),
         }
     }
 
-    fn bool_temp(id: usize) -> crate::amir::AmirTemp {
-        crate::amir::AmirTemp {
+    fn bool_temp(id: usize) -> AmirTemp {
+        AmirTemp {
             id: TempId::from_usize(id),
             ty: ArType::Primitive(Primitive::Bool),
             span: arandu_lexer::Span::new(0, 0, 0),
         }
     }
 
-    fn func(statements: Vec<AmirStmt>, temps: Vec<crate::amir::AmirTemp>) -> AmirFunc {
+    fn func(statements: Vec<AmirStmt>, temps: Vec<AmirTemp>) -> AmirFunc {
         let mut stmts = AmirStmtTable::new();
         let mut range = DenseRange::empty();
         for stmt in statements {
@@ -356,7 +70,7 @@ mod tests {
             statements: range,
             terminator: AmirTerminator::Return,
         }];
-        let cfg = crate::cfg::compute_cfg_edges(&blocks);
+        let cfg = compute_cfg_edges(&blocks);
         AmirFunc {
             symbol: crate::SymbolId(0),
             return_type: ArType::Void,
@@ -375,7 +89,7 @@ mod tests {
         let mut pool = AmirLiteralPool::default();
         let two = AmirConstant::Pool(pool.intern(AmirLiteralEntry::Int("2".to_string())));
         let three = AmirConstant::Pool(pool.intern(AmirLiteralEntry::Int("3".to_string())));
-        let mut func = func(
+        let mut f = func(
             vec![
                 AmirStmt::Assign {
                     lhs: TempId::from_usize(0),
@@ -397,9 +111,9 @@ mod tests {
             vec![int_temp(0), bool_temp(1)],
         );
 
-        fold_constants(&mut func, &mut pool);
+        sccp(&mut f, &mut pool);
 
-        let folded_stmt = func
+        let folded_stmt = f
             .block_stmts(BlockId::from_usize(0))
             .nth(1)
             .expect("expected folded comparison statement");
@@ -415,7 +129,7 @@ mod tests {
     #[test]
     fn fold_not_bool() {
         let mut pool = AmirLiteralPool::default();
-        let mut func = func(
+        let mut f = func(
             vec![AmirStmt::Assign {
                 lhs: TempId::from_usize(0),
                 rhs: AmirRvalue::Unary {
@@ -425,8 +139,8 @@ mod tests {
             }],
             vec![bool_temp(0)],
         );
-        fold_constants(&mut func, &mut pool);
-        let stmt = func.block_stmts(BlockId::from_usize(0)).next().unwrap();
+        sccp(&mut f, &mut pool);
+        let stmt = f.block_stmts(BlockId::from_usize(0)).next().unwrap();
         assert!(matches!(
             stmt,
             AmirStmt::Assign {
@@ -440,7 +154,7 @@ mod tests {
     fn fold_neg_int() {
         let mut pool = AmirLiteralPool::default();
         let five = AmirConstant::Pool(pool.intern(AmirLiteralEntry::Int("5".to_string())));
-        let mut func = func(
+        let mut f = func(
             vec![AmirStmt::Assign {
                 lhs: TempId::from_usize(0),
                 rhs: AmirRvalue::Unary {
@@ -450,8 +164,8 @@ mod tests {
             }],
             vec![int_temp(0)],
         );
-        fold_constants(&mut func, &mut pool);
-        let stmt = func.block_stmts(BlockId::from_usize(0)).next().unwrap();
+        sccp(&mut f, &mut pool);
+        let stmt = f.block_stmts(BlockId::from_usize(0)).next().unwrap();
         if let AmirStmt::Assign {
             rhs: AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Pool(id))),
             ..
@@ -468,7 +182,7 @@ mod tests {
         let mut pool = AmirLiteralPool::default();
         let a = AmirConstant::Pool(pool.intern(AmirLiteralEntry::Int("7".to_string())));
         let b = AmirConstant::Pool(pool.intern(AmirLiteralEntry::Int("6".to_string())));
-        let mut func = func(
+        let mut f = func(
             vec![AmirStmt::Assign {
                 lhs: TempId::from_usize(0),
                 rhs: AmirRvalue::Binary {
@@ -479,8 +193,8 @@ mod tests {
             }],
             vec![int_temp(0)],
         );
-        fold_constants(&mut func, &mut pool);
-        let stmt = func.block_stmts(BlockId::from_usize(0)).next().unwrap();
+        sccp(&mut f, &mut pool);
+        let stmt = f.block_stmts(BlockId::from_usize(0)).next().unwrap();
         if let AmirStmt::Assign {
             rhs: AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Pool(id))),
             ..
@@ -495,7 +209,7 @@ mod tests {
     #[test]
     fn fold_bool_and_or() {
         let mut pool = AmirLiteralPool::default();
-        let mut func = func(
+        let mut f = func(
             vec![
                 AmirStmt::Assign {
                     lhs: TempId::from_usize(0),
@@ -516,8 +230,8 @@ mod tests {
             ],
             vec![bool_temp(0), bool_temp(1)],
         );
-        fold_constants(&mut func, &mut pool);
-        let mut stmts = func.block_stmts(BlockId::from_usize(0));
+        sccp(&mut f, &mut pool);
+        let mut stmts = f.block_stmts(BlockId::from_usize(0));
         let s0 = stmts.next().unwrap();
         let s1 = stmts.next().unwrap();
         assert!(matches!(
@@ -537,8 +251,90 @@ mod tests {
     }
 
     #[test]
+    fn sccp_dead_branch_proven_by_constant_condition() {
+        // Diamond: if (false) { bb1 } else { bb2 }
+        // SCCP alone should turn Branch(false, bb1, bb2) → Goto(bb2)
+        // without requiring DCE or SimplifyCFG.
+        let mut st = AmirStmtTable::new();
+        st.push(AmirStmt::Assign {
+            lhs: TempId::from_usize(0),
+            rhs: AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Bool(false))),
+        });
+        st.push(AmirStmt::Store {
+            lhs: crate::amir::AmirPlace {
+                local: crate::amir::LocalId::from_usize(0),
+                projections: smallvec::smallvec![],
+            },
+            rhs: AmirOperand::Constant(AmirConstant::Bool(true)),
+        });
+        st.push(AmirStmt::Store {
+            lhs: crate::amir::AmirPlace {
+                local: crate::amir::LocalId::from_usize(1),
+                projections: smallvec::smallvec![],
+            },
+            rhs: AmirOperand::Constant(AmirConstant::Bool(false)),
+        });
+        let mut func = AmirFunc {
+            symbol: crate::SymbolId(0),
+            return_type: ArType::Void,
+            receiver: None,
+            params: Vec::new(),
+            locals: vec![
+                crate::amir::AmirLocal {
+                    id: crate::amir::LocalId::from_usize(0),
+                    ty: ArType::Primitive(Primitive::Bool),
+                    symbol: None,
+                    span: arandu_lexer::Span::new(0, 0, 0),
+                    use_span: None,
+                },
+                crate::amir::AmirLocal {
+                    id: crate::amir::LocalId::from_usize(1),
+                    ty: ArType::Primitive(Primitive::Bool),
+                    symbol: None,
+                    span: arandu_lexer::Span::new(0, 0, 0),
+                    use_span: None,
+                },
+            ],
+            temps: vec![bool_temp(0)],
+            blocks: vec![
+                AmirBasicBlock {
+                    id: BlockId::from_usize(0),
+                    statements: DenseRange::new(0, 1),
+                    terminator: AmirTerminator::Branch {
+                        condition: AmirOperand::Copy(TempId::from_usize(0)),
+                        if_true: BlockId::from_usize(1),
+                        if_false: BlockId::from_usize(2),
+                    },
+                },
+                AmirBasicBlock {
+                    id: BlockId::from_usize(1),
+                    statements: DenseRange::new(1, 1),
+                    terminator: AmirTerminator::Return,
+                },
+                AmirBasicBlock {
+                    id: BlockId::from_usize(2),
+                    statements: DenseRange::new(2, 1),
+                    terminator: AmirTerminator::Return,
+                },
+            ],
+            stmts: st,
+            cfg: compute_cfg_edges(&[]),
+        };
+        func.cfg = compute_cfg_edges(&func.blocks);
+
+        let mut pool = AmirLiteralPool::default();
+        assert!(sccp(&mut func, &mut pool));
+
+        // The Branch should now be Goto(bb2) — the false branch.
+        assert!(matches!(
+            func.block(BlockId::from_usize(0)).terminator,
+            AmirTerminator::Goto(t) if t == BlockId::from_usize(2)
+        ));
+    }
+
+    #[test]
     fn dce_removes_unused_pure_assigns_and_keeps_alloc() {
-        let mut func = func(
+        let mut f = func(
             vec![
                 AmirStmt::Assign {
                     lhs: TempId::from_usize(1),
@@ -552,10 +348,10 @@ mod tests {
             vec![bool_temp(0), bool_temp(1), bool_temp(2)],
         );
 
-        eliminate_dead_assigns(&mut func);
+        optimize_amir_func(&mut f, &mut crate::literal_pool::AmirLiteralPool::default());
 
-        assert_eq!(func.blocks[0].statements.len, 1);
-        let stmt = func
+        assert_eq!(f.blocks[0].statements.len, 1);
+        let stmt = f
             .block_stmts(BlockId::from_usize(0))
             .next()
             .expect("expected one statement");
@@ -570,9 +366,9 @@ mod tests {
 
     #[test]
     fn dce_removes_unused_binary() {
-        let mut pool = AmirLiteralPool::default();
+        let mut pool = crate::literal_pool::AmirLiteralPool::default();
         let a = AmirConstant::Pool(pool.intern(AmirLiteralEntry::Int("3".to_string())));
-        let mut func = func(
+        let mut f = func(
             vec![AmirStmt::Assign {
                 lhs: TempId::from_usize(1),
                 rhs: AmirRvalue::Binary {
@@ -583,14 +379,13 @@ mod tests {
             }],
             vec![int_temp(0), int_temp(1)],
         );
-        eliminate_dead_assigns(&mut func);
-        // temp(1) is not used → removed
-        assert_eq!(func.blocks[0].statements.len, 0);
+        optimize_amir_func(&mut f, &mut pool);
+        assert_eq!(f.blocks[0].statements.len, 0);
     }
 
     #[test]
     fn dce_keeps_call_side_effect() {
-        let mut func = func(
+        let mut f = func(
             vec![AmirStmt::Call {
                 lhs: Some(TempId::from_usize(0)),
                 callee: AmirOperand::FunctionRef(crate::SymbolId(1)),
@@ -598,28 +393,99 @@ mod tests {
             }],
             vec![bool_temp(0)],
         );
-        eliminate_dead_assigns(&mut func);
-        // Call has side effects (not removable) → kept
-        assert_eq!(func.blocks[0].statements.len, 1);
+        optimize_amir_func(&mut f, &mut crate::literal_pool::AmirLiteralPool::default());
+        assert_eq!(f.blocks[0].statements.len, 1);
     }
 
     #[test]
-    fn rvalue_with_move_not_removable() {
-        use crate::amir::AmirPlace;
-        assert!(rvalue_contains_move(&AmirRvalue::Use(AmirOperand::Move(
-            TempId::from_usize(0)
-        ))));
-        assert!(!rvalue_contains_move(&AmirRvalue::Use(AmirOperand::Copy(
-            TempId::from_usize(0)
-        ))));
-        assert!(!rvalue_contains_move(&AmirRvalue::Load(AmirPlace {
-            local: LocalId::from_usize(0),
-            projections: smallvec::smallvec![],
-        })));
-        assert!(rvalue_contains_move(&AmirRvalue::Binary {
-            op: BinaryOp::Add,
-            left: AmirOperand::Copy(TempId::from_usize(0)),
-            right: AmirOperand::Move(TempId::from_usize(1)),
-        }));
+    fn whole_pipeline_dead_branch_elimination() {
+        // Diamond where the branch condition is constant true:
+        //   bb0: t0 = Bool(true); Branch(t0, bb1, bb2)
+        //   bb1: Store; Goto bb3
+        //   bb2: Store; Goto bb3
+        //   bb3: Return
+        // After SCCP: Branch -> Goto(bb1), bb2 unreachable.
+        // After SimplifyCFG: bb2 removed, bb1 merged with bb0+bb3.
+        let mut st = AmirStmtTable::new();
+        st.push(AmirStmt::Assign {
+            lhs: TempId::from_usize(0),
+            rhs: AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Bool(true))),
+        });
+        st.push(AmirStmt::Store {
+            lhs: crate::amir::AmirPlace {
+                local: crate::amir::LocalId::from_usize(0),
+                projections: smallvec::smallvec![],
+            },
+            rhs: AmirOperand::Constant(AmirConstant::Bool(true)),
+        });
+        st.push(AmirStmt::Store {
+            lhs: crate::amir::AmirPlace {
+                local: crate::amir::LocalId::from_usize(1),
+                projections: smallvec::smallvec![],
+            },
+            rhs: AmirOperand::Constant(AmirConstant::Bool(false)),
+        });
+        let mut func = AmirFunc {
+            symbol: crate::SymbolId(0),
+            return_type: ArType::Void,
+            receiver: None,
+            params: Vec::new(),
+            locals: vec![
+                crate::amir::AmirLocal {
+                    id: crate::amir::LocalId::from_usize(0),
+                    ty: ArType::Primitive(Primitive::Bool),
+                    symbol: None,
+                    span: arandu_lexer::Span::new(0, 0, 0),
+                    use_span: None,
+                },
+                crate::amir::AmirLocal {
+                    id: crate::amir::LocalId::from_usize(1),
+                    ty: ArType::Primitive(Primitive::Bool),
+                    symbol: None,
+                    span: arandu_lexer::Span::new(0, 0, 0),
+                    use_span: None,
+                },
+            ],
+            temps: vec![bool_temp(0)],
+            blocks: vec![
+                AmirBasicBlock {
+                    id: BlockId::from_usize(0),
+                    statements: DenseRange::new(0, 1),
+                    terminator: AmirTerminator::Branch {
+                        condition: AmirOperand::Copy(TempId::from_usize(0)),
+                        if_true: BlockId::from_usize(1),
+                        if_false: BlockId::from_usize(2),
+                    },
+                },
+                AmirBasicBlock {
+                    id: BlockId::from_usize(1),
+                    statements: DenseRange::new(1, 1),
+                    terminator: AmirTerminator::Goto(BlockId::from_usize(3)),
+                },
+                AmirBasicBlock {
+                    id: BlockId::from_usize(2),
+                    statements: DenseRange::new(2, 1),
+                    terminator: AmirTerminator::Goto(BlockId::from_usize(3)),
+                },
+                AmirBasicBlock {
+                    id: BlockId::from_usize(3),
+                    statements: DenseRange::empty(),
+                    terminator: AmirTerminator::Return,
+                },
+            ],
+            stmts: st,
+            cfg: compute_cfg_edges(&[]),
+        };
+        func.cfg = compute_cfg_edges(&func.blocks);
+
+        optimize_amir_func(
+            &mut func,
+            &mut crate::literal_pool::AmirLiteralPool::default(),
+        );
+
+        // After optimization: only 1 block (merged bb0 + bb1 + bb3), with 2 stmts + Return
+        assert_eq!(func.blocks.len(), 1);
+        assert_eq!(func.blocks[0].statements.len, 2);
+        assert!(matches!(func.blocks[0].terminator, AmirTerminator::Return));
     }
 }
