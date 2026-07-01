@@ -545,6 +545,121 @@ mod tests {
     }
 
     #[test]
+    fn available_local_no_error() {
+        let mut stmts = AmirStmtTable::new();
+        let func = make_func(
+            vec![block(
+                vec![AmirStmt::Assign {
+                    lhs: TempId::from_usize(0),
+                    rhs: AmirRvalue::Load(place(0)),
+                }],
+                &mut stmts,
+            )],
+            vec![local(0, non_copy_ty())],
+            vec![temp(0, non_copy_ty())],
+            stmts,
+        );
+        let symbols = SymbolTable::new();
+        assert!(check_moves(&func, &symbols).is_empty());
+    }
+
+    #[test]
+    fn use_after_move_reports_error() {
+        let mut stmts = AmirStmtTable::new();
+        let func = make_func(
+            vec![block(
+                vec![
+                    AmirStmt::Assign {
+                        lhs: TempId::from_usize(0),
+                        rhs: AmirRvalue::Load(place(0)),
+                    },
+                    AmirStmt::Destroy(place(0)),
+                    AmirStmt::Assign {
+                        lhs: TempId::from_usize(0),
+                        rhs: AmirRvalue::Load(place(0)),
+                    },
+                ],
+                &mut stmts,
+            )],
+            vec![local(0, non_copy_ty())],
+            vec![temp(0, non_copy_ty())],
+            stmts,
+        );
+        let symbols = SymbolTable::new();
+        let diags = check_moves(&func, &symbols);
+        assert!(diags.iter().any(|d| d.code == DiagCode::O001UseAfterMove));
+    }
+
+    #[test]
+    fn move_on_one_branch_maybe_moved() {
+        let mut stmts = AmirStmtTable::new();
+        let b0 = BlockId::from_usize(0);
+        let b1 = BlockId::from_usize(1);
+        let b2 = BlockId::from_usize(2);
+        let b3 = BlockId::from_usize(3);
+
+        let mut range0 = DenseRange::empty();
+        extend_block_range(
+            &mut range0,
+            stmts.push(AmirStmt::Assign {
+                lhs: TempId::from_usize(0),
+                rhs: AmirRvalue::Load(place(0)),
+            }),
+        );
+        let block0 = AmirBasicBlock {
+            id: b0,
+            statements: range0,
+            terminator: AmirTerminator::Branch {
+                condition: AmirOperand::Copy(TempId::from_usize(0)),
+                if_true: b1,
+                if_false: b2,
+            },
+        };
+
+        let mut range1 = DenseRange::empty();
+        extend_block_range(&mut range1, stmts.push(AmirStmt::Destroy(place(0))));
+        let block1 = AmirBasicBlock {
+            id: b1,
+            statements: range1,
+            terminator: AmirTerminator::Goto(b3),
+        };
+
+        let block2 = AmirBasicBlock {
+            id: b2,
+            statements: DenseRange::empty(),
+            terminator: AmirTerminator::Goto(b3),
+        };
+
+        let mut range3 = DenseRange::empty();
+        extend_block_range(
+            &mut range3,
+            stmts.push(AmirStmt::Assign {
+                lhs: TempId::from_usize(0),
+                rhs: AmirRvalue::Load(place(0)),
+            }),
+        );
+        let block3 = AmirBasicBlock {
+            id: b3,
+            statements: range3,
+            terminator: AmirTerminator::Return,
+        };
+
+        let func = make_func(
+            vec![block0, block1, block2, block3],
+            vec![local(0, non_copy_ty())],
+            vec![temp(0, non_copy_ty())],
+            stmts,
+        );
+        let symbols = SymbolTable::new();
+        let diags = check_moves(&func, &symbols);
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.code == DiagCode::O007InconsistentMoveBetweenBranches)
+        );
+    }
+
+    #[test]
     fn copy_type_move_does_not_mark_origin_moved() {
         let mut stmts = AmirStmtTable::new();
         let func = make_func(

@@ -454,6 +454,95 @@ mod tests {
     }
 
     #[test]
+    fn test_no_error_with_loop_init() {
+        // bb0: Store local0 = const; Goto bb1
+        // bb1: Load local0; Branch(cond, bb1, bb2)
+        // bb2: return
+        let mut stmts = AmirStmtTable::new();
+        let blocks = vec![
+            make_block(
+                0,
+                vec![AmirStmt::Store {
+                    lhs: place(0),
+                    rhs: AmirOperand::Constant(AmirConstant::Bool(true)),
+                }],
+                AmirTerminator::Goto(BlockId::from_usize(1)),
+                &[1],
+                &[],
+                &mut stmts,
+            ),
+            make_block(
+                1,
+                vec![AmirStmt::Assign {
+                    lhs: TempId::from_usize(1),
+                    rhs: AmirRvalue::Load(place(0)),
+                }],
+                AmirTerminator::Branch {
+                    condition: AmirOperand::Copy(TempId::from_usize(1)),
+                    if_true: BlockId::from_usize(1),
+                    if_false: BlockId::from_usize(2),
+                },
+                &[1, 2],
+                &[0],
+                &mut stmts,
+            ),
+            make_block(2, vec![], AmirTerminator::Return, &[], &[1], &mut stmts),
+        ];
+        let func = make_func(
+            blocks,
+            stmts,
+            vec![make_local(0, None)],
+            vec![make_temp(0), make_temp(1)],
+        );
+        let st = make_symbol_table();
+        let diags = check_definite_init(&func, &st);
+        assert!(diags.is_empty(), "expected no errors, got: {:?}", diags);
+    }
+
+    #[test]
+    fn test_no_error_with_empty_func() {
+        let stmts = AmirStmtTable::new();
+        let blocks = vec![make_block(
+            0,
+            vec![],
+            AmirTerminator::Return,
+            &[],
+            &[],
+            &mut stmts.clone(),
+        )];
+        let func = make_func(blocks, stmts, vec![], vec![]);
+        let st = make_symbol_table();
+        let diags = check_definite_init(&func, &st);
+        assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn test_error_no_init_at_all() {
+        let mut stmts = AmirStmtTable::new();
+        let blocks = vec![make_block(
+            0,
+            vec![AmirStmt::Assign {
+                lhs: TempId::from_usize(1),
+                rhs: AmirRvalue::Load(place(0)),
+            }],
+            AmirTerminator::Return,
+            &[],
+            &[],
+            &mut stmts,
+        )];
+        let func = make_func(
+            blocks,
+            stmts,
+            vec![make_local(0, None)],
+            vec![make_temp(0), make_temp(1)],
+        );
+        let st = make_symbol_table();
+        let diags = check_definite_init(&func, &st);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].code, DiagCode::O008UseBeforeInit);
+    }
+
+    #[test]
     fn test_no_error_on_both_branches_init() {
         // bb0: Branch -> bb1, bb2
         // bb1: Store local0; Goto bb3

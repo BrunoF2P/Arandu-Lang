@@ -324,7 +324,7 @@ fn rvalue_contains_move(rvalue: &AmirRvalue) -> bool {
 mod tests {
     use super::*;
     use crate::amir::program::extend_block_range;
-    use crate::amir::{AmirBasicBlock, AmirStmtTable, BlockId, TempId};
+    use crate::amir::{AmirBasicBlock, AmirStmtTable, BlockId, LocalId, TempId};
     use crate::layout::DenseRange;
     use crate::passes::type_checker::types::{ArType, Primitive};
 
@@ -413,6 +413,130 @@ mod tests {
     }
 
     #[test]
+    fn fold_not_bool() {
+        let mut pool = AmirLiteralPool::default();
+        let mut func = func(
+            vec![AmirStmt::Assign {
+                lhs: TempId::from_usize(0),
+                rhs: AmirRvalue::Unary {
+                    op: UnaryOp::Not,
+                    operand: AmirOperand::Constant(AmirConstant::Bool(false)),
+                },
+            }],
+            vec![bool_temp(0)],
+        );
+        fold_constants(&mut func, &mut pool);
+        let stmt = func.block_stmts(BlockId::from_usize(0)).next().unwrap();
+        assert!(matches!(
+            stmt,
+            AmirStmt::Assign {
+                rhs: AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Bool(true))),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn fold_neg_int() {
+        let mut pool = AmirLiteralPool::default();
+        let five = AmirConstant::Pool(pool.intern(AmirLiteralEntry::Int("5".to_string())));
+        let mut func = func(
+            vec![AmirStmt::Assign {
+                lhs: TempId::from_usize(0),
+                rhs: AmirRvalue::Unary {
+                    op: UnaryOp::Neg,
+                    operand: AmirOperand::Constant(five),
+                },
+            }],
+            vec![int_temp(0)],
+        );
+        fold_constants(&mut func, &mut pool);
+        let stmt = func.block_stmts(BlockId::from_usize(0)).next().unwrap();
+        if let AmirStmt::Assign {
+            rhs: AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Pool(id))),
+            ..
+        } = stmt
+        {
+            assert_eq!(pool.get(*id), &AmirLiteralEntry::Int("-5".to_string()));
+        } else {
+            panic!("expected folded neg");
+        }
+    }
+
+    #[test]
+    fn fold_int_mul() {
+        let mut pool = AmirLiteralPool::default();
+        let a = AmirConstant::Pool(pool.intern(AmirLiteralEntry::Int("7".to_string())));
+        let b = AmirConstant::Pool(pool.intern(AmirLiteralEntry::Int("6".to_string())));
+        let mut func = func(
+            vec![AmirStmt::Assign {
+                lhs: TempId::from_usize(0),
+                rhs: AmirRvalue::Binary {
+                    op: BinaryOp::Mul,
+                    left: AmirOperand::Constant(a),
+                    right: AmirOperand::Constant(b),
+                },
+            }],
+            vec![int_temp(0)],
+        );
+        fold_constants(&mut func, &mut pool);
+        let stmt = func.block_stmts(BlockId::from_usize(0)).next().unwrap();
+        if let AmirStmt::Assign {
+            rhs: AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Pool(id))),
+            ..
+        } = stmt
+        {
+            assert_eq!(pool.get(*id), &AmirLiteralEntry::Int("42".to_string()));
+        } else {
+            panic!("expected folded mul");
+        }
+    }
+
+    #[test]
+    fn fold_bool_and_or() {
+        let mut pool = AmirLiteralPool::default();
+        let mut func = func(
+            vec![
+                AmirStmt::Assign {
+                    lhs: TempId::from_usize(0),
+                    rhs: AmirRvalue::Binary {
+                        op: BinaryOp::And,
+                        left: AmirOperand::Constant(AmirConstant::Bool(true)),
+                        right: AmirOperand::Constant(AmirConstant::Bool(false)),
+                    },
+                },
+                AmirStmt::Assign {
+                    lhs: TempId::from_usize(1),
+                    rhs: AmirRvalue::Binary {
+                        op: BinaryOp::Or,
+                        left: AmirOperand::Constant(AmirConstant::Bool(false)),
+                        right: AmirOperand::Constant(AmirConstant::Bool(true)),
+                    },
+                },
+            ],
+            vec![bool_temp(0), bool_temp(1)],
+        );
+        fold_constants(&mut func, &mut pool);
+        let mut stmts = func.block_stmts(BlockId::from_usize(0));
+        let s0 = stmts.next().unwrap();
+        let s1 = stmts.next().unwrap();
+        assert!(matches!(
+            s0,
+            AmirStmt::Assign {
+                rhs: AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Bool(false))),
+                ..
+            }
+        ));
+        assert!(matches!(
+            s1,
+            AmirStmt::Assign {
+                rhs: AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Bool(true))),
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn dce_removes_unused_pure_assigns_and_keeps_alloc() {
         let mut func = func(
             vec![
@@ -442,5 +566,60 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn dce_removes_unused_binary() {
+        let mut pool = AmirLiteralPool::default();
+        let a = AmirConstant::Pool(pool.intern(AmirLiteralEntry::Int("3".to_string())));
+        let mut func = func(
+            vec![AmirStmt::Assign {
+                lhs: TempId::from_usize(1),
+                rhs: AmirRvalue::Binary {
+                    op: BinaryOp::Add,
+                    left: AmirOperand::Constant(a),
+                    right: AmirOperand::Constant(a),
+                },
+            }],
+            vec![int_temp(0), int_temp(1)],
+        );
+        eliminate_dead_assigns(&mut func);
+        // temp(1) is not used → removed
+        assert_eq!(func.blocks[0].statements.len, 0);
+    }
+
+    #[test]
+    fn dce_keeps_call_side_effect() {
+        let mut func = func(
+            vec![AmirStmt::Call {
+                lhs: Some(TempId::from_usize(0)),
+                callee: AmirOperand::FunctionRef(crate::SymbolId(1)),
+                args: smallvec::smallvec![],
+            }],
+            vec![bool_temp(0)],
+        );
+        eliminate_dead_assigns(&mut func);
+        // Call has side effects (not removable) → kept
+        assert_eq!(func.blocks[0].statements.len, 1);
+    }
+
+    #[test]
+    fn rvalue_with_move_not_removable() {
+        use crate::amir::AmirPlace;
+        assert!(rvalue_contains_move(&AmirRvalue::Use(AmirOperand::Move(
+            TempId::from_usize(0)
+        ))));
+        assert!(!rvalue_contains_move(&AmirRvalue::Use(AmirOperand::Copy(
+            TempId::from_usize(0)
+        ))));
+        assert!(!rvalue_contains_move(&AmirRvalue::Load(AmirPlace {
+            local: LocalId::from_usize(0),
+            projections: smallvec::smallvec![],
+        })));
+        assert!(rvalue_contains_move(&AmirRvalue::Binary {
+            op: BinaryOp::Add,
+            left: AmirOperand::Copy(TempId::from_usize(0)),
+            right: AmirOperand::Move(TempId::from_usize(1)),
+        }));
     }
 }
