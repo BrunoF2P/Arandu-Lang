@@ -56,7 +56,7 @@ func main() {
     )
     .expect("parse");
     let resolution = resolve(&program);
-    let mut tc = type_check(resolution, &program);
+    let tc = type_check(resolution, &program);
     let scope = tc.symbols.global_scope();
     assert!(
         tc.symbols.lookup_module(scope, "err").is_some(),

@@ -250,7 +250,8 @@ fn main() {
 
                 let hir = {
                     arandu_base::time_pass!("lower-hir");
-                    match arandu_semantics::lower_to_hir(&mut checked.type_check, &checked.program) {
+                    match arandu_semantics::lower_to_hir(&mut checked.type_check, &checked.program)
+                    {
                         Ok(hir) => hir,
                         Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
                     }
@@ -275,7 +276,8 @@ fn main() {
                 };
                 let hir = {
                     arandu_base::time_pass!("lower-hir");
-                    match arandu_semantics::lower_to_hir(&mut checked.type_check, &checked.program) {
+                    match arandu_semantics::lower_to_hir(&mut checked.type_check, &checked.program)
+                    {
                         Ok(hir) => hir,
                         Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
                     }
@@ -302,7 +304,8 @@ fn main() {
                 };
                 let hir = {
                     arandu_base::time_pass!("lower-hir");
-                    match arandu_semantics::lower_to_hir(&mut checked.type_check, &checked.program) {
+                    match arandu_semantics::lower_to_hir(&mut checked.type_check, &checked.program)
+                    {
                         Ok(hir) => hir,
                         Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
                     }
@@ -343,7 +346,8 @@ fn main() {
 
                 let hir = {
                     arandu_base::time_pass!("lower-hir");
-                    match arandu_semantics::lower_to_hir(&mut checked.type_check, &checked.program) {
+                    match arandu_semantics::lower_to_hir(&mut checked.type_check, &checked.program)
+                    {
                         Ok(hir) => hir,
                         Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
                     }
@@ -370,8 +374,12 @@ fn main() {
                 let output = {
                     arandu_base::time_pass!("codegen");
                     let backend = arandu_backend_cranelift::CraneliftBackend::new();
-                    match CodegenBackend::compile(backend, &amir, &checked.type_check.symbols, &())
-                    {
+                    match CodegenBackend::compile(
+                        backend,
+                        &amir,
+                        &checked.type_check.symbols,
+                        &checked.type_check.type_info,
+                    ) {
                         Ok(out) => out,
                         Err(diag) => print_diagnostics_and_exit(&[diag], &filepath),
                     }

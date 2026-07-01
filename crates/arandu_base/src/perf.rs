@@ -375,10 +375,7 @@ pub fn print_perf_summary() {
         emit(
             YELLOW,
             "mem",
-            &format!(
-                "Arena allocated: {mb:.1} MB  requests: {}",
-                fmt_num(count)
-            ),
+            &format!("Arena allocated: {mb:.1} MB  requests: {}", fmt_num(count)),
         );
         if use_color() {
             let (h, m, s) = local_hms();

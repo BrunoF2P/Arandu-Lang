@@ -1091,7 +1091,11 @@ fn test_async_block_and_await_typecheck() {
     let program = parse(source).expect("Failed to parse");
     let resolution = resolve(&program);
     let result = type_check(resolution, &program);
-    assert!(result.diagnostics.is_empty(), "Expected no type errors, but got {:?}", result.diagnostics);
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected no type errors, but got {:?}",
+        result.diagnostics
+    );
 }
 
 #[test]

@@ -472,12 +472,21 @@ fn resolves_external_import_alias() {
         "#,
     )
     .unwrap();
-    
-    let (mut symbols, resolved, docs, diagnostics) = arandu_resolve::name_resolution::collect_symbols(&program);
+
+    let (mut symbols, resolved, docs, diagnostics) =
+        arandu_resolve::name_resolution::collect_symbols(&program);
     let span = Span::new(0, 0, 0);
-    symbols.define_module_member("github.com/empresa/auth.userService", "login", span).unwrap();
-    
-    let result = arandu_resolve::name_resolution::resolve_with_symbols(symbols, resolved, docs, diagnostics, &program);
+    symbols
+        .define_module_member("github.com/empresa/auth.userService", "login", span)
+        .unwrap();
+
+    let result = arandu_resolve::name_resolution::resolve_with_symbols(
+        symbols,
+        resolved,
+        docs,
+        diagnostics,
+        &program,
+    );
     assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
 }
 
@@ -493,12 +502,21 @@ fn resolves_external_import_alias_type() {
         "#,
     )
     .unwrap();
-    
-    let (mut symbols, resolved, docs, diagnostics) = arandu_resolve::name_resolution::collect_symbols(&program);
+
+    let (mut symbols, resolved, docs, diagnostics) =
+        arandu_resolve::name_resolution::collect_symbols(&program);
     let span = Span::new(0, 0, 0);
-    symbols.define_module_member("github.com/empresa/auth.userService", "User", span).unwrap();
-    
-    let result = arandu_resolve::name_resolution::resolve_with_symbols(symbols, resolved, docs, diagnostics, &program);
+    symbols
+        .define_module_member("github.com/empresa/auth.userService", "User", span)
+        .unwrap();
+
+    let result = arandu_resolve::name_resolution::resolve_with_symbols(
+        symbols,
+        resolved,
+        docs,
+        diagnostics,
+        &program,
+    );
     assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
 }
 

@@ -1,6 +1,6 @@
-use std::sync::Arc;
 use crate::line_index::LineIndex;
 use rustc_hash::FxHashMap;
+use std::sync::Arc;
 
 /// An entry in the `SourceRegistry` representing a loaded source file.
 /// Uses `Arc<str>` for zero-copy memory interning and lock-free thread safety across compilation sessions.
