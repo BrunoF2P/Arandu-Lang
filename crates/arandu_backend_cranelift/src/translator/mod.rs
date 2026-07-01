@@ -32,6 +32,7 @@ pub struct FunctionTranslator<'a, 'b> {
     pub ptr_type: Type,
     pub literal_pool: &'b arandu_semantics::literal_pool::AmirLiteralPool,
     pub current_func: &'b AmirFunc,
+    pub type_info: &'b arandu_semantics::TypeInfo,
     pub(crate) error: Option<Diagnostic>,
 }
 
@@ -45,6 +46,7 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
         ptr_type: Type,
         literal_pool: &'b arandu_semantics::literal_pool::AmirLiteralPool,
         current_func: &'b AmirFunc,
+        type_info: &'b arandu_semantics::TypeInfo,
     ) -> Self {
         Self {
             builder,
@@ -57,6 +59,7 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
             ptr_type,
             literal_pool,
             current_func,
+            type_info,
             error: None,
         }
     }
@@ -83,7 +86,9 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
     }
 
     pub(crate) fn poison_i32(&mut self) -> Value {
-        self.builder.ins().iconst(cranelift_codegen::ir::types::I32, 0)
+        self.builder
+            .ins()
+            .iconst(cranelift_codegen::ir::types::I32, 0)
     }
 
     pub(crate) fn temp_span(&self, temp_id: TempId) -> Span {

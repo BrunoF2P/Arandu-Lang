@@ -28,7 +28,7 @@ pub use arandu_base::newtype_index;
 pub use arandu_base::stable_id::{DenseSlotMap, GenerationalId, SlotMap, StableHandle};
 pub use arandu_base::string_pool::{SsoString, StringId, StringPool};
 pub use arandu_base::vm::VmReservation;
-pub use layout::DenseRange;
+pub use layout::{DenseRange, LayoutEngine, StructLayoutProvider, TypeLayout};
 
 pub use amir_validate::validate_amir_program;
 pub use codegen::{CodegenBackend, CompiledCode};

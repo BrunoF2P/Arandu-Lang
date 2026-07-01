@@ -68,7 +68,11 @@ pub fn clif_type(ty: &ArType, ptr_type: Type) -> ClifType {
             ClifType::Concrete(ptr_type)
         }
         ArType::Func(_, _) => ClifType::Concrete(ptr_type),
-        ArType::Tuple(_) | ArType::Result(_, _) | ArType::Option(_) | ArType::Coroutine(_) | ArType::Range(_) => {
+        ArType::Tuple(_)
+        | ArType::Result(_, _)
+        | ArType::Option(_)
+        | ArType::Coroutine(_)
+        | ArType::Range(_) => {
             // Composite types map to pointers for JIT passing.
             ClifType::Concrete(ptr_type)
         }

@@ -32,22 +32,23 @@ impl CraneliftBackend {
         self,
         program: &AmirProgram,
         symbols: &SymbolTable,
+        type_info: &arandu_semantics::TypeInfo,
     ) -> Result<CompiledModule, Diagnostic> {
-        CodegenBackend::compile(self, program, symbols, &())
+        CodegenBackend::compile(self, program, symbols, type_info)
     }
 }
 
 impl CodegenBackend for CraneliftBackend {
-    type TargetConfig = ();
+    type TargetConfig = arandu_semantics::TypeInfo;
     type CompilationOutput = CompiledModule;
 
     fn compile(
         self,
         program: &AmirProgram,
         symbols: &SymbolTable,
-        _config: &Self::TargetConfig,
+        config: &Self::TargetConfig,
     ) -> Result<Self::CompilationOutput, Diagnostic> {
-        self.jit.compile_program(program, symbols)
+        self.jit.compile_program(program, symbols, config)
     }
 }
 

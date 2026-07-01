@@ -1,8 +1,8 @@
 use crate::abi::build_signature;
 use crate::translator::FunctionTranslator;
 use arandu_base::span::Span;
-use arandu_semantics::{DiagCode, Diagnostic, SymbolTable};
 use arandu_semantics::amir::AmirProgram;
+use arandu_semantics::{DiagCode, Diagnostic, SymbolTable};
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
@@ -46,6 +46,7 @@ impl AranduJit {
         mut self,
         program: &AmirProgram,
         symbols: &SymbolTable,
+        type_info: &arandu_semantics::TypeInfo,
     ) -> Result<CompiledModule, Diagnostic> {
         let mut func_ids = FxHashMap::default();
         let default_call_conv = self.module.isa().default_call_conv();
@@ -66,7 +67,10 @@ impl AranduJit {
                 .module
                 .declare_function(&sym.name, Linkage::Export, &sig)
                 .map_err(|err| {
-                    codegen_ice(format!("failed to declare function '{}': {err:?}", sym.name))
+                    codegen_ice(format!(
+                        "failed to declare function '{}': {err:?}",
+                        sym.name
+                    ))
                 })?;
             func_ids.insert(sym.name.clone(), func_id);
 
@@ -135,6 +139,7 @@ impl AranduJit {
                     ptr_type,
                     &program.literal_pool,
                     func,
+                    type_info,
                 );
                 translator.translate()?;
             }
