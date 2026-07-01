@@ -2,13 +2,17 @@ use arandu_lexer::Span;
 use arandu_parser::ast_pool::{ExprId, ExprKind};
 use arandu_parser::{BinaryOp, UnaryOp};
 
+use super::synth_expr;
 use crate::type_checker::TypeChecker;
 use crate::type_checker::constraints::ConstraintOrigin;
 use crate::type_checker::types::{self, ArType, Primitive};
 use arandu_middle::types::type_interner::TypeId;
-use super::synth_expr;
 
-pub(super) fn cast_types_compatible(found: &ArType, target: &ArType, interner: &arandu_middle::types::TypeInterner) -> bool {
+pub(super) fn cast_types_compatible(
+    found: &ArType,
+    target: &ArType,
+    interner: &arandu_middle::types::TypeInterner,
+) -> bool {
     if found.is_error() || target.is_error() {
         return true;
     }
@@ -238,8 +242,7 @@ pub(super) fn synth_binary_unary_expr(
                         );
                         return Some(checker.intern(ArType::Error));
                     }
-                    let inner_ty = types::resolve_literal_pair(left_ty, right_ty)
-                        .default_literal();
+                    let inner_ty = types::resolve_literal_pair(left_ty, right_ty).default_literal();
                     let inner_id = checker.intern(inner_ty);
                     Some(checker.intern(ArType::Range(inner_id)))
                 }

@@ -17,7 +17,9 @@ pub fn constraint_to_diagnostic(
     symbols: &SymbolTable,
     type_info: &TypeInfo,
 ) -> Diagnostic {
-    let expected_str = constraint.expected.display(symbols, &type_info.type_interner);
+    let expected_str = constraint
+        .expected
+        .display(symbols, &type_info.type_interner);
     let found_str = constraint.found.display(symbols, &type_info.type_interner);
 
     match &constraint.origin {

@@ -195,19 +195,19 @@ pub(crate) fn synth_method_call(
 
     for (i, arg_id) in arg_ids.iter().copied().enumerate() {
         let arg_ty_id = synth_expr(checker, arg_id);
-        if let Some(&expected_id) = explicit_params.get(i) {
-            if !checker.unify_ids(expected_id, arg_ty_id) {
-                checker.add_constraint(
-                    expected_id,
-                    arg_ty_id,
-                    ConstraintOrigin::CallArg {
-                        call_span,
-                        param_span: field_span,
-                        arg_span: checker.pool.expr_span(arg_id),
-                        arg_index: i + 1,
-                    },
-                );
-            }
+        if let Some(&expected_id) = explicit_params.get(i)
+            && !checker.unify_ids(expected_id, arg_ty_id)
+        {
+            checker.add_constraint(
+                expected_id,
+                arg_ty_id,
+                ConstraintOrigin::CallArg {
+                    call_span,
+                    param_span: field_span,
+                    arg_span: checker.pool.expr_span(arg_id),
+                    arg_index: i + 1,
+                },
+            );
         }
     }
 

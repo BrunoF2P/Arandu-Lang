@@ -12,10 +12,19 @@ use super::place::synth_place;
 /// Roteador principal de checagem de tipo de instruções.
 pub fn check_stmt(checker: &mut TypeChecker<'_>, pool: &AstPool, stmt: &Stmt) {
     match stmt {
-        Stmt::VarDecl { span: _, bindings, value } => {
+        Stmt::VarDecl {
+            span: _,
+            bindings,
+            value,
+        } => {
             check_var_decl_stmt(checker, bindings, *value);
         }
-        Stmt::Set { span: _, places, op: _, value } => {
+        Stmt::Set {
+            span: _,
+            places,
+            op: _,
+            value,
+        } => {
             check_set_stmt(checker, places, *value);
         }
         Stmt::Return { span, values } => {
@@ -24,13 +33,26 @@ pub fn check_stmt(checker: &mut TypeChecker<'_>, pool: &AstPool, stmt: &Stmt) {
         Stmt::Expr { expr, .. } => {
             super::super::synth::synth_expr(checker, *expr);
         }
-        Stmt::If { span: _, condition, then_block, else_block } => {
+        Stmt::If {
+            span: _,
+            condition,
+            then_block,
+            else_block,
+        } => {
             check_if_stmt(checker, pool, condition, then_block, else_block.as_ref());
         }
-        Stmt::While { span: _, condition, body } => {
+        Stmt::While {
+            span: _,
+            condition,
+            body,
+        } => {
             check_while_stmt(checker, pool, condition, body);
         }
-        Stmt::For { span: _, clause, body } => {
+        Stmt::For {
+            span: _,
+            clause,
+            body,
+        } => {
             check_for_stmt(checker, pool, clause, body);
         }
         Stmt::Match { span: _, expr } => {
@@ -47,7 +69,8 @@ pub fn check_stmt(checker: &mut TypeChecker<'_>, pool: &AstPool, stmt: &Stmt) {
         }
         _ => {}
     }
-}fn check_var_decl_stmt(
+}
+fn check_var_decl_stmt(
     checker: &mut TypeChecker<'_>,
     bindings: &[arandu_parser::BindingItem],
     value: arandu_parser::ast_pool::ExprId,
@@ -80,7 +103,10 @@ fn check_multi_var_decl(
     for (i, binding) in bindings.iter().enumerate() {
         let binding_key = crate::NodeKey::from(binding.span);
         if let Some(symbol_id) = checker.resolved.definitions.get(&binding_key).copied() {
-            let elem_ty_id = val_tys.get(i).copied().unwrap_or_else(|| checker.intern(ArType::Error));
+            let elem_ty_id = val_tys
+                .get(i)
+                .copied()
+                .unwrap_or_else(|| checker.intern(ArType::Error));
             let mut bind_ty_id = elem_ty_id;
 
             if let Some(ty_expr) = &binding.ty {
@@ -168,32 +194,50 @@ fn check_set_stmt(
     let val_ty_id = super::super::synth::synth_expr(checker, value);
 
     if places.len() > 1 {
-        let val_tys: Vec<TypeId> = if let Some((ok_id, err_id)) = checker.result_ok_err_ids(val_ty_id) {
-            vec![ok_id, err_id]
-        } else {
-            match checker.resolve(val_ty_id) {
-                ArType::Tuple(tys) => tys.clone(),
-                ArType::Error => vec![checker.intern(ArType::Error); places.len()],
-                _ => vec![val_ty_id; places.len()],
-            }
-        };
+        let val_tys: Vec<TypeId> =
+            if let Some((ok_id, err_id)) = checker.result_ok_err_ids(val_ty_id) {
+                vec![ok_id, err_id]
+            } else {
+                match checker.resolve(val_ty_id) {
+                    ArType::Tuple(tys) => tys.clone(),
+                    ArType::Error => vec![checker.intern(ArType::Error); places.len()],
+                    _ => vec![val_ty_id; places.len()],
+                }
+            };
 
         for (i, place) in places.iter().enumerate() {
             let expected_ty_id = synth_place(checker, place);
-            let elem_ty_id = val_tys.get(i).copied().unwrap_or_else(|| checker.intern(ArType::Error));
-            apply_set_constraints(checker, expected_ty_id, elem_ty_id, place.span, checker.pool.expr_span(value));
+            let elem_ty_id = val_tys
+                .get(i)
+                .copied()
+                .unwrap_or_else(|| checker.intern(ArType::Error));
+            apply_set_constraints(
+                checker,
+                expected_ty_id,
+                elem_ty_id,
+                place.span,
+                checker.pool.expr_span(value),
+            );
         }
     } else if let Some(place) = places.first() {
         let expected_ty_id = synth_place(checker, place);
         let mut final_val_ty_id = val_ty_id;
 
-        if matches!(checker.pool.expr(value), arandu_parser::ExprKind::Nil) && !checker.resolve(expected_ty_id).is_error() {
+        if matches!(checker.pool.expr(value), arandu_parser::ExprKind::Nil)
+            && !checker.resolve(expected_ty_id).is_error()
+        {
             checker.type_info.record_expr_type(value, expected_ty_id);
             final_val_ty_id = expected_ty_id;
         }
 
-        let is_result = checker.result_ok_err(checker.resolve(final_val_ty_id)).is_some();
-        if is_result && checker.result_ok_err(checker.resolve(expected_ty_id)).is_none() {
+        let is_result = checker
+            .result_ok_err(checker.resolve(final_val_ty_id))
+            .is_some();
+        if is_result
+            && checker
+                .result_ok_err(checker.resolve(expected_ty_id))
+                .is_none()
+        {
             checker.diagnostics.push(crate::Diagnostic::warning(
                 crate::DiagCode::W006UnhandledResult,
                 "Result value must be handled with `?` or `value, err = f()`",
@@ -201,7 +245,13 @@ fn check_set_stmt(
             ));
         }
 
-        apply_set_constraints(checker, expected_ty_id, final_val_ty_id, place.span, checker.pool.expr_span(value));
+        apply_set_constraints(
+            checker,
+            expected_ty_id,
+            final_val_ty_id,
+            place.span,
+            checker.pool.expr_span(value),
+        );
     }
 }
 
@@ -223,10 +273,7 @@ fn check_return_stmt(
     } else {
         let tys = values
             .iter()
-            .map(|v| {
-                let ty_id = super::super::synth::synth_expr(checker, *v);
-                ty_id
-            })
+            .map(|v| super::super::synth::synth_expr(checker, *v))
             .collect();
         checker.intern(ArType::Tuple(tys))
     };
@@ -367,7 +414,11 @@ fn check_simple_stmt(
     stmt: &arandu_parser::SimpleStmt,
 ) {
     match stmt {
-        arandu_parser::SimpleStmt::VarDecl { span, bindings, value } => {
+        arandu_parser::SimpleStmt::VarDecl {
+            span,
+            bindings,
+            value,
+        } => {
             check_stmt(
                 checker,
                 pool,
@@ -378,7 +429,12 @@ fn check_simple_stmt(
                 },
             );
         }
-        arandu_parser::SimpleStmt::Set { span, places, op, value } => {
+        arandu_parser::SimpleStmt::Set {
+            span,
+            places,
+            op,
+            value,
+        } => {
             check_stmt(
                 checker,
                 pool,
@@ -396,7 +452,11 @@ fn check_simple_stmt(
     }
 }
 
-fn check_free_stmt(checker: &mut TypeChecker<'_>, span: arandu_base::Span, expr: arandu_parser::ast_pool::ExprId) {
+fn check_free_stmt(
+    checker: &mut TypeChecker<'_>,
+    span: arandu_base::Span,
+    expr: arandu_parser::ast_pool::ExprId,
+) {
     let ty_id = super::super::synth::synth_expr(checker, expr);
     let ty = checker.resolve(ty_id).clone();
     if !ty.is_error() && !matches!(ty, ArType::Ptr(_)) {
@@ -412,13 +472,20 @@ fn check_free_stmt(checker: &mut TypeChecker<'_>, span: arandu_base::Span, expr:
             )
             .with_label(
                 checker.pool.expr_span(expr),
-                format!("expression has type '{}'", ty.display(&checker.symbols, interner)),
+                format!(
+                    "expression has type '{}'",
+                    ty.display(&checker.symbols, interner)
+                ),
             ),
         );
     }
 }
 
-fn check_defer_stmt(checker: &mut TypeChecker<'_>, pool: &AstPool, body: &arandu_parser::DeferBody) {
+fn check_defer_stmt(
+    checker: &mut TypeChecker<'_>,
+    pool: &AstPool,
+    body: &arandu_parser::DeferBody,
+) {
     match body {
         arandu_parser::DeferBody::Block { block, .. } => {
             check_block(checker, pool, block);
@@ -468,10 +535,7 @@ fn apply_assignment_constraints(
         checker.add_constraint(
             expected.clone(),
             actual.clone(),
-            ConstraintOrigin::Assignment {
-                lhs_span,
-                rhs_span,
-            },
+            ConstraintOrigin::Assignment { lhs_span, rhs_span },
         );
     }
 }

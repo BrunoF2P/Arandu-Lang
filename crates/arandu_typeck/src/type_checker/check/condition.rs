@@ -10,7 +10,11 @@ pub fn check_condition(checker: &mut TypeChecker<'_>, condition: &Condition) {
             let cond_ty_id = super::super::synth::synth_expr(checker, *expr);
             let cond_ty = checker.resolve(cond_ty_id).clone();
             if !cond_ty.is_error()
-                && !super::super::types::unify(&cond_ty, &ArType::Primitive(Primitive::Bool), &checker.type_info.type_interner)
+                && !super::super::types::unify(
+                    &cond_ty,
+                    &ArType::Primitive(Primitive::Bool),
+                    &checker.type_info.type_interner,
+                )
             {
                 checker.add_constraint(
                     ArType::Primitive(Primitive::Bool),

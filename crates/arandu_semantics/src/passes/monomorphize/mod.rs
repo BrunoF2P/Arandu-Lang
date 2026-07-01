@@ -4,7 +4,9 @@ mod graph;
 
 pub use collect::analyze_instantiations;
 pub use demangle::{demangle_symbol, mangle_symbol};
-pub use graph::{InstantiationGraph, InstantiationKey, InstantiationNode, InstantiationNodeId, MonoError};
+pub use graph::{
+    InstantiationGraph, InstantiationKey, InstantiationNode, InstantiationNodeId, MonoError,
+};
 
 #[cfg(test)]
 mod tests {
@@ -18,8 +20,13 @@ mod tests {
     }
 
     fn define_symbol(st: &mut SymbolTable, name: &str) -> SymbolId {
-        st.define(st.global_scope(), name, SymbolKind::Func, Span::new(0, 0, 0))
-            .unwrap()
+        st.define(
+            st.global_scope(),
+            name,
+            SymbolKind::Func,
+            Span::new(0, 0, 0),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -37,7 +44,7 @@ mod tests {
         let id1 = graph.get_or_insert(key.clone(), &interner, &st).unwrap();
         let id2 = graph.get_or_insert(key, &interner, &st).unwrap();
         assert_eq!(id1, id2);
-        assert!(graph.len() >= 1);
+        assert!(!graph.is_empty());
     }
 
     #[test]
@@ -282,7 +289,7 @@ func main() {
 
         let graph = analyze_instantiations(&tc, &hir).expect("analysis failed");
 
-        assert!(graph.len() >= 1);
+        assert!(!graph.is_empty());
         assert!(
             graph
                 .iter()

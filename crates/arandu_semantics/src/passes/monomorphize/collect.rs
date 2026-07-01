@@ -1,8 +1,8 @@
 use arandu_diagnostics::{DiagCode, Diagnostic};
 use arandu_lexer::Span;
 use arandu_middle::hir::{
-    HirCatchHandler, HirCondition, HirDecl, HirExprId, HirExprKind, HirLambdaBody,
-    HirMatchArmBody, HirPool, HirProgram, HirSimpleStmt, HirStmt, HirStmtKind,
+    HirCatchHandler, HirCondition, HirDecl, HirExprId, HirExprKind, HirLambdaBody, HirMatchArmBody,
+    HirPool, HirProgram, HirSimpleStmt, HirStmt, HirStmtKind,
 };
 use arandu_middle::symbol_table::SymbolId;
 use arandu_middle::types::{ArType, TypeInterner};
@@ -92,7 +92,11 @@ impl InstantiationAnalyzer<'_> {
         }
     }
 
-    fn visit_block(&mut self, block: arandu_middle::hir::HirBlockId, current: Option<InstantiationNodeId>) {
+    fn visit_block(
+        &mut self,
+        block: arandu_middle::hir::HirBlockId,
+        current: Option<InstantiationNodeId>,
+    ) {
         let blk = self.hir.pool.block(block);
         for &stmt_id in self.hir.pool.stmt_list(blk.statements) {
             let stmt = self.hir.pool.stmt(stmt_id);

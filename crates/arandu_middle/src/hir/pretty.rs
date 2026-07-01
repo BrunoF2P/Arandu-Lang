@@ -162,7 +162,6 @@ impl HirFieldPattern {
     }
 }
 
-
 fn display_type(ty: &crate::types::ArType, ctx: &HirPrettyCtx<'_>) -> String {
     ctx.display_ty(ty)
 }
@@ -710,7 +709,7 @@ impl HirExpr {
                 ));
             }
             HirExprKind::Generic { callee, args } => {
-                let args_strs: Vec<String> = args.iter().map(|a| display_type(&a, ctx)).collect();
+                let args_strs: Vec<String> = args.iter().map(|a| display_type(a, ctx)).collect();
                 out.push_str(&format!(
                     "{}Generic<{}>: {}\n",
                     ind,
@@ -927,7 +926,7 @@ impl HirExpr {
                 out.push_str(&format!(
                     "{}Cast({}): {}\n",
                     ind,
-                    display_type(&target_ty, ctx),
+                    display_type(target_ty, ctx),
                     display_type(&self.ty, ctx)
                 ));
                 expr.pretty_print_to(out, indent + 1, ctx);

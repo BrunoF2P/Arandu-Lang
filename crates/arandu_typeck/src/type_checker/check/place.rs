@@ -42,7 +42,10 @@ pub(crate) fn synth_place(checker: &mut TypeChecker<'_>, place: &arandu_parser::
                     )
                     .with_label(
                         place.span,
-                        format!("this has type '{}'", current_ty.display(&checker.symbols, interner)),
+                        format!(
+                            "this has type '{}'",
+                            current_ty.display(&checker.symbols, interner)
+                        ),
                     )
                     .with_hint("use safe access `?.` or make the value non-nullable".to_string());
                     checker.diagnostics.push(diag);
@@ -58,14 +61,20 @@ pub(crate) fn synth_place(checker: &mut TypeChecker<'_>, place: &arandu_parser::
                     _ => None,
                 };
                 let field_from_struct = if let Some((struct_id, args)) = struct_info_opt {
-                    let resolved_args: Vec<ArType> = args
-                        .iter()
-                        .map(|&a| interner.resolve(a).clone())
-                        .collect();
-                    if let Some(fields_map) = super::super::types::struct_fields_instantiated(checker, struct_id, &resolved_args) {
+                    let resolved_args: Vec<ArType> =
+                        args.iter().map(|&a| interner.resolve(a).clone()).collect();
+                    if let Some(fields_map) = super::super::types::struct_fields_instantiated(
+                        checker,
+                        struct_id,
+                        &resolved_args,
+                    ) {
                         fields_map.get(name).cloned()
                     } else {
-                        checker.type_info.struct_fields.get(&struct_id).and_then(|fields| fields.get(name).cloned())
+                        checker
+                            .type_info
+                            .struct_fields
+                            .get(&struct_id)
+                            .and_then(|fields| fields.get(name).cloned())
                     }
                 } else {
                     None
@@ -107,7 +116,10 @@ pub(crate) fn synth_place(checker: &mut TypeChecker<'_>, place: &arandu_parser::
                     )
                     .with_label(
                         place.span,
-                        format!("this has type '{}'", current_ty.display(&checker.symbols, interner)),
+                        format!(
+                            "this has type '{}'",
+                            current_ty.display(&checker.symbols, interner)
+                        ),
                     )
                     .with_hint(
                         "use safe index `?[...]` or make the value non-nullable".to_string(),

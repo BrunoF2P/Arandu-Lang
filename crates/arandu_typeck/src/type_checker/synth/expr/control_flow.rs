@@ -1,11 +1,11 @@
 use arandu_lexer::Span;
 use arandu_parser::ast_pool::{ExprId, ExprKind};
 
+use super::synth_expr;
 use crate::type_checker::TypeChecker;
 use crate::type_checker::constraints::ConstraintOrigin;
 use crate::type_checker::synth::check_pattern;
 use crate::type_checker::types::{self, ArType};
-use super::synth_expr;
 
 #[cold]
 #[inline(never)]
@@ -126,11 +126,8 @@ pub(super) fn synth_control_flow_expr(
                         expr: inner_expr, ..
                     } => synth_expr(checker, *inner_expr),
                     arandu_parser::MatchArmBody::Block { block, .. } => {
-                        let block_ty = crate::type_checker::check::check_block(
-                            checker,
-                            checker.pool,
-                            block,
-                        );
+                        let block_ty =
+                            crate::type_checker::check::check_block(checker, checker.pool, block);
                         checker.intern(block_ty)
                     }
                 };

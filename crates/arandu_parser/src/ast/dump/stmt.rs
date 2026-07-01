@@ -1,17 +1,14 @@
 use arandu_lexer::Span;
 
 use super::super::ast_pool::AstPool;
-use super::super::{BindingItem, Block, Condition, DeferBody, ForClause, Place, PlaceSuffix, SimpleStmt, Stmt};
+use super::super::{
+    BindingItem, Block, Condition, DeferBody, ForClause, Place, PlaceSuffix, SimpleStmt, Stmt,
+};
 use super::decl::dump_type;
 use super::expr::{dump_expr, dump_pattern};
 use super::{dump_set_op, dump_span};
 
-pub(super) fn dump_block_body(
-    pool: &AstPool,
-    block: &Block,
-    out: &mut Vec<String>,
-    indent: usize,
-) {
+pub(super) fn dump_block_body(pool: &AstPool, block: &Block, out: &mut Vec<String>, indent: usize) {
     for stmt in &block.statements {
         dump_stmt(pool, *stmt, out, indent);
     }
@@ -308,12 +305,7 @@ pub(super) fn dump_place(pool: &AstPool, place: &Place) -> String {
     out
 }
 
-pub(super) fn dump_inline_block(
-    pool: &AstPool,
-    label: &str,
-    span: Span,
-    block: &Block,
-) -> String {
+pub(super) fn dump_inline_block(pool: &AstPool, label: &str, span: Span, block: &Block) -> String {
     format!(
         "{label} {} {}",
         dump_span(span),

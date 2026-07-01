@@ -7,9 +7,7 @@ use std::cell::RefCell;
 use arandu_lexer::Span;
 
 use super::ast_pool::AstPool;
-use super::{
-    Attribute, BinaryOp, GenericParam, Program, SetOp, UnaryOp, Visibility, WhereItem,
-};
+use super::{Attribute, BinaryOp, GenericParam, Program, SetOp, UnaryOp, Visibility, WhereItem};
 use decl::{dump_import, dump_top_level_decl};
 
 thread_local! {

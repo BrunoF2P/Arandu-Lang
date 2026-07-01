@@ -68,10 +68,11 @@ impl<'a> Resolver<'a> {
             return false;
         }
         if let Some(ref cur_mod) = self.current_module
-            && let Some(symbol) = self.symbols.lookup_module_member(cur_mod, root) {
-                self.record_type_ref(name.span, symbol);
-                return true;
-            }
+            && let Some(symbol) = self.symbols.lookup_module_member(cur_mod, root)
+        {
+            self.record_type_ref(name.span, symbol);
+            return true;
+        }
         if let Some(symbol) = self.symbols.lookup_type(scope, root) {
             self.record_type_ref(name.span, symbol);
             return true;

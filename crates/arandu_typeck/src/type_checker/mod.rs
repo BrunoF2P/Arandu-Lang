@@ -144,12 +144,32 @@ impl<'a> TypeChecker<'a> {
         types::unify_return(expected, actual, &self.type_info.type_interner)
     }
 
-    pub fn lower_type_expr(&mut self, expr_id: arandu_parser::TypeExprId, scope: ScopeId) -> ArType {
-        types::lower_type_expr(expr_id, self.pool, &self.symbols, scope, &self.resolved, &mut self.type_info.type_interner)
+    pub fn lower_type_expr(
+        &mut self,
+        expr_id: arandu_parser::TypeExprId,
+        scope: ScopeId,
+    ) -> ArType {
+        let ctx = types::LowerCtx {
+            pool: self.pool,
+            symbols: &self.symbols,
+            scope,
+            resolved: &self.resolved,
+        };
+        arandu_middle::types::lower::lower_type_expr_ctx(expr_id, &ctx, &mut self.type_info.type_interner)
     }
 
-    pub fn lower_result_type(&mut self, result: &arandu_parser::ResultType, scope: ScopeId) -> ArType {
-        types::lower_result_type(result, self.pool, &self.symbols, scope, &self.resolved, &mut self.type_info.type_interner)
+    pub fn lower_result_type(
+        &mut self,
+        result: &arandu_parser::ResultType,
+        scope: ScopeId,
+    ) -> ArType {
+        let ctx = types::LowerCtx {
+            pool: self.pool,
+            symbols: &self.symbols,
+            scope,
+            resolved: &self.resolved,
+        };
+        arandu_middle::types::lower::lower_result_type_ctx(result, &ctx, &mut self.type_info.type_interner)
     }
 
     pub fn lower_named_type(
@@ -159,7 +179,13 @@ impl<'a> TypeChecker<'a> {
         args: &[arandu_parser::TypeExprId],
         scope: ScopeId,
     ) -> ArType {
-        types::lower_named_type(span, name, args, self.pool, &self.symbols, scope, &self.resolved, &mut self.type_info.type_interner)
+        let ctx = types::LowerCtx {
+            pool: self.pool,
+            symbols: &self.symbols,
+            scope,
+            resolved: &self.resolved,
+        };
+        types::lower_named_type(span, name, args, &ctx, &mut self.type_info.type_interner)
     }
 
     /// Scope used when lowering type expressions in the current context.
@@ -220,7 +246,6 @@ impl TypeChecker<'_> {
     pub(crate) fn record_decl_type(&mut self, symbol: SymbolId, id: TypeId) {
         self.type_info.record_decl_type(symbol, id);
     }
-
 
     #[must_use]
     pub(crate) fn expr_type_id(&self, expr: ExprId) -> Option<TypeId> {
@@ -537,4 +562,24 @@ pub struct TypeCheckResult {
     pub resolved: ResolvedNames,
     pub type_info: TypeInfo,
     pub diagnostics: Vec<Diagnostic>,
+}
+
+impl arandu_middle::layout::StructLayoutProvider for TypeInfo {
+    fn get_struct_fields(
+        &self,
+        struct_id: SymbolId,
+    ) -> Option<&rustc_hash::FxHashMap<String, ArType>> {
+        self.struct_fields.get(&struct_id)
+    }
+
+    fn get_struct_field_indices(
+        &self,
+        struct_id: SymbolId,
+    ) -> Option<&rustc_hash::FxHashMap<String, usize>> {
+        self.struct_field_indices.get(&struct_id)
+    }
+
+    fn get_generic_params(&self, struct_id: SymbolId) -> Option<&[SymbolId]> {
+        self.generic_params.get(&struct_id).map(|v| v.as_slice())
+    }
 }

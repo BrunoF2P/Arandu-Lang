@@ -303,8 +303,14 @@ impl<'a> Parser<'a> {
                 ))
             }
             TokenKind::IdentValue => {
-                if self.tokens.get(self.pos + 1).is_some_and(|t| matches!(t.kind, TokenKind::Dot))
-                    && self.tokens.get(self.pos + 2).is_some_and(|t| matches!(t.kind, TokenKind::IdentType))
+                if self
+                    .tokens
+                    .get(self.pos + 1)
+                    .is_some_and(|t| matches!(t.kind, TokenKind::Dot))
+                    && self
+                        .tokens
+                        .get(self.pos + 2)
+                        .is_some_and(|t| matches!(t.kind, TokenKind::IdentType))
                 {
                     self.parse_type_led_expr()
                 } else {
@@ -614,13 +620,9 @@ impl<'a> Parser<'a> {
         {
             let member = self.expect_name_like()?;
             let span = self.span_from_mark(start);
-            return Ok(self.pool.alloc_expr(
-                ExprKind::TypePath {
-                    type_name,
-                    member,
-                },
-                span,
-            ));
+            return Ok(self
+                .pool
+                .alloc_expr(ExprKind::TypePath { type_name, member }, span));
         }
         Err(ParseError::new(
             ParseErrorCode::ExpectedExpression,

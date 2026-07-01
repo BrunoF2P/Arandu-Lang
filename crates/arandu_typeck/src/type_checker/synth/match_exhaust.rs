@@ -78,7 +78,9 @@ fn pattern_to_variant_symbol_id(
     match checker.pool.pattern(pat) {
         // `Variant` or `EnumName.Variant`
         Pattern::Enum { variant, .. } => {
-            let short = variant.rsplit_once('.').map_or(variant.as_str(), |(_, s)| s);
+            let short = variant
+                .rsplit_once('.')
+                .map_or(variant.as_str(), |(_, s)| s);
             for (&var_id, &(parent_id, _)) in &checker.type_info.enum_variants {
                 if parent_id == enum_id {
                     let var_name = &checker.symbols.get(var_id).name;

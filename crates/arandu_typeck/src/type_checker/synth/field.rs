@@ -1,5 +1,5 @@
-use arandu_parser::ast_pool::{ExprId, ExprKind};
 use arandu_middle::types::TypeId;
+use arandu_parser::ast_pool::{ExprId, ExprKind};
 
 use super::super::TypeChecker;
 use super::super::constraints::ConstraintOrigin;
@@ -73,7 +73,10 @@ pub(crate) fn resolve_field(
         )
         .with_label(
             checker.pool.expr_span(base),
-            format!("this has type '{}'", base_ty.display(&checker.symbols, &checker.type_info.type_interner)),
+            format!(
+                "this has type '{}'",
+                base_ty.display(&checker.symbols, &checker.type_info.type_interner)
+            ),
         )
         .with_hint("use safe access `?.` or make the value non-nullable".to_string());
         checker.diagnostics.push(diag);
@@ -90,14 +93,17 @@ pub(crate) fn resolve_field(
     };
 
     let field_ty = if let Some((struct_id, args)) = struct_info_opt {
-        let resolved_args: Vec<ArType> = args
-            .iter()
-            .map(|&a| checker.resolve(a).clone())
-            .collect();
-        let field_from_struct = if let Some(fields_map) = super::super::types::struct_fields_instantiated(checker, struct_id, &resolved_args) {
+        let resolved_args: Vec<ArType> = args.iter().map(|&a| checker.resolve(a).clone()).collect();
+        let field_from_struct = if let Some(fields_map) =
+            super::super::types::struct_fields_instantiated(checker, struct_id, &resolved_args)
+        {
             fields_map.get(field).cloned()
         } else {
-            checker.type_info.struct_fields.get(&struct_id).and_then(|fields| fields.get(field).cloned())
+            checker
+                .type_info
+                .struct_fields
+                .get(&struct_id)
+                .and_then(|fields| fields.get(field).cloned())
         };
 
         if let Some(field_ty) = field_from_struct {
@@ -114,10 +120,12 @@ pub(crate) fn resolve_field(
                 let mut found_method_ty = None;
                 for &iface_sym in constraints {
                     if let Some(iface_info) = checker.type_info.interfaces.get(&iface_sym)
-                        && let Some((_, method_sig)) = iface_info.methods.iter().find(|(m, _)| m == field) {
-                            found_method_ty = Some(method_sig.clone());
-                            break;
-                        }
+                        && let Some((_, method_sig)) =
+                            iface_info.methods.iter().find(|(m, _)| m == field)
+                    {
+                        found_method_ty = Some(method_sig.clone());
+                        break;
+                    }
                 }
                 if let Some(method_ty) = found_method_ty {
                     if let ArType::Func(params, ret) = method_ty {
@@ -204,7 +212,10 @@ pub(crate) fn resolve_index(
         )
         .with_label(
             checker.pool.expr_span(base),
-            format!("this has type '{}'", base_ty.display(&checker.symbols, &checker.type_info.type_interner)),
+            format!(
+                "this has type '{}'",
+                base_ty.display(&checker.symbols, &checker.type_info.type_interner)
+            ),
         )
         .with_hint("use safe index `?[...]` or make the value non-nullable".to_string());
         checker.diagnostics.push(diag);

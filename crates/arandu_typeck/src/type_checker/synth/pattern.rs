@@ -121,7 +121,11 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                     }
                 } else {
                     let expected_enum_ty = ArType::Named(enum_symbol_id, vec![]);
-                    if !super::super::types::unify(val_ty, &expected_enum_ty, &checker.type_info.type_interner) {
+                    if !super::super::types::unify(
+                        val_ty,
+                        &expected_enum_ty,
+                        &checker.type_info.type_interner,
+                    ) {
                         checker.add_constraint(
                             expected_enum_ty,
                             value_ty,
@@ -269,8 +273,10 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                                         {
                                             let expected_pat_ty =
                                                 tys.get(i).cloned().unwrap_or(ArType::Error);
-                                            let expected_pat_ty_id =
-                                                checker.type_info.type_interner.intern(expected_pat_ty);
+                                            let expected_pat_ty_id = checker
+                                                .type_info
+                                                .type_interner
+                                                .intern(expected_pat_ty);
                                             check_pattern(checker, pat_id, expected_pat_ty_id);
                                         }
                                     }
@@ -406,7 +412,11 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
             if let Some(struct_symbol_id) = checker.resolved.type_refs.get(&type_key).copied() {
                 let expected_struct_ty = ArType::Named(struct_symbol_id, vec![]);
                 let val_ty = checker.resolve(value_ty);
-                if !super::super::types::unify(val_ty, &expected_struct_ty, &checker.type_info.type_interner) {
+                if !super::super::types::unify(
+                    val_ty,
+                    &expected_struct_ty,
+                    &checker.type_info.type_interner,
+                ) {
                     checker.add_constraint(
                         expected_struct_ty,
                         value_ty,

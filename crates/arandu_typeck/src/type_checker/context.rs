@@ -59,11 +59,7 @@ impl TyCtx {
     /// Reports to the global perf counters when `-Zprofile-queries` is active.
     #[must_use]
     pub fn lookup(&self, symbol: SymbolId) -> Option<TypeId> {
-        let result = self
-            .bindings
-            .get(symbol.0 as usize)
-            .copied()
-            .flatten();
+        let result = self.bindings.get(symbol.0 as usize).copied().flatten();
         if result.is_some() {
             arandu_base::perf::track_query_hit();
         } else {

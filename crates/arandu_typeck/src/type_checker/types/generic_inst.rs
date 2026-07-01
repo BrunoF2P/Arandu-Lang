@@ -1,14 +1,14 @@
 use rustc_hash::FxHashMap;
 
 use arandu_middle::SymbolId;
-use arandu_parser::{GenericParam, IndexRange};
 use arandu_parser::ast_pool::{ExprId, ExprKind};
+use arandu_parser::{GenericParam, IndexRange};
 
 use crate::type_checker::TypeChecker;
 use crate::type_checker::types::{
-    ArType, GenericSubst, TypeInterner, build_subst, lower_type_expr,
-    substitute_type, type_name_base,
+    ArType, GenericSubst, LowerCtx, TypeInterner, build_subst, substitute_type, type_name_base,
 };
+use arandu_middle::types::lower::lower_type_expr_ctx;
 
 #[must_use]
 pub fn extract_generic_param_symbols(
@@ -75,22 +75,19 @@ pub fn synth_generic_instantiation(
 ) -> ArType {
     let arg_ids = checker.pool.type_expr_list(type_args).to_vec();
     let scope = checker.type_scope();
+    let ctx = LowerCtx {
+        pool: checker.pool,
+        symbols: &checker.symbols,
+        scope,
+        resolved: &checker.resolved,
+    };
     let arg_tys: Vec<ArType> = arg_ids
         .iter()
-        .map(|a| {
-            lower_type_expr(
-                *a,
-                checker.pool,
-                &checker.symbols,
-                scope,
-                &checker.resolved,
-                &mut checker.type_info.type_interner,
-            )
-        })
+        .map(|a| lower_type_expr_ctx(*a, &ctx, &mut checker.type_info.type_interner))
         .collect();
 
     if let ExprKind::TypePath { type_name, member } = checker.pool.expr(callee) {
-        let base_name = type_name_base(&type_name);
+        let base_name = type_name_base(type_name);
         if base_name == "Result" {
             if arg_tys.len() != 1 {
                 let diag = crate::Diagnostic::error(
@@ -206,7 +203,10 @@ pub fn synth_generic_instantiation(
     instantiate_type(&template, &subst, &mut checker.type_info.type_interner)
 }
 
-fn resolve_generic_callee_symbol(checker: &mut TypeChecker<'_>, callee: ExprId) -> Option<SymbolId> {
+fn resolve_generic_callee_symbol(
+    checker: &mut TypeChecker<'_>,
+    callee: ExprId,
+) -> Option<SymbolId> {
     match checker.pool.expr(callee) {
         ExprKind::Path { .. } => checker.resolved.expr_symbol(callee),
         ExprKind::TypePath { .. } => checker.resolved.expr_symbol(callee).or_else(|| {
@@ -217,9 +217,9 @@ fn resolve_generic_callee_symbol(checker: &mut TypeChecker<'_>, callee: ExprId) 
                 .copied()
         }),
         ExprKind::Field { base, field } => {
-            let base_ty_id = checker.expr_type_id(*base).unwrap_or_else(|| {
-                crate::passes::type_checker::synth::synth_expr(checker, *base)
-            });
+            let base_ty_id = checker
+                .expr_type_id(*base)
+                .unwrap_or_else(|| crate::passes::type_checker::synth::synth_expr(checker, *base));
             let base_ty = checker.resolve(base_ty_id).clone();
             let actual_base_ty = match &base_ty {
                 ArType::Nullable(inner) => checker.resolve(*inner).clone(),

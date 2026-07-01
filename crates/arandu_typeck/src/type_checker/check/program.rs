@@ -30,22 +30,21 @@ pub fn check_program(checker: &mut TypeChecker<'_>, program: &Program) {
                     checker.record_decl_type(*symbol_id, val_ty);
                 }
             }
-            TopLevelDecl::Extern(extern_decl)
-                if extern_decl.abi == "arandu-intrinsic" => {
-                    let module_name = program
-                        .module
-                        .as_ref()
-                        .map(|m| m.path.join("."))
-                        .unwrap_or_default();
-                    if !module_name.starts_with("std.core") {
-                        checker.diagnostics.push(crate::Diagnostic::error(
-                            crate::DiagCode::U001FeatureNotSupported,
-                            "the 'arandu-intrinsic' ABI is restricted to the std.core module"
-                                .to_string(),
-                            extern_decl.span,
-                        ));
-                    }
+            TopLevelDecl::Extern(extern_decl) if extern_decl.abi == "arandu-intrinsic" => {
+                let module_name = program
+                    .module
+                    .as_ref()
+                    .map(|m| m.path.join("."))
+                    .unwrap_or_default();
+                if !module_name.starts_with("std.core") {
+                    checker.diagnostics.push(crate::Diagnostic::error(
+                        crate::DiagCode::U001FeatureNotSupported,
+                        "the 'arandu-intrinsic' ABI is restricted to the std.core module"
+                            .to_string(),
+                        extern_decl.span,
+                    ));
                 }
+            }
             _ => {}
         }
     }
@@ -75,16 +74,17 @@ fn duplicate_module_member_info(checker: &mut TypeChecker<'_>, program: &Program
                     if let Some(&free_id) = checker.resolved.definitions.get(&name_key)
                         && let Some(member_id) =
                             checker.symbols.lookup_module_member(&module_name, name)
-                            && free_id != member_id {
-                                if let Some(ty_id) = checker.decl_type_id(free_id) {
-                                    checker.record_decl_type(member_id, ty_id);
-                                }
-                                if let Some(params) =
-                                    checker.type_info.generic_params.get(&free_id).cloned()
-                                {
-                                    checker.type_info.generic_params.insert(member_id, params);
-                                }
-                            }
+                        && free_id != member_id
+                    {
+                        if let Some(ty_id) = checker.decl_type_id(free_id) {
+                            checker.record_decl_type(member_id, ty_id);
+                        }
+                        if let Some(params) =
+                            checker.type_info.generic_params.get(&free_id).cloned()
+                        {
+                            checker.type_info.generic_params.insert(member_id, params);
+                        }
+                    }
                 }
                 continue;
             }
@@ -94,38 +94,39 @@ fn duplicate_module_member_info(checker: &mut TypeChecker<'_>, program: &Program
         let name_key = crate::NodeKey::from(span);
         if let Some(&free_id) = checker.resolved.definitions.get(&name_key)
             && let Some(member_id) = checker.symbols.lookup_module_member(&module_name, name)
-                && free_id != member_id {
-                    if let Some(ty_id) = checker.decl_type_id(free_id) {
-                        checker.record_decl_type(member_id, ty_id);
-                    }
-                    if let Some(params) = checker.type_info.generic_params.get(&free_id).cloned() {
-                        checker.type_info.generic_params.insert(member_id, params);
-                    }
-                    if let Some(fields) = checker.type_info.struct_fields.get(&free_id).cloned() {
-                        checker.type_info.struct_fields.insert(member_id, fields);
-                    }
-                    if let Some(field_syms) = checker
-                        .type_info
-                        .struct_field_symbols
-                        .get(&free_id)
-                        .cloned()
-                    {
-                        checker
-                            .type_info
-                            .struct_field_symbols
-                            .insert(member_id, field_syms);
-                    }
-                    if let Some(field_idxs) = checker
-                        .type_info
-                        .struct_field_indices
-                        .get(&free_id)
-                        .cloned()
-                    {
-                        checker
-                            .type_info
-                            .struct_field_indices
-                            .insert(member_id, field_idxs);
-                    }
-                }
+            && free_id != member_id
+        {
+            if let Some(ty_id) = checker.decl_type_id(free_id) {
+                checker.record_decl_type(member_id, ty_id);
+            }
+            if let Some(params) = checker.type_info.generic_params.get(&free_id).cloned() {
+                checker.type_info.generic_params.insert(member_id, params);
+            }
+            if let Some(fields) = checker.type_info.struct_fields.get(&free_id).cloned() {
+                checker.type_info.struct_fields.insert(member_id, fields);
+            }
+            if let Some(field_syms) = checker
+                .type_info
+                .struct_field_symbols
+                .get(&free_id)
+                .cloned()
+            {
+                checker
+                    .type_info
+                    .struct_field_symbols
+                    .insert(member_id, field_syms);
+            }
+            if let Some(field_idxs) = checker
+                .type_info
+                .struct_field_indices
+                .get(&free_id)
+                .cloned()
+            {
+                checker
+                    .type_info
+                    .struct_field_indices
+                    .insert(member_id, field_idxs);
+            }
+        }
     }
 }

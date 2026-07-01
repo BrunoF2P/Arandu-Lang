@@ -1,7 +1,8 @@
 use arandu_lexer::Span;
-use arandu_parser::ast_pool::{ExprId, ExprKind};
 use arandu_parser::CatchHandler;
+use arandu_parser::ast_pool::{ExprId, ExprKind};
 
+use super::synth_expr;
 use crate::type_checker::TypeChecker;
 use crate::type_checker::constraints::ConstraintOrigin;
 use crate::type_checker::synth::{
@@ -9,7 +10,6 @@ use crate::type_checker::synth::{
     synth_method_call, synth_option_ctor, synth_result_ctor,
 };
 use crate::type_checker::types::{self, ArType};
-use super::synth_expr;
 
 use arandu_middle::types::type_interner::TypeId;
 
@@ -80,8 +80,11 @@ pub(super) fn synth_call_expr(
                     }
                 }
                 if let Some(variant_symbol_id) = variant_symbol_opt
-                    && let Some((_, shape)) =
-                        checker.type_info.enum_variants.get(&variant_symbol_id).cloned()
+                    && let Some((_, shape)) = checker
+                        .type_info
+                        .enum_variants
+                        .get(&variant_symbol_id)
+                        .cloned()
                 {
                     let enum_ty = ArType::Named(*enum_symbol_id, vec![]);
                     match shape {
@@ -89,10 +92,7 @@ pub(super) fn synth_call_expr(
                             return Some(checker.intern(enum_ty));
                         }
                         crate::type_checker::EnumPayloadShape::Tuple(tys) => {
-                            let param_ids = tys
-                                .iter()
-                                .map(|t| checker.intern(t.clone()))
-                                .collect();
+                            let param_ids = tys.iter().map(|t| checker.intern(t.clone())).collect();
                             let enum_id = checker.intern(enum_ty);
                             return Some(checker.intern(ArType::Func(param_ids, enum_id)));
                         }
@@ -110,35 +110,35 @@ pub(super) fn synth_call_expr(
         ExprKind::Generic { callee, args } => {
             let callee_id = *callee;
             let args_range = *args;
-            let ty = types::synth_generic_instantiation(
-                checker, callee_id, args_range, span,
-            );
+            let ty = types::synth_generic_instantiation(checker, callee_id, args_range, span);
             Some(checker.intern(ty))
         }
         ExprKind::Field { base, field } => {
             let base_id = *base;
             let field_str = field.clone();
-            let ty_id = if let Some(ty_id) = resolve_namespace_field(checker, base_id, expr, &field_str, span)
-                {
-                    ty_id
-                } else if let Some(ty_id) = resolve_namespace_member_type(checker, expr) {
-                    ty_id
-                } else {
-                    resolve_field(checker, base_id, &field_str, span, false)
-                };
+            let ty_id = if let Some(ty_id) =
+                resolve_namespace_field(checker, base_id, expr, &field_str, span)
+            {
+                ty_id
+            } else if let Some(ty_id) = resolve_namespace_member_type(checker, expr) {
+                ty_id
+            } else {
+                resolve_field(checker, base_id, &field_str, span, false)
+            };
             Some(ty_id)
         }
         ExprKind::SafeField { base, field } => {
             let base_id = *base;
             let field_str = field.clone();
-            let ty_id = if let Some(ty_id) = resolve_namespace_field(checker, base_id, expr, &field_str, span)
-                {
-                    ty_id
-                } else if let Some(ty_id) = resolve_namespace_member_type(checker, expr) {
-                    ty_id
-                } else {
-                    resolve_field(checker, base_id, &field_str, span, true)
-                };
+            let ty_id = if let Some(ty_id) =
+                resolve_namespace_field(checker, base_id, expr, &field_str, span)
+            {
+                ty_id
+            } else if let Some(ty_id) = resolve_namespace_member_type(checker, expr) {
+                ty_id
+            } else {
+                resolve_field(checker, base_id, &field_str, span, true)
+            };
             Some(ty_id)
         }
         ExprKind::Index { base, index } => {
@@ -157,20 +157,18 @@ pub(super) fn synth_call_expr(
             let inner_id = *inner_expr;
             let inner_ty_id = synth_expr(checker, inner_id);
             let inner_ty = checker.resolve(inner_ty_id);
-            Some(
-                if let Some(ok_ty) = checker.try_ok_type(inner_ty) {
-                    checker.intern(ok_ty)
-                } else if inner_ty.is_error() {
-                    checker.intern(ArType::Error)
-                } else {
-                    checker.add_constraint(
-                        ArType::Error,
-                        inner_ty_id,
-                        ConstraintOrigin::TryInvalid { span },
-                    );
-                    checker.intern(ArType::Error)
-                },
-            )
+            Some(if let Some(ok_ty) = checker.try_ok_type(inner_ty) {
+                checker.intern(ok_ty)
+            } else if inner_ty.is_error() {
+                checker.intern(ArType::Error)
+            } else {
+                checker.add_constraint(
+                    ArType::Error,
+                    inner_ty_id,
+                    ConstraintOrigin::TryInvalid { span },
+                );
+                checker.intern(ArType::Error)
+            })
         }
         ExprKind::Call {
             callee,
@@ -259,19 +257,19 @@ pub(super) fn synth_call_expr(
                             }
                             for (i, arg_id) in arg_ids.iter().copied().enumerate() {
                                 let arg_ty_id = synth_expr(checker, arg_id);
-                                if let Some(&expected_id) = explicit_params.get(i) {
-                                    if !checker.unify_ids(expected_id, arg_ty_id) {
-                                        checker.add_constraint(
-                                            expected_id,
-                                            arg_ty_id,
-                                            ConstraintOrigin::CallArg {
-                                                call_span: span,
-                                                param_span: field_span,
-                                                arg_span: checker.pool.expr_span(arg_id),
-                                                arg_index: i + 1,
-                                            },
-                                        );
-                                    }
+                                if let Some(&expected_id) = explicit_params.get(i)
+                                    && !checker.unify_ids(expected_id, arg_ty_id)
+                                {
+                                    checker.add_constraint(
+                                        expected_id,
+                                        arg_ty_id,
+                                        ConstraintOrigin::CallArg {
+                                            call_span: span,
+                                            param_span: field_span,
+                                            arg_span: checker.pool.expr_span(arg_id),
+                                            arg_index: i + 1,
+                                        },
+                                    );
                                 }
                             }
                             let params_id = checker.intern(ArType::Func(params, ret));
@@ -358,7 +356,10 @@ pub(super) fn synth_call_expr(
                 )
                 .with_label(
                     checker.pool.expr_span(callee_id),
-                    format!("this has type '{}'", callee_ty.display(&checker.symbols, interner)),
+                    format!(
+                        "this has type '{}'",
+                        callee_ty.display(&checker.symbols, interner)
+                    ),
                 );
                 checker.diagnostics.push(diag);
                 checker.intern(ArType::Error)
@@ -385,11 +386,7 @@ pub(super) fn synth_call_expr(
                     span: h_span,
                     ..
                 } => {
-                    let ty = crate::type_checker::check::check_block(
-                        checker,
-                        checker.pool,
-                        block,
-                    );
+                    let ty = crate::type_checker::check::check_block(checker, checker.pool, block);
                     (*h_span, checker.intern(ty))
                 }
             };

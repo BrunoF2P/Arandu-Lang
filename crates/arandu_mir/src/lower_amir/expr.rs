@@ -149,7 +149,8 @@ impl LowerCtx<'_> {
         symbols: &SymbolTable,
     ) -> Result<AmirOperand, Diagnostic> {
         let inner = self.hir.pool.expr(inner_id);
-        let (_, err_ty) = result_ok_err(&inner.ty, &self.tc.type_info.type_interner).expect("try_result on non-result");
+        let (_, err_ty) = result_ok_err(&inner.ty, &self.tc.type_info.type_interner)
+            .expect("try_result on non-result");
         let base = self.lower_expr(inner_id, None, symbols)?;
         if self.current_block.is_none() {
             let dest = target.unwrap_or_else(|| self.new_temp(expr_ty));
@@ -402,7 +403,12 @@ impl LowerCtx<'_> {
             }
             HirExprKind::Call { callee, args, .. } => {
                 let callee_expr = self.hir.pool.expr(*callee);
-                let method_target = resolve_method_target(callee_expr, &self.hir.pool, symbols, &self.tc.type_info.type_interner);
+                let method_target = resolve_method_target(
+                    callee_expr,
+                    &self.hir.pool,
+                    symbols,
+                    &self.tc.type_info.type_interner,
+                );
                 let callee_op = if let Some(method_symbol) = method_target {
                     AmirOperand::FunctionRef(method_symbol)
                 } else {

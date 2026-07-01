@@ -79,7 +79,7 @@ fn expr_type_for_kind(
             .cloned()
             .filter(|ty| !ty.is_error())
             .unwrap_or(fallback),
-         HirExprKind::Call { callee, .. } => {
+        HirExprKind::Call { callee, .. } => {
             let callee_expr = hir_pool.expr(*callee);
             let interner = &type_check.type_info.type_interner;
             if !callee_expr.ty.is_error() {
@@ -95,9 +95,7 @@ fn expr_type_for_kind(
                     .type_info
                     .decl_type(*symbol)
                     .and_then(|ty| match ty {
-                        ArType::Func(_, ret) => Some(
-                            interner.resolve(*ret).clone()
-                        ),
+                        ArType::Func(_, ret) => Some(interner.resolve(*ret).clone()),
                         _ => None,
                     })
                     .unwrap_or(fallback),

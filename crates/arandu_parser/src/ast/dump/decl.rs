@@ -3,14 +3,12 @@ use std::fmt::Write;
 use super::super::ast_pool::AstPool;
 use super::super::{
     ConstDecl, EnumDecl, EnumPayload, ExternDecl, FuncDecl, FuncName, FuncSignature, ImportDecl,
-    InterfaceDecl, Ownership, Param, ResultType, StructDecl, TopLevelDecl, TypeAliasDecl,
-    TypeExpr, TypeName, Visibility,
+    InterfaceDecl, Ownership, Param, ResultType, StructDecl, TopLevelDecl, TypeAliasDecl, TypeExpr,
+    TypeName, Visibility,
 };
 use super::expr::dump_expr;
 use super::stmt::dump_block_body;
-use super::{
-    dump_attrs, dump_generic_params, dump_span, dump_visibility, dump_where_clause,
-};
+use super::{dump_attrs, dump_generic_params, dump_span, dump_visibility, dump_where_clause};
 
 pub(super) fn dump_top_level_decl(pool: &AstPool, decl: &TopLevelDecl, out: &mut Vec<String>) {
     match decl {
@@ -183,12 +181,7 @@ fn dump_extern(pool: &AstPool, decl: &ExternDecl, out: &mut Vec<String>) {
     }
 }
 
-fn dump_signature(
-    pool: &AstPool,
-    signature: &FuncSignature,
-    out: &mut Vec<String>,
-    indent: usize,
-) {
+fn dump_signature(pool: &AstPool, signature: &FuncSignature, out: &mut Vec<String>, indent: usize) {
     dump_attrs(pool, &signature.attrs, out, indent);
     let pad = " ".repeat(indent);
     let params = signature

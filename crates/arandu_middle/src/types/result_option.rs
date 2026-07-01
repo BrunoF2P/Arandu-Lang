@@ -1,8 +1,8 @@
-use arandu_parser::{ResultType, TypeExprId, TypeName, ast_pool::AstPool};
+use arandu_parser::{ResultType, TypeExprId, TypeName};
 
 use super::ar_type::ArType;
+use super::lower::LowerCtx;
 use super::type_interner::TypeInterner;
-use crate::{ResolvedNames, ScopeId, SymbolTable};
 
 #[must_use]
 pub fn result_type_decl_span(result: &ResultType) -> arandu_lexer::Span {
@@ -71,16 +71,13 @@ pub fn is_tryable_type(ty: &ArType, interner: &TypeInterner) -> bool {
 pub(crate) fn lower_builtin_generic(
     name: &TypeName,
     args: &[TypeExprId],
-    pool: &AstPool,
-    symbols: &SymbolTable,
-    scope: ScopeId,
-    resolved: &ResolvedNames,
+    ctx: &LowerCtx<'_>,
     interner: &mut TypeInterner,
 ) -> Option<ArType> {
     let base = type_name_base(name);
     let lowered: Vec<ArType> = args
         .iter()
-        .map(|&a| super::lower::lower_type_expr(a, pool, symbols, scope, resolved, interner))
+        .map(|&a| super::lower::lower_type_expr_ctx(a, ctx, interner))
         .collect();
     match (base, lowered.len()) {
         ("Result", 2) => {

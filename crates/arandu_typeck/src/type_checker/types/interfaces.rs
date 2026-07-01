@@ -3,11 +3,11 @@ use rustc_hash::FxHashMap;
 use arandu_lexer::Span;
 use arandu_parser::{FuncSignature, GenericParam, TypeName, WhereItem};
 
-use super::ArType;
 use super::unify;
+use super::{ArType, LowerCtx};
 use super::{GenericSubst, TypeInterner, build_subst, substitute_type};
-use super::{lower_result_type, lower_type_expr};
 use crate::passes::type_checker::TypeChecker;
+use arandu_middle::types::lower::{lower_result_type_ctx, lower_type_expr_ctx};
 use crate::{ScopeId, SymbolId, SymbolKind};
 
 #[derive(Debug, Clone)]
@@ -139,27 +139,19 @@ fn collect_interface(checker: &mut TypeChecker, decl: &arandu_parser::InterfaceD
 }
 
 fn lower_func_signature(checker: &mut TypeChecker, sig: &FuncSignature, scope: ScopeId) -> ArType {
+    let ctx = LowerCtx {
+        pool: checker.pool,
+        symbols: &checker.symbols,
+        scope,
+        resolved: &checker.resolved,
+    };
     let mut param_types = Vec::new();
     for param in &sig.params {
-        let ty = lower_type_expr(
-            param.ty,
-            checker.pool,
-            &checker.symbols,
-            scope,
-            &checker.resolved,
-            &mut checker.type_info.type_interner,
-        );
+        let ty = lower_type_expr_ctx(param.ty, &ctx, &mut checker.type_info.type_interner);
         param_types.push(checker.type_info.type_interner.intern(ty));
     }
     let ret = if let Some(result) = &sig.result {
-        lower_result_type(
-            result,
-            checker.pool,
-            &checker.symbols,
-            scope,
-            &checker.resolved,
-            &mut checker.type_info.type_interner,
-        )
+        lower_result_type_ctx(result, &ctx, &mut checker.type_info.type_interner)
     } else {
         ArType::Void
     };
@@ -301,7 +293,11 @@ pub(crate) fn check_instantiation_constraints(
     let _ = decl_symbol;
 }
 
-fn missing_methods_note(checker: &mut TypeChecker, concrete: &ArType, iface_sym: SymbolId) -> String {
+fn missing_methods_note(
+    checker: &mut TypeChecker,
+    concrete: &ArType,
+    iface_sym: SymbolId,
+) -> String {
     let missing = missing_interface_methods(checker, concrete, iface_sym);
     if missing.is_empty() {
         "required method signatures are incompatible".to_string()
@@ -327,7 +323,8 @@ pub(crate) fn type_satisfies_interface(
 
     // We can iterate and borrow interner mutably inside the loop
     for (method, required) in &iface.methods {
-        let required_inst = substitute_type(required, &iface_subst, &mut checker.type_info.type_interner);
+        let required_inst =
+            substitute_type(required, &iface_subst, &mut checker.type_info.type_interner);
         let Some(provided) = lookup_method_type(checker, &type_name, method) else {
             return false;
         };
@@ -356,7 +353,8 @@ fn missing_interface_methods(
 
     let mut missing = Vec::new();
     for (method, required) in &iface.methods {
-        let required_inst = substitute_type(required, &iface_subst, &mut checker.type_info.type_interner);
+        let required_inst =
+            substitute_type(required, &iface_subst, &mut checker.type_info.type_interner);
         let Some(provided) = lookup_method_type(checker, &type_name, method) else {
             let mut similar = Vec::new();
             if let Some(methods) = checker.symbols.associated_members.get(&type_name) {

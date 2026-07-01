@@ -26,8 +26,8 @@ pub fn lower_to_hir(
     let mut hir_pool = crate::hir::HirPool::new();
     for decl_id in &program.decls {
         let decl = program.pool.decl(*decl_id);
-        if let Some(hir_decl) = decl::lower_decl(type_check, &program.pool, &mut hir_pool, decl)
-            .map_err(|e| vec![e])?
+        if let Some(hir_decl) =
+            decl::lower_decl(type_check, &program.pool, &mut hir_pool, decl).map_err(|e| vec![e])?
         {
             let hir_decl_id = hir_pool.alloc_decl(hir_decl);
             decls.push(hir_decl_id);

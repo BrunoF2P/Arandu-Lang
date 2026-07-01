@@ -2,14 +2,18 @@ use arandu_lexer::Span;
 use arandu_parser::ast_pool::{ExprId, ExprKind};
 use smallvec::SmallVec;
 
+use super::synth_expr;
 use crate::type_checker::TypeChecker;
 use crate::type_checker::constraints::ConstraintOrigin;
 use crate::type_checker::types::{self, ArType, Primitive};
 use arandu_middle::types::type_interner::TypeId;
-use super::synth_expr;
 
 /// Stricter than `unify` for array literals: int and float literals must not mix.
-pub(super) fn array_element_types_compatible(a: &ArType, b: &ArType, interner: &arandu_middle::types::TypeInterner) -> bool {
+pub(super) fn array_element_types_compatible(
+    a: &ArType,
+    b: &ArType,
+    interner: &arandu_middle::types::TypeInterner,
+) -> bool {
     if matches!(
         (a, b),
         (ArType::IntLiteral, ArType::FloatLiteral) | (ArType::FloatLiteral, ArType::IntLiteral)
@@ -73,12 +77,9 @@ pub(super) fn synth_literal_expr(
                     .iter()
                     .map(|&arg_id| checker.resolve(arg_id).clone())
                     .collect();
-                let field_map = types::struct_fields_instantiated(
-                    checker,
-                    symbol_id,
-                    &resolved_args,
-                )
-                .or_else(|| checker.type_info.struct_fields.get(&symbol_id).cloned());
+                let field_map =
+                    types::struct_fields_instantiated(checker, symbol_id, &resolved_args)
+                        .or_else(|| checker.type_info.struct_fields.get(&symbol_id).cloned());
                 let field_ids = checker.pool.field_init_list(fields_range).to_vec();
 
                 let mut seen_fields = SmallVec::<[(&str, Span); 8]>::new();
@@ -107,7 +108,11 @@ pub(super) fn synth_literal_expr(
                         let defined_field_ty_opt = fields_def.get(&field.name).cloned();
                         if let Some(defined_field_ty) = defined_field_ty_opt {
                             let field_val_ty = checker.resolve(field_val_ty_id);
-                            if !types::unify(&defined_field_ty, field_val_ty, &checker.type_info.type_interner) {
+                            if !types::unify(
+                                &defined_field_ty,
+                                field_val_ty,
+                                &checker.type_info.type_interner,
+                            ) {
                                 checker.add_constraint(
                                     defined_field_ty,
                                     field_val_ty_id,
@@ -177,7 +182,11 @@ pub(super) fn synth_literal_expr(
                 } else {
                     let elem_ty = checker.resolve(elem_ty_id);
                     let item_ty = checker.resolve(item_ty_id);
-                    if !array_element_types_compatible(elem_ty, item_ty, &checker.type_info.type_interner) {
+                    if !array_element_types_compatible(
+                        elem_ty,
+                        item_ty,
+                        &checker.type_info.type_interner,
+                    ) {
                         checker.add_constraint(
                             elem_ty_id,
                             item_ty_id,

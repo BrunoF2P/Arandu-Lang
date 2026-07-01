@@ -118,7 +118,9 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    pub(super) fn try_parse_assignment(&mut self) -> Option<Result<crate::ast_pool::StmtId, ParseError>> {
+    pub(super) fn try_parse_assignment(
+        &mut self,
+    ) -> Option<Result<crate::ast_pool::StmtId, ParseError>> {
         let start = self.mark();
         let mut places = Vec::new();
         match self.parse_place() {
@@ -539,7 +541,6 @@ impl<'a> Parser<'a> {
         self.consume();
         Ok(op)
     }
-
 
     pub(super) fn looks_like_for_in_clause(&self) -> bool {
         let mut index = self.pos;

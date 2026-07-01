@@ -56,9 +56,7 @@ pub(crate) fn lower_decl(
                 .cloned()
                 .unwrap_or(ArType::Error);
             let return_type = match decl_ty {
-                ArType::Func(_, ret) => {
-                    type_check.type_info.type_interner.resolve(ret).clone()
-                }
+                ArType::Func(_, ret) => type_check.type_info.type_interner.resolve(ret).clone(),
                 other => other,
             };
             let mut params = Vec::new();
@@ -131,10 +129,8 @@ pub(crate) fn lower_decl(
                                     Some(tys[0].clone())
                                 } else {
                                     let mut interner = type_check.type_info.type_interner.clone();
-                                    let tys_ids = tys
-                                        .iter()
-                                        .map(|t| interner.intern(t.clone()))
-                                        .collect();
+                                    let tys_ids =
+                                        tys.iter().map(|t| interner.intern(t.clone())).collect();
                                     Some(ArType::Tuple(tys_ids))
                                 }
                             }
@@ -169,9 +165,7 @@ pub(crate) fn lower_decl(
                     .cloned()
                     .unwrap_or(ArType::Error);
                 let return_type = match m_ty {
-                    ArType::Func(_, ret) => {
-                        type_check.type_info.type_interner.resolve(ret).clone()
-                    }
+                    ArType::Func(_, ret) => type_check.type_info.type_interner.resolve(ret).clone(),
                     other => other,
                 };
                 let mut params = Vec::new();

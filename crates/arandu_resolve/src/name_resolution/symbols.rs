@@ -14,10 +14,11 @@ impl<'a> Resolver<'a> {
         span: Span,
     ) {
         if let Some(ref cur_mod) = self.current_module
-            && let Some(symbol) = self.symbols.lookup_module_member(cur_mod, name) {
-                self.record_expr_ref(expr, symbol);
-                return;
-            }
+            && let Some(symbol) = self.symbols.lookup_module_member(cur_mod, name)
+        {
+            self.record_expr_ref(expr, symbol);
+            return;
+        }
         if let Some(symbol) = self.symbols.lookup_value(scope, name) {
             self.record_expr_ref(expr, symbol);
             return;
@@ -53,10 +54,11 @@ impl<'a> Resolver<'a> {
 
     pub(crate) fn resolve_assignment_target(&mut self, scope: ScopeId, name: &str, span: Span) {
         if let Some(ref cur_mod) = self.current_module
-            && let Some(symbol) = self.symbols.lookup_module_member(cur_mod, name) {
-                self.record_value_ref(span, symbol);
-                return;
-            }
+            && let Some(symbol) = self.symbols.lookup_module_member(cur_mod, name)
+        {
+            self.record_value_ref(span, symbol);
+            return;
+        }
         if let Some(symbol) = self.symbols.lookup_value(scope, name) {
             self.record_value_ref(span, symbol);
             return;
@@ -128,7 +130,13 @@ impl<'a> Resolver<'a> {
         true
     }
 
-    pub(crate) fn define(&mut self, scope: ScopeId, name: &str, kind: SymbolKind, span: Span) -> Option<crate::SymbolId> {
+    pub(crate) fn define(
+        &mut self,
+        scope: ScopeId,
+        name: &str,
+        kind: SymbolKind,
+        span: Span,
+    ) -> Option<crate::SymbolId> {
         match self.symbols.define(scope, name, kind, span) {
             Ok(symbol) => {
                 self.resolved.define(span, symbol);

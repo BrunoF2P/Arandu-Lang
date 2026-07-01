@@ -34,7 +34,13 @@ fn receiver_kind_prefix(kind: ReceiverKind) -> &'static str {
 }
 
 impl AmirFunc {
-    fn pretty_print_to(&self, out: &mut String, symbols: &SymbolTable, pool: &AmirLiteralPool, interner: &crate::types::TypeInterner) {
+    fn pretty_print_to(
+        &self,
+        out: &mut String,
+        symbols: &SymbolTable,
+        pool: &AmirLiteralPool,
+        interner: &crate::types::TypeInterner,
+    ) {
         let param_strs: Vec<String> = self
             .params
             .iter()

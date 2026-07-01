@@ -12,7 +12,8 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
                 let mut field_symbols = rustc_hash::FxHashMap::default();
                 let mut field_indices = rustc_hash::FxHashMap::default();
                 for (idx, field) in struct_decl.fields.iter().enumerate() {
-                    let field_ty = checker.lower_type_expr(field.ty, checker.symbols.global_scope());
+                    let field_ty =
+                        checker.lower_type_expr(field.ty, checker.symbols.global_scope());
                     let field_key = crate::NodeKey::from(field.span);
                     if let Some(field_symbol) = checker.resolved.definitions.get(&field_key) {
                         field_symbols.insert(field.name.clone(), *field_symbol);
@@ -51,7 +52,10 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
                     &enum_decl.generic_params,
                 );
                 if !params.is_empty() {
-                    checker.type_info.generic_params.insert(enum_symbol_id, params);
+                    checker
+                        .type_info
+                        .generic_params
+                        .insert(enum_symbol_id, params);
                 }
 
                 for (tag, variant) in enum_decl.variants.iter().enumerate() {
@@ -70,7 +74,8 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
                         _ => super::super::EnumPayloadShape::Unit,
                     };
                     let variant_key = crate::NodeKey::from(variant.span);
-                    if let Some(variant_symbol_id) = checker.resolved.definitions.get(&variant_key).copied()
+                    if let Some(variant_symbol_id) =
+                        checker.resolved.definitions.get(&variant_key).copied()
                     {
                         checker
                             .type_info
@@ -93,7 +98,8 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
                 }
             }
             TopLevelDecl::TypeAlias(alias_decl) => {
-                let alias_ty = checker.lower_type_expr(alias_decl.ty, checker.symbols.global_scope());
+                let alias_ty =
+                    checker.lower_type_expr(alias_decl.ty, checker.symbols.global_scope());
                 let alias_key = crate::NodeKey::from(alias_decl.span);
                 if let Some(symbol_id) = checker.resolved.definitions.get(&alias_key).copied() {
                     let alias_id = checker.intern(alias_ty);
@@ -141,7 +147,8 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &P
 
                 let mut param_types = Vec::new();
                 for param in &func_decl.params {
-                    let param_ty = checker.lower_type_expr(param.ty, checker.symbols.global_scope());
+                    let param_ty =
+                        checker.lower_type_expr(param.ty, checker.symbols.global_scope());
                     param_types.push(checker.intern(param_ty));
                 }
 
@@ -156,24 +163,30 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &P
                         &func_decl.generic_params,
                     );
                     if !params.is_empty() {
-                        checker.type_info.generic_params.insert(symbol_id, params.clone());
+                        checker
+                            .type_info
+                            .generic_params
+                            .insert(symbol_id, params.clone());
                     }
                     if let arandu_parser::FuncName::Method { .. } = &func_decl.name
                         && let Some(first_param) = func_decl.params.first()
-                            && first_param.name.as_str() == "self"
-                                && let Some(first_ty_id) = param_types.first_mut() {
-                                    let lowered_first_ty = checker.resolve(*first_ty_id).clone();
-                                    if let ArType::Named(struct_id, ref args) = lowered_first_ty
-                                        && args.is_empty() && !params.is_empty() {
-                                            let mut new_args = Vec::new();
-                                            for &param_sym in &params {
-                                                let arg_ty = ArType::Named(param_sym, vec![]);
-                                                new_args.push(checker.intern(arg_ty));
-                                            }
-                                            let new_first_ty = ArType::Named(struct_id, new_args);
-                                            *first_ty_id = checker.intern(new_first_ty);
-                                        }
-                                }
+                        && first_param.name.as_str() == "self"
+                        && let Some(first_ty_id) = param_types.first_mut()
+                    {
+                        let lowered_first_ty = checker.resolve(*first_ty_id).clone();
+                        if let ArType::Named(struct_id, ref args) = lowered_first_ty
+                            && args.is_empty()
+                            && !params.is_empty()
+                        {
+                            let mut new_args = Vec::new();
+                            for &param_sym in &params {
+                                let arg_ty = ArType::Named(param_sym, vec![]);
+                                new_args.push(checker.intern(arg_ty));
+                            }
+                            let new_first_ty = ArType::Named(struct_id, new_args);
+                            *first_ty_id = checker.intern(new_first_ty);
+                        }
+                    }
                     let ret_id = checker.intern(ret_ty);
                     let func_ty = ArType::Func(param_types, ret_id);
                     let func_id = checker.intern(func_ty);
@@ -190,7 +203,8 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &P
 
                     let mut param_types = Vec::new();
                     for param in &member.params {
-                        let param_ty = checker.lower_type_expr(param.ty, checker.symbols.global_scope());
+                        let param_ty =
+                            checker.lower_type_expr(param.ty, checker.symbols.global_scope());
                         param_types.push(checker.intern(param_ty));
                     }
 

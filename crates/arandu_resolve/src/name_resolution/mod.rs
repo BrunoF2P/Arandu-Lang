@@ -334,7 +334,11 @@ impl<'a> Resolver<'a> {
         self.used_symbols.insert(symbol);
     }
 
-    pub(crate) fn record_expr_ref(&mut self, expr: arandu_parser::ast_pool::ExprId, symbol: crate::SymbolId) {
+    pub(crate) fn record_expr_ref(
+        &mut self,
+        expr: arandu_parser::ast_pool::ExprId,
+        symbol: crate::SymbolId,
+    ) {
         self.resolved.expr_ref(expr, symbol);
         self.mark_used(symbol);
     }
@@ -349,11 +353,20 @@ impl<'a> Resolver<'a> {
         self.mark_used(symbol);
     }
 
-    pub(crate) fn record_import_symbol(&mut self, symbol: crate::SymbolId, name: String, span: arandu_lexer::Span) {
+    pub(crate) fn record_import_symbol(
+        &mut self,
+        symbol: crate::SymbolId,
+        name: String,
+        span: arandu_lexer::Span,
+    ) {
         self.imported_symbols.insert(symbol, (name, span));
     }
 
-    pub(crate) fn lookup_and_record_module(&mut self, scope: crate::ScopeId, name: &str) -> Option<crate::SymbolId> {
+    pub(crate) fn lookup_and_record_module(
+        &mut self,
+        scope: crate::ScopeId,
+        name: &str,
+    ) -> Option<crate::SymbolId> {
         let sym = self.symbols.lookup_module(scope, name)?;
         self.mark_used(sym);
         Some(sym)
