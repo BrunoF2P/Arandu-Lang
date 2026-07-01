@@ -1,5 +1,8 @@
 #![allow(clippy::unnecessary_wraps)] // recovery parsers use Result for local error handling
 
+#[cfg(test)]
+mod tests;
+
 mod ast;
 mod parser;
 
