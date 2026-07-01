@@ -94,15 +94,31 @@ pub trait StructLayoutProvider {
 }
 
 /// The physical memory layout engine.
+///
+/// Target-dependent sizes (e.g. `Float`, `Int`) are derived from
+/// `pointer_width`. On 64-bit targets `Float` = F64 (8 bytes); on
+/// 32-bit targets `Float` = F32 (4 bytes).
+///
+/// TODO: When adding support for i686, wasm32, or aarch64, replace the ad-hoc
+/// `pointer_width`/`float_size` fields with a proper `DataLayout` struct that
+/// stores (size, abi_align, pref_align) per type class (see the full design
+/// discussed in `arandu_base::target`). Key insight: `i686_sysv` requires
+/// i64/f64 to have size=8 but abi_align=4, which `pointer_width` alone cannot
+/// express. The `DataLayout` approach also decouples target identity (triple)
+/// from data-layout rules, allowing manual overrides like `soft-float` ABI.
 #[derive(Debug, Clone)]
 pub struct LayoutEngine {
     pub pointer_width: u64,
+    pub float_size: u64,
 }
 
 impl LayoutEngine {
     #[must_use]
     pub fn new(pointer_width: u64) -> Self {
-        Self { pointer_width }
+        Self {
+            pointer_width,
+            float_size: pointer_width, // 8 on 64-bit → F64, 4 on 32-bit → F32
+        }
     }
 
     /// Compute the memory layout of any canonical `TypeId`.
@@ -138,11 +154,19 @@ impl LayoutEngine {
                     align: 2,
                     field_offsets: Vec::new(),
                 },
-                Primitive::I32 | Primitive::U32 | Primitive::F32 | Primitive::Float => TypeLayout {
+                Primitive::I32 | Primitive::U32 | Primitive::F32 => TypeLayout {
                     size: 4,
                     align: 4,
                     field_offsets: Vec::new(),
                 },
+                Primitive::Float => {
+                    let align = self.float_size;
+                    TypeLayout {
+                        size: self.float_size,
+                        align,
+                        field_offsets: Vec::new(),
+                    }
+                }
                 Primitive::Int
                 | Primitive::Uint
                 | Primitive::I64
@@ -552,6 +576,208 @@ mod tests {
     }
 
     #[test]
+    fn test_all_primitive_layouts() {
+        let engine = LayoutEngine::new(8);
+        let mut interner = TypeInterner::new();
+        let provider = MockProvider;
+
+        let cases = [
+            (Primitive::I8, 1u64, 1u64),
+            (Primitive::U8, 1, 1),
+            (Primitive::Byte, 1, 1),
+            (Primitive::Bool, 1, 1),
+            (Primitive::Char, 1, 1),
+            (Primitive::I16, 2, 2),
+            (Primitive::U16, 2, 2),
+            (Primitive::I32, 4, 4),
+            (Primitive::U32, 4, 4),
+            (Primitive::F32, 4, 4),
+            (Primitive::Float, 8, 8),
+            (Primitive::Int, 8, 8),
+            (Primitive::Uint, 8, 8),
+            (Primitive::I64, 8, 8),
+            (Primitive::U64, 8, 8),
+            (Primitive::F64, 8, 8),
+            (Primitive::Any, 8, 8),
+        ];
+        for (prim, size, align) in cases {
+            let tid = interner.intern(ArType::Primitive(prim));
+            let layout = engine.layout_of(tid, &interner, &provider);
+            assert_eq!(layout.size, size, "{prim:?} size");
+            assert_eq!(layout.align, align, "{prim:?} align");
+            assert!(layout.field_offsets.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_ptr_layout() {
+        for &ptr_width in &[4u64, 8] {
+            let engine = LayoutEngine::new(ptr_width);
+            let mut interner = TypeInterner::new();
+            let provider = MockProvider;
+            let inner = interner.intern(ArType::Primitive(Primitive::I32));
+            let ptr_ty = ArType::Ptr(inner);
+            let tid = interner.intern(ptr_ty);
+            let layout = engine.layout_of(tid, &interner, &provider);
+            assert_eq!(layout.size, ptr_width);
+            assert_eq!(layout.align, ptr_width);
+        }
+    }
+
+    #[test]
+    fn test_slice_layout() {
+        for &ptr_width in &[4u64, 8] {
+            let engine = LayoutEngine::new(ptr_width);
+            let mut interner = TypeInterner::new();
+            let provider = MockProvider;
+            let inner = interner.intern(ArType::Primitive(Primitive::I32));
+            let slice_ty = ArType::Slice(inner);
+            let tid = interner.intern(slice_ty);
+            let layout = engine.layout_of(tid, &interner, &provider);
+            // ptr(ptr_width) + len(u64=8), aligned to max(ptr_width, 8)
+            assert_eq!(layout.field_offsets, vec![0, ptr_width.max(8)]);
+            assert_eq!(layout.align, ptr_width.max(8));
+        }
+    }
+
+    #[test]
+    fn test_array_layout() {
+        let engine = LayoutEngine::new(8);
+        let mut interner = TypeInterner::new();
+        let provider = MockProvider;
+        let elem = interner.intern(ArType::Primitive(Primitive::I32));
+        let arr_ty = ArType::Array(5, elem);
+        let tid = interner.intern(arr_ty);
+        let layout = engine.layout_of(tid, &interner, &provider);
+        assert_eq!(layout.size, 20); // 5 * 4
+        assert_eq!(layout.align, 4);
+    }
+
+    #[test]
+    fn test_void_error_layout() {
+        let engine = LayoutEngine::new(8);
+        let mut interner = TypeInterner::new();
+        let provider = MockProvider;
+        for ty in [ArType::Void, ArType::Err, ArType::Error] {
+            let tid = interner.intern(ty);
+            let layout = engine.layout_of(tid, &interner, &provider);
+            assert_eq!(layout.size, 0);
+            assert_eq!(layout.align, 1);
+        }
+    }
+
+    #[test]
+    fn test_func_layout() {
+        let engine = LayoutEngine::new(8);
+        let mut interner = TypeInterner::new();
+        let provider = MockProvider;
+        let int_id = interner.intern(ArType::Primitive(Primitive::Int));
+        let func_ty = ArType::Func(vec![int_id, int_id], int_id);
+        let tid = interner.intern(func_ty);
+        let layout = engine.layout_of(tid, &interner, &provider);
+        assert_eq!(layout.size, 8);
+        assert_eq!(layout.align, 8);
+    }
+
+    #[test]
+    fn test_nullable_layout_delegates_to_inner() {
+        let engine = LayoutEngine::new(8);
+        let mut interner = TypeInterner::new();
+        let provider = MockProvider;
+        let inner = interner.intern(ArType::Primitive(Primitive::I32));
+        let nullable = ArType::Nullable(inner);
+        let tid = interner.intern(nullable);
+        let layout = engine.layout_of(tid, &interner, &provider);
+        assert_eq!(layout.size, 4);
+        assert_eq!(layout.align, 4);
+    }
+
+    #[test]
+    fn test_tuple_layout() {
+        let engine = LayoutEngine::new(8);
+        let mut interner = TypeInterner::new();
+        let provider = MockProvider;
+        let u8_id = interner.intern(ArType::Primitive(Primitive::U8));
+        let i32_id = interner.intern(ArType::Primitive(Primitive::I32));
+        let u8_2 = interner.intern(ArType::Primitive(Primitive::U8));
+        let tuple_ty = ArType::Tuple(vec![u8_id, i32_id, u8_2]);
+        let tid = interner.intern(tuple_ty);
+        let layout = engine.layout_of(tid, &interner, &provider);
+        // u8 at 0, i32 at 4 (align 4), u8 at 8, total = 12 (aligned to 4)
+        assert_eq!(layout.align, 4);
+        assert_eq!(layout.field_offsets, vec![0, 4, 8]);
+        assert_eq!(layout.size, 12);
+    }
+
+    #[test]
+    fn test_result_layout() {
+        let engine = LayoutEngine::new(8);
+        let mut interner = TypeInterner::new();
+        let provider = MockProvider;
+        let ok = interner.intern(ArType::Primitive(Primitive::I32));
+        let err = interner.intern(ArType::Primitive(Primitive::U8));
+        let result_ty = ArType::Result(ok, err);
+        let tid = interner.intern(result_ty);
+        let layout = engine.layout_of(tid, &interner, &provider);
+        // tag at 0, payload at 8 (ptr_width), max payload = max(4,1) = 4, total = 12 aligned to max(4,1,8)=8 => 16
+        assert_eq!(layout.field_offsets, vec![0, 8]);
+        assert_eq!(layout.align, 8);
+        assert_eq!(layout.size, 16);
+    }
+
+    #[test]
+    fn test_option_layout() {
+        let engine = LayoutEngine::new(8);
+        let mut interner = TypeInterner::new();
+        let provider = MockProvider;
+        let inner = interner.intern(ArType::Primitive(Primitive::I32));
+        let opt_ty = ArType::Option(inner);
+        let tid = interner.intern(opt_ty);
+        let layout = engine.layout_of(tid, &interner, &provider);
+        // tag at 0, payload at 8 (ptr_width), payload size 4, total = 12 aligned to max(4,8)=8 => 16
+        assert_eq!(layout.field_offsets, vec![0, 8]);
+        assert_eq!(layout.align, 8);
+        assert_eq!(layout.size, 16);
+    }
+
+    #[test]
+    fn test_range_layout() {
+        let engine = LayoutEngine::new(8);
+        let mut interner = TypeInterner::new();
+        let provider = MockProvider;
+        let inner = interner.intern(ArType::Primitive(Primitive::I32));
+        let range_ty = ArType::Range(inner);
+        let tid = interner.intern(range_ty);
+        let layout = engine.layout_of(tid, &interner, &provider);
+        // start at 0, end at 4 (padding to align 4), total = 8
+        assert_eq!(layout.field_offsets, vec![0, 4]);
+        assert_eq!(layout.align, 4);
+        assert_eq!(layout.size, 8);
+    }
+
+    #[test]
+    fn test_int_literal_layout() {
+        let engine = LayoutEngine::new(8);
+        let mut interner = TypeInterner::new();
+        let provider = MockProvider;
+        let tid = interner.intern(ArType::IntLiteral);
+        let layout = engine.layout_of(tid, &interner, &provider);
+        assert_eq!(layout.size, 8);
+        assert_eq!(layout.align, 8);
+    }
+
+    #[test]
+    fn test_float_literal_layout() {
+        let engine = LayoutEngine::new(8);
+        let mut interner = TypeInterner::new();
+        let provider = MockProvider;
+        let tid = interner.intern(ArType::FloatLiteral);
+        let layout = engine.layout_of(tid, &interner, &provider);
+        assert_eq!(layout.size, 8);
+        assert_eq!(layout.align, 8);
+    }
+
+    #[test]
     fn test_struct_layout_and_padding() {
         let engine = LayoutEngine::new(8);
         let mut interner = TypeInterner::new();
@@ -591,5 +817,61 @@ mod tests {
         assert_eq!(layout.align, 4);
         assert_eq!(layout.field_offsets, vec![0, 4, 8]);
         assert_eq!(layout.size, 12);
+    }
+
+    #[test]
+    fn test_struct_missing_fields_fallback() {
+        let engine = LayoutEngine::new(8);
+        let mut interner = TypeInterner::new();
+        let struct_sym = SymbolId(9999);
+        let struct_ty = ArType::Named(struct_sym, Vec::new());
+        let struct_id = interner.intern(struct_ty);
+        let provider = MockProvider;
+        let layout = engine.layout_of(struct_id, &interner, &provider);
+        assert_eq!(layout.size, 0);
+        assert_eq!(layout.align, 1);
+        assert!(layout.field_offsets.is_empty());
+    }
+
+    #[test]
+    fn test_struct_generic_substitution() {
+        let engine = LayoutEngine::new(8);
+        let mut interner = TypeInterner::new();
+
+        let struct_sym = SymbolId(42);
+        let param_sym = SymbolId(1);
+
+        let param_ty = ArType::Named(param_sym, vec![]);
+
+        let mut fields = FxHashMap::default();
+        fields.insert("value".to_string(), param_ty);
+
+        let mut field_indices = FxHashMap::default();
+        field_indices.insert("value".to_string(), 0);
+
+        let mut fields_map = FxHashMap::default();
+        fields_map.insert(struct_sym, fields);
+
+        let mut indices_map = FxHashMap::default();
+        indices_map.insert(struct_sym, field_indices);
+
+        let mut generic_params = FxHashMap::default();
+        generic_params.insert(struct_sym, vec![param_sym]);
+
+        let provider = StructMockProvider {
+            fields: fields_map,
+            field_indices: indices_map,
+            generic_params,
+        };
+
+        let concrete_int = interner.intern(ArType::Primitive(Primitive::I32));
+        let struct_ty = ArType::Named(struct_sym, vec![concrete_int]);
+        let struct_id = interner.intern(struct_ty);
+
+        let layout = engine.layout_of(struct_id, &interner, &provider);
+        // value field substituted to I32: size 4, align 4
+        assert_eq!(layout.align, 4);
+        assert_eq!(layout.field_offsets, vec![0]);
+        assert_eq!(layout.size, 4);
     }
 }
