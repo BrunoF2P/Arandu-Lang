@@ -1,37 +1,36 @@
 use super::super::TypeChecker;
 use super::super::constraints::ConstraintOrigin;
-use super::super::types::{ArType, Primitive};
+use super::super::types::{ArType, Primitive, TypeId};
 
-pub(crate) fn synth_place(checker: &mut TypeChecker<'_>, place: &arandu_parser::Place) -> ArType {
+pub(crate) fn synth_place(checker: &mut TypeChecker<'_>, place: &arandu_parser::Place) -> TypeId {
     let root_key = crate::NodeKey::from(place.span);
-    let mut current_ty = if let Some(symbol_id) = checker.resolved.value_refs.get(&root_key) {
-        if let Some(ty) = checker.ctx.lookup(*symbol_id) {
-            ty.clone()
-        } else if let Some(ty) = checker.decl_type(*symbol_id) {
-            ty
+    let mut current_ty_id = if let Some(symbol_id) = checker.resolved.value_refs.get(&root_key) {
+        if let Some(ty_id) = checker.ctx.lookup(*symbol_id) {
+            ty_id
+        } else if let Some(ty_id) = checker.decl_type_id(*symbol_id) {
+            ty_id
         } else {
-            ArType::Error
+            checker.intern(ArType::Error)
         }
     } else {
-        ArType::Error
+        checker.intern(ArType::Error)
     };
 
     // 2. Traverse suffixes
     for suffix in &place.suffixes {
-        if current_ty.is_error() {
+        if checker.resolve(current_ty_id).is_error() {
             break;
         }
         match suffix {
             arandu_parser::PlaceSuffix::Field { span, name } => {
                 let interner = &checker.type_info.type_interner;
-                let (actual_base_ty, was_nullable) = match &current_ty {
-                    ArType::Nullable(inner) => (
-                        interner.resolve(*inner).clone(),
-                        true,
-                    ),
-                    other => (other.clone(), false),
+                let (actual_base_ty_id, was_nullable) = match checker.resolve(current_ty_id) {
+                    ArType::Nullable(inner) => (*inner, true),
+                    _ => (current_ty_id, false),
                 };
+                let actual_base_ty = checker.resolve(actual_base_ty_id);
                 if was_nullable {
+                    let current_ty = checker.resolve(current_ty_id);
                     let diag = crate::Diagnostic::error(
                         crate::DiagCode::T006NotNullable,
                         format!(
@@ -47,10 +46,10 @@ pub(crate) fn synth_place(checker: &mut TypeChecker<'_>, place: &arandu_parser::
                     )
                     .with_hint("use safe access `?.` or make the value non-nullable".to_string());
                     checker.diagnostics.push(diag);
-                    current_ty = ArType::Error;
+                    current_ty_id = checker.intern(ArType::Error);
                     break;
                 }
-                let struct_info_opt = match &actual_base_ty {
+                let struct_info_opt = match actual_base_ty {
                     ArType::Named(id, args) => Some((*id, args.clone())),
                     ArType::Ptr(inner) => match interner.resolve(*inner) {
                         ArType::Named(id, args) => Some((*id, args.clone())),
@@ -73,32 +72,31 @@ pub(crate) fn synth_place(checker: &mut TypeChecker<'_>, place: &arandu_parser::
                 };
 
                 if let Some(field_ty) = field_from_struct {
-                    current_ty = field_ty;
+                    current_ty_id = checker.intern(field_ty);
                 } else {
+                    let err_id = checker.intern(ArType::Error);
                     checker.add_constraint(
-                        actual_base_ty.clone(),
-                        ArType::Error,
+                        actual_base_ty_id,
+                        err_id,
                         ConstraintOrigin::UndefinedField {
                             base_span: place.span,
                             field_span: *span,
                             field_name: name.clone(),
                         },
                     );
-                    current_ty = ArType::Error;
+                    current_ty_id = err_id;
                 }
             }
             arandu_parser::PlaceSuffix::Index { span, expr } => {
                 let index_ty_id = super::super::synth::synth_expr(checker, *expr);
-                let index_ty = checker.resolve(index_ty_id).clone();
                 let interner = &checker.type_info.type_interner;
-                let (actual_base_ty, was_nullable) = match &current_ty {
-                    ArType::Nullable(inner) => (
-                        interner.resolve(*inner).clone(),
-                        true,
-                    ),
-                    other => (other.clone(), false),
+                let (actual_base_ty_id, was_nullable) = match checker.resolve(current_ty_id) {
+                    ArType::Nullable(inner) => (*inner, true),
+                    _ => (current_ty_id, false),
                 };
+                let actual_base_ty = checker.resolve(actual_base_ty_id);
                 if was_nullable {
+                    let current_ty = checker.resolve(current_ty_id);
                     let diag = crate::Diagnostic::error(
                         crate::DiagCode::T006NotNullable,
                         format!(
@@ -115,30 +113,32 @@ pub(crate) fn synth_place(checker: &mut TypeChecker<'_>, place: &arandu_parser::
                         "use safe index `?[...]` or make the value non-nullable".to_string(),
                     );
                     checker.diagnostics.push(diag);
-                    current_ty = ArType::Error;
+                    current_ty_id = checker.intern(ArType::Error);
                     break;
                 }
-                match &actual_base_ty {
+                match actual_base_ty {
                     ArType::Array(_, inner) | ArType::Slice(inner) => {
-                        current_ty = interner.resolve(*inner).clone();
+                        current_ty_id = *inner;
                     }
                     _ => {
+                        let err_id = checker.intern(ArType::Error);
                         checker.add_constraint(
-                            actual_base_ty.clone(),
-                            ArType::Error,
+                            actual_base_ty_id,
+                            err_id,
                             ConstraintOrigin::InvalidIndex {
                                 base_span: place.span,
                                 index_span: checker.pool.expr_span(*expr),
                                 is_base_error: true,
                             },
                         );
-                        current_ty = ArType::Error;
+                        current_ty_id = err_id;
                     }
                 }
+                let index_ty = checker.resolve(index_ty_id);
                 if !index_ty.is_error() && !index_ty.is_integer() {
                     checker.add_constraint(
                         ArType::Primitive(Primitive::Int),
-                        index_ty,
+                        index_ty_id,
                         ConstraintOrigin::InvalidIndex {
                             base_span: place.span,
                             index_span: checker.pool.expr_span(*expr),
@@ -150,5 +150,5 @@ pub(crate) fn synth_place(checker: &mut TypeChecker<'_>, place: &arandu_parser::
         }
     }
 
-    current_ty
+    current_ty_id
 }

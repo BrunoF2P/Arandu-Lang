@@ -35,14 +35,13 @@ pub(super) fn synth_binary_unary_expr(
             let right_ty_id = synth_expr(checker, right_id);
             let interner = &checker.type_info.type_interner;
             let left_ty = interner.resolve(left_ty_id);
-            let right_ty = interner.resolve(right_ty_id);
             match left_ty {
                 ArType::Nullable(inner) => {
-                    let inner_ty = interner.resolve(*inner);
-                    if !types::unify(inner_ty, right_ty, interner) {
+                    let inner_id = *inner;
+                    if !checker.unify_ids(inner_id, right_ty_id) {
                         checker.add_constraint(
-                            inner_ty.clone(),
-                            right_ty.clone(),
+                            inner_id,
+                            right_ty_id,
                             ConstraintOrigin::NullCoalesce {
                                 left_span: checker.pool.expr_span(left_id),
                                 right_span: checker.pool.expr_span(right_id),
@@ -82,19 +81,20 @@ pub(super) fn synth_binary_unary_expr(
             let ty_id = *ty;
             let found_ty_id = synth_expr(checker, inner_id);
             let target_ty = checker.lower_type_expr(ty_id, checker.type_scope());
-            let interner = &checker.type_info.type_interner;
-            let found_ty = interner.resolve(found_ty_id);
-            if !cast_types_compatible(found_ty, &target_ty, interner) {
+            let target_ty_id = checker.intern(target_ty);
+            let found_ty = checker.resolve(found_ty_id);
+            let target_ty = checker.resolve(target_ty_id);
+            if !cast_types_compatible(found_ty, target_ty, &checker.type_info.type_interner) {
                 checker.add_constraint(
-                    target_ty.clone(),
-                    found_ty.clone(),
+                    target_ty_id,
+                    found_ty_id,
                     ConstraintOrigin::CastExpr {
                         expr_span: checker.pool.expr_span(inner_id),
                         target_span: checker.pool.type_expr_span(ty_id),
                     },
                 );
             }
-            Some(checker.intern(target_ty))
+            Some(target_ty_id)
         }
         ExprKind::Unary {
             op,
@@ -114,7 +114,7 @@ pub(super) fn synth_binary_unary_expr(
                     } else {
                         checker.add_constraint(
                             ArType::Primitive(Primitive::Int),
-                            expr_ty.clone(),
+                            expr_ty_id,
                             ConstraintOrigin::UnaryOp {
                                 op_span: span,
                                 operand_span: checker.pool.expr_span(inner_id),
@@ -129,7 +129,7 @@ pub(super) fn synth_binary_unary_expr(
                     } else {
                         checker.add_constraint(
                             ArType::Primitive(Primitive::Bool),
-                            expr_ty.clone(),
+                            expr_ty_id,
                             ConstraintOrigin::UnaryOp {
                                 op_span: span,
                                 operand_span: checker.pool.expr_span(inner_id),
@@ -144,7 +144,7 @@ pub(super) fn synth_binary_unary_expr(
                     } else {
                         checker.add_constraint(
                             ArType::Primitive(Primitive::Int),
-                            expr_ty.clone(),
+                            expr_ty_id,
                             ConstraintOrigin::UnaryOp {
                                 op_span: span,
                                 operand_span: checker.pool.expr_span(inner_id),
@@ -161,7 +161,7 @@ pub(super) fn synth_binary_unary_expr(
                     } else {
                         checker.add_constraint(
                             ArType::Error,
-                            expr_ty.clone(),
+                            expr_ty_id,
                             ConstraintOrigin::AwaitInvalid { span },
                         );
                         Some(checker.intern(ArType::Error))
@@ -184,12 +184,14 @@ pub(super) fn synth_binary_unary_expr(
 
             match op {
                 BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
-                    if !types::unify(left_ty, right_ty, interner)
+                    let left_ty = checker.resolve(left_ty_id);
+                    let right_ty = checker.resolve(right_ty_id);
+                    if !checker.unify_ids(left_ty_id, right_ty_id)
                         || (!left_ty.is_numeric() && !right_ty.is_numeric())
                     {
                         checker.add_constraint(
-                            left_ty.clone(),
-                            right_ty.clone(),
+                            left_ty_id,
+                            right_ty_id,
                             ConstraintOrigin::BinaryOp {
                                 op_span: span,
                                 left_span: checker.pool.expr_span(left_id),
@@ -206,10 +208,10 @@ pub(super) fn synth_binary_unary_expr(
                 | BinaryOp::Gt
                 | BinaryOp::LtEqual
                 | BinaryOp::GtEqual => {
-                    if !types::unify(left_ty, right_ty, interner) {
+                    if !checker.unify_ids(left_ty_id, right_ty_id) {
                         checker.add_constraint(
-                            left_ty.clone(),
-                            right_ty.clone(),
+                            left_ty_id,
+                            right_ty_id,
                             ConstraintOrigin::BinaryOp {
                                 op_span: span,
                                 left_span: checker.pool.expr_span(left_id),
@@ -220,12 +222,14 @@ pub(super) fn synth_binary_unary_expr(
                     Some(checker.intern(ArType::Primitive(Primitive::Bool)))
                 }
                 BinaryOp::RangeExclusive | BinaryOp::RangeInclusive => {
-                    if !types::unify(left_ty, right_ty, interner)
+                    let left_ty = checker.resolve(left_ty_id);
+                    let right_ty = checker.resolve(right_ty_id);
+                    if !checker.unify_ids(left_ty_id, right_ty_id)
                         || (!left_ty.is_integer() && !right_ty.is_integer())
                     {
                         checker.add_constraint(
-                            left_ty.clone(),
-                            right_ty.clone(),
+                            left_ty_id,
+                            right_ty_id,
                             ConstraintOrigin::BinaryOp {
                                 op_span: span,
                                 left_span: checker.pool.expr_span(left_id),

@@ -2,22 +2,22 @@ use arandu_lexer::Span;
 
 use crate::SymbolId;
 
-use super::types::ArType;
+use super::types::TypeId;
 
 // ── TyCtx — typing context ─────────────────────────────────────────
 
 /// Typing context that accumulates bindings as we walk the AST.
 ///
 /// Unlike the `SymbolTable` (which tracks names in scopes), `TyCtx` maps
-/// each `SymbolId` to its `ArType`. It also tracks the expected return
+/// each `SymbolId` to its `TypeId`. It also tracks the expected return
 /// type of the current function and whether we're inside a loop.
 #[derive(Debug)]
 pub struct TyCtx {
-    /// Map from `SymbolId` to its inferred/declared `ArType`.
-    bindings: Vec<Option<ArType>>,
+    /// Map from `SymbolId` to its inferred/declared `TypeId`.
+    bindings: Vec<Option<TypeId>>,
 
     /// Stack of expected return types for nested functions/lambdas.
-    return_stack: Vec<ArType>,
+    return_stack: Vec<TypeId>,
 
     /// Span of the return type in each nested function declaration.
     return_decl_span_stack: Vec<Span>,
@@ -46,7 +46,7 @@ impl TyCtx {
     // ── Bindings ────────────────────────────────────────────────────
 
     /// Record that `symbol` has type `ty`.
-    pub fn bind(&mut self, symbol: SymbolId, ty: ArType) {
+    pub fn bind(&mut self, symbol: SymbolId, ty: TypeId) {
         let idx = symbol.0 as usize;
         if idx >= self.bindings.len() {
             self.bindings.resize(idx + 1, None);
@@ -58,11 +58,12 @@ impl TyCtx {
     ///
     /// Reports to the global perf counters when `-Zprofile-queries` is active.
     #[must_use]
-    pub fn lookup(&self, symbol: SymbolId) -> Option<&ArType> {
+    pub fn lookup(&self, symbol: SymbolId) -> Option<TypeId> {
         let result = self
             .bindings
             .get(symbol.0 as usize)
-            .and_then(|opt| opt.as_ref());
+            .copied()
+            .flatten();
         if result.is_some() {
             arandu_base::perf::track_query_hit();
         } else {
@@ -74,7 +75,7 @@ impl TyCtx {
     // ── Return type stack ───────────────────────────────────────────
 
     /// Push an expected return type when entering a function body.
-    pub fn push_return(&mut self, ty: ArType, decl_span: Span) {
+    pub fn push_return(&mut self, ty: TypeId, decl_span: Span) {
         self.return_stack.push(ty);
         self.return_decl_span_stack.push(decl_span);
     }
@@ -87,8 +88,8 @@ impl TyCtx {
 
     /// Get the return type expected by the current function.
     #[must_use]
-    pub fn current_return(&self) -> Option<&ArType> {
-        self.return_stack.last()
+    pub fn current_return(&self) -> Option<TypeId> {
+        self.return_stack.last().copied()
     }
 
     /// Span of the declared return type for the current function.

@@ -134,15 +134,16 @@ pub fn check_func_body(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
                         }
                 }
 
+        let param_ty_id = checker.intern(param_ty);
         let param_key = crate::NodeKey::from(param.span);
         if let Some(&symbol_id) = checker.resolved.definitions.get(&param_key) {
-            let param_ty_id = checker.intern(param_ty.clone());
-            checker.ctx.bind(symbol_id, param_ty);
+            checker.ctx.bind(symbol_id, param_ty_id);
             checker.record_decl_type(symbol_id, param_ty_id);
         }
     }
 
-    checker.ctx.push_return(ret_ty, return_decl_span);
+    let ret_id = checker.intern(ret_ty);
+    checker.ctx.push_return(ret_id, return_decl_span);
     check_block(checker, checker.pool, &decl.body);
     checker.ctx.pop_return();
     checker.type_scope_id = None;

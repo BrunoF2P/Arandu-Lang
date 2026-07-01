@@ -184,11 +184,11 @@ impl ArType {
     /// Resolve a literal type to a concrete type. If the type is a literal
     /// and no context is available, defaults to `int` or `float`.
     #[must_use]
-    pub fn default_literal(self) -> ArType {
+    pub fn default_literal(&self) -> ArType {
         match self {
             ArType::IntLiteral => ArType::Primitive(Primitive::Int),
             ArType::FloatLiteral => ArType::Primitive(Primitive::Float),
-            other => other,
+            other => other.clone(),
         }
     }
 

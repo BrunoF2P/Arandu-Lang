@@ -1,4 +1,5 @@
 use arandu_parser::ast_pool::{ExprId, ExprKind};
+use arandu_middle::types::TypeId;
 
 use super::super::TypeChecker;
 use super::super::constraints::ConstraintOrigin;
@@ -11,7 +12,7 @@ pub(crate) fn resolve_namespace_field(
     expr: ExprId,
     field: &str,
     _span: arandu_lexer::Span,
-) -> Option<ArType> {
+) -> Option<TypeId> {
     let ExprKind::Path { path } = checker.pool.expr(base) else {
         return None;
     };
@@ -20,22 +21,22 @@ pub(crate) fn resolve_namespace_field(
     }
     let symbol_id = checker.symbols.lookup_module_member(&path[0], field)?;
     checker.resolved.expr_ref(expr, symbol_id);
-    if let Some(ty) = checker.ctx.lookup(symbol_id) {
-        return Some(ty.clone());
+    if let Some(ty_id) = checker.ctx.lookup(symbol_id) {
+        return Some(ty_id);
     }
-    checker.decl_type(symbol_id)
+    checker.decl_type_id(symbol_id)
 }
 
 pub(crate) fn resolve_namespace_member_type(
     checker: &TypeChecker<'_>,
     expr: ExprId,
-) -> Option<ArType> {
+) -> Option<TypeId> {
     if let Some(symbol_id) = checker.resolved.expr_symbol(expr) {
-        if let Some(ty) = checker.ctx.lookup(symbol_id) {
-            return Some(ty.clone());
+        if let Some(ty_id) = checker.ctx.lookup(symbol_id) {
+            return Some(ty_id);
         }
-        if let Some(ty) = checker.decl_type(symbol_id) {
-            return Some(ty);
+        if let Some(ty_id) = checker.decl_type_id(symbol_id) {
+            return Some(ty_id);
         }
     }
     None
@@ -47,22 +48,20 @@ pub(crate) fn resolve_field(
     field: &String,
     field_span: arandu_lexer::Span,
     safe: bool,
-) -> ArType {
+) -> TypeId {
     let base_ty_id = synth_expr(checker, base);
-    let base_ty = checker.resolve(base_ty_id).clone();
-    if base_ty.is_error() {
-        return ArType::Error;
+    if checker.resolve(base_ty_id).is_error() {
+        return checker.intern(ArType::Error);
     }
 
-    let (actual_base_ty, was_nullable) = match &base_ty {
-        ArType::Nullable(inner) => (
-            checker.type_info.type_interner.resolve(*inner).clone(),
-            true,
-        ),
-        other => (other.clone(), false),
+    let (actual_base_ty_id, was_nullable) = match checker.resolve(base_ty_id) {
+        ArType::Nullable(inner) => (*inner, true),
+        _ => (base_ty_id, false),
     };
+    let actual_base_ty = checker.resolve(actual_base_ty_id);
 
     if was_nullable && !safe {
+        let base_ty = checker.resolve(base_ty_id);
         let diag = crate::Diagnostic::error(
             crate::DiagCode::T006NotNullable,
             format!(
@@ -78,12 +77,12 @@ pub(crate) fn resolve_field(
         )
         .with_hint("use safe access `?.` or make the value non-nullable".to_string());
         checker.diagnostics.push(diag);
-        return ArType::Error;
+        return checker.intern(ArType::Error);
     }
 
-    let struct_info_opt = match &actual_base_ty {
+    let struct_info_opt = match actual_base_ty {
         ArType::Named(id, args) => Some((*id, args.clone())),
-        ArType::Ptr(inner) => match checker.type_info.type_interner.resolve(*inner) {
+        ArType::Ptr(inner) => match checker.resolve(*inner) {
             ArType::Named(id, args) => Some((*id, args.clone())),
             _ => None,
         },
@@ -93,7 +92,7 @@ pub(crate) fn resolve_field(
     let field_ty = if let Some((struct_id, args)) = struct_info_opt {
         let resolved_args: Vec<ArType> = args
             .iter()
-            .map(|&a| checker.type_info.type_interner.resolve(a).clone())
+            .map(|&a| checker.resolve(a).clone())
             .collect();
         let field_from_struct = if let Some(fields_map) = super::super::types::struct_fields_instantiated(checker, struct_id, &resolved_args) {
             fields_map.get(field).cloned()
@@ -122,7 +121,7 @@ pub(crate) fn resolve_field(
                 }
                 if let Some(method_ty) = found_method_ty {
                     if let ArType::Func(params, ret) = method_ty {
-                        let mut new_params = vec![checker.intern(actual_base_ty.clone())];
+                        let mut new_params = vec![actual_base_ty_id];
                         new_params.extend(params);
                         ArType::Func(new_params, ret)
                     } else {
@@ -130,7 +129,7 @@ pub(crate) fn resolve_field(
                     }
                 } else {
                     checker.add_constraint(
-                        actual_base_ty.clone(),
+                        actual_base_ty_id,
                         ArType::Error,
                         ConstraintOrigin::UndefinedField {
                             base_span: checker.pool.expr_span(base),
@@ -138,11 +137,11 @@ pub(crate) fn resolve_field(
                             field_name: field.clone(),
                         },
                     );
-                    return ArType::Error;
+                    return checker.intern(ArType::Error);
                 }
             } else {
                 checker.add_constraint(
-                    actual_base_ty.clone(),
+                    actual_base_ty_id,
                     ArType::Error,
                     ConstraintOrigin::UndefinedField {
                         base_span: checker.pool.expr_span(base),
@@ -150,12 +149,12 @@ pub(crate) fn resolve_field(
                         field_name: field.clone(),
                     },
                 );
-                return ArType::Error;
+                return checker.intern(ArType::Error);
             }
         }
     } else {
         checker.add_constraint(
-            actual_base_ty.clone(),
+            actual_base_ty_id,
             ArType::Error,
             ConstraintOrigin::UndefinedField {
                 base_span: checker.pool.expr_span(base),
@@ -163,14 +162,14 @@ pub(crate) fn resolve_field(
                 field_name: field.clone(),
             },
         );
-        return ArType::Error;
+        return checker.intern(ArType::Error);
     };
 
+    let field_id = checker.intern(field_ty);
     if safe || was_nullable {
-        let field_id = checker.intern(field_ty);
-        ArType::Nullable(field_id)
+        checker.intern(ArType::Nullable(field_id))
     } else {
-        field_ty
+        field_id
     }
 }
 
@@ -179,25 +178,22 @@ pub(crate) fn resolve_index(
     base: ExprId,
     index: ExprId,
     safe: bool,
-) -> ArType {
+) -> TypeId {
     let base_ty_id = synth_expr(checker, base);
     let index_ty_id = synth_expr(checker, index);
-    let base_ty = checker.resolve(base_ty_id).clone();
-    let index_ty = checker.resolve(index_ty_id).clone();
 
-    if base_ty.is_error() {
-        return ArType::Error;
+    if checker.resolve(base_ty_id).is_error() {
+        return checker.intern(ArType::Error);
     }
 
-    let (actual_base_ty, was_nullable) = match &base_ty {
-        ArType::Nullable(inner) => (
-            checker.type_info.type_interner.resolve(*inner).clone(),
-            true,
-        ),
-        other => (other.clone(), false),
+    let (actual_base_ty_id, was_nullable) = match checker.resolve(base_ty_id) {
+        ArType::Nullable(inner) => (*inner, true),
+        _ => (base_ty_id, false),
     };
+    let actual_base_ty = checker.resolve(actual_base_ty_id);
 
     if was_nullable && !safe {
+        let base_ty = checker.resolve(base_ty_id);
         let diag = crate::Diagnostic::error(
             crate::DiagCode::T006NotNullable,
             format!(
@@ -212,16 +208,14 @@ pub(crate) fn resolve_index(
         )
         .with_hint("use safe index `?[...]` or make the value non-nullable".to_string());
         checker.diagnostics.push(diag);
-        return ArType::Error;
+        return checker.intern(ArType::Error);
     }
 
-    let elem_ty = match &actual_base_ty {
-        ArType::Array(_, inner) | ArType::Slice(inner) => {
-            checker.type_info.type_interner.resolve(*inner).clone()
-        }
+    let elem_ty_id = match actual_base_ty {
+        ArType::Array(_, inner) | ArType::Slice(inner) => *inner,
         _ => {
             checker.add_constraint(
-                actual_base_ty.clone(),
+                actual_base_ty_id,
                 ArType::Error,
                 ConstraintOrigin::InvalidIndex {
                     base_span: checker.pool.expr_span(base),
@@ -229,14 +223,15 @@ pub(crate) fn resolve_index(
                     is_base_error: true,
                 },
             );
-            return ArType::Error;
+            checker.intern(ArType::Error)
         }
     };
 
+    let index_ty = checker.resolve(index_ty_id);
     if !index_ty.is_error() && !index_ty.is_integer() {
         checker.add_constraint(
             ArType::Primitive(Primitive::Int),
-            index_ty,
+            index_ty_id,
             ConstraintOrigin::InvalidIndex {
                 base_span: checker.pool.expr_span(base),
                 index_span: checker.pool.expr_span(index),
@@ -246,9 +241,8 @@ pub(crate) fn resolve_index(
     }
 
     if safe || was_nullable {
-        let elem_id = checker.intern(elem_ty);
-        ArType::Nullable(elem_id)
+        checker.intern(ArType::Nullable(elem_ty_id))
     } else {
-        elem_ty
+        elem_ty_id
     }
 }

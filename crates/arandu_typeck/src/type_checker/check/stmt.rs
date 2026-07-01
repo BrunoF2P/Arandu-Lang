@@ -4,7 +4,7 @@ use arandu_parser::ast_pool::ExprKind;
 
 use super::super::TypeChecker;
 use super::super::constraints::ConstraintOrigin;
-use super::super::types::{ArType, Primitive};
+use super::super::types::{ArType, Primitive, TypeId};
 use super::block::check_block;
 use super::condition::check_condition;
 use super::place::synth_place;
@@ -53,12 +53,11 @@ pub fn check_stmt(checker: &mut TypeChecker<'_>, pool: &AstPool, stmt: &Stmt) {
     value: arandu_parser::ast_pool::ExprId,
 ) {
     let val_ty_id = super::super::synth::synth_expr(checker, value);
-    let val_ty = checker.resolve(val_ty_id).clone();
 
     if bindings.len() > 1 {
-        check_multi_var_decl(checker, bindings, value, &val_ty);
+        check_multi_var_decl(checker, bindings, value, val_ty_id);
     } else if let Some(binding) = bindings.first() {
-        check_single_var_decl(checker, binding, value, &val_ty);
+        check_single_var_decl(checker, binding, value, val_ty_id);
     }
 }
 
@@ -66,29 +65,27 @@ fn check_multi_var_decl(
     checker: &mut TypeChecker<'_>,
     bindings: &[arandu_parser::BindingItem],
     value: arandu_parser::ast_pool::ExprId,
-    val_ty: &ArType,
+    val_ty_id: TypeId,
 ) {
-    let val_tys = if let Some((ok, err)) = checker.result_ok_err(val_ty) {
-        vec![ok, err]
+    let val_tys: Vec<TypeId> = if let Some((ok_id, err_id)) = checker.result_ok_err_ids(val_ty_id) {
+        vec![ok_id, err_id]
     } else {
-        match val_ty {
-            ArType::Tuple(tys) => tys
-                .iter()
-                .map(|&t| checker.resolve(t).clone())
-                .collect(),
-            ArType::Error => vec![ArType::Error; bindings.len()],
-            other => vec![other.clone(); bindings.len()],
+        match checker.resolve(val_ty_id) {
+            ArType::Tuple(tys) => tys.clone(),
+            ArType::Error => vec![checker.intern(ArType::Error); bindings.len()],
+            _ => vec![val_ty_id; bindings.len()],
         }
     };
 
     for (i, binding) in bindings.iter().enumerate() {
         let binding_key = crate::NodeKey::from(binding.span);
         if let Some(symbol_id) = checker.resolved.definitions.get(&binding_key).copied() {
-            let elem_ty = val_tys.get(i).cloned().unwrap_or(ArType::Error);
-            let mut bind_ty = elem_ty.clone();
+            let elem_ty_id = val_tys.get(i).copied().unwrap_or_else(|| checker.intern(ArType::Error));
+            let mut bind_ty_id = elem_ty_id;
 
             if let Some(ty_expr) = &binding.ty {
                 let expected = checker.lower_type_expr(*ty_expr, checker.type_scope());
+                let elem_ty = checker.resolve(elem_ty_id).clone();
 
                 apply_assignment_constraints(
                     checker,
@@ -97,11 +94,10 @@ fn check_multi_var_decl(
                     binding.span,
                     checker.pool.expr_span(value),
                 );
-                bind_ty = expected;
+                bind_ty_id = checker.intern(expected);
             }
 
-            let bind_ty_id = checker.intern(bind_ty.clone());
-            checker.ctx.bind(symbol_id, bind_ty);
+            checker.ctx.bind(symbol_id, bind_ty_id);
             checker.record_decl_type(symbol_id, bind_ty_id);
         }
     }
@@ -111,20 +107,20 @@ fn check_single_var_decl(
     checker: &mut TypeChecker<'_>,
     binding: &arandu_parser::BindingItem,
     value: arandu_parser::ast_pool::ExprId,
-    val_ty: &ArType,
+    val_ty_id: TypeId,
 ) {
     let binding_key = crate::NodeKey::from(binding.span);
     if let Some(symbol_id) = checker.resolved.definitions.get(&binding_key).copied() {
-        let mut bind_ty = val_ty.clone();
+        let mut bind_ty_id = val_ty_id;
 
         if matches!(checker.pool.expr(value), ExprKind::Nil)
             && let Some(ty_expr) = &binding.ty
         {
             let expected = checker.lower_type_expr(*ty_expr, checker.type_scope());
             if !expected.is_error() {
-                let expected_id = checker.intern(expected.clone());
+                let expected_id = checker.intern(expected);
                 checker.type_info.record_expr_type(value, expected_id);
-                bind_ty = expected;
+                bind_ty_id = expected_id;
             }
         }
 
@@ -133,6 +129,7 @@ fn check_single_var_decl(
             checker.result_ok_err(&expected).is_some()
         });
 
+        let val_ty = checker.resolve(val_ty_id);
         if checker.result_ok_err(val_ty).is_some() && !annotated_as_result {
             checker.diagnostics.push(crate::Diagnostic::warning(
                 crate::DiagCode::W006UnhandledResult,
@@ -143,6 +140,7 @@ fn check_single_var_decl(
 
         if let Some(ty_expr) = &binding.ty {
             let expected = checker.lower_type_expr(*ty_expr, checker.type_scope());
+            let bind_ty = checker.resolve(bind_ty_id).clone();
 
             apply_assignment_constraints(
                 checker,
@@ -151,11 +149,10 @@ fn check_single_var_decl(
                 binding.span,
                 checker.pool.expr_span(value),
             );
-            bind_ty = expected;
+            bind_ty_id = checker.intern(expected);
         }
 
-        let bind_ty_id = checker.intern(bind_ty.clone());
-        checker.ctx.bind(symbol_id, bind_ty);
+        checker.ctx.bind(symbol_id, bind_ty_id);
         checker.record_decl_type(symbol_id, bind_ty_id);
     }
 }
@@ -169,40 +166,34 @@ fn check_set_stmt(
         validate_mutability(checker, place);
     }
     let val_ty_id = super::super::synth::synth_expr(checker, value);
-    let val_ty = checker.resolve(val_ty_id).clone();
 
     if places.len() > 1 {
-        let val_tys = if let Some((ok, err)) = checker.result_ok_err(&val_ty) {
-            vec![ok, err]
+        let val_tys: Vec<TypeId> = if let Some((ok_id, err_id)) = checker.result_ok_err_ids(val_ty_id) {
+            vec![ok_id, err_id]
         } else {
-            match &val_ty {
-                ArType::Tuple(tys) => tys
-                    .iter()
-                    .map(|&t| checker.resolve(t).clone())
-                    .collect(),
-                ArType::Error => vec![ArType::Error; places.len()],
-                other => vec![other.clone(); places.len()],
+            match checker.resolve(val_ty_id) {
+                ArType::Tuple(tys) => tys.clone(),
+                ArType::Error => vec![checker.intern(ArType::Error); places.len()],
+                _ => vec![val_ty_id; places.len()],
             }
         };
 
         for (i, place) in places.iter().enumerate() {
-            let expected_ty = synth_place(checker, place);
-            let elem_ty = val_tys.get(i).cloned().unwrap_or(ArType::Error);
-            apply_set_constraints(checker, &expected_ty, &elem_ty, place.span, checker.pool.expr_span(value));
+            let expected_ty_id = synth_place(checker, place);
+            let elem_ty_id = val_tys.get(i).copied().unwrap_or_else(|| checker.intern(ArType::Error));
+            apply_set_constraints(checker, expected_ty_id, elem_ty_id, place.span, checker.pool.expr_span(value));
         }
     } else if let Some(place) = places.first() {
-        let expected_ty = synth_place(checker, place);
-        let mut final_val_ty = val_ty.clone();
+        let expected_ty_id = synth_place(checker, place);
+        let mut final_val_ty_id = val_ty_id;
 
-        if matches!(checker.pool.expr(value), arandu_parser::ExprKind::Nil) && !expected_ty.is_error() {
-            let expected_ty_id = checker.intern(expected_ty.clone());
+        if matches!(checker.pool.expr(value), arandu_parser::ExprKind::Nil) && !checker.resolve(expected_ty_id).is_error() {
             checker.type_info.record_expr_type(value, expected_ty_id);
-            final_val_ty = expected_ty.clone();
+            final_val_ty_id = expected_ty_id;
         }
 
-        if checker.result_ok_err(&final_val_ty).is_some()
-            && checker.result_ok_err(&expected_ty).is_none()
-        {
+        let is_result = checker.result_ok_err(checker.resolve(final_val_ty_id)).is_some();
+        if is_result && checker.result_ok_err(checker.resolve(expected_ty_id)).is_none() {
             checker.diagnostics.push(crate::Diagnostic::warning(
                 crate::DiagCode::W006UnhandledResult,
                 "Result value must be handled with `?` or `value, err = f()`",
@@ -210,7 +201,7 @@ fn check_set_stmt(
             ));
         }
 
-        apply_set_constraints(checker, &expected_ty, &final_val_ty, place.span, checker.pool.expr_span(value));
+        apply_set_constraints(checker, expected_ty_id, final_val_ty_id, place.span, checker.pool.expr_span(value));
     }
 }
 
@@ -219,11 +210,11 @@ fn check_return_stmt(
     span: arandu_base::Span,
     values: &[arandu_parser::ast_pool::ExprId],
 ) {
-    let current_ret = checker
+    let current_ret_id = checker
         .ctx
         .current_return()
-        .cloned()
-        .unwrap_or(ArType::Void);
+        .unwrap_or_else(|| checker.intern(ArType::Void));
+    let current_ret = checker.resolve(current_ret_id).clone();
 
     let val_ty_id = if values.is_empty() {
         checker.intern(ArType::Void)
@@ -251,7 +242,7 @@ fn check_return_stmt(
             },
         );
     } else if !val_ty.is_literal()
-        && val_ty.clone().default_literal() != current_ret.clone().default_literal()
+        && val_ty.default_literal() != current_ret.default_literal()
         && current_ret.is_numeric()
         && val_ty.is_numeric()
     {
@@ -326,8 +317,8 @@ fn check_for_stmt(
             if let Some(binding) = bindings.first() {
                 let binding_key = crate::NodeKey::from(binding.span);
                 if let Some(symbol_id) = checker.resolved.definitions.get(&binding_key).copied() {
-                    checker.ctx.bind(symbol_id, elem_ty.clone());
-                    let elem_ty_id = checker.intern(elem_ty.clone());
+                    let elem_ty_id = checker.intern(elem_ty);
+                    checker.ctx.bind(symbol_id, elem_ty_id);
                     checker.record_decl_type(symbol_id, elem_ty_id);
                 }
             }
@@ -461,7 +452,7 @@ fn apply_assignment_constraints(
     rhs_span: arandu_base::Span,
 ) {
     if !actual.is_literal()
-        && actual.clone().default_literal() != expected.clone().default_literal()
+        && actual.default_literal() != expected.default_literal()
         && expected.is_numeric()
         && actual.is_numeric()
     {
@@ -487,33 +478,37 @@ fn apply_assignment_constraints(
 
 fn apply_set_constraints(
     checker: &mut TypeChecker<'_>,
-    expected: &ArType,
-    actual: &ArType,
+    expected_id: TypeId,
+    actual_id: TypeId,
     place_span: arandu_base::Span,
     value_span: arandu_base::Span,
 ) {
-    if !super::super::types::unify(expected, actual, &checker.type_info.type_interner) {
+    if !checker.unify_ids(expected_id, actual_id) {
         checker.add_constraint(
-            expected.clone(),
-            actual.clone(),
+            expected_id,
+            actual_id,
             ConstraintOrigin::SetTarget {
                 place_span,
                 value_span,
             },
         );
-    } else if !actual.is_literal()
-        && actual.clone().default_literal() != expected.clone().default_literal()
-        && expected.is_numeric()
-        && actual.is_numeric()
-    {
-        checker.add_constraint(
-            expected.clone(),
-            actual.clone(),
-            ConstraintOrigin::ImplicitWidening {
-                source_span: value_span,
-                target_span: place_span,
-            },
-        );
+    } else {
+        let actual = checker.resolve(actual_id);
+        let expected = checker.resolve(expected_id);
+        if !actual.is_literal()
+            && actual.default_literal() != expected.default_literal()
+            && expected.is_numeric()
+            && actual.is_numeric()
+        {
+            checker.add_constraint(
+                expected_id,
+                actual_id,
+                ConstraintOrigin::ImplicitWidening {
+                    source_span: value_span,
+                    target_span: place_span,
+                },
+            );
+        }
     }
 }
 

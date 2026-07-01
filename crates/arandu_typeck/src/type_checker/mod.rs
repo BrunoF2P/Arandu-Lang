@@ -168,10 +168,42 @@ impl<'a> TypeChecker<'a> {
         self.type_scope_id
             .unwrap_or_else(|| self.symbols.global_scope())
     }
+}
 
+pub enum ArTypeOrId {
+    Type(ArType),
+    Id(TypeId),
+}
+
+impl From<ArType> for ArTypeOrId {
+    fn from(t: ArType) -> Self {
+        ArTypeOrId::Type(t)
+    }
+}
+
+impl From<TypeId> for ArTypeOrId {
+    fn from(id: TypeId) -> Self {
+        ArTypeOrId::Id(id)
+    }
+}
+
+impl TypeChecker<'_> {
     /// Add a type constraint failure. Translates it immediately into a
     /// flow-based error message and pushes it to the diagnostics list.
-    pub fn add_constraint(&mut self, expected: ArType, found: ArType, origin: ConstraintOrigin) {
+    pub fn add_constraint(
+        &mut self,
+        expected: impl Into<ArTypeOrId>,
+        found: impl Into<ArTypeOrId>,
+        origin: ConstraintOrigin,
+    ) {
+        let expected = match expected.into() {
+            ArTypeOrId::Type(t) => t,
+            ArTypeOrId::Id(id) => self.resolve(id).clone(),
+        };
+        let found = match found.into() {
+            ArTypeOrId::Type(t) => t,
+            ArTypeOrId::Id(id) => self.resolve(id).clone(),
+        };
         let constraint = Constraint {
             expected,
             found,

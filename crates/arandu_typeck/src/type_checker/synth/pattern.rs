@@ -12,19 +12,16 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
         Pattern::Bind { span, name: _ } => {
             let key = crate::NodeKey::from(*span);
             if let Some(symbol_id) = checker.resolved.definitions.get(&key) {
-                let val_ty = checker.type_info.resolve_type_id(value_ty).clone();
-                checker.ctx.bind(*symbol_id, val_ty.clone());
+                checker.ctx.bind(*symbol_id, value_ty);
                 checker.record_decl_type(*symbol_id, value_ty);
             }
         }
         Pattern::Literal { expr, .. } => {
             let expr_ty_id = synth_expr(checker, *expr);
-            let expr_ty = checker.resolve(expr_ty_id).clone();
-            let val_ty = checker.type_info.resolve_type_id(value_ty).clone();
-            if !super::super::types::unify(&val_ty, &expr_ty, &checker.type_info.type_interner) {
+            if !checker.unify_ids(value_ty, expr_ty_id) {
                 checker.add_constraint(
-                    val_ty.clone(),
-                    expr_ty,
+                    value_ty,
+                    expr_ty_id,
                     ConstraintOrigin::Assignment {
                         lhs_span: pat.span(),
                         rhs_span: checker.pool.expr_span(*expr),
@@ -40,9 +37,11 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
         } => {
             let type_key = crate::NodeKey::from(type_name.span);
             if let Some(enum_symbol_id) = checker.resolved.type_refs.get(&type_key).copied() {
-                let val_ty = checker.type_info.resolve_type_id(value_ty).clone();
+                let val_ty = checker.resolve(value_ty);
 
-                if let ArType::Result(ok_id, err_id) = &val_ty {
+                if let ArType::Result(ok_id, err_id) = val_ty {
+                    let ok_id = *ok_id;
+                    let err_id = *err_id;
                     match variant.as_str() {
                         "Ok" => {
                             if payload.len != 1 {
@@ -56,7 +55,7 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                                 ));
                             }
                             if let Some(&pat_id) = checker.pool.pattern_list(*payload).first() {
-                                check_pattern(checker, pat_id, *ok_id);
+                                check_pattern(checker, pat_id, ok_id);
                             }
                         }
                         "Err" => {
@@ -71,7 +70,7 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                                 ));
                             }
                             if let Some(&pat_id) = checker.pool.pattern_list(*payload).first() {
-                                check_pattern(checker, pat_id, *err_id);
+                                check_pattern(checker, pat_id, err_id);
                             }
                         }
                         _ => {
@@ -82,7 +81,8 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                             ));
                         }
                     }
-                } else if let ArType::Option(inner_id) = &val_ty {
+                } else if let ArType::Option(inner_id) = val_ty {
+                    let inner_id = *inner_id;
                     match variant.as_str() {
                         "Some" => {
                             if payload.len != 1 {
@@ -96,7 +96,7 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                                 ));
                             }
                             if let Some(&pat_id) = checker.pool.pattern_list(*payload).first() {
-                                check_pattern(checker, pat_id, *inner_id);
+                                check_pattern(checker, pat_id, inner_id);
                             }
                         }
                         "None" => {
@@ -121,10 +121,10 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                     }
                 } else {
                     let expected_enum_ty = ArType::Named(enum_symbol_id, vec![]);
-                    if !super::super::types::unify(&val_ty, &expected_enum_ty, &checker.type_info.type_interner) {
+                    if !super::super::types::unify(val_ty, &expected_enum_ty, &checker.type_info.type_interner) {
                         checker.add_constraint(
-                            expected_enum_ty.clone(),
-                            val_ty.clone(),
+                            expected_enum_ty,
+                            value_ty,
                             ConstraintOrigin::Assignment {
                                 lhs_span: *span,
                                 rhs_span: type_name.span,
@@ -206,159 +206,171 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
             name,
             payload,
         } => {
-            let val_ty = checker.type_info.resolve_type_id(value_ty).clone();
-            match &val_ty {
-                ArType::Named(enum_symbol_id, _) => {
-                    let enum_name = &checker.symbols.get(*enum_symbol_id).name;
-                    let mut variant_symbol_opt = None;
-                    for (&var_id, &(parent_id, _)) in &checker.type_info.enum_variants {
-                        if parent_id == *enum_symbol_id {
-                            let var_name = &checker.symbols.get(var_id).name;
-                            if var_name == name || var_name.ends_with(&format!(".{}", name)) {
-                                variant_symbol_opt = Some(var_id);
-                                break;
-                            }
-                        }
-                    }
-                    if let Some(variant_symbol_id) = variant_symbol_opt {
-                        let shape_opt = checker
-                            .type_info
-                            .enum_variants
-                            .get(&variant_symbol_id)
-                            .cloned();
-                        if let Some((_, shape)) = shape_opt {
-                            match shape {
-                                super::super::EnumPayloadShape::Unit => {
-                                    if !payload.is_empty() {
-                                        checker.diagnostics.push(crate::Diagnostic::error(
-                                            crate::DiagCode::T012WrongArgCount,
-                                            format!(
-                                                "enum variant '{}' expects 0 payload items, found {}",
-                                                name, payload.len
-                                            ),
-                                            *span,
-                                        ));
-                                    }
-                                }
-                                super::super::EnumPayloadShape::Tuple(tys) => {
-                                    if tys.len() != payload.len as usize {
-                                        checker.diagnostics.push(crate::Diagnostic::error(
-                                            crate::DiagCode::T012WrongArgCount,
-                                            format!(
-                                                "enum variant '{}' expects {} payload items, found {}",
-                                                name,
-                                                tys.len(),
-                                                payload.len
-                                            ),
-                                            *span,
-                                        ));
-                                    }
-                                    for (i, &pat_id) in
-                                        checker.pool.pattern_list(*payload).iter().enumerate()
-                                    {
-                                        let expected_pat_ty =
-                                            tys.get(i).cloned().unwrap_or(ArType::Error);
-                                        let expected_pat_ty_id =
-                                            checker.type_info.type_interner.intern(expected_pat_ty);
-                                        check_pattern(checker, pat_id, expected_pat_ty_id);
-                                    }
+            enum EnumInfo {
+                Named(crate::SymbolId),
+                Result(TypeId, TypeId),
+                Option(TypeId),
+            }
+            let enum_info = match checker.resolve(value_ty) {
+                ArType::Named(enum_symbol_id, _) => Some(EnumInfo::Named(*enum_symbol_id)),
+                ArType::Result(ok_id, err_id) => Some(EnumInfo::Result(*ok_id, *err_id)),
+                ArType::Option(inner_id) => Some(EnumInfo::Option(*inner_id)),
+                _ => None,
+            };
+            if let Some(info) = enum_info {
+                match info {
+                    EnumInfo::Named(enum_symbol_id) => {
+                        let enum_name = checker.symbols.get(enum_symbol_id).name.clone();
+                        let mut variant_symbol_opt = None;
+                        for (&var_id, &(parent_id, _)) in &checker.type_info.enum_variants {
+                            if parent_id == enum_symbol_id {
+                                let var_name = &checker.symbols.get(var_id).name;
+                                if var_name == name || var_name.ends_with(&format!(".{}", name)) {
+                                    variant_symbol_opt = Some(var_id);
+                                    break;
                                 }
                             }
                         }
-                    } else {
-                        checker.diagnostics.push(crate::Diagnostic::error(
-                            crate::DiagCode::T018UndefinedField,
-                            format!("variant '{name}' is not defined on enum '{enum_name}'"),
-                            *span,
-                        ));
+                        if let Some(variant_symbol_id) = variant_symbol_opt {
+                            let shape_opt = checker
+                                .type_info
+                                .enum_variants
+                                .get(&variant_symbol_id)
+                                .cloned();
+                            if let Some((_, shape)) = shape_opt {
+                                match shape {
+                                    super::super::EnumPayloadShape::Unit => {
+                                        if !payload.is_empty() {
+                                            checker.diagnostics.push(crate::Diagnostic::error(
+                                                crate::DiagCode::T012WrongArgCount,
+                                                format!(
+                                                    "enum variant '{}' expects 0 payload items, found {}",
+                                                    name, payload.len
+                                                ),
+                                                *span,
+                                            ));
+                                        }
+                                    }
+                                    super::super::EnumPayloadShape::Tuple(tys) => {
+                                        if tys.len() != payload.len as usize {
+                                            checker.diagnostics.push(crate::Diagnostic::error(
+                                                crate::DiagCode::T012WrongArgCount,
+                                                format!(
+                                                    "enum variant '{}' expects {} payload items, found {}",
+                                                    name,
+                                                    tys.len(),
+                                                    payload.len
+                                                ),
+                                                *span,
+                                            ));
+                                        }
+                                        for (i, &pat_id) in
+                                            checker.pool.pattern_list(*payload).iter().enumerate()
+                                        {
+                                            let expected_pat_ty =
+                                                tys.get(i).cloned().unwrap_or(ArType::Error);
+                                            let expected_pat_ty_id =
+                                                checker.type_info.type_interner.intern(expected_pat_ty);
+                                            check_pattern(checker, pat_id, expected_pat_ty_id);
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            checker.diagnostics.push(crate::Diagnostic::error(
+                                crate::DiagCode::T018UndefinedField,
+                                format!("variant '{name}' is not defined on enum '{enum_name}'"),
+                                *span,
+                            ));
+                        }
                     }
+                    EnumInfo::Result(ok_id, err_id) => match name.as_str() {
+                        "Ok" => {
+                            if payload.len != 1 {
+                                checker.diagnostics.push(crate::Diagnostic::error(
+                                    crate::DiagCode::T012WrongArgCount,
+                                    format!(
+                                        "variant 'Ok' expects 1 payload item, found {}",
+                                        payload.len
+                                    ),
+                                    *span,
+                                ));
+                            }
+                            if let Some(&pat_id) = checker.pool.pattern_list(*payload).first() {
+                                check_pattern(checker, pat_id, ok_id);
+                            }
+                        }
+                        "Err" => {
+                            if payload.len != 1 {
+                                checker.diagnostics.push(crate::Diagnostic::error(
+                                    crate::DiagCode::T012WrongArgCount,
+                                    format!(
+                                        "variant 'Err' expects 1 payload item, found {}",
+                                        payload.len
+                                    ),
+                                    *span,
+                                ));
+                            }
+                            if let Some(&pat_id) = checker.pool.pattern_list(*payload).first() {
+                                check_pattern(checker, pat_id, err_id);
+                            }
+                        }
+                        _ => {
+                            checker.diagnostics.push(crate::Diagnostic::error(
+                                crate::DiagCode::T018UndefinedField,
+                                format!("variant '{name}' is not defined on Result"),
+                                *span,
+                            ));
+                        }
+                    },
+                    EnumInfo::Option(inner_id) => match name.as_str() {
+                        "Some" => {
+                            if payload.len != 1 {
+                                checker.diagnostics.push(crate::Diagnostic::error(
+                                    crate::DiagCode::T012WrongArgCount,
+                                    format!(
+                                        "variant 'Some' expects 1 payload item, found {}",
+                                        payload.len
+                                    ),
+                                    *span,
+                                ));
+                            }
+                            if let Some(&pat_id) = checker.pool.pattern_list(*payload).first() {
+                                check_pattern(checker, pat_id, inner_id);
+                            }
+                        }
+                        "None" => {
+                            if !payload.is_empty() {
+                                checker.diagnostics.push(crate::Diagnostic::error(
+                                    crate::DiagCode::T012WrongArgCount,
+                                    format!(
+                                        "variant 'None' expects 0 payload items, found {}",
+                                        payload.len
+                                    ),
+                                    *span,
+                                ));
+                            }
+                        }
+                        _ => {
+                            checker.diagnostics.push(crate::Diagnostic::error(
+                                crate::DiagCode::T018UndefinedField,
+                                format!("variant '{name}' is not defined on Option"),
+                                *span,
+                            ));
+                        }
+                    },
                 }
-                ArType::Result(ok_id, err_id) => match name.as_str() {
-                    "Ok" => {
-                        if payload.len != 1 {
-                            checker.diagnostics.push(crate::Diagnostic::error(
-                                crate::DiagCode::T012WrongArgCount,
-                                format!(
-                                    "variant 'Ok' expects 1 payload item, found {}",
-                                    payload.len
-                                ),
-                                *span,
-                            ));
-                        }
-                        if let Some(&pat_id) = checker.pool.pattern_list(*payload).first() {
-                            check_pattern(checker, pat_id, *ok_id);
-                        }
-                    }
-                    "Err" => {
-                        if payload.len != 1 {
-                            checker.diagnostics.push(crate::Diagnostic::error(
-                                crate::DiagCode::T012WrongArgCount,
-                                format!(
-                                    "variant 'Err' expects 1 payload item, found {}",
-                                    payload.len
-                                ),
-                                *span,
-                            ));
-                        }
-                        if let Some(&pat_id) = checker.pool.pattern_list(*payload).first() {
-                            check_pattern(checker, pat_id, *err_id);
-                        }
-                    }
-                    _ => {
-                        checker.diagnostics.push(crate::Diagnostic::error(
-                            crate::DiagCode::T018UndefinedField,
-                            format!("variant '{name}' is not defined on Result"),
-                            *span,
-                        ));
-                    }
-                },
-                ArType::Option(inner_id) => match name.as_str() {
-                    "Some" => {
-                        if payload.len != 1 {
-                            checker.diagnostics.push(crate::Diagnostic::error(
-                                crate::DiagCode::T012WrongArgCount,
-                                format!(
-                                    "variant 'Some' expects 1 payload item, found {}",
-                                    payload.len
-                                ),
-                                *span,
-                            ));
-                        }
-                        if let Some(&pat_id) = checker.pool.pattern_list(*payload).first() {
-                            check_pattern(checker, pat_id, *inner_id);
-                        }
-                    }
-                    "None" => {
-                        if !payload.is_empty() {
-                            checker.diagnostics.push(crate::Diagnostic::error(
-                                crate::DiagCode::T012WrongArgCount,
-                                format!(
-                                    "variant 'None' expects 0 payload items, found {}",
-                                    payload.len
-                                ),
-                                *span,
-                            ));
-                        }
-                    }
-                    _ => {
-                        checker.diagnostics.push(crate::Diagnostic::error(
-                            crate::DiagCode::T018UndefinedField,
-                            format!("variant '{name}' is not defined on Option"),
-                            *span,
-                        ));
-                    }
-                },
-                _ => {
-                    let interner = &checker.type_info.type_interner;
-                    checker.diagnostics.push(crate::Diagnostic::error(
-                        crate::DiagCode::T002IncompatibleAssignment,
-                        format!(
-                            "cannot match type tuple pattern against non-enum type '{}'",
-                            val_ty.display(&checker.symbols, interner)
-                        ),
-                        *span,
-                    ));
-                }
+            } else {
+                let val_ty = checker.resolve(value_ty);
+                let interner = &checker.type_info.type_interner;
+                checker.diagnostics.push(crate::Diagnostic::error(
+                    crate::DiagCode::T002IncompatibleAssignment,
+                    format!(
+                        "cannot match type tuple pattern against non-enum type '{}'",
+                        val_ty.display(&checker.symbols, interner)
+                    ),
+                    *span,
+                ));
             }
         }
         Pattern::Tuple { items, span: _ } => {
@@ -393,11 +405,11 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
             let type_key = crate::NodeKey::from(type_name.span);
             if let Some(struct_symbol_id) = checker.resolved.type_refs.get(&type_key).copied() {
                 let expected_struct_ty = ArType::Named(struct_symbol_id, vec![]);
-                let val_ty = checker.type_info.resolve_type_id(value_ty).clone();
-                if !super::super::types::unify(&val_ty, &expected_struct_ty, &checker.type_info.type_interner) {
+                let val_ty = checker.resolve(value_ty);
+                if !super::super::types::unify(val_ty, &expected_struct_ty, &checker.type_info.type_interner) {
                     checker.add_constraint(
-                        expected_struct_ty.clone(),
-                        val_ty.clone(),
+                        expected_struct_ty,
+                        value_ty,
                         ConstraintOrigin::Assignment {
                             lhs_span: pat.span(),
                             rhs_span: type_name.span,
@@ -412,14 +424,14 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                         .get(&struct_symbol_id)
                         .and_then(|df| df.get(&field.name).cloned());
                     if let Some(field_ty) = field_ty_opt {
-                        let field_ty_id = checker.type_info.type_interner.intern(field_ty.clone());
+                        let field_ty_id = checker.type_info.type_interner.intern(field_ty);
                         if let Some(pat_id) = field.pattern {
                             check_pattern(checker, pat_id, field_ty_id);
                         } else {
                             let key = crate::NodeKey::from(field.span);
                             if let Some(symbol_id) = checker.resolved.definitions.get(&key).copied()
                             {
-                                checker.ctx.bind(symbol_id, field_ty.clone());
+                                checker.ctx.bind(symbol_id, field_ty_id);
                                 checker.record_decl_type(symbol_id, field_ty_id);
                             }
                         }
@@ -445,23 +457,20 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
         } => {
             let start_ty_id = synth_expr(checker, *start);
             let end_ty_id = synth_expr(checker, *end);
-            let start_ty = checker.resolve(start_ty_id).clone();
-            let end_ty = checker.resolve(end_ty_id).clone();
-            let val_ty = checker.type_info.resolve_type_id(value_ty).clone();
-            if !super::super::types::unify(&val_ty, &start_ty, &checker.type_info.type_interner) {
+            if !checker.unify_ids(value_ty, start_ty_id) {
                 checker.add_constraint(
-                    val_ty.clone(),
-                    start_ty,
+                    value_ty,
+                    start_ty_id,
                     ConstraintOrigin::Assignment {
                         lhs_span: pat.span(),
                         rhs_span: checker.pool.expr_span(*start),
                     },
                 );
             }
-            if !super::super::types::unify(&val_ty, &end_ty, &checker.type_info.type_interner) {
+            if !checker.unify_ids(value_ty, end_ty_id) {
                 checker.add_constraint(
-                    val_ty.clone(),
-                    end_ty,
+                    value_ty,
+                    end_ty_id,
                     ConstraintOrigin::Assignment {
                         lhs_span: pat.span(),
                         rhs_span: checker.pool.expr_span(*end),

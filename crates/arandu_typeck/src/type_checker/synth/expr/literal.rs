@@ -43,16 +43,16 @@ pub(super) fn synth_literal_expr(
             Some(checker.intern(ArType::Primitive(Primitive::Str)))
         }
         ExprKind::Nil => {
-            if let Some(ret) = checker.ctx.current_return() {
+            if let Some(ret_id) = checker.ctx.current_return() {
                 // If it is nil, it can fallback to return type or nullable/option
+                let ret = checker.resolve(ret_id).clone();
                 if types::is_err_type(&ret, &checker.type_info.type_interner) {
                     let err_id = checker.intern(ArType::Error);
                     Some(checker.intern(ArType::Nullable(err_id)))
                 } else if types::is_tryable_type(&ret, &checker.type_info.type_interner) {
-                    Some(checker.intern(ret.clone()))
+                    Some(ret_id)
                 } else {
-                    let id = checker.intern(ret.clone());
-                    Some(checker.intern(ArType::Nullable(id)))
+                    Some(checker.intern(ArType::Nullable(ret_id)))
                 }
             } else {
                 let err_id = checker.intern(ArType::Error);
@@ -63,17 +63,22 @@ pub(super) fn synth_literal_expr(
             let ty_id = *ty;
             let fields_range = *fields;
             let struct_ty = checker.lower_type_expr(ty_id, checker.type_scope());
-            if let ArType::Named(symbol_id, generic_args) = &struct_ty {
+            let struct_ty_id = checker.intern(struct_ty);
+            let struct_info = match checker.resolve(struct_ty_id) {
+                ArType::Named(symbol_id, generic_args) => Some((*symbol_id, generic_args.clone())),
+                _ => None,
+            };
+            if let Some((symbol_id, generic_args)) = struct_info {
                 let resolved_args: Vec<ArType> = generic_args
                     .iter()
                     .map(|&arg_id| checker.resolve(arg_id).clone())
                     .collect();
                 let field_map = types::struct_fields_instantiated(
                     checker,
-                    *symbol_id,
+                    symbol_id,
                     &resolved_args,
                 )
-                .or_else(|| checker.type_info.struct_fields.get(symbol_id).cloned());
+                .or_else(|| checker.type_info.struct_fields.get(&symbol_id).cloned());
                 let field_ids = checker.pool.field_init_list(fields_range).to_vec();
 
                 let mut seen_fields = SmallVec::<[(&str, Span); 8]>::new();
@@ -99,13 +104,13 @@ pub(super) fn synth_literal_expr(
                     for fid in &field_ids {
                         let field = checker.pool.field_init(*fid);
                         let field_val_ty_id = synth_expr(checker, field.value);
-                        let field_val_ty = checker.resolve(field_val_ty_id).clone();
-                        let defined_field_ty = fields_def.get(&field.name).cloned();
-                        if let Some(defined_field_ty) = defined_field_ty {
-                            if !types::unify(&defined_field_ty, &field_val_ty, &checker.type_info.type_interner) {
+                        let defined_field_ty_opt = fields_def.get(&field.name).cloned();
+                        if let Some(defined_field_ty) = defined_field_ty_opt {
+                            let field_val_ty = checker.resolve(field_val_ty_id);
+                            if !types::unify(&defined_field_ty, field_val_ty, &checker.type_info.type_interner) {
                                 checker.add_constraint(
                                     defined_field_ty,
-                                    field_val_ty,
+                                    field_val_ty_id,
                                     ConstraintOrigin::FieldInit {
                                         struct_span: span,
                                         field_name: field.name.clone(),
@@ -116,7 +121,7 @@ pub(super) fn synth_literal_expr(
                             }
                         } else {
                             checker.add_constraint(
-                                struct_ty.clone(),
+                                struct_ty_id,
                                 ArType::Error,
                                 ConstraintOrigin::UndefinedField {
                                     base_span: checker.pool.type_expr_span(ty_id),
@@ -136,7 +141,7 @@ pub(super) fn synth_literal_expr(
                     if !missing_fields.is_empty() {
                         missing_fields.sort();
                         let missing_str = missing_fields.join(", ");
-                        let struct_name = checker.symbols.get(*symbol_id).name.clone();
+                        let struct_name = checker.symbols.get(symbol_id).name.clone();
                         let diag = crate::Diagnostic::error(
                             crate::DiagCode::T027MissingStructFields,
                             format!("missing fields {missing_str} in struct initializer"),
@@ -158,32 +163,35 @@ pub(super) fn synth_literal_expr(
                     let _ = synth_expr(checker, field.value);
                 }
             }
-            Some(checker.intern(struct_ty))
+            Some(struct_ty_id)
         }
         ExprKind::Array { items } => {
             let items_range = *items;
-            let mut elem_ty = ArType::Error;
+            let error_id = checker.intern(ArType::Error);
+            let mut elem_ty_id = error_id;
             let item_ids = checker.pool.expr_list(items_range).to_vec();
             for (i, item_id) in item_ids.iter().copied().enumerate() {
                 let item_ty_id = synth_expr(checker, item_id);
-                let item_ty = checker.resolve(item_ty_id).clone();
-                if elem_ty.is_error() {
-                    elem_ty = item_ty;
-                } else if !array_element_types_compatible(&elem_ty, &item_ty, &checker.type_info.type_interner) {
-                    checker.add_constraint(
-                        elem_ty.clone(),
-                        item_ty,
-                        ConstraintOrigin::ArrayLiteral {
-                            array_span: span,
-                            item_span: checker.pool.expr_span(item_id),
-                            item_index: i,
-                        },
-                    );
-                    elem_ty = ArType::Error;
+                if checker.resolve(elem_ty_id).is_error() {
+                    elem_ty_id = item_ty_id;
+                } else {
+                    let elem_ty = checker.resolve(elem_ty_id);
+                    let item_ty = checker.resolve(item_ty_id);
+                    if !array_element_types_compatible(elem_ty, item_ty, &checker.type_info.type_interner) {
+                        checker.add_constraint(
+                            elem_ty_id,
+                            item_ty_id,
+                            ConstraintOrigin::ArrayLiteral {
+                                array_span: span,
+                                item_span: checker.pool.expr_span(item_id),
+                                item_index: i,
+                            },
+                        );
+                        elem_ty_id = error_id;
+                    }
                 }
             }
-            let elem_id = checker.intern(elem_ty);
-            Some(checker.intern(ArType::Array(items_range.len as u64, elem_id)))
+            Some(checker.intern(ArType::Array(items_range.len as u64, elem_ty_id)))
         }
         _ => None,
     }
