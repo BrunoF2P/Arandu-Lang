@@ -7,8 +7,8 @@ use super::unify;
 use super::{ArType, LowerCtx};
 use super::{GenericSubst, TypeInterner, build_subst, substitute_type};
 use crate::passes::type_checker::TypeChecker;
-use arandu_middle::types::lower::{lower_result_type_ctx, lower_type_expr_ctx};
 use crate::{ScopeId, SymbolId, SymbolKind};
+use arandu_middle::types::lower::{lower_result_type_ctx, lower_type_expr_ctx};
 
 #[derive(Debug, Clone)]
 pub struct InterfaceInfo {

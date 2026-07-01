@@ -38,7 +38,12 @@ pub fn lower_type_expr(
     resolved: &ResolvedNames,
     interner: &mut TypeInterner,
 ) -> ArType {
-    let ctx = LowerCtx { pool, symbols, scope, resolved };
+    let ctx = LowerCtx {
+        pool,
+        symbols,
+        scope,
+        resolved,
+    };
     lower_type_expr_ctx(expr_id, &ctx, interner)
 }
 
@@ -114,7 +119,12 @@ pub fn lower_result_type(
     resolved: &ResolvedNames,
     interner: &mut TypeInterner,
 ) -> ArType {
-    let ctx = LowerCtx { pool, symbols, scope, resolved };
+    let ctx = LowerCtx {
+        pool,
+        symbols,
+        scope,
+        resolved,
+    };
     lower_result_type_ctx(result, &ctx, interner)
 }
 
@@ -167,5 +177,435 @@ pub fn lower_named_type(
     } else {
         // Name was not resolved — name resolver already emitted an error.
         ArType::Error
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::Primitive;
+    use arandu_parser::ast_pool::IndexRange;
+
+    fn new_interner() -> TypeInterner {
+        TypeInterner::new()
+    }
+
+    fn new_pool() -> AstPool {
+        AstPool::new()
+    }
+
+    fn default_symbols() -> SymbolTable {
+        SymbolTable::new()
+    }
+
+    fn default_resolved() -> ResolvedNames {
+        ResolvedNames::default()
+    }
+
+    // ── Primitive ──
+
+    #[test]
+    fn lowers_int_primitive() {
+        let mut pool = new_pool();
+        let id = pool.alloc_type_expr(TypeExpr::Primitive {
+            span: Span::new(0, 1, 0),
+            name: "int".to_string(),
+        });
+        let mut i = new_interner();
+        let symbols = default_symbols();
+        let resolved = default_resolved();
+        let ctx = LowerCtx {
+            pool: &pool,
+            symbols: &symbols,
+            scope: ScopeId(0),
+            resolved: &resolved,
+        };
+        assert_eq!(
+            lower_type_expr_ctx(id, &ctx, &mut i),
+            ArType::Primitive(Primitive::Int)
+        );
+    }
+
+    #[test]
+    fn lowers_err_primitive() {
+        let mut pool = new_pool();
+        let id = pool.alloc_type_expr(TypeExpr::Primitive {
+            span: Span::new(0, 3, 0),
+            name: "Err".to_string(),
+        });
+        let mut i = new_interner();
+        let symbols = default_symbols();
+        let resolved = default_resolved();
+        let ctx = LowerCtx {
+            pool: &pool,
+            symbols: &symbols,
+            scope: ScopeId(0),
+            resolved: &resolved,
+        };
+        assert_eq!(lower_type_expr_ctx(id, &ctx, &mut i), ArType::Err);
+    }
+
+    #[test]
+    fn lowers_unknown_primitive_to_error() {
+        let mut pool = new_pool();
+        let id = pool.alloc_type_expr(TypeExpr::Primitive {
+            span: Span::new(0, 5, 0),
+            name: "unknown".to_string(),
+        });
+        let mut i = new_interner();
+        let symbols = default_symbols();
+        let resolved = default_resolved();
+        let ctx = LowerCtx {
+            pool: &pool,
+            symbols: &symbols,
+            scope: ScopeId(0),
+            resolved: &resolved,
+        };
+        assert_eq!(lower_type_expr_ctx(id, &ctx, &mut i), ArType::Error);
+    }
+
+    // ── Nullable ──
+
+    #[test]
+    fn lowers_nullable_int() {
+        let mut pool = new_pool();
+        let inner = pool.alloc_type_expr(TypeExpr::Primitive {
+            span: Span::new(0, 3, 0),
+            name: "int".to_string(),
+        });
+        let id = pool.alloc_type_expr(TypeExpr::Nullable {
+            span: Span::new(0, 4, 0),
+            inner,
+        });
+        let mut i = new_interner();
+        let symbols = default_symbols();
+        let resolved = default_resolved();
+        let ctx = LowerCtx {
+            pool: &pool,
+            symbols: &symbols,
+            scope: ScopeId(0),
+            resolved: &resolved,
+        };
+        let result = lower_type_expr_ctx(id, &ctx, &mut i);
+        let expected_inner = i.intern(ArType::Primitive(Primitive::Int));
+        assert_eq!(result, ArType::Nullable(expected_inner));
+    }
+
+    // ── Pointer ──
+
+    #[test]
+    fn lowers_pointer() {
+        let mut pool = new_pool();
+        let inner = pool.alloc_type_expr(TypeExpr::Primitive {
+            span: Span::new(0, 3, 0),
+            name: "int".to_string(),
+        });
+        let id = pool.alloc_type_expr(TypeExpr::Pointer {
+            span: Span::new(0, 8, 0),
+            inner,
+        });
+        let mut i = new_interner();
+        let symbols = default_symbols();
+        let resolved = default_resolved();
+        let ctx = LowerCtx {
+            pool: &pool,
+            symbols: &symbols,
+            scope: ScopeId(0),
+            resolved: &resolved,
+        };
+        let result = lower_type_expr_ctx(id, &ctx, &mut i);
+        let expected_inner = i.intern(ArType::Primitive(Primitive::Int));
+        assert_eq!(result, ArType::Ptr(expected_inner));
+    }
+
+    // ── Slice ──
+
+    #[test]
+    fn lowers_slice() {
+        let mut pool = new_pool();
+        let inner = pool.alloc_type_expr(TypeExpr::Primitive {
+            span: Span::new(0, 3, 0),
+            name: "int".to_string(),
+        });
+        let id = pool.alloc_type_expr(TypeExpr::Slice {
+            span: Span::new(0, 5, 0),
+            inner,
+        });
+        let mut i = new_interner();
+        let symbols = default_symbols();
+        let resolved = default_resolved();
+        let ctx = LowerCtx {
+            pool: &pool,
+            symbols: &symbols,
+            scope: ScopeId(0),
+            resolved: &resolved,
+        };
+        let result = lower_type_expr_ctx(id, &ctx, &mut i);
+        let expected_inner = i.intern(ArType::Primitive(Primitive::Int));
+        assert_eq!(result, ArType::Slice(expected_inner));
+    }
+
+    // ── Array ──
+
+    #[test]
+    fn lowers_array() {
+        let mut pool = new_pool();
+        let elem = pool.alloc_type_expr(TypeExpr::Primitive {
+            span: Span::new(0, 3, 0),
+            name: "float".to_string(),
+        });
+        let id = pool.alloc_type_expr(TypeExpr::Array {
+            span: Span::new(0, 8, 0),
+            size: "10".to_string(),
+            elem,
+        });
+        let mut i = new_interner();
+        let symbols = default_symbols();
+        let resolved = default_resolved();
+        let ctx = LowerCtx {
+            pool: &pool,
+            symbols: &symbols,
+            scope: ScopeId(0),
+            resolved: &resolved,
+        };
+        let result = lower_type_expr_ctx(id, &ctx, &mut i);
+        let expected_elem = i.intern(ArType::Primitive(Primitive::Float));
+        assert_eq!(result, ArType::Array(10, expected_elem));
+    }
+
+    #[test]
+    fn lowers_array_invalid_size_defaults_to_zero() {
+        let mut pool = new_pool();
+        let elem = pool.alloc_type_expr(TypeExpr::Primitive {
+            span: Span::new(0, 3, 0),
+            name: "int".to_string(),
+        });
+        let id = pool.alloc_type_expr(TypeExpr::Array {
+            span: Span::new(0, 8, 0),
+            size: "abc".to_string(),
+            elem,
+        });
+        let mut i = new_interner();
+        let symbols = default_symbols();
+        let resolved = default_resolved();
+        let ctx = LowerCtx {
+            pool: &pool,
+            symbols: &symbols,
+            scope: ScopeId(0),
+            resolved: &resolved,
+        };
+        let result = lower_type_expr_ctx(id, &ctx, &mut i);
+        let expected_elem = i.intern(ArType::Primitive(Primitive::Int));
+        assert_eq!(result, ArType::Array(0, expected_elem));
+    }
+
+    // ── Group ──
+
+    #[test]
+    fn lowers_group_unwraps() {
+        let mut pool = new_pool();
+        let inner = pool.alloc_type_expr(TypeExpr::Primitive {
+            span: Span::new(0, 3, 0),
+            name: "bool".to_string(),
+        });
+        let id = pool.alloc_type_expr(TypeExpr::Group {
+            span: Span::new(0, 5, 0),
+            inner,
+        });
+        let mut i = new_interner();
+        let symbols = default_symbols();
+        let resolved = default_resolved();
+        let ctx = LowerCtx {
+            pool: &pool,
+            symbols: &symbols,
+            scope: ScopeId(0),
+            resolved: &resolved,
+        };
+        assert_eq!(
+            lower_type_expr_ctx(id, &ctx, &mut i),
+            ArType::Primitive(Primitive::Bool)
+        );
+    }
+
+    // ── Named with resolved type refs ──
+
+    #[test]
+    fn lowers_named_type_via_resolved_refs() {
+        let mut pool = new_pool();
+        let mut symbols = SymbolTable::new();
+        let mut resolved = ResolvedNames::default();
+
+        let span = Span::new(0, 4, 0);
+        let sym = symbols
+            .define(ScopeId(0), "User", crate::SymbolKind::Struct, span)
+            .unwrap();
+        resolved.type_refs.insert(crate::NodeKey::from(span), sym);
+
+        let name = TypeName {
+            span,
+            path: vec!["User".to_string()],
+        };
+        let id = pool.alloc_type_expr(TypeExpr::Named {
+            span,
+            name,
+            args: IndexRange::empty(),
+        });
+
+        let mut i = new_interner();
+        let ctx = LowerCtx {
+            pool: &pool,
+            symbols: &symbols,
+            scope: ScopeId(0),
+            resolved: &resolved,
+        };
+        assert_eq!(
+            lower_type_expr_ctx(id, &ctx, &mut i),
+            ArType::Named(sym, vec![])
+        );
+    }
+
+    #[test]
+    fn lowers_unresolved_named_returns_error() {
+        let mut pool = new_pool();
+        let resolved = ResolvedNames::default();
+
+        let name = TypeName {
+            span: Span::new(0, 4, 0),
+            path: vec!["Unknown".to_string()],
+        };
+        let id = pool.alloc_type_expr(TypeExpr::Named {
+            span: Span::new(0, 4, 0),
+            name,
+            args: IndexRange::empty(),
+        });
+
+        let mut i = new_interner();
+        let ctx = LowerCtx {
+            pool: &pool,
+            symbols: &default_symbols(),
+            scope: ScopeId(0),
+            resolved: &resolved,
+        };
+        assert_eq!(lower_type_expr_ctx(id, &ctx, &mut i), ArType::Error);
+    }
+
+    // ── Func type ──
+
+    #[test]
+    fn lowers_func_type_no_return() {
+        let mut pool = new_pool();
+        let param = pool.alloc_type_expr(TypeExpr::Primitive {
+            span: Span::new(0, 3, 0),
+            name: "int".to_string(),
+        });
+        let params_range = pool.alloc_type_expr_list(&[param]);
+        let id = pool.alloc_type_expr(TypeExpr::Func {
+            span: Span::new(0, 12, 0),
+            params: params_range,
+            result: None,
+        });
+
+        let mut i = new_interner();
+        let symbols = default_symbols();
+        let resolved = default_resolved();
+        let ctx = LowerCtx {
+            pool: &pool,
+            symbols: &symbols,
+            scope: ScopeId(0),
+            resolved: &resolved,
+        };
+        let result = lower_type_expr_ctx(id, &ctx, &mut i);
+        let int_tid = i.intern(ArType::Primitive(Primitive::Int));
+        let void_tid = i.intern(ArType::Void);
+        assert_eq!(result, ArType::Func(vec![int_tid], void_tid));
+    }
+
+    #[test]
+    fn lowers_func_type_with_return() {
+        let mut pool = new_pool();
+        let param = pool.alloc_type_expr(TypeExpr::Primitive {
+            span: Span::new(0, 3, 0),
+            name: "int".to_string(),
+        });
+        let ret_expr = pool.alloc_type_expr(TypeExpr::Primitive {
+            span: Span::new(0, 4, 0),
+            name: "bool".to_string(),
+        });
+        let params_range = pool.alloc_type_expr_list(&[param]);
+        let id = pool.alloc_type_expr(TypeExpr::Func {
+            span: Span::new(0, 18, 0),
+            params: params_range,
+            result: Some(ResultType::Single {
+                span: Span::new(10, 18, 0),
+                ty: ret_expr,
+            }),
+        });
+
+        let mut i = new_interner();
+        let symbols = default_symbols();
+        let resolved = default_resolved();
+        let ctx = LowerCtx {
+            pool: &pool,
+            symbols: &symbols,
+            scope: ScopeId(0),
+            resolved: &resolved,
+        };
+        let result = lower_type_expr_ctx(id, &ctx, &mut i);
+        let int_tid = i.intern(ArType::Primitive(Primitive::Int));
+        let bool_tid = i.intern(ArType::Primitive(Primitive::Bool));
+        assert_eq!(result, ArType::Func(vec![int_tid], bool_tid));
+    }
+
+    // ── lower_result_type ──
+
+    #[test]
+    fn lowers_single_result_type() {
+        let mut pool = new_pool();
+        let inner = pool.alloc_type_expr(TypeExpr::Primitive {
+            span: Span::new(0, 3, 0),
+            name: "int".to_string(),
+        });
+        let result = ResultType::Single {
+            span: Span::new(0, 3, 0),
+            ty: inner,
+        };
+
+        let mut i = new_interner();
+        let symbols = default_symbols();
+        let resolved = default_resolved();
+        let ctx = LowerCtx {
+            pool: &pool,
+            symbols: &symbols,
+            scope: ScopeId(0),
+            resolved: &resolved,
+        };
+        assert_eq!(
+            lower_result_type_ctx(&result, &ctx, &mut i),
+            ArType::Primitive(Primitive::Int)
+        );
+    }
+
+    // ── lower_named_type with void ──
+
+    #[test]
+    fn lowers_void_type_name() {
+        let pool = new_pool();
+        let name = TypeName {
+            span: Span::new(0, 4, 0),
+            path: vec!["void".to_string()],
+        };
+        let mut i = new_interner();
+        let symbols = default_symbols();
+        let resolved = default_resolved();
+        let ctx = LowerCtx {
+            pool: &pool,
+            symbols: &symbols,
+            scope: ScopeId(0),
+            resolved: &resolved,
+        };
+        assert_eq!(
+            lower_named_type(Span::new(0, 4, 0), &name, &[], &ctx, &mut i),
+            ArType::Void
+        );
     }
 }

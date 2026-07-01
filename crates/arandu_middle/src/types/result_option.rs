@@ -96,3 +96,220 @@ pub(crate) fn lower_builtin_generic(
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::Primitive;
+
+    fn interner() -> TypeInterner {
+        TypeInterner::new()
+    }
+
+    fn int_id(i: &mut TypeInterner) -> super::super::type_interner::TypeId {
+        i.intern(ArType::Primitive(Primitive::Int))
+    }
+    fn str_id(i: &mut TypeInterner) -> super::super::type_interner::TypeId {
+        i.intern(ArType::Primitive(Primitive::Str))
+    }
+    // ── is_err_type ──
+
+    #[test]
+    fn err_is_err_type() {
+        let i = interner();
+        assert!(is_err_type(&ArType::Err, &i));
+    }
+
+    #[test]
+    fn nullable_err_is_err_type() {
+        let mut i = interner();
+        let inner = i.intern(ArType::Err);
+        assert!(is_err_type(&ArType::Nullable(inner), &i));
+    }
+
+    #[test]
+    fn int_is_not_err() {
+        let i = interner();
+        assert!(!is_err_type(&ArType::Primitive(Primitive::Int), &i));
+    }
+
+    // ── result_ok_err ──
+
+    #[test]
+    fn result_ok_err_extracts() {
+        let mut i = interner();
+        let ok = int_id(&mut i);
+        let err = str_id(&mut i);
+        let r = ArType::Result(ok, err);
+        let (got_ok, got_err) = result_ok_err(&r, &i).unwrap();
+        assert_eq!(got_ok, ArType::Primitive(Primitive::Int));
+        assert_eq!(got_err, ArType::Primitive(Primitive::Str));
+    }
+
+    #[test]
+    fn non_result_returns_none() {
+        let i = interner();
+        assert!(result_ok_err(&ArType::Primitive(Primitive::Int), &i).is_none());
+        assert!(result_ok_err(&ArType::Void, &i).is_none());
+    }
+
+    // ── is_result_type ──
+
+    #[test]
+    fn is_result_type_true() {
+        let mut i = interner();
+        let r = ArType::Result(int_id(&mut i), str_id(&mut i));
+        assert!(is_result_type(&r, &i));
+    }
+
+    #[test]
+    fn is_result_type_false() {
+        let i = interner();
+        assert!(!is_result_type(&ArType::Primitive(Primitive::Int), &i));
+        assert!(!is_result_type(
+            &ArType::Option(int_id(&mut interner())),
+            &i
+        ));
+    }
+
+    // ── is_option_type ──
+
+    #[test]
+    fn option_type_recognized() {
+        assert!(is_option_type(&ArType::Option(int_id(&mut interner()))));
+    }
+
+    #[test]
+    fn non_option_not_recognized() {
+        assert!(!is_option_type(&ArType::Primitive(Primitive::Int)));
+        assert!(!is_option_type(&ArType::Result(
+            int_id(&mut interner()),
+            str_id(&mut interner())
+        )));
+    }
+
+    // ── try_ok_type ──
+
+    #[test]
+    fn try_ok_from_result() {
+        let mut i = interner();
+        let r = ArType::Result(int_id(&mut i), str_id(&mut i));
+        assert_eq!(try_ok_type(&r, &i), Some(ArType::Primitive(Primitive::Int)));
+    }
+
+    #[test]
+    fn try_ok_from_option() {
+        let mut i = interner();
+        let opt = ArType::Option(int_id(&mut i));
+        assert_eq!(
+            try_ok_type(&opt, &i),
+            Some(ArType::Primitive(Primitive::Int))
+        );
+    }
+
+    #[test]
+    fn try_ok_from_nullable_non_err() {
+        let mut i = interner();
+        let null = ArType::Nullable(int_id(&mut i));
+        assert_eq!(
+            try_ok_type(&null, &i),
+            Some(ArType::Primitive(Primitive::Int))
+        );
+    }
+
+    #[test]
+    fn try_ok_from_nullable_err_returns_none() {
+        let mut i = interner();
+        let inner = i.intern(ArType::Err);
+        let null_err = ArType::Nullable(inner);
+        assert_eq!(try_ok_type(&null_err, &i), None);
+    }
+
+    #[test]
+    fn try_ok_non_tryable_returns_none() {
+        let i = interner();
+        assert_eq!(try_ok_type(&ArType::Primitive(Primitive::Int), &i), None);
+        assert_eq!(try_ok_type(&ArType::Void, &i), None);
+    }
+
+    // ── is_tryable_type ──
+
+    #[test]
+    fn result_option_and_non_err_nullable_are_tryable() {
+        let mut i = interner();
+        assert!(is_tryable_type(
+            &ArType::Result(int_id(&mut i), str_id(&mut i)),
+            &i
+        ));
+        assert!(is_tryable_type(&ArType::Option(int_id(&mut i)), &i));
+        assert!(is_tryable_type(&ArType::Nullable(int_id(&mut i)), &i));
+    }
+
+    #[test]
+    fn nullable_err_is_not_tryable() {
+        let mut i = interner();
+        let inner = i.intern(ArType::Err);
+        assert!(!is_tryable_type(&ArType::Nullable(inner), &i));
+    }
+
+    #[test]
+    fn plain_type_not_tryable() {
+        let i = interner();
+        assert!(!is_tryable_type(&ArType::Primitive(Primitive::Int), &i));
+    }
+
+    // ── type_name_base ──
+
+    #[test]
+    fn type_name_base_single_path() {
+        let name = arandu_parser::TypeName {
+            span: arandu_lexer::Span::new(0, 0, 0),
+            path: vec!["Result".to_string()],
+        };
+        assert_eq!(type_name_base(&name), "Result");
+    }
+
+    #[test]
+    fn type_name_base_multi_path() {
+        let name = arandu_parser::TypeName {
+            span: arandu_lexer::Span::new(0, 0, 0),
+            path: vec!["std".to_string(), "core".to_string(), "String".to_string()],
+        };
+        assert_eq!(type_name_base(&name), "String");
+    }
+
+    #[test]
+    fn type_name_base_empty_path() {
+        let name = arandu_parser::TypeName {
+            span: arandu_lexer::Span::new(0, 0, 0),
+            path: vec![],
+        };
+        assert_eq!(type_name_base(&name), "");
+    }
+
+    // ── lower_builtin_generic ──
+
+    #[test]
+    fn lower_builtin_wrong_name_returns_none() {
+        let mut i = interner();
+        let name = arandu_parser::TypeName {
+            span: arandu_lexer::Span::new(0, 0, 0),
+            path: vec!["NonExistent".to_string()],
+        };
+        let result = lower_builtin_generic(&name, &[], &create_dummy_ctx(), &mut i);
+        assert!(result.is_none());
+    }
+
+    fn create_dummy_ctx() -> LowerCtx<'static> {
+        use crate::ResolvedNames;
+        let pool = Box::new(arandu_parser::ast_pool::AstPool::new());
+        let symbols = Box::new(crate::SymbolTable::new());
+        let resolved = Box::new(ResolvedNames::default());
+        LowerCtx {
+            pool: Box::leak(pool),
+            symbols: Box::leak(symbols),
+            scope: crate::ScopeId(0),
+            resolved: Box::leak(resolved),
+        }
+    }
+}

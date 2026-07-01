@@ -231,3 +231,376 @@ impl ArType {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SymbolTable;
+    use crate::types::Primitive;
+
+    fn empty_symbols() -> SymbolTable {
+        SymbolTable::new()
+    }
+
+    fn new_interner() -> TypeInterner {
+        TypeInterner::new()
+    }
+
+    // ── is_error ──
+
+    #[test]
+    fn error_type_is_error() {
+        assert!(ArType::Error.is_error());
+    }
+
+    #[test]
+    fn non_error_types_are_not_error() {
+        assert!(!ArType::Primitive(Primitive::Int).is_error());
+        assert!(!ArType::Void.is_error());
+        assert!(!ArType::Err.is_error());
+        assert!(!ArType::IntLiteral.is_error());
+    }
+
+    // ── is_numeric ──
+
+    #[test]
+    fn primitives_is_numeric() {
+        for p in &[
+            Primitive::Int,
+            Primitive::Uint,
+            Primitive::Float,
+            Primitive::I8,
+            Primitive::I16,
+            Primitive::I32,
+            Primitive::I64,
+            Primitive::U8,
+            Primitive::U16,
+            Primitive::U32,
+            Primitive::U64,
+            Primitive::F32,
+            Primitive::F64,
+            Primitive::Byte,
+        ] {
+            assert!(
+                ArType::Primitive(*p).is_numeric(),
+                "{p:?} should be numeric"
+            );
+        }
+    }
+
+    #[test]
+    fn non_numeric_is_not_numeric() {
+        assert!(!ArType::Primitive(Primitive::Bool).is_numeric());
+        assert!(!ArType::Primitive(Primitive::Str).is_numeric());
+        assert!(!ArType::Primitive(Primitive::Char).is_numeric());
+        assert!(!ArType::Void.is_numeric());
+    }
+
+    #[test]
+    fn literals_are_numeric() {
+        assert!(ArType::IntLiteral.is_numeric());
+        assert!(ArType::FloatLiteral.is_numeric());
+    }
+
+    // ── is_integer ──
+
+    #[test]
+    fn int_literal_is_integer() {
+        assert!(ArType::IntLiteral.is_integer());
+        assert!(!ArType::FloatLiteral.is_integer());
+    }
+
+    // ── is_float ──
+
+    #[test]
+    fn float_literal_is_float() {
+        assert!(ArType::FloatLiteral.is_float());
+        assert!(!ArType::IntLiteral.is_float());
+    }
+
+    // ── is_literal ──
+
+    #[test]
+    fn literal_types() {
+        assert!(ArType::IntLiteral.is_literal());
+        assert!(ArType::FloatLiteral.is_literal());
+        assert!(!ArType::Primitive(Primitive::Int).is_literal());
+        assert!(!ArType::Void.is_literal());
+    }
+
+    // ── default_literal ──
+
+    #[test]
+    fn default_int_literal() {
+        assert_eq!(
+            ArType::IntLiteral.default_literal(),
+            ArType::Primitive(Primitive::Int)
+        );
+    }
+
+    #[test]
+    fn default_float_literal() {
+        assert_eq!(
+            ArType::FloatLiteral.default_literal(),
+            ArType::Primitive(Primitive::Float)
+        );
+    }
+
+    #[test]
+    fn default_non_literal_returns_self() {
+        assert_eq!(ArType::Void.default_literal(), ArType::Void);
+        assert_eq!(ArType::Err.default_literal(), ArType::Err);
+    }
+
+    // ── literal_absorbs ──
+
+    #[test]
+    fn int_literal_absorbs_numeric() {
+        assert!(ArType::IntLiteral.literal_absorbs(&ArType::Primitive(Primitive::Int)));
+        assert!(ArType::IntLiteral.literal_absorbs(&ArType::Primitive(Primitive::U32)));
+        assert!(ArType::IntLiteral.literal_absorbs(&ArType::Primitive(Primitive::Byte)));
+        assert!(!ArType::IntLiteral.literal_absorbs(&ArType::Primitive(Primitive::Bool)));
+        assert!(!ArType::IntLiteral.literal_absorbs(&ArType::Primitive(Primitive::Str)));
+    }
+
+    #[test]
+    fn float_literal_absorbs_floats() {
+        assert!(ArType::FloatLiteral.literal_absorbs(&ArType::Primitive(Primitive::Float)));
+        assert!(ArType::FloatLiteral.literal_absorbs(&ArType::Primitive(Primitive::F32)));
+        assert!(ArType::FloatLiteral.literal_absorbs(&ArType::Primitive(Primitive::F64)));
+        assert!(!ArType::FloatLiteral.literal_absorbs(&ArType::Primitive(Primitive::Int)));
+        assert!(!ArType::FloatLiteral.literal_absorbs(&ArType::Primitive(Primitive::Bool)));
+    }
+
+    #[test]
+    fn non_literal_does_not_absorb() {
+        assert!(
+            !ArType::Primitive(Primitive::Int).literal_absorbs(&ArType::Primitive(Primitive::Int))
+        );
+        assert!(!ArType::Void.literal_absorbs(&ArType::Primitive(Primitive::Int)));
+    }
+
+    // ── is_copy_v01 ──
+
+    #[test]
+    fn numeric_primitives_are_copy() {
+        assert!(ArType::Primitive(Primitive::Int).is_copy_v01());
+        assert!(ArType::Primitive(Primitive::Float).is_copy_v01());
+        assert!(ArType::Primitive(Primitive::U32).is_copy_v01());
+    }
+
+    #[test]
+    fn bool_char_byte_any_are_copy() {
+        assert!(ArType::Primitive(Primitive::Bool).is_copy_v01());
+        assert!(ArType::Primitive(Primitive::Char).is_copy_v01());
+        assert!(ArType::Primitive(Primitive::Byte).is_copy_v01());
+        assert!(ArType::Primitive(Primitive::Any).is_copy_v01());
+    }
+
+    #[test]
+    fn str_is_not_copy() {
+        assert!(!ArType::Primitive(Primitive::Str).is_copy_v01());
+    }
+
+    #[test]
+    fn literals_ptr_nullable_are_copy() {
+        assert!(ArType::IntLiteral.is_copy_v01());
+        assert!(ArType::FloatLiteral.is_copy_v01());
+        let mut i = new_interner();
+        assert!(ArType::Ptr(i.intern(ArType::Primitive(Primitive::Int))).is_copy_v01());
+        assert!(ArType::Nullable(i.intern(ArType::Primitive(Primitive::Int))).is_copy_v01());
+    }
+
+    #[test]
+    fn error_void_err_are_copy() {
+        assert!(ArType::Error.is_copy_v01());
+        assert!(ArType::Void.is_copy_v01());
+        assert!(ArType::Err.is_copy_v01());
+    }
+
+    #[test]
+    fn named_func_slice_array_tuple_are_not_copy() {
+        assert!(!ArType::Named(SymbolId(1), vec![]).is_copy_v01());
+        let mut i = new_interner();
+        let int = i.intern(ArType::Primitive(Primitive::Int));
+        assert!(!ArType::Func(vec![int], int).is_copy_v01());
+        assert!(!ArType::Slice(int).is_copy_v01());
+        assert!(!ArType::Array(3, int).is_copy_v01());
+        assert!(!ArType::Tuple(vec![int]).is_copy_v01());
+        assert!(!ArType::Result(int, int).is_copy_v01());
+        assert!(!ArType::Option(int).is_copy_v01());
+        assert!(!ArType::Coroutine(int).is_copy_v01());
+        assert!(!ArType::Range(int).is_copy_v01());
+    }
+
+    // ── display ──
+
+    #[test]
+    fn display_primitives() {
+        let syms = empty_symbols();
+        let i = new_interner();
+        assert_eq!(ArType::Primitive(Primitive::Int).display(&syms, &i), "int");
+        assert_eq!(
+            ArType::Primitive(Primitive::Bool).display(&syms, &i),
+            "bool"
+        );
+        assert_eq!(ArType::Primitive(Primitive::Str).display(&syms, &i), "str");
+        assert_eq!(ArType::Primitive(Primitive::F64).display(&syms, &i), "f64");
+    }
+
+    #[test]
+    fn display_named_no_args() {
+        let mut syms = empty_symbols();
+        let span = arandu_lexer::Span::new(0, 0, 0);
+        let id = syms
+            .define(
+                syms.global_scope(),
+                "MyStruct",
+                crate::SymbolKind::Struct,
+                span,
+            )
+            .unwrap();
+        let i = new_interner();
+        assert_eq!(ArType::Named(id, vec![]).display(&syms, &i), "MyStruct");
+    }
+
+    #[test]
+    fn display_named_with_generic_args() {
+        let mut syms = empty_symbols();
+        let span = arandu_lexer::Span::new(0, 0, 0);
+        let list_id = syms
+            .define(syms.global_scope(), "List", crate::SymbolKind::Struct, span)
+            .unwrap();
+        let int_id = syms
+            .define(
+                syms.global_scope(),
+                "int",
+                crate::SymbolKind::TypeAlias,
+                span,
+            )
+            .unwrap();
+        let mut i = new_interner();
+        let int_tid = i.intern(ArType::Named(int_id, vec![]));
+        assert_eq!(
+            ArType::Named(list_id, vec![int_tid]).display(&syms, &i),
+            "List<int>"
+        );
+    }
+
+    #[test]
+    fn display_func_type() {
+        let mut syms = empty_symbols();
+        let span = arandu_lexer::Span::new(0, 0, 0);
+        let sym = syms
+            .define(
+                syms.global_scope(),
+                "int",
+                crate::SymbolKind::TypeAlias,
+                span,
+            )
+            .unwrap();
+        let mut i = new_interner();
+        let int_tid = i.intern(ArType::Named(sym, vec![]));
+        let ret = i.intern(ArType::Void);
+        let f = ArType::Func(vec![int_tid, int_tid], ret);
+        assert_eq!(f.display(&syms, &i), "func(int, int)");
+    }
+
+    #[test]
+    fn display_func_with_return() {
+        let mut syms = empty_symbols();
+        let span = arandu_lexer::Span::new(0, 0, 0);
+        let int_sym = syms
+            .define(
+                syms.global_scope(),
+                "int",
+                crate::SymbolKind::TypeAlias,
+                span,
+            )
+            .unwrap();
+        let bool_sym = syms
+            .define(
+                syms.global_scope(),
+                "bool",
+                crate::SymbolKind::TypeAlias,
+                span,
+            )
+            .unwrap();
+        let mut i = new_interner();
+        let int_tid = i.intern(ArType::Named(int_sym, vec![]));
+        let bool_tid = i.intern(ArType::Named(bool_sym, vec![]));
+        let f = ArType::Func(vec![int_tid], bool_tid);
+        assert_eq!(f.display(&syms, &i), "func(int) bool");
+    }
+
+    #[test]
+    fn display_nullable_slice_array_ptr() {
+        let mut syms = empty_symbols();
+        let span = arandu_lexer::Span::new(0, 0, 0);
+        let int_sym = syms
+            .define(
+                syms.global_scope(),
+                "int",
+                crate::SymbolKind::TypeAlias,
+                span,
+            )
+            .unwrap();
+        let mut i = new_interner();
+        let int_tid = i.intern(ArType::Named(int_sym, vec![]));
+        assert_eq!(ArType::Nullable(int_tid).display(&syms, &i), "int?");
+        assert_eq!(ArType::Slice(int_tid).display(&syms, &i), "[]int");
+        assert_eq!(ArType::Array(4, int_tid).display(&syms, &i), "[4]int");
+        assert_eq!(ArType::Ptr(int_tid).display(&syms, &i), "ptr[int]");
+    }
+
+    #[test]
+    fn display_tuple_result_option() {
+        let mut syms = empty_symbols();
+        let span = arandu_lexer::Span::new(0, 0, 0);
+        let int_sym = syms
+            .define(
+                syms.global_scope(),
+                "int",
+                crate::SymbolKind::TypeAlias,
+                span,
+            )
+            .unwrap();
+        let str_sym = syms
+            .define(
+                syms.global_scope(),
+                "str",
+                crate::SymbolKind::TypeAlias,
+                span,
+            )
+            .unwrap();
+        let mut i = new_interner();
+        let int_tid = i.intern(ArType::Named(int_sym, vec![]));
+        let str_tid = i.intern(ArType::Named(str_sym, vec![]));
+        assert_eq!(
+            ArType::Tuple(vec![int_tid, str_tid]).display(&syms, &i),
+            "(int, str)"
+        );
+        assert_eq!(
+            ArType::Result(int_tid, str_tid).display(&syms, &i),
+            "Result<int, str>"
+        );
+        assert_eq!(ArType::Option(int_tid).display(&syms, &i), "Option<int>");
+    }
+
+    #[test]
+    fn display_coroutine_range_err_void_literals() {
+        let syms = empty_symbols();
+        let mut i = new_interner();
+        let int_tid = i.intern(ArType::Primitive(Primitive::Int));
+        assert_eq!(
+            ArType::Coroutine(int_tid).display(&syms, &i),
+            "Coroutine<int>"
+        );
+        assert_eq!(ArType::Range(int_tid).display(&syms, &i), "Range<int>");
+        assert_eq!(ArType::Err.display(&syms, &i), "Err");
+        assert_eq!(ArType::Void.display(&syms, &i), "void");
+        assert_eq!(ArType::IntLiteral.display(&syms, &i), "int");
+        assert_eq!(ArType::FloatLiteral.display(&syms, &i), "float");
+        assert_eq!(ArType::Error.display(&syms, &i), "<error>");
+    }
+}

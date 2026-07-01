@@ -450,3 +450,316 @@ impl fmt::Display for Diagnostic {
         f.write_str(&self.format_for_cli(&registry))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dummy_span() -> Span {
+        Span::new(0, 0, 0)
+    }
+
+    fn registry_with(content: &str) -> SourceRegistry {
+        let mut reg = SourceRegistry::new();
+        reg.register("test.arandu", content);
+        reg
+    }
+
+    // ── Severity Display ──
+
+    #[test]
+    fn severity_display() {
+        assert_eq!(Severity::Error.to_string(), "error");
+        assert_eq!(Severity::Warning.to_string(), "warning");
+        assert_eq!(Severity::Note.to_string(), "note");
+        assert_eq!(Severity::Hint.to_string(), "hint");
+    }
+
+    // ── DiagCode ──
+
+    #[test]
+    fn diag_code_as_str() {
+        for (code, expected) in &[
+            (DiagCode::LX001UnterminatedString, "LX001"),
+            (DiagCode::P001UnexpectedToken, "P001"),
+            (DiagCode::M001UnresolvedImport, "M001"),
+            (DiagCode::N001UndefinedValue, "N001"),
+            (DiagCode::T001CannotInferType, "T001"),
+            (DiagCode::L001LoweringUnresolvedSymbol, "L001"),
+            (DiagCode::G001GenericInstantiationCycle, "G001"),
+            (DiagCode::O001UseAfterMove, "O001"),
+            (DiagCode::W001VariableAssignedNotUsed, "W001"),
+            (DiagCode::U001FeatureNotSupported, "U001"),
+            (DiagCode::ICELX001, "ICE-LX-001"),
+        ] {
+            assert_eq!(code.as_str(), *expected, "mismatch for {code:?}");
+        }
+    }
+
+    #[test]
+    fn diag_code_display_matches_as_str() {
+        let codes = [
+            DiagCode::T002IncompatibleAssignment,
+            DiagCode::T003IncompatibleCallArg,
+            DiagCode::N003RedefinedName,
+            DiagCode::ICEP001,
+        ];
+        for code in &codes {
+            assert_eq!(code.to_string(), code.as_str());
+        }
+    }
+
+    // ── Hint ──
+
+    #[test]
+    fn hint_from_string() {
+        let h: Hint = "hello".to_string().into();
+        assert_eq!(h.message, "hello");
+        assert_eq!(h.replacement, None);
+    }
+
+    #[test]
+    fn hint_from_str() {
+        let h: Hint = "hello".into();
+        assert_eq!(h.message, "hello");
+        assert_eq!(h.replacement, None);
+    }
+
+    // ── Diagnostic builder: error ──
+
+    #[test]
+    fn diagnostic_error_builder() {
+        let d = Diagnostic::error(DiagCode::T001CannotInferType, "oops", dummy_span());
+        assert_eq!(d.code, DiagCode::T001CannotInferType);
+        assert_eq!(d.severity, Severity::Error);
+        assert_eq!(d.kind, DiagnosticKind::User);
+        assert_eq!(d.message, "oops");
+        assert_eq!(d.span, dummy_span());
+    }
+
+    #[test]
+    fn diagnostic_warning_builder() {
+        let d = Diagnostic::warning(
+            DiagCode::W001VariableAssignedNotUsed,
+            "unused",
+            dummy_span(),
+        );
+        assert_eq!(d.severity, Severity::Warning);
+        assert_eq!(d.kind, DiagnosticKind::User);
+    }
+
+    #[test]
+    fn diagnostic_note_builder() {
+        let d = Diagnostic::note(DiagCode::N001UndefinedValue, "info", dummy_span());
+        assert_eq!(d.severity, Severity::Note);
+        assert_eq!(d.kind, DiagnosticKind::User);
+    }
+
+    #[test]
+    fn diagnostic_hint_builder() {
+        let d = Diagnostic::hint(
+            DiagCode::T005OperatorNotApplicable,
+            "try cast",
+            dummy_span(),
+        );
+        assert_eq!(d.severity, Severity::Hint);
+        assert_eq!(d.kind, DiagnosticKind::User);
+    }
+
+    #[test]
+    fn diagnostic_ice_builder() {
+        let d = Diagnostic::ice(DiagCode::ICET001, "internal", dummy_span());
+        assert_eq!(d.severity, Severity::Error);
+        assert_eq!(d.kind, DiagnosticKind::InternalCompilerError);
+    }
+
+    // ── Diagnostic builder: with_* ──
+
+    #[test]
+    fn diagnostic_with_label() {
+        let d = Diagnostic::error(
+            DiagCode::T002IncompatibleAssignment,
+            "type mismatch",
+            dummy_span(),
+        )
+        .with_label(Span::new(0, 2, 5), "here");
+        assert_eq!(d.labels.len(), 1);
+        assert_eq!(d.labels[0].message, "here");
+        assert_eq!(d.labels[0].span, Span::new(0, 2, 5));
+    }
+
+    #[test]
+    fn diagnostic_with_multiple_labels() {
+        let d = Diagnostic::error(
+            DiagCode::T002IncompatibleAssignment,
+            "type mismatch",
+            dummy_span(),
+        )
+        .with_label(Span::new(0, 2, 5), "a")
+        .with_label(Span::new(0, 6, 8), "b");
+        assert_eq!(d.labels.len(), 2);
+    }
+
+    #[test]
+    fn diagnostic_with_note() {
+        let d = Diagnostic::error(
+            DiagCode::T002IncompatibleAssignment,
+            "type mismatch",
+            dummy_span(),
+        )
+        .with_note("consider adding a cast");
+        assert_eq!(d.notes, vec!["consider adding a cast"]);
+    }
+
+    #[test]
+    fn diagnostic_with_hint() {
+        let d = Diagnostic::error(
+            DiagCode::T002IncompatibleAssignment,
+            "type mismatch",
+            dummy_span(),
+        )
+        .with_hint("try using `as`");
+        assert_eq!(d.hints.len(), 1);
+        assert_eq!(d.hints[0].message, "try using `as`");
+        assert_eq!(d.hints[0].replacement, None);
+    }
+
+    #[test]
+    fn diagnostic_with_hint_replacement() {
+        let hint = Hint {
+            message: "replace with int".to_string(),
+            replacement: Some(CodeReplacement {
+                span: Span::new(0, 0, 3),
+                new_text: "int".to_string(),
+            }),
+        };
+        let d = Diagnostic::error(DiagCode::T010InvalidCast, "bad cast", dummy_span())
+            .with_hint_replacement(hint);
+        assert_eq!(d.hints.len(), 1);
+        assert_eq!(d.hints[0].message, "replace with int");
+        assert!(d.hints[0].replacement.is_some());
+    }
+
+    #[test]
+    fn diagnostic_starts_empty() {
+        let d = Diagnostic::error(DiagCode::T001CannotInferType, "x", dummy_span());
+        assert!(d.labels.is_empty());
+        assert!(d.notes.is_empty());
+        assert!(d.hints.is_empty());
+    }
+
+    // ── format_for_cli: no registry ──
+
+    #[test]
+    fn format_no_registry() {
+        let d = Diagnostic::error(
+            DiagCode::T001CannotInferType,
+            "cannot infer type of `x`",
+            dummy_span(),
+        );
+        let out = d.format_for_cli(&SourceRegistry::new());
+        assert_eq!(out, "T001: cannot infer type of `x`\n  --> 1:1");
+    }
+
+    #[test]
+    fn format_with_registry() {
+        let reg = registry_with("let x = 1;");
+        let d = Diagnostic::warning(
+            DiagCode::W001VariableAssignedNotUsed,
+            "unused variable `x`",
+            Span::new(0, 4, 5),
+        );
+        let out = d.format_for_cli(&reg);
+        // Source: "let x = 1;" — byte 4 = line 1, col 5 (1-based)
+        assert_eq!(out, "W001: unused variable `x`\n  --> test.arandu:1:5");
+    }
+
+    #[test]
+    fn format_with_label() {
+        let reg = registry_with("let x: int = 5;");
+        let d = Diagnostic::error(
+            DiagCode::T002IncompatibleAssignment,
+            "type mismatch",
+            Span::new(0, 0, 3),
+        )
+        .with_label(Span::new(0, 8, 11), "expected `int`");
+        let out = d.format_for_cli(&reg);
+        assert!(out.contains("expected `int`"));
+        assert!(out.contains("label: 1:9-1:12"));
+    }
+
+    #[test]
+    fn format_with_note() {
+        let d = Diagnostic::error(
+            DiagCode::T002IncompatibleAssignment,
+            "mismatch",
+            dummy_span(),
+        )
+        .with_note("try casting");
+        let out = d.format_for_cli(&SourceRegistry::new());
+        assert!(out.contains("note: try casting"));
+    }
+
+    #[test]
+    fn format_with_hint() {
+        let d = Diagnostic::error(
+            DiagCode::T002IncompatibleAssignment,
+            "mismatch",
+            dummy_span(),
+        )
+        .with_hint("use `as`");
+        let out = d.format_for_cli(&SourceRegistry::new());
+        assert!(out.contains("hint: use `as`"));
+    }
+
+    #[test]
+    fn format_with_hint_replacement() {
+        let hint = Hint {
+            message: "replace with int".to_string(),
+            replacement: Some(CodeReplacement {
+                span: Span::new(0, 0, 4),
+                new_text: "int".to_string(),
+            }),
+        };
+        let reg = registry_with("let x: str = 5;");
+        let d = Diagnostic::error(
+            DiagCode::T010InvalidCast,
+            "invalid cast",
+            Span::new(0, 0, 0),
+        )
+        .with_hint_replacement(hint);
+        let out = d.format_for_cli(&reg);
+        assert!(out.contains("replacement: at 1:1-1:5 with \"int\""));
+    }
+
+    #[test]
+    fn format_ice_code_prefix() {
+        let d = Diagnostic::ice(DiagCode::ICET001, "internal error", dummy_span());
+        let out = d.format_for_cli(&SourceRegistry::new());
+        assert!(out.starts_with("ICE-T-001: internal error"));
+    }
+
+    #[test]
+    fn format_no_trailing_newline() {
+        let d = Diagnostic::error(
+            DiagCode::P001UnexpectedToken,
+            "unexpected token",
+            dummy_span(),
+        );
+        let out = d.format_for_cli(&SourceRegistry::new());
+        assert!(
+            !out.ends_with('\n'),
+            "output should not have trailing newline"
+        );
+    }
+
+    // ── Display ──
+
+    #[test]
+    fn display_delegates_to_format_for_cli() {
+        let d = Diagnostic::error(DiagCode::T001CannotInferType, "x", dummy_span());
+        let display = d.to_string();
+        let formatted = d.format_for_cli(&SourceRegistry::default());
+        assert_eq!(display, formatted);
+    }
+}
