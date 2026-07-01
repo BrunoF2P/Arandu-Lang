@@ -10,9 +10,9 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
 name = "anyhow"
-version = "1.0.102"
+version = "1.0.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
+checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
 name = "arandu_backend_cranelift"
@@ -45,7 +45,6 @@ version = "0.1.0"
 dependencies = [
  "arandu_backend_cranelift",
  "arandu_base",
- "arandu_diagnostics",
  "arandu_lexer",
  "arandu_parser",
  "arandu_semantics",
@@ -82,11 +81,8 @@ dependencies = [
 name = "arandu_mir"
 version = "0.1.0"
 dependencies = [
- "arandu_base",
- "arandu_diagnostics",
  "arandu_lexer",
  "arandu_middle",
- "arandu_parser",
  "arandu_typeck",
  "rustc-hash",
  "smallvec",
@@ -106,8 +102,6 @@ dependencies = [
 name = "arandu_resolve"
 version = "0.1.0"
 dependencies = [
- "arandu_base",
- "arandu_diagnostics",
  "arandu_lexer",
  "arandu_middle",
  "arandu_parser",
@@ -131,8 +125,6 @@ dependencies = [
  "arandu_typeck",
  "libc",
  "rustc-hash",
- "smallvec",
- "strsim",
 ]
 
 [[package]]
@@ -148,7 +140,6 @@ name = "arandu_typeck"
 version = "0.1.0"
 dependencies = [
  "arandu_base",
- "arandu_diagnostics",
  "arandu_lexer",
  "arandu_middle",
  "arandu_parser",

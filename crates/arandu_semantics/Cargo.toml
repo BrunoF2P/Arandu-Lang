@@ -17,8 +17,6 @@ arandu_typeck = { path = "../arandu_typeck" }
 arandu_mir = { path = "../arandu_mir" }
 arandu_diagnostics = { path = "../arandu_diagnostics" }
 arandu_base = { path = "../arandu_base", features = ["vm"] }
-smallvec = "1.15.2"
-strsim = "0.11.1"
 libc = "0.2.186"
 rustc-hash = "2.1.2"
 
