@@ -97,7 +97,7 @@ fn is_valid_terminator(term: &AmirTerminator) -> bool {
     matches!(
         term,
         AmirTerminator::Return
-            | AmirTerminator::Goto(_)
+            | AmirTerminator::Goto { .. }
             | AmirTerminator::Branch { .. }
             | AmirTerminator::SwitchInt { .. }
             | AmirTerminator::Unreachable
@@ -107,15 +107,15 @@ fn is_valid_terminator(term: &AmirTerminator) -> bool {
 fn terminator_targets(term: &AmirTerminator) -> Vec<BlockId> {
     match term {
         AmirTerminator::Return | AmirTerminator::Unreachable => Vec::new(),
-        AmirTerminator::Goto(b) => vec![*b],
+        AmirTerminator::Goto { target, .. } => vec![*target],
         AmirTerminator::Branch {
             if_true, if_false, ..
         } => vec![*if_true, *if_false],
         AmirTerminator::SwitchInt {
             targets, otherwise, ..
         } => {
-            let mut v: Vec<BlockId> = targets.iter().map(|(_, b)| *b).collect();
-            v.push(*otherwise);
+            let mut v: Vec<BlockId> = targets.iter().map(|(_, b, _)| *b).collect();
+            v.push(otherwise.0);
             v
         }
     }

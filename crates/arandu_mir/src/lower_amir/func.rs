@@ -2,13 +2,11 @@
 
 use super::{LowerCtx, MoveState};
 use crate::TypeCheckResult;
-use crate::amir::{
-    AmirFunc, AmirOperand, AmirPlace, AmirStmtTable, AmirTemp, AmirTerminator, TempId,
-};
+use crate::amir::{AmirFunc, AmirOperand, AmirStmtTable, AmirTemp, AmirTerminator, TempId};
 use crate::diagnostics::Diagnostic;
 use crate::hir::{HirBlockId, HirFunc, HirProgram};
 use crate::literal_pool::AmirLiteralPool;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 pub(crate) fn lower_func(
     f: &HirFunc,
@@ -16,6 +14,7 @@ pub(crate) fn lower_func(
     tc: &TypeCheckResult,
     hir: &HirProgram,
     literal_pool: &mut AmirLiteralPool,
+    func_diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<AmirFunc, Diagnostic> {
     let mut ctx = LowerCtx {
         tc,
@@ -33,6 +32,11 @@ pub(crate) fn lower_func(
         temp_states: Vec::new(),
         temp_origins: Vec::new(),
         local_states: Vec::new(),
+        predecessors: FxHashMap::default(),
+        sealed_blocks: FxHashSet::default(),
+        current_def: FxHashMap::default(),
+        incomplete_phis: FxHashMap::default(),
+        redirected_temps: FxHashMap::default(),
     };
 
     // Return register is TempId(0)
@@ -49,6 +53,7 @@ pub(crate) fn lower_func(
 
     // Start with bb0 so we can emit parameter store instructions there
     let bb0 = ctx.new_block();
+    ctx.sealed_blocks.insert(bb0);
     ctx.current_block = Some(bb0);
 
     for param in hir.pool.params_list(f.params) {
@@ -62,16 +67,9 @@ pub(crate) fn lower_func(
             });
         }
         params.push(p_temp);
-
-        // Copy incoming parameter SSA register value to local stack slot
+        // Directly bind the parameter temp to the local variable in the entry block
         let p_local = ctx.new_local(param.ty.clone(), param.symbol, param.span);
-        ctx.emit_store_place(
-            AmirPlace {
-                local: p_local,
-                projections: smallvec::SmallVec::new(),
-            },
-            AmirOperand::Copy(p_temp),
-        )?;
+        ctx.write_variable_source(p_local, AmirOperand::Copy(p_temp));
     }
 
     ctx.lower_block(body, &tc.symbols)?;
@@ -83,9 +81,44 @@ pub(crate) fn lower_func(
         }
     }
 
-    let cfg = crate::cfg::compute_cfg_edges(&ctx.blocks);
+    // Seal all remaining unsealed blocks
+    for i in 0..ctx.blocks.len() {
+        ctx.seal_block(crate::amir::BlockId::from_usize(i));
+    }
 
-    Ok(AmirFunc {
+    // OSSA Optimization passes
+    // 1. Construct raw AmirFunc for validation and checks
+    let raw_cfg = crate::cfg::compute_cfg_edges(&ctx.blocks);
+    let raw_func = AmirFunc {
+        symbol: f.symbol,
+        return_type: f.return_type.clone(),
+        receiver,
+        params: params.clone(),
+        locals: ctx.locals.clone(),
+        temps: ctx.temps.clone(),
+        blocks: ctx.blocks.clone(),
+        stmts: ctx.stmts.clone(),
+        cfg: raw_cfg,
+    };
+
+    // 2. Run checks on raw func
+    func_diagnostics.extend(crate::amir_validate::validate_amir_func(
+        &raw_func,
+        &tc.symbols,
+    ));
+    func_diagnostics.extend(crate::definite_init::check_definite_init(
+        &raw_func,
+        &tc.symbols,
+    ));
+    func_diagnostics.extend(crate::move_checker::check_moves(&raw_func, &tc.symbols));
+
+    // 3. OSSA Optimization passes
+    ctx.eliminate_trivial_phis();
+    ctx.prune_eliminated_parameters();
+    ctx.rewrite_all_operands();
+
+    let cfg = crate::cfg::compute_cfg_edges(&ctx.blocks);
+    let mut amir_f = AmirFunc {
         symbol: f.symbol,
         return_type: f.return_type.clone(),
         receiver,
@@ -95,7 +128,12 @@ pub(crate) fn lower_func(
         blocks: ctx.blocks,
         stmts: ctx.stmts,
         cfg,
-    })
+    };
+
+    // 4. Prune dummy loads and stores
+    super::prune_dummy_loads_stores(&mut amir_f);
+
+    Ok(amir_f)
 }
 
 // Extension helper to check if terminator is unreachable

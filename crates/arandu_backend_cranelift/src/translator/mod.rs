@@ -110,10 +110,22 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
     }
 
     pub fn translate(&mut self) -> Result<(), Diagnostic> {
-        for (idx, _) in self.current_func.blocks.iter().enumerate() {
+        for (idx, _block) in self.current_func.blocks.iter().enumerate() {
             let block_id = BlockId::from_usize(idx);
             let clif_block = self.builder.create_block();
             self.block_map.insert(block_id, clif_block);
+        }
+
+        for (idx, block) in self.current_func.blocks.iter().enumerate() {
+            let block_id = BlockId::from_usize(idx);
+            let clif_block = self.block_map[&block_id];
+            if block_id.as_usize() > 0 {
+                for param in &block.params {
+                    if let ClifType::Concrete(clif_ty) = clif_type(&param.ty, self.ptr_type) {
+                        self.builder.append_block_param(clif_block, clif_ty);
+                    }
+                }
+            }
         }
 
         let entry_clif = self.block_map[&BlockId::from_usize(0)];
@@ -164,6 +176,15 @@ impl<'a, 'b> AmirVisitor for FunctionTranslator<'a, 'b> {
         }
         let clif_block = self.block_map[&block.id];
         self.builder.switch_to_block(clif_block);
+
+        if block.id.as_usize() > 0 {
+            let clif_params = self.builder.block_params(clif_block).to_vec();
+            for (i, param) in block.params.iter().enumerate() {
+                if let Some(&var) = self.temp_map.get(&param.id) {
+                    self.builder.def_var(var, clif_params[i]);
+                }
+            }
+        }
 
         for stmt_id in block.statements.iter_ids::<InstrId>() {
             let stmt = self.current_func.stmt(stmt_id);

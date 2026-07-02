@@ -27,13 +27,8 @@ impl LowerCtx<'_> {
                     let b = &bindings_slice[0];
                     let local_id = self.new_local(b.ty.clone(), b.symbol, b.span);
                     let val_op = self.lower_expr(*value, None, symbols)?;
-                    self.emit_store_place(
-                        AmirPlace {
-                            local: local_id,
-                            projections: smallvec::SmallVec::new(),
-                        },
-                        val_op,
-                    )?;
+                    let consumed = self.consume_operand(val_op)?;
+                    self.write_variable_source(local_id, consumed);
                 } else {
                     let val_op = self.lower_expr(*value, None, symbols)?;
                     for (i, b) in bindings_slice.iter().enumerate() {
@@ -46,13 +41,8 @@ impl LowerCtx<'_> {
                                 field: i,
                             },
                         );
-                        self.emit_store_place(
-                            AmirPlace {
-                                local: local_id,
-                                projections: smallvec::SmallVec::new(),
-                            },
-                            AmirOperand::Copy(temp),
-                        )?;
+                        let consumed = self.consume_operand(AmirOperand::Copy(temp))?;
+                        self.write_variable_source(local_id, consumed);
                     }
                 }
             }
@@ -82,14 +72,14 @@ impl LowerCtx<'_> {
             HirStmtKind::Break => {
                 if let Some((_, exit_block, defer_depth)) = self.loop_stack.last().copied() {
                     self.exit_defer_frames_from(defer_depth, false, symbols)?;
-                    self.set_terminator(AmirTerminator::Goto(exit_block));
+                    self.emit_goto(exit_block);
                     self.current_block = None;
                 }
             }
             HirStmtKind::Continue => {
                 if let Some((cont_block, _, defer_depth)) = self.loop_stack.last().copied() {
                     self.exit_defer_frames_from(defer_depth, false, symbols)?;
-                    self.set_terminator(AmirTerminator::Goto(cont_block));
+                    self.emit_goto(cont_block);
                     self.current_block = None;
                 }
             }
@@ -107,12 +97,14 @@ impl LowerCtx<'_> {
                 let bb_join = self.new_block();
 
                 self.set_bool_branch(cond_op, bb_then, bb_else);
+                self.seal_block(bb_then);
+                self.seal_block(bb_else);
 
                 // Then
                 self.current_block = Some(bb_then);
                 self.lower_block(*then_block, symbols)?;
                 if self.current_block.is_some() {
-                    self.set_terminator(AmirTerminator::Goto(bb_join));
+                    self.emit_goto(bb_join);
                 }
 
                 // Else
@@ -121,9 +113,10 @@ impl LowerCtx<'_> {
                     self.lower_block(*eb, symbols)?;
                 }
                 if self.current_block.is_some() {
-                    self.set_terminator(AmirTerminator::Goto(bb_join));
+                    self.emit_goto(bb_join);
                 }
 
+                self.seal_block(bb_join);
                 self.current_block = Some(bb_join);
             }
             HirStmtKind::While { condition, body } => {
@@ -131,20 +124,23 @@ impl LowerCtx<'_> {
                 let bb_body = self.new_block();
                 let bb_exit = self.new_block();
 
-                self.set_terminator(AmirTerminator::Goto(bb_cond));
+                self.emit_goto(bb_cond);
 
                 self.current_block = Some(bb_cond);
                 let cond_op = self.lower_condition(condition, symbols)?;
                 self.set_bool_branch(cond_op, bb_body, bb_exit);
+                self.seal_block(bb_body);
+                self.seal_block(bb_exit);
 
                 let defer_depth = self.defer_frames.len();
                 self.loop_stack.push((bb_cond, bb_exit, defer_depth));
                 self.current_block = Some(bb_body);
                 self.lower_block(*body, symbols)?;
                 if self.current_block.is_some() {
-                    self.set_terminator(AmirTerminator::Goto(bb_cond));
+                    self.emit_goto(bb_cond);
                 }
                 self.loop_stack.pop();
+                self.seal_block(bb_cond);
 
                 self.current_block = Some(bb_exit);
             }
@@ -182,7 +178,7 @@ impl LowerCtx<'_> {
                     let bb_step = self.new_block();
                     let bb_exit = self.new_block();
 
-                    self.set_terminator(AmirTerminator::Goto(bb_cond));
+                    self.emit_goto(bb_cond);
 
                     self.current_block = Some(bb_cond);
                     let idx_op = self.load_place(
@@ -211,6 +207,8 @@ impl LowerCtx<'_> {
                         },
                     );
                     self.set_bool_branch(AmirOperand::Copy(cond_tmp), bb_body, bb_exit);
+                    self.seal_block(bb_body);
+                    self.seal_block(bb_exit);
 
                     let defer_depth = self.defer_frames.len();
                     self.loop_stack.push((bb_step, bb_exit, defer_depth));
@@ -241,22 +239,18 @@ impl LowerCtx<'_> {
                                 index: idx_op2,
                             },
                         );
-                        self.emit_store_place(
-                            AmirPlace {
-                                local: local_id,
-                                projections: smallvec::SmallVec::new(),
-                            },
-                            AmirOperand::Copy(elem_temp),
-                        )?;
+                        let consumed = self.consume_operand(AmirOperand::Copy(elem_temp))?;
+                        self.write_variable_source(local_id, consumed);
                     }
 
                     self.lower_block(*body, symbols)?;
                     if self.current_block.is_some() {
-                        self.set_terminator(AmirTerminator::Goto(bb_step));
+                        self.emit_goto(bb_step);
                     }
                     self.loop_stack.pop();
 
                     self.current_block = Some(bb_step);
+                    self.seal_block(bb_step);
                     let idx_op3 = self.load_place(
                         &AmirPlace {
                             local: idx_local,
@@ -282,7 +276,8 @@ impl LowerCtx<'_> {
                         },
                         AmirOperand::Copy(next_idx),
                     )?;
-                    self.set_terminator(AmirTerminator::Goto(bb_cond));
+                    self.emit_goto(bb_cond);
+                    self.seal_block(bb_cond);
 
                     self.current_block = Some(bb_exit);
                 }
@@ -301,7 +296,7 @@ impl LowerCtx<'_> {
                     let bb_step = self.new_block();
                     let bb_exit = self.new_block();
 
-                    self.set_terminator(AmirTerminator::Goto(bb_cond));
+                    self.emit_goto(bb_cond);
 
                     self.current_block = Some(bb_cond);
                     let cond_op = if let Some(c) = condition {
@@ -310,23 +305,27 @@ impl LowerCtx<'_> {
                         AmirOperand::Constant(AmirConstant::Bool(true))
                     };
                     self.set_bool_branch(cond_op, bb_body, bb_exit);
+                    self.seal_block(bb_body);
+                    self.seal_block(bb_exit);
 
                     let defer_depth = self.defer_frames.len();
                     self.loop_stack.push((bb_step, bb_exit, defer_depth));
                     self.current_block = Some(bb_body);
                     self.lower_block(*body, symbols)?;
                     if self.current_block.is_some() {
-                        self.set_terminator(AmirTerminator::Goto(bb_step));
+                        self.emit_goto(bb_step);
                     }
                     self.loop_stack.pop();
 
                     self.current_block = Some(bb_step);
+                    self.seal_block(bb_step);
                     if let Some(s) = step {
                         self.lower_simple_stmt(s, symbols)?;
                     }
                     if self.current_block.is_some() {
-                        self.set_terminator(AmirTerminator::Goto(bb_cond));
+                        self.emit_goto(bb_cond);
                     }
+                    self.seal_block(bb_cond);
 
                     self.current_block = Some(bb_exit);
                 }
@@ -368,13 +367,8 @@ impl LowerCtx<'_> {
                     let b = &bindings_slice[0];
                     let local_id = self.new_local(b.ty.clone(), b.symbol, b.span);
                     let val_op = self.lower_expr(*value, None, symbols)?;
-                    self.emit_store_place(
-                        AmirPlace {
-                            local: local_id,
-                            projections: smallvec::SmallVec::new(),
-                        },
-                        val_op,
-                    )?;
+                    let consumed = self.consume_operand(val_op)?;
+                    self.write_variable_source(local_id, consumed);
                 } else {
                     let val_op = self.lower_expr(*value, None, symbols)?;
                     for (i, b) in bindings_slice.iter().enumerate() {
@@ -387,13 +381,8 @@ impl LowerCtx<'_> {
                                 field: i,
                             },
                         );
-                        self.emit_store_place(
-                            AmirPlace {
-                                local: local_id,
-                                projections: smallvec::SmallVec::new(),
-                            },
-                            AmirOperand::Copy(temp),
-                        )?;
+                        let consumed = self.consume_operand(AmirOperand::Copy(temp))?;
+                        self.write_variable_source(local_id, consumed);
                     }
                 }
             }
@@ -450,34 +439,67 @@ impl LowerCtx<'_> {
                     projections: projections?.into(),
                 };
 
-                if *op == SetOp::Assign {
-                    self.emit_store_place(amir_place, val_op.clone())?;
-                } else {
-                    let bin_op = match op {
-                        SetOp::AddAssign => BinaryOp::Add,
-                        SetOp::SubAssign => BinaryOp::Sub,
-                        SetOp::MulAssign => BinaryOp::Mul,
-                        SetOp::DivAssign => BinaryOp::Div,
-                        SetOp::ModAssign => BinaryOp::Mod,
-                        SetOp::BitAndAssign => BinaryOp::BitAnd,
-                        SetOp::BitOrAssign => BinaryOp::BitOr,
-                        SetOp::BitXorAssign => BinaryOp::BitXor,
-                        SetOp::ShiftLeftAssign => BinaryOp::ShiftLeft,
-                        SetOp::ShiftRightAssign => BinaryOp::ShiftRight,
-                        _ => BinaryOp::Add,
+                if amir_place.projections.is_empty() {
+                    let final_val = if *op == SetOp::Assign {
+                        val_op.clone()
+                    } else {
+                        let bin_op = match op {
+                            SetOp::AddAssign => BinaryOp::Add,
+                            SetOp::SubAssign => BinaryOp::Sub,
+                            SetOp::MulAssign => BinaryOp::Mul,
+                            SetOp::DivAssign => BinaryOp::Div,
+                            SetOp::ModAssign => BinaryOp::Mod,
+                            SetOp::BitAndAssign => BinaryOp::BitAnd,
+                            SetOp::BitOrAssign => BinaryOp::BitOr,
+                            SetOp::BitXorAssign => BinaryOp::BitXor,
+                            SetOp::ShiftLeftAssign => BinaryOp::ShiftLeft,
+                            SetOp::ShiftRightAssign => BinaryOp::ShiftRight,
+                            _ => BinaryOp::Add,
+                        };
+                        let old_val = self.read_variable_source(local_id);
+                        let temp = self.new_temp(place.ty.clone());
+                        self.emit_assign_temp(
+                            temp,
+                            AmirRvalue::Binary {
+                                op: bin_op,
+                                left: old_val,
+                                right: val_op.clone(),
+                            },
+                        );
+                        AmirOperand::Copy(temp)
                     };
-                    let old_val =
-                        self.load_place(&amir_place, place.ty.clone(), &projection_types)?;
-                    let temp = self.new_temp(place.ty.clone());
-                    self.emit_assign_temp(
-                        temp,
-                        AmirRvalue::Binary {
-                            op: bin_op,
-                            left: old_val,
-                            right: val_op.clone(),
-                        },
-                    );
-                    self.emit_store_place(amir_place, AmirOperand::Copy(temp))?;
+                    let consumed = self.consume_operand(final_val)?;
+                    self.write_variable_source(local_id, consumed);
+                } else {
+                    if *op == SetOp::Assign {
+                        self.emit_store_place(amir_place, val_op.clone())?;
+                    } else {
+                        let bin_op = match op {
+                            SetOp::AddAssign => BinaryOp::Add,
+                            SetOp::SubAssign => BinaryOp::Sub,
+                            SetOp::MulAssign => BinaryOp::Mul,
+                            SetOp::DivAssign => BinaryOp::Div,
+                            SetOp::ModAssign => BinaryOp::Mod,
+                            SetOp::BitAndAssign => BinaryOp::BitAnd,
+                            SetOp::BitOrAssign => BinaryOp::BitOr,
+                            SetOp::BitXorAssign => BinaryOp::BitXor,
+                            SetOp::ShiftLeftAssign => BinaryOp::ShiftLeft,
+                            SetOp::ShiftRightAssign => BinaryOp::ShiftRight,
+                            _ => BinaryOp::Add,
+                        };
+                        let old_val =
+                            self.load_place(&amir_place, place.ty.clone(), &projection_types)?;
+                        let temp = self.new_temp(place.ty.clone());
+                        self.emit_assign_temp(
+                            temp,
+                            AmirRvalue::Binary {
+                                op: bin_op,
+                                left: old_val,
+                                right: val_op.clone(),
+                            },
+                        );
+                        self.emit_store_place(amir_place, AmirOperand::Copy(temp))?;
+                    }
                 }
             }
         } else {
@@ -503,11 +525,7 @@ impl LowerCtx<'_> {
                             }
                         })
                         .collect();
-                    let amir_place = AmirPlace {
-                        local: local_id,
-                        projections: projections?.into(),
-                    };
-
+                    let projections = projections?;
                     let temp_ty = place.ty.clone();
                     let temp = self.new_temp(temp_ty);
                     self.emit_assign_temp(
@@ -517,7 +535,16 @@ impl LowerCtx<'_> {
                             field: i,
                         },
                     );
-                    self.emit_store_place(amir_place, AmirOperand::Copy(temp))?;
+                    let val_to_store = self.consume_operand(AmirOperand::Copy(temp))?;
+                    if projections.is_empty() {
+                        self.write_variable_source(local_id, val_to_store);
+                    } else {
+                        let amir_place = AmirPlace {
+                            local: local_id,
+                            projections: projections.into(),
+                        };
+                        self.emit_store_place(amir_place, val_to_store)?;
+                    }
                 }
             }
         }

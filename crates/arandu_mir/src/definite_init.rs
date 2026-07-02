@@ -120,8 +120,8 @@ pub fn check_definite_init(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagno
             // Add successors to worklist
             match &block.terminator {
                 AmirTerminator::Return | AmirTerminator::Unreachable => {}
-                AmirTerminator::Goto(b) => {
-                    worklist.push_back(*b);
+                AmirTerminator::Goto { target, .. } => {
+                    worklist.push_back(*target);
                 }
                 AmirTerminator::Branch {
                     if_true, if_false, ..
@@ -132,10 +132,10 @@ pub fn check_definite_init(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagno
                 AmirTerminator::SwitchInt {
                     targets, otherwise, ..
                 } => {
-                    for (_, b) in targets {
+                    for (_, b, _) in targets {
                         worklist.push_back(*b);
                     }
-                    worklist.push_back(*otherwise);
+                    worklist.push_back(otherwise.0);
                 }
             }
         } else {
@@ -301,6 +301,7 @@ mod tests {
         AmirBasicBlock {
             id: BlockId::from_usize(id),
             statements: range,
+            params: Vec::new(),
             terminator,
         }
     }
@@ -402,7 +403,9 @@ mod tests {
                 AmirTerminator::Branch {
                     condition: AmirOperand::Constant(AmirConstant::Bool(true)),
                     if_true: BlockId::from_usize(1),
+                    true_args: Vec::new(),
                     if_false: BlockId::from_usize(2),
+                    false_args: Vec::new(),
                 },
                 &[1, 2],
                 &[],
@@ -414,7 +417,10 @@ mod tests {
                     lhs: place(0),
                     rhs: AmirOperand::Constant(AmirConstant::Bool(true)),
                 }],
-                AmirTerminator::Goto(BlockId::from_usize(3)),
+                AmirTerminator::Goto {
+                    target: BlockId::from_usize(3),
+                    args: Vec::new(),
+                },
                 &[3],
                 &[0],
                 &mut stmts,
@@ -422,7 +428,10 @@ mod tests {
             make_block(
                 2,
                 vec![],
-                AmirTerminator::Goto(BlockId::from_usize(3)),
+                AmirTerminator::Goto {
+                    target: BlockId::from_usize(3),
+                    args: Vec::new(),
+                },
                 &[3],
                 &[0],
                 &mut stmts,
@@ -466,7 +475,10 @@ mod tests {
                     lhs: place(0),
                     rhs: AmirOperand::Constant(AmirConstant::Bool(true)),
                 }],
-                AmirTerminator::Goto(BlockId::from_usize(1)),
+                AmirTerminator::Goto {
+                    target: BlockId::from_usize(1),
+                    args: Vec::new(),
+                },
                 &[1],
                 &[],
                 &mut stmts,
@@ -480,7 +492,9 @@ mod tests {
                 AmirTerminator::Branch {
                     condition: AmirOperand::Copy(TempId::from_usize(1)),
                     if_true: BlockId::from_usize(1),
+                    true_args: Vec::new(),
                     if_false: BlockId::from_usize(2),
+                    false_args: Vec::new(),
                 },
                 &[1, 2],
                 &[0],
@@ -556,7 +570,9 @@ mod tests {
                 AmirTerminator::Branch {
                     condition: AmirOperand::Constant(AmirConstant::Bool(true)),
                     if_true: BlockId::from_usize(1),
+                    true_args: Vec::new(),
                     if_false: BlockId::from_usize(2),
+                    false_args: Vec::new(),
                 },
                 &[1, 2],
                 &[],
@@ -568,7 +584,10 @@ mod tests {
                     lhs: place(0),
                     rhs: AmirOperand::Constant(AmirConstant::Bool(true)),
                 }],
-                AmirTerminator::Goto(BlockId::from_usize(3)),
+                AmirTerminator::Goto {
+                    target: BlockId::from_usize(3),
+                    args: Vec::new(),
+                },
                 &[3],
                 &[0],
                 &mut stmts,
@@ -579,7 +598,10 @@ mod tests {
                     lhs: place(0),
                     rhs: AmirOperand::Constant(AmirConstant::Bool(true)),
                 }],
-                AmirTerminator::Goto(BlockId::from_usize(3)),
+                AmirTerminator::Goto {
+                    target: BlockId::from_usize(3),
+                    args: Vec::new(),
+                },
                 &[3],
                 &[0],
                 &mut stmts,

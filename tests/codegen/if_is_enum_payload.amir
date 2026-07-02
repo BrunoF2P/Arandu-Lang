@@ -10,29 +10,23 @@ Func test_payload(res: Result) -> int
     _7: int
     _8: int
     _9: int
+    _10: int
+    _11: int
     s0: Result // res
     s1: int // val
     s2: int // x
 
-  bb0:
-    s0 = move _1
-    s1 = 0
-    _2 = s0
-    _3 = discriminant(_2)
+  bb0(_7: int /* from: "x" */):
+    _3 = discriminant(_1)
     _4 = eq _3, 0
-    _5 = payload(_2 as Ok.0)
-    s2 = _5
+    _5 = payload(_1 as Ok.0)
     _6 = and _4, true
-    switchInt _6 { 1 => bb1, otherwise => bb2 }
+    branch _6 => bb1, else bb2
   bb1:
-    _7 = s2
-    s1 = _7
-    goto bb3
+    goto bb3(_7)
   bb2:
-    _8 = neg 1
-    s1 = _8
-    goto bb3
-  bb3:
-    _9 = s1
-    _0 = _9
+    _9 = neg 1
+    goto bb3(_9)
+  bb3(_10: int /* from: "val" */):
+    _0 = _10
     return

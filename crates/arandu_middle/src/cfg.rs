@@ -84,9 +84,9 @@ pub fn transfer_edges(cfg: &mut ControlFlowGraph, into: BlockId, from: BlockId) 
 fn terminator_successors(term: &AmirTerminator) -> smallvec::SmallVec<[BlockId; 2]> {
     match term {
         AmirTerminator::Return | AmirTerminator::Unreachable => smallvec::SmallVec::new(),
-        AmirTerminator::Goto(b) => {
+        AmirTerminator::Goto { target, .. } => {
             let mut s = smallvec::SmallVec::new();
-            s.push(*b);
+            s.push(*target);
             s
         }
         AmirTerminator::Branch {
@@ -101,10 +101,10 @@ fn terminator_successors(term: &AmirTerminator) -> smallvec::SmallVec<[BlockId; 
             targets, otherwise, ..
         } => {
             let mut out = smallvec::SmallVec::new();
-            for (_, b) in targets {
+            for (_, b, _) in targets {
                 out.push(*b);
             }
-            out.push(*otherwise);
+            out.push(otherwise.0);
             out
         }
     }
@@ -119,6 +119,7 @@ mod tests {
         AmirBasicBlock {
             id: BlockId::from_usize(id),
             statements: crate::layout::DenseRange::empty(),
+            params: Vec::new(),
             terminator,
         }
     }
@@ -141,7 +142,13 @@ mod tests {
     #[test]
     fn cfg_two_blocks_with_goto() {
         let blocks = vec![
-            block(0, AmirTerminator::Goto(BlockId::from_usize(1))),
+            block(
+                0,
+                AmirTerminator::Goto {
+                    target: BlockId::from_usize(1),
+                    args: Vec::new(),
+                },
+            ),
             block(1, AmirTerminator::Return),
         ];
         let cfg = compute_cfg_edges(&blocks);
@@ -158,7 +165,9 @@ mod tests {
                 AmirTerminator::Branch {
                     condition: cond,
                     if_true: BlockId::from_usize(1),
+                    true_args: Vec::new(),
                     if_false: BlockId::from_usize(2),
+                    false_args: Vec::new(),
                 },
             ),
             block(1, AmirTerminator::Return),
@@ -180,8 +189,8 @@ mod tests {
     fn cfg_switch_int_multiple_targets() {
         let disc = AmirOperand::Constant(AmirConstant::Bool(false));
         let targets = vec![
-            (1i128, BlockId::from_usize(1)),
-            (2i128, BlockId::from_usize(2)),
+            (1i128, BlockId::from_usize(1), Vec::new()),
+            (2i128, BlockId::from_usize(2), Vec::new()),
         ];
         let blocks = vec![
             block(
@@ -189,7 +198,7 @@ mod tests {
                 AmirTerminator::SwitchInt {
                     discriminant: disc,
                     targets,
-                    otherwise: BlockId::from_usize(3),
+                    otherwise: (BlockId::from_usize(3), Vec::new()),
                 },
             ),
             block(1, AmirTerminator::Return),
@@ -217,7 +226,13 @@ mod tests {
 
     #[test]
     fn cfg_out_of_bounds_target_is_skipped() {
-        let blocks = vec![block(0, AmirTerminator::Goto(BlockId::from_usize(5)))];
+        let blocks = vec![block(
+            0,
+            AmirTerminator::Goto {
+                target: BlockId::from_usize(5),
+                args: Vec::new(),
+            },
+        )];
         let cfg = compute_cfg_edges(&blocks);
         assert!(cfg.successors[0].is_empty());
     }
@@ -231,11 +246,25 @@ mod tests {
                 AmirTerminator::Branch {
                     condition: cond,
                     if_true: BlockId::from_usize(1),
+                    true_args: Vec::new(),
                     if_false: BlockId::from_usize(2),
+                    false_args: Vec::new(),
                 },
             ),
-            block(1, AmirTerminator::Goto(BlockId::from_usize(3))),
-            block(2, AmirTerminator::Goto(BlockId::from_usize(3))),
+            block(
+                1,
+                AmirTerminator::Goto {
+                    target: BlockId::from_usize(3),
+                    args: Vec::new(),
+                },
+            ),
+            block(
+                2,
+                AmirTerminator::Goto {
+                    target: BlockId::from_usize(3),
+                    args: Vec::new(),
+                },
+            ),
             block(3, AmirTerminator::Return),
         ];
         let cfg = compute_cfg_edges(&blocks);
@@ -247,7 +276,13 @@ mod tests {
     #[test]
     fn retarget_successor_updates_both_lists() {
         let mut cfg = compute_cfg_edges(&[
-            block(0, AmirTerminator::Goto(BlockId::from_usize(1))),
+            block(
+                0,
+                AmirTerminator::Goto {
+                    target: BlockId::from_usize(1),
+                    args: Vec::new(),
+                },
+            ),
             block(1, AmirTerminator::Return),
             block(2, AmirTerminator::Return),
         ]);
@@ -265,7 +300,13 @@ mod tests {
     #[test]
     fn clear_block_removes_all_edges() {
         let mut cfg = compute_cfg_edges(&[
-            block(0, AmirTerminator::Goto(BlockId::from_usize(1))),
+            block(
+                0,
+                AmirTerminator::Goto {
+                    target: BlockId::from_usize(1),
+                    args: Vec::new(),
+                },
+            ),
             block(1, AmirTerminator::Return),
         ]);
         clear_block(&mut cfg, BlockId::from_usize(0));
@@ -277,7 +318,13 @@ mod tests {
     #[test]
     fn transfer_edges_moves_all_edges() {
         let mut cfg = compute_cfg_edges(&[
-            block(0, AmirTerminator::Goto(BlockId::from_usize(2))),
+            block(
+                0,
+                AmirTerminator::Goto {
+                    target: BlockId::from_usize(2),
+                    args: Vec::new(),
+                },
+            ),
             block(1, AmirTerminator::Return),
             block(2, AmirTerminator::Return),
         ]);

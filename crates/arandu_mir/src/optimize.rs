@@ -68,6 +68,7 @@ mod tests {
         let blocks = vec![AmirBasicBlock {
             id: BlockId::from_usize(0),
             statements: range,
+            params: Vec::new(),
             terminator: AmirTerminator::Return,
         }];
         let cfg = compute_cfg_edges(&blocks);
@@ -300,20 +301,25 @@ mod tests {
                 AmirBasicBlock {
                     id: BlockId::from_usize(0),
                     statements: DenseRange::new(0, 1),
+                    params: Vec::new(),
                     terminator: AmirTerminator::Branch {
                         condition: AmirOperand::Copy(TempId::from_usize(0)),
                         if_true: BlockId::from_usize(1),
+                        true_args: Vec::new(),
                         if_false: BlockId::from_usize(2),
+                        false_args: Vec::new(),
                     },
                 },
                 AmirBasicBlock {
                     id: BlockId::from_usize(1),
                     statements: DenseRange::new(1, 1),
+                    params: Vec::new(),
                     terminator: AmirTerminator::Return,
                 },
                 AmirBasicBlock {
                     id: BlockId::from_usize(2),
                     statements: DenseRange::new(2, 1),
+                    params: Vec::new(),
                     terminator: AmirTerminator::Return,
                 },
             ],
@@ -328,7 +334,7 @@ mod tests {
         // The Branch should now be Goto(bb2) — the false branch.
         assert!(matches!(
             func.block(BlockId::from_usize(0)).terminator,
-            AmirTerminator::Goto(t) if t == BlockId::from_usize(2)
+            AmirTerminator::Goto { target, .. } if target == BlockId::from_usize(2)
         ));
     }
 
@@ -451,25 +457,37 @@ mod tests {
                 AmirBasicBlock {
                     id: BlockId::from_usize(0),
                     statements: DenseRange::new(0, 1),
+                    params: Vec::new(),
                     terminator: AmirTerminator::Branch {
                         condition: AmirOperand::Copy(TempId::from_usize(0)),
                         if_true: BlockId::from_usize(1),
+                        true_args: Vec::new(),
                         if_false: BlockId::from_usize(2),
+                        false_args: Vec::new(),
                     },
                 },
                 AmirBasicBlock {
                     id: BlockId::from_usize(1),
                     statements: DenseRange::new(1, 1),
-                    terminator: AmirTerminator::Goto(BlockId::from_usize(3)),
+                    params: Vec::new(),
+                    terminator: AmirTerminator::Goto {
+                        target: BlockId::from_usize(3),
+                        args: Vec::new(),
+                    },
                 },
                 AmirBasicBlock {
                     id: BlockId::from_usize(2),
                     statements: DenseRange::new(2, 1),
-                    terminator: AmirTerminator::Goto(BlockId::from_usize(3)),
+                    params: Vec::new(),
+                    terminator: AmirTerminator::Goto {
+                        target: BlockId::from_usize(3),
+                        args: Vec::new(),
+                    },
                 },
                 AmirBasicBlock {
                     id: BlockId::from_usize(3),
                     statements: DenseRange::empty(),
+                    params: Vec::new(),
                     terminator: AmirTerminator::Return,
                 },
             ],

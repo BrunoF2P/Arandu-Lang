@@ -27,7 +27,7 @@ pub fn reachable_blocks_dense(func: &AmirFunc) -> BitSet<BlockId> {
 pub fn terminator_targets(term: &AmirTerminator) -> SmallVec<[BlockId; 2]> {
     match term {
         AmirTerminator::Return | AmirTerminator::Unreachable => SmallVec::new(),
-        AmirTerminator::Goto(block) => smallvec![*block],
+        AmirTerminator::Goto { target, .. } => smallvec![*target],
         AmirTerminator::Branch {
             if_true, if_false, ..
         } => smallvec![*if_true, *if_false],
@@ -35,8 +35,8 @@ pub fn terminator_targets(term: &AmirTerminator) -> SmallVec<[BlockId; 2]> {
             targets, otherwise, ..
         } => {
             let mut blocks: SmallVec<[BlockId; 2]> =
-                targets.iter().map(|(_, block)| *block).collect();
-            blocks.push(*otherwise);
+                targets.iter().map(|(_, block, _)| *block).collect();
+            blocks.push(otherwise.0);
             blocks
         }
     }
@@ -79,6 +79,7 @@ mod tests {
         let b = AmirBasicBlock {
             id: BlockId::from_usize(0),
             statements: DenseRange::empty(),
+            params: Vec::new(),
             terminator: AmirTerminator::Return,
         };
         let func = func_with_blocks(vec![b]);
@@ -92,16 +93,22 @@ mod tests {
         let b0 = AmirBasicBlock {
             id: BlockId::from_usize(0),
             statements: DenseRange::empty(),
-            terminator: AmirTerminator::Goto(BlockId::from_usize(1)),
+            params: Vec::new(),
+            terminator: AmirTerminator::Goto {
+                target: BlockId::from_usize(1),
+                args: Vec::new(),
+            },
         };
         let b1 = AmirBasicBlock {
             id: BlockId::from_usize(1),
             statements: DenseRange::empty(),
+            params: Vec::new(),
             terminator: AmirTerminator::Return,
         };
         let b2 = AmirBasicBlock {
             id: BlockId::from_usize(2),
             statements: DenseRange::empty(),
+            params: Vec::new(),
             terminator: AmirTerminator::Return,
         };
         let func = func_with_blocks(vec![b0, b1, b2]);
@@ -117,22 +124,27 @@ mod tests {
         let b0 = AmirBasicBlock {
             id: BlockId::from_usize(0),
             statements: DenseRange::empty(),
+            params: Vec::new(),
             terminator: AmirTerminator::Branch {
                 condition: crate::amir::value::AmirOperand::Constant(
                     crate::amir::value::AmirConstant::Bool(true),
                 ),
                 if_true: BlockId::from_usize(1),
+                true_args: Vec::new(),
                 if_false: BlockId::from_usize(2),
+                false_args: Vec::new(),
             },
         };
         let b1 = AmirBasicBlock {
             id: BlockId::from_usize(1),
             statements: DenseRange::empty(),
+            params: Vec::new(),
             terminator: AmirTerminator::Return,
         };
         let b2 = AmirBasicBlock {
             id: BlockId::from_usize(2),
             statements: DenseRange::empty(),
+            params: Vec::new(),
             terminator: AmirTerminator::Return,
         };
         let func = func_with_blocks(vec![b0, b1, b2]);
@@ -146,15 +158,17 @@ mod tests {
         let b0 = AmirBasicBlock {
             id: BlockId::from_usize(0),
             statements: DenseRange::empty(),
+            params: Vec::new(),
             terminator: AmirTerminator::SwitchInt {
                 discriminant: AmirOperand::Constant(crate::amir::value::AmirConstant::Bool(true)),
                 targets: vec![],
-                otherwise: BlockId::from_usize(1),
+                otherwise: (BlockId::from_usize(1), Vec::new()),
             },
         };
         let b1 = AmirBasicBlock {
             id: BlockId::from_usize(1),
             statements: DenseRange::empty(),
+            params: Vec::new(),
             terminator: AmirTerminator::Return,
         };
         let func = func_with_blocks(vec![b0, b1]);
@@ -174,7 +188,10 @@ mod tests {
 
     #[test]
     fn terminator_targets_goto() {
-        let t = terminator_targets(&AmirTerminator::Goto(BlockId::from_usize(3)));
+        let t = terminator_targets(&AmirTerminator::Goto {
+            target: BlockId::from_usize(3),
+            args: Vec::new(),
+        });
         assert_eq!(t.len(), 1);
         assert_eq!(t[0], BlockId::from_usize(3));
     }
@@ -186,7 +203,9 @@ mod tests {
                 crate::amir::value::AmirConstant::Bool(false),
             ),
             if_true: BlockId::from_usize(1),
+            true_args: Vec::new(),
             if_false: BlockId::from_usize(2),
+            false_args: Vec::new(),
         });
         assert_eq!(t.len(), 2);
     }

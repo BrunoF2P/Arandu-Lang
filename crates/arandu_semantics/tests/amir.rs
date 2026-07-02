@@ -191,20 +191,89 @@ func main(cond: bool) {
     );
 }
 
+#[test]
+fn loop_ssa_simplification_converges() {
+    let src = r#"
+func main(cond: bool) {
+    let mut acc: int = 0
+    let mut i: int = 0
+    while i < 10 {
+        acc = acc + i
+        i = i + 1
+    }
+}
+"#;
+    let program = arandu_parser::parse(src).expect("parse failed");
+    let resolution = resolve(&program);
+    let mut tc = type_check(resolution, &program);
+    let hir = lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
+    let amir = lower_to_amir(&tc, &hir).expect("OSSA lowering failed");
+
+    assert!(!amir.funcs.is_empty());
+    let func = &amir.funcs[0];
+
+    // 1. None of the simple Load/Store statements should survive the pruning pass.
+    use arandu_middle::amir::{AmirRvalue, AmirStmt};
+    for block in &func.blocks {
+        for stmt in func.block_stmts(block.id) {
+            match stmt {
+                AmirStmt::Store { lhs, .. } => {
+                    assert!(
+                        !lhs.projections.is_empty(),
+                        "Store virtual não podado de variável simples: {:?}",
+                        stmt
+                    );
+                }
+                AmirStmt::Assign {
+                    rhs: AmirRvalue::Load(place),
+                    ..
+                } => {
+                    assert!(
+                        !place.projections.is_empty(),
+                        "Load virtual não podado de variável simples: {:?}",
+                        stmt
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // 2. The loop header block must have exactly 2 block-params (acc, i) after trivial phi elimination.
+    let loop_header = func
+        .blocks
+        .iter()
+        .find(|b| func.predecessors(b.id).len() > 1)
+        .expect("loop header not found");
+
+    assert_eq!(
+        loop_header.params.len(),
+        2,
+        "esperado exatamente 2 block-params (acc, i) no header do loop, achou {}",
+        loop_header.params.len()
+    );
+}
+
 fn empty_block(id: usize, _predecessors: &[usize], successors: &[usize]) -> AmirBasicBlock {
     let term = match successors {
         [] => AmirTerminator::Unreachable,
-        &[s] => AmirTerminator::Goto(BlockId::from_usize(s)),
+        &[s] => AmirTerminator::Goto {
+            target: BlockId::from_usize(s),
+            args: Vec::new(),
+        },
         &[t, f] => AmirTerminator::Branch {
             condition: AmirOperand::Constant(AmirConstant::Bool(true)),
             if_true: BlockId::from_usize(t),
+            true_args: Vec::new(),
             if_false: BlockId::from_usize(f),
+            false_args: Vec::new(),
         },
         _ => panic!("too many successors in test"),
     };
     AmirBasicBlock {
         id: BlockId::from_usize(id),
         statements: DenseRange::empty(),
+        params: Vec::new(),
         terminator: term,
     }
 }
@@ -283,8 +352,14 @@ fn dense_reachability_tracks_cfg_without_hash_sets() {
         ],
         AmirStmtTable::new(),
     );
-    func.blocks[0].terminator = AmirTerminator::Goto(BlockId::from_usize(1));
-    func.blocks[1].terminator = AmirTerminator::Goto(BlockId::from_usize(2));
+    func.blocks[0].terminator = AmirTerminator::Goto {
+        target: BlockId::from_usize(1),
+        args: Vec::new(),
+    };
+    func.blocks[1].terminator = AmirTerminator::Goto {
+        target: BlockId::from_usize(2),
+        args: Vec::new(),
+    };
     func.blocks[2].terminator = AmirTerminator::Return;
 
     let reachable = reachable_blocks_dense(&func);
@@ -333,6 +408,7 @@ fn local_liveness_uses_dense_bitsets() {
         vec![AmirBasicBlock {
             id: BlockId::from_usize(0),
             statements: DenseRange::new(first.as_usize(), second.as_usize() - first.as_usize() + 1),
+            params: Vec::new(),
             terminator: AmirTerminator::Return,
         }],
         stmts,
@@ -358,6 +434,7 @@ fn dce_tracks_used_temps_with_dense_bitsets() {
     let func_block = AmirBasicBlock {
         id: BlockId::from_usize(0),
         statements: DenseRange::new(first.as_usize(), 2),
+        params: Vec::new(),
         terminator: AmirTerminator::Return,
     };
     let mut func = test_func(
@@ -382,6 +459,7 @@ fn validate_amir_rejects_poison_temp_with_icegen002() {
     let func_block = AmirBasicBlock {
         id: BlockId::from_usize(0),
         statements: DenseRange::new(0, 0),
+        params: Vec::new(),
         terminator: AmirTerminator::Return,
     };
     let mut poison_temp = test_temp(0);

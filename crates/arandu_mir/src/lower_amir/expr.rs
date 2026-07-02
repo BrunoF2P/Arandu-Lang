@@ -1,7 +1,5 @@
 use super::{LowerCtx, amir_unsupported};
-use crate::amir::{
-    AmirConstant, AmirOperand, AmirPlace, AmirRvalue, AmirStmt, AmirTerminator, TempId,
-};
+use crate::amir::{AmirConstant, AmirOperand, AmirRvalue, AmirStmt, AmirTerminator, TempId};
 use crate::diagnostics::Diagnostic;
 use crate::literal_pool::AmirLiteralEntry;
 use crate::ops::BinaryOp;
@@ -173,11 +171,9 @@ impl LowerCtx<'_> {
         let bb_return_err = self.new_block();
         let bb_continue = self.new_block();
 
-        self.set_terminator(AmirTerminator::Branch {
-            condition: AmirOperand::Copy(cond_tmp),
-            if_true: bb_return_err,
-            if_false: bb_continue,
-        });
+        self.set_bool_branch(AmirOperand::Copy(cond_tmp), bb_return_err, bb_continue);
+        self.seal_block(bb_return_err);
+        self.seal_block(bb_continue);
 
         self.current_block = Some(bb_return_err);
         self.exit_all_defer_frames(true, symbols)?;
@@ -217,11 +213,9 @@ impl LowerCtx<'_> {
         let bb_return_nil = self.new_block();
         let bb_continue = self.new_block();
 
-        self.set_terminator(AmirTerminator::Branch {
-            condition: AmirOperand::Copy(cond_tmp),
-            if_true: bb_return_nil,
-            if_false: bb_continue,
-        });
+        self.set_bool_branch(AmirOperand::Copy(cond_tmp), bb_return_nil, bb_continue);
+        self.seal_block(bb_return_nil);
+        self.seal_block(bb_continue);
 
         self.current_block = Some(bb_return_nil);
         self.exit_all_defer_frames(true, symbols)?;
@@ -293,12 +287,8 @@ impl LowerCtx<'_> {
                 Ok(op)
             }
             HirExprKind::Path { symbol } => {
-                let op = if let Some(&local_id) = self.symbol_map.get(symbol) {
-                    let place = AmirPlace {
-                        local: local_id,
-                        projections: smallvec::SmallVec::new(),
-                    };
-                    self.load_place(&place, expr.ty.clone(), &[])
+                let op: AmirOperand = if let Some(&local_id) = self.symbol_map.get(symbol) {
+                    Ok::<AmirOperand, Diagnostic>(self.read_variable_source(local_id))
                 } else {
                     let sym = symbols.get(*symbol);
                     Ok(match sym.kind {
@@ -316,12 +306,8 @@ impl LowerCtx<'_> {
                 Ok(op)
             }
             HirExprKind::TypePath { member_symbol, .. } => {
-                let op = if let Some(&local_id) = self.symbol_map.get(member_symbol) {
-                    let place = AmirPlace {
-                        local: local_id,
-                        projections: smallvec::SmallVec::new(),
-                    };
-                    self.load_place(&place, expr.ty.clone(), &[])
+                let op: AmirOperand = if let Some(&local_id) = self.symbol_map.get(member_symbol) {
+                    Ok::<AmirOperand, Diagnostic>(self.read_variable_source(local_id))
                 } else {
                     Ok(AmirOperand::GlobalRef(*member_symbol))
                 }?;
@@ -475,22 +461,25 @@ impl LowerCtx<'_> {
                 let dest = target.unwrap_or_else(|| self.new_temp(expr.ty.clone()));
 
                 self.set_bool_branch(cond_op, bb_then, bb_else);
+                self.seal_block(bb_then);
+                self.seal_block(bb_else);
 
                 // Then branch
                 self.current_block = Some(bb_then);
                 self.lower_block_as_expr(*then_block, Some(dest), symbols)?;
                 if self.current_block.is_some() {
-                    self.set_terminator(AmirTerminator::Goto(bb_join));
+                    self.emit_goto(bb_join);
                 }
 
                 // Else branch
                 self.current_block = Some(bb_else);
                 self.lower_block_as_expr(*else_block, Some(dest), symbols)?;
                 if self.current_block.is_some() {
-                    self.set_terminator(AmirTerminator::Goto(bb_join));
+                    self.emit_goto(bb_join);
                 }
 
                 // Join
+                self.seal_block(bb_join);
                 self.current_block = Some(bb_join);
                 Ok(AmirOperand::Copy(dest))
             }
@@ -563,18 +552,16 @@ impl LowerCtx<'_> {
                 let bb_access = self.new_block();
                 let bb_join = self.new_block();
 
-                self.set_terminator(AmirTerminator::Branch {
-                    condition: AmirOperand::Copy(cond_tmp),
-                    if_true: bb_null,
-                    if_false: bb_access,
-                });
+                self.set_bool_branch(AmirOperand::Copy(cond_tmp), bb_null, bb_access);
+                self.seal_block(bb_null);
+                self.seal_block(bb_access);
 
                 self.current_block = Some(bb_null);
                 self.emit_assign_temp(
                     dest,
                     AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Nil)),
                 );
-                self.set_terminator(AmirTerminator::Goto(bb_join));
+                self.emit_goto(bb_join);
 
                 self.current_block = Some(bb_access);
                 let base_expr = self.hir.pool.expr(*base);
@@ -586,8 +573,9 @@ impl LowerCtx<'_> {
                         field: field_idx,
                     },
                 );
-                self.set_terminator(AmirTerminator::Goto(bb_join));
+                self.emit_goto(bb_join);
 
+                self.seal_block(bb_join);
                 self.current_block = Some(bb_join);
                 Ok(AmirOperand::Copy(dest))
             }
@@ -612,18 +600,16 @@ impl LowerCtx<'_> {
                 let bb_access = self.new_block();
                 let bb_join = self.new_block();
 
-                self.set_terminator(AmirTerminator::Branch {
-                    condition: AmirOperand::Copy(cond_tmp),
-                    if_true: bb_null,
-                    if_false: bb_access,
-                });
+                self.set_bool_branch(AmirOperand::Copy(cond_tmp), bb_null, bb_access);
+                self.seal_block(bb_null);
+                self.seal_block(bb_access);
 
                 self.current_block = Some(bb_null);
                 self.emit_assign_temp(
                     dest,
                     AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Nil)),
                 );
-                self.set_terminator(AmirTerminator::Goto(bb_join));
+                self.emit_goto(bb_join);
 
                 self.current_block = Some(bb_access);
                 let index_op = self.lower_expr(*index, None, symbols)?;
@@ -635,9 +621,10 @@ impl LowerCtx<'_> {
                     },
                 );
                 if self.current_block.is_some() {
-                    self.set_terminator(AmirTerminator::Goto(bb_join));
+                    self.emit_goto(bb_join);
                 }
 
+                self.seal_block(bb_join);
                 self.current_block = Some(bb_join);
                 Ok(AmirOperand::Copy(dest))
             }
@@ -662,22 +649,21 @@ impl LowerCtx<'_> {
                 let bb_right = self.new_block();
                 let bb_join = self.new_block();
 
-                self.set_terminator(AmirTerminator::Branch {
-                    condition: AmirOperand::Copy(cond_tmp),
-                    if_true: bb_left,
-                    if_false: bb_right,
-                });
+                self.set_bool_branch(AmirOperand::Copy(cond_tmp), bb_left, bb_right);
+                self.seal_block(bb_left);
+                self.seal_block(bb_right);
 
                 self.current_block = Some(bb_left);
                 self.emit_assign_temp(dest, AmirRvalue::Use(left_op));
-                self.set_terminator(AmirTerminator::Goto(bb_join));
+                self.emit_goto(bb_join);
 
                 self.current_block = Some(bb_right);
                 self.lower_expr(*right, Some(dest), symbols)?;
                 if self.current_block.is_some() {
-                    self.set_terminator(AmirTerminator::Goto(bb_join));
+                    self.emit_goto(bb_join);
                 }
 
+                self.seal_block(bb_join);
                 self.current_block = Some(bb_join);
                 Ok(AmirOperand::Copy(dest))
             }

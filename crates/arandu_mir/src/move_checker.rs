@@ -150,15 +150,36 @@ pub fn check_moves(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagnostic> {
 
 fn temp_origins(func: &AmirFunc) -> Vec<Option<LocalId>> {
     let mut origins = vec![None; func.temps.len()];
+    for (i, &param_temp) in func.params.iter().enumerate() {
+        origins[param_temp.as_usize()] = Some(LocalId::from_usize(i));
+    }
     for block in &func.blocks {
-        for stmt in func.block_stmts(block.id) {
-            if let AmirStmt::Assign {
-                lhs,
-                rhs: AmirRvalue::Load(place),
-            } = stmt
-            {
-                if place.projections.is_empty() {
-                    origins[lhs.as_usize()] = Some(place.local);
+        for param in &block.params {
+            origins[param.id.as_usize()] = Some(param.local);
+        }
+    }
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for block in &func.blocks {
+            for stmt in func.block_stmts(block.id) {
+                if let AmirStmt::Assign { lhs, rhs } = stmt {
+                    let mut found_origin = None;
+                    match rhs {
+                        AmirRvalue::Load(place) if place.projections.is_empty() => {
+                            found_origin = Some(place.local);
+                        }
+                        AmirRvalue::Use(AmirOperand::Copy(t) | AmirOperand::Move(t)) => {
+                            found_origin = origins[t.as_usize()];
+                        }
+                        _ => {}
+                    }
+                    if let Some(loc) = found_origin {
+                        if origins[lhs.as_usize()].is_none() {
+                            origins[lhs.as_usize()] = Some(loc);
+                            changed = true;
+                        }
+                    }
                 }
             }
         }
@@ -206,13 +227,42 @@ fn apply_block(
     }
 
     match &func.block(block).terminator {
-        AmirTerminator::Branch { condition, .. } => {
+        AmirTerminator::Branch {
+            condition,
+            true_args,
+            false_args,
+            ..
+        } => {
             check_operand_read(condition, func, temp_origins, state, &mut diagnostics);
+            for arg in true_args {
+                consume_operand(arg, func, temp_origins, state, &mut diagnostics, false);
+            }
+            for arg in false_args {
+                consume_operand(arg, func, temp_origins, state, &mut diagnostics, false);
+            }
         }
-        AmirTerminator::SwitchInt { discriminant, .. } => {
+        AmirTerminator::SwitchInt {
+            discriminant,
+            targets,
+            otherwise,
+            ..
+        } => {
             check_operand_read(discriminant, func, temp_origins, state, &mut diagnostics);
+            for (_, _, args) in targets {
+                for arg in args {
+                    consume_operand(arg, func, temp_origins, state, &mut diagnostics, false);
+                }
+            }
+            for arg in &otherwise.1 {
+                consume_operand(arg, func, temp_origins, state, &mut diagnostics, false);
+            }
         }
-        AmirTerminator::Return | AmirTerminator::Goto(_) | AmirTerminator::Unreachable => {}
+        AmirTerminator::Goto { args, .. } => {
+            for arg in args {
+                consume_operand(arg, func, temp_origins, state, &mut diagnostics, false);
+            }
+        }
+        AmirTerminator::Return | AmirTerminator::Unreachable => {}
     }
 }
 
@@ -433,15 +483,15 @@ fn local_name(local: LocalId, func: &AmirFunc, symbols: &SymbolTable) -> String 
 fn successors(term: &AmirTerminator) -> Vec<crate::amir::BlockId> {
     match term {
         AmirTerminator::Return | AmirTerminator::Unreachable => Vec::new(),
-        AmirTerminator::Goto(block) => vec![*block],
+        AmirTerminator::Goto { target, .. } => vec![*target],
         AmirTerminator::Branch {
             if_true, if_false, ..
         } => vec![*if_true, *if_false],
         AmirTerminator::SwitchInt {
             targets, otherwise, ..
         } => {
-            let mut out: Vec<_> = targets.iter().map(|(_, block)| *block).collect();
-            out.push(*otherwise);
+            let mut out: Vec<_> = targets.iter().map(|(_, block, _)| *block).collect();
+            out.push(otherwise.0);
             out
         }
     }
@@ -498,6 +548,7 @@ mod tests {
         AmirBasicBlock {
             id: BlockId::from_usize(0),
             statements: range,
+            params: Vec::new(),
             terminator: AmirTerminator::Return,
         }
     }
@@ -609,10 +660,13 @@ mod tests {
         let block0 = AmirBasicBlock {
             id: b0,
             statements: range0,
+            params: Vec::new(),
             terminator: AmirTerminator::Branch {
                 condition: AmirOperand::Copy(TempId::from_usize(0)),
                 if_true: b1,
+                true_args: Vec::new(),
                 if_false: b2,
+                false_args: Vec::new(),
             },
         };
 
@@ -621,13 +675,21 @@ mod tests {
         let block1 = AmirBasicBlock {
             id: b1,
             statements: range1,
-            terminator: AmirTerminator::Goto(b3),
+            params: Vec::new(),
+            terminator: AmirTerminator::Goto {
+                target: b3,
+                args: Vec::new(),
+            },
         };
 
         let block2 = AmirBasicBlock {
             id: b2,
             statements: DenseRange::empty(),
-            terminator: AmirTerminator::Goto(b3),
+            params: Vec::new(),
+            terminator: AmirTerminator::Goto {
+                target: b3,
+                args: Vec::new(),
+            },
         };
 
         let mut range3 = DenseRange::empty();
@@ -641,6 +703,7 @@ mod tests {
         let block3 = AmirBasicBlock {
             id: b3,
             statements: range3,
+            params: Vec::new(),
             terminator: AmirTerminator::Return,
         };
 

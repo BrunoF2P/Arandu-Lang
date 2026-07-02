@@ -106,7 +106,25 @@ impl AmirFunc {
 
         // Basic blocks
         for block in &self.blocks {
-            out.push_str(&format!("  bb{}:\n", block.id.0));
+            let mut param_str = String::new();
+            if !block.params.is_empty() {
+                let p_strs: Vec<String> = block
+                    .params
+                    .iter()
+                    .map(|p| {
+                        let mut s = format!("_{}: {}", p.id.0, p.ty.display(symbols, interner));
+                        if let Some(ref from) = p.from {
+                            s.push_str(&format!(" /* from: \"{from}\" */"));
+                        }
+                        if p.moved {
+                            s.push_str(" @moved");
+                        }
+                        s
+                    })
+                    .collect();
+                param_str = format!("({})", p_strs.join(", "));
+            }
+            out.push_str(&format!("  bb{}{}:\n", block.id.0, param_str));
             for stmt in self.block_stmts(block.id) {
                 out.push_str("    ");
                 stmt.pretty_print_to(out, symbols, pool);
@@ -326,25 +344,44 @@ impl AmirConstant {
     }
 }
 
+fn format_args(args: &[AmirOperand], symbols: &SymbolTable, pool: &AmirLiteralPool) -> String {
+    if args.is_empty() {
+        return String::new();
+    }
+    let arg_strs: Vec<String> = args
+        .iter()
+        .map(|a| a.to_pretty_string(symbols, pool))
+        .collect();
+    format!("({})", arg_strs.join(", "))
+}
+
 impl AmirTerminator {
     fn pretty_print_to(&self, out: &mut String, symbols: &SymbolTable, pool: &AmirLiteralPool) {
         match self {
             AmirTerminator::Return => {
                 out.push_str("return");
             }
-            AmirTerminator::Goto(b) => {
-                out.push_str(&format!("goto bb{}", b.0));
+            AmirTerminator::Goto { target, args } => {
+                out.push_str(&format!(
+                    "goto bb{}{}",
+                    target.0,
+                    format_args(args, symbols, pool)
+                ));
             }
             AmirTerminator::Branch {
                 condition,
                 if_true,
+                true_args,
                 if_false,
+                false_args,
             } => {
                 out.push_str(&format!(
-                    "branch {} => bb{}, else bb{}",
+                    "branch {} => bb{}{}, else bb{}{}",
                     condition.to_pretty_string(symbols, pool),
                     if_true.0,
-                    if_false.0
+                    format_args(true_args, symbols, pool),
+                    if_false.0,
+                    format_args(false_args, symbols, pool)
                 ));
             }
             AmirTerminator::SwitchInt {
@@ -358,13 +395,24 @@ impl AmirTerminator {
                 ));
                 let target_strs: Vec<String> = targets
                     .iter()
-                    .map(|(val, dest)| format!("{} => bb{}", val, dest.0))
+                    .map(|(val, dest, target_args)| {
+                        format!(
+                            "{} => bb{}{}",
+                            val,
+                            dest.0,
+                            format_args(target_args, symbols, pool)
+                        )
+                    })
                     .collect();
                 out.push_str(&target_strs.join(", "));
                 if !targets.is_empty() {
                     out.push_str(", ");
                 }
-                out.push_str(&format!("otherwise => bb{} }}", otherwise.0));
+                out.push_str(&format!(
+                    "otherwise => bb{}{} }}",
+                    otherwise.0.0,
+                    format_args(&otherwise.1, symbols, pool)
+                ));
             }
             AmirTerminator::Unreachable => {
                 out.push_str("unreachable");

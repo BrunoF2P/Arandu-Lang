@@ -12,27 +12,23 @@ Func test_match_expr(x: int) -> int
     s1: int // res
 
   bb0:
-    s0 = _1
-    _2 = s0
-    switchInt _2 { 1 => bb2, otherwise => bb3 }
+    switchInt _1 { 1 => bb2, otherwise => bb3 }
   bb1:
-    s1 = _3
-    _7 = s1
-    _0 = _7
+    _0 = _3
     return
   bb2:
     _3 = 10
     goto bb1
   bb3:
-    _4 = ge _2, 2
-    _5 = lt _2, 5
+    _4 = ge _1, 2
+    _5 = lt _1, 5
     _6 = and _4, _5
-    switchInt _6 { 1 => bb4, otherwise => bb5 }
+    branch _6 => bb4, else bb5
   bb4:
     _3 = 20
     goto bb1
   bb5:
-    switchInt true { 1 => bb6, otherwise => bb7 }
+    branch true => bb6, else bb7
   bb6:
     _3 = 30
     goto bb1
@@ -48,33 +44,27 @@ Func test_match_stmt(x: int) -> int
     _4: bool
     _5: bool
     _6: int
+    _7: int
     s0: int // x
     s1: int // res
 
   bb0:
-    s0 = _1
-    s1 = 0
-    _2 = s0
-    switchInt _2 { 1 => bb2, otherwise => bb3 }
-  bb1:
-    _6 = s1
+    switchInt _1 { 1 => bb2, otherwise => bb3 }
+  bb1(_6: int /* from: "res" */):
     _0 = _6
     return
   bb2:
-    s1 = 10
-    goto bb1
+    goto bb1(10)
   bb3:
-    _3 = ge _2, 2
-    _4 = lt _2, 5
+    _3 = ge _1, 2
+    _4 = lt _1, 5
     _5 = and _3, _4
-    switchInt _5 { 1 => bb4, otherwise => bb5 }
+    branch _5 => bb4, else bb5
   bb4:
-    s1 = 20
-    goto bb1
+    goto bb1(20)
   bb5:
-    switchInt true { 1 => bb6, otherwise => bb7 }
+    branch true => bb6, else bb7
   bb6:
-    s1 = 30
-    goto bb1
+    goto bb1(30)
   bb7:
     unreachable

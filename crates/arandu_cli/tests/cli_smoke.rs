@@ -105,8 +105,9 @@ fn amir_opt_flag_folds_constants_without_changing_default_command() {
     let file = dir.join("arandu_cli_amir_opt.aru");
     fs::write(
         &file,
-        r"func main() {
+        r"func main(): int {
     let value: int = 1 + 2
+    return value
 }
 ",
     )
@@ -123,7 +124,7 @@ fn amir_opt_flag_folds_constants_without_changing_default_command() {
     let optimized_stdout = String::from_utf8_lossy(&optimized.stdout);
     assert!(plain_stdout.contains("add 1, 2"));
     assert!(!optimized_stdout.contains("add 1, 2"));
-    assert!(optimized_stdout.contains("_1 = 3"));
+    assert!(optimized_stdout.contains("= 3"));
 }
 
 #[test]

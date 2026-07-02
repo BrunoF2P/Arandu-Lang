@@ -76,17 +76,23 @@ pub fn simplify_cfg(func: &mut AmirFunc) -> bool {
 /// If `bid` ends with `Goto(target)` and `target` is an empty `Goto`-only
 /// chain, bypass the chain and go directly to the final non-trivial block.
 fn thread_block(func: &mut AmirFunc, bid: BlockId) -> bool {
-    let target = match func.block(bid).terminator {
-        AmirTerminator::Goto(t) => t,
+    let (target, args) = match &func.block(bid).terminator {
+        AmirTerminator::Goto { target, args } => (*target, args),
         _ => return false,
     };
+    if !args.is_empty() {
+        return false;
+    }
 
     let final_target = resolve_goto_chain(func, target);
     if final_target == target {
         return false;
     }
 
-    func.block_mut(bid).terminator = AmirTerminator::Goto(final_target);
+    func.block_mut(bid).terminator = AmirTerminator::Goto {
+        target: final_target,
+        args: Vec::new(),
+    };
     retarget_successor(&mut func.cfg, bid, target, final_target);
     true
 }
@@ -94,11 +100,16 @@ fn thread_block(func: &mut AmirFunc, bid: BlockId) -> bool {
 fn resolve_goto_chain(func: &AmirFunc, mut block: BlockId) -> BlockId {
     loop {
         let b = func.block(block);
-        if !b.statements.is_empty() {
+        if !b.statements.is_empty() || !b.params.is_empty() {
             return block;
         }
         match &b.terminator {
-            AmirTerminator::Goto(t) => block = *t,
+            AmirTerminator::Goto { target, args } => {
+                if !args.is_empty() {
+                    return block;
+                }
+                block = *target;
+            }
             _ => return block,
         }
     }
@@ -222,6 +233,7 @@ fn remove_unreachable_blocks(func: &mut AmirFunc) -> bool {
         new_blocks.push(AmirBasicBlock {
             id: old_to_new[old].unwrap(),
             statements: func.blocks[old].statements,
+            params: func.blocks[old].params.clone(),
             terminator: new_term,
         });
     }
@@ -259,21 +271,28 @@ fn remove_unreachable_blocks(func: &mut AmirFunc) -> bool {
 
 fn remap_terminator(term: &AmirTerminator, map: &[Option<BlockId>]) -> AmirTerminator {
     match term {
-        AmirTerminator::Goto(b) => {
-            let new_b = map[b.as_usize()].unwrap_or(*b);
-            AmirTerminator::Goto(new_b)
+        AmirTerminator::Goto { target, args } => {
+            let new_target = map[target.as_usize()].unwrap_or(*target);
+            AmirTerminator::Goto {
+                target: new_target,
+                args: args.clone(),
+            }
         }
         AmirTerminator::Branch {
             condition,
             if_true,
+            true_args,
             if_false,
+            false_args,
         } => {
             let new_t = map[if_true.as_usize()].unwrap_or(*if_true);
             let new_f = map[if_false.as_usize()].unwrap_or(*if_false);
             AmirTerminator::Branch {
                 condition: condition.clone(),
                 if_true: new_t,
+                true_args: true_args.clone(),
                 if_false: new_f,
+                false_args: false_args.clone(),
             }
         }
         AmirTerminator::SwitchInt {
@@ -281,10 +300,13 @@ fn remap_terminator(term: &AmirTerminator, map: &[Option<BlockId>]) -> AmirTermi
             targets,
             otherwise,
         } => {
-            let new_otherwise = map[otherwise.as_usize()].unwrap_or(*otherwise);
+            let new_otherwise = (
+                map[otherwise.0.as_usize()].unwrap_or(otherwise.0),
+                otherwise.1.clone(),
+            );
             let new_targets: Vec<_> = targets
                 .iter()
-                .map(|(val, b)| (*val, map[b.as_usize()].unwrap_or(*b)))
+                .map(|(val, b, args)| (*val, map[b.as_usize()].unwrap_or(*b), args.clone()))
                 .collect();
             AmirTerminator::SwitchInt {
                 discriminant: discriminant.clone(),
@@ -330,6 +352,7 @@ mod tests {
         AmirBasicBlock {
             id: BlockId::from_usize(id),
             statements: range,
+            params: Vec::new(),
             terminator: AmirTerminator::Return,
         }
     }
@@ -359,12 +382,20 @@ mod tests {
                 AmirBasicBlock {
                     id: bbid(0),
                     statements: DenseRange::empty(),
-                    terminator: AmirTerminator::Goto(bbid(1)),
+                    params: Vec::new(),
+                    terminator: AmirTerminator::Goto {
+                        target: bbid(1),
+                        args: Vec::new(),
+                    },
                 },
                 AmirBasicBlock {
                     id: bbid(1),
                     statements: DenseRange::empty(),
-                    terminator: AmirTerminator::Goto(bbid(2)),
+                    params: Vec::new(),
+                    terminator: AmirTerminator::Goto {
+                        target: bbid(2),
+                        args: Vec::new(),
+                    },
                 },
                 block(2, vec![], &mut st),
             ],
@@ -415,11 +446,16 @@ mod tests {
                 AmirBasicBlock {
                     id: bbid(0),
                     statements: DenseRange::new(0, 1),
-                    terminator: AmirTerminator::Goto(bbid(1)),
+                    params: Vec::new(),
+                    terminator: AmirTerminator::Goto {
+                        target: bbid(1),
+                        args: Vec::new(),
+                    },
                 },
                 AmirBasicBlock {
                     id: bbid(1),
                     statements: DenseRange::new(1, 1),
+                    params: Vec::new(),
                     terminator: AmirTerminator::Return,
                 },
             ],
@@ -462,7 +498,11 @@ mod tests {
                 AmirBasicBlock {
                     id: bbid(0),
                     statements: DenseRange::empty(),
-                    terminator: AmirTerminator::Goto(bbid(1)),
+                    params: Vec::new(),
+                    terminator: AmirTerminator::Goto {
+                        target: bbid(1),
+                        args: Vec::new(),
+                    },
                 },
                 block(1, vec![], &mut st),
                 block(2, vec![], &mut st),
@@ -499,12 +539,20 @@ mod tests {
                 AmirBasicBlock {
                     id: bbid(0),
                     statements: DenseRange::empty(),
-                    terminator: AmirTerminator::Goto(bbid(1)),
+                    params: Vec::new(),
+                    terminator: AmirTerminator::Goto {
+                        target: bbid(1),
+                        args: Vec::new(),
+                    },
                 },
                 AmirBasicBlock {
                     id: bbid(1),
                     statements: DenseRange::empty(),
-                    terminator: AmirTerminator::Goto(bbid(2)),
+                    params: Vec::new(),
+                    terminator: AmirTerminator::Goto {
+                        target: bbid(2),
+                        args: Vec::new(),
+                    },
                 },
                 block(2, vec![], &mut st),
             ],

@@ -9,9 +9,5 @@ Func add(a: int, b: int) -> int
     s1: int // b
 
   bb0:
-    s0 = _1
-    s1 = _2
-    _3 = s0
-    _4 = s1
-    _0 = add _3, _4
+    _0 = add _1, _2
     return

@@ -197,4 +197,38 @@ The AMIR lowering compiler pass performs the following steps:
    - Nested operators (e.g. `a + b * c`) are flattened: inner operators are evaluated into temporary registers, and these temporaries are used as operands in subsequent statements.
 5. For structured statements:
    - `If`: Allocates the conditional evaluation block, branches into a `then` block and an `else` block (each ending with a jump to a joint `bb_exit` block).
-   - `While`: Jumps to a condition evaluation block, which checks the condition and jumps either to the loop body block or the loop exit block. The loop body block ends with an unconditional jump back to the condition block.
+   
+- `While`: Jumps to a condition evaluation block, which checks the condition and jumps either to the loop body block or the loop exit block. The loop body block ends with an unconditional jump back to the condition block.
+
+## OSSA (Ownership Static Single Assignment) Construction & Virtual Anchoring
+
+In Arandu, local variable tracking (definite initialization and ownership/move checking) is performed on the completed AMIR CFG as separate compiler passes. However, to generate optimal machine code, variables are promoted to pure Static Single Assignment (SSA) form using **Braun's algorithm**.
+
+Directly promoting to SSA during lowering would eliminate all `Load` and `Store` statements of simple local variables, leaving the move and initialization checkers with no statements to inspect (making use-before-init and use-after-move undetectable). 
+
+To solve this, Arandu implements the **Virtual Anchoring & Pruning** design pattern:
+
+### 1. The Virtual Anchor Pattern
+
+During HIR-to-AMIR lowering:
+1. **SSABuilder (Braun's algorithm)** is used to construct pure SSA values and parameter blocks (phi nodes) on-the-fly.
+2. Every source-level write of a simple local variable (via `write_variable_source`) updates the SSA builder's `current_def` map and *additionally* emits a dummy `Store` statement:
+   `Store(local, value)`
+3. Every source-level read of a simple local variable (via `read_variable_source`) queries the SSA builder for the active SSA value (`val`). It then generates a new virtual temporary (`temp`) and emits a dummy `Load` statement:
+   `temp = Load(local)`
+   And registers a redirection: `redirected_temps.insert(temp, val)`.
+   Subsequent statements in the block refer to `temp`.
+
+### 2. Validation Stage
+
+The compiler runs all verification passes (`check_definite_init`, `check_moves`, and `validate_amir_func`) on the **raw AMIR**, which still contains all virtual `Store` and `Load` anchors. 
+- The move checker can trace the flow of values and state modifications (e.g. `Available` -> `Moved`) through the dummy statements.
+- The definite initialization checker uses the virtual `Store` instructions to compute block-level initialization facts.
+
+### 3. Operand Rewriting & Pruning
+
+After all validations succeed with no errors:
+1. **Operand Rewriting**: `rewrite_all_operands()` recursively replaces all virtual temporaries in statements and block parameters with their final, resolved SSA values from the redirection map.
+2. **Poda (Pruning)**: `prune_dummy_loads_stores()` sweeps the entire function CFG and deletes all virtual `Store` and `Load` statements of simple local variables (those with empty projections).
+3. The remaining AMIR contains pure, optimal SSA code with zero redundant copies, ready to be translated by the Cranelift backend.
+

@@ -129,7 +129,7 @@ fn collect_terminator_uses(
         AmirTerminator::SwitchInt { discriminant, .. } => {
             collect_operand_uses(discriminant, defined, uses, block);
         }
-        AmirTerminator::Return | AmirTerminator::Goto(_) | AmirTerminator::Unreachable => {}
+        AmirTerminator::Return | AmirTerminator::Goto { .. } | AmirTerminator::Unreachable => {}
     }
 }
 
@@ -252,6 +252,7 @@ mod tests {
         AmirBasicBlock {
             id: block_id(id),
             statements: DenseRange::empty(),
+            params: Vec::new(),
             terminator: AmirTerminator::Return,
         }
     }
@@ -369,11 +370,16 @@ mod tests {
         let block0 = AmirBasicBlock {
             id: b0,
             statements: DenseRange::new(0, 1),
-            terminator: AmirTerminator::Goto(b1),
+            params: Vec::new(),
+            terminator: AmirTerminator::Goto {
+                target: b1,
+                args: Vec::new(),
+            },
         };
         let block1 = AmirBasicBlock {
             id: b1,
             statements: DenseRange::new(1, 1),
+            params: Vec::new(),
             terminator: AmirTerminator::Return,
         };
 
@@ -402,10 +408,13 @@ mod tests {
         let block0 = AmirBasicBlock {
             id: b0,
             statements: DenseRange::new(0, 1),
+            params: Vec::new(),
             terminator: AmirTerminator::Branch {
                 condition: AmirOperand::Copy(temp_id(0)),
                 if_true: b1,
+                true_args: Vec::new(),
                 if_false: b2,
+                false_args: Vec::new(),
             },
         };
         let block1 = empty_block(1);
@@ -431,10 +440,11 @@ mod tests {
         let block0 = AmirBasicBlock {
             id: b0,
             statements: DenseRange::new(0, 1),
+            params: Vec::new(),
             terminator: AmirTerminator::SwitchInt {
                 discriminant: AmirOperand::Copy(temp_id(0)),
                 targets: vec![],
-                otherwise: block_id(1),
+                otherwise: (block_id(1), Vec::new()),
             },
         };
         let block1 = empty_block(1);
@@ -475,21 +485,32 @@ mod tests {
         let block0 = AmirBasicBlock {
             id: b0,
             statements: DenseRange::new(0, 1),
+            params: Vec::new(),
             terminator: AmirTerminator::Branch {
                 condition: AmirOperand::Constant(AmirConstant::Bool(true)),
                 if_true: b1,
+                true_args: Vec::new(),
                 if_false: b2,
+                false_args: Vec::new(),
             },
         };
         let block1 = AmirBasicBlock {
             id: b1,
             statements: DenseRange::empty(),
-            terminator: AmirTerminator::Goto(b3),
+            params: Vec::new(),
+            terminator: AmirTerminator::Goto {
+                target: b3,
+                args: Vec::new(),
+            },
         };
         let block2 = AmirBasicBlock {
             id: b2,
             statements: DenseRange::new(1, 1),
-            terminator: AmirTerminator::Goto(b3),
+            params: Vec::new(),
+            terminator: AmirTerminator::Goto {
+                target: b3,
+                args: Vec::new(),
+            },
         };
         let block3 = empty_block(3);
 

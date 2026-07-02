@@ -64,7 +64,7 @@ pub enum AmirRvalue {
     BorrowMut(AmirPlace),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AmirOperand {
     Copy(TempId),
     Move(TempId),

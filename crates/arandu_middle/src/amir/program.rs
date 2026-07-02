@@ -105,6 +105,7 @@ mod tests {
     fn block(id: usize) -> AmirBasicBlock {
         AmirBasicBlock {
             id: super::super::block::BlockId::from_usize(id),
+            params: Vec::new(),
             statements: DenseRange::empty(),
             terminator: AmirTerminator::Return,
         }

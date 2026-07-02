@@ -149,7 +149,7 @@ fn apply(func: &mut AmirFunc, pool: &mut AmirLiteralPool, lattice: &[LatticeVal]
             AmirTerminator::Branch { .. } | AmirTerminator::SwitchInt { .. }
         );
         let new_term = simplify_terminator(&old_term, lattice, pool);
-        let is_goto = matches!(&new_term, AmirTerminator::Goto(_));
+        let is_goto = matches!(&new_term, AmirTerminator::Goto { .. });
         if was_branch_or_switch && is_goto {
             func.block_mut(bid).terminator = new_term;
             changed = true;
@@ -244,6 +244,7 @@ fn propagate_branches(
             condition,
             if_true,
             if_false,
+            ..
         } => match operand_lattice(condition, lattice) {
             LatticeVal::Constant(AmirConstant::Bool(true)) => {
                 changed |= set_reachable(*if_true, reachable);
@@ -256,7 +257,7 @@ fn propagate_branches(
                 changed |= set_reachable(*if_false, reachable);
             }
         },
-        AmirTerminator::Goto(target) => {
+        AmirTerminator::Goto { target, .. } => {
             changed |= set_reachable(*target, reachable);
         }
         AmirTerminator::SwitchInt {
@@ -267,7 +268,7 @@ fn propagate_branches(
             LatticeVal::Constant(c) => {
                 if let Some(val) = const_as_i128(&c, pool) {
                     let mut matched = false;
-                    for (tv, tb) in targets {
+                    for (tv, tb, _) in targets {
                         if *tv == val {
                             changed |= set_reachable(*tb, reachable);
                             matched = true;
@@ -275,20 +276,20 @@ fn propagate_branches(
                         }
                     }
                     if !matched {
-                        changed |= set_reachable(*otherwise, reachable);
+                        changed |= set_reachable(otherwise.0, reachable);
                     }
                 } else {
-                    for (_, tb) in targets {
+                    for (_, tb, _) in targets {
                         changed |= set_reachable(*tb, reachable);
                     }
-                    changed |= set_reachable(*otherwise, reachable);
+                    changed |= set_reachable(otherwise.0, reachable);
                 }
             }
             _ => {
-                for (_, tb) in targets {
+                for (_, tb, _) in targets {
                     changed |= set_reachable(*tb, reachable);
                 }
-                changed |= set_reachable(*otherwise, reachable);
+                changed |= set_reachable(otherwise.0, reachable);
             }
         },
         AmirTerminator::Return | AmirTerminator::Unreachable => {}
@@ -321,10 +322,18 @@ fn simplify_terminator(
         AmirTerminator::Branch {
             condition,
             if_true,
+            true_args,
             if_false,
+            false_args,
         } => match operand_lattice(condition, lattice) {
-            LatticeVal::Constant(AmirConstant::Bool(true)) => AmirTerminator::Goto(*if_true),
-            LatticeVal::Constant(AmirConstant::Bool(false)) => AmirTerminator::Goto(*if_false),
+            LatticeVal::Constant(AmirConstant::Bool(true)) => AmirTerminator::Goto {
+                target: *if_true,
+                args: true_args.clone(),
+            },
+            LatticeVal::Constant(AmirConstant::Bool(false)) => AmirTerminator::Goto {
+                target: *if_false,
+                args: false_args.clone(),
+            },
             _ => terminator.clone(),
         },
         AmirTerminator::SwitchInt {
@@ -334,12 +343,18 @@ fn simplify_terminator(
         } => match operand_lattice(discriminant, lattice) {
             LatticeVal::Constant(c) => {
                 if let Some(val) = const_as_i128(&c, pool) {
-                    for (tv, tb) in targets {
+                    for (tv, tb, args) in targets {
                         if *tv == val {
-                            return AmirTerminator::Goto(*tb);
+                            return AmirTerminator::Goto {
+                                target: *tb,
+                                args: args.clone(),
+                            };
                         }
                     }
-                    AmirTerminator::Goto(*otherwise)
+                    AmirTerminator::Goto {
+                        target: otherwise.0,
+                        args: otherwise.1.clone(),
+                    }
                 } else {
                     terminator.clone()
                 }

@@ -5,23 +5,18 @@ Func test_literal(x: int) -> int
     _2: int
     _3: bool
     _4: int
+    _5: int
     s0: int // x
     s1: int // res
 
   bb0:
-    s0 = _1
-    s1 = 0
-    _2 = s0
-    _3 = eq _2, 5
-    switchInt _3 { 1 => bb1, otherwise => bb2 }
+    _3 = eq _1, 5
+    branch _3 => bb1, else bb2
   bb1:
-    s1 = 10
-    goto bb3
+    goto bb3(10)
   bb2:
-    s1 = 20
-    goto bb3
-  bb3:
-    _4 = s1
+    goto bb3(20)
+  bb3(_4: int /* from: "res" */):
     _0 = _4
     return
 
@@ -31,21 +26,16 @@ Func test_wildcard(x: int) -> int
     _1: int
     _2: int
     _3: int
+    _4: int
     s0: int // x
     s1: int // res
 
   bb0:
-    s0 = _1
-    s1 = 0
-    _2 = s0
-    switchInt true { 1 => bb1, otherwise => bb2 }
+    branch true => bb1, else bb2
   bb1:
-    s1 = 10
-    goto bb3
+    goto bb3(10)
   bb2:
-    s1 = 20
-    goto bb3
-  bb3:
-    _3 = s1
+    goto bb3(20)
+  bb3(_3: int /* from: "res" */):
     _0 = _3
     return

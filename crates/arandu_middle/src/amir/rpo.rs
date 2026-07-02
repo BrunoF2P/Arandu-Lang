@@ -45,19 +45,25 @@ mod tests {
     fn make_block(id: usize, successors: &[usize]) -> AmirBasicBlock {
         let term = match successors {
             [] => AmirTerminator::Return,
-            &[s] => AmirTerminator::Goto(BlockId::from_usize(s)),
+            &[s] => AmirTerminator::Goto {
+                target: BlockId::from_usize(s),
+                args: Vec::new(),
+            },
             &[t, f] => AmirTerminator::Branch {
                 condition: crate::amir::AmirOperand::Constant(crate::amir::AmirConstant::Bool(
                     true,
                 )),
                 if_true: BlockId::from_usize(t),
+                true_args: Vec::new(),
                 if_false: BlockId::from_usize(f),
+                false_args: Vec::new(),
             },
             _ => panic!("too many successors"),
         };
         AmirBasicBlock {
             id: BlockId::from_usize(id),
             statements: DenseRange::empty(),
+            params: Vec::new(),
             terminator: term,
         }
     }

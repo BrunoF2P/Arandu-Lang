@@ -274,6 +274,7 @@ mod tests {
         let blocks = vec![AmirBasicBlock {
             id: BlockId::from_usize(0),
             statements: range,
+            params: Vec::new(),
             terminator: AmirTerminator::Return,
         }];
         let cfg = crate::cfg::compute_cfg_edges(&blocks);

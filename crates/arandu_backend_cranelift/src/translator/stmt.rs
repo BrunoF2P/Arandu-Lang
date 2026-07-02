@@ -1,7 +1,7 @@
 use arandu_semantics::amir::{
     AmirOperand, AmirPlace, AmirProjection, AmirStmt, AmirTerminator, TempId,
 };
-use cranelift_codegen::ir::{InstBuilder, TrapCode, Type, Value};
+use cranelift_codegen::ir::{BlockArg, InstBuilder, TrapCode, Type, Value};
 use cranelift_frontend::Switch;
 use cranelift_module::{FuncId, Module};
 
@@ -286,21 +286,72 @@ impl FunctionTranslator<'_, '_> {
                     }
                 }
             }
-            AmirTerminator::Goto(target) => {
+            AmirTerminator::Goto { target, args } => {
+                let target_block = &self.current_func.blocks[target.as_usize()];
+                let clif_args: Vec<BlockArg> = args
+                    .iter()
+                    .enumerate()
+                    .map(|(j, arg)| {
+                        let param_ty = &target_block.params[j].ty;
+                        let expected_ty = match clif_type(param_ty, self.ptr_type) {
+                            ClifType::Concrete(ty) => Some(ty),
+                            ClifType::Void => None,
+                        };
+                        let val = self.translate_operand(arg, expected_ty);
+                        BlockArg::Value(val)
+                    })
+                    .collect();
                 let clif_target = self.block_map[target];
-                self.builder.ins().jump(clif_target, &[]);
+                self.builder.ins().jump(clif_target, &clif_args);
             }
             AmirTerminator::Branch {
                 condition,
                 if_true,
+                true_args,
                 if_false,
+                false_args,
             } => {
                 let cond_val = self.translate_operand(condition, None);
+
+                let true_block_def = &self.current_func.blocks[if_true.as_usize()];
+                let true_clif_args: Vec<BlockArg> = true_args
+                    .iter()
+                    .enumerate()
+                    .map(|(j, arg)| {
+                        let param_ty = &true_block_def.params[j].ty;
+                        let expected_ty = match clif_type(param_ty, self.ptr_type) {
+                            ClifType::Concrete(ty) => Some(ty),
+                            ClifType::Void => None,
+                        };
+                        let val = self.translate_operand(arg, expected_ty);
+                        BlockArg::Value(val)
+                    })
+                    .collect();
+
+                let false_block_def = &self.current_func.blocks[if_false.as_usize()];
+                let false_clif_args: Vec<BlockArg> = false_args
+                    .iter()
+                    .enumerate()
+                    .map(|(j, arg)| {
+                        let param_ty = &false_block_def.params[j].ty;
+                        let expected_ty = match clif_type(param_ty, self.ptr_type) {
+                            ClifType::Concrete(ty) => Some(ty),
+                            ClifType::Void => None,
+                        };
+                        let val = self.translate_operand(arg, expected_ty);
+                        BlockArg::Value(val)
+                    })
+                    .collect();
+
                 let true_block = self.block_map[if_true];
                 let false_block = self.block_map[if_false];
-                self.builder
-                    .ins()
-                    .brif(cond_val, true_block, &[], false_block, &[]);
+                self.builder.ins().brif(
+                    cond_val,
+                    true_block,
+                    &true_clif_args,
+                    false_block,
+                    &false_clif_args,
+                );
             }
             AmirTerminator::SwitchInt {
                 discriminant,
@@ -308,10 +359,18 @@ impl FunctionTranslator<'_, '_> {
                 otherwise,
             } => {
                 let disc_val = self.translate_operand(discriminant, None);
-                let otherwise_block = self.block_map[otherwise];
+                let otherwise_block = self.block_map[&otherwise.0];
+                assert!(
+                    otherwise.1.is_empty(),
+                    "SwitchInt otherwise block cannot have arguments"
+                );
 
                 let mut switch = Switch::new();
-                for &(val, ref target) in targets {
+                for &(val, ref target, ref args) in targets {
+                    assert!(
+                        args.is_empty(),
+                        "SwitchInt target block cannot have arguments"
+                    );
                     let target_block = self.block_map[target];
                     switch.set_entry(val as u128, target_block);
                 }

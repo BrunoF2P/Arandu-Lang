@@ -210,18 +210,23 @@ mod tests {
 #[derive(Debug, Clone)]
 pub enum AmirTerminator {
     Return,
-    Goto(BlockId),
+    Goto {
+        target: BlockId,
+        args: Vec<AmirOperand>,
+    },
     /// Boolean conditional branch: if `condition` is true, jump to `if_true`, else `if_false`.
     Branch {
         condition: AmirOperand,
         if_true: BlockId,
+        true_args: Vec<AmirOperand>,
         if_false: BlockId,
+        false_args: Vec<AmirOperand>,
     },
     /// Integer discriminant switch (e.g. enum tags, `switch` on int).
     SwitchInt {
         discriminant: AmirOperand,
-        targets: Vec<(i128, BlockId)>,
-        otherwise: BlockId,
+        targets: Vec<(i128, BlockId, Vec<AmirOperand>)>,
+        otherwise: (BlockId, Vec<AmirOperand>),
     },
     Unreachable,
 }

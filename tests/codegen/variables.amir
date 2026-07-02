@@ -7,9 +7,5 @@ Func variables() -> int
     s1: int // y
 
   bb0:
-    s0 = 10
-    s1 = 20
-    _1 = s0
-    _2 = s1
-    _0 = add _1, _2
+    _0 = add 10, 20
     return

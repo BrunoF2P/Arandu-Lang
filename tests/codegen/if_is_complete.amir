@@ -18,31 +18,26 @@ Func test_tuple_pattern() -> int
     _7: bool
     _8: int
     _9: int
+    _10: int
+    _11: int
     s0: (int, int) // pair
     s1: int // val
     s2: int // x
 
-  bb0:
+  bb0(_8: int /* from: "x" */):
     _1 = call fn@make_pair()
-    s0 = move _1
-    s1 = 0
-    _2 = s0
-    _3 = _2.0
-    s2 = _3
+    _3 = move _1.0
     _4 = and true, true
-    _5 = _2.1
+    _5 = move _1.1
     _6 = eq _5, 10
     _7 = and _4, _6
-    switchInt _7 { 1 => bb1, otherwise => bb2 }
+    branch _7 => bb1, else bb2
   bb1:
-    _8 = s2
-    s1 = _8
-    goto bb3
+    goto bb3(_8)
   bb2:
-    goto bb3
-  bb3:
-    _9 = s1
-    _0 = _9
+    goto bb3(0)
+  bb3(_10: int /* from: "val" */):
+    _0 = _10
     return
 
 Func test_typetuple_pattern(res: Result) -> int
@@ -56,29 +51,24 @@ Func test_typetuple_pattern(res: Result) -> int
     _6: bool
     _7: int
     _8: int
+    _9: int
+    _10: int
     s0: Result // res
     s1: int // val
     s2: int // x
 
-  bb0:
-    s0 = move _1
-    s1 = 0
-    _2 = s0
-    _3 = discriminant(_2)
+  bb0(_7: int /* from: "x" */):
+    _3 = discriminant(_1)
     _4 = eq _3, 0
-    _5 = payload(_2 as Ok.0)
-    s2 = _5
+    _5 = payload(_1 as Ok.0)
     _6 = and _4, true
-    switchInt _6 { 1 => bb1, otherwise => bb2 }
+    branch _6 => bb1, else bb2
   bb1:
-    _7 = s2
-    s1 = _7
-    goto bb3
+    goto bb3(_7)
   bb2:
-    goto bb3
-  bb3:
-    _8 = s1
-    _0 = _8
+    goto bb3(0)
+  bb3(_9: int /* from: "val" */):
+    _0 = _9
     return
 
 Func test_range_pattern(x: int) -> bool
@@ -90,24 +80,20 @@ Func test_range_pattern(x: int) -> bool
     _4: bool
     _5: bool
     _6: bool
+    _7: bool
     s0: int // x
     s1: bool // res
 
   bb0:
-    s0 = _1
-    s1 = false
-    _2 = s0
-    _3 = ge _2, 1
-    _4 = le _2, 10
+    _3 = ge _1, 1
+    _4 = le _1, 10
     _5 = and _3, _4
-    switchInt _5 { 1 => bb1, otherwise => bb2 }
+    branch _5 => bb1, else bb2
   bb1:
-    s1 = true
-    goto bb3
+    goto bb3(true)
   bb2:
-    goto bb3
-  bb3:
-    _6 = s1
+    goto bb3(false)
+  bb3(_6: bool /* from: "res" */):
     _0 = _6
     return
 
@@ -120,23 +106,19 @@ Func test_range_exclusive(x: int) -> bool
     _4: bool
     _5: bool
     _6: bool
+    _7: bool
     s0: int // x
     s1: bool // res
 
   bb0:
-    s0 = _1
-    s1 = false
-    _2 = s0
-    _3 = ge _2, 1
-    _4 = lt _2, 10
+    _3 = ge _1, 1
+    _4 = lt _1, 10
     _5 = and _3, _4
-    switchInt _5 { 1 => bb1, otherwise => bb2 }
+    branch _5 => bb1, else bb2
   bb1:
-    s1 = true
-    goto bb3
+    goto bb3(true)
   bb2:
-    goto bb3
-  bb3:
-    _6 = s1
+    goto bb3(false)
+  bb3(_6: bool /* from: "res" */):
     _0 = _6
     return

@@ -7,9 +7,7 @@ Func test_alloc_free() -> void
 
   bb0:
     _1 = alloc(64)
-    s0 = _1
-    _2 = s0
-    free _2
+    free _1
     return
 
 Func test_defer() -> int
@@ -19,10 +17,7 @@ Func test_defer() -> int
     s0: int // x
 
   bb0:
-    s0 = 0
-    s0 = 1
-    _1 = s0
-    _0 = _1
+    _0 = 1
     return
 
 Func test_defer_scope() -> int
@@ -31,20 +26,16 @@ Func test_defer_scope() -> int
     _1: int
     _2: int
     _3: int
+    _4: int
     s0: int // x
 
   bb0:
-    s0 = 0
-    switchInt true { 1 => bb1, otherwise => bb2 }
+    branch true => bb1, else bb2
   bb1:
-    s0 = 5
-    _1 = s0
-    _2 = add _1, 10
-    s0 = _2
-    goto bb3
+    _2 = add 5, 10
+    goto bb3(_2)
   bb2:
-    goto bb3
-  bb3:
-    _3 = s0
+    goto bb3(0)
+  bb3(_3: int /* from: "x" */):
     _0 = _3
     return

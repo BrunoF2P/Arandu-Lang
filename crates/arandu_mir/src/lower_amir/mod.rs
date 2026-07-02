@@ -1,16 +1,14 @@
 use crate::amir::{
-    AmirBasicBlock, AmirLocal, AmirProgram, AmirStmtTable, AmirTemp, BlockId, LocalId,
+    AmirBasicBlock, AmirFunc, AmirLocal, AmirOperand, AmirProgram, AmirRvalue, AmirStmt,
+    AmirStmtTable, AmirTemp, BlockId, LocalId, TempId,
 };
-use crate::amir_validate::validate_amir_func;
-use crate::definite_init::check_definite_init;
 use crate::diagnostics::{DiagCode, Diagnostic, Severity};
 use crate::hir::{HirBlock, HirDecl, HirFunc, HirProgram};
 use crate::literal_pool::AmirLiteralPool;
-use crate::move_checker::check_moves;
 use crate::passes::type_checker::types::ArType;
 use crate::{SymbolId, TypeCheckResult};
 use arandu_lexer::Span;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 mod ctx;
 mod expr;
@@ -40,11 +38,8 @@ pub fn lower_to_amir(
             },
         ) = hir.pool.decl(decl_id)
         {
-            match lower_func(f, *body, tc, hir, &mut literal_pool) {
+            match lower_func(f, *body, tc, hir, &mut literal_pool, &mut diagnostics) {
                 Ok(amir_f) => {
-                    diagnostics.extend(validate_amir_func(&amir_f, &tc.symbols));
-                    diagnostics.extend(check_definite_init(&amir_f, &tc.symbols));
-                    diagnostics.extend(check_moves(&amir_f, &tc.symbols));
                     funcs.push(amir_f);
                 }
                 Err(diag) => diagnostics.push(diag),
@@ -61,6 +56,44 @@ pub fn lower_to_amir(
     } else {
         Err(diagnostics)
     }
+}
+
+pub fn prune_dummy_loads_stores(func: &mut AmirFunc) {
+    let mut new_stmts = AmirStmtTable::new();
+    let mut new_blocks = Vec::with_capacity(func.blocks.len());
+
+    for block in &func.blocks {
+        let new_range_start = new_stmts.len();
+        let mut new_range_len = 0;
+
+        for stmt_id in func.block_stmt_ids(block.id) {
+            let stmt = func.stmts.get(stmt_id).unwrap();
+            let keep = match stmt {
+                AmirStmt::Store { lhs, .. } if lhs.projections.is_empty() => false,
+                AmirStmt::Assign {
+                    rhs: AmirRvalue::Load(place),
+                    ..
+                } if place.projections.is_empty() => false,
+                _ => true,
+            };
+
+            if keep {
+                new_stmts.push(stmt.clone());
+                new_range_len += 1;
+            }
+        }
+
+        new_blocks.push(AmirBasicBlock {
+            id: block.id,
+            params: block.params.clone(),
+            statements: crate::layout::DenseRange::new(new_range_start, new_range_len),
+            terminator: block.terminator.clone(),
+        });
+    }
+
+    func.stmts = new_stmts;
+    func.blocks = new_blocks;
+    func.cfg = crate::cfg::compute_cfg_edges(&func.blocks);
 }
 
 pub(crate) fn amir_unsupported(span: Span, feature: &str, roadmap: &str) -> Diagnostic {
@@ -99,6 +132,13 @@ pub(crate) struct LowerCtx<'a> {
     temp_states: Vec<MoveState>,
     temp_origins: Vec<Option<LocalId>>,
     local_states: Vec<MoveState>,
+
+    // SSA builder fields (OSSA Braun et al.)
+    predecessors: FxHashMap<BlockId, Vec<BlockId>>,
+    sealed_blocks: FxHashSet<BlockId>,
+    current_def: FxHashMap<(BlockId, LocalId), AmirOperand>,
+    incomplete_phis: FxHashMap<BlockId, Vec<(LocalId, TempId)>>,
+    redirected_temps: FxHashMap<TempId, AmirOperand>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

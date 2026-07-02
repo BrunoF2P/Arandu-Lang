@@ -8,7 +8,7 @@ pub mod rpo;
 pub mod stmt;
 pub mod value;
 
-pub use block::{AmirBasicBlock, BlockId};
+pub use block::{AmirBasicBlock, BlockId, BlockParam};
 pub use dominators::Dominators;
 pub use local::{AmirLocal, AmirReceiver, AmirTemp, LocalId, TempId};
 pub use program::{AmirFunc, AmirProgram};

@@ -26,9 +26,7 @@ Func test_try() -> int
     return
   bb2:
     _4 = _1.0
-    s0 = _4
-    _5 = s0
-    _0 = mul _5, 2
+    _0 = mul _4, 2
     return
 
 Func test_safe_field(p: Point?) -> int
@@ -42,15 +40,13 @@ Func test_safe_field(p: Point?) -> int
     s0: Point? // p
 
   bb0:
-    s0 = _1
-    _3 = s0
-    _4 = eq _3, nil
+    _4 = eq _1, nil
     branch _4 => bb1, else bb2
   bb1:
     _2 = nil
     goto bb3
   bb2:
-    _2 = _3.0
+    _2 = _1.0
     goto bb3
   bb3:
     _5 = ne _2, nil
@@ -78,17 +74,13 @@ Func test_safe_index(arr: []int, idx: int) -> int
     s1: int // idx
 
   bb0:
-    s0 = move _1
-    s1 = _2
-    _4 = s0
-    _5 = eq _4, nil
+    _5 = eq _1, nil
     branch _5 => bb1, else bb2
   bb1:
     _3 = nil
     goto bb3
   bb2:
-    _6 = s1
-    _3 = _4[_6]
+    _3 = _1[_2]
     goto bb3
   bb3:
     _7 = ne _3, nil
@@ -114,17 +106,13 @@ Func test_null_coalesce(a: int?, b: int) -> int
     s1: int // b
 
   bb0:
-    s0 = _1
-    s1 = _2
-    _3 = s0
-    _4 = ne _3, nil
+    _4 = ne _1, nil
     branch _4 => bb1, else bb2
   bb1:
-    _0 = _3
+    _0 = _1
     goto bb3
   bb2:
-    _5 = s1
-    _0 = _5
+    _0 = _2
     goto bb3
   bb3:
     return

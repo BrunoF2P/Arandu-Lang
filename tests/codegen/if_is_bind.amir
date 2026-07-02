@@ -5,24 +5,18 @@ Func test_bind(x: int) -> int
     _2: int
     _3: int
     _4: int
+    _5: int
+    _6: int
     s0: int // x
     s1: int // res
     s2: int // y
 
-  bb0:
-    s0 = _1
-    s1 = 0
-    _2 = s0
-    s2 = _2
-    switchInt true { 1 => bb1, otherwise => bb2 }
+  bb0(_3: int /* from: "y" */):
+    branch true => bb1, else bb2
   bb1:
-    _3 = s2
-    s1 = _3
-    goto bb3
+    goto bb3(_3)
   bb2:
-    s1 = 20
-    goto bb3
-  bb3:
-    _4 = s1
-    _0 = _4
+    goto bb3(20)
+  bb3(_5: int /* from: "res" */):
+    _0 = _5
     return

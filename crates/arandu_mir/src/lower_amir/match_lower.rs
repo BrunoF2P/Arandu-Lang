@@ -78,6 +78,7 @@ impl LowerCtx<'_> {
             self.lower_match_chain(scrutinee, &arms, dest, bb_end, symbols)?;
         }
 
+        self.seal_block(bb_end);
         self.current_block = Some(bb_end);
         Ok(AmirOperand::Copy(dest))
     }
@@ -114,6 +115,7 @@ impl LowerCtx<'_> {
         } else {
             self.lower_match_chain_stmt(scrutinee, &arms, bb_end, symbols)?;
         }
+        self.seal_block(bb_end);
         self.current_block = Some(bb_end);
         Ok(())
     }
@@ -256,11 +258,11 @@ impl LowerCtx<'_> {
         let otherwise_bb = self.new_block();
 
         self.current_block = Some(entry_bb);
-        self.set_terminator(AmirTerminator::SwitchInt {
-            discriminant: plan.discriminant,
-            targets,
-            otherwise: otherwise_bb,
-        });
+        self.emit_switch_int(plan.discriminant, targets.clone(), otherwise_bb);
+        self.seal_block(otherwise_bb);
+        for sw in &plan.arms {
+            self.seal_block(sw.block);
+        }
 
         for sw in &plan.arms {
             self.current_block = Some(sw.block);
@@ -300,11 +302,11 @@ impl LowerCtx<'_> {
         let otherwise_bb = self.new_block();
 
         self.current_block = Some(entry_bb);
-        self.set_terminator(AmirTerminator::SwitchInt {
-            discriminant: plan.discriminant,
-            targets,
-            otherwise: otherwise_bb,
-        });
+        self.emit_switch_int(plan.discriminant, targets.clone(), otherwise_bb);
+        self.seal_block(otherwise_bb);
+        for sw in &plan.arms {
+            self.seal_block(sw.block);
+        }
         for sw in &plan.arms {
             self.current_block = Some(sw.block);
             self.lower_match_arm_stmt(&ctx.arms[sw.arm_index], ctx.bb_end, ctx.symbols)?;
@@ -369,20 +371,20 @@ impl LowerCtx<'_> {
             let is_match = self.lower_pattern_match(scrutinee.clone(), &pattern, symbols)?;
             if let Some(guard) = arm.guard {
                 let bb_guard = self.new_block();
-                self.set_terminator(AmirTerminator::Branch {
-                    condition: is_match,
-                    if_true: bb_guard,
-                    if_false: bb_next,
-                });
+                self.set_bool_branch(is_match, bb_guard, bb_next);
+                self.seal_block(bb_guard);
                 self.current_block = Some(bb_guard);
                 let guard_res = self.lower_expr(guard, None, symbols)?;
                 self.set_bool_branch(guard_res, bb_match, bb_next);
+                self.seal_block(bb_match);
             } else {
                 self.set_bool_branch(is_match, bb_match, bb_next);
+                self.seal_block(bb_match);
             }
             self.current_block = Some(bb_match);
             self.lower_match_arm_stmt(arm, bb_end, symbols)?;
             self.current_block = Some(bb_next);
+            self.seal_block(bb_next);
             if i + 1 == indices.len() {
                 self.set_terminator(AmirTerminator::Unreachable);
             }
@@ -405,7 +407,7 @@ impl LowerCtx<'_> {
             }
         }
         if self.current_block.is_some() {
-            self.set_terminator(AmirTerminator::Goto(bb_end));
+            self.emit_goto(bb_end);
         }
         Ok(())
     }
@@ -429,21 +431,21 @@ impl LowerCtx<'_> {
 
             if let Some(guard) = arm.guard {
                 let bb_guard = self.new_block();
-                self.set_terminator(AmirTerminator::Branch {
-                    condition: is_match,
-                    if_true: bb_guard,
-                    if_false: bb_next,
-                });
+                self.set_bool_branch(is_match, bb_guard, bb_next);
+                self.seal_block(bb_guard);
                 self.current_block = Some(bb_guard);
                 let guard_res = self.lower_expr(guard, None, symbols)?;
                 self.set_bool_branch(guard_res, bb_match, bb_next);
+                self.seal_block(bb_match);
             } else {
                 self.set_bool_branch(is_match, bb_match, bb_next);
+                self.seal_block(bb_match);
             }
 
             self.current_block = Some(bb_match);
             self.lower_match_arm_body(arm, dest, bb_end, symbols)?;
             self.current_block = Some(bb_next);
+            self.seal_block(bb_next);
 
             if i + 1 == indices.len() {
                 self.set_terminator(AmirTerminator::Unreachable);
@@ -468,7 +470,7 @@ impl LowerCtx<'_> {
             }
         }
         if self.current_block.is_some() {
-            self.set_terminator(AmirTerminator::Goto(bb_end));
+            self.emit_goto(bb_end);
         }
         Ok(())
     }
