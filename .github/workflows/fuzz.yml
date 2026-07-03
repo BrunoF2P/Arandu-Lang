@@ -1,0 +1,90 @@
+name: Fuzz
+
+on:
+  schedule:
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz-lex:
+    name: Fuzz Lexer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v4
+        with:
+          path: arandu_fuzz/corpus/fuzz_lex
+          key: fuzz-corpus-lex-${{ github.run_id }}
+          restore-keys: fuzz-corpus-lex-
+      - run: cargo fuzz run fuzz_lex -- -max_total_time=1800
+        working-directory: arandu_fuzz
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fuzz-lex-crashes
+          path: arandu_fuzz/corpus/fuzz_lex/crashes/
+
+  fuzz-parse:
+    name: Fuzz Parser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v4
+        with:
+          path: arandu_fuzz/corpus/fuzz_parse
+          key: fuzz-corpus-parse-${{ github.run_id }}
+          restore-keys: fuzz-corpus-parse-
+      - run: cargo fuzz run fuzz_parse -- -max_total_time=1800
+        working-directory: arandu_fuzz
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fuzz-parse-crashes
+          path: arandu_fuzz/corpus/fuzz_parse/crashes/
+
+  fuzz-lex-simd:
+    name: Fuzz Lexer SIMD Equivalence
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v4
+        with:
+          path: arandu_fuzz/corpus/fuzz_lex_simd
+          key: fuzz-corpus-lex-simd-${{ github.run_id }}
+          restore-keys: fuzz-corpus-lex-simd-
+      - run: cargo fuzz run fuzz_lex_simd -- -max_total_time=1800
+        working-directory: arandu_fuzz
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fuzz-lex-simd-crashes
+          path: arandu_fuzz/corpus/fuzz_lex_simd/crashes/
+
+  fuzz-parse-structured:
+    name: Fuzz Parser (Structured)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v4
+        with:
+          path: arandu_fuzz/corpus/fuzz_parse_structured
+          key: fuzz-corpus-parse-structured-${{ github.run_id }}
+          restore-keys: fuzz-corpus-parse-structured-
+      - run: cargo fuzz run fuzz_parse_structured -- -max_total_time=1800
+        working-directory: arandu_fuzz
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fuzz-parse-structured-crashes
+          path: arandu_fuzz/corpus/fuzz_parse_structured/crashes/

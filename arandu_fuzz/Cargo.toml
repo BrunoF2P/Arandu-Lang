@@ -1,0 +1,29 @@
+[package]
+name = "arandu_fuzz"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4.13"
+arandu_lexer = { path = "../crates/arandu_lexer" }
+arandu_parser = { path = "../crates/arandu_parser" }
+
+[[bin]]
+name = "fuzz_lex"
+path = "fuzz_targets/fuzz_lex.rs"
+
+[[bin]]
+name = "fuzz_parse"
+path = "fuzz_targets/fuzz_parse.rs"
+
+[[bin]]
+name = "fuzz_lex_simd"
+path = "fuzz_targets/fuzz_lex_simd.rs"
+
+[[bin]]
+name = "fuzz_parse_structured"
+path = "fuzz_targets/fuzz_parse_structured.rs"
