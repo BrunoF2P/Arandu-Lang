@@ -19,6 +19,7 @@ arandu_diagnostics = { path = "../arandu_diagnostics" }
 arandu_base = { path = "../arandu_base", features = ["vm"] }
 libc = "0.2.186"
 rustc-hash = "2.1.2"
+tracing.workspace = true
 
 [lib]
 path = "src/lib.rs"

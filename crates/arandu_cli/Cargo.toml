@@ -14,4 +14,5 @@ arandu_parser = { path = "../arandu_parser" }
 arandu_semantics = { path = "../arandu_semantics" }
 arandu_backend_cranelift = { path = "../arandu_backend_cranelift" }
 arandu_base = { path = "../arandu_base" }
+tracing.workspace = true
 

@@ -3,6 +3,7 @@ use arandu_parser::{Program, TopLevelDecl};
 use crate::type_checker::TypeChecker;
 use crate::type_checker::types::ArType;
 
+#[tracing::instrument(level = "trace", target = "arandu_typeck", skip(checker, program))]
 pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Program) {
     for decl_id in &program.decls {
         let decl = checker.pool.decl(*decl_id);
@@ -134,6 +135,7 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
     }
 }
 
+#[tracing::instrument(level = "trace", target = "arandu_typeck", skip(checker, program))]
 pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &Program) {
     for decl_id in &program.decls {
         let decl = checker.pool.decl(*decl_id);

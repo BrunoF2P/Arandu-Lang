@@ -315,7 +315,11 @@ impl<'a> Lexer<'a> {
                     continue;
                 }
             }
-            return Some(peek_kind_from(&self.source[i..]));
+            // Ensure i is on a UTF-8 char boundary before slicing into &str
+            let valid_i = (i..=bytes.len())
+                .find(|&pos| self.source.is_char_boundary(pos))
+                .unwrap_or(bytes.len());
+            return Some(peek_kind_from(&self.source[valid_i..]));
         }
         Some(TokenKind::Eof)
     }
@@ -389,8 +393,10 @@ impl<'a> Lexer<'a> {
             let b = bytes[self.pos];
             if b < 128 {
                 Some(b as char)
-            } else {
+            } else if self.source.is_char_boundary(self.pos) {
                 self.source[self.pos..].chars().next()
+            } else {
+                None
             }
         } else {
             None

@@ -34,6 +34,7 @@ pub fn parse(source: &str) -> Result<Program, ParseError> {
     parse_with_file_id(source, 0)
 }
 
+#[tracing::instrument(level = "trace", target = "arandu_parser", skip(source))]
 pub fn parse_with_file_id(source: &str, file_id: u32) -> Result<Program, ParseError> {
     let output = parse_recovering_with_file_id(source, file_id);
     if let Some(err) = output.diagnostics.into_iter().next() {

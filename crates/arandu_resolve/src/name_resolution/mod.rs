@@ -1,3 +1,6 @@
+use arandu_middle::parse_cache::ParseCache;
+use arandu_middle::StdlibPathCache;
+use arandu_middle::CompileSession;
 use arandu_parser::{FuncName, Program, TopLevelDecl};
 
 use crate::{ResolutionResult, ResolvedNames, SymbolKind, SymbolTable};
@@ -11,31 +14,18 @@ mod symbols;
 mod types;
 mod util;
 
-fn find_stdlib_path(relative: &str) -> Option<std::path::PathBuf> {
-    let mut current = std::env::current_dir().ok()?;
-    loop {
-        let candidate = current.join(relative);
-        if candidate.exists() {
-            return Some(candidate);
-        }
-        if let Some(parent) = current.parent() {
-            current = parent.to_path_buf();
-        } else {
-            break;
-        }
-    }
-    None
-}
-
+#[tracing::instrument(level = "trace", target = "arandu_resolve")]
 pub(crate) fn load_stdlib_transitively(
     table: &mut SymbolTable,
     start_relative_path: &str,
     current_module: Option<&str>,
     program: Option<&Program>,
+    cache: &mut ParseCache,
+    stdlib_cache: &mut StdlibPathCache,
 ) {
     let mut visited = rustc_hash::FxHashSet::default();
     let mut queue = Vec::new();
-    if let Some(path) = find_stdlib_path(start_relative_path) {
+    if let Some(path) = stdlib_cache.get_or_resolve(start_relative_path) {
         queue.push((path, start_relative_path.to_string()));
     }
     if let Some(p) = program {
@@ -43,12 +33,12 @@ pub(crate) fn load_stdlib_transitively(
             if let arandu_parser::ImportDecl::External { source, .. } = import {
                 if let Some(relative) = source.strip_prefix("std.core.") {
                     let stdlib_rel = format!("stdlib/core/{relative}.aru");
-                    if let Some(path) = find_stdlib_path(&stdlib_rel) {
+                    if let Some(path) = stdlib_cache.get_or_resolve(&stdlib_rel) {
                         queue.push((path, stdlib_rel.clone()));
                     }
                 } else if let Some(relative) = source.strip_prefix("std.alloc.") {
                     let stdlib_rel = format!("stdlib/alloc/{relative}.aru");
-                    if let Some(path) = find_stdlib_path(&stdlib_rel) {
+                    if let Some(path) = stdlib_cache.get_or_resolve(&stdlib_rel) {
                         queue.push((path, stdlib_rel.clone()));
                     }
                 }
@@ -60,9 +50,20 @@ pub(crate) fn load_stdlib_transitively(
         if !visited.insert(path.clone()) {
             continue;
         }
-        if let Ok(source) = std::fs::read_to_string(&path)
-            && let Ok(program) = arandu_parser::parse(&source)
+        let read_span = tracing::info_span!(target: "arandu_resolve", "read_stdlib_file").entered();
+        let source = std::fs::read_to_string(&path);
+        drop(read_span);
+        if let Ok(source) = source
+            && let Ok(program) = cache.get_or_parse(&path, &source)
         {
+            let parse_span = tracing::info_span!(
+                target: "arandu_resolve",
+                "process_stdlib_file",
+                file = tracing::field::Empty
+            ).entered();
+            if let Some(ref module) = program.module {
+                parse_span.record("file", tracing::field::display(module.path.join(".")));
+            }
             let is_current = if let Some(module) = &program.module {
                 let module_name = module.path.join(".");
                 Some(module_name.as_str()) == current_module
@@ -76,20 +77,24 @@ pub(crate) fn load_stdlib_transitively(
                     .as_ref()
                     .map(|m| m.path.join("."))
                     .unwrap_or_default();
-                eprintln!("[load_stdlib] Processing: {}", mod_label);
+                tracing::debug!(target: "arandu_resolve", module = %mod_label, "Processing stdlib module");
                 // Collect symbols and merge
-                let (syms, _, _, _) = crate::name_resolution::collect_symbols(&program);
+                let (syms, _, _, _) = crate::name_resolution::collect_symbols(program);
                 let before = table.iter().count();
                 table.merge_from(syms);
                 let after = table.iter().count();
-                eprintln!(
-                    "[load_stdlib] Merged {} new symbols into table",
-                    after - before
-                );
+                let new_syms = after - before;
+                tracing::debug!(target: "arandu_resolve", new_symbols = new_syms, "Merged symbols into table");
 
+                let members_span = tracing::info_span!(
+                    target: "arandu_resolve",
+                    "define_module_members",
+                    module = tracing::field::Empty
+                ).entered();
                 // Define module members
                 if let Some(module) = &program.module {
                     let module_name = module.path.join(".");
+                    members_span.record("module", tracing::field::display(&module_name));
                     for decl_id in &program.decls {
                         let decl = program.pool.decl(*decl_id);
                         match decl {
@@ -117,32 +122,40 @@ pub(crate) fn load_stdlib_transitively(
                         }
                     }
                 }
-            }
+                drop(members_span);
 
-            // Enqueue imports
-            for import in &program.imports {
-                if let arandu_parser::ImportDecl::External { source, .. } = import {
-                    eprintln!(
-                        "[load_stdlib] Import: source='{}' in {:?}",
-                        source,
-                        program.module.as_ref().map(|m| m.path.join("."))
-                    );
-                    if let Some(relative) = source.strip_prefix("std.core.") {
-                        let stdlib_rel = format!("stdlib/core/{relative}.aru");
-                        if let Some(p) = find_stdlib_path(&stdlib_rel) {
-                            eprintln!("[load_stdlib] Enqueuing: {:?}", p);
-                            queue.push((p, stdlib_rel));
-                        } else {
-                            eprintln!("[load_stdlib] NOT FOUND: {}", stdlib_rel);
-                        }
-                    } else if let Some(relative) = source.strip_prefix("std.alloc.") {
-                        let stdlib_rel = format!("stdlib/alloc/{relative}.aru");
-                        if let Some(p) = find_stdlib_path(&stdlib_rel) {
-                            queue.push((p, stdlib_rel));
+                let imports_span = tracing::info_span!(
+                    target: "arandu_resolve",
+                    "scan_imports",
+                    file = tracing::field::Empty
+                ).entered();
+                if let Some(ref module) = program.module {
+                    imports_span.record("file", tracing::field::display(module.path.join(".")));
+                }
+                // Enqueue imports
+                for import in &program.imports {
+                    if let arandu_parser::ImportDecl::External { source, .. } = import {
+                        let current_mod = program.module.as_ref().map(|m| m.path.join("."));
+                        tracing::debug!(target: "arandu_resolve", import = %source, current_module = ?current_mod, "Stdlib import found");
+                        if let Some(relative) = source.strip_prefix("std.core.") {
+                            let stdlib_rel = format!("stdlib/core/{relative}.aru");
+                            if let Some(p) = stdlib_cache.get_or_resolve(&stdlib_rel) {
+                                tracing::debug!(target: "arandu_resolve", path = ?p, "Enqueuing stdlib module");
+                                queue.push((p, stdlib_rel));
+                            } else {
+                                tracing::warn!(target: "arandu_resolve", path = %stdlib_rel, "Stdlib path not found");
+                            }
+                        } else if let Some(relative) = source.strip_prefix("std.alloc.") {
+                            let stdlib_rel = format!("stdlib/alloc/{relative}.aru");
+                            if let Some(p) = stdlib_cache.get_or_resolve(&stdlib_rel) {
+                                queue.push((p, stdlib_rel));
+                            }
                         }
                     }
                 }
+                drop(imports_span);
             }
+            drop(parse_span);
         }
     }
 }
@@ -151,7 +164,7 @@ pub(crate) fn load_stdlib_transitively(
 pub fn create_symbol_table_with_prelude() -> SymbolTable {
     let mut table = SymbolTable::new();
     let span = arandu_lexer::Span::new(0, 0, 0);
-    eprintln!("[prelude] Creating symbol table with prelude");
+    tracing::debug!(target: "arandu_resolve", "Creating symbol table with prelude");
     for (module, members) in [
         ("io", ["println", "create", "remove"].as_slice()),
         ("err", ["new"].as_slice()),
@@ -160,16 +173,41 @@ pub fn create_symbol_table_with_prelude() -> SymbolTable {
             let _ = table.define_module_member(module, member, span);
         }
     }
-    load_stdlib_transitively(&mut table, "stdlib/core/prelude.aru", None, None);
+    load_stdlib_transitively(
+        &mut table,
+        "stdlib/core/prelude.aru",
+        None,
+        None,
+        &mut ParseCache::new(),
+        &mut StdlibPathCache::new(),
+    );
     table
 }
 
 #[must_use]
-pub fn resolve(program: &Program) -> ResolutionResult {
-    Resolver::new(&program.pool, Some(program)).resolve_program(program)
+pub fn resolve_with_cache(program: &Program, session: &mut CompileSession) -> ResolutionResult {
+    Resolver::new(
+        &program.pool,
+        Some(program),
+        &mut session.parse_cache,
+        &mut session.stdlib_cache,
+    )
+    .resolve_program(program)
 }
 
 #[must_use]
+pub fn resolve(program: &Program) -> ResolutionResult {
+    Resolver::new(
+        &program.pool,
+        Some(program),
+        &mut ParseCache::new(),
+        &mut StdlibPathCache::new(),
+    )
+    .resolve_program(program)
+}
+
+#[must_use]
+#[tracing::instrument(level = "trace", target = "arandu_resolve", skip(program))]
 pub fn collect_symbols(
     program: &Program,
 ) -> (

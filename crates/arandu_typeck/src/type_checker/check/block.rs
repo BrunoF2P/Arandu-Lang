@@ -5,6 +5,7 @@ use super::super::TypeChecker;
 use super::super::types::ArType;
 use super::stmt::check_stmt;
 
+#[tracing::instrument(level = "trace", target = "arandu_typeck", skip(checker, pool, block))]
 pub fn check_block(checker: &mut TypeChecker<'_>, pool: &AstPool, block: &Block) -> ArType {
     let mut last_ty = ArType::Void;
     let len = block.statements.len();

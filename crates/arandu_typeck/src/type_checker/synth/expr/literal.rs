@@ -23,6 +23,7 @@ pub(super) fn array_element_types_compatible(
     types::unify(a, b, interner)
 }
 
+#[tracing::instrument(level = "trace", target = "arandu_typeck", skip(checker, _expr))]
 pub(super) fn synth_literal_expr(
     checker: &mut TypeChecker<'_>,
     _expr: ExprId,

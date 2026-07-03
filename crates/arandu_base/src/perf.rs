@@ -14,6 +14,8 @@
 
 use std::{
     io::IsTerminal,
+    path::PathBuf,
+    sync::OnceLock,
     sync::atomic::{AtomicBool, AtomicU64, Ordering},
     time::Instant,
 };
@@ -33,8 +35,6 @@ const GREEN: &str = "\x1b[92m";
 const CYAN: &str = "\x1b[96m";
 /// Bright yellow — `[mem]` + memory stats
 const YELLOW: &str = "\x1b[93m";
-/// Bright blue — `[info]` informational messages
-const BLUE: &str = "\x1b[94m";
 /// Bright red — warnings / errors in perf context
 const RED: &str = "\x1b[91m";
 
@@ -48,6 +48,22 @@ pub static PROFILE_QUERIES: AtomicBool = AtomicBool::new(false);
 pub static PRINT_ALLOC_STATS: AtomicBool = AtomicBool::new(false);
 /// `-Zdump-mir` — dump MIR after each pass.
 pub static DUMP_MIR: AtomicBool = AtomicBool::new(false);
+
+/// `-Zdebug-parser` — enable trace-level logging for the parser.
+pub static DEBUG_PARSER: AtomicBool = AtomicBool::new(false);
+/// `-Zdebug-typeck` — enable trace-level logging for type checking & unification.
+pub static DEBUG_TYPECK: AtomicBool = AtomicBool::new(false);
+/// `-Zdebug-ossa` — enable trace-level logging for move checker, OSSA & AMIR passes.
+pub static DEBUG_OSSA: AtomicBool = AtomicBool::new(false);
+/// `-Zdebug-layout` — enable trace-level logging for the layout engine.
+pub static DEBUG_LAYOUT: AtomicBool = AtomicBool::new(false);
+/// `-Zdebug-backend` — enable trace-level logging for Cranelift codegen.
+pub static DEBUG_BACKEND: AtomicBool = AtomicBool::new(false);
+/// `-Zdebug-all` — enable all debug categories above.
+pub static DEBUG_ALL: AtomicBool = AtomicBool::new(false);
+
+/// `-Zself-profile=<path>` — path for Trace Event JSON output.
+pub static SELF_PROFILE_PATH: OnceLock<String> = OnceLock::new();
 
 // ── Global metric counters ────────────────────────────────────────────────────
 
@@ -148,11 +164,31 @@ fn emit(tag_color: &str, tag: &str, msg: &str) {
 pub fn init_z_flags(flags: &[String]) {
     for flag in flags {
         let key = flag.trim_start_matches("-Z");
-        match key {
+        // Split flag=value pairs (e.g. self-profile=trace.json).
+        let (op, value) = match key.split_once('=') {
+            Some((k, v)) => (k, Some(v)),
+            None => (key, None),
+        };
+        match op {
             "time-passes" => TIME_PASSES.store(true, Ordering::Relaxed),
             "profile-queries" => PROFILE_QUERIES.store(true, Ordering::Relaxed),
             "print-alloc-stats" => PRINT_ALLOC_STATS.store(true, Ordering::Relaxed),
             "dump-mir" => DUMP_MIR.store(true, Ordering::Relaxed),
+            "debug-parser" => DEBUG_PARSER.store(true, Ordering::Relaxed),
+            "debug-typeck" => DEBUG_TYPECK.store(true, Ordering::Relaxed),
+            "debug-ossa" => DEBUG_OSSA.store(true, Ordering::Relaxed),
+            "debug-layout" => DEBUG_LAYOUT.store(true, Ordering::Relaxed),
+            "debug-backend" => DEBUG_BACKEND.store(true, Ordering::Relaxed),
+            "debug-all" => DEBUG_ALL.store(true, Ordering::Relaxed),
+            "self-profile" => {
+                if let Some(path) = value {
+                    let _ = SELF_PROFILE_PATH.set(path.to_string());
+                } else if use_color() {
+                    eprintln!("{RED}[perf] warning: -Zself-profile requires a path (e.g. -Zself-profile=trace.json){RESET}");
+                } else {
+                    eprintln!("[perf] warning: -Zself-profile requires a path (e.g. -Zself-profile=trace.json)");
+                }
+            }
             other => {
                 if use_color() {
                     eprintln!("{RED}[perf] warning: unknown -Z flag '{other}'{RESET}");
@@ -162,6 +198,33 @@ pub fn init_z_flags(flags: &[String]) {
             }
         }
     }
+}
+
+/// Build a [`TracingConfig`] from the current `-Z` flag atomics.
+///
+/// Called once after `init_z_flags` to pass configuration into the tracing
+/// subsystem.
+pub fn build_tracing_config() -> crate::tracing_bridge::TracingConfig {
+    crate::tracing_bridge::TracingConfig {
+        debug_parser: DEBUG_PARSER.load(Ordering::Relaxed),
+        debug_typeck: DEBUG_TYPECK.load(Ordering::Relaxed),
+        debug_ossa: DEBUG_OSSA.load(Ordering::Relaxed),
+        debug_layout: DEBUG_LAYOUT.load(Ordering::Relaxed),
+        debug_backend: DEBUG_BACKEND.load(Ordering::Relaxed),
+        debug_all: DEBUG_ALL.load(Ordering::Relaxed),
+        self_profile: SELF_PROFILE_PATH.get().map(PathBuf::from),
+    }
+}
+
+/// Returns `true` if any `-Zdebug-*` flag is currently active.
+#[inline(always)]
+pub fn any_debug_flag_active() -> bool {
+    DEBUG_PARSER.load(Ordering::Relaxed)
+        || DEBUG_TYPECK.load(Ordering::Relaxed)
+        || DEBUG_OSSA.load(Ordering::Relaxed)
+        || DEBUG_LAYOUT.load(Ordering::Relaxed)
+        || DEBUG_BACKEND.load(Ordering::Relaxed)
+        || DEBUG_ALL.load(Ordering::Relaxed)
 }
 
 // ── PassTimer — RAII guard for pass timing ────────────────────────────────────
@@ -268,41 +331,6 @@ pub fn track_alloc(bytes: usize) {
         ALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
         ALLOCATED_BYTES.fetch_add(bytes as u64, Ordering::Relaxed);
     }
-}
-
-// ── perf_info! macro — informational compiler messages ───────────────────────
-
-/// Emit a `[arandu][info]` line to stderr, with timestamp and colour.
-///
-/// Only emits when any `-Z` flag is active (i.e. the user asked for verbose
-/// output). Falls back to a plain line when colours are unavailable.
-///
-/// # Example
-///
-/// ```no_run
-/// arandu_base::perf_info!("Machine code written to ./target/release/main");
-/// ```
-#[macro_export]
-macro_rules! perf_info {
-    ($($arg:tt)*) => {
-        if $crate::perf::any_z_flag_active() {
-            $crate::perf::emit_info(&format!($($arg)*));
-        }
-    };
-}
-
-/// Returns `true` if at least one `-Z` flag is currently active.
-#[inline(always)]
-pub fn any_z_flag_active() -> bool {
-    TIME_PASSES.load(Ordering::Relaxed)
-        || PROFILE_QUERIES.load(Ordering::Relaxed)
-        || PRINT_ALLOC_STATS.load(Ordering::Relaxed)
-        || DUMP_MIR.load(Ordering::Relaxed)
-}
-
-/// Emit one `[arandu][info]` line. Called by the [`perf_info!`] macro.
-pub fn emit_info(msg: &str) {
-    emit(BLUE, "info", msg);
 }
 
 // ── Summary report ────────────────────────────────────────────────────────────

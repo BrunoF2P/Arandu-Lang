@@ -7,6 +7,7 @@ pub mod source_registry;
 pub mod span;
 pub mod stable_id;
 pub mod string_pool;
+pub mod tracing_bridge;
 
 #[cfg(feature = "vm")]
 pub mod vm;
@@ -19,9 +20,10 @@ pub use bitset::{BitMatrix, BitSet};
 pub use index_vec::IndexVec;
 pub use line_index::LineIndex;
 pub use perf::{
-    any_z_flag_active, emit_info, init_z_flags, print_perf_summary, track_alloc, track_query_hit,
-    track_query_miss,
+    any_debug_flag_active, build_tracing_config, init_z_flags,
+    print_perf_summary, track_alloc, track_query_hit, track_query_miss,
 };
+pub use tracing_bridge::finalize_self_profile;
 pub use scratch::with_scratch;
 pub use source_registry::{SourceFile, SourceRegistry};
 pub use span::Span;

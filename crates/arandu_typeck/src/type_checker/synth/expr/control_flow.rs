@@ -27,6 +27,7 @@ pub(super) fn report_unsupported(
 
 use arandu_middle::types::type_interner::TypeId;
 
+#[tracing::instrument(level = "trace", target = "arandu_typeck", skip(checker, _expr))]
 pub(super) fn synth_control_flow_expr(
     checker: &mut TypeChecker<'_>,
     _expr: ExprId,

@@ -19,6 +19,7 @@ mod stmt;
 
 pub(crate) use func::lower_func;
 
+#[tracing::instrument(level = "trace", target = "arandu_mir::lower_amir", skip(tc, hir))]
 pub fn lower_to_amir(
     tc: &TypeCheckResult,
     hir: &HirProgram,

@@ -63,7 +63,11 @@ Fase 2 — A Construção da Infraestrutura & Execução (v0.2) · [EM ANDAMENTO
    └─ [ ] FUZZ   Fuzzing Lexer/Parser SIMD (arandu_fuzz e cron jobs semanais de robustez)
 [ ] C_FB   Backend C de portabilidade e bootstrapping
 [ ] DX     Diagnostics & Tooling Infrastructure (DX1-DX3, DX4 CFG visualization)
-[ ] PERF   Compiler Instrumentation & Observabilidade (pass timers, allocations, query logs, -Z flags)
+[x] PERF   Compiler Instrumentation & Observabilidade (pass timers, allocations, query logs, -Z flags, tracing-based self-profile)
+    ├─ [x] PERF.1   Tracing subscriber + -Zdebug-* flags via EnvFilter (replaces time_pass!/debug_point!)
+    ├─ [x] PERF.2   SelfProfile Layer — Trace Event JSON buffer em memória, finalize_self_profile()
+    ├─ [x] PERF.3   #[instrument] em 22 funções críticas (parser, unify, typeck, resolve, etc.)
+    └─ [x] PERF.4   ParseCache em CompileSession — cache de ASTs keyed por PathBuf elimina parsing duplicado de stdlib
 [ ] SL_C   Stdlib Fundamental: arandu_core e arandu_alloc (primitivas heapless e arena/smallvec/bitset)
 [ ] DOC1   docs/ossa-virtual-anchoring.md — RFC retroativo documentando a técnica de âncoras virtuais + poda
 
@@ -207,13 +211,20 @@ Source (.aru)
 
 Antes de expandir as capacidades de otimização, o compilador do Arandu constrói sua fundação infraestrutural. A Fase A cubre tanto a semântica e efeitos da linguagem (A1–A4) quanto a **arquitetura de execução** do compilador em si (A5–A11).
 
-#### A1 — Query System (Incremental Semantic Database)
+#### A1 — Query System (Incremental Semantic Database via Salsa)
 
 Inspirado por Salsa e o request-evaluator do Swift, o compilador é estruturado como um banco de dados de consultas (queries) puras e memoizadas:
 
+* **ParseCache (precursor, Fase 2)**: `HashMap<PathBuf, &Program>` mantido em `CompileSession` evita re-parsing de arquivos stdlib entre resolução de nomes e type-check. É o primeiro passo de memoização no pipeline e será absorvido pelo Salsa database como uma query `parse(path) -> Program`.
 * **Grafo de Dependências Estáticas**: Rastreia de forma fina quais consultas dependem de quais arquivos fonte.
 * **Compilação Incremental O(1)**: Alterações em um método em uma classe só invalidam as queries daquele bloco de código específico, mantendo feedback de compilação abaixo de 50ms.
 * **Queries Determinísticas**: Garante que compilações repetidas com os mesmos inputs gerem binários idênticos byte a byte.
+
+**Roteiro de migração para Salsa:**
+1. `ParseCache` → query `parse(path: Path) -> Program` no Salsa database
+2. `CompileSession` → `salsa::Database` com todos os recursos (type_interner, symbol_table, etc.)
+3. Queries de name resolution e type-check → queries Salsa com dependências finas entre arquivos
+4. Cancelamento automático de queries obsoletas em edições LSP
 
 #### A2 — Effect System (v0.3)
 
@@ -615,6 +626,7 @@ Instrumentação fina do motor incremental (Salsa-like):
 * Grafo de invalidação de queries ativo em tempo real;
 * Custo de rebuild incremental por query;
 * Memoization hit rate de análises de tipo e resolução de escopos.
+* **ParseCache hit-rate** no self-profile: quantos `parse_with_file_id` foram evitados pelo cache (`-Zself-profile` mostra 6 em vez de 11 chamadas para um build single-file típico).
 
 #### PERF4 — Debug Flags (-Z)
 

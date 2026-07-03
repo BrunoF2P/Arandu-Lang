@@ -42,6 +42,7 @@ impl AranduJit {
         Self { module }
     }
 
+    #[tracing::instrument(level = "trace", target = "arandu_backend_cranelift", skip(self, program, symbols, type_info))]
     pub fn compile_program(
         mut self,
         program: &AmirProgram,

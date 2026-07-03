@@ -10,6 +10,7 @@ use arandu_typeck::TypeCheckResult;
 
 use super::graph::{InstantiationGraph, InstantiationKey, InstantiationNodeId, MonoError};
 
+#[tracing::instrument(level = "trace", target = "arandu_typeck", skip(tc, hir))]
 pub fn analyze_instantiations(
     tc: &TypeCheckResult,
     hir: &HirProgram,

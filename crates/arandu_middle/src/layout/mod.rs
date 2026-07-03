@@ -132,6 +132,7 @@ impl LayoutEngine {
     }
 
     /// Compute the memory layout of a structural `ArType`.
+    #[tracing::instrument(level = "trace", target = "arandu_middle::layout", skip(self, interner, provider))]
     pub fn layout_of_type(
         &self,
         ty: &ArType,

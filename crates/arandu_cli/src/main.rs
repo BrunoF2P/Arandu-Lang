@@ -61,9 +61,10 @@ fn parse_and_check(source: &str, filepath: &str) -> CheckedProgram {
         Err(err) => print_parse_error_and_exit(&err, filepath),
     };
 
-    let resolution = arandu_semantics::resolve(&program);
-
-    let type_check = arandu_semantics::type_check(resolution, &program);
+    let mut session = arandu_semantics::CompileSession::new();
+    let resolution = arandu_semantics::resolve_with_cache(&program, &mut session);
+    let type_check =
+        arandu_semantics::type_check_with_session(resolution, &program, &mut session);
 
     if !type_check.diagnostics.is_empty() {
         print_diagnostics_and_exit(&type_check.diagnostics, filepath);
@@ -80,6 +81,8 @@ fn usage_and_exit() -> ! {
         "usage: arandu_cli <lex|parse|check|hir|amir|run> <path> [--debug] [--opt] [--parallel]"
     );
     eprintln!("       -Z flags: -Ztime-passes  -Zprofile-queries  -Zprint-alloc-stats  -Zdump-mir");
+    eprintln!("                : -Zdebug-parser -Zdebug-typeck -Zdebug-ossa -Zdebug-layout -Zdebug-backend -Zdebug-all");
+    eprintln!("                : -Zself-profile=<path>");
 
     process::exit(2);
 }
@@ -118,6 +121,10 @@ fn main() {
 
     // Initialise global perf flags (written once, read-only afterwards).
     arandu_base::init_z_flags(&z_flags);
+
+    // Initialise the tracing subscriber from -Zdebug-* / -Zself-profile flags.
+    let tracing_cfg = arandu_base::build_tracing_config();
+    arandu_base::tracing_bridge::init_tracing(tracing_cfg);
 
     if args.len() != 3 {
         usage_and_exit();
@@ -246,7 +253,7 @@ fn main() {
                     arandu_base::time_pass!("parse+check");
                     parse_and_check(&source, &filepath)
                 };
-                arandu_base::perf_info!("Syntax analysis and type-check completed");
+                tracing::info!("Syntax analysis and type-check completed");
 
                 let hir = {
                     arandu_base::time_pass!("lower-hir");
@@ -256,7 +263,7 @@ fn main() {
                         Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
                     }
                 };
-                arandu_base::perf_info!("HIR lowering completed");
+                tracing::info!("HIR lowering completed");
 
                 validate_hir_and_analyze(&hir, &checked.type_check, &filepath);
                 {
@@ -265,7 +272,7 @@ fn main() {
                         print_diagnostics_and_exit(&diags, &filepath);
                     }
                 }
-                arandu_base::perf_info!("Compilation verified successfully — no errors found");
+                tracing::info!("Compilation verified successfully — no errors found");
                 println!("ok");
             }
 
@@ -342,7 +349,7 @@ fn main() {
                     arandu_base::time_pass!("parse+check");
                     parse_and_check(&source, &filepath)
                 };
-                arandu_base::perf_info!("Syntax analysis and type-check completed");
+                tracing::info!("Syntax analysis and type-check completed");
 
                 let hir = {
                     arandu_base::time_pass!("lower-hir");
@@ -352,7 +359,7 @@ fn main() {
                         Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
                     }
                 };
-                arandu_base::perf_info!("HIR lowering completed");
+                tracing::info!("HIR lowering completed");
                 validate_hir_and_analyze(&hir, &checked.type_check, &filepath);
 
                 let mut amir = {
@@ -362,12 +369,12 @@ fn main() {
                         Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
                     }
                 };
-                arandu_base::perf_info!("AMIR lowering completed");
+                tracing::info!("AMIR lowering completed");
 
                 if opt {
                     arandu_base::time_pass!("optimize-amir");
                     arandu_semantics::optimize_amir(&mut amir);
-                    arandu_base::perf_info!("Optimisation passes applied");
+                    tracing::info!("Optimisation passes applied");
                 }
 
                 use arandu_semantics::{CodegenBackend, CompiledCode};
@@ -384,9 +391,10 @@ fn main() {
                         Err(diag) => print_diagnostics_and_exit(&[diag], &filepath),
                     }
                 };
-                arandu_base::perf_info!("Machine code generated (Cranelift JIT backend)");
+                tracing::info!("Machine code generated (Cranelift JIT backend)");
 
                 arandu_base::print_perf_summary();
+                arandu_base::finalize_self_profile();
 
                 unsafe {
                     if let Some(main_fn) =
@@ -406,4 +414,5 @@ fn main() {
     }
 
     arandu_base::print_perf_summary();
+    arandu_base::finalize_self_profile();
 }

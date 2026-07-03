@@ -1,4 +1,6 @@
 use arandu_lexer::Span;
+use arandu_middle::parse_cache::ParseCache;
+use arandu_middle::StdlibPathCache;
 use arandu_parser::Program;
 
 use crate::{DocCommentMap, NodeKey, ResolutionResult, ResolvedNames, SymbolKind, SymbolTable};
@@ -9,6 +11,8 @@ impl<'a> Resolver<'a> {
     pub(crate) fn new(
         pool: &'a arandu_parser::ast_pool::AstPool,
         program: Option<&Program>,
+        cache: &mut ParseCache,
+        stdlib_cache: &mut StdlibPathCache,
     ) -> Self {
         let current_module = program.and_then(|p| p.module.as_ref().map(|m| m.path.join(".")));
         let mut resolver = Self {
@@ -22,7 +26,7 @@ impl<'a> Resolver<'a> {
             imported_symbols: rustc_hash::FxHashMap::default(),
             used_symbols: rustc_hash::FxHashSet::default(),
         };
-        resolver.define_prelude(program);
+        resolver.define_prelude(program, cache, stdlib_cache);
         resolver.symbols.setup_prelude_scope();
         resolver
     }
@@ -66,7 +70,12 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    pub(crate) fn define_prelude(&mut self, program: Option<&Program>) {
+    pub(crate) fn define_prelude(
+        &mut self,
+        program: Option<&Program>,
+        cache: &mut ParseCache,
+        stdlib_cache: &mut StdlibPathCache,
+    ) {
         let span = Span::new(0, 0, 0);
         for (module, members) in [
             ("io", ["println", "create", "remove"].as_slice()),
@@ -82,14 +91,13 @@ impl<'a> Resolver<'a> {
             "stdlib/core/prelude.aru",
             current_module.as_deref(),
             program,
+            cache,
+            stdlib_cache,
         );
         let global = self.symbols.global_scope();
         let has_result = self.symbols.lookup_type(global, "Result").is_some();
         let has_option = self.symbols.lookup_type(global, "Option").is_some();
-        eprintln!("[define_prelude] Result in scope: {has_result}, Option in scope: {has_option}");
-        eprintln!(
-            "[define_prelude] Total symbols: {}",
-            self.symbols.iter().count()
-        );
+        tracing::debug!(target: "arandu_resolve", has_result, has_option, "Prelude types in scope");
+        tracing::debug!(target: "arandu_resolve", total = self.symbols.iter().count(), "Symbol table after prelude load");
     }
 }

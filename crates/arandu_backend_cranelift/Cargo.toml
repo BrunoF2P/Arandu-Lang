@@ -15,6 +15,7 @@ cranelift-module = "0.133.1"
 cranelift-native = "0.133.1"
 target-lexicon = "0.13.5"
 rustc-hash = "2.1.2"
+tracing.workspace = true
 
 [dev-dependencies]
 arandu_parser = { path = "../arandu_parser" }

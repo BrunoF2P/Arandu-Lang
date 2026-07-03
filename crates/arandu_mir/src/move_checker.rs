@@ -36,6 +36,7 @@ impl MoveState {
         }
     }
 
+    #[tracing::instrument(level = "trace", target = "arandu_mir::move_checker", skip_all)]
     fn join_predecessors(preds: impl Iterator<Item = Self>, num_locals: usize) -> Self {
         let mut preds = preds.peekable();
         let Some(mut acc) = preds.next() else {

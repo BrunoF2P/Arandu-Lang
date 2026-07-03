@@ -9,6 +9,7 @@ use super::FunctionTranslator;
 use crate::types::{ClifType, clif_type};
 
 impl FunctionTranslator<'_, '_> {
+    #[tracing::instrument(level = "trace", target = "arandu_backend_cranelift", skip(self))]
     pub(super) fn translate_stmt(&mut self, stmt: &AmirStmt) {
         if self.error.is_some() {
             return;

@@ -7,12 +7,16 @@ pub mod hir;
 pub mod layout;
 pub mod literal_pool;
 pub mod ops;
+pub mod parse_cache;
 pub mod resolved;
 pub mod session;
+pub mod stdlib_cache;
 pub mod symbol_table;
 pub mod types;
 
+pub use parse_cache::ParseCache;
 pub use session::CompileSession;
+pub use stdlib_cache::StdlibPathCache;
 
 pub use arandu_base::arena;
 pub use arandu_base::bitset;

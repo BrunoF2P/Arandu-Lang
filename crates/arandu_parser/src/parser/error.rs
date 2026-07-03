@@ -16,6 +16,7 @@ pub struct ParseError {
 impl ParseError {
     #[cold]
     #[inline(never)]
+    #[tracing::instrument(level = "trace", target = "arandu_parser", skip(source, token, message))]
     pub(super) fn new(
         code: ParseErrorCode,
         message: impl Into<String>,

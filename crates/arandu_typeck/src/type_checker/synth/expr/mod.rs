@@ -15,6 +15,7 @@ use literal::synth_literal_expr;
 
 use arandu_middle::types::type_interner::TypeId;
 
+#[tracing::instrument(level = "trace", target = "arandu_typeck", skip(checker))]
 pub fn synth_expr(checker: &mut TypeChecker<'_>, expr: ExprId) -> TypeId {
     let id = synth_expr_inner(checker, expr);
     checker.record_expr_type(expr, id);

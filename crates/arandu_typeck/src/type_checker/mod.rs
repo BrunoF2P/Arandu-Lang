@@ -16,15 +16,32 @@ use constraints::{Constraint, ConstraintOrigin};
 use context::TyCtx;
 use types::{ArType, TypeId, TypeInterner};
 
+// ── Session mode ────────────────────────────────────────────────────
+
+/// Controls whether `check_program` runs as the top-level shared compilation
+/// unit (user entry file) or as an isolated stdlib module.
+///
+/// - `Shared` — the caller holds a persistent `CompileSession`; prelude
+///   signatures are loaded from disk and merged into the global table.
+/// - `Isolated` — a temporary session created solely for one stdlib module;
+///   prelude loading is skipped (already handled by the outer `Shared` call).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SessionMode {
+    Shared,
+    Isolated,
+}
+
 // ── Entry point ─────────────────────────────────────────────────────
 
 use arandu_middle::CompileSession;
 
+/// Shared implementation used by both entry points below.
 #[must_use]
-pub fn type_check_with_session(
+fn type_check_with_mode(
     resolution: ResolutionResult,
     program: &Program,
     session: &mut CompileSession,
+    mode: SessionMode,
 ) -> TypeCheckResult {
     let mut checker = TypeChecker::new_with_interner(
         resolution.symbols,
@@ -33,16 +50,44 @@ pub fn type_check_with_session(
         &program.pool,
         std::mem::take(&mut session.type_interner),
     );
-    check::check_program(&mut checker, program);
+    checker.session_mode = mode;
+    check::check_program(
+        &mut checker,
+        program,
+        &mut session.parse_cache,
+        &mut session.stdlib_cache,
+    );
     let res = checker.finish();
-    session.type_interner = res.type_info.type_interner.clone();
+    if mode == SessionMode::Shared {
+        session.type_interner = res.type_info.type_interner.clone();
+    }
     res
 }
 
+/// Type-check within an existing (shared) compilation session.
+/// The `session.type_interner` is preserved so subsequent `type_check_with_session`
+/// calls see previously interned types.
 #[must_use]
+#[tracing::instrument(level = "trace", target = "arandu_typeck", skip(session, resolution, program))]
+pub fn type_check_with_session(
+    resolution: ResolutionResult,
+    program: &Program,
+    session: &mut CompileSession,
+) -> TypeCheckResult {
+    type_check_with_mode(resolution, program, session, SessionMode::Shared)
+}
+
+/// Standalone type-check (for stdlib internal .aru files).
+/// Creates a throw-away session; no prelude loading (handled by outer).
+#[must_use]
+#[tracing::instrument(level = "trace", target = "arandu_typeck", skip(resolution, program))]
 pub fn type_check(resolution: ResolutionResult, program: &Program) -> TypeCheckResult {
-    let mut session = CompileSession::new();
-    type_check_with_session(resolution, program, &mut session)
+    type_check_with_mode(
+        resolution,
+        program,
+        &mut CompileSession::new(),
+        SessionMode::Isolated,
+    )
 }
 
 // ── TypeChecker state ───────────────────────────────────────────────
@@ -56,6 +101,10 @@ pub struct TypeChecker<'a> {
     /// Scope for lowering type expressions inside the current function body.
     type_scope_id: Option<ScopeId>,
     pub pool: &'a AstPool,
+    /// Whether this checker runs as a top-level shared unit (user file) or an
+    /// isolated stdlib module. Controls prelude-loading behaviour in
+    /// `register_prelude`.
+    pub session_mode: SessionMode,
 }
 
 impl<'a> TypeChecker<'a> {
@@ -85,6 +134,7 @@ impl<'a> TypeChecker<'a> {
             diagnostics,
             type_scope_id: None,
             pool,
+            session_mode: SessionMode::Isolated,
         }
     }
 
@@ -140,8 +190,8 @@ impl<'a> TypeChecker<'a> {
     }
 
     #[must_use]
-    pub fn unify_return(&self, expected: &ArType, actual: &ArType) -> bool {
-        types::unify_return(expected, actual, &self.type_info.type_interner)
+    pub fn unify_return_type(&self, expected: &ArType, actual: &ArType) -> bool {
+        types::unify_return_type(expected, actual, &self.type_info.type_interner)
     }
 
     pub fn lower_type_expr(

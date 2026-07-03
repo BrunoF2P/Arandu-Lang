@@ -251,6 +251,7 @@ impl SymbolTable {
         }
     }
 
+    #[tracing::instrument(level = "trace", target = "arandu_middle", skip(self, other))]
     pub fn merge_from(&mut self, other: SymbolTable) {
         let self_symbols_len = self.symbols.len() as u32;
         let self_scopes_len = self.scopes.len() as u32;

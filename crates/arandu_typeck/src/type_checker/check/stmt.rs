@@ -10,6 +10,7 @@ use super::condition::check_condition;
 use super::place::synth_place;
 
 /// Roteador principal de checagem de tipo de instruções.
+#[tracing::instrument(level = "trace", target = "arandu_typeck", skip(checker, pool, stmt))]
 pub fn check_stmt(checker: &mut TypeChecker<'_>, pool: &AstPool, stmt: &Stmt) {
     match stmt {
         Stmt::VarDecl {
@@ -279,7 +280,7 @@ fn check_return_stmt(
     };
     let val_ty = checker.resolve(val_ty_id).clone();
 
-    if !checker.unify_return(&current_ret, &val_ty) {
+    if !checker.unify_return_type(&current_ret, &val_ty) {
         checker.add_constraint(
             current_ret,
             val_ty,

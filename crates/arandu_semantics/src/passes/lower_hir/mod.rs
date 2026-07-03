@@ -9,6 +9,7 @@ mod pattern;
 mod place;
 mod stmt;
 
+#[tracing::instrument(level = "trace", target = "arandu_semantics", skip(type_check, program))]
 pub fn lower_to_hir(
     type_check: &mut TypeCheckResult,
     program: &Program,

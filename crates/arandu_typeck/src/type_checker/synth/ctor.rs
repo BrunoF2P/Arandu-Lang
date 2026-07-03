@@ -93,6 +93,7 @@ pub(crate) fn synth_option_ctor(
     }
 }
 
+#[tracing::instrument(level = "trace", target = "arandu_typeck", skip(checker))]
 pub(crate) fn synth_method_call(
     checker: &mut TypeChecker<'_>,
     base: ExprId,

@@ -109,6 +109,7 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
             .unwrap_or_else(|| self.func_span())
     }
 
+    #[tracing::instrument(level = "trace", target = "arandu_backend_cranelift", skip(self))]
     pub fn translate(&mut self) -> Result<(), Diagnostic> {
         for (idx, _block) in self.current_func.blocks.iter().enumerate() {
             let block_id = BlockId::from_usize(idx);

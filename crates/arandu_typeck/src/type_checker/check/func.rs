@@ -99,6 +99,7 @@ fn func_type_scope(checker: &TypeChecker<'_>, decl: &FuncDecl) -> crate::ScopeId
     checker.symbols.global_scope()
 }
 
+#[tracing::instrument(level = "trace", target = "arandu_typeck", skip(checker, decl))]
 pub fn check_func_body(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
     if matches!(decl.name, arandu_parser::FuncName::Method { .. }) {
         validate_method_receiver(checker, decl);

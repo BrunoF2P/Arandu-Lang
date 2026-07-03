@@ -5,7 +5,8 @@ use super::type_interner::TypeInterner;
 
 /// Unify return value type against declared `Result` return.
 #[must_use]
-pub fn unify_return(expected: &ArType, actual: &ArType, interner: &TypeInterner) -> bool {
+#[tracing::instrument(level = "trace", target = "arandu_middle::types::unify", skip(interner))]
+pub fn unify_return_type(expected: &ArType, actual: &ArType, interner: &TypeInterner) -> bool {
     if unify(expected, actual, interner) {
         return true;
     }
@@ -40,6 +41,7 @@ pub fn unify_return(expected: &ArType, actual: &ArType, interner: &TypeInterner)
 /// - Named types compare `SymbolId` + generic args
 /// - Func types compare param count, params, and return
 #[must_use]
+#[tracing::instrument(level = "trace", target = "arandu_middle::types::unify", skip(interner))]
 pub fn unify(a: &ArType, b: &ArType, interner: &TypeInterner) -> bool {
     // Poison and Any always unify
     if a.is_error() || b.is_error() {
@@ -721,7 +723,7 @@ mod tests {
     #[test]
     fn return_unifies_direct_match() {
         let i = new_interner();
-        assert!(unify_return(
+        assert!(unify_return_type(
             &ArType::Primitive(Primitive::Int),
             &ArType::Primitive(Primitive::Int),
             &i
@@ -735,7 +737,7 @@ mod tests {
         let err_i = str_t(&mut i);
         let expected = ArType::Result(ok_i, err_i);
         let actual = ArType::Result(int_t(&mut i), str_t(&mut i));
-        assert!(unify_return(&expected, &actual, &i));
+        assert!(unify_return_type(&expected, &actual, &i));
     }
 
     #[test]
@@ -745,7 +747,7 @@ mod tests {
         let err_type_id = i.intern(ArType::Error);
         let expected = ArType::Result(void_id, i.intern(ArType::Err));
         let actual = ArType::Nullable(err_type_id);
-        assert!(unify_return(&expected, &actual, &i));
+        assert!(unify_return_type(&expected, &actual, &i));
     }
 
     #[test]
@@ -754,8 +756,8 @@ mod tests {
         let void_id = i.intern(ArType::Void);
         let err_id = i.intern(ArType::Err);
         let expected = ArType::Result(void_id, err_id);
-        assert!(unify_return(&expected, &ArType::Err, &i));
-        assert!(unify_return(
+        assert!(unify_return_type(&expected, &ArType::Err, &i));
+        assert!(unify_return_type(
             &expected,
             &ArType::Nullable(i.intern(ArType::Error)),
             &i
@@ -765,7 +767,7 @@ mod tests {
     #[test]
     fn return_rejects_mismatch() {
         let i = new_interner();
-        assert!(!unify_return(
+        assert!(!unify_return_type(
             &ArType::Primitive(Primitive::Int),
             &ArType::Primitive(Primitive::Bool),
             &i

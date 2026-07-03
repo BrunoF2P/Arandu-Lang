@@ -25,6 +25,7 @@ pub(super) fn cast_types_compatible(
     matches!(found, ArType::Ptr(_)) && matches!(target, ArType::Ptr(_))
 }
 
+#[tracing::instrument(level = "trace", target = "arandu_typeck", skip(checker, _expr))]
 pub(super) fn synth_binary_unary_expr(
     checker: &mut TypeChecker<'_>,
     _expr: ExprId,

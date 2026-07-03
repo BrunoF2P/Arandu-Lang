@@ -42,6 +42,7 @@ pub(crate) fn resolve_namespace_member_type(
     None
 }
 
+#[tracing::instrument(level = "trace", target = "arandu_typeck", skip(checker))]
 pub(crate) fn resolve_field(
     checker: &mut TypeChecker<'_>,
     base: ExprId,
@@ -181,6 +182,7 @@ pub(crate) fn resolve_field(
     }
 }
 
+#[tracing::instrument(level = "trace", target = "arandu_typeck", skip(checker))]
 pub(crate) fn resolve_index(
     checker: &mut TypeChecker<'_>,
     base: ExprId,
