@@ -1,0 +1,22 @@
+module alloc_test
+
+import "std.alloc.allocator_api" as alloc_api
+import "std.alloc.vec" as vec
+
+// Compile this file and check the generated assembly or AMIR
+// to ensure no calls to `malloc` or `free` are made when using
+// the BumpArena for the Vec operations.
+func main() : void {
+    let mut arena = alloc_api.BumpArena.new(1024)
+    
+    // Vec uses the BumpArena instance. The generic instantiation
+    // will inline the alloc method from BumpArena, ensuring zero 
+    // overhead and zero libc calls during push.
+    let mut v = vec.Vec<u64, alloc_api.BumpArena>.new_in(arena)
+
+    v.push(10)
+    v.push(20)
+    v.push(30)
+
+    v.free() // BumpArena.dealloc is a no-op, so no libc free is called.
+}

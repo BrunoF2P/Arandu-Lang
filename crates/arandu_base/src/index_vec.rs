@@ -1,8 +1,22 @@
+//! Type-indexed `Vec` and the `IdIndex` trait.
+//!
+//! [`IndexVec<I, T>`] is a `Vec<T>` whose elements are addressed by a typed
+//! index `I` rather than a plain `usize`. This prevents accidental indexing
+//! into the wrong arena (e.g. using a `LocalId` to index into a temp table).
+//!
+//! Define a custom index type with the [`newtype_index!`] macro.
+
 use std::marker::PhantomData;
 use std::ops::{Index, IndexMut};
 
+/// A typed index suitable for use with [`IndexVec`].
+///
+/// Implementors are cheap to copy and compare, and bijectively convert to/from
+/// `usize`. Use [`newtype_index!`] to derive this for a newtype wrapper.
 pub trait IdIndex: Copy + PartialEq + Eq {
+    /// Converts the index to a raw `usize` offset.
     fn to_usize(self) -> usize;
+    /// Constructs the index from a raw `usize` offset.
     fn from_usize(value: usize) -> Self;
 }
 
@@ -17,6 +31,11 @@ impl IdIndex for usize {
     }
 }
 
+/// A `Vec<T>` indexed by a typed key `I` rather than a plain `usize`.
+///
+/// Prevents accidentally indexing one arena with an index from another. The
+/// underlying storage is `pub raw: Vec<T>` for interop with code that needs
+/// slice access without going through the typed API.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct IndexVec<I: IdIndex, T> {
     pub raw: Vec<T>,
@@ -24,6 +43,7 @@ pub struct IndexVec<I: IdIndex, T> {
 }
 
 impl<I: IdIndex, T> IndexVec<I, T> {
+    /// Creates an empty `IndexVec`.
     #[must_use]
     pub const fn new() -> Self {
         Self {
@@ -32,6 +52,7 @@ impl<I: IdIndex, T> IndexVec<I, T> {
         }
     }
 
+    /// Creates an empty `IndexVec` with at least the given capacity pre-allocated.
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
@@ -40,12 +61,14 @@ impl<I: IdIndex, T> IndexVec<I, T> {
         }
     }
 
+    /// Appends `val` and returns the typed index it was assigned.
     pub fn push(&mut self, val: T) -> I {
         let idx = self.raw.len();
         self.raw.push(val);
         I::from_usize(idx)
     }
 
+    /// Extends the vec with `values` and returns the typed index range `[start, end)`.
     pub fn push_many<Iter>(&mut self, values: Iter) -> std::ops::Range<I>
     where
         Iter: IntoIterator<Item = T>,
@@ -55,38 +78,47 @@ impl<I: IdIndex, T> IndexVec<I, T> {
         I::from_usize(start)..I::from_usize(self.raw.len())
     }
 
+    /// Returns a reference to the element at `index`, or `None` if out of bounds.
     pub fn get(&self, index: I) -> Option<&T> {
         self.raw.get(index.to_usize())
     }
 
+    /// Returns a mutable reference to the element at `index`, or `None` if out of bounds.
     pub fn get_mut(&mut self, index: I) -> Option<&mut T> {
         self.raw.get_mut(index.to_usize())
     }
 
+    /// Returns the number of elements.
     pub fn len(&self) -> usize {
         self.raw.len()
     }
 
+    /// Returns `true` if there are no elements.
     pub fn is_empty(&self) -> bool {
         self.raw.is_empty()
     }
 
+    /// Iterates over element references in insertion order.
     pub fn iter(&self) -> std::slice::Iter<'_, T> {
         self.raw.iter()
     }
 
+    /// Iterates over mutable element references in insertion order.
     pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, T> {
         self.raw.iter_mut()
     }
 
+    /// Iterates over the typed indices of all elements.
     pub fn ids(&self) -> impl Iterator<Item = I> + '_ {
         (0..self.raw.len()).map(I::from_usize)
     }
 
+    /// Returns a slice of all elements.
     pub fn as_slice(&self) -> &[T] {
         &self.raw
     }
 
+    /// Returns a mutable slice of all elements.
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         &mut self.raw
     }
@@ -119,6 +151,15 @@ impl<I: IdIndex, T> From<Vec<T>> for IndexVec<I, T> {
     }
 }
 
+/// Derives a `u32`-backed typed index implementing [`IdIndex`] for use with [`IndexVec`].
+///
+/// # Example
+/// ```ignore
+/// newtype_index!(FuncId);
+/// let mut vec: IndexVec<FuncId, &str> = IndexVec::new();
+/// let id: FuncId = vec.push("hello");
+/// assert_eq!(vec[id], "hello");
+/// ```
 #[macro_export]
 macro_rules! newtype_index {
     ($name:ident) => {

@@ -236,6 +236,9 @@ impl LowerCtx<'_> {
         let rhs = self.consume_operand(rhs)?;
         if lhs.projections.is_empty() {
             self.local_states[lhs.local.as_usize()] = MoveState::Available;
+            if let Some(block) = self.current_block {
+                self.write_variable(block, lhs.local, rhs.clone());
+            }
         }
         self.push_stmt(AmirStmt::Store { lhs, rhs });
         Ok(())

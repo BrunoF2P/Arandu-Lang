@@ -1,15 +1,27 @@
+//! Cranelift IR type helpers.
+//!
+//! Provides the mapping between Arandu [`ArType`]s and the Cranelift
+//! [`Type`] system used to build function signatures and emit IR values.
+
 use arandu_semantics::passes::type_checker::types::ArType;
 use arandu_semantics::passes::type_checker::types::Primitive;
 use cranelift_codegen::ir::Type;
 use cranelift_codegen::ir::types::*;
 
+/// A Cranelift IR type, extended with a `Void` variant.
+///
+/// Cranelift itself has no void type; this wrapper carries `Void` for
+/// Arandu types that produce no value (e.g. `()`, error types).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClifType {
+    /// A concrete Cranelift scalar type.
     Concrete(Type),
+    /// Represents no value (void return / unused slot).
     Void,
 }
 
 impl ClifType {
+    /// Returns the inner [`Type`] if this is `Concrete`, or `None` for `Void`.
     #[must_use]
     pub fn concrete(self) -> Option<Type> {
         match self {
@@ -19,6 +31,9 @@ impl ClifType {
     }
 }
 
+/// Returns `true` if `ty` is an unsigned integer Arandu primitive.
+///
+/// Used to select zero-extension vs sign-extension for narrowing casts.
 #[must_use]
 pub fn ar_type_is_unsigned_integer(ty: &ArType) -> bool {
     matches!(
@@ -35,6 +50,11 @@ pub fn ar_type_is_unsigned_integer(ty: &ArType) -> bool {
     )
 }
 
+/// Maps an Arandu [`ArType`] to a single [`ClifType`].
+///
+/// For composite types that expand to multiple Cranelift slots (e.g. `str`),
+/// this returns the *primary* slot type only. Use [`clif_types`] when you need
+/// the full slot list for ABI purposes.
 #[must_use]
 pub fn clif_type(ty: &ArType, ptr_type: Type) -> ClifType {
     match ty {
@@ -50,9 +70,9 @@ pub fn clif_type(ty: &ArType, ptr_type: Type) -> ClifType {
             Primitive::Bool => ClifType::Concrete(I8),
             Primitive::Char => ClifType::Concrete(I32),
             Primitive::Str => {
-                // TODO(SL_C): Str é fat pointer (ptr, len).
-                // Por ora mapeado como I64 (só ptr). Vai quebrar quando
-                // funções que retornam/recebem str forem implementadas.
+                // TODO(SL_C): `Str` is a fat pointer (ptr + len). Currently mapped to a single
+                // I64 (ptr only). This will break when functions that return/receive `str` are
+                // fully implemented via ABI. See `clif_types` for the two-value representation.
                 ClifType::Concrete(ptr_type)
             }
             Primitive::Any => ClifType::Concrete(ptr_type),
@@ -64,7 +84,8 @@ pub fn clif_type(ty: &ArType, ptr_type: Type) -> ClifType {
         ArType::IntLiteral => ClifType::Concrete(I32),
         ArType::FloatLiteral => ClifType::Concrete(F64),
         ArType::Named(_, _) => {
-            // Structs are passed by pointer or custom ABI representation, for now pointer.
+            // TODO: Named types (structs, enums) should use a proper multi-value ABI.
+            // Currently mapped to a pointer for JIT passing.
             ClifType::Concrete(ptr_type)
         }
         ArType::Func(_, _) => ClifType::Concrete(ptr_type),
@@ -79,6 +100,11 @@ pub fn clif_type(ty: &ArType, ptr_type: Type) -> ClifType {
     }
 }
 
+/// Maps an Arandu [`ArType`] to the full list of Cranelift [`Type`]s needed
+/// to represent it in an ABI slot.
+///
+/// Most types map to a single slot. `str` is special: it expands to
+/// `[ptr_type, I64]` (pointer + length), matching the `ArStr` fat-pointer layout.
 #[must_use]
 pub fn clif_types(ty: &ArType, ptr_type: Type) -> Vec<Type> {
     match ty {
@@ -90,6 +116,9 @@ pub fn clif_types(ty: &ArType, ptr_type: Type) -> Vec<Type> {
     }
 }
 
+/// Returns the number of Cranelift ABI slots required to pass `ty`.
+///
+/// `str` requires 2 slots (ptr + len); void types require 0; everything else 1.
 #[must_use]
 pub fn clif_slot_count(ty: &ArType) -> usize {
     match ty {

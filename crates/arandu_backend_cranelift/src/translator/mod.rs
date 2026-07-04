@@ -1,3 +1,9 @@
+//! AMIR → Cranelift IR function translator.
+//!
+//! [`FunctionTranslator`] walks an [`AmirFunc`] basic block by block,
+//! emitting Cranelift IR instructions via a [`FunctionBuilder`]. The
+//! [`AmirVisitor`] trait defines the visit callbacks used during traversal.
+
 mod compare;
 mod expr;
 mod stmt;
@@ -18,12 +24,21 @@ use rustc_hash::FxHashMap;
 
 use crate::types::{ClifType, clif_type, clif_types};
 
+/// Visitor callbacks invoked while translating an [`AmirFunc`] to Cranelift IR.
 pub trait AmirVisitor {
+    /// Called once for each basic block before its statements are visited.
     fn visit_block(&mut self, block: &AmirBasicBlock);
+    /// Called for each statement within the current block.
     fn visit_stmt(&mut self, stmt: &AmirStmt);
+    /// Called for the block terminator after all statements have been visited.
     fn visit_terminator(&mut self, term: &AmirTerminator);
 }
 
+/// Translates a single [`AmirFunc`] into Cranelift IR using a [`FunctionBuilder`].
+///
+/// Holds all per-function compilation state: block/temp/local mappings,
+/// string fat-pointer variables, and a deferred error slot so that
+/// translation can continue after the first failure.
 pub struct FunctionTranslator<'a, 'b> {
     pub builder: FunctionBuilder<'a>,
     pub module: &'b mut JITModule,

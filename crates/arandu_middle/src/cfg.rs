@@ -68,13 +68,14 @@ pub fn clear_block(cfg: &mut ControlFlowGraph, block: BlockId) {
 /// now has `into` as a predecessor instead of `from`.  `from`'s successor
 /// list is cleared after the transfer.
 pub fn transfer_edges(cfg: &mut ControlFlowGraph, into: BlockId, from: BlockId) {
-    let from_succs: Vec<BlockId> = cfg.successors[from.as_usize()].clone();
+    // mem::take moves the Vec out without cloning, leaving an empty Vec in place.
+    // The trailing .clear() is therefore unnecessary and has been removed.
+    let from_succs = std::mem::take(&mut cfg.successors[from.as_usize()]);
     for succ in &from_succs {
         cfg.predecessors[succ.as_usize()].retain(|&p| p != from);
         cfg.predecessors[succ.as_usize()].push(into);
     }
     cfg.successors[into.as_usize()] = from_succs;
-    cfg.successors[from.as_usize()].clear();
 }
 
 // ---------------------------------------------------------------------------

@@ -737,14 +737,6 @@ fn jit_returns_ice_on_invalid_literal_pool() {
 /// of 0, failing the assert regardless of hashmap ordering.
 #[test]
 fn jit_enum_cross_variant_name_no_collision() {
-    // Two enums with identically-named variants.
-    // color_tag() and status_tag() each return the discriminant of their
-    // respective ".Red" variant encoded as an integer via match.
-    //
-    // Before the fix, the global name-based fallback scan would silently
-    // assign the wrong discriminant when FxHashMap happened to return the
-    // other enum's "Red" first.  The test is deterministic: a regression
-    // produces 1 instead of 0, failing the assert regardless of hash order.
     let src = r#"
         enum Color  { Red, Green }
         enum Status { Yellow, Red }
@@ -783,5 +775,8 @@ fn jit_enum_cross_variant_name_no_collision() {
     // the wrong arm fires and the assert catches it — regardless of which
     // direction the cross-enum lookup goes and regardless of hashmap ordering.
     assert_eq!(color_tag, 0, "Color.Red must match arm 0 (tag 0 in Color)");
-    assert_eq!(status_tag, 1, "Status.Red must match arm 1 (tag 1 in Status, Yellow is 0)");
+    assert_eq!(
+        status_tag, 1,
+        "Status.Red must match arm 1 (tag 1 in Status, Yellow is 0)"
+    );
 }

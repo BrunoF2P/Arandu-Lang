@@ -1,3 +1,17 @@
+//! Shared compiler types and intermediate representations for Arandu.
+//!
+//! This crate is the central dependency hub. It owns:
+//! - **AMIR** (`amir`): the Arandu Mid-level IR (SSA-like, typed basic blocks).
+//! - **HIR** (`hir`): the High-level IR produced by the lowering pass.
+//! - **Type system** (`types`): [`ArType`], [`TypeInterner`], and primitives.
+//! - **Layout engine** (`layout`): struct/enum memory layout computation.
+//! - **Symbol table** (`symbol_table`): scoped identifier registry.
+//! - **Diagnostics** (`diagnostics`): re-exported from `arandu_diagnostics`.
+//! - **Parse cache** and **stdlib path cache**: incremental compilation helpers.
+//!
+//! Re-exports from `arandu_base` (arena, bitset, index_vec, stable_id, etc.)
+//! are provided so downstream crates need only depend on this crate.
+
 pub mod amir;
 pub mod amir_validate;
 pub mod cfg;

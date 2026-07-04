@@ -1,3 +1,9 @@
+//! Low-level Cranelift JIT compilation internals.
+//!
+//! [`AranduJit`] drives the Cranelift JIT module lifecycle: it declares all
+//! functions, defines each one via [`FunctionTranslator`], finalizes the
+//! in-memory compilation, and returns a [`CompiledModule`] ready for execution.
+
 use crate::abi::build_signature;
 use crate::translator::FunctionTranslator;
 use arandu_base::span::Span;
@@ -13,6 +19,12 @@ fn codegen_ice(message: impl Into<String>) -> Diagnostic {
     Diagnostic::ice(DiagCode::ICEGEN001, message, Span::new(0, 0, 0))
 }
 
+/// Stateful Cranelift JIT context.
+///
+/// Wraps a [`JITModule`] and orchestrates the full compilation of an
+/// [`AmirProgram`]: function declaration, translation, and memory finalization.
+/// Consumed by [`AranduJit::compile_program`] — create a fresh instance for
+/// each compilation.
 pub struct AranduJit {
     pub module: JITModule,
 }
@@ -24,6 +36,11 @@ impl Default for AranduJit {
 }
 
 impl AranduJit {
+    /// Creates a new [`AranduJit`] with default Cranelift settings.
+    ///
+    /// Configures the host ISA via `cranelift_native`, disables PIC and
+    /// library colocated calls, and sets optimization level to `none` (for
+    /// fastest JIT compilation during development/testing).
     #[must_use]
     pub fn new() -> Self {
         let mut flag_builder = settings::builder();
@@ -42,6 +59,12 @@ impl AranduJit {
         Self { module }
     }
 
+    /// Compiles all functions in `program` to native machine code.
+    ///
+    /// Three-phase compilation:
+    /// 1. Declare all functions (enabling mutual recursion).
+    /// 2. Define/translate each function body via [`FunctionTranslator`].
+    /// 3. Finalize in-memory code and return a [`CompiledModule`].
     #[tracing::instrument(
         level = "trace",
         target = "arandu_backend_cranelift",
@@ -81,8 +104,6 @@ impl AranduJit {
             .declare_function("free", Linkage::Import, &free_sig)
             .map_err(|err| codegen_ice(format!("failed to declare free: {err:?}")))?;
         func_ids.insert("free".to_string(), free_id);
-
-        // 1. Declare all functions first to support cross-calls
 
         // 1. Declare all functions first to support cross-calls
         for func in &program.funcs {
@@ -195,15 +216,23 @@ impl AranduJit {
     }
 }
 
+/// The result of a successful JIT compilation.
+///
+/// Holds the finalized [`JITModule`] and the mapping from function names to
+/// their [`FuncId`]s. Use [`CompiledModule::get_fn`] to obtain callable
+/// function pointers.
 pub struct CompiledModule {
     module: JITModule,
     func_ids: FxHashMap<String, FuncId>,
 }
 
 impl CompiledModule {
+    /// Returns a callable function pointer for the named function.
+    ///
     /// # Safety
-    /// O chamador garante que a assinatura `F` corresponde
-    /// exatamente à função compilada.
+    /// The caller must guarantee that the type `F` exactly matches the
+    /// signature of the compiled function. Mismatched signatures cause
+    /// undefined behaviour.
     pub unsafe fn get_fn<F>(&self, name: &str) -> Option<F> {
         let id = self.func_ids.get(name)?;
         let ptr = self.module.get_finalized_function(*id);

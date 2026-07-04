@@ -1,3 +1,10 @@
+//! Cranelift JIT backend for Arandu.
+//!
+//! Exposes [`CraneliftBackend`] which implements the [`CodegenBackend`] trait.
+//! The backend compiles an [`AmirProgram`] to native machine code in memory
+//! via Cranelift and returns a [`CompiledModule`] whose functions can be
+//! called directly through raw function pointers.
+
 #![allow(clippy::collapsible_if)]
 pub mod abi;
 pub mod jit;
@@ -10,6 +17,10 @@ use crate::jit::AranduJit;
 use arandu_semantics::amir::AmirProgram;
 use arandu_semantics::{CodegenBackend, CompiledCode, Diagnostic, SymbolTable};
 
+/// Entry point for the Cranelift JIT backend.
+///
+/// Implements [`CodegenBackend`]; use [`CraneliftBackend::new`] and then
+/// [`CraneliftBackend::compile`] to JIT-compile an [`AmirProgram`].
 pub struct CraneliftBackend {
     jit: AranduJit,
 }
@@ -21,6 +32,7 @@ impl Default for CraneliftBackend {
 }
 
 impl CraneliftBackend {
+    /// Creates a new `CraneliftBackend` with a freshly initialized JIT context.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -28,6 +40,9 @@ impl CraneliftBackend {
         }
     }
 
+    /// Compiles `program` to native code and returns the [`CompiledModule`].
+    ///
+    /// This is a convenience wrapper around [`CodegenBackend::compile`].
     pub fn compile(
         self,
         program: &AmirProgram,

@@ -1,3 +1,8 @@
+//! Intraprocedural local variable liveness analysis.
+//!
+//! Computes which local variables are live-in and live-out for each basic
+//! block in an [`AmirFunc`]. Used by optimization and code generation passes.
+
 use crate::amir::reachability::terminator_targets;
 use crate::amir::{
     AmirFunc, AmirOperand, AmirPlace, AmirProjection, AmirRvalue, AmirStmt, AmirTerminator,
@@ -5,6 +10,7 @@ use crate::amir::{
 };
 use crate::{BitMatrix, BitSet};
 
+/// Liveness query results for all local variables within a single function.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalLiveness {
     live_in: Vec<BitSet<LocalId>>,
@@ -12,17 +18,22 @@ pub struct LocalLiveness {
 }
 
 impl LocalLiveness {
+    /// Returns the set of local variables that are live at the entry of the given block.
     #[must_use]
     pub fn live_in(&self, block: BlockId) -> &BitSet<LocalId> {
         &self.live_in[block.as_usize()]
     }
 
+    /// Returns the set of local variables that are live at the exit of the given block.
     #[must_use]
     pub fn live_out(&self, block: BlockId) -> &BitSet<LocalId> {
         &self.live_out[block.as_usize()]
     }
 }
 
+/// Runs intraprocedural liveness analysis for all local variables in the function.
+///
+/// Uses a backward dataflow analysis over the CFG.
 #[must_use]
 pub fn analyze_local_liveness(func: &AmirFunc) -> LocalLiveness {
     let num_blocks = func.blocks.len();

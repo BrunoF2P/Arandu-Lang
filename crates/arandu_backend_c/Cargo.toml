@@ -1,0 +1,20 @@
+[package]
+name = "arandu_backend_c"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+arandu_base = { path = "../arandu_base" }
+arandu_middle = { path = "../arandu_middle" }
+arandu_semantics = { path = "../arandu_semantics" }
+rustc-hash = "2.1.3"
+
+[dev-dependencies]
+arandu_parser = { path = "../arandu_parser" }
+arandu_semantics = { path = "../arandu_semantics" }
+arandu_backend_cranelift = { path = "../arandu_backend_cranelift" }
+
+[lints]
+workspace = true

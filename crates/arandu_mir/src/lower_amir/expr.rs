@@ -316,7 +316,7 @@ impl LowerCtx<'_> {
                 }
                 Ok(op)
             }
-             HirExprKind::Path { symbol } => {
+            HirExprKind::Path { symbol } => {
                 // Derive the parent enum SymbolId from the expression's resolved type.
                 // The type checker always resolves an enum-variant expression to
                 // ArType::Named(enum_sym, []), so we can use that as a filter anchor
@@ -328,27 +328,40 @@ impl LowerCtx<'_> {
                 };
                 let op: AmirOperand = if let Some(&local_id) = self.symbol_map.get(symbol) {
                     Ok::<AmirOperand, Diagnostic>(self.read_variable_source(local_id))
-                } else if let Some(&tag) = self.tc.type_info.enum_variant_tags.get(symbol).or_else(|| {
-                    // Fallback: find the canonical variant SymbolId whose parent enum
-                    // matches the type we already know this expression has, then look up
-                    // its tag. No string comparison needed — anchored by SymbolId.
-                    let enum_id = enum_sym_from_ty?;
-                    self.tc.type_info.enum_variants.iter()
-                        .find(|&(v_sym, (parent_sym, _))| {
-                            *parent_sym == enum_id
-                                && self.tc.type_info.enum_variant_tags.contains_key(v_sym)
-                                && {
-                                    // Name must match (bare suffix of the lookup symbol vs
-                                    // bare suffix of the registered variant symbol).
-                                    let lookup_bare = symbols.get(*symbol).name
-                                        .rsplit('.').next().unwrap_or("");
-                                    let reg_bare = symbols.get(*v_sym).name
-                                        .rsplit('.').next().unwrap_or("");
-                                    lookup_bare == reg_bare
-                                }
-                        })
-                        .and_then(|(v_sym, _)| self.tc.type_info.enum_variant_tags.get(v_sym))
-                }) {
+                } else if let Some(&tag) =
+                    self.tc.type_info.enum_variant_tags.get(symbol).or_else(|| {
+                        // Fallback: find the canonical variant SymbolId whose parent enum
+                        // matches the type we already know this expression has, then look up
+                        // its tag. No string comparison needed — anchored by SymbolId.
+                        let enum_id = enum_sym_from_ty?;
+                        self.tc
+                            .type_info
+                            .enum_variants
+                            .iter()
+                            .find(|&(v_sym, (parent_sym, _))| {
+                                *parent_sym == enum_id
+                                    && self.tc.type_info.enum_variant_tags.contains_key(v_sym)
+                                    && {
+                                        // Name must match (bare suffix of the lookup symbol vs
+                                        // bare suffix of the registered variant symbol).
+                                        let lookup_bare = symbols
+                                            .get(*symbol)
+                                            .name
+                                            .rsplit('.')
+                                            .next()
+                                            .unwrap_or("");
+                                        let reg_bare = symbols
+                                            .get(*v_sym)
+                                            .name
+                                            .rsplit('.')
+                                            .next()
+                                            .unwrap_or("");
+                                        lookup_bare == reg_bare
+                                    }
+                            })
+                            .and_then(|(v_sym, _)| self.tc.type_info.enum_variant_tags.get(v_sym))
+                    })
+                {
                     let dest = target.unwrap_or_else(|| self.new_temp(expr.ty.clone()));
                     self.emit_assign_temp(
                         dest,
@@ -370,15 +383,19 @@ impl LowerCtx<'_> {
                 }?;
                 if let Some(dest) = target {
                     let already_assigned = self.tc.type_info.enum_variant_tags.contains_key(symbol)
-                        || enum_sym_from_ty.map_or(false, |enum_id| {
-                            let lookup_bare = symbols.get(*symbol).name
-                                .rsplit('.').next().unwrap_or("");
-                            self.tc.type_info.enum_variants.iter().any(|(v_sym, (parent, _))| {
-                                *parent == enum_id
-                                    && symbols.get(*v_sym).name
-                                        .rsplit('.').next().unwrap_or("") == lookup_bare
-                                    && self.tc.type_info.enum_variant_tags.contains_key(v_sym)
-                            })
+                        || enum_sym_from_ty.is_some_and(|enum_id| {
+                            let lookup_bare =
+                                symbols.get(*symbol).name.rsplit('.').next().unwrap_or("");
+                            self.tc
+                                .type_info
+                                .enum_variants
+                                .iter()
+                                .any(|(v_sym, (parent, _))| {
+                                    *parent == enum_id
+                                        && symbols.get(*v_sym).name.rsplit('.').next().unwrap_or("")
+                                            == lookup_bare
+                                        && self.tc.type_info.enum_variant_tags.contains_key(v_sym)
+                                })
                         });
                     if !already_assigned {
                         let rhs = self.consume_operand(op.clone())?;
@@ -387,23 +404,39 @@ impl LowerCtx<'_> {
                 }
                 Ok(op)
             }
-             HirExprKind::TypePath { type_symbol, member_symbol } => {
+            HirExprKind::TypePath {
+                type_symbol,
+                member_symbol,
+            } => {
                 let op: AmirOperand = if let Some(&local_id) = self.symbol_map.get(member_symbol) {
                     Ok::<AmirOperand, Diagnostic>(self.read_variable_source(local_id))
-                } else if let Some(&tag) = self.tc.type_info.enum_variant_tags.get(member_symbol).or_else(|| {
-                    // Filter by the enum type that the parser already resolved (type_symbol).
-                    // This eliminates cross-enum collisions for identically-named variants.
-                    let lookup_bare = symbols.get(*member_symbol).name
-                        .rsplit('.').next().unwrap_or("");
-                    self.tc.type_info.enum_variants.iter()
-                        .find(|&(v_sym, (parent_sym, _))| {
-                            *parent_sym == *type_symbol
-                                && symbols.get(*v_sym).name
-                                    .rsplit('.').next().unwrap_or("") == lookup_bare
-                                && self.tc.type_info.enum_variant_tags.contains_key(v_sym)
-                        })
-                        .and_then(|(v_sym, _)| self.tc.type_info.enum_variant_tags.get(v_sym))
-                }) {
+                } else if let Some(&tag) = self
+                    .tc
+                    .type_info
+                    .enum_variant_tags
+                    .get(member_symbol)
+                    .or_else(|| {
+                        // Filter by the enum type that the parser already resolved (type_symbol).
+                        // This eliminates cross-enum collisions for identically-named variants.
+                        let lookup_bare = symbols
+                            .get(*member_symbol)
+                            .name
+                            .rsplit('.')
+                            .next()
+                            .unwrap_or("");
+                        self.tc
+                            .type_info
+                            .enum_variants
+                            .iter()
+                            .find(|&(v_sym, (parent_sym, _))| {
+                                *parent_sym == *type_symbol
+                                    && symbols.get(*v_sym).name.rsplit('.').next().unwrap_or("")
+                                        == lookup_bare
+                                    && self.tc.type_info.enum_variant_tags.contains_key(v_sym)
+                            })
+                            .and_then(|(v_sym, _)| self.tc.type_info.enum_variant_tags.get(v_sym))
+                    })
+                {
                     let dest = target.unwrap_or_else(|| self.new_temp(expr.ty.clone()));
                     self.emit_assign_temp(
                         dest,
@@ -417,15 +450,25 @@ impl LowerCtx<'_> {
                     Ok(AmirOperand::GlobalRef(*member_symbol))
                 }?;
                 if let Some(dest) = target {
-                    let lookup_bare = symbols.get(*member_symbol).name
-                        .rsplit('.').next().unwrap_or("");
-                    let already_assigned = self.tc.type_info.enum_variant_tags.contains_key(member_symbol)
-                        || self.tc.type_info.enum_variants.iter().any(|(v_sym, (parent, _))| {
-                            *parent == *type_symbol
-                                && symbols.get(*v_sym).name
-                                    .rsplit('.').next().unwrap_or("") == lookup_bare
-                                && self.tc.type_info.enum_variant_tags.contains_key(v_sym)
-                        });
+                    let lookup_bare = symbols
+                        .get(*member_symbol)
+                        .name
+                        .rsplit('.')
+                        .next()
+                        .unwrap_or("");
+                    let already_assigned =
+                        self.tc
+                            .type_info
+                            .enum_variant_tags
+                            .contains_key(member_symbol)
+                            || self.tc.type_info.enum_variants.iter().any(
+                                |(v_sym, (parent, _))| {
+                                    *parent == *type_symbol
+                                        && symbols.get(*v_sym).name.rsplit('.').next().unwrap_or("")
+                                            == lookup_bare
+                                        && self.tc.type_info.enum_variant_tags.contains_key(v_sym)
+                                },
+                            );
                     if !already_assigned {
                         let rhs = self.consume_operand(op.clone())?;
                         self.emit_assign_temp(dest, AmirRvalue::Use(rhs));
@@ -506,6 +549,138 @@ impl LowerCtx<'_> {
             }
             HirExprKind::Call { callee, args, .. } => {
                 let callee_expr = self.hir.pool.expr(*callee);
+
+                let mut is_enum_ctor = None;
+                match &callee_expr.kind {
+                    HirExprKind::Path { symbol } => {
+                        let enum_sym_from_ty = match &callee_expr.ty {
+                            ArType::Named(id, _) => Some(*id),
+                            ArType::Func(_, ret) => {
+                                match self.tc.type_info.type_interner.resolve(*ret) {
+                                    ArType::Named(id, _) => Some(*id),
+                                    _ => None,
+                                }
+                            }
+                            _ => None,
+                        };
+                        if let Some(&tag) =
+                            self.tc.type_info.enum_variant_tags.get(symbol).or_else(|| {
+                                let enum_id = enum_sym_from_ty?;
+                                self.tc
+                                    .type_info
+                                    .enum_variants
+                                    .iter()
+                                    .find(|&(v_sym, (parent_sym, _))| {
+                                        *parent_sym == enum_id
+                                            && self
+                                                .tc
+                                                .type_info
+                                                .enum_variant_tags
+                                                .contains_key(v_sym)
+                                            && {
+                                                let lookup_bare = symbols
+                                                    .get(*symbol)
+                                                    .name
+                                                    .rsplit('.')
+                                                    .next()
+                                                    .unwrap_or("");
+                                                let reg_bare = symbols
+                                                    .get(*v_sym)
+                                                    .name
+                                                    .rsplit('.')
+                                                    .next()
+                                                    .unwrap_or("");
+                                                lookup_bare == reg_bare
+                                            }
+                                    })
+                                    .and_then(|(v_sym, _)| {
+                                        self.tc.type_info.enum_variant_tags.get(v_sym)
+                                    })
+                            })
+                        {
+                            is_enum_ctor = Some(tag);
+                        }
+                    }
+                    HirExprKind::TypePath {
+                        type_symbol,
+                        member_symbol,
+                    } => {
+                        if let Some(&tag) = self
+                            .tc
+                            .type_info
+                            .enum_variant_tags
+                            .get(member_symbol)
+                            .or_else(|| {
+                                let lookup_bare = symbols
+                                    .get(*member_symbol)
+                                    .name
+                                    .rsplit('.')
+                                    .next()
+                                    .unwrap_or("");
+                                self.tc
+                                    .type_info
+                                    .enum_variants
+                                    .iter()
+                                    .find(|&(v_sym, (parent_sym, _))| {
+                                        *parent_sym == *type_symbol
+                                            && symbols
+                                                .get(*v_sym)
+                                                .name
+                                                .rsplit('.')
+                                                .next()
+                                                .unwrap_or("")
+                                                == lookup_bare
+                                            && self
+                                                .tc
+                                                .type_info
+                                                .enum_variant_tags
+                                                .contains_key(v_sym)
+                                    })
+                                    .and_then(|(v_sym, _)| {
+                                        self.tc.type_info.enum_variant_tags.get(v_sym)
+                                    })
+                            })
+                        {
+                            is_enum_ctor = Some(tag);
+                        }
+                    }
+                    _ => {}
+                }
+
+                if let Some(tag) = is_enum_ctor {
+                    let args_slice = self.hir.pool.expr_list(*args);
+                    let payload_op = match args_slice.len() {
+                        0 => None,
+                        1 => Some(self.lower_expr(args_slice[0], None, symbols)?),
+                        _ => {
+                            let mut item_ops = Vec::with_capacity(args_slice.len());
+                            for &arg in args_slice {
+                                item_ops.push(self.lower_expr(arg, None, symbols)?);
+                            }
+                            let param_tys = match &callee_expr.ty {
+                                ArType::Func(params, _) => params.clone(),
+                                _ => vec![],
+                            };
+                            let tuple_ty = ArType::Tuple(param_tys);
+                            let dest_tuple = self.new_temp(tuple_ty);
+                            self.emit_assign_temp(
+                                dest_tuple,
+                                AmirRvalue::Tuple { items: item_ops },
+                            );
+                            Some(AmirOperand::Copy(dest_tuple))
+                        }
+                    };
+                    let dest = target.unwrap_or_else(|| self.new_temp(expr.ty.clone()));
+                    self.emit_assign_temp(
+                        dest,
+                        AmirRvalue::EnumConstruct {
+                            variant_tag: tag,
+                            payload: payload_op,
+                        },
+                    );
+                    return Ok(AmirOperand::Copy(dest));
+                }
+
                 let method_target = resolve_method_target(
                     callee_expr,
                     &self.hir.pool,

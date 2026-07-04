@@ -49,7 +49,9 @@ impl BumpArena {
             // Commit extra 64KB pages on demand if next_bump crosses committed range
             let current_committed = self.committed.load(Ordering::Acquire);
             if next_bump > current_committed {
-                let _lock = self.commit_lock.lock().unwrap();
+                // Recover from a poisoned lock instead of cascading a panic to
+                // other threads that are concurrently allocating from the arena.
+                let _lock = self.commit_lock.lock().unwrap_or_else(|e| e.into_inner());
                 let current_committed = self.committed.load(Ordering::Relaxed);
                 if next_bump > current_committed {
                     let new_committed = (next_bump + 65535) & !65535;

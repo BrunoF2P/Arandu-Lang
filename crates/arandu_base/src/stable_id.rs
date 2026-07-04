@@ -383,7 +383,9 @@ pub(crate) mod collision_registry {
         let mut collision = false;
         let mut existing_path = String::new();
         {
-            let mut lock = REGISTRY.lock().unwrap();
+            // Use unwrap_or_else to recover from a poisoned lock rather than
+            // cascading a double-panic during tests or concurrent debug builds.
+            let mut lock = REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
             let map = lock.get_or_insert_with(FxHashMap::default);
             if let Some(existing) = map.get(&handle.0) {
                 if existing != path {

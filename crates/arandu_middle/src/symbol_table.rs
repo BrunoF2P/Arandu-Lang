@@ -228,6 +228,8 @@ pub struct SymbolTable {
     module_members: FxHashMap<String, FxHashMap<String, SymbolId>>,
     pub associated_members: FxHashMap<String, FxHashMap<String, SymbolId>>,
     global_scope_id: ScopeId,
+    pub builtin_alloc: Option<SymbolId>,
+    pub builtin_free: Option<SymbolId>,
 }
 
 impl Default for SymbolTable {
@@ -248,6 +250,8 @@ impl SymbolTable {
             module_members: FxHashMap::default(),
             associated_members: FxHashMap::default(),
             global_scope_id: ScopeId(0),
+            builtin_alloc: None,
+            builtin_free: None,
         }
     }
 

@@ -10,12 +10,21 @@ use crate::literal_pool::AmirLiteralPool;
 use crate::sccp::sccp;
 use crate::simplify_cfg::simplify_cfg;
 
+/// Runs the full AMIR optimization pipeline on all functions in `program`.
+///
+/// Each function is independently optimized in a fixpoint loop.
+/// See [`optimize_amir_func`] for the per-function pass sequence.
 pub fn optimize_amir(program: &mut AmirProgram) {
     for func in &mut program.funcs {
         optimize_amir_func(func, &mut program.literal_pool);
     }
 }
 
+/// Runs the per-function optimization loop until convergence.
+///
+/// Pass order: SCCP (constant propagation) → Mark-Sweep DCE → CFG
+/// Simplification. Each iteration feeds the next; the loop terminates
+/// when no pass reports any change.
 pub fn optimize_amir_func(func: &mut AmirFunc, literal_pool: &mut AmirLiteralPool) {
     loop {
         let mut changed = false;

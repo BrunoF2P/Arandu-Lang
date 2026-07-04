@@ -1,3 +1,9 @@
+//! AMIR lowering pass.
+//!
+//! Transforms a [`HirProgram`] (High-level IR) into an [`AmirProgram`]
+//! (Arandu Mid-level IR). Each HIR function is independently lowered into
+//! SSA-like AMIR basic blocks. Aborts early if type-checking already failed.
+
 use crate::amir::{
     AmirBasicBlock, AmirFunc, AmirLocal, AmirOperand, AmirProgram, AmirRvalue, AmirStmt,
     AmirStmtTable, AmirTemp, BlockId, LocalId, TempId,
@@ -19,6 +25,11 @@ mod stmt;
 
 pub(crate) use func::lower_func;
 
+/// Lowers a [`HirProgram`] into an [`AmirProgram`].
+///
+/// Returns `Err` immediately if `tc` already contains any [`Severity::Error`]
+/// diagnostics. Each function is lowered independently; partial errors are
+/// collected and returned together so the caller sees all failures at once.
 #[tracing::instrument(level = "trace", target = "arandu_mir::lower_amir", skip(tc, hir))]
 pub fn lower_to_amir(
     tc: &TypeCheckResult,
@@ -68,7 +79,12 @@ pub fn prune_dummy_loads_stores(func: &mut AmirFunc) {
         let mut new_range_len = 0;
 
         for stmt_id in func.block_stmt_ids(block.id) {
-            let stmt = func.stmts.get(stmt_id).unwrap();
+            let stmt = func
+                .stmts
+                .get(stmt_id)
+                // Safety: stmt_id comes from block_stmt_ids(), which only
+                // yields IDs that were inserted into func.stmts during lowering.
+                .expect("stmt_id from block_stmt_ids is always present in func.stmts");
             let keep = match stmt {
                 AmirStmt::Store { lhs, .. } if lhs.projections.is_empty() => false,
                 AmirStmt::Assign {

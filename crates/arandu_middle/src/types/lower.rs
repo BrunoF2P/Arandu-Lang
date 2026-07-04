@@ -159,6 +159,9 @@ pub fn lower_named_type(
     if type_name_base(name) == "void" && args.is_empty() {
         return ArType::Void;
     }
+    if type_name_base(name) == "Err" && args.is_empty() {
+        return ArType::Err;
+    }
     if let Some(builtin) = lower_builtin_generic(name, args, ctx, interner) {
         return builtin;
     }
