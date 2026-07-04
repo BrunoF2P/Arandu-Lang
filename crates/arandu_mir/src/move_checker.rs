@@ -105,7 +105,7 @@ pub fn check_moves(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagnostic> {
     }
 
     let mut iterations = 0;
-    let max_iterations = num_blocks + 1;
+    let max_iterations = num_blocks * 32 + 100;
 
     while let Some(bid) = worklist.pop_front() {
         iterations += 1;
@@ -297,6 +297,12 @@ fn consume_rvalue(
         | AmirRvalue::Unary { operand: op, .. } => {
             consume_operand(op, func, temp_origins, state, diagnostics, false);
         }
+        AmirRvalue::EnumConstruct { payload, .. } => {
+            if let Some(op) = payload {
+                consume_operand(op, func, temp_origins, state, diagnostics, false);
+            }
+        }
+
         AmirRvalue::Binary { left, right, .. }
         | AmirRvalue::IndexAccess {
             base: left,

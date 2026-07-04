@@ -280,6 +280,16 @@ impl AmirRvalue {
                     index
                 ));
             }
+            AmirRvalue::EnumConstruct {
+                variant_tag,
+                payload,
+            } => {
+                let payload_str = match payload {
+                    Some(op) => format!(", {}", op.to_pretty_string(symbols, pool)),
+                    None => "".to_string(),
+                };
+                out.push_str(&format!("enumConstruct({}{})", variant_tag, payload_str));
+            }
             AmirRvalue::Len(value) => {
                 out.push_str(&format!("len({})", value.to_pretty_string(symbols, pool)));
             }

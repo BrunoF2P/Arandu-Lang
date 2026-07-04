@@ -17,7 +17,7 @@ Func test_defer() -> int
     s0: int // x
 
   bb0:
-    _0 = 1
+    _0 = 0
     return
 
 Func test_defer_scope() -> int

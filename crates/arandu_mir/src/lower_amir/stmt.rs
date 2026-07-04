@@ -8,7 +8,7 @@ use crate::diagnostics::Diagnostic;
 use crate::hir::{HirForClause, HirPlace, HirPlaceSuffix, HirSimpleStmt, HirStmt, HirStmtKind};
 use crate::literal_pool::AmirLiteralEntry;
 use crate::ops::{BinaryOp, SetOp};
-use crate::passes::type_checker::types::{ArType, Primitive};
+use crate::passes::type_checker::types::{ArType, Primitive, result_ok_err};
 
 impl LowerCtx<'_> {
     pub(crate) fn lower_stmt(
@@ -52,23 +52,73 @@ impl LowerCtx<'_> {
             }
             HirStmtKind::Return { values } => {
                 let values_slice = self.hir.pool.expr_list(*values);
-                let is_error = self.is_error_return(values_slice);
-                self.exit_all_defer_frames(is_error, symbols)?;
-                if values_slice.is_empty() {
-                    self.set_terminator(AmirTerminator::Return);
-                } else if values_slice.len() == 1 {
+                if values_slice.len() == 1 {
                     self.lower_expr(values_slice[0], Some(TempId(0)), symbols)?;
-                    self.set_terminator(AmirTerminator::Return);
-                } else {
+                } else if values_slice.len() > 1 {
                     let mut ops = Vec::new();
                     for &v in values_slice {
                         ops.push(self.lower_expr(v, None, symbols)?);
                     }
                     self.emit_assign_temp(TempId(0), AmirRvalue::Tuple { items: ops });
+                }
+
+                let is_result =
+                    result_ok_err(&self.func_return_type, &self.tc.type_info.type_interner)
+                        .is_some();
+                let has_errdefer = self.defer_frames.iter().any(|frame| {
+                    frame
+                        .entries
+                        .iter()
+                        .any(|(_, kind)| *kind == DeferKind::ErrDefer)
+                });
+
+                if is_result && has_errdefer {
+                    let tag_tmp = self.new_temp(ArType::Primitive(Primitive::Int));
+                    self.emit_assign_temp(
+                        tag_tmp,
+                        AmirRvalue::Discriminant {
+                            value: AmirOperand::Copy(TempId(0)),
+                        },
+                    );
+
+                    let one_lit = self.intern_literal(AmirLiteralEntry::Int("1".to_string()));
+                    let cond_tmp = self.new_temp(ArType::Primitive(Primitive::Bool));
+                    self.emit_assign_temp(
+                        cond_tmp,
+                        AmirRvalue::Binary {
+                            op: BinaryOp::Equal,
+                            left: AmirOperand::Copy(tag_tmp),
+                            right: AmirOperand::Constant(one_lit),
+                        },
+                    );
+
+                    let bb_err = self.new_block();
+                    let bb_ok = self.new_block();
+
+                    self.set_bool_branch(AmirOperand::Copy(cond_tmp), bb_err, bb_ok);
+                    self.seal_block(bb_err);
+                    self.seal_block(bb_ok);
+
+                    // BB Err: runs errdefers AND defers
+                    self.current_block = Some(bb_err);
+                    let saved_frames = self.defer_frames.clone();
+                    self.exit_all_defer_frames(true, symbols)?;
+                    self.set_terminator(AmirTerminator::Return);
+
+                    // BB Ok: runs ONLY defers
+                    self.defer_frames = saved_frames;
+                    self.current_block = Some(bb_ok);
+                    self.exit_all_defer_frames(false, symbols)?;
+                    self.set_terminator(AmirTerminator::Return);
+                } else {
+                    let is_error = self.is_error_return(values_slice);
+                    self.exit_all_defer_frames(is_error, symbols)?;
                     self.set_terminator(AmirTerminator::Return);
                 }
+
                 self.current_block = None;
             }
+
             HirStmtKind::Break => {
                 if let Some((_, exit_block, defer_depth)) = self.loop_stack.last().copied() {
                     self.exit_defer_frames_from(defer_depth, false, symbols)?;

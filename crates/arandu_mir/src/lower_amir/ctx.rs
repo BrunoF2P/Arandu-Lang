@@ -611,6 +611,12 @@ impl LowerCtx<'_> {
             AmirRvalue::EnumPayload { value, .. } => {
                 *value = Self::resolve_operand(redirected_temps, value.clone());
             }
+            AmirRvalue::EnumConstruct { payload, .. } => {
+                if let Some(op) = payload {
+                    *op = Self::resolve_operand(redirected_temps, op.clone());
+                }
+            }
+
             AmirRvalue::Len(value) => {
                 *value = Self::resolve_operand(redirected_temps, value.clone());
             }

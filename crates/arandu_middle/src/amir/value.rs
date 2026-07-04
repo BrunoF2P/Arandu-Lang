@@ -54,7 +54,12 @@ pub enum AmirRvalue {
         variant: SymbolId,
         index: usize,
     },
+    EnumConstruct {
+        variant_tag: usize,
+        payload: Option<AmirOperand>,
+    },
     Len(AmirOperand),
+
     Alloc(AmirOperand),
     /// Load value from a stack-allocated local place (memory) into an SSA register.
     Load(AmirPlace),

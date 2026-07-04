@@ -15,20 +15,39 @@ Func on_ok() -> void
 Func test_success() -> Result<void, Err>
   locals:
     _0: Result<void, Err> // return
+    _1: int
+    _2: bool
 
   bb0:
-    call fn@on_ok()
     _0 = nil
+    _1 = discriminant(_0)
+    _2 = eq _1, 1
+    branch _2 => bb1, else bb2
+  bb1:
+    call fn@on_err()
+    call fn@on_ok()
+    return
+  bb2:
+    call fn@on_ok()
     return
 
 Func test_error() -> Result<void, Err>
   locals:
     _0: Result<void, Err> // return
     _1: Err
+    _2: int
+    _3: bool
 
   bb0:
+    _1 = call fn@err.new("interpolated")
+    _0 = enumConstruct(1, _1)
+    _2 = discriminant(_0)
+    _3 = eq _2, 1
+    branch _3 => bb1, else bb2
+  bb1:
     call fn@on_err()
     call fn@on_ok()
-    _1 = call fn@err.new("interpolated")
-    _0 = (nil, _1)
+    return
+  bb2:
+    call fn@on_ok()
     return

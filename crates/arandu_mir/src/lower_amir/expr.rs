@@ -126,7 +126,7 @@ impl LowerCtx<'_> {
     }
 
     pub(crate) fn lower_result_ok_field(&mut self, base: AmirOperand, dest: TempId) {
-        self.emit_assign_temp(dest, AmirRvalue::FieldAccess { base, field: 0 });
+        self.emit_assign_temp(dest, AmirRvalue::FieldAccess { base, field: 1 });
     }
 
     pub(crate) fn lower_result_err_field(
@@ -158,13 +158,22 @@ impl LowerCtx<'_> {
         let err_tmp = self.new_temp(err_ty.clone());
         self.lower_result_err_field(base.clone(), err_ty, err_tmp);
 
+        let tag_tmp = self.new_temp(ArType::Primitive(Primitive::Int));
+        self.emit_assign_temp(
+            tag_tmp,
+            AmirRvalue::Discriminant {
+                value: base.clone(),
+            },
+        );
+
+        let one_lit = self.intern_literal(AmirLiteralEntry::Int("1".to_string()));
         let cond_tmp = self.new_temp(ArType::Primitive(Primitive::Bool));
         self.emit_assign_temp(
             cond_tmp,
             AmirRvalue::Binary {
-                op: BinaryOp::NotEqual,
-                left: AmirOperand::Copy(err_tmp),
-                right: AmirOperand::Constant(AmirConstant::Nil),
+                op: BinaryOp::Equal,
+                left: AmirOperand::Copy(tag_tmp),
+                right: AmirOperand::Constant(one_lit),
             },
         );
 
@@ -177,8 +186,17 @@ impl LowerCtx<'_> {
 
         self.current_block = Some(bb_return_err);
         self.exit_all_defer_frames(true, symbols)?;
-        self.emit_assign_temp(TempId(0), AmirRvalue::Use(AmirOperand::Copy(err_tmp)));
+        let err_ctor_tmp = self.new_temp(self.func_return_type.clone());
+        self.emit_assign_temp(
+            err_ctor_tmp,
+            AmirRvalue::EnumConstruct {
+                variant_tag: 1,
+                payload: Some(AmirOperand::Copy(err_tmp)),
+            },
+        );
+        self.emit_assign_temp(TempId(0), AmirRvalue::Use(AmirOperand::Copy(err_ctor_tmp)));
         self.set_terminator(AmirTerminator::Return);
+
         self.current_block = None;
 
         self.current_block = Some(bb_continue);
@@ -280,15 +298,66 @@ impl LowerCtx<'_> {
                 Ok(op)
             }
             HirExprKind::Nil => {
-                let op = AmirOperand::Constant(AmirConstant::Nil);
-                if let Some(dest) = target {
+                let op = if is_option_type(&expr.ty) {
+                    let dest = target.unwrap_or_else(|| self.new_temp(expr.ty.clone()));
+                    self.emit_assign_temp(
+                        dest,
+                        AmirRvalue::EnumConstruct {
+                            variant_tag: 0,
+                            payload: None,
+                        },
+                    );
+                    AmirOperand::Copy(dest)
+                } else {
+                    AmirOperand::Constant(AmirConstant::Nil)
+                };
+                if let (Some(dest), false) = (target, is_option_type(&expr.ty)) {
                     self.emit_assign_temp(dest, AmirRvalue::Use(op.clone()));
                 }
                 Ok(op)
             }
-            HirExprKind::Path { symbol } => {
+             HirExprKind::Path { symbol } => {
+                // Derive the parent enum SymbolId from the expression's resolved type.
+                // The type checker always resolves an enum-variant expression to
+                // ArType::Named(enum_sym, []), so we can use that as a filter anchor
+                // instead of doing a global name-based scan — which would silently
+                // pick the wrong discriminant when two enums share a variant name.
+                let enum_sym_from_ty = match &expr.ty {
+                    ArType::Named(id, _) => Some(*id),
+                    _ => None,
+                };
                 let op: AmirOperand = if let Some(&local_id) = self.symbol_map.get(symbol) {
                     Ok::<AmirOperand, Diagnostic>(self.read_variable_source(local_id))
+                } else if let Some(&tag) = self.tc.type_info.enum_variant_tags.get(symbol).or_else(|| {
+                    // Fallback: find the canonical variant SymbolId whose parent enum
+                    // matches the type we already know this expression has, then look up
+                    // its tag. No string comparison needed — anchored by SymbolId.
+                    let enum_id = enum_sym_from_ty?;
+                    self.tc.type_info.enum_variants.iter()
+                        .find(|&(v_sym, (parent_sym, _))| {
+                            *parent_sym == enum_id
+                                && self.tc.type_info.enum_variant_tags.contains_key(v_sym)
+                                && {
+                                    // Name must match (bare suffix of the lookup symbol vs
+                                    // bare suffix of the registered variant symbol).
+                                    let lookup_bare = symbols.get(*symbol).name
+                                        .rsplit('.').next().unwrap_or("");
+                                    let reg_bare = symbols.get(*v_sym).name
+                                        .rsplit('.').next().unwrap_or("");
+                                    lookup_bare == reg_bare
+                                }
+                        })
+                        .and_then(|(v_sym, _)| self.tc.type_info.enum_variant_tags.get(v_sym))
+                }) {
+                    let dest = target.unwrap_or_else(|| self.new_temp(expr.ty.clone()));
+                    self.emit_assign_temp(
+                        dest,
+                        AmirRvalue::EnumConstruct {
+                            variant_tag: tag,
+                            payload: None,
+                        },
+                    );
+                    Ok(AmirOperand::Copy(dest))
                 } else {
                     let sym = symbols.get(*symbol);
                     Ok(match sym.kind {
@@ -300,23 +369,71 @@ impl LowerCtx<'_> {
                     })
                 }?;
                 if let Some(dest) = target {
-                    let rhs = self.consume_operand(op.clone())?;
-                    self.emit_assign_temp(dest, AmirRvalue::Use(rhs));
+                    let already_assigned = self.tc.type_info.enum_variant_tags.contains_key(symbol)
+                        || enum_sym_from_ty.map_or(false, |enum_id| {
+                            let lookup_bare = symbols.get(*symbol).name
+                                .rsplit('.').next().unwrap_or("");
+                            self.tc.type_info.enum_variants.iter().any(|(v_sym, (parent, _))| {
+                                *parent == enum_id
+                                    && symbols.get(*v_sym).name
+                                        .rsplit('.').next().unwrap_or("") == lookup_bare
+                                    && self.tc.type_info.enum_variant_tags.contains_key(v_sym)
+                            })
+                        });
+                    if !already_assigned {
+                        let rhs = self.consume_operand(op.clone())?;
+                        self.emit_assign_temp(dest, AmirRvalue::Use(rhs));
+                    }
                 }
                 Ok(op)
             }
-            HirExprKind::TypePath { member_symbol, .. } => {
+             HirExprKind::TypePath { type_symbol, member_symbol } => {
                 let op: AmirOperand = if let Some(&local_id) = self.symbol_map.get(member_symbol) {
                     Ok::<AmirOperand, Diagnostic>(self.read_variable_source(local_id))
+                } else if let Some(&tag) = self.tc.type_info.enum_variant_tags.get(member_symbol).or_else(|| {
+                    // Filter by the enum type that the parser already resolved (type_symbol).
+                    // This eliminates cross-enum collisions for identically-named variants.
+                    let lookup_bare = symbols.get(*member_symbol).name
+                        .rsplit('.').next().unwrap_or("");
+                    self.tc.type_info.enum_variants.iter()
+                        .find(|&(v_sym, (parent_sym, _))| {
+                            *parent_sym == *type_symbol
+                                && symbols.get(*v_sym).name
+                                    .rsplit('.').next().unwrap_or("") == lookup_bare
+                                && self.tc.type_info.enum_variant_tags.contains_key(v_sym)
+                        })
+                        .and_then(|(v_sym, _)| self.tc.type_info.enum_variant_tags.get(v_sym))
+                }) {
+                    let dest = target.unwrap_or_else(|| self.new_temp(expr.ty.clone()));
+                    self.emit_assign_temp(
+                        dest,
+                        AmirRvalue::EnumConstruct {
+                            variant_tag: tag,
+                            payload: None,
+                        },
+                    );
+                    Ok(AmirOperand::Copy(dest))
                 } else {
                     Ok(AmirOperand::GlobalRef(*member_symbol))
                 }?;
                 if let Some(dest) = target {
-                    let rhs = self.consume_operand(op.clone())?;
-                    self.emit_assign_temp(dest, AmirRvalue::Use(rhs));
+                    let lookup_bare = symbols.get(*member_symbol).name
+                        .rsplit('.').next().unwrap_or("");
+                    let already_assigned = self.tc.type_info.enum_variant_tags.contains_key(member_symbol)
+                        || self.tc.type_info.enum_variants.iter().any(|(v_sym, (parent, _))| {
+                            *parent == *type_symbol
+                                && symbols.get(*v_sym).name
+                                    .rsplit('.').next().unwrap_or("") == lookup_bare
+                                && self.tc.type_info.enum_variant_tags.contains_key(v_sym)
+                        });
+                    if !already_assigned {
+                        let rhs = self.consume_operand(op.clone())?;
+                        self.emit_assign_temp(dest, AmirRvalue::Use(rhs));
+                    }
                 }
                 Ok(op)
             }
+
             HirExprKind::Generic { callee, .. } => self.lower_expr(*callee, target, symbols),
             HirExprKind::Alloc { expr: inner } => {
                 let inner_op = self.lower_expr(*inner, None, symbols)?;
@@ -500,25 +617,34 @@ impl LowerCtx<'_> {
                     ResultCtorVariant::Ok => {
                         self.emit_assign_temp(
                             dest,
-                            AmirRvalue::Tuple {
-                                items: vec![val_op, AmirOperand::Constant(AmirConstant::Nil)],
+                            AmirRvalue::EnumConstruct {
+                                variant_tag: 0,
+                                payload: Some(val_op),
                             },
                         );
                     }
                     ResultCtorVariant::Err => {
                         self.emit_assign_temp(
                             dest,
-                            AmirRvalue::Tuple {
-                                items: vec![AmirOperand::Constant(AmirConstant::Nil), val_op],
+                            AmirRvalue::EnumConstruct {
+                                variant_tag: 1,
+                                payload: Some(val_op),
                             },
                         );
                     }
                     ResultCtorVariant::Some => {
-                        self.emit_assign_temp(dest, AmirRvalue::Use(val_op));
+                        self.emit_assign_temp(
+                            dest,
+                            AmirRvalue::EnumConstruct {
+                                variant_tag: 1,
+                                payload: Some(val_op),
+                            },
+                        );
                     }
                 }
                 Ok(AmirOperand::Copy(dest))
             }
+
             HirExprKind::Try { expr: inner } => {
                 let inner_expr = self.hir.pool.expr(*inner);
                 if result_ok_err(&inner_expr.ty, &self.tc.type_info.type_interner).is_some() {

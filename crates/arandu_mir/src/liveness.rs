@@ -163,6 +163,11 @@ fn collect_rvalue_uses(
                 collect_operand_uses(op, defined, uses, block);
             }
         }
+        AmirRvalue::EnumConstruct { payload, .. } => {
+            if let Some(op) = payload {
+                collect_operand_uses(op, defined, uses, block);
+            }
+        }
         AmirRvalue::Array { items } | AmirRvalue::Tuple { items } => {
             for op in items {
                 collect_operand_uses(op, defined, uses, block);

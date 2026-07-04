@@ -3,7 +3,7 @@ Func load() -> Result<int, Err>
     _0: Result<int, Err> // return
 
   bb0:
-    _0 = (0, nil)
+    _0 = enumConstruct(0, 0)
     return
 
 Func test_try() -> int
@@ -11,22 +11,26 @@ Func test_try() -> int
     _0: int // return
     _1: Result<int, Err>
     _2: Err
-    _3: bool
-    _4: int
+    _3: int
+    _4: bool
     _5: int
+    _6: int
+    _7: int
     s0: int // x
 
   bb0:
     _1 = call fn@load()
     _2 = _1.1
-    _3 = ne _2, nil
-    branch _3 => bb1, else bb2
+    _3 = discriminant(_1)
+    _4 = eq _3, 1
+    branch _4 => bb1, else bb2
   bb1:
-    _0 = _2
+    _5 = enumConstruct(1, _2)
+    _0 = _5
     return
   bb2:
-    _4 = _1.0
-    _0 = mul _4, 2
+    _6 = _1.1
+    _0 = mul _6, 2
     return
 
 Func test_safe_field(p: Point?) -> int

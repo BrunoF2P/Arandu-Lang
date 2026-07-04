@@ -106,12 +106,13 @@ pub(crate) fn amir_unsupported(span: Span, feature: &str, roadmap: &str) -> Diag
     .with_hint("see docs/arandu-compiler-roadmap-v0.1.md for the planned milestone")
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DeferKind {
     Defer,
     ErrDefer,
 }
 
+#[derive(Clone)]
 pub(crate) struct DeferFrame {
     entries: Vec<(HirBlock, DeferKind)>,
 }

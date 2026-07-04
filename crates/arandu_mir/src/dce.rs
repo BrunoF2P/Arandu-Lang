@@ -195,6 +195,14 @@ fn collect_rvalue_temps(rvalue: &AmirRvalue) -> SmallVec<[TempId; 4]> {
         AmirRvalue::FieldAccess { base, .. }
         | AmirRvalue::Discriminant { value: base }
         | AmirRvalue::EnumPayload { value: base, .. } => collect_operand_temps(base),
+        AmirRvalue::EnumConstruct { payload, .. } => {
+            let mut t = SmallVec::new();
+            if let Some(op) = payload {
+                t.extend(collect_operand_temps(op));
+            }
+            t
+        }
+
         AmirRvalue::IndexAccess { base, index } => {
             let mut t = collect_operand_temps(base);
             t.extend(collect_operand_temps(index));
