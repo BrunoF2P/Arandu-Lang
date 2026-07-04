@@ -42,7 +42,11 @@ impl AranduJit {
         Self { module }
     }
 
-    #[tracing::instrument(level = "trace", target = "arandu_backend_cranelift", skip(self, program, symbols, type_info))]
+    #[tracing::instrument(
+        level = "trace",
+        target = "arandu_backend_cranelift",
+        skip(self, program, symbols, type_info)
+    )]
     pub fn compile_program(
         mut self,
         program: &AmirProgram,
@@ -53,7 +57,33 @@ impl AranduJit {
         let default_call_conv = self.module.isa().default_call_conv();
         let ptr_type = self.module.target_config().pointer_type();
 
+        // Declare malloc as import
+        let mut malloc_sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+        malloc_sig
+            .params
+            .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+        malloc_sig
+            .returns
+            .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+        let malloc_id = self
+            .module
+            .declare_function("malloc", Linkage::Import, &malloc_sig)
+            .map_err(|err| codegen_ice(format!("failed to declare malloc: {err:?}")))?;
+        func_ids.insert("malloc".to_string(), malloc_id);
+
+        // Declare free as import
+        let mut free_sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+        free_sig
+            .params
+            .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+        let free_id = self
+            .module
+            .declare_function("free", Linkage::Import, &free_sig)
+            .map_err(|err| codegen_ice(format!("failed to declare free: {err:?}")))?;
+        func_ids.insert("free".to_string(), free_id);
+
         // 1. Declare all functions first to support cross-calls
+
         // 1. Declare all functions first to support cross-calls
         for func in &program.funcs {
             let sym = symbols.get(func.symbol);

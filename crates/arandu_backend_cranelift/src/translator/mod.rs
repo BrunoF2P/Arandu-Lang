@@ -4,16 +4,19 @@ mod stmt;
 
 use arandu_base::span::Span;
 use arandu_semantics::amir::{
-    AmirBasicBlock, AmirFunc, AmirStmt, AmirTerminator, BlockId, InstrId, LocalId, TempId,
+    AmirBasicBlock, AmirConstant, AmirFunc, AmirOperand, AmirStmt, AmirTerminator, BlockId,
+    InstrId, LocalId, TempId,
 };
+use arandu_semantics::passes::type_checker::types::{ArType, Primitive};
 use arandu_semantics::{DiagCode, Diagnostic, SymbolTable};
+use cranelift_codegen::ir::types::I64;
 use cranelift_codegen::ir::{Block, InstBuilder, Type, Value};
 use cranelift_frontend::{FunctionBuilder, Variable};
 use cranelift_jit::JITModule;
 use cranelift_module::FuncId;
 use rustc_hash::FxHashMap;
 
-use crate::types::{ClifType, clif_type};
+use crate::types::{ClifType, clif_type, clif_types};
 
 pub trait AmirVisitor {
     fn visit_block(&mut self, block: &AmirBasicBlock);
@@ -29,6 +32,8 @@ pub struct FunctionTranslator<'a, 'b> {
     pub block_map: FxHashMap<BlockId, Block>,
     pub temp_map: FxHashMap<TempId, Variable>,
     pub local_map: FxHashMap<LocalId, Variable>,
+    pub str_temp_map: FxHashMap<TempId, (Variable, Variable)>,
+    pub str_local_map: FxHashMap<LocalId, (Variable, Variable)>,
     pub ptr_type: Type,
     pub literal_pool: &'b arandu_semantics::literal_pool::AmirLiteralPool,
     pub current_func: &'b AmirFunc,
@@ -56,6 +61,8 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
             block_map: FxHashMap::default(),
             temp_map: FxHashMap::default(),
             local_map: FxHashMap::default(),
+            str_temp_map: FxHashMap::default(),
+            str_local_map: FxHashMap::default(),
             ptr_type,
             literal_pool,
             current_func,
@@ -109,7 +116,40 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
             .unwrap_or_else(|| self.func_span())
     }
 
+    pub(crate) fn get_operand_ar_type(&self, op: &AmirOperand) -> ArType {
+        match op {
+            AmirOperand::Copy(temp_id) | AmirOperand::Move(temp_id) => {
+                self.current_func.temps[temp_id.as_usize()].ty.clone()
+            }
+            AmirOperand::Constant(c) => match c {
+                AmirConstant::Bool(_) => ArType::Primitive(Primitive::Bool),
+                AmirConstant::Nil => ArType::Void,
+                AmirConstant::Pool(lit_id) => match self.literal_pool.get(*lit_id) {
+                    arandu_semantics::literal_pool::AmirLiteralEntry::Int(_) => ArType::IntLiteral,
+                    arandu_semantics::literal_pool::AmirLiteralEntry::Float(_) => {
+                        ArType::FloatLiteral
+                    }
+                    arandu_semantics::literal_pool::AmirLiteralEntry::Str(_) => {
+                        ArType::Primitive(Primitive::Str)
+                    }
+                    arandu_semantics::literal_pool::AmirLiteralEntry::Char(_) => {
+                        ArType::Primitive(Primitive::Char)
+                    }
+                },
+            },
+            AmirOperand::FunctionRef(_) | AmirOperand::GlobalRef(_) => {
+                if let AmirOperand::GlobalRef(symbol) = op {
+                    if let Some(ty) = self.type_info.decl_type(*symbol) {
+                        return ty.clone();
+                    }
+                }
+                ArType::Error
+            }
+        }
+    }
+
     #[tracing::instrument(level = "trace", target = "arandu_backend_cranelift", skip(self))]
+
     pub fn translate(&mut self) -> Result<(), Diagnostic> {
         for (idx, _block) in self.current_func.blocks.iter().enumerate() {
             let block_id = BlockId::from_usize(idx);
@@ -122,7 +162,7 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
             let clif_block = self.block_map[&block_id];
             if block_id.as_usize() > 0 {
                 for param in &block.params {
-                    if let ClifType::Concrete(clif_ty) = clif_type(&param.ty, self.ptr_type) {
+                    for &clif_ty in &clif_types(&param.ty, self.ptr_type) {
                         self.builder.append_block_param(clif_block, clif_ty);
                     }
                 }
@@ -135,23 +175,45 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
         self.builder.switch_to_block(entry_clif);
 
         for local in &self.current_func.locals {
-            if let ClifType::Concrete(clif_ty) = clif_type(&local.ty, self.ptr_type) {
+            if matches!(local.ty, ArType::Primitive(Primitive::Str)) {
+                let var_ptr = self.builder.declare_var(self.ptr_type);
+                let var_len = self.builder.declare_var(I64);
+                self.str_local_map.insert(local.id, (var_ptr, var_len));
+            } else if let ClifType::Concrete(clif_ty) = clif_type(&local.ty, self.ptr_type) {
                 let var = self.builder.declare_var(clif_ty);
                 self.local_map.insert(local.id, var);
             }
         }
 
         for temp in &self.current_func.temps {
-            if let ClifType::Concrete(clif_ty) = clif_type(&temp.ty, self.ptr_type) {
+            if matches!(temp.ty, ArType::Primitive(Primitive::Str)) {
+                let var_ptr = self.builder.declare_var(self.ptr_type);
+                let var_len = self.builder.declare_var(I64);
+                self.str_temp_map.insert(temp.id, (var_ptr, var_len));
+            } else if let ClifType::Concrete(clif_ty) = clif_type(&temp.ty, self.ptr_type) {
                 let var = self.builder.declare_var(clif_ty);
                 self.temp_map.insert(temp.id, var);
             }
         }
 
         let entry_params = self.builder.block_params(entry_clif).to_vec();
-        for (i, &param_temp_id) in self.current_func.params.iter().enumerate() {
-            if let Some(&var) = self.temp_map.get(&param_temp_id) {
-                self.builder.def_var(var, entry_params[i]);
+        let mut clif_slot_idx = 0;
+        for &param_temp_id in &self.current_func.params {
+            let param_ty = &self.current_func.temps[param_temp_id.as_usize()].ty;
+            if matches!(param_ty, ArType::Primitive(Primitive::Str)) {
+                let ptr_val = entry_params[clif_slot_idx];
+                let len_val = entry_params[clif_slot_idx + 1];
+                clif_slot_idx += 2;
+                if let Some(&(var_ptr, var_len)) = self.str_temp_map.get(&param_temp_id) {
+                    self.builder.def_var(var_ptr, ptr_val);
+                    self.builder.def_var(var_len, len_val);
+                }
+            } else if let ClifType::Concrete(_) = clif_type(param_ty, self.ptr_type) {
+                let val = entry_params[clif_slot_idx];
+                clif_slot_idx += 1;
+                if let Some(&var) = self.temp_map.get(&param_temp_id) {
+                    self.builder.def_var(var, val);
+                }
             }
         }
 
@@ -180,9 +242,22 @@ impl<'a, 'b> AmirVisitor for FunctionTranslator<'a, 'b> {
 
         if block.id.as_usize() > 0 {
             let clif_params = self.builder.block_params(clif_block).to_vec();
-            for (i, param) in block.params.iter().enumerate() {
-                if let Some(&var) = self.temp_map.get(&param.id) {
-                    self.builder.def_var(var, clif_params[i]);
+            let mut clif_slot_idx = 0;
+            for param in &block.params {
+                if matches!(param.ty, ArType::Primitive(Primitive::Str)) {
+                    let ptr_val = clif_params[clif_slot_idx];
+                    let len_val = clif_params[clif_slot_idx + 1];
+                    clif_slot_idx += 2;
+                    if let Some(&(var_ptr, var_len)) = self.str_temp_map.get(&param.id) {
+                        self.builder.def_var(var_ptr, ptr_val);
+                        self.builder.def_var(var_len, len_val);
+                    }
+                } else if let ClifType::Concrete(_) = clif_type(&param.ty, self.ptr_type) {
+                    let val = clif_params[clif_slot_idx];
+                    clif_slot_idx += 1;
+                    if let Some(&var) = self.temp_map.get(&param.id) {
+                        self.builder.def_var(var, val);
+                    }
                 }
             }
         }

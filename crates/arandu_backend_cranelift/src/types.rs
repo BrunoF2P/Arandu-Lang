@@ -78,3 +78,23 @@ pub fn clif_type(ty: &ArType, ptr_type: Type) -> ClifType {
         }
     }
 }
+
+#[must_use]
+pub fn clif_types(ty: &ArType, ptr_type: Type) -> Vec<Type> {
+    match ty {
+        ArType::Primitive(Primitive::Str) => vec![ptr_type, I64],
+        _ => match clif_type(ty, ptr_type) {
+            ClifType::Concrete(t) => vec![t],
+            ClifType::Void => vec![],
+        },
+    }
+}
+
+#[must_use]
+pub fn clif_slot_count(ty: &ArType) -> usize {
+    match ty {
+        ArType::Primitive(Primitive::Str) => 2,
+        ArType::Void | ArType::Err | ArType::Error => 0,
+        _ => 1,
+    }
+}

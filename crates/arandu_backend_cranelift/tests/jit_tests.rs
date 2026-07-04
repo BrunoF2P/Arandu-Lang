@@ -559,93 +559,136 @@ fn jit_int_match() {
     assert_eq!(result, 30);
 }
 
-// FIXME: implement AmirRvalue::Discriminant + EnumPayload in crates/arandu_backend_cranelift/src/translator/expr.rs
-// #[test]
-// fn jit_enum_match() {
-//     let src = r#"
-//     enum Color {
-//         Red,
-//         Green,
-//         Blue,
-//     }
-//     func pick(c: Color): int {
-//         return match c {
-//             Color.Red => 1
-//             Color.Green => 2
-//             Color.Blue => 3
-//         }
-//     }
-//     "#;
-//     let (amir, symbols, type_info) = compile_src(src);
-//     let backend = CraneliftBackend::new();
-//     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
-//     let result: i32 = unsafe {
-//         let f: unsafe fn(i64) -> i32 = module.get_fn("pick").unwrap();
-//         f(0)
-//     };
-//     assert_eq!(result, 1);
-// }
+#[test]
+fn jit_enum_match() {
+    let src = r#"
+    enum Color {
+        Red,
+        Green,
+        Blue,
+    }
+    func pick(c: Color): int {
+        return match c {
+            Color.Red => 1
+            Color.Green => 2
+            Color.Blue => 3
+        }
+    }
+    func test_red(): int {
+        return pick(Color.Red);
+    }
+    func test_green(): int {
+        return pick(Color.Green);
+    }
+    func test_blue(): int {
+        return pick(Color.Blue);
+    }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    let backend = CraneliftBackend::new();
+    let module = backend.compile(&amir, &symbols, &type_info).unwrap();
+    let result_red: i32 = unsafe {
+        let f: unsafe fn() -> i32 = module.get_fn("test_red").unwrap();
+        f()
+    };
+    assert_eq!(result_red, 1);
+    let result_green: i32 = unsafe {
+        let f: unsafe fn() -> i32 = module.get_fn("test_green").unwrap();
+        f()
+    };
+    assert_eq!(result_green, 2);
+    let result_blue: i32 = unsafe {
+        let f: unsafe fn() -> i32 = module.get_fn("test_blue").unwrap();
+        f()
+    };
+    assert_eq!(result_blue, 3);
+}
 
-// FIXME: implement AmirRvalue::IndexAccess in crates/arandu_backend_cranelift/src/translator/expr.rs
-// #[test]
-// fn jit_index_access() {
-//     let src = r#"
-//     func get(a: []int, i: int): int {
-//         return a[i];
-//     }
-//     "#;
-// }
+#[test]
+fn jit_enum_none_payload_never_read() {
+    let src = r#"
+    enum MaybeInt {
+        None,
+        Some(int),
+    }
+    func get_value(m: MaybeInt): int {
+        return match m {
+            MaybeInt.None => 0
+            MaybeInt.Some(val) => val
+        }
+    }
+    func run_loop(n: int): int {
+        let mut i = 0;
+        let mut sum = 0;
+        while i < n {
+            let m = MaybeInt.None;
+            sum = sum + get_value(m);
+            i = i + 1;
+        }
+        return sum;
+    }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    let backend = CraneliftBackend::new();
+    let module = backend.compile(&amir, &symbols, &type_info).unwrap();
+    let result: i32 = unsafe {
+        let f: unsafe fn(i32) -> i32 = module.get_fn("run_loop").unwrap();
+        f(1000)
+    };
+    assert_eq!(result, 0);
+}
 
-// FIXME: implement AmirRvalue::Array in crates/arandu_backend_cranelift/src/translator/expr.rs
-// #[test]
-// fn jit_array_literal() {
-//     let src = r#"
-//     func first(): int {
-//         let a = [1, 2, 3];
-//         return a[0];
-//     }
-//     "#;
-// }
+#[test]
+fn jit_tuple() {
+    let src = r#"
+    func pair(): (int, bool) {
+        return 42, true;
+    }
+    func get_first(): int {
+        let x, y = pair();
+        return x;
+    }
+    func get_second(): bool {
+        let x, y = pair();
+        return y;
+    }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    let backend = CraneliftBackend::new();
+    let module = backend.compile(&amir, &symbols, &type_info).unwrap();
+    let first: i32 = unsafe {
+        let f: unsafe fn() -> i32 = module.get_fn("get_first").unwrap();
+        f()
+    };
+    assert_eq!(first, 42);
+    let second: bool = unsafe {
+        let f: unsafe fn() -> bool = module.get_fn("get_second").unwrap();
+        f()
+    };
+    assert!(second);
+}
 
-// FIXME: implement AmirRvalue::Tuple in crates/arandu_backend_cranelift/src/translator/expr.rs
-// #[test]
-// fn jit_tuple() {
-//     let src = r#"
-//     func pair(): (int, bool) {
-//         return (42, true);
-//     }
-//     "#;
-// }
-
-// FIXME: implement AmirRvalue::Borrow/BorrowMut in crates/arandu_backend_cranelift/src/translator/expr.rs
-// #[test]
-// fn jit_borrow() {
-//     let src = r#"
-//     func inc(p: ptr[int]): void {
-//         *p += 1;
-//     }
-//     "#;
-// }
-
-// FIXME: implement BinaryOp::Mod for floats in crates/arandu_backend_cranelift/src/translator/compare.rs
-// #[test]
-// fn jit_float_mod() {
-//     let src = "func rem(a: float, b: float): float { return a % b; }";
-// }
-
-// FIXME: implement UnaryOp::Await in crates/arandu_backend_cranelift/src/translator/expr.rs
-// #[test]
-// fn jit_await() {}
-
-// FIXME: AmirRvalue::StructLiteral needs malloc declared as extern in the program;
-//        backend also has ptr_type vs uint mismatch for the size parameter
-// #[test]
-// fn jit_struct_literal() {
-//     let src = r#"
-//     struct Point { x: int, y: int }
-//     func make(): Point { return Point { x: 1, y: 2 }; }
-//     "#;
-// }
+#[test]
+fn jit_struct_literal() {
+    let src = r#"
+    struct Point {
+        x: int
+        y: int
+    }
+    func get_sum(): int {
+        let p = Point { x: 10, y: 20 };
+        return p.x + p.y;
+    }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    let backend = CraneliftBackend::new();
+    let module = backend.compile(&amir, &symbols, &type_info).unwrap();
+    let sum: i32 = unsafe {
+        let f: unsafe fn() -> i32 = module.get_fn("get_sum").unwrap();
+        f()
+    };
+    assert_eq!(sum, 30);
+}
 
 #[test]
 fn jit_returns_ice_on_invalid_literal_pool() {
@@ -668,4 +711,77 @@ fn jit_returns_ice_on_invalid_literal_pool() {
         "unexpected ICE message: {}",
         err.message
     );
+}
+
+/// Regression test: two enums sharing a variant name must not collide
+/// on their discriminant tags.
+///
+/// ## What this guards against
+///
+/// The variant resolution fallback used to scan `enum_variant_tags` globally
+/// by name — so `Color.Red` and `Status.Red` could silently resolve to
+/// whichever `SymbolId` the hashmap returned first (non-deterministic with
+/// standard HashMap; consistent-but-wrong with FxHashMap since it does not
+/// randomize its seed per process, so a collision would mask itself in CI).
+///
+/// The fix registers both the definition-site SymbolId ("Red") *and* the
+/// associated-member SymbolId ("Color.Red") in `enum_variant_tags` during
+/// `collect_type_shapes`, so the direct `.get(symbol)` hit never falls
+/// through to the name-based global scan.
+///
+/// ## Why this test is deterministic
+///
+/// Rather than relying on iteration order to expose the bug, the test
+/// encodes the expected discriminant as the JIT return value and asserts
+/// it numerically.  A regression produces tag 1 (the wrong variant) instead
+/// of 0, failing the assert regardless of hashmap ordering.
+#[test]
+fn jit_enum_cross_variant_name_no_collision() {
+    // Two enums with identically-named variants.
+    // color_tag() and status_tag() each return the discriminant of their
+    // respective ".Red" variant encoded as an integer via match.
+    //
+    // Before the fix, the global name-based fallback scan would silently
+    // assign the wrong discriminant when FxHashMap happened to return the
+    // other enum's "Red" first.  The test is deterministic: a regression
+    // produces 1 instead of 0, failing the assert regardless of hash order.
+    let src = r#"
+        enum Color  { Red, Green }
+        enum Status { Yellow, Red }
+
+        func color_tag() : int {
+            return match Color.Red {
+                Color.Red   => 0
+                Color.Green => 1
+            }
+        }
+
+        func status_tag() : int {
+            return match Status.Red {
+                Status.Yellow => 0
+                Status.Red    => 1
+            }
+        }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    let backend = CraneliftBackend::new();
+    let module = backend.compile(&amir, &symbols, &type_info).unwrap();
+
+    let color_tag: i32 = unsafe {
+        let f: unsafe fn() -> i32 = module.get_fn("color_tag").unwrap();
+        f()
+    };
+    let status_tag: i32 = unsafe {
+        let f: unsafe fn() -> i32 = module.get_fn("status_tag").unwrap();
+        f()
+    };
+
+    // Color.Red is declared first in Color → match arm 0.
+    // Status.Red is declared SECOND in Status (Yellow first) → match arm 1.
+    // The asymmetry is intentional: if the bug regresses and Color.Red is
+    // resolved using Status.Red's discriminant (1) or vice-versa (0),
+    // the wrong arm fires and the assert catches it — regardless of which
+    // direction the cross-enum lookup goes and regardless of hashmap ordering.
+    assert_eq!(color_tag, 0, "Color.Red must match arm 0 (tag 0 in Color)");
+    assert_eq!(status_tag, 1, "Status.Red must match arm 1 (tag 1 in Status, Yellow is 0)");
 }

@@ -1,14 +1,340 @@
-use arandu_semantics::amir::{AmirConstant, AmirOperand, AmirProjection, AmirRvalue};
+use arandu_semantics::amir::{AmirConstant, AmirOperand, AmirPlace, AmirProjection, AmirRvalue};
 use arandu_semantics::ops::UnaryOp;
+use arandu_semantics::passes::type_checker::types::{ArType, Primitive};
 use cranelift_codegen::ir::{InstBuilder, Type, Value};
 use cranelift_module::Module;
 
 use super::FunctionTranslator;
 
 impl FunctionTranslator<'_, '_> {
+    pub(super) fn translate_str_operand(&mut self, operand: &AmirOperand) -> (Value, Value) {
+        if self.error.is_some() {
+            return (self.poison_i32(), self.poison_i32());
+        }
+
+        match operand {
+            AmirOperand::Copy(temp_id) | AmirOperand::Move(temp_id) => {
+                if let Some(&(var_ptr, var_len)) = self.str_temp_map.get(temp_id) {
+                    let ptr_val = self.builder.use_var(var_ptr);
+                    let len_val = self.builder.use_var(var_len);
+                    (ptr_val, len_val)
+                } else if let Some(&var) = self.temp_map.get(temp_id) {
+                    let ptr_val = self.builder.use_var(var);
+                    let len_val = self
+                        .builder
+                        .ins()
+                        .iconst(cranelift_codegen::ir::types::I64, 0);
+                    (ptr_val, len_val)
+                } else {
+                    self.record_ice(
+                        "use of undeclared AMIR temp in codegen",
+                        self.temp_span(*temp_id),
+                    );
+                    (self.poison_i32(), self.poison_i32())
+                }
+            }
+            AmirOperand::Constant(AmirConstant::Pool(lit_id)) => {
+                let entry = self.literal_pool.get(*lit_id);
+                if let arandu_semantics::literal_pool::AmirLiteralEntry::Str(s) = entry {
+                    let str_bytes = s.as_bytes();
+                    let data_id = match self.module.declare_data(
+                        &format!("str_lit_{}", lit_id.0),
+                        cranelift_module::Linkage::Local,
+                        false,
+                        false,
+                    ) {
+                        Ok(data_id) => data_id,
+                        Err(err) => {
+                            self.record_ice(
+                                format!("failed to declare string literal in JIT module: {err:?}"),
+                                self.func_span(),
+                            );
+                            return (self.poison_i32(), self.poison_i32());
+                        }
+                    };
+                    let mut data_ctx = cranelift_module::DataDescription::new();
+                    data_ctx.define(str_bytes.to_vec().into_boxed_slice());
+                    let _ = self.module.define_data(data_id, &data_ctx);
+                    let local_data_ref =
+                        self.module.declare_data_in_func(data_id, self.builder.func);
+                    let ptr_val = self
+                        .builder
+                        .ins()
+                        .symbol_value(self.ptr_type, local_data_ref);
+                    let len_val = self
+                        .builder
+                        .ins()
+                        .iconst(cranelift_codegen::ir::types::I64, s.len() as i64);
+                    (ptr_val, len_val)
+                } else {
+                    self.record_ice("expected string literal in pool", self.func_span());
+                    (self.poison_i32(), self.poison_i32())
+                }
+            }
+            _ => {
+                self.record_ice(
+                    "unsupported operand for translate_str_operand",
+                    self.func_span(),
+                );
+                (self.poison_i32(), self.poison_i32())
+            }
+        }
+    }
+
+    pub(super) fn translate_str_rvalue(&mut self, rvalue: &AmirRvalue) -> (Value, Value) {
+        if self.error.is_some() {
+            return (self.poison_i32(), self.poison_i32());
+        }
+
+        match rvalue {
+            AmirRvalue::Use(op) => self.translate_str_operand(op),
+            AmirRvalue::Load(place) => {
+                if place.projections.is_empty() {
+                    if let Some(&(var_ptr, var_len)) = self.str_local_map.get(&place.local) {
+                        (self.builder.use_var(var_ptr), self.builder.use_var(var_len))
+                    } else {
+                        self.record_ice(
+                            "use of undeclared AMIR local str in codegen",
+                            self.local_span(place.local),
+                        );
+                        (self.poison_i32(), self.poison_i32())
+                    }
+                } else {
+                    let (ptr_val, offset) = self.translate_place_address_for_load(place);
+                    let loaded_ptr = self.builder.ins().load(
+                        self.ptr_type,
+                        cranelift_codegen::ir::MemFlagsData::new(),
+                        ptr_val,
+                        offset,
+                    );
+                    let loaded_len = self.builder.ins().load(
+                        cranelift_codegen::ir::types::I64,
+                        cranelift_codegen::ir::MemFlagsData::new(),
+                        ptr_val,
+                        offset + self.ptr_type.bytes() as i32,
+                    );
+                    (loaded_ptr, loaded_len)
+                }
+            }
+            AmirRvalue::FieldAccess { base, field } => {
+                let ptr_val = self.translate_operand(base, Some(self.ptr_type));
+                let base_ty = match base {
+                    AmirOperand::Copy(temp_id) | AmirOperand::Move(temp_id) => {
+                        &self.current_func.temps[temp_id.as_usize()].ty
+                    }
+                    _ => &arandu_semantics::types::ArType::Error,
+                };
+                let struct_ty = match base_ty {
+                    arandu_semantics::types::ArType::Ptr(inner) => {
+                        self.type_info.resolve_type_id(*inner)
+                    }
+                    other => other,
+                };
+                let pointer_width = self.ptr_type.bytes() as u64;
+                let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
+                let layout =
+                    engine.layout_of_type(struct_ty, &self.type_info.type_interner, self.type_info);
+                let offset = layout.field_offsets[*field] as i32;
+
+                let loaded_ptr = self.builder.ins().load(
+                    self.ptr_type,
+                    cranelift_codegen::ir::MemFlagsData::new(),
+                    ptr_val,
+                    offset,
+                );
+                let loaded_len = self.builder.ins().load(
+                    cranelift_codegen::ir::types::I64,
+                    cranelift_codegen::ir::MemFlagsData::new(),
+                    ptr_val,
+                    offset + pointer_width as i32,
+                );
+                (loaded_ptr, loaded_len)
+            }
+            AmirRvalue::EnumPayload {
+                value,
+                variant,
+                index,
+            } => {
+                let ptr_val = self.translate_operand(value, Some(self.ptr_type));
+                let pointer_width = self.ptr_type.bytes() as u64;
+
+                let base_ty = match value {
+                    AmirOperand::Copy(temp_id) | AmirOperand::Move(temp_id) => {
+                        &self.current_func.temps[temp_id.as_usize()].ty
+                    }
+                    _ => &arandu_semantics::types::ArType::Error,
+                };
+                let enum_ty = match base_ty {
+                    arandu_semantics::types::ArType::Ptr(inner) => {
+                        self.type_info.resolve_type_id(*inner)
+                    }
+                    other => other,
+                };
+                let enum_id = match enum_ty {
+                    ArType::Named(enum_id, _) => *enum_id,
+                    _ => arandu_semantics::SymbolId(0),
+                };
+
+                let mut payload_offset = 0;
+                if let Some(variants) =
+                    arandu_semantics::layout::StructLayoutProvider::get_enum_variants(
+                        self.type_info,
+                        enum_id,
+                    )
+                {
+                    let tag = self
+                        .type_info
+                        .enum_variant_tags
+                        .get(variant)
+                        .copied()
+                        .unwrap_or(0);
+                    if let Some(variant_shape) = variants.get(tag) {
+                        if let Some(payload_ty_id) = variant_shape.payload_ty {
+                            let payload_ty = self.type_info.resolve_type_id(payload_ty_id);
+                            let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
+                            let payload_layout = engine.layout_of_type(
+                                payload_ty,
+                                &self.type_info.type_interner,
+                                self.type_info,
+                            );
+                            if *index < payload_layout.field_offsets.len() {
+                                payload_offset = payload_layout.field_offsets[*index] as i32;
+                            }
+                        }
+                    }
+                }
+
+                let total_offset = pointer_width as i32 + payload_offset;
+                let loaded_ptr = self.builder.ins().load(
+                    self.ptr_type,
+                    cranelift_codegen::ir::MemFlagsData::new(),
+                    ptr_val,
+                    total_offset,
+                );
+                let loaded_len = self.builder.ins().load(
+                    cranelift_codegen::ir::types::I64,
+                    cranelift_codegen::ir::MemFlagsData::new(),
+                    ptr_val,
+                    total_offset + self.ptr_type.bytes() as i32,
+                );
+                (loaded_ptr, loaded_len)
+            }
+            _ => {
+                self.record_ice(
+                    "unsupported rvalue kind returning str in codegen",
+                    self.func_span(),
+                );
+                (self.poison_i32(), self.poison_i32())
+            }
+        }
+    }
+
+    pub(super) fn translate_place_address_for_load(&mut self, place: &AmirPlace) -> (Value, i32) {
+        let mut ptr_val = if let Some(&var) = self.local_map.get(&place.local) {
+            self.builder.use_var(var)
+        } else if let Some(&(var_ptr, _)) = self.str_local_map.get(&place.local) {
+            self.builder.use_var(var_ptr)
+        } else {
+            self.record_ice(
+                "use of undeclared AMIR local in codegen",
+                self.local_span(place.local),
+            );
+            return (self.poison_i32(), 0);
+        };
+
+        let mut current_ty = self.current_func.locals[place.local.as_usize()].ty.clone();
+
+        for i in 0..place.projections.len().saturating_sub(1) {
+            let proj = &place.projections[i];
+            match proj {
+                AmirProjection::Field(symbol_id) => {
+                    let offset = self.translate_projection_offset(&mut current_ty, *symbol_id);
+                    ptr_val = self.builder.ins().load(
+                        self.ptr_type,
+                        cranelift_codegen::ir::MemFlagsData::new(),
+                        ptr_val,
+                        offset,
+                    );
+                }
+                AmirProjection::Index(op) => {
+                    let idx_val = self.translate_operand(op, Some(self.ptr_type));
+                    let inner_ty_id = match &current_ty {
+                        ArType::Ptr(inner) | ArType::Slice(inner) | ArType::Array(_, inner) => {
+                            *inner
+                        }
+                        _ => {
+                            self.record_ice(
+                                "indexing non-indexable type in codegen",
+                                self.local_span(place.local),
+                            );
+                            return (self.poison_i32(), 0);
+                        }
+                    };
+                    let inner_ty = self.type_info.resolve_type_id(inner_ty_id).clone();
+                    current_ty = inner_ty;
+
+                    let pointer_width = self.ptr_type.bytes() as u64;
+                    let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
+                    let layout = engine.layout_of_type(
+                        &current_ty,
+                        &self.type_info.type_interner,
+                        self.type_info,
+                    );
+                    let elem_size = self.builder.ins().iconst(self.ptr_type, layout.size as i64);
+                    let offset_val = self.builder.ins().imul(idx_val, elem_size);
+                    ptr_val = self.builder.ins().iadd(ptr_val, offset_val);
+                    ptr_val = self.builder.ins().load(
+                        self.ptr_type,
+                        cranelift_codegen::ir::MemFlagsData::new(),
+                        ptr_val,
+                        0,
+                    );
+                }
+            }
+        }
+
+        let Some(last_proj) = place.projections.last() else {
+            return (ptr_val, 0);
+        };
+        match last_proj {
+            AmirProjection::Field(symbol_id) => {
+                let offset = self.translate_projection_offset(&mut current_ty, *symbol_id);
+                (ptr_val, offset)
+            }
+            AmirProjection::Index(op) => {
+                let idx_val = self.translate_operand(op, Some(self.ptr_type));
+                let inner_ty_id = match &current_ty {
+                    ArType::Ptr(inner) | ArType::Slice(inner) | ArType::Array(_, inner) => *inner,
+                    _ => {
+                        self.record_ice(
+                            "indexing non-indexable type in codegen",
+                            self.local_span(place.local),
+                        );
+                        return (self.poison_i32(), 0);
+                    }
+                };
+                let inner_ty = self.type_info.resolve_type_id(inner_ty_id).clone();
+                current_ty = inner_ty;
+
+                let pointer_width = self.ptr_type.bytes() as u64;
+                let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
+                let layout = engine.layout_of_type(
+                    &current_ty,
+                    &self.type_info.type_interner,
+                    self.type_info,
+                );
+                let elem_size = self.builder.ins().iconst(self.ptr_type, layout.size as i64);
+                let offset_val = self.builder.ins().imul(idx_val, elem_size);
+                let target_ptr = self.builder.ins().iadd(ptr_val, offset_val);
+                (target_ptr, 0)
+            }
+        }
+    }
+
     pub(super) fn translate_operand(
         &mut self,
         operand: &AmirOperand,
+
         expected_ty: Option<Type>,
     ) -> Value {
         if self.error.is_some() {
@@ -135,7 +461,7 @@ impl FunctionTranslator<'_, '_> {
         &mut self,
         rvalue: &AmirRvalue,
         expected_ty: Option<Type>,
-        expected_ar_type: Option<&arandu_semantics::types::ArType>,
+        expected_ar_type: Option<&ArType>,
     ) -> Value {
         if self.error.is_some() {
             return self.poison_i32();
@@ -144,14 +470,14 @@ impl FunctionTranslator<'_, '_> {
         match rvalue {
             AmirRvalue::Use(op) => self.translate_operand(op, expected_ty),
             AmirRvalue::Binary { op, left, right } => {
-                let mut opt_ty = expected_ty;
-                if opt_ty.is_none() {
-                    if let AmirOperand::Copy(temp_id) | AmirOperand::Move(temp_id) = left {
-                        opt_ty = self.get_temp_clif_type(*temp_id);
-                    } else if let AmirOperand::Copy(temp_id) | AmirOperand::Move(temp_id) = right {
-                        opt_ty = self.get_temp_clif_type(*temp_id);
-                    }
-                }
+                let opt_ty = match op {
+                    arandu_semantics::ops::BinaryOp::Add
+                    | arandu_semantics::ops::BinaryOp::Sub
+                    | arandu_semantics::ops::BinaryOp::Mul
+                    | arandu_semantics::ops::BinaryOp::Div
+                    | arandu_semantics::ops::BinaryOp::Mod => expected_ty,
+                    _ => None,
+                };
                 let lhs = self.translate_operand(left, opt_ty);
                 let rhs = self.translate_operand(right, opt_ty);
                 self.translate_binary_op(*op, lhs, rhs, Some(left), Some(right))
@@ -173,61 +499,17 @@ impl FunctionTranslator<'_, '_> {
                         }
                     }
                 } else {
-                    let mut ptr_val = if let Some(&var) = self.local_map.get(&place.local) {
-                        self.builder.use_var(var)
-                    } else {
-                        self.record_ice(
-                            "use of undeclared AMIR local in codegen",
-                            self.local_span(place.local),
-                        );
-                        return self.poison_i32();
-                    };
-
-                    for proj in &place.projections {
-                        match proj {
-                            AmirProjection::Field(symbol_id) => {
-                                let name = &self.symbol_table.get(*symbol_id).name;
-                                let offset = match name.as_str() {
-                                    "buf" => 0,
-                                    "len" => 8,
-                                    "cap" => 16,
-                                    _ => {
-                                        self.record_ice(
-                                            format!(
-                                                "unsupported struct field '{}' in codegen",
-                                                name
-                                            ),
-                                            self.symbol_table.get(*symbol_id).span,
-                                        );
-                                        return self.poison_i32();
-                                    }
-                                };
-                                let clif_ty = expected_ty.unwrap_or(self.ptr_type);
-                                ptr_val = self.builder.ins().load(
-                                    clif_ty,
-                                    cranelift_codegen::ir::MemFlagsData::new(),
-                                    ptr_val,
-                                    offset,
-                                );
-                            }
-                            AmirProjection::Index(op) => {
-                                let idx_val = self.translate_operand(op, Some(self.ptr_type));
-                                let elem_size = self.builder.ins().iconst(self.ptr_type, 8);
-                                let offset_val = self.builder.ins().imul(idx_val, elem_size);
-                                let elem_ptr = self.builder.ins().iadd(ptr_val, offset_val);
-                                let clif_ty = expected_ty.unwrap_or(self.ptr_type);
-                                ptr_val = self.builder.ins().load(
-                                    clif_ty,
-                                    cranelift_codegen::ir::MemFlagsData::new(),
-                                    elem_ptr,
-                                    0,
-                                );
-                            }
-                        }
-                    }
-                    ptr_val
+                    let (base_ptr, offset) = self.translate_place_address_for_load(place);
+                    let clif_ty = expected_ty.unwrap_or(self.ptr_type);
+                    self.builder.ins().load(
+                        clif_ty,
+                        cranelift_codegen::ir::MemFlagsData::new(),
+                        base_ptr,
+                        offset,
+                    )
                 }
             }
+
             AmirRvalue::StructLiteral {
                 struct_symbol,
                 fields,
@@ -261,17 +543,140 @@ impl FunctionTranslator<'_, '_> {
                         .get(struct_symbol)
                         .and_then(|m| m.get(name.as_str()).copied())
                         .unwrap_or(i);
-                    let val = self.translate_operand(op, None);
                     let offset = layout.field_offsets[field_idx] as i32;
-                    self.builder.ins().store(
-                        cranelift_codegen::ir::MemFlagsData::new(),
-                        val,
-                        ptr_val,
-                        offset,
-                    );
+                    let op_ty = self.get_operand_ar_type(op);
+                    if matches!(op_ty, ArType::Primitive(Primitive::Str)) {
+                        let (elem_ptr, elem_len) = self.translate_str_operand(op);
+                        self.builder.ins().store(
+                            cranelift_codegen::ir::MemFlagsData::new(),
+                            elem_ptr,
+                            ptr_val,
+                            offset,
+                        );
+                        self.builder.ins().store(
+                            cranelift_codegen::ir::MemFlagsData::new(),
+                            elem_len,
+                            ptr_val,
+                            offset + pointer_width as i32,
+                        );
+                    } else {
+                        let val = self.translate_operand(op, None);
+                        self.builder.ins().store(
+                            cranelift_codegen::ir::MemFlagsData::new(),
+                            val,
+                            ptr_val,
+                            offset,
+                        );
+                    }
                 }
                 ptr_val
             }
+            AmirRvalue::Tuple { items } => {
+                let Some(malloc_func_id) = self.malloc_func_id() else {
+                    return self.poison_i32();
+                };
+                let local_ref = self
+                    .module
+                    .declare_func_in_func(malloc_func_id, self.builder.func);
+
+                let pointer_width = self.ptr_type.bytes() as u64;
+                let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
+                let tuple_ty = expected_ar_type.cloned().unwrap_or(ArType::Error);
+                let layout =
+                    engine.layout_of_type(&tuple_ty, &self.type_info.type_interner, self.type_info);
+
+                let size_val = self.builder.ins().iconst(self.ptr_type, layout.size as i64);
+                let call_inst = self.builder.ins().call(local_ref, &[size_val]);
+                let ptr_val = self.builder.inst_results(call_inst)[0];
+
+                for (i, op) in items.iter().enumerate() {
+                    let offset = layout.field_offsets[i] as i32;
+                    let op_ty = self.get_operand_ar_type(op);
+                    if matches!(op_ty, ArType::Primitive(Primitive::Str)) {
+                        let (elem_ptr, elem_len) = self.translate_str_operand(op);
+                        self.builder.ins().store(
+                            cranelift_codegen::ir::MemFlagsData::new(),
+                            elem_ptr,
+                            ptr_val,
+                            offset,
+                        );
+                        self.builder.ins().store(
+                            cranelift_codegen::ir::MemFlagsData::new(),
+                            elem_len,
+                            ptr_val,
+                            offset + pointer_width as i32,
+                        );
+                    } else {
+                        let val = self.translate_operand(op, None);
+                        self.builder.ins().store(
+                            cranelift_codegen::ir::MemFlagsData::new(),
+                            val,
+                            ptr_val,
+                            offset,
+                        );
+                    }
+                }
+                ptr_val
+            }
+            AmirRvalue::Array { items } => {
+                let Some(malloc_func_id) = self.malloc_func_id() else {
+                    return self.poison_i32();
+                };
+                let local_ref = self
+                    .module
+                    .declare_func_in_func(malloc_func_id, self.builder.func);
+
+                let pointer_width = self.ptr_type.bytes() as u64;
+                let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
+                let array_ty = expected_ar_type.cloned().unwrap_or(ArType::Error);
+                let layout =
+                    engine.layout_of_type(&array_ty, &self.type_info.type_interner, self.type_info);
+
+                let size_val = self.builder.ins().iconst(self.ptr_type, layout.size as i64);
+                let call_inst = self.builder.ins().call(local_ref, &[size_val]);
+                let ptr_val = self.builder.inst_results(call_inst)[0];
+
+                let item_ar_ty = match &array_ty {
+                    ArType::Array(_, inner) => self.type_info.resolve_type_id(*inner).clone(),
+                    _ => ArType::Error,
+                };
+                let item_layout = engine.layout_of_type(
+                    &item_ar_ty,
+                    &self.type_info.type_interner,
+                    self.type_info,
+                );
+                let item_size = item_layout.size as i32;
+
+                for (i, op) in items.iter().enumerate() {
+                    let offset = i as i32 * item_size;
+                    let op_ty = self.get_operand_ar_type(op);
+                    if matches!(op_ty, ArType::Primitive(Primitive::Str)) {
+                        let (elem_ptr, elem_len) = self.translate_str_operand(op);
+                        self.builder.ins().store(
+                            cranelift_codegen::ir::MemFlagsData::new(),
+                            elem_ptr,
+                            ptr_val,
+                            offset,
+                        );
+                        self.builder.ins().store(
+                            cranelift_codegen::ir::MemFlagsData::new(),
+                            elem_len,
+                            ptr_val,
+                            offset + pointer_width as i32,
+                        );
+                    } else {
+                        let val = self.translate_operand(op, None);
+                        self.builder.ins().store(
+                            cranelift_codegen::ir::MemFlagsData::new(),
+                            val,
+                            ptr_val,
+                            offset,
+                        );
+                    }
+                }
+                ptr_val
+            }
+
             AmirRvalue::FieldAccess { base, field } => {
                 let ptr_val = self.translate_operand(base, Some(self.ptr_type));
                 let base_ty = match base {
@@ -298,6 +703,139 @@ impl FunctionTranslator<'_, '_> {
                     cranelift_codegen::ir::MemFlagsData::new(),
                     ptr_val,
                     offset,
+                )
+            }
+            AmirRvalue::EnumConstruct {
+                variant_tag,
+                payload,
+            } => {
+                let Some(malloc_func_id) = self.malloc_func_id() else {
+                    return self.poison_i32();
+                };
+                let local_ref = self
+                    .module
+                    .declare_func_in_func(malloc_func_id, self.builder.func);
+
+                let pointer_width = self.ptr_type.bytes() as u64;
+                let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
+                let enum_ty = expected_ar_type.cloned().unwrap_or(ArType::Error);
+                let layout =
+                    engine.layout_of_type(&enum_ty, &self.type_info.type_interner, self.type_info);
+
+                let size_val = self.builder.ins().iconst(self.ptr_type, layout.size as i64);
+                let call_inst = self.builder.ins().call(local_ref, &[size_val]);
+                let ptr_val = self.builder.inst_results(call_inst)[0];
+
+                let tag_val = self
+                    .builder
+                    .ins()
+                    .iconst(self.ptr_type, *variant_tag as i64);
+                self.builder.ins().store(
+                    cranelift_codegen::ir::MemFlagsData::new(),
+                    tag_val,
+                    ptr_val,
+                    0,
+                );
+
+                if let Some(op) = payload {
+                    let op_ty = self.get_operand_ar_type(op);
+                    if matches!(op_ty, ArType::Primitive(Primitive::Str)) {
+                        let (elem_ptr, elem_len) = self.translate_str_operand(op);
+                        self.builder.ins().store(
+                            cranelift_codegen::ir::MemFlagsData::new(),
+                            elem_ptr,
+                            ptr_val,
+                            pointer_width as i32,
+                        );
+                        self.builder.ins().store(
+                            cranelift_codegen::ir::MemFlagsData::new(),
+                            elem_len,
+                            ptr_val,
+                            (pointer_width * 2) as i32,
+                        );
+                    } else {
+                        let val = self.translate_operand(op, None);
+                        self.builder.ins().store(
+                            cranelift_codegen::ir::MemFlagsData::new(),
+                            val,
+                            ptr_val,
+                            pointer_width as i32,
+                        );
+                    }
+                }
+
+                ptr_val
+            }
+            AmirRvalue::Discriminant { value } => {
+                let ptr_val = self.translate_operand(value, Some(self.ptr_type));
+                self.builder.ins().load(
+                    cranelift_codegen::ir::types::I32,
+                    cranelift_codegen::ir::MemFlagsData::new(),
+                    ptr_val,
+                    0,
+                )
+            }
+            AmirRvalue::EnumPayload {
+                value,
+                variant,
+                index,
+            } => {
+                let ptr_val = self.translate_operand(value, Some(self.ptr_type));
+                let pointer_width = self.ptr_type.bytes() as u64;
+
+                let base_ty = match value {
+                    AmirOperand::Copy(temp_id) | AmirOperand::Move(temp_id) => {
+                        &self.current_func.temps[temp_id.as_usize()].ty
+                    }
+                    _ => &arandu_semantics::types::ArType::Error,
+                };
+                let enum_ty = match base_ty {
+                    arandu_semantics::types::ArType::Ptr(inner) => {
+                        self.type_info.resolve_type_id(*inner)
+                    }
+                    other => other,
+                };
+                let enum_id = match enum_ty {
+                    ArType::Named(enum_id, _) => *enum_id,
+                    _ => arandu_semantics::SymbolId(0),
+                };
+
+                let mut payload_offset = 0;
+                if let Some(variants) =
+                    arandu_semantics::layout::StructLayoutProvider::get_enum_variants(
+                        self.type_info,
+                        enum_id,
+                    )
+                {
+                    let tag = self
+                        .type_info
+                        .enum_variant_tags
+                        .get(variant)
+                        .copied()
+                        .unwrap_or(0);
+                    if let Some(variant_shape) = variants.get(tag) {
+                        if let Some(payload_ty_id) = variant_shape.payload_ty {
+                            let payload_ty = self.type_info.resolve_type_id(payload_ty_id);
+                            let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
+                            let payload_layout = engine.layout_of_type(
+                                payload_ty,
+                                &self.type_info.type_interner,
+                                self.type_info,
+                            );
+                            if *index < payload_layout.field_offsets.len() {
+                                payload_offset = payload_layout.field_offsets[*index] as i32;
+                            }
+                        }
+                    }
+                }
+
+                let total_offset = pointer_width as i32 + payload_offset;
+                let clif_ty = expected_ty.unwrap_or(self.ptr_type);
+                self.builder.ins().load(
+                    clif_ty,
+                    cranelift_codegen::ir::MemFlagsData::new(),
+                    ptr_val,
+                    total_offset,
                 )
             }
             AmirRvalue::Borrow(_) | AmirRvalue::BorrowMut(_) => {

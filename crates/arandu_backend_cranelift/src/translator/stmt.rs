@@ -1,6 +1,7 @@
 use arandu_semantics::amir::{
     AmirOperand, AmirPlace, AmirProjection, AmirStmt, AmirTerminator, TempId,
 };
+use arandu_semantics::passes::type_checker::types::{ArType, Primitive};
 use cranelift_codegen::ir::{BlockArg, InstBuilder, TrapCode, Type, Value};
 use cranelift_frontend::Switch;
 use cranelift_module::{FuncId, Module};
@@ -16,26 +17,61 @@ impl FunctionTranslator<'_, '_> {
         }
         match stmt {
             AmirStmt::Assign { lhs, rhs } => {
-                let expected_ty = self.get_temp_clif_type(*lhs);
-                let expected_ar_type = Some(&self.current_func.temps[lhs.as_usize()].ty);
-                let val = self.translate_rvalue(rhs, expected_ty, expected_ar_type);
-                if let Some(&var) = self.temp_map.get(lhs) {
-                    self.builder.def_var(var, val);
+                let lhs_ty = &self.current_func.temps[lhs.as_usize()].ty;
+                if matches!(lhs_ty, ArType::Primitive(Primitive::Str)) {
+                    let (ptr_val, len_val) = self.translate_str_rvalue(rhs);
+                    if let Some(&(var_ptr, var_len)) = self.str_temp_map.get(lhs) {
+                        self.builder.def_var(var_ptr, ptr_val);
+                        self.builder.def_var(var_len, len_val);
+                    }
+                } else {
+                    let expected_ty = self.get_temp_clif_type(*lhs);
+                    let expected_ar_type = Some(&self.current_func.temps[lhs.as_usize()].ty);
+                    let val = self.translate_rvalue(rhs, expected_ty, expected_ar_type);
+                    if let Some(&var) = self.temp_map.get(lhs) {
+                        self.builder.def_var(var, val);
+                    }
                 }
             }
             AmirStmt::Store { lhs, rhs } => {
-                let expected_ty = self
-                    .current_func
-                    .locals
-                    .iter()
-                    .find(|l| l.id == lhs.local)
-                    .and_then(|l| match clif_type(&l.ty, self.ptr_type) {
-                        ClifType::Concrete(ty) => Some(ty),
-                        ClifType::Void => None,
-                    });
-                let val = self.translate_operand(rhs, expected_ty);
-                self.translate_store_place(lhs, val);
+                let lhs_ty = &self.current_func.locals[lhs.local.as_usize()].ty;
+                if matches!(lhs_ty, ArType::Primitive(Primitive::Str)) {
+                    let (ptr_val, len_val) = self.translate_str_operand(rhs);
+                    if lhs.projections.is_empty() {
+                        if let Some(&(var_ptr, var_len)) = self.str_local_map.get(&lhs.local) {
+                            self.builder.def_var(var_ptr, ptr_val);
+                            self.builder.def_var(var_len, len_val);
+                        }
+                    } else {
+                        let (base_ptr, offset) = self.translate_place_address_for_load(lhs);
+                        self.builder.ins().store(
+                            cranelift_codegen::ir::MemFlagsData::new(),
+                            ptr_val,
+                            base_ptr,
+                            offset,
+                        );
+                        self.builder.ins().store(
+                            cranelift_codegen::ir::MemFlagsData::new(),
+                            len_val,
+                            base_ptr,
+                            offset + self.ptr_type.bytes() as i32,
+                        );
+                    }
+                } else {
+                    let expected_ty = self
+                        .current_func
+                        .locals
+                        .iter()
+                        .find(|l| l.id == lhs.local)
+                        .and_then(|l| match clif_type(&l.ty, self.ptr_type) {
+                            ClifType::Concrete(ty) => Some(ty),
+                            ClifType::Void => None,
+                        });
+                    let val = self.translate_operand(rhs, expected_ty);
+                    self.translate_store_place(lhs, val);
+                }
             }
+
             AmirStmt::Call { lhs, callee, args } => {
                 if let AmirOperand::FunctionRef(sym_id) = callee {
                     let sym = self.symbol_table.get(*sym_id);
@@ -96,31 +132,64 @@ impl FunctionTranslator<'_, '_> {
                             .map(|param| param.value_type)
                             .collect();
 
-                        let clif_args: Vec<Value> = args
-                            .iter()
-                            .enumerate()
-                            .map(|(i, arg)| {
-                                let expected = expected_tys.get(i).copied();
-                                self.translate_operand(arg, expected)
-                            })
-                            .collect();
+                        let mut clif_args = Vec::new();
+                        let mut clif_param_idx = 0;
+                        for arg in args {
+                            let arg_ty = self.get_operand_ar_type(arg);
+                            if matches!(arg_ty, ArType::Primitive(Primitive::Str)) {
+                                let (ptr_val, len_val) = self.translate_str_operand(arg);
+                                clif_args.push(ptr_val);
+                                clif_args.push(len_val);
+                                clif_param_idx += 2;
+                            } else {
+                                let expected = expected_tys.get(clif_param_idx).copied();
+                                let val = self.translate_operand(arg, expected);
+                                clif_args.push(val);
+                                clif_param_idx += 1;
+                            }
+                        }
 
                         self.builder.ins().call(local_ref, &clif_args)
                     }
                     _ => unimplemented!("Indirect function calls not implemented yet"),
                 };
                 if let Some(lhs_temp) = lhs {
-                    if let Some(&var) = self.temp_map.get(lhs_temp) {
+                    let lhs_ty = &self.current_func.temps[lhs_temp.as_usize()].ty;
+                    if matches!(lhs_ty, ArType::Primitive(Primitive::Str)) {
+                        let results = self.builder.inst_results(call_inst);
+                        if results.len() >= 2 {
+                            let res0 = results[0];
+                            let res1 = results[1];
+                            if let Some(&(var_ptr, var_len)) = self.str_temp_map.get(lhs_temp) {
+                                self.builder.def_var(var_ptr, res0);
+                                self.builder.def_var(var_len, res1);
+                            }
+                        }
+                    } else if let Some(&var) = self.temp_map.get(lhs_temp) {
                         let results = self.builder.inst_results(call_inst);
                         if !results.is_empty() {
-                            self.builder.def_var(var, results[0]);
+                            let res0 = results[0];
+                            self.builder.def_var(var, res0);
                         }
                     }
                 }
             }
-            AmirStmt::Free(_) => {}
+            AmirStmt::Free(op) => {
+                let ptr_val = self.translate_operand(op, Some(self.ptr_type));
+                self.emit_free_ptr(ptr_val);
+            }
             AmirStmt::StorageLive(_) | AmirStmt::StorageDead(_) => {}
-            AmirStmt::Destroy(_) => {}
+            AmirStmt::Destroy(place) => {
+                if place.projections.is_empty() {
+                    let ty = &self.current_func.locals[place.local.as_usize()].ty;
+                    if !ty.is_copy_v01() {
+                        if let Some(&var) = self.local_map.get(&place.local) {
+                            let ptr_val = self.builder.use_var(var);
+                            self.emit_free_ptr(ptr_val);
+                        }
+                    }
+                }
+            }
             AmirStmt::Nop => {}
         }
     }
@@ -268,40 +337,87 @@ impl FunctionTranslator<'_, '_> {
         }
     }
 
+    pub(super) fn free_func_id(&mut self) -> Option<FuncId> {
+        match self.func_ids.get("free") {
+            Some(func_id) => Some(*func_id),
+            None => {
+                self.record_ice("free was not declared in the JIT module", self.func_span());
+                None
+            }
+        }
+    }
+
+    pub(super) fn emit_free_ptr(&mut self, ptr_val: Value) {
+        let Some(free_func_id) = self.free_func_id() else {
+            return;
+        };
+        let local_ref = self
+            .module
+            .declare_func_in_func(free_func_id, self.builder.func);
+
+        #[cfg(debug_assertions)]
+        {
+            let poison_val = self.builder.ins().iconst(self.ptr_type, 0xDE_i64);
+            self.builder.ins().store(
+                cranelift_codegen::ir::MemFlagsData::new(),
+                poison_val,
+                ptr_val,
+                0,
+            );
+        }
+
+        self.builder.ins().call(local_ref, &[ptr_val]);
+    }
+
     pub(super) fn translate_terminator(&mut self, terminator: &AmirTerminator) {
         match terminator {
             AmirTerminator::Return => {
-                let clif_ret = clif_type(&self.current_func.return_type, self.ptr_type);
-                match clif_ret {
-                    ClifType::Concrete(_) => {
-                        let ret_temp = TempId::from_usize(0);
-                        if let Some(&var) = self.temp_map.get(&ret_temp) {
-                            let ret_val = self.builder.use_var(var);
-                            self.builder.ins().return_(&[ret_val]);
-                        } else {
+                if matches!(
+                    self.current_func.return_type,
+                    ArType::Primitive(Primitive::Str)
+                ) {
+                    let ret_temp = TempId::from_usize(0);
+                    if let Some(&(var_ptr, var_len)) = self.str_temp_map.get(&ret_temp) {
+                        let ptr_val = self.builder.use_var(var_ptr);
+                        let len_val = self.builder.use_var(var_len);
+                        self.builder.ins().return_(&[ptr_val, len_val]);
+                    } else {
+                        let p = self.poison_i32();
+                        self.builder.ins().return_(&[p, p]);
+                    }
+                } else {
+                    let clif_ret = clif_type(&self.current_func.return_type, self.ptr_type);
+                    match clif_ret {
+                        ClifType::Concrete(_) => {
+                            let ret_temp = TempId::from_usize(0);
+                            if let Some(&var) = self.temp_map.get(&ret_temp) {
+                                let ret_val = self.builder.use_var(var);
+                                self.builder.ins().return_(&[ret_val]);
+                            } else {
+                                self.builder.ins().return_(&[]);
+                            }
+                        }
+                        ClifType::Void => {
                             self.builder.ins().return_(&[]);
                         }
                     }
-                    ClifType::Void => {
-                        self.builder.ins().return_(&[]);
-                    }
                 }
             }
+
             AmirTerminator::Goto { target, args } => {
                 let target_block = &self.current_func.blocks[target.as_usize()];
-                let clif_args: Vec<BlockArg> = args
-                    .iter()
-                    .enumerate()
-                    .map(|(j, arg)| {
-                        let param_ty = &target_block.params[j].ty;
-                        let expected_ty = match clif_type(param_ty, self.ptr_type) {
-                            ClifType::Concrete(ty) => Some(ty),
-                            ClifType::Void => None,
-                        };
-                        let val = self.translate_operand(arg, expected_ty);
-                        BlockArg::Value(val)
-                    })
-                    .collect();
+                let mut clif_args = Vec::new();
+                for (j, arg) in args.iter().enumerate() {
+                    let param_ty = &target_block.params[j].ty;
+                    if matches!(param_ty, ArType::Primitive(Primitive::Str)) {
+                        let (ptr_val, len_val) = self.translate_str_operand(arg);
+                        clif_args.push(BlockArg::Value(ptr_val));
+                        clif_args.push(BlockArg::Value(len_val));
+                    } else if let ClifType::Concrete(ty) = clif_type(param_ty, self.ptr_type) {
+                        let val = self.translate_operand(arg, Some(ty));
+                        clif_args.push(BlockArg::Value(val));
+                    }
+                }
                 let clif_target = self.block_map[target];
                 self.builder.ins().jump(clif_target, &clif_args);
             }
@@ -315,34 +431,32 @@ impl FunctionTranslator<'_, '_> {
                 let cond_val = self.translate_operand(condition, None);
 
                 let true_block_def = &self.current_func.blocks[if_true.as_usize()];
-                let true_clif_args: Vec<BlockArg> = true_args
-                    .iter()
-                    .enumerate()
-                    .map(|(j, arg)| {
-                        let param_ty = &true_block_def.params[j].ty;
-                        let expected_ty = match clif_type(param_ty, self.ptr_type) {
-                            ClifType::Concrete(ty) => Some(ty),
-                            ClifType::Void => None,
-                        };
-                        let val = self.translate_operand(arg, expected_ty);
-                        BlockArg::Value(val)
-                    })
-                    .collect();
+                let mut true_clif_args = Vec::new();
+                for (j, arg) in true_args.iter().enumerate() {
+                    let param_ty = &true_block_def.params[j].ty;
+                    if matches!(param_ty, ArType::Primitive(Primitive::Str)) {
+                        let (ptr_val, len_val) = self.translate_str_operand(arg);
+                        true_clif_args.push(BlockArg::Value(ptr_val));
+                        true_clif_args.push(BlockArg::Value(len_val));
+                    } else if let ClifType::Concrete(ty) = clif_type(param_ty, self.ptr_type) {
+                        let val = self.translate_operand(arg, Some(ty));
+                        true_clif_args.push(BlockArg::Value(val));
+                    }
+                }
 
                 let false_block_def = &self.current_func.blocks[if_false.as_usize()];
-                let false_clif_args: Vec<BlockArg> = false_args
-                    .iter()
-                    .enumerate()
-                    .map(|(j, arg)| {
-                        let param_ty = &false_block_def.params[j].ty;
-                        let expected_ty = match clif_type(param_ty, self.ptr_type) {
-                            ClifType::Concrete(ty) => Some(ty),
-                            ClifType::Void => None,
-                        };
-                        let val = self.translate_operand(arg, expected_ty);
-                        BlockArg::Value(val)
-                    })
-                    .collect();
+                let mut false_clif_args = Vec::new();
+                for (j, arg) in false_args.iter().enumerate() {
+                    let param_ty = &false_block_def.params[j].ty;
+                    if matches!(param_ty, ArType::Primitive(Primitive::Str)) {
+                        let (ptr_val, len_val) = self.translate_str_operand(arg);
+                        false_clif_args.push(BlockArg::Value(ptr_val));
+                        false_clif_args.push(BlockArg::Value(len_val));
+                    } else if let ClifType::Concrete(ty) = clif_type(param_ty, self.ptr_type) {
+                        let val = self.translate_operand(arg, Some(ty));
+                        false_clif_args.push(BlockArg::Value(val));
+                    }
+                }
 
                 let true_block = self.block_map[if_true];
                 let false_block = self.block_map[if_false];
@@ -354,6 +468,7 @@ impl FunctionTranslator<'_, '_> {
                     &false_clif_args,
                 );
             }
+
             AmirTerminator::SwitchInt {
                 discriminant,
                 targets,
@@ -383,7 +498,7 @@ impl FunctionTranslator<'_, '_> {
         }
     }
 
-    fn translate_projection_offset(
+    pub(super) fn translate_projection_offset(
         &self,
         current_ty: &mut arandu_semantics::types::ArType,
         symbol_id: arandu_semantics::SymbolId,
