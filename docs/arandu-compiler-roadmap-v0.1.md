@@ -57,8 +57,8 @@ Fase 2 — A Construção da Infraestrutura & Execução (v0.2) · [EM ANDAMENTO
 [x] A11    Token & String Storage Engine (packed tokens, SSO, string interning)
 [x] BC     Backend Cranelift (Dev/Debug com compilador em memória)
    ├─ [x] BC.1   Fat Pointer String JIT (tratar String como ptr + len na convenção de chamadas do Cranelift)
-   ├─ [x] BC.2   Implementar EnumPayload & Discriminant no Cranelift JIT
-   ├─ [x] BC.3   Implementar IndexAccess & Array/Tuple no Cranelift JIT
+   ├─ [x] BC.2   Implementar EnumPayload & Discriminant no Cranelift JIT (Garantia estática contra double-free depende de M2; atualmente mitigado via poison-check em debug)
+   ├─ [x] BC.3   Implementar IndexAccess & Array/Tuple no Cranelift JIT (Garantia estática contra double-free depende de M2; atualmente mitigado via poison-check em debug)
    ├─ [ ] BC.4   Implementar Borrow/BorrowMut e Await no Cranelift JIT (Borrow de heap pointers; stack local borrow depende de F2)
    └─ [x] FUZZ   Fuzzing Lexer/Parser SIMD (arandu_fuzz e cron jobs semanais de robustez)
 [ ] C_FB   Backend C de portabilidade e bootstrapping
@@ -85,6 +85,7 @@ Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
    ├─ [ ] F2.2   Janelas de Liveness de Empréstimos (reutilizar liveness SSA de referências como regiões NLL do CFG)
    └─ [ ] F2.3   Análise de Escape e Fallback Geracional (Vale-style generational refs para stack-locals que escapam)
 [ ] M2     Move checker avançado (O002, O003, O006)
+           └─ Dependência: fecha a garantia estática de double-free que hoje é mitigada apenas por poison-check (0xDE) em debug (ver BC.2/BC.3)
 [ ] G2     Generational fallback opcional + O004 (escape analysis)
 [ ] SL_S   Stdlib de Sistema: arandu_std (io, fs, process, env, path, time, random, sync, thread, ffi)
 [ ] SL_R   Async Runtime: arandu_std::runtime (scheduler cooperativo/work-stealing e reactor OS epoll/kqueue/io_uring)
