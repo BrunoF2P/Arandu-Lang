@@ -63,8 +63,7 @@ fn parse_and_check(source: &str, filepath: &str) -> CheckedProgram {
 
     let mut session = arandu_semantics::CompileSession::new();
     let resolution = arandu_semantics::resolve_with_cache(&program, &mut session);
-    let type_check =
-        arandu_semantics::type_check_with_session(resolution, &program, &mut session);
+    let type_check = arandu_semantics::type_check_with_session(resolution, &program, &mut session);
 
     if !type_check.diagnostics.is_empty() {
         print_diagnostics_and_exit(&type_check.diagnostics, filepath);
@@ -81,7 +80,9 @@ fn usage_and_exit() -> ! {
         "usage: arandu_cli <lex|parse|check|hir|amir|run> <path> [--debug] [--opt] [--parallel]"
     );
     eprintln!("       -Z flags: -Ztime-passes  -Zprofile-queries  -Zprint-alloc-stats  -Zdump-mir");
-    eprintln!("                : -Zdebug-parser -Zdebug-typeck -Zdebug-ossa -Zdebug-layout -Zdebug-backend -Zdebug-all");
+    eprintln!(
+        "                : -Zdebug-parser -Zdebug-typeck -Zdebug-ossa -Zdebug-layout -Zdebug-backend -Zdebug-all"
+    );
     eprintln!("                : -Zself-profile=<path>");
 
     process::exit(2);

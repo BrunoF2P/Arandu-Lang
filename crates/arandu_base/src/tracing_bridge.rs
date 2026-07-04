@@ -19,14 +19,14 @@ use std::{
     time::Instant,
 };
 use tracing::{
+    Event, Id, Subscriber,
     field::{Field, Visit},
     span::Attributes,
-    Event, Id, Subscriber,
 };
 use tracing_subscriber::{
+    EnvFilter, Registry,
     layer::{Context, Layer},
     prelude::*,
-    EnvFilter, Registry,
 };
 
 // ── Static helpers (lazy-init via OnceLock) ───────────────────────────
@@ -61,8 +61,7 @@ static SELF_PROFILE_PATH: OnceLock<PathBuf> = OnceLock::new();
 static SELF_PROFILE_EVENTS: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 
 fn self_profile_events() -> &'static Mutex<Vec<String>> {
-    SELF_PROFILE_EVENTS
-        .get_or_init(|| Mutex::new(Vec::new()))
+    SELF_PROFILE_EVENTS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
 /// Write all buffered trace events to the target file as a JSON array.

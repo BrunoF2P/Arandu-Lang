@@ -58,8 +58,12 @@ mod tests {
     #[test]
     fn get_or_parse_different_paths() {
         let mut cache = ParseCache::new();
-        let a_addr = cache.get_or_parse(Path::new("a.aru"), "func foo() {}").unwrap() as *const _;
-        let b_addr = cache.get_or_parse(Path::new("b.aru"), "func bar() {}").unwrap() as *const _;
+        let a_addr = cache
+            .get_or_parse(Path::new("a.aru"), "func foo() {}")
+            .unwrap() as *const _;
+        let b_addr = cache
+            .get_or_parse(Path::new("b.aru"), "func bar() {}")
+            .unwrap() as *const _;
         assert_ne!(a_addr, b_addr);
     }
 

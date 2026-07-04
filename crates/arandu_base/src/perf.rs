@@ -184,9 +184,13 @@ pub fn init_z_flags(flags: &[String]) {
                 if let Some(path) = value {
                     let _ = SELF_PROFILE_PATH.set(path.to_string());
                 } else if use_color() {
-                    eprintln!("{RED}[perf] warning: -Zself-profile requires a path (e.g. -Zself-profile=trace.json){RESET}");
+                    eprintln!(
+                        "{RED}[perf] warning: -Zself-profile requires a path (e.g. -Zself-profile=trace.json){RESET}"
+                    );
                 } else {
-                    eprintln!("[perf] warning: -Zself-profile requires a path (e.g. -Zself-profile=trace.json)");
+                    eprintln!(
+                        "[perf] warning: -Zself-profile requires a path (e.g. -Zself-profile=trace.json)"
+                    );
                 }
             }
             other => {
