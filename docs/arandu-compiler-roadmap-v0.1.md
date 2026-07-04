@@ -30,7 +30,7 @@ Legenda: `[x]` feito · `[/]` em andamento · `[ ]` não iniciado
 | Move checker | `[x]` | OSSA intraprocedural, O001/O005/O007, spans reais |
 | Middle-end opt | `[x]` | Constant folding intra-bloco + DCE denso |
 | Backend Cranelift | `[x]` | v0.2 Dev/Debug |
-| Backend C | `[ ]` | Portabilidade fallback |
+| Backend C | `[x]` | Portabilidade fallback |
 | Backend LLVM | `[ ]` | v0.4+ Release Optimizer |
 
 ### Marcos de Entrega
@@ -61,14 +61,14 @@ Fase 2 — A Construção da Infraestrutura & Execução (v0.2) · [EM ANDAMENTO
    ├─ [x] BC.3   Implementar IndexAccess & Array/Tuple no Cranelift JIT (Garantia estática contra double-free depende de M2; atualmente mitigado via poison-check em debug)
    ├─ [ ] BC.4   Implementar Borrow/BorrowMut e Await no Cranelift JIT (Borrow de heap pointers; stack local borrow depende de F2)
    └─ [x] FUZZ   Fuzzing Lexer/Parser SIMD (arandu_fuzz e cron jobs semanais de robustez)
-[ ] C_FB   Backend C de portabilidade e bootstrapping
-[ ] DX     Diagnostics & Tooling Infrastructure (DX1-DX3, DX4 CFG visualization)
+[x] C_FB   Backend C de portabilidade e bootstrapping
+[x] DX     Diagnostics & Tooling Infrastructure (DX1-DX3, DX4 CFG visualization; DX2 recovery anchors completed)
 [x] PERF   Compiler Instrumentation & Observabilidade (pass timers, allocations, query logs, -Z flags, tracing-based self-profile)
     ├─ [x] PERF.1   Tracing subscriber + -Zdebug-* flags via EnvFilter (replaces time_pass!/debug_point!)
     ├─ [x] PERF.2   SelfProfile Layer — Trace Event JSON buffer em memória, finalize_self_profile()
     ├─ [x] PERF.3   #[instrument] em 22 funções críticas (parser, unify, typeck, resolve, etc.)
     └─ [x] PERF.4   ParseCache em CompileSession — cache de ASTs keyed por PathBuf elimina parsing duplicado de stdlib
-[ ] SL_C   Stdlib Fundamental: arandu_core e arandu_alloc (primitivas heapless e arena/smallvec/bitset)
+[x] SL_C   Stdlib Fundamental: arandu_core e arandu_alloc (primitivas heapless e arena/smallvec/bitset)
 [x] DOC1   docs/ossa-virtual-anchoring.md — RFC retroativo documentando a técnica de âncoras virtuais + poda
 
 Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
@@ -87,6 +87,82 @@ Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
 [ ] M2     Move checker avançado (O002, O003, O006)
            └─ Dependência: fecha a garantia estática de double-free que hoje é mitigada apenas por poison-check (0xDE) em debug (ver BC.2/BC.3)
 [ ] G2     Generational fallback opcional + O004 (escape analysis)
+[ ] T2     DX Enhancements: Default Generic Parameters & Scoped Enum Variant Sugar
+   ├─ [ ] T2.1   Default Generic Parameters (e.g. struct Vec<T, A = GlobalAllocator> in parser, resolved and typechecker instantiation)
+   └─ [ ] T2.2   Implicit Enum Variant Dot-Notation Sugar (e.g. .Ok(val) using bidirectional expected-type inference in typechecker)
+[ ] T3     DX: Import Sem Aspas para Módulos Internos (LSP-friendly path tokens)
+   │
+   │  Motivação: `import "std.core.mem" as mem` usa uma string opaca que o LSP
+   │  não consegue completar sem tratamento especial de "cursor dentro de string".
+   │  Com `import std.core.mem as mem` o lexer emite tokens limpos (IDENT + DOT)
+   │  que o LSP completa com o mesmo mecanismo de qualquer expressão pontuada.
+   │  Strings com aspas continuam válidas para paths de filesystem com caracteres
+   │  inválidos como identificadores (barras, hifens, domínios).
+   │
+   ├─ [ ] T3.1   AST: Novo variant ImportDecl::ModuleAlias
+   │             Arquivo: crates/arandu_parser/src/ast/decl.rs
+   │             Adicionar variant ao enum ImportDecl:
+   │               ModuleAlias {
+   │                   span: Span,
+   │                   path: Vec<String>,   // ex: ["std", "core", "mem"]
+   │                   alias: String,       // ex: "mem"
+   │               }
+   │             Atualizar impl ImportDecl::span() para cobrir o novo variant.
+   │             Atualizar todos os match exaustivos em dump/decl.rs, collect.rs e mod.rs.
+   │
+   ├─ [ ] T3.2   Parser: Reconhecer `import <path> as <alias>` sem aspas
+   │             Arquivo: crates/arandu_parser/src/parser/decl.rs (fn parse_import)
+   │             Lógica atual: após parse_module_path(), não testa `as`.
+   │             Mudança: no branch de ImportDecl::Module, após parse_module_path(),
+   │             verificar se o próximo token é KW_AS:
+   │               let path = self.parse_module_path()?;
+   │               if self.eat_name("KW_AS") {
+   │                   let alias = self.expect_import_name()?;
+   │                   // → ImportDecl::ModuleAlias { path, alias }
+   │               } else {
+   │                   // → ImportDecl::Module { path }  (comportamento atual)
+   │               }
+   │             Nenhuma ambiguidade sintática: KW_AS nunca é um segmento de módulo.
+   │             expect_optional_semicolon_after_module_path() continua igual.
+   │
+   ├─ [ ] T3.3   Resolvedor: Tratar ModuleAlias igual ao External
+   │             Arquivo: crates/arandu_resolve/src/name_resolution/collect.rs
+   │             Em collect_import(), adicionar braço para ModuleAlias:
+   │               ImportDecl::ModuleAlias { path, alias, span } => {
+   │                   if let Some(sym) = self.define(scope, alias, SymbolKind::Module, *span) {
+   │                       self.record_import_symbol(sym, alias.clone(), *span);
+   │                   }
+   │                   let source = path.join(".");
+   │                   self.import_aliases.insert(alias.clone(), source);
+   │               }
+   │             Arquivo: crates/arandu_resolve/src/name_resolution/mod.rs
+   │             Em load_stdlib_transitively() e load_stdlib_signatures(),
+   │             adicionar match arm para ImportDecl::ModuleAlias { path, .. }:
+   │               let source = path.join(".");  // "std.core.mem"
+   │               // reutilizar a mesma lógica de strip_prefix de External
+   │
+   ├─ [ ] T3.4   Migrar stdlib para a nova sintaxe sem aspas
+   │             Arquivos: stdlib/core/*.aru, stdlib/alloc/*.aru
+   │             Antes:  import "std.core.mem" as mem
+   │             Depois: import std.core.mem as mem
+   │             Busca/substitui. O resolvedor continuará funcionando pois
+   │             ModuleAlias produz a mesma chave `import_aliases` que External.
+   │
+   ├─ [ ] T3.5   Testes de contrato parser
+   │             Arquivo: crates/arandu_parser/tests/parser_contract.rs
+   │             Adicionar: import_module_alias_no_quotes — verifica que
+   │             `import std.core.mem as mem` produz ImportDecl::ModuleAlias
+   │             com path=["std","core","mem"] e alias="mem".
+   │             test_all_stdlib_files_parse_cleanly() já cobre a stdlib migrada.
+   │
+   └─ [ ] T3.6   Impacto no LSP futuro (documentar no RFC, não implementar agora)
+                 Com tokens limpos, o servidor LSP pode:
+                 - Completar segmentos de caminho (std. → core, alloc)
+                 - Completar módulos internos do projeto pelo grafo de módulos
+                 - Emitir diagnósticos de import inválido com span preciso (IDENT)
+                   em vez de span que abrange a string inteira
+                 - Reutilizar o mesmo mecanismo de "complete após DOT" que
+                   já funcionará para acesso a campos e membros de módulos
 [ ] SL_S   Stdlib de Sistema: arandu_std (io, fs, process, env, path, time, random, sync, thread, ffi)
 [ ] SL_R   Async Runtime: arandu_std::runtime (scheduler cooperativo/work-stealing e reactor OS epoll/kqueue/io_uring)
 [ ] SL_T   Testing Harness: arandu_std::testing (test runner integrado e benchmark engine)

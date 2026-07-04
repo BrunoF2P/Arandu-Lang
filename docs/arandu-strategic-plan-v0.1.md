@@ -91,9 +91,10 @@ Modelo alvo (proposta — fechar em RFC curta):
 - `module path.to.file` no topo
 - `import io` / `import err` (já existe)
 - Visibilidade: `public` / `private` (v0.2); `internal` (v0.3)
-- Reexport e import parcial: v0.2+
+### 2.4 Melhorias de DX no Resolvedor/Typechecker (Fase 3)
 
-Impacta: symbol table, cache incremental, HIR estável, pacotes estilo Cargo.
+1. **Parâmetros Genéricos Padrão**: Permitir a omissão de tipos de alocadores (ex: `Vec<T>` em vez de `Vec<T, GlobalAllocator>`). Requer suporte no AST, parser e expansão de tipos omitidos no typechecker durante a instanciação.
+2. **Açúcar Sintático para Enums (Dot-Notation)**: Permitir expressões curtas `.Ok(val)` e `.Some(val)` em expressões de atribuição, argumentos de função e retornos. Requer inferência bidirecional baseada no tipo esperado do contexto (expected type).
 
 ---
 
@@ -193,6 +194,7 @@ Integração da análise de código + sessão de correção AMIR/namespace.
 | BUG-03 | `catch` retorna `ArType::Error` | `synth/expr.rs` | T002 / T005 |
 | BUG-04 | `??` não unifica tipos dos lados | `synth/expr.rs` | **T002** / T006 |
 | BUG-05 | array literal mismatch silencioso | `synth/expr.rs` | **T002** |
+| BUG-08 | `emit_store_place` (ZST/local) não atualiza SSA tracker | `lower_amir/ctx.rs` | ICE (uninitialized read) |
 
 ### 7.2 Alto — v0.1 ✅ (2026-05)
 
