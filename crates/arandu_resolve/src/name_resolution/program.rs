@@ -85,6 +85,15 @@ impl<'a> Resolver<'a> {
                 let _ = self.symbols.define_module_member(module, member, span);
             }
         }
+        let global_scope = self.symbols.global_scope();
+        self.symbols.builtin_alloc = self
+            .symbols
+            .define(global_scope, "alloc", SymbolKind::Func, span)
+            .ok();
+        self.symbols.builtin_free = self
+            .symbols
+            .define(global_scope, "free", SymbolKind::Func, span)
+            .ok();
         let current_module = program.and_then(|p| p.module.as_ref().map(|m| m.path.join(".")));
         super::load_stdlib_transitively(
             &mut self.symbols,
@@ -93,6 +102,7 @@ impl<'a> Resolver<'a> {
             program,
             cache,
             stdlib_cache,
+            &mut self.diagnostics,
         );
         let global = self.symbols.global_scope();
         let has_result = self.symbols.lookup_type(global, "Result").is_some();

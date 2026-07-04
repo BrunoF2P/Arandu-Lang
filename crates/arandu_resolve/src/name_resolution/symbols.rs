@@ -137,6 +137,23 @@ impl<'a> Resolver<'a> {
         kind: SymbolKind,
         span: Span,
     ) -> Option<crate::SymbolId> {
+        if name == "alloc" || name == "free" {
+            let is_std = self
+                .current_module
+                .as_ref()
+                .map(|m| m.starts_with("std."))
+                .unwrap_or(false);
+            if !is_std {
+                self.diagnostics.push(Diagnostic::error(
+                    DiagCode::N003RedefinedName,
+                    format!(
+                        "name '{name}' is a reserved builtin function name and cannot be redefined"
+                    ),
+                    span,
+                ));
+                return None;
+            }
+        }
         match self.symbols.define(scope, name, kind, span) {
             Ok(symbol) => {
                 self.resolved.define(span, symbol);

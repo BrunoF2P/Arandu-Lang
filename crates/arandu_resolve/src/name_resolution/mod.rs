@@ -22,6 +22,7 @@ pub(crate) fn load_stdlib_transitively(
     program: Option<&Program>,
     cache: &mut ParseCache,
     stdlib_cache: &mut StdlibPathCache,
+    diagnostics: &mut Vec<crate::Diagnostic>,
 ) {
     let mut visited = rustc_hash::FxHashSet::default();
     let mut queue = Vec::new();
@@ -53,118 +54,150 @@ pub(crate) fn load_stdlib_transitively(
         let read_span = tracing::info_span!(target: "arandu_resolve", "read_stdlib_file").entered();
         let source = std::fs::read_to_string(&path);
         drop(read_span);
-        if let Ok(source) = source
-            && let Ok(program) = cache.get_or_parse(&path, &source)
-        {
-            let parse_span = tracing::info_span!(
-                target: "arandu_resolve",
-                "process_stdlib_file",
-                file = tracing::field::Empty
-            )
-            .entered();
-            if let Some(ref module) = program.module {
-                parse_span.record("file", tracing::field::display(module.path.join(".")));
-            }
-            let is_current = if let Some(module) = &program.module {
-                let module_name = module.path.join(".");
-                Some(module_name.as_str()) == current_module
-            } else {
-                false
-            };
+        match source {
+            Ok(source) => {
+                match cache.get_or_parse(&path, &source) {
+                    Ok(program) => {
+                        let parse_span = tracing::info_span!(
+                            target: "arandu_resolve",
+                            "process_stdlib_file",
+                            file = tracing::field::Empty
+                        )
+                        .entered();
+                        if let Some(ref module) = program.module {
+                            parse_span
+                                .record("file", tracing::field::display(module.path.join(".")));
+                        }
+                        let is_current = if let Some(module) = &program.module {
+                            let module_name = module.path.join(".");
+                            Some(module_name.as_str()) == current_module
+                        } else {
+                            false
+                        };
 
-            if !is_current {
-                let mod_label = program
-                    .module
-                    .as_ref()
-                    .map(|m| m.path.join("."))
-                    .unwrap_or_default();
-                tracing::debug!(target: "arandu_resolve", module = %mod_label, "Processing stdlib module");
-                // Collect symbols and merge
-                let (syms, _, _, _) = crate::name_resolution::collect_symbols(program);
-                let before = table.iter().count();
-                table.merge_from(syms);
-                let after = table.iter().count();
-                let new_syms = after - before;
-                tracing::debug!(target: "arandu_resolve", new_symbols = new_syms, "Merged symbols into table");
+                        if !is_current {
+                            let mod_label = program
+                                .module
+                                .as_ref()
+                                .map(|m| m.path.join("."))
+                                .unwrap_or_default();
+                            tracing::debug!(target: "arandu_resolve", module = %mod_label, "Processing stdlib module");
+                            // Collect symbols and merge
+                            let (syms, _, _, _) = crate::name_resolution::collect_symbols(program);
+                            let before = table.iter().count();
+                            table.merge_from(syms);
+                            let after = table.iter().count();
+                            let new_syms = after - before;
+                            tracing::debug!(target: "arandu_resolve", new_symbols = new_syms, "Merged symbols into table");
 
-                let members_span = tracing::info_span!(
-                    target: "arandu_resolve",
-                    "define_module_members",
-                    module = tracing::field::Empty
-                )
-                .entered();
-                // Define module members
-                if let Some(module) = &program.module {
-                    let module_name = module.path.join(".");
-                    members_span.record("module", tracing::field::display(&module_name));
-                    for decl_id in &program.decls {
-                        let decl = program.pool.decl(*decl_id);
-                        match decl {
-                            arandu_parser::TopLevelDecl::Enum(d) => {
-                                let _ = table.define_module_member(&module_name, &d.name, d.span);
-                            }
-                            arandu_parser::TopLevelDecl::Struct(d) => {
-                                let _ = table.define_module_member(&module_name, &d.name, d.span);
-                            }
-                            arandu_parser::TopLevelDecl::Extern(d) => {
-                                for member in &d.members {
-                                    let _ = table.define_module_member(
-                                        &module_name,
-                                        &member.name,
-                                        member.span,
-                                    );
+                            let members_span = tracing::info_span!(
+                                target: "arandu_resolve",
+                                "define_module_members",
+                                module = tracing::field::Empty
+                            )
+                            .entered();
+                            // Define module members
+                            if let Some(module) = &program.module {
+                                let module_name = module.path.join(".");
+                                members_span
+                                    .record("module", tracing::field::display(&module_name));
+                                for decl_id in &program.decls {
+                                    let decl = program.pool.decl(*decl_id);
+                                    match decl {
+                                        arandu_parser::TopLevelDecl::Enum(d) => {
+                                            let _ = table.define_module_member(
+                                                &module_name,
+                                                &d.name,
+                                                d.span,
+                                            );
+                                        }
+                                        arandu_parser::TopLevelDecl::Struct(d) => {
+                                            let _ = table.define_module_member(
+                                                &module_name,
+                                                &d.name,
+                                                d.span,
+                                            );
+                                        }
+                                        arandu_parser::TopLevelDecl::Extern(d) => {
+                                            for member in &d.members {
+                                                let _ = table.define_module_member(
+                                                    &module_name,
+                                                    &member.name,
+                                                    member.span,
+                                                );
+                                            }
+                                        }
+                                        arandu_parser::TopLevelDecl::Func(d) => {
+                                            if let arandu_parser::FuncName::Free { span, name } =
+                                                &d.name
+                                            {
+                                                let _ = table.define_module_member(
+                                                    &module_name,
+                                                    name,
+                                                    *span,
+                                                );
+                                            }
+                                        }
+                                        _ => {}
+                                    }
                                 }
                             }
-                            arandu_parser::TopLevelDecl::Func(d) => {
-                                if let arandu_parser::FuncName::Free { span, name } = &d.name {
-                                    let _ = table.define_module_member(&module_name, name, *span);
+                            drop(members_span);
+
+                            let imports_span = tracing::info_span!(
+                                target: "arandu_resolve",
+                                "scan_imports",
+                                file = tracing::field::Empty
+                            )
+                            .entered();
+                            if let Some(ref module) = program.module {
+                                imports_span
+                                    .record("file", tracing::field::display(module.path.join(".")));
+                            }
+                            // Enqueue imports
+                            for import in &program.imports {
+                                if let arandu_parser::ImportDecl::External { source, .. } = import {
+                                    let current_mod =
+                                        program.module.as_ref().map(|m| m.path.join("."));
+                                    tracing::debug!(target: "arandu_resolve", import = %source, current_module = ?current_mod, "Stdlib import found");
+                                    if let Some(relative) = source.strip_prefix("std.core.") {
+                                        let stdlib_rel = format!("stdlib/core/{relative}.aru");
+                                        if let Some(p) = stdlib_cache.get_or_resolve(&stdlib_rel) {
+                                            tracing::debug!(target: "arandu_resolve", path = ?p, "Enqueuing stdlib module");
+                                            queue.push((p, stdlib_rel));
+                                        } else {
+                                            tracing::warn!(target: "arandu_resolve", path = %stdlib_rel, "Stdlib path not found");
+                                        }
+                                    } else if let Some(relative) = source.strip_prefix("std.alloc.")
+                                    {
+                                        let stdlib_rel = format!("stdlib/alloc/{relative}.aru");
+                                        if let Some(p) = stdlib_cache.get_or_resolve(&stdlib_rel) {
+                                            queue.push((p, stdlib_rel));
+                                        }
+                                    }
                                 }
                             }
-                            _ => {}
+                            drop(imports_span);
                         }
+                        drop(parse_span);
+                    }
+                    Err(err) => {
+                        diagnostics.push(err.into());
                     }
                 }
-                drop(members_span);
-
-                let imports_span = tracing::info_span!(
-                    target: "arandu_resolve",
-                    "scan_imports",
-                    file = tracing::field::Empty
-                )
-                .entered();
-                if let Some(ref module) = program.module {
-                    imports_span.record("file", tracing::field::display(module.path.join(".")));
-                }
-                // Enqueue imports
-                for import in &program.imports {
-                    if let arandu_parser::ImportDecl::External { source, .. } = import {
-                        let current_mod = program.module.as_ref().map(|m| m.path.join("."));
-                        tracing::debug!(target: "arandu_resolve", import = %source, current_module = ?current_mod, "Stdlib import found");
-                        if let Some(relative) = source.strip_prefix("std.core.") {
-                            let stdlib_rel = format!("stdlib/core/{relative}.aru");
-                            if let Some(p) = stdlib_cache.get_or_resolve(&stdlib_rel) {
-                                tracing::debug!(target: "arandu_resolve", path = ?p, "Enqueuing stdlib module");
-                                queue.push((p, stdlib_rel));
-                            } else {
-                                tracing::warn!(target: "arandu_resolve", path = %stdlib_rel, "Stdlib path not found");
-                            }
-                        } else if let Some(relative) = source.strip_prefix("std.alloc.") {
-                            let stdlib_rel = format!("stdlib/alloc/{relative}.aru");
-                            if let Some(p) = stdlib_cache.get_or_resolve(&stdlib_rel) {
-                                queue.push((p, stdlib_rel));
-                            }
-                        }
-                    }
-                }
-                drop(imports_span);
             }
-            drop(parse_span);
+            Err(err) => {
+                diagnostics.push(crate::Diagnostic::error(
+                    crate::DiagCode::ICEN001,
+                    format!("failed to read stdlib file {}: {}", path.display(), err),
+                    arandu_lexer::Span::new(0, 0, 0),
+                ));
+            }
         }
     }
 }
 
-#[must_use]
-pub fn create_symbol_table_with_prelude() -> SymbolTable {
+pub fn create_symbol_table_with_prelude() -> Result<SymbolTable, Vec<crate::Diagnostic>> {
     let mut table = SymbolTable::new();
     let span = arandu_lexer::Span::new(0, 0, 0);
     tracing::debug!(target: "arandu_resolve", "Creating symbol table with prelude");
@@ -176,6 +209,14 @@ pub fn create_symbol_table_with_prelude() -> SymbolTable {
             let _ = table.define_module_member(module, member, span);
         }
     }
+    let global_scope = table.global_scope();
+    table.builtin_alloc = table
+        .define(global_scope, "alloc", SymbolKind::Func, span)
+        .ok();
+    table.builtin_free = table
+        .define(global_scope, "free", SymbolKind::Func, span)
+        .ok();
+    let mut diagnostics = Vec::new();
     load_stdlib_transitively(
         &mut table,
         "stdlib/core/prelude.aru",
@@ -183,8 +224,12 @@ pub fn create_symbol_table_with_prelude() -> SymbolTable {
         None,
         &mut ParseCache::new(),
         &mut StdlibPathCache::new(),
+        &mut diagnostics,
     );
-    table
+    if !diagnostics.is_empty() {
+        return Err(diagnostics);
+    }
+    Ok(table)
 }
 
 #[must_use]

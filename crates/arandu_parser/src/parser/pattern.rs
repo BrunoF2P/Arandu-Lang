@@ -41,13 +41,13 @@ impl<'a> Parser<'a> {
     pub(super) fn parse_pattern(&mut self) -> Result<PatternId, ParseError> {
         let start = self.mark();
         if matches!(&self.current().kind, TokenKind::IdentValue) && self.current_text() == "_" {
-            self.consume();
+            self.advance();
             return Ok(self.pool.alloc_pattern(Pattern::Wildcard {
                 span: self.span_from_mark(start),
             }));
         }
         if self.at_kind_name("LPAREN") {
-            self.consume();
+            self.advance();
             let mut items = vec![self.parse_pattern()?];
             self.expect_name("COMMA")?;
             items.push(self.parse_pattern()?);

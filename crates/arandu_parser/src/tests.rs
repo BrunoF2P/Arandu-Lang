@@ -243,3 +243,166 @@ fn parse_nested_if() {
     let s = strip_spans(&result);
     assert!(s.matches("If").count() >= 2);
 }
+
+#[test]
+#[rustfmt::skip]
+fn recovery_suppresses_cascade_but_not_distinct_errors() {
+    let output = parse_recovering(&"module test
+        func main() {
+            let x = 
+            let good_stmt_1 = 1;
+            let good_stmt_2 = 2;
+            let y = 
+            return x
+        }
+    ".replace("\r\n", "\n"));
+    // Only two syntax errors should be reported, one for x and one for y.
+    assert_eq!(
+        output.diagnostics.len(),
+        2,
+        "Should report exactly 2 distinct syntax errors"
+    );
+}
+
+#[test]
+#[rustfmt::skip]
+fn recovery_does_not_leak_past_closing_brace() {
+    let output = parse_recovering(&"module test
+        func bad() {
+            let x = 
+        } // RBrace should sync and not leak error state
+        
+        func good() {
+            return 1
+        }
+    ".replace("\r\n", "\n"));
+    let dump = output.program.dump("");
+    assert!(dump.contains("good"));
+}
+
+// ── AstPool unit tests ────────────────────────────────────────────────────────
+
+#[test]
+fn ast_pool_alloc_expr_increments_id_and_vectors() {
+    use crate::{AstPool, ExprKind};
+    use arandu_lexer::Span;
+
+    let mut pool = AstPool::new();
+    let span = Span {
+        file_id: 0,
+        start: 0,
+        end: 0,
+    };
+
+    // First allocation: id index == 0
+    let id0 = pool.alloc_expr(ExprKind::Nil, span);
+    assert_eq!(id0.as_usize(), 0);
+    assert_eq!(pool.exprs.len(), 1);
+    assert_eq!(pool.expr_spans.len(), 1);
+
+    // Second allocation: id index == 1
+    let id1 = pool.alloc_expr(ExprKind::Bool { value: true }, span);
+    assert_eq!(id1.as_usize(), 1);
+    assert_eq!(pool.exprs.len(), 2);
+    assert_eq!(pool.expr_spans.len(), 2);
+
+    // Values can be retrieved through the lookup helpers
+    assert_eq!(*pool.expr(id0), ExprKind::Nil);
+    assert_eq!(pool.expr_span(id0), span);
+    assert_eq!(*pool.expr(id1), ExprKind::Bool { value: true });
+}
+
+#[test]
+fn ast_pool_alloc_stmt_increments_id_and_vectors() {
+    use crate::{AstPool, Stmt};
+    use arandu_lexer::Span;
+
+    let mut pool = AstPool::new();
+    let span = Span {
+        file_id: 0,
+        start: 0,
+        end: 0,
+    };
+
+    // First allocation: id index == 0
+    let id0 = pool.alloc_stmt(Stmt::Break { span });
+    assert_eq!(id0.as_usize(), 0);
+    assert_eq!(pool.stmts.len(), 1);
+    assert_eq!(pool.stmt_spans.len(), 1);
+
+    // Second allocation: id index == 1
+    let id1 = pool.alloc_stmt(Stmt::Continue { span });
+    assert_eq!(id1.as_usize(), 1);
+    assert_eq!(pool.stmts.len(), 2);
+    assert_eq!(pool.stmt_spans.len(), 2);
+
+    // Values and spans can be retrieved through lookup helpers
+    assert!(matches!(*pool.stmt(id0), Stmt::Break { .. }));
+    assert_eq!(pool.stmt_span(id0), span);
+    assert!(matches!(*pool.stmt(id1), Stmt::Continue { .. }));
+}
+
+// ── Program::dump ─────────────────────────────────────────────────────────────
+
+#[test]
+fn program_dump_contains_structural_keywords() {
+    let source = "module test\nfunc main() {\n    return 0\n}\n";
+    let program = parse(source).unwrap();
+    let dump = program.dump(source);
+    // The dump should at least mention the program root and the function name
+    assert!(
+        dump.contains("Program"),
+        "expected 'Program' in dump, got:\n{dump}"
+    );
+    assert!(
+        dump.contains("main"),
+        "expected 'main' in dump, got:\n{dump}"
+    );
+}
+
+#[test]
+fn program_dump_empty_source_starts_with_program() {
+    let program = parse("").unwrap();
+    let dump = program.dump("");
+    assert!(
+        dump.starts_with("Program"),
+        "dump of empty source should start with 'Program'"
+    );
+}
+
+// ── parse_recovering_with_file_id ─────────────────────────────────────────────
+
+#[test]
+fn parse_recovering_with_file_id_propagates_to_program_span() {
+    use crate::parse_recovering_with_file_id;
+
+    // Valid source: no diagnostics, program span carries file_id
+    let output = parse_recovering_with_file_id("module test\nfunc main() { }\n", 42);
+    assert!(
+        output.diagnostics.is_empty(),
+        "valid source should produce no diagnostics"
+    );
+    assert_eq!(
+        output.program.span.file_id, 42,
+        "program span should carry the supplied file_id"
+    );
+}
+
+#[test]
+fn parse_recovering_with_file_id_error_carries_file_id() {
+    use crate::parse_recovering_with_file_id;
+
+    // Invalid source: diagnostics must carry the correct file_id in their span
+    let output = parse_recovering_with_file_id("module test\nfunc main() {\n    let x =\n}\n", 99);
+    assert!(
+        !output.diagnostics.is_empty(),
+        "invalid source should produce at least one diagnostic"
+    );
+    for diag in &output.diagnostics {
+        assert_eq!(
+            diag.span.file_id, 99,
+            "error span should carry file_id=99, got {}",
+            diag.span.file_id
+        );
+    }
+}

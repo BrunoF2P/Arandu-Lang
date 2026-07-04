@@ -1,12 +1,33 @@
+//! Compiler diagnostic types for Arandu.
+//!
+//! A [`Diagnostic`] represents a single compiler message (error, warning, note,
+//! or hint) and carries a machine-readable [`DiagCode`], a human-readable
+//! message, a primary [`Span`], optional secondary [`Label`]s, notes, and
+//! [`Hint`]s with optional code replacements.
+//!
+//! # Building a diagnostic
+//! ```ignore
+//! Diagnostic::error(DiagCode::T001CannotInferType, "cannot infer type", span)
+//!     .with_label(extra_span, "declared here")
+//!     .with_hint("add an explicit type annotation")
+//! ```
+
 pub use arandu_base::source_registry::SourceRegistry;
 pub use arandu_base::span::Span;
 use std::fmt;
 
+/// Severity level of a compiler diagnostic.
+///
+/// Controls how the message is displayed and whether compilation is aborted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
+    /// A hard error that prevents successful compilation.
     Error,
+    /// A potential issue that does not prevent compilation.
     Warning,
+    /// Informational context attached to an error or warning.
     Note,
+    /// A suggestion for how to fix an issue, optionally with a code replacement.
     Hint,
 }
 
@@ -21,21 +42,36 @@ impl fmt::Display for Severity {
     }
 }
 
+/// Whether a diagnostic was produced by the user's code or by an internal compiler bug.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiagnosticKind {
+    /// The diagnostic describes a problem in the user's source code.
     User,
+    /// The diagnostic describes an unexpected compiler bug (ICE — Internal Compiler Error).
     InternalCompilerError,
 }
 
+/// A suggested text replacement attached to a [`Hint`].
+///
+/// When present in a hint, editors and CLI can offer to automatically apply
+/// the replacement to the source file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodeReplacement {
+    /// The source span to replace.
     pub span: Span,
+    /// The text that should replace the spanned region.
     pub new_text: String,
 }
 
+/// A human-readable suggestion attached to a [`Diagnostic`].
+///
+/// Hints optionally carry a [`CodeReplacement`] so that tooling can offer
+/// a one-click fix.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hint {
+    /// The hint message shown to the user.
     pub message: String,
+    /// An optional automatic code fix for the suggestion.
     pub replacement: Option<CodeReplacement>,
 }
 
@@ -57,6 +93,24 @@ impl From<&str> for Hint {
     }
 }
 
+/// Machine-readable diagnostic code.
+///
+/// Every [`Diagnostic`] carries exactly one `DiagCode` that uniquely identifies
+/// the error category. Codes are grouped by compiler phase:
+///
+/// | Prefix | Phase |
+/// |--------|-------|
+/// | `LX`   | Lexer |
+/// | `P`    | Parser |
+/// | `M`    | Module / import resolution |
+/// | `N`    | Name resolution / scope |
+/// | `T`    | Type checker |
+/// | `L`    | Lowering |
+/// | `G`    | Generics |
+/// | `O`    | Ownership / move checker |
+/// | `W`    | Warnings / linting |
+/// | `U`    | Unimplemented / future features |
+/// | `ICE`  | Internal compiler error |
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiagCode {
     // ── Lexical Analysis (LX) ──
@@ -252,21 +306,45 @@ impl fmt::Display for DiagCode {
     }
 }
 
+/// A secondary source location annotation attached to a [`Diagnostic`].
+///
+/// Labels highlight additional spans of code that are relevant to the main
+/// diagnostic message (e.g. "value moved here", "declared here").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Label {
+    /// The source span this label points to.
     pub span: Span,
+    /// A short message describing why this span is relevant.
     pub message: String,
 }
 
+/// A single compiler diagnostic message.
+///
+/// Diagnostics are the primary output of every compiler pass. They carry a
+/// machine-readable [`DiagCode`], a human-readable message, a primary source
+/// [`Span`], optional secondary [`Label`]s, free-form notes, and [`Hint`]s
+/// with optional code replacements.
+///
+/// Use the [`Diagnostic::error`], [`Diagnostic::warning`], etc. constructors
+/// and chain [`with_label`](Diagnostic::with_label), [`with_note`](Diagnostic::with_note),
+/// and [`with_hint`](Diagnostic::with_hint) to build a complete diagnostic.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
+    /// Machine-readable error code for tooling and tests.
     pub code: DiagCode,
+    /// Display severity (controls abort behaviour and rendering colour).
     pub severity: Severity,
+    /// Whether this is a user error or an internal compiler error.
     pub kind: DiagnosticKind,
+    /// Primary human-readable message.
     pub message: String,
+    /// Primary source location that the message refers to.
     pub span: Span,
+    /// Secondary annotated spans for additional context.
     pub labels: Vec<Label>,
+    /// Free-form explanatory notes appended after the main message.
     pub notes: Vec<String>,
+    /// Actionable hints, optionally with automatic code replacements.
     pub hints: Vec<Hint>,
 }
 
@@ -275,6 +353,7 @@ pub use arandu_base::index_vec;
 pub use arandu_base::stable_id;
 
 impl Diagnostic {
+    /// Creates a user-facing error diagnostic.
     pub fn error(code: DiagCode, message: impl Into<String>, span: Span) -> Self {
         Self {
             code,
@@ -288,6 +367,7 @@ impl Diagnostic {
         }
     }
 
+    /// Creates a user-facing warning diagnostic.
     pub fn warning(code: DiagCode, message: impl Into<String>, span: Span) -> Self {
         Self {
             code,
@@ -301,6 +381,7 @@ impl Diagnostic {
         }
     }
 
+    /// Creates a user-facing informational note.
     pub fn note(code: DiagCode, message: impl Into<String>, span: Span) -> Self {
         Self {
             code,
@@ -314,6 +395,7 @@ impl Diagnostic {
         }
     }
 
+    /// Creates a user-facing hint (suggestion).
     pub fn hint(code: DiagCode, message: impl Into<String>, span: Span) -> Self {
         Self {
             code,
@@ -327,6 +409,10 @@ impl Diagnostic {
         }
     }
 
+    /// Creates an Internal Compiler Error (ICE) diagnostic.
+    ///
+    /// ICEs indicate a bug in the compiler itself, not in the user's code.
+    /// They are always rendered as errors regardless of the provided code's category.
     pub fn ice(code: DiagCode, message: impl Into<String>, span: Span) -> Self {
         Self {
             code,
@@ -340,6 +426,7 @@ impl Diagnostic {
         }
     }
 
+    /// Attaches a secondary source label to this diagnostic.
     #[must_use]
     pub fn with_label(mut self, span: Span, message: impl Into<String>) -> Self {
         self.labels.push(Label {
@@ -349,12 +436,14 @@ impl Diagnostic {
         self
     }
 
+    /// Appends a free-form explanatory note to this diagnostic.
     #[must_use]
     pub fn with_note(mut self, note: impl Into<String>) -> Self {
         self.notes.push(note.into());
         self
     }
 
+    /// Appends a plain-text hint (no code replacement).
     #[must_use]
     pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
         self.hints.push(Hint {
@@ -364,6 +453,7 @@ impl Diagnostic {
         self
     }
 
+    /// Appends a hint with an optional automatic code replacement.
     #[must_use]
     pub fn with_hint_replacement(mut self, hint: Hint) -> Self {
         self.hints.push(hint);

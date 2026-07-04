@@ -1,6 +1,21 @@
 module std.core.result
 
-enum Result<T, E> {
+extern "C" {
+    func abort() : void;
+}
+
+public enum Result<T, E> {
     Ok(T),
     Err(E),
+}
+
+public func Result.expect_or_abort<T, E>(self, reason: str) : T {
+    match self {
+        Ok(v) => {
+            return v;
+        }
+        Err(_) => {
+            abort();
+        }
+    }
 }

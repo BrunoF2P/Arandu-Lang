@@ -323,3 +323,41 @@ fn invalid_err_only_return_rejected() {
         ParseErrorCode::InvalidResultReturn,
     );
 }
+
+#[test]
+fn test_all_stdlib_files_parse_cleanly() {
+    let stdlib_dir = workspace_root().join("stdlib");
+    let mut files = Vec::new();
+    fn find_aru_files(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    find_aru_files(&path, files);
+                } else if path.extension().is_some_and(|ext| ext == "aru") {
+                    files.push(path);
+                }
+            }
+        }
+    }
+    find_aru_files(&stdlib_dir, &mut files);
+    assert!(
+        !files.is_empty(),
+        "stdlib files not found in {}",
+        stdlib_dir.display()
+    );
+
+    let mut failed = false;
+    for file in files {
+        let source = std::fs::read_to_string(&file)
+            .unwrap_or_else(|err| panic!("failed to read stdlib file {}: {}", file.display(), err));
+        if let Err(err) = arandu_parser::parse(&source) {
+            println!("Stdlib file {} failed to parse: {:?}", file.display(), err);
+            failed = true;
+        }
+    }
+    assert!(
+        !failed,
+        "One or more stdlib files had syntax/parsing errors"
+    );
+}

@@ -87,7 +87,7 @@ impl<'a> Resolver<'a> {
             ));
             return false;
         }
-        if matches!(root.as_str(), "Coroutine" | "void") {
+        if matches!(root.as_str(), "Coroutine" | "void" | "Err") {
             return true;
         }
         let mut diagnostic = Diagnostic::error(

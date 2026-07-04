@@ -8,6 +8,9 @@ fn type_expr_is_err_slot(ty_id: TypeExprId, pool: &crate::ast::ast_pool::AstPool
     match pool.type_expr(ty_id) {
         TypeExpr::Nullable { inner, .. } => type_expr_is_err_slot(*inner, pool),
         TypeExpr::Primitive { name, .. } => name == "Err",
+        TypeExpr::Named { name, args, .. } => {
+            args.is_empty() && name.path.len() == 1 && name.path[0] == "Err"
+        }
         _ => false,
     }
 }
@@ -216,7 +219,7 @@ impl<'a> Parser<'a> {
             let size = match &self.current().kind {
                 TokenKind::IntDec => {
                     let value = self.current_text().to_string();
-                    self.consume();
+                    self.advance();
                     value
                 }
                 _ => {
@@ -273,7 +276,7 @@ impl<'a> Parser<'a> {
                 .alloc_type_expr(TypeExpr::Group { span, inner: ty }));
         }
         if let Some(name) = primitive_type_name(&self.current().kind) {
-            self.consume();
+            self.advance();
             let span = self.span_from_mark(start);
             return Ok(self.pool.alloc_type_expr(TypeExpr::Primitive {
                 span,
@@ -319,12 +322,12 @@ impl<'a> Parser<'a> {
         let last = match &self.current().kind {
             TokenKind::IdentType => {
                 let name = self.current_text().to_string();
-                self.consume();
+                self.advance();
                 name
             }
             TokenKind::IdentValue if self.current_text() == "void" => {
                 let name = self.current_text().to_string();
-                self.consume();
+                self.advance();
                 name
             }
             _ => self.expect_ident_type()?,

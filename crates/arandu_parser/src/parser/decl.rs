@@ -113,7 +113,7 @@ impl<'a> Parser<'a> {
             match &self.current().kind {
                 TokenKind::StringText | TokenKind::StringEscape => {
                     text.push_str(self.current_text());
-                    self.consume();
+                    self.advance();
                 }
                 _ => {
                     return Err(ParseError::new(
@@ -461,7 +461,7 @@ impl<'a> Parser<'a> {
         let abi = match &self.current().kind {
             TokenKind::StringText => {
                 let text = self.current_text().to_string();
-                self.consume();
+                self.advance();
                 text
             }
             _ => {

@@ -39,107 +39,125 @@ fn load_stdlib_signatures(
         if !visited.insert(path.clone()) {
             continue;
         }
-        if let Ok(source) = std::fs::read_to_string(&path)
-            && let Ok(program) = cache.get_or_parse(&path, &source)
-        {
-            let module_name = program.module.as_ref().map(|m| m.path.join("."));
-            let is_current = module_name.as_deref() == current_module;
+        match std::fs::read_to_string(&path) {
+            Ok(source) => {
+                match cache.get_or_parse(&path, &source) {
+                    Ok(program) => {
+                        let module_name = program.module.as_ref().map(|m| m.path.join("."));
+                        let is_current = module_name.as_deref() == current_module;
 
-            if !is_current {
-                let mut resolved = arandu_resolve::ResolvedNames::default();
+                        if !is_current {
+                            let mut resolved = arandu_resolve::ResolvedNames::default();
 
-                if let Some(ref mod_name) = module_name {
-                    for decl_id in &program.decls {
-                        let decl = program.pool.decl(*decl_id);
-                        match decl {
-                            arandu_parser::TopLevelDecl::Enum(d) => {
-                                if let Some(sym) =
-                                    checker.symbols.lookup_module_member(mod_name, &d.name)
-                                {
-                                    resolved.define(d.span, sym);
-                                }
-                            }
-                            arandu_parser::TopLevelDecl::Struct(d) => {
-                                if let Some(sym) =
-                                    checker.symbols.lookup_module_member(mod_name, &d.name)
-                                {
-                                    resolved.define(d.span, sym);
-                                }
-                            }
-                            arandu_parser::TopLevelDecl::Func(d) => match &d.name {
-                                arandu_parser::FuncName::Free { span, name } => {
-                                    if let Some(sym) =
-                                        checker.symbols.lookup_module_member(mod_name, name)
-                                    {
-                                        resolved.define(*span, sym);
+                            if let Some(ref mod_name) = module_name {
+                                for decl_id in &program.decls {
+                                    let decl = program.pool.decl(*decl_id);
+                                    match decl {
+                                        arandu_parser::TopLevelDecl::Enum(d) => {
+                                            if let Some(sym) = checker
+                                                .symbols
+                                                .lookup_module_member(mod_name, &d.name)
+                                            {
+                                                resolved.define(d.span, sym);
+                                            }
+                                        }
+                                        arandu_parser::TopLevelDecl::Struct(d) => {
+                                            if let Some(sym) = checker
+                                                .symbols
+                                                .lookup_module_member(mod_name, &d.name)
+                                            {
+                                                resolved.define(d.span, sym);
+                                            }
+                                        }
+                                        arandu_parser::TopLevelDecl::Func(d) => match &d.name {
+                                            arandu_parser::FuncName::Free { span, name } => {
+                                                if let Some(sym) = checker
+                                                    .symbols
+                                                    .lookup_module_member(mod_name, name)
+                                                {
+                                                    resolved.define(*span, sym);
+                                                }
+                                            }
+                                            arandu_parser::FuncName::Method {
+                                                span,
+                                                receiver,
+                                                name,
+                                            } => {
+                                                let receiver_name = receiver.path.join(".");
+                                                if let Some(sym) = checker
+                                                    .symbols
+                                                    .lookup_associated_member(&receiver_name, name)
+                                                {
+                                                    resolved.define(*span, sym);
+                                                }
+                                            }
+                                        },
+                                        arandu_parser::TopLevelDecl::Extern(d) => {
+                                            for member in &d.members {
+                                                if let Some(sym) = checker
+                                                    .symbols
+                                                    .lookup_module_member(mod_name, &member.name)
+                                                {
+                                                    resolved.define(member.span, sym);
+                                                }
+                                            }
+                                        }
+                                        _ => {}
                                     }
                                 }
-                                arandu_parser::FuncName::Method {
-                                    span,
-                                    receiver,
-                                    name,
-                                } => {
-                                    let receiver_name = receiver.path.join(".");
-                                    if let Some(sym) = checker
-                                        .symbols
-                                        .lookup_associated_member(&receiver_name, name)
-                                    {
-                                        resolved.define(*span, sym);
+                            }
+
+                            let res = arandu_resolve::resolve_with_symbols(
+                                checker.symbols.clone(),
+                                resolved,
+                                arandu_resolve::DocCommentMap::default(),
+                                Vec::new(),
+                                program,
+                            );
+
+                            let tc_result = crate::type_check(res, program);
+
+                            let checker_sym_count = checker.symbols.iter().count();
+                            let tc_sym_count = tc_result.symbols.iter().count();
+                            if tc_sym_count > checker_sym_count {
+                                checker
+                                    .symbols
+                                    .merge_from_extending(&tc_result.symbols, checker_sym_count);
+                            }
+
+                            checker.type_info.merge_from(&tc_result.type_info);
+                        }
+
+                        // Enqueue imports
+                        for import in &program.imports {
+                            if let arandu_parser::ImportDecl::External { source, .. } = import {
+                                if source.starts_with("std.core.") {
+                                    let relative = source.strip_prefix("std.core.").unwrap();
+                                    let stdlib_rel = format!("stdlib/core/{relative}.aru");
+                                    if let Some(p) = stdlib_cache.get_or_resolve(&stdlib_rel) {
+                                        queue.push(p);
                                     }
-                                }
-                            },
-                            arandu_parser::TopLevelDecl::Extern(d) => {
-                                for member in &d.members {
-                                    if let Some(sym) =
-                                        checker.symbols.lookup_module_member(mod_name, &member.name)
-                                    {
-                                        resolved.define(member.span, sym);
+                                } else if source.starts_with("std.alloc.") {
+                                    let relative = source.strip_prefix("std.alloc.").unwrap();
+                                    let stdlib_rel = format!("stdlib/alloc/{relative}.aru");
+                                    if let Some(p) = stdlib_cache.get_or_resolve(&stdlib_rel) {
+                                        queue.push(p);
                                     }
                                 }
                             }
-                            _ => {}
                         }
                     }
+                    Err(err) => {
+                        checker.diagnostics.push(err.into());
+                    }
                 }
-
-                let res = arandu_resolve::resolve_with_symbols(
-                    checker.symbols.clone(),
-                    resolved,
-                    arandu_resolve::DocCommentMap::default(),
-                    Vec::new(),
-                    program,
-                );
-
-                let tc_result = crate::type_check(res, program);
-
-                let checker_sym_count = checker.symbols.iter().count();
-                let tc_sym_count = tc_result.symbols.iter().count();
-                if tc_sym_count > checker_sym_count {
-                    checker
-                        .symbols
-                        .merge_from_extending(&tc_result.symbols, checker_sym_count);
-                }
-
-                checker.type_info.merge_from(&tc_result.type_info);
             }
-
-            // Enqueue imports
-            for import in &program.imports {
-                if let arandu_parser::ImportDecl::External { source, .. } = import {
-                    if source.starts_with("std.core.") {
-                        let relative = source.strip_prefix("std.core.").unwrap();
-                        let stdlib_rel = format!("stdlib/core/{relative}.aru");
-                        if let Some(p) = stdlib_cache.get_or_resolve(&stdlib_rel) {
-                            queue.push(p);
-                        }
-                    } else if source.starts_with("std.alloc.") {
-                        let relative = source.strip_prefix("std.alloc.").unwrap();
-                        let stdlib_rel = format!("stdlib/alloc/{relative}.aru");
-                        if let Some(p) = stdlib_cache.get_or_resolve(&stdlib_rel) {
-                            queue.push(p);
-                        }
-                    }
-                }
+            Err(err) => {
+                checker.diagnostics.push(arandu_middle::Diagnostic::error(
+                    arandu_middle::DiagCode::ICET001,
+                    format!("failed to read stdlib file {}: {}", path.display(), err),
+                    arandu_lexer::Span::new(0, 0, 0),
+                ));
             }
         }
     }

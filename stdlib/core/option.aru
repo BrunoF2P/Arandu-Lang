@@ -1,6 +1,21 @@
 module std.core.option
 
-enum Option<T> {
-    None,
+extern "C" {
+    func abort() : void;
+}
+
+public enum Option<T> {
     Some(T),
+    None,
+}
+
+public func Option.expect_or_abort<T>(self, reason: str) : T {
+    match self {
+        Some(v) => {
+            return v;
+        }
+        None => {
+            abort();
+        }
+    }
 }

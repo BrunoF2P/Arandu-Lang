@@ -185,7 +185,18 @@ pub fn compile_parallel(paths: Vec<PathBuf>) -> Result<ParallelOutput, Vec<Diagn
                 if parsed_count == num_files {
                     // All files parsed. Merge symbols!
                     let mut combined_symbols =
-                        crate::passes::name_resolution::create_symbol_table_with_prelude();
+                        match crate::passes::name_resolution::create_symbol_table_with_prelude() {
+                            Ok(table) => table,
+                            Err(diags) => {
+                                for diag in diags {
+                                    final_diagnostics.push(diag);
+                                }
+                                for sender in &worker_senders {
+                                    let _ = sender.send(Task::Shutdown);
+                                }
+                                return Err(final_diagnostics);
+                            }
+                        };
                     let mut combined_docs = crate::DocCommentMap::default();
                     let mut combined_diags = Vec::new();
 
