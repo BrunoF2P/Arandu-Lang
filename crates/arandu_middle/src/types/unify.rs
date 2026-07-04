@@ -5,7 +5,11 @@ use super::type_interner::TypeInterner;
 
 /// Unify return value type against declared `Result` return.
 #[must_use]
-#[tracing::instrument(level = "trace", target = "arandu_middle::types::unify", skip(interner))]
+#[tracing::instrument(
+    level = "trace",
+    target = "arandu_middle::types::unify",
+    skip(interner)
+)]
 pub fn unify_return_type(expected: &ArType, actual: &ArType, interner: &TypeInterner) -> bool {
     if unify(expected, actual, interner) {
         return true;
@@ -41,7 +45,11 @@ pub fn unify_return_type(expected: &ArType, actual: &ArType, interner: &TypeInte
 /// - Named types compare `SymbolId` + generic args
 /// - Func types compare param count, params, and return
 #[must_use]
-#[tracing::instrument(level = "trace", target = "arandu_middle::types::unify", skip(interner))]
+#[tracing::instrument(
+    level = "trace",
+    target = "arandu_middle::types::unify",
+    skip(interner)
+)]
 pub fn unify(a: &ArType, b: &ArType, interner: &TypeInterner) -> bool {
     // Poison and Any always unify
     if a.is_error() || b.is_error() {

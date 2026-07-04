@@ -68,7 +68,11 @@ fn type_check_with_mode(
 /// The `session.type_interner` is preserved so subsequent `type_check_with_session`
 /// calls see previously interned types.
 #[must_use]
-#[tracing::instrument(level = "trace", target = "arandu_typeck", skip(session, resolution, program))]
+#[tracing::instrument(
+    level = "trace",
+    target = "arandu_typeck",
+    skip(session, resolution, program)
+)]
 pub fn type_check_with_session(
     resolution: ResolutionResult,
     program: &Program,
@@ -361,6 +365,12 @@ pub struct TypeInfo {
     ///
     /// Populated during `collect_type_shapes` to allow the AMIR lowering pass
     /// to resolve `variant_symbol → tag` in O(1) without scanning HIR decls.
+    ///
+    /// Both the *definition-site* `SymbolId` (name `"Red"`) and the
+    /// *associated-member* `SymbolId` (name `"Color.Red"`) are registered here
+    /// for each variant during `collect_type_shapes`.  This ensures a direct
+    /// `enum_variant_tags.get(symbol)` hit for both bare (`Red`) and qualified
+    /// (`Color.Red`) references without any name-based fallback scan.
     pub enum_variant_tags: FxHashMap<SymbolId, usize>,
     /// Ordered type-parameter symbols for generic decls (func, struct, …).
     pub generic_params: FxHashMap<SymbolId, Vec<SymbolId>>,
@@ -639,6 +649,54 @@ impl arandu_middle::layout::StructLayoutProvider for TypeInfo {
 
     fn get_generic_params(&self, struct_id: SymbolId) -> Option<&[SymbolId]> {
         self.generic_params.get(&struct_id).map(|v| v.as_slice())
+    }
+
+    fn get_enum_variants(
+        &self,
+        enum_id: SymbolId,
+    ) -> Option<Vec<arandu_middle::layout::EnumPayloadShape>> {
+        let mut variant_list: Vec<(usize, &EnumPayloadShape)> = self
+            .enum_variants
+            .iter()
+            .filter(|(_var_symbol, (parent_enum_id, _shape))| *parent_enum_id == enum_id)
+            .map(|(var_symbol, (_parent, shape))| {
+                let tag = self.enum_variant_tags.get(var_symbol).copied().unwrap_or(0);
+                (tag, shape)
+            })
+            .collect();
+
+        if variant_list.is_empty() {
+            return None;
+        }
+
+        variant_list.sort_by_key(|(tag, _shape)| *tag);
+
+        let mut mapped_variants = Vec::new();
+        for (_tag, shape) in variant_list {
+            let payload_ty = match shape {
+                EnumPayloadShape::Unit => None,
+                EnumPayloadShape::Tuple(tys) => {
+                    if tys.is_empty() {
+                        None
+                    } else if tys.len() == 1 {
+                        self.type_interner.lookup(&tys[0])
+                    } else {
+                        let mut tids = Vec::new();
+                        for t in tys {
+                            if let Some(tid) = self.type_interner.lookup(t) {
+                                tids.push(tid);
+                            } else {
+                                return None;
+                            }
+                        }
+                        self.type_interner.lookup(&ArType::Tuple(tids))
+                    }
+                }
+            };
+            mapped_variants.push(arandu_middle::layout::EnumPayloadShape { payload_ty });
+        }
+
+        Some(mapped_variants)
     }
 }
 

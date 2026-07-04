@@ -1,6 +1,6 @@
-use arandu_middle::parse_cache::ParseCache;
-use arandu_middle::StdlibPathCache;
 use arandu_middle::CompileSession;
+use arandu_middle::StdlibPathCache;
+use arandu_middle::parse_cache::ParseCache;
 use arandu_parser::{FuncName, Program, TopLevelDecl};
 
 use crate::{ResolutionResult, ResolvedNames, SymbolKind, SymbolTable};
@@ -60,7 +60,8 @@ pub(crate) fn load_stdlib_transitively(
                 target: "arandu_resolve",
                 "process_stdlib_file",
                 file = tracing::field::Empty
-            ).entered();
+            )
+            .entered();
             if let Some(ref module) = program.module {
                 parse_span.record("file", tracing::field::display(module.path.join(".")));
             }
@@ -90,7 +91,8 @@ pub(crate) fn load_stdlib_transitively(
                     target: "arandu_resolve",
                     "define_module_members",
                     module = tracing::field::Empty
-                ).entered();
+                )
+                .entered();
                 // Define module members
                 if let Some(module) = &program.module {
                     let module_name = module.path.join(".");
@@ -128,7 +130,8 @@ pub(crate) fn load_stdlib_transitively(
                     target: "arandu_resolve",
                     "scan_imports",
                     file = tracing::field::Empty
-                ).entered();
+                )
+                .entered();
                 if let Some(ref module) = program.module {
                     imports_span.record("file", tracing::field::display(module.path.join(".")));
                 }

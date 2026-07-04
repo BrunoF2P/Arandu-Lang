@@ -1,7 +1,7 @@
-use super::super::{SessionMode, TypeChecker};
 use super::super::types::{ArType, Primitive};
-use arandu_middle::parse_cache::ParseCache;
+use super::super::{SessionMode, TypeChecker};
 use arandu_middle::StdlibPathCache;
+use arandu_middle::parse_cache::ParseCache;
 use arandu_parser::Program;
 
 fn load_stdlib_signatures(
@@ -185,6 +185,12 @@ pub(crate) fn register_prelude(
 
     if checker.session_mode == SessionMode::Shared {
         let current_module = program.module.as_ref().map(|m| m.path.join("."));
-        load_stdlib_signatures(checker, program, current_module.as_deref(), cache, stdlib_cache);
+        load_stdlib_signatures(
+            checker,
+            program,
+            current_module.as_deref(),
+            cache,
+            stdlib_cache,
+        );
     }
 }

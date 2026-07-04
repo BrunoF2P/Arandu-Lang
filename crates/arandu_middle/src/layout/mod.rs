@@ -86,11 +86,17 @@ pub struct TypeLayout {
     pub field_offsets: Vec<u64>, // Field offsets (populated for structs, tuples, etc.)
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EnumPayloadShape {
+    pub payload_ty: Option<TypeId>,
+}
+
 /// Decoupled metadata provider to resolve struct fields and generic parameters.
 pub trait StructLayoutProvider {
     fn get_struct_fields(&self, struct_id: SymbolId) -> Option<&FxHashMap<String, ArType>>;
     fn get_struct_field_indices(&self, struct_id: SymbolId) -> Option<&FxHashMap<String, usize>>;
     fn get_generic_params(&self, struct_id: SymbolId) -> Option<&[SymbolId]>;
+    fn get_enum_variants(&self, enum_id: SymbolId) -> Option<Vec<EnumPayloadShape>>;
 }
 
 /// The physical memory layout engine.
@@ -132,7 +138,11 @@ impl LayoutEngine {
     }
 
     /// Compute the memory layout of a structural `ArType`.
-    #[tracing::instrument(level = "trace", target = "arandu_middle::layout", skip(self, interner, provider))]
+    #[tracing::instrument(
+        level = "trace",
+        target = "arandu_middle::layout",
+        skip(self, interner, provider)
+    )]
     pub fn layout_of_type(
         &self,
         ty: &ArType,
@@ -314,6 +324,28 @@ impl LayoutEngine {
                             field_offsets: Vec::new(),
                         }
                     }
+                } else if let Some(variants) = provider.get_enum_variants(*symbol_id) {
+                    let tag_size = self.pointer_width;
+                    let mut max_payload_size = 0;
+                    let mut max_payload_align = 1;
+                    for variant in variants {
+                        if let Some(payload_ty_id) = variant.payload_ty {
+                            let payload_layout = self.layout_of(payload_ty_id, interner, provider);
+                            if payload_layout.size > max_payload_size {
+                                max_payload_size = payload_layout.size;
+                            }
+                            if payload_layout.align > max_payload_align {
+                                max_payload_align = payload_layout.align;
+                            }
+                        }
+                    }
+                    let max_align = max_payload_align.max(tag_size);
+                    let size = (tag_size + max_payload_size + max_align - 1) & !(max_align - 1);
+                    TypeLayout {
+                        size,
+                        align: max_align,
+                        field_offsets: vec![0, tag_size],
+                    }
                 } else {
                     TypeLayout {
                         size: 0,
@@ -322,6 +354,7 @@ impl LayoutEngine {
                     }
                 }
             }
+
             ArType::Func(_, _) => TypeLayout {
                 size: self.pointer_width,
                 align: self.pointer_width,
@@ -517,6 +550,9 @@ mod tests {
         fn get_generic_params(&self, _struct_id: SymbolId) -> Option<&[SymbolId]> {
             None
         }
+        fn get_enum_variants(&self, _enum_id: SymbolId) -> Option<Vec<EnumPayloadShape>> {
+            None
+        }
     }
 
     #[test]
@@ -559,6 +595,7 @@ mod tests {
         fields: FxHashMap<SymbolId, FxHashMap<String, ArType>>,
         field_indices: FxHashMap<SymbolId, FxHashMap<String, usize>>,
         generic_params: FxHashMap<SymbolId, Vec<SymbolId>>,
+        enum_variants: FxHashMap<SymbolId, Vec<EnumPayloadShape>>,
     }
 
     impl StructLayoutProvider for StructMockProvider {
@@ -573,6 +610,9 @@ mod tests {
         }
         fn get_generic_params(&self, struct_id: SymbolId) -> Option<&[SymbolId]> {
             self.generic_params.get(&struct_id).map(|v| v.as_slice())
+        }
+        fn get_enum_variants(&self, enum_id: SymbolId) -> Option<Vec<EnumPayloadShape>> {
+            self.enum_variants.get(&enum_id).cloned()
         }
     }
 
@@ -805,6 +845,7 @@ mod tests {
             fields: fields_map,
             field_indices: indices_map,
             generic_params: FxHashMap::default(),
+            enum_variants: FxHashMap::default(),
         };
 
         let struct_ty = ArType::Named(struct_sym, Vec::new());
@@ -863,6 +904,7 @@ mod tests {
             fields: fields_map,
             field_indices: indices_map,
             generic_params,
+            enum_variants: FxHashMap::default(),
         };
 
         let concrete_int = interner.intern(ArType::Primitive(Primitive::I32));

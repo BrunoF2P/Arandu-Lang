@@ -1,6 +1,6 @@
 use arandu_lexer::Span;
-use arandu_middle::parse_cache::ParseCache;
 use arandu_middle::StdlibPathCache;
+use arandu_middle::parse_cache::ParseCache;
 use arandu_parser::Program;
 
 use crate::{DocCommentMap, NodeKey, ResolutionResult, ResolvedNames, SymbolKind, SymbolTable};
