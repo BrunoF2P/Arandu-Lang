@@ -56,11 +56,11 @@ Fase 2 — A Construção da Infraestrutura & Execução (v0.2) · [EM ANDAMENTO
 [x] A10    Stable ID Infrastructure (generational IDs, slotmaps, stable handles)
 [x] A11    Token & String Storage Engine (packed tokens, SSO, string interning)
 [x] BC     Backend Cranelift (Dev/Debug com compilador em memória)
-   ├─ [ ] BC.1   Fat Pointer String JIT (tratar String como ptr + len na convenção de chamadas do Cranelift)
-   ├─ [ ] BC.2   Implementar EnumPayload & Discriminant no Cranelift JIT
-   ├─ [ ] BC.3   Implementar IndexAccess & Array/Tuple no Cranelift JIT
+   ├─ [x] BC.1   Fat Pointer String JIT (tratar String como ptr + len na convenção de chamadas do Cranelift)
+   ├─ [x] BC.2   Implementar EnumPayload & Discriminant no Cranelift JIT
+   ├─ [x] BC.3   Implementar IndexAccess & Array/Tuple no Cranelift JIT
    ├─ [ ] BC.4   Implementar Borrow/BorrowMut e Await no Cranelift JIT (Borrow de heap pointers; stack local borrow depende de F2)
-   └─ [ ] FUZZ   Fuzzing Lexer/Parser SIMD (arandu_fuzz e cron jobs semanais de robustez)
+   └─ [x] FUZZ   Fuzzing Lexer/Parser SIMD (arandu_fuzz e cron jobs semanais de robustez)
 [ ] C_FB   Backend C de portabilidade e bootstrapping
 [ ] DX     Diagnostics & Tooling Infrastructure (DX1-DX3, DX4 CFG visualization)
 [x] PERF   Compiler Instrumentation & Observabilidade (pass timers, allocations, query logs, -Z flags, tracing-based self-profile)
@@ -69,7 +69,7 @@ Fase 2 — A Construção da Infraestrutura & Execução (v0.2) · [EM ANDAMENTO
     ├─ [x] PERF.3   #[instrument] em 22 funções críticas (parser, unify, typeck, resolve, etc.)
     └─ [x] PERF.4   ParseCache em CompileSession — cache de ASTs keyed por PathBuf elimina parsing duplicado de stdlib
 [ ] SL_C   Stdlib Fundamental: arandu_core e arandu_alloc (primitivas heapless e arena/smallvec/bitset)
-[ ] DOC1   docs/ossa-virtual-anchoring.md — RFC retroativo documentando a técnica de âncoras virtuais + poda
+[x] DOC1   docs/ossa-virtual-anchoring.md — RFC retroativo documentando a técnica de âncoras virtuais + poda
 
 Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
 [ ] A1     Query System (Incremental Semantic Database, Salsa-like O(1) invalidation)
