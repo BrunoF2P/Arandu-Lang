@@ -106,6 +106,7 @@ pub struct Parser<'a> {
     pub pool: crate::ast::ast_pool::AstPool,
     pub(super) diagnostics: Vec<ParseError>,
     pub file_id: u32,
+    pub suppression_window: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -127,6 +128,7 @@ impl<'a> Parser<'a> {
             diagnostics: Vec::new(),
             pool: crate::ast::ast_pool::AstPool::new(),
             file_id: 0,
+            suppression_window: 0,
         }
     }
 
@@ -160,12 +162,25 @@ impl<'a> Parser<'a> {
                 break;
             }
             if self.at_kind_name("KW_IMPORT") {
-                imports.push(self.parse_import()?);
+                match self.parse_import() {
+                    Ok(import) => imports.push(import),
+                    Err(err) => {
+                        self.report_error(err);
+                        self.synchronize_top_level();
+                    }
+                }
                 continue;
             }
-            let decl = self.parse_top_level_decl()?;
-            let decl_id = self.pool.alloc_decl(decl);
-            decls.push(decl_id);
+            match self.parse_top_level_decl() {
+                Ok(decl) => {
+                    let decl_id = self.pool.alloc_decl(decl);
+                    decls.push(decl_id);
+                }
+                Err(err) => {
+                    self.report_error(err);
+                    self.synchronize_top_level();
+                }
+            }
         }
 
         Ok(Program {
@@ -198,7 +213,7 @@ impl<'a> Parser<'a> {
 
     pub(super) fn skip_semicolons(&mut self) {
         while self.at_kind_name("SEMICOLON") {
-            self.consume();
+            self.advance();
         }
     }
 
@@ -208,7 +223,7 @@ impl<'a> Parser<'a> {
                 span: self.current().span(self.file_id),
                 text: self.current_text().to_string(),
             });
-            self.consume();
+            self.advance();
             self.skip_semicolons();
         }
     }
@@ -239,7 +254,7 @@ impl<'a> Parser<'a> {
         match &self.current().kind {
             TokenKind::IdentValue => {
                 let name = self.current_text().to_string();
-                self.consume();
+                self.advance();
                 Ok(name)
             }
             _ => Err(ParseError::expected(
@@ -257,7 +272,7 @@ impl<'a> Parser<'a> {
         match &self.current().kind {
             TokenKind::IdentType | TokenKind::TypeErr => {
                 let name = self.current_text().to_string();
-                self.consume();
+                self.advance();
                 Ok(name)
             }
             _ => Err(ParseError::expected(
@@ -275,7 +290,7 @@ impl<'a> Parser<'a> {
         match &self.current().kind {
             TokenKind::TypeErr | TokenKind::IdentValue | TokenKind::IdentType => {
                 let name = self.current_text().to_string();
-                self.consume();
+                self.advance();
                 Ok(name)
             }
             _ => Err(ParseError::expected(
@@ -293,12 +308,12 @@ impl<'a> Parser<'a> {
         match &self.current().kind {
             TokenKind::IdentValue => {
                 let name = self.current_text().to_string();
-                self.consume();
+                self.advance();
                 Ok(name)
             }
             kind if is_contextual_module_segment(kind) => {
                 let text = self.current_text().to_string();
-                self.consume();
+                self.advance();
                 Ok(text)
             }
             _ => Err(ParseError::expected(
@@ -314,7 +329,7 @@ impl<'a> Parser<'a> {
 
     pub(super) fn expect_name(&mut self, name: &str) -> Result<(), ParseError> {
         if self.at_kind_name(name) {
-            self.consume();
+            self.advance();
             Ok(())
         } else {
             Err(ParseError::expected(
@@ -330,7 +345,7 @@ impl<'a> Parser<'a> {
 
     pub(super) fn eat_name(&mut self, name: &str) -> bool {
         if self.at_kind_name(name) {
-            self.consume();
+            self.advance();
             true
         } else {
             false
@@ -339,7 +354,7 @@ impl<'a> Parser<'a> {
 
     pub(super) fn expect_kind(&mut self, kind: TokenKind) -> Result<(), ParseError> {
         if self.current().kind == kind {
-            self.consume();
+            self.advance();
             Ok(())
         } else {
             let name = kind.name();
@@ -356,7 +371,7 @@ impl<'a> Parser<'a> {
 
     pub(super) fn eat_kind(&mut self, kind: TokenKind) -> bool {
         if self.current().kind == kind {
-            self.consume();
+            self.advance();
             true
         } else {
             false
@@ -383,7 +398,12 @@ impl<'a> Parser<'a> {
         &self.tokens[self.pos - 1]
     }
 
-    pub(super) fn consume(&mut self) -> &Token {
+    pub(super) fn advance(&mut self) -> &Token {
+        self.suppression_window += 1;
+        self.advance_raw()
+    }
+
+    pub(super) fn advance_raw(&mut self) -> &Token {
         let token = &self.tokens[self.pos];
         if self.pos < self.tokens.len() - 1 {
             self.pos += 1;
@@ -391,10 +411,31 @@ impl<'a> Parser<'a> {
         token
     }
 
+    pub(super) fn report_error(&mut self, err: ParseError) {
+        if self.suppression_window >= 3 {
+            self.diagnostics.push(err);
+        }
+        self.suppression_window = 0;
+    }
+
     #[cold]
     #[inline(never)]
     pub(super) fn synchronize_top_level(&mut self) {
-        self.consume();
+        if matches!(
+            self.current().kind,
+            TokenKind::KwFunc
+                | TokenKind::KwStruct
+                | TokenKind::KwEnum
+                | TokenKind::KwInterface
+                | TokenKind::KwExtern
+                | TokenKind::KwType
+                | TokenKind::KwConst
+                | TokenKind::KwImport
+                | TokenKind::KwModule
+        ) {
+            return;
+        }
+        self.advance_raw();
         while !self.at_kind_name("EOF") {
             if matches!(
                 self.current().kind,
@@ -410,21 +451,37 @@ impl<'a> Parser<'a> {
             ) {
                 break;
             }
-            self.consume();
+            self.advance_raw();
         }
     }
 
     #[cold]
     #[inline(never)]
     pub(super) fn synchronize_stmt(&mut self) {
-        self.consume();
+        if matches!(
+            self.current().kind,
+            TokenKind::RBrace
+                | TokenKind::KwReturn
+                | TokenKind::KwIf
+                | TokenKind::KwFor
+                | TokenKind::KwWhile
+                | TokenKind::KwMatch
+                | TokenKind::KwBreak
+                | TokenKind::KwContinue
+                | TokenKind::KwDefer
+                | TokenKind::KwErrdefer
+        ) {
+            return;
+        }
+        self.advance_raw();
         while !self.at_kind_name("EOF") {
             if self.previous().kind == TokenKind::Semicolon {
                 break;
             }
             if matches!(
                 self.current().kind,
-                TokenKind::KwReturn
+                TokenKind::RBrace
+                    | TokenKind::KwReturn
                     | TokenKind::KwIf
                     | TokenKind::KwFor
                     | TokenKind::KwWhile
@@ -436,7 +493,7 @@ impl<'a> Parser<'a> {
             ) {
                 break;
             }
-            self.consume();
+            self.advance_raw();
         }
     }
 
@@ -536,8 +593,6 @@ static TOKEN_INFO_TABLE: [TokenInfo; TokenKind::COUNT] = {
                 | TokenKind::KwShared
                 | TokenKind::KwSelf
                 | TokenKind::KwPtr
-                | TokenKind::KwAlloc
-                | TokenKind::KwFree
                 | TokenKind::KwDefer
                 | TokenKind::KwErrdefer
                 | TokenKind::KwLet

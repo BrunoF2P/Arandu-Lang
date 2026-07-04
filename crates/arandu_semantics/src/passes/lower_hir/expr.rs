@@ -215,6 +215,14 @@ pub(crate) fn lower_expr_raw(
         } => {
             let callee_id = *callee;
             let arg_ids = pool.expr_list(*args).to_vec();
+            if let Some(callee_sym) = get_resolved_value_ref(type_check, callee_id)
+                && Some(callee_sym) == type_check.symbols.builtin_alloc
+            {
+                let inner_id = lower_expr(type_check, pool, hir_pool, arg_ids[0])?;
+                let kind = HirExprKind::Alloc { expr: inner_id };
+                let ty = expr_type_for_kind(type_check, hir_pool, &kind, fallback_ty);
+                return Ok(HirExpr { kind, ty, span });
+            }
             if trailing_block.is_none()
                 && let Some(variant) = builtin_ctor_variant(pool, callee_id)
                 && arg_ids.len() == 1

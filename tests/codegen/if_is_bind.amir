@@ -6,17 +6,16 @@ Func test_bind(x: int) -> int
     _3: int
     _4: int
     _5: int
-    _6: int
     s0: int // x
     s1: int // res
     s2: int // y
 
-  bb0(_3: int /* from: "y" */):
+  bb0:
     branch true => bb1, else bb2
   bb1:
-    goto bb3(_3)
+    goto bb3(_1)
   bb2:
     goto bb3(20)
-  bb3(_5: int /* from: "res" */):
-    _0 = _5
+  bb3(_4: int /* from: "res" */):
+    _0 = _4
     return

@@ -11,22 +11,21 @@ Func test_payload(res: Result) -> int
     _8: int
     _9: int
     _10: int
-    _11: int
     s0: Result // res
     s1: int // val
     s2: int // x
 
-  bb0(_7: int /* from: "x" */):
+  bb0:
     _3 = discriminant(_1)
     _4 = eq _3, 0
     _5 = payload(_1 as Ok.0)
     _6 = and _4, true
     branch _6 => bb1, else bb2
   bb1:
-    goto bb3(_7)
+    goto bb3(_5)
   bb2:
-    _9 = neg 1
-    goto bb3(_9)
-  bb3(_10: int /* from: "val" */):
-    _0 = _10
+    _8 = neg 1
+    goto bb3(_8)
+  bb3(_9: int /* from: "val" */):
+    _0 = _9
     return

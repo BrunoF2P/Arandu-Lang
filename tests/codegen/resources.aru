@@ -1,6 +1,6 @@
 func test_alloc_free() {
-    let buffer = alloc 64
-    free buffer
+    let buffer = alloc(64)
+    free(buffer)
 }
 
 func test_defer(): int {

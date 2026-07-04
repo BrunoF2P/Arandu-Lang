@@ -10,7 +10,7 @@ impl<'a> Parser<'a> {
         match self.try_parse_expr(min_bp) {
             Ok(expr) => Ok(expr),
             Err(err) => {
-                self.diagnostics.push(err);
+                self.report_error(err);
                 // No synchronize_expr yet, to avoid eating too much.
                 // It just falls back to ExprKind::Error so parent parses can fail/recover naturally.
                 let span = self.span_from_mark(start);
@@ -74,7 +74,7 @@ impl<'a> Parser<'a> {
                 }
                 TokenKind::LBracket => {
                     let span_start = self.pool.expr_span(left);
-                    self.consume();
+                    self.advance();
                     let index = self.parse_expr(0)?;
                     self.expect_kind(TokenKind::RBracket)?;
                     let span = span_between(span_start, self.previous().span(self.file_id));
@@ -84,7 +84,7 @@ impl<'a> Parser<'a> {
                     continue;
                 }
                 TokenKind::SafeIndexStart => {
-                    self.consume();
+                    self.advance();
                     let span_start = self.pool.expr_span(left);
                     let index = self.parse_expr(0)?;
                     self.expect_kind(TokenKind::RBracket)?;
@@ -95,7 +95,7 @@ impl<'a> Parser<'a> {
                     continue;
                 }
                 TokenKind::Dot => {
-                    self.consume();
+                    self.advance();
                     let span_start = self.pool.expr_span(left);
                     let field = self.expect_ident_value()?;
                     let span = span_between(span_start, self.previous().span(self.file_id));
@@ -105,7 +105,7 @@ impl<'a> Parser<'a> {
                     continue;
                 }
                 TokenKind::SafeDot => {
-                    self.consume();
+                    self.advance();
                     let span_start = self.pool.expr_span(left);
                     let field = self.expect_ident_value()?;
                     let span = span_between(span_start, self.previous().span(self.file_id));
@@ -115,7 +115,7 @@ impl<'a> Parser<'a> {
                     continue;
                 }
                 TokenKind::Question => {
-                    self.consume();
+                    self.advance();
                     let span_start = self.pool.expr_span(left);
                     let span = span_between(span_start, self.previous().span(self.file_id));
                     left = self.pool.alloc_expr(ExprKind::Try { expr: left }, span);
@@ -128,7 +128,7 @@ impl<'a> Parser<'a> {
                         break;
                     }
                     let span_start = self.pool.expr_span(left);
-                    self.consume();
+                    self.advance();
                     let handler = if self.eat_kind(TokenKind::Pipe) {
                         let handler_start = self.pos.saturating_sub(1);
                         let error = self.expect_ident_value()?;
@@ -165,7 +165,7 @@ impl<'a> Parser<'a> {
                         break;
                     }
                     let span_start = self.pool.expr_span(left);
-                    self.consume();
+                    self.advance();
                     let ty = self.parse_type()?;
                     let span = span_between(span_start, self.pool.type_expr_span(ty));
                     left = self
@@ -201,7 +201,7 @@ impl<'a> Parser<'a> {
                 }
             }
             let span_start = self.pool.expr_span(left);
-            self.consume();
+            self.advance();
             let right = self.parse_expr(right_bp)?;
             let span = span_between(span_start, self.pool.expr_span(right));
             left = if op == BinaryOp::NullCoalesce {
@@ -219,7 +219,7 @@ impl<'a> Parser<'a> {
         let start = self.mark();
         match &self.current().kind {
             TokenKind::Minus => {
-                self.consume();
+                self.advance();
                 let expr = self.parse_expr(150)?;
                 let span = self.span_from_mark(start);
                 Ok(self.pool.alloc_expr(
@@ -231,7 +231,7 @@ impl<'a> Parser<'a> {
                 ))
             }
             TokenKind::Bang => {
-                self.consume();
+                self.advance();
                 let expr = self.parse_expr(150)?;
                 let span = self.span_from_mark(start);
                 Ok(self.pool.alloc_expr(
@@ -243,7 +243,7 @@ impl<'a> Parser<'a> {
                 ))
             }
             TokenKind::Tilde => {
-                self.consume();
+                self.advance();
                 let expr = self.parse_expr(150)?;
                 let span = self.span_from_mark(start);
                 Ok(self.pool.alloc_expr(
@@ -255,7 +255,7 @@ impl<'a> Parser<'a> {
                 ))
             }
             TokenKind::KwAwait => {
-                self.consume();
+                self.advance();
                 let expr = self.parse_expr(150)?;
                 let span = self.span_from_mark(start);
                 Ok(self.pool.alloc_expr(
@@ -266,14 +266,8 @@ impl<'a> Parser<'a> {
                     span,
                 ))
             }
-            TokenKind::KwAlloc => {
-                self.consume();
-                let expr = self.parse_expr(150)?;
-                let span = self.span_from_mark(start);
-                Ok(self.pool.alloc_expr(ExprKind::Alloc { expr }, span))
-            }
             TokenKind::KwAsync => {
-                self.consume();
+                self.advance();
                 let block = self.parse_block()?;
                 let block_id = self.pool.alloc_block(block);
                 let span = self.span_from_mark(start);
@@ -282,7 +276,7 @@ impl<'a> Parser<'a> {
                     .alloc_expr(ExprKind::AsyncBlock { block: block_id }, span))
             }
             TokenKind::KwUnsafe => {
-                self.consume();
+                self.advance();
                 let block = self.parse_block()?;
                 let block_id = self.pool.alloc_block(block);
                 let span = self.span_from_mark(start);
@@ -293,7 +287,7 @@ impl<'a> Parser<'a> {
             TokenKind::KwIf => self.parse_if_expr(),
             TokenKind::KwMatch => self.parse_match_expr(),
             TokenKind::KwSelf => {
-                self.consume();
+                self.advance();
                 let span = self.span_from_mark(start);
                 Ok(self.pool.alloc_expr(
                     ExprKind::Path {
@@ -324,34 +318,34 @@ impl<'a> Parser<'a> {
             TokenKind::IdentType => self.parse_type_led_expr(),
             TokenKind::IntDec | TokenKind::IntHex | TokenKind::IntBin | TokenKind::IntOct => {
                 let value = self.current_text().to_string();
-                self.consume();
+                self.advance();
                 let span = self.span_from_mark(start);
                 Ok(self.pool.alloc_expr(ExprKind::Int { value }, span))
             }
             TokenKind::Float => {
                 let value = self.current_text().to_string();
-                self.consume();
+                self.advance();
                 let span = self.span_from_mark(start);
                 Ok(self.pool.alloc_expr(ExprKind::Float { value }, span))
             }
             TokenKind::BoolTrue => {
-                self.consume();
+                self.advance();
                 let span = self.span_from_mark(start);
                 Ok(self.pool.alloc_expr(ExprKind::Bool { value: true }, span))
             }
             TokenKind::BoolFalse => {
-                self.consume();
+                self.advance();
                 let span = self.span_from_mark(start);
                 Ok(self.pool.alloc_expr(ExprKind::Bool { value: false }, span))
             }
             TokenKind::Char => {
                 let value = self.current().char_content(self.source).to_string();
-                self.consume();
+                self.advance();
                 let span = self.span_from_mark(start);
                 Ok(self.pool.alloc_expr(ExprKind::Char { value }, span))
             }
             TokenKind::Nil => {
-                self.consume();
+                self.advance();
                 let span = self.span_from_mark(start);
                 Ok(self.pool.alloc_expr(ExprKind::Nil, span))
             }
@@ -361,7 +355,7 @@ impl<'a> Parser<'a> {
             }
             TokenKind::RawString => {
                 let value = self.current().raw_string_content(self.source).to_string();
-                self.consume();
+                self.advance();
                 let span = self.span_from_mark(start);
                 let text_part = StringPart::Text { span, text: value };
                 let part_id = self.pool.alloc_string_part(text_part);
@@ -381,7 +375,7 @@ impl<'a> Parser<'a> {
                                 params_ok = false;
                                 break;
                             }
-                            self.consume();
+                            self.advance();
                             if self.can_start_type() && self.parse_type().is_err() {
                                 params_ok = false;
                                 break;
@@ -403,7 +397,7 @@ impl<'a> Parser<'a> {
                 if is_lambda {
                     self.parse_lambda()
                 } else {
-                    self.consume();
+                    self.advance();
                     let expr = self.parse_expr(0)?;
                     self.expect_name("RPAREN")?;
                     let span = self.span_from_mark(start);
@@ -669,12 +663,12 @@ impl<'a> Parser<'a> {
                 TokenKind::StringText | TokenKind::StringEscape => {
                     let span = self.current().span(self.file_id);
                     let text = self.current_text().to_string();
-                    self.consume();
+                    self.advance();
                     parts.push(StringPart::Text { span, text });
                 }
                 TokenKind::InterpStart => {
                     let part_start = self.mark();
-                    self.consume();
+                    self.advance();
                     let expr = self.parse_expr(0)?;
                     self.expect_name("INTERP_END")?;
                     parts.push(StringPart::Expr {

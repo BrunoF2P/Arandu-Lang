@@ -1,8 +1,8 @@
 Program @1:1-12:2
   Module @1:1-1:29 tests.unsafeFreeAlloc
   Func @3:1-12:2 main() -> void
-    Var @4:5-4:26 @4:9-4:15 buffer = Alloc @4:18-4:26(Int @4:24-4:26(64))
+    Var @4:5-4:27 @4:9-4:15 buffer = Call @4:18-4:27(Path @4:18-4:23(alloc), [Int @4:24-4:26(64)])
     Unsafe @5:5-7:6
       Expr @6:9-6:29 Call @6:9-6:29(Field @6:9-6:18(Path @6:9-6:12(raw), write), [Path @6:19-6:25(buffer), Int @6:27-6:28(1)])
     Var @8:5-10:6 @8:9-8:14 value = UnsafeBlock @8:17-10:6 Block @8:24-10:6[Expr @9:9-9:25 Call @9:9-9:25(Field @9:9-9:17(Path @9:9-9:12(raw), read), [Path @9:18-9:24(buffer)])]
-    Free @11:5-11:16 Path @11:10-11:16(buffer)
+    Expr @11:5-11:17 Call @11:5-11:17(Path @11:5-11:9(free), [Path @11:10-11:16(buffer)])

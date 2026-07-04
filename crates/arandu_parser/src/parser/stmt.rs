@@ -39,7 +39,7 @@ impl<'a> Parser<'a> {
         match self.try_parse_stmt() {
             Ok(stmt) => Ok(stmt),
             Err(err) => {
-                self.diagnostics.push(err);
+                self.report_error(err);
                 self.synchronize_stmt();
                 Ok(self
                     .pool
@@ -54,7 +54,7 @@ impl<'a> Parser<'a> {
         }
         if self.at_kind_name("KW_BREAK") {
             let start = self.mark();
-            self.consume();
+            self.advance();
             self.expect_semicolon()?;
             return Ok(self.pool.alloc_stmt(Stmt::Break {
                 span: self.span_from_mark(start),
@@ -62,14 +62,11 @@ impl<'a> Parser<'a> {
         }
         if self.at_kind_name("KW_CONTINUE") {
             let start = self.mark();
-            self.consume();
+            self.advance();
             self.expect_semicolon()?;
             return Ok(self.pool.alloc_stmt(Stmt::Continue {
                 span: self.span_from_mark(start),
             }));
-        }
-        if self.at_kind_name("KW_FREE") {
-            return self.parse_free();
         }
         if self.at_kind_name("KW_IF") {
             return self.parse_if();
@@ -88,7 +85,7 @@ impl<'a> Parser<'a> {
         }
         if self.at_kind_name("KW_UNSAFE") {
             let start = self.mark();
-            self.consume();
+            self.advance();
             let block = self.parse_block()?;
             return Ok(self.pool.alloc_stmt(Stmt::Unsafe {
                 span: self.span_from_mark(start),
@@ -207,12 +204,12 @@ impl<'a> Parser<'a> {
         let start = self.mark();
         let root = match &self.current().kind {
             TokenKind::KwSelf => {
-                self.consume();
+                self.advance();
                 "self".to_string()
             }
             TokenKind::IdentValue => {
                 let name = self.current_text().to_string();
-                self.consume();
+                self.advance();
                 name
             }
             _ => {
@@ -316,17 +313,6 @@ impl<'a> Parser<'a> {
                 expr,
             })
         }
-    }
-
-    pub(super) fn parse_free(&mut self) -> Result<crate::ast_pool::StmtId, ParseError> {
-        let start = self.mark();
-        self.expect_name("KW_FREE")?;
-        let value = self.parse_expr(0)?;
-        self.expect_semicolon()?;
-        Ok(self.pool.alloc_stmt(Stmt::Free {
-            span: self.span_from_mark(start),
-            expr: value,
-        }))
     }
 
     pub(super) fn parse_while(&mut self) -> Result<crate::ast_pool::StmtId, ParseError> {
@@ -446,7 +432,7 @@ impl<'a> Parser<'a> {
     pub(super) fn parse_simple_stmt(&mut self) -> Result<SimpleStmt, ParseError> {
         let start = self.mark();
         if self.at_kind_name("KW_LET") {
-            self.consume();
+            self.advance();
             let (bindings, value) = self.parse_var_decl_parts()?;
             return Ok(SimpleStmt::VarDecl {
                 span: self.span_from_mark(start),
@@ -538,7 +524,7 @@ impl<'a> Parser<'a> {
                 ));
             }
         };
-        self.consume();
+        self.advance();
         Ok(op)
     }
 

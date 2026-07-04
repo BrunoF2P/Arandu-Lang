@@ -1,9 +1,9 @@
 module examples.invalid.semantics.doubleFree
 
 func main() {
-    let buffer = alloc 64
-    free buffer
+    let buffer = alloc(64)
+    free(buffer)
 
     // expected: memory error; `buffer` was already freed.
-    free buffer
+    free(buffer)
 }

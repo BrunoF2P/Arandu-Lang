@@ -1,21 +1,81 @@
 module std.alloc.allocator_api
 
+import "std.core.mem" as mem
+
 extern "C" {
     func malloc(size: u64) : ptr[u8];
     func free(p: ptr[u8]) : void;
+    func realloc(p: ptr[u8], size: u64) : ptr[u8];
+    func abort() : void;
 }
 
-interface Allocator {
-    func alloc(size: u64, align: u64) : ptr[u8];
-    func free(p: ptr[u8], size: u64, align: u64) : void;
+public enum AllocError {
+    OutOfMemory,
+    InvalidLayout,
 }
 
-struct SystemAllocator {}
-
-func SystemAllocator.alloc(shared self, size: u64, align: u64) : ptr[u8] {
-    return malloc(size)
+public interface Allocator {
+    func alloc(size: u64, align: u64) : Result<ptr[u8], AllocError>;
+    func dealloc(p: ptr[u8], size: u64, align: u64) : void;
+    func realloc(p: ptr[u8], old_size: u64, new_size: u64, align: u64) : Result<ptr[u8], AllocError>;
 }
 
-func SystemAllocator.free(shared self, p: ptr[u8], size: u64, align: u64) : void {
+public struct GlobalAllocator {}
+
+func GlobalAllocator.alloc(shared self, size: u64, align: u64) : Result<ptr[u8], AllocError> {
+    let p = malloc(size)
+    if p == nil {
+        return Result.Err(AllocError.OutOfMemory)
+    }
+    return Result.Ok(p)
+}
+
+func GlobalAllocator.dealloc(shared self, p: ptr[u8], size: u64, align: u64) : void {
     free(p)
+}
+
+func GlobalAllocator.realloc(shared self, p: ptr[u8], old_size: u64, new_size: u64, align: u64) : Result<ptr[u8], AllocError> {
+    let new_ptr = realloc(p, new_size)
+    if new_ptr == nil {
+        return Result.Err(AllocError.OutOfMemory)
+    }
+    return Result.Ok(new_ptr)
+}
+
+// Simple BumpArena for tests
+public struct BumpArena {
+    buffer: ptr[u8]
+    capacity: u64
+    offset: u64
+}
+
+public func new_bump_arena(capacity: u64) : BumpArena {
+    let p = malloc(capacity)
+    return BumpArena {
+        buffer: p,
+        capacity: capacity,
+        offset: 0,
+    }
+}
+
+func BumpArena.alloc(mut self, size: u64, align: u64) : Result<ptr[u8], AllocError> {
+    // Simple align
+    let current = self.offset
+    let aligned = (current + align - 1) & ~(align - 1)
+    if aligned + size > self.capacity {
+        return Result.Err(AllocError.OutOfMemory)
+    }
+    self.offset = aligned + size
+    let p = mem.ptr_offset<u8>(self.buffer, aligned as i32)
+    return Result.Ok(p)
+}
+
+func BumpArena.dealloc(mut self, p: ptr[u8], size: u64, align: u64) : void {
+    // Bump arena does not free individual items
+}
+
+func BumpArena.realloc(mut self, p: ptr[u8], old_size: u64, new_size: u64, align: u64) : Result<ptr[u8], AllocError> {
+    let new_ptr = self.alloc(new_size, align)?
+    mem.copy(new_ptr, p, old_size)
+    return Result.Ok(new_ptr)
 }

@@ -1,3 +1,8 @@
+//! HIR lowering pass.
+//!
+//! Transforms a type-checked [`Program`] AST into a [`HirProgram`] (High-level IR).
+//! Must run after type-checking; aborts early if any errors are already present.
+
 use crate::TypeCheckResult;
 use crate::diagnostics::{Diagnostic, Severity};
 use crate::hir::HirProgram;
@@ -9,6 +14,10 @@ mod pattern;
 mod place;
 mod stmt;
 
+/// Lowers a type-checked AST into a [`HirProgram`].
+///
+/// Returns `Err` immediately if `type_check` already contains any
+/// [`Severity::Error`] diagnostics, avoiding work on a broken program.
 #[tracing::instrument(
     level = "trace",
     target = "arandu_semantics",

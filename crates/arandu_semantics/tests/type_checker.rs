@@ -776,7 +776,7 @@ fn test_free_requires_ptr() {
         "
         func main() {
             let x: int = 10
-            free x
+            free(x)
         }
         ",
         [O011FreeRequiresPtr]
@@ -1009,7 +1009,7 @@ fn test_type_checker_smart_suggestions() {
             // Method suggestion
             let b: int = p.get_
             // Pointer to struct suggestion
-            let ptr_p: ptr[Point] = alloc Point { myfield: 1, y: 2 }
+            let ptr_p: ptr[Point] = alloc(Point { myfield: 1, y: 2 })
             let c: int = ptr_p.y_
         }
     ";

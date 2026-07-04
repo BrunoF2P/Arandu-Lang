@@ -178,6 +178,49 @@ pub(super) fn synth_call_expr(
         } => {
             let callee_id = *callee;
             let args_range = *args;
+            if let Some(callee_sym) = checker.resolved.expr_symbol(callee_id) {
+                if Some(callee_sym) == checker.symbols.builtin_alloc {
+                    let arg_ids = checker.pool.expr_list(args_range).to_vec();
+                    let arg_ty = if let Some(first) = arg_ids.first() {
+                        super::synth_expr(checker, *first)
+                    } else {
+                        checker.intern(ArType::Error)
+                    };
+                    let ptr_ty = checker.intern(ArType::Ptr(arg_ty));
+                    checker.record_expr_type(expr, ptr_ty);
+                    return Some(ptr_ty);
+                }
+                if Some(callee_sym) == checker.symbols.builtin_free {
+                    let arg_ids = checker.pool.expr_list(args_range).to_vec();
+                    if let Some(first) = arg_ids.first() {
+                        let arg_ty_id = super::synth_expr(checker, *first);
+                        let arg_ty = checker.resolve(arg_ty_id).clone();
+                        if !arg_ty.is_error() && !matches!(arg_ty, ArType::Ptr(_)) {
+                            let interner = &checker.type_info.type_interner;
+                            checker.diagnostics.push(
+                                crate::Diagnostic::error(
+                                    crate::DiagCode::O011FreeRequiresPtr,
+                                    format!(
+                                        "`free` requires a pointer type (`ptr[T]`), found '{}'",
+                                        arg_ty.display(&checker.symbols, interner)
+                                    ),
+                                    span,
+                                )
+                                .with_label(
+                                    checker.pool.expr_span(*first),
+                                    format!(
+                                        "expression has type '{}'",
+                                        arg_ty.display(&checker.symbols, interner)
+                                    ),
+                                ),
+                            );
+                        }
+                    }
+                    let void_ty = checker.intern(ArType::Void);
+                    checker.record_expr_type(expr, void_ty);
+                    return Some(void_ty);
+                }
+            }
             if let Some(result_ty) = synth_result_ctor(checker, callee_id, args_range, span) {
                 return Some(checker.intern(result_ty));
             }
