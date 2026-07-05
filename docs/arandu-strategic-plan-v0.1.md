@@ -185,6 +185,23 @@ Invariantes obrigatórios: ver [arandu-amir-v0.1.md § Invariantes](./arandu-ami
 
 Integração da análise de código + sessão de correção AMIR/namespace.
 
+### 7.0 Crítico — Fase 2 (correções de causa raiz, 2026-06)
+
+| ID | Problema | Onde | Causa raiz | DiagCode/Nota |
+|----|----------|------|------------|---------------|
+| BUG-08 | Leitura de lixo em bind de pattern matching através de blocos | `lower_amir/ctx.rs` — `emit_store_place` | Não atualizava `write_variable`/`current_def` do tracker SSA quando a projeção era vazia (local puro); só variáveis com projeção de campo eram cobertas antes | Corrigido na função compartilhada; testes `parity_ssa_pattern_bind` e `parity_ssa_pattern_bind_multi_arms` |
+| BUG-09 | `type 'Result' is not declared` mascarando erro real de sintaxe na stdlib | `arandu_resolve::load_stdlib_transitively`, `arandu_typeck::load_stdlib_signatures` | Erros de parse/leitura de arquivo da stdlib eram engolidos silenciosamente (`if let Ok(...)`) | Propagados como `Diagnostic`; falha de prelude embutida vira ICE (`ICEN001`/`ICET001`), distinto de `M001UnresolvedImport` (erro do usuário) |
+| BUG-10 | `Ok`/`Err`/`Some`/`None`/`alloc`/`free` como keywords geravam patches acumulativos no parser | Lexer + `pattern.rs`/`expr.rs` | Palavras-chave reservadas para o que são, estruturalmente, construtores de valor ou funções builtin comuns | Removidas do lexer (BC.2.2); resolvidas via prelude + `#[builtin(alloc)]`/`#[builtin(free)]`; identidade protegida por `N003RedefinedName` |
+| BUG-11 | Colisão de `SymbolId` entre declaração e referência qualificada da mesma variante de enum (`Color.Red`) | `resolve/collect.rs` | `define_associated_member` gerava um segundo símbolo para a mesma variante; `enum_variant_tags` só registrava o primeiro | Registro do tag para ambos os símbolos em `collect_type_shapes`; fallback textual por sufixo removido; teste `jit_enum_cross_variant_name_no_collision` |
+| BUG-12 | `Option.None`/enum sem payload caía em `unimplemented!()` no backend | `translator/expr.rs` (Cranelift) | `AmirOperand::GlobalRef` nunca teve tradução; construção de variante sem payload não existia como caminho próprio no AMIR | Emitido como `Tuple{tag, Undef}`; teste `jit_none_payload_never_read` (20 iterações, detecta leitura indevida de payload) |
+| BUG-13 | `Primitive::Int`/`Uint` sempre calculados como 8 bytes, mascarado por desenvolvimento em 64-bit | `arandu_middle/layout/mod.rs` | Agrupados incorretamente com `I64`/`U64`/`F64` (largura fixa), ignorando `pointer_width` | Separados e calculados dinamicamente; suíte de layout passou a testar `pointer_width` 4 e 8 |
+| BUG-14 | Lixo em bits altos de registrador ao chamar função JIT com assinatura de teste incompatível | `jit_tests.rs` | `int`/`uint` agora dependem de plataforma; chamadas de teste com `unsafe fn(i32,...)` não estendiam sinal corretamente pra `i64` real esperado pela função JIT | Assinaturas de teste corrigidas para `i64`; nota de ABI: `int`/`uint` do Arandu equivalem a `intptr_t`/`uintptr_t` em C |
+| BUG-15 | Análises de dataflow (move checker, definite init) paravam silenciosamente antes do fixpoint | `move_checker.rs`, `definite_init.rs` | Teto de iteração fixo; estouro cortava a análise sem diagnóstico (`debug_assert!` em debug, nada em release) | Corrigido para ICE explícito ao estourar teto generoso, em vez de corte silencioso |
+| BUG-16 | `alloc`/`free`/chamada extern sem exigir bloco unsafe | `type_checker` | Nenhuma validação de contexto para operações de memória crua/FFI | `O012`/`O013`/`O014` (`AllocRequiresUnsafe`/`ExternRequiresUnsafe`/`FreeRequiresUnsafe`); rastreamento via `unsafe_depth` em `TyCtx` |
+
+### 7.5 Nota de padrão observado
+Os itens acima compartilham uma característica: o sintoma reportado inicialmente nunca era a causa raiz real, e a correção só se sustentou quando aplicada na camada de origem (SSA, resolução de identidade de símbolo, layout dependente de plataforma) em vez de no ponto onde o sintoma apareceu. Nenhum foi resolvido com `if` especial local sem generalização — ver `docs/ossa-virtual-anchoring.md` para a técnica que motivou esse padrão de investigação.
+
 ### 7.1 Crítico — antes de fechar v0.1 ✅ (2026-05)
 
 | ID | Problema | Onde | DiagCode |
