@@ -45,6 +45,16 @@ pub(super) fn synth_control_flow_expr(
             Some(checker.intern(ArType::Error))
         }
         ExprKind::Alloc { expr: inner_expr } => {
+            if !checker.ctx.is_in_unsafe() {
+                checker.diagnostics.push(
+                    crate::Diagnostic::error(
+                        crate::DiagCode::O012AllocRequiresUnsafe,
+                        "`alloc` requires an `unsafe` block",
+                        span,
+                    )
+                    .with_label(span, "`alloc` is unsafe and must be inside an `unsafe` block"),
+                );
+            }
             let inner_id = *inner_expr;
             let inner_ty_id = synth_expr(checker, inner_id);
             Some(checker.intern(ArType::Ptr(inner_ty_id)))
@@ -60,12 +70,14 @@ pub(super) fn synth_control_flow_expr(
             Some(checker.intern(ArType::Coroutine(inner_id)))
         }
         ExprKind::UnsafeBlock { block } => {
+            checker.ctx.enter_unsafe();
             let block_id = *block;
             let block_ty = crate::type_checker::check::check_block(
                 checker,
                 checker.pool,
                 checker.pool.block(block_id),
             );
+            checker.ctx.exit_unsafe();
             Some(checker.intern(block_ty))
         }
         ExprKind::If {

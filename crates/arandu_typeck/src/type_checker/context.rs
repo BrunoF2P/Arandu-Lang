@@ -24,6 +24,9 @@ pub struct TyCtx {
 
     /// Depth of loop nesting (for validating break/continue).
     loop_depth: u32,
+
+    /// Depth of unsafe block nesting.
+    unsafe_depth: u32,
 }
 
 impl Default for TyCtx {
@@ -40,6 +43,7 @@ impl TyCtx {
             return_stack: Vec::new(),
             return_decl_span_stack: Vec::new(),
             loop_depth: 0,
+            unsafe_depth: 0,
         }
     }
 
@@ -111,4 +115,23 @@ impl TyCtx {
     pub fn is_in_loop(&self) -> bool {
         self.loop_depth > 0
     }
+
+    // ── Unsafe tracking ─────────────────────────────────────────────
+
+    /// Enter an unsafe scope.
+    pub fn enter_unsafe(&mut self) {
+        self.unsafe_depth += 1;
+    }
+
+    /// Leave an unsafe scope.
+    pub fn exit_unsafe(&mut self) {
+        self.unsafe_depth = self.unsafe_depth.saturating_sub(1);
+    }
+
+    /// Returns true if we're inside an unsafe block.
+    #[must_use]
+    pub fn is_in_unsafe(&self) -> bool {
+        self.unsafe_depth > 0
+    }
 }
+

@@ -105,13 +105,18 @@ pub fn check_moves(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagnostic> {
     }
 
     let mut iterations = 0;
-    let max_iterations = num_blocks * 32 + 100;
+    let sanity_limit = num_blocks * num_blocks + 1000;
 
     while let Some(bid) = worklist.pop_front() {
         iterations += 1;
-        if iterations > max_iterations {
-            debug_assert!(false, "move checker failed to converge");
-            break;
+        if iterations > sanity_limit {
+            return vec![Diagnostic::ice(
+                DiagCode::ICEO001,
+                format!(
+                    "move checker failed to converge after {iterations} iterations ({num_blocks} blocks) — possível bug de monotonicidade no dataflow"
+                ),
+                arandu_lexer::Span::new(0, 0, 0),
+            )];
         }
 
         let bi = bid.as_usize();

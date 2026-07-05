@@ -179,6 +179,17 @@ pub(super) fn synth_call_expr(
             let callee_id = *callee;
             let args_range = *args;
             if let Some(callee_sym) = checker.resolved.expr_symbol(callee_id) {
+                let sym = checker.symbols.get(callee_sym);
+                if sym.kind == arandu_middle::SymbolKind::ExternFunc && !checker.ctx.is_in_unsafe() {
+                    checker.diagnostics.push(
+                        crate::Diagnostic::error(
+                            crate::DiagCode::O013ExternRequiresUnsafe,
+                            "call to extern function requires an `unsafe` block",
+                            span,
+                        )
+                        .with_label(span, "`extern` functions are unsafe and must be called inside an `unsafe` block"),
+                    );
+                }
                 if Some(callee_sym) == checker.symbols.builtin_alloc {
                     let arg_ids = checker.pool.expr_list(args_range).to_vec();
                     let arg_ty = if let Some(first) = arg_ids.first() {

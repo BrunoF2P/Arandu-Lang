@@ -458,6 +458,16 @@ fn check_free_stmt(
     span: arandu_base::Span,
     expr: arandu_parser::ast_pool::ExprId,
 ) {
+    if !checker.ctx.is_in_unsafe() {
+        checker.diagnostics.push(
+            crate::Diagnostic::error(
+                crate::DiagCode::O014FreeRequiresUnsafe,
+                "`free` requires an `unsafe` block",
+                span,
+            )
+            .with_label(span, "`free` is unsafe and must be inside an `unsafe` block"),
+        );
+    }
     let ty_id = super::super::synth::synth_expr(checker, expr);
     let ty = checker.resolve(ty_id).clone();
     if !ty.is_error() && !matches!(ty, ArType::Ptr(_)) {
