@@ -180,9 +180,40 @@ impl<'a> CEmitter<'a> {
         writeln!(&mut self.output, ") {{").unwrap();
 
         // Declare locals and temps strictly at the top
+        let mut used_locals = rustc_hash::FxHashSet::default();
+        for stmt in func.stmts.payloads.iter() {
+            match stmt {
+                AmirStmt::Store { lhs, .. } => {
+                    used_locals.insert(lhs.local.as_usize());
+                }
+                AmirStmt::Destroy(place) => {
+                    used_locals.insert(place.local.as_usize());
+                }
+                AmirStmt::StorageLive(local) | AmirStmt::StorageDead(local) => {
+                    used_locals.insert(local.as_usize());
+                }
+                AmirStmt::Assign { rhs, .. } => match rhs {
+                    AmirRvalue::Load(place)
+                    | AmirRvalue::Borrow(place)
+                    | AmirRvalue::BorrowMut(place) => {
+                        used_locals.insert(place.local.as_usize());
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
+        for block in &func.blocks {
+            for param in &block.params {
+                used_locals.insert(param.local.as_usize());
+            }
+        }
+
         for (i, local) in func.locals.iter().enumerate() {
-            let ty_str = self.format_type(&local.ty);
-            writeln!(&mut self.output, "    {} l{};", ty_str, i).unwrap();
+            if used_locals.contains(&i) {
+                let ty_str = self.format_type(&local.ty);
+                writeln!(&mut self.output, "    {} l{};", ty_str, i).unwrap();
+            }
         }
         for (i, temp) in func.temps.iter().enumerate() {
             let ty_str = self.format_type(&temp.ty);
