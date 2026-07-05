@@ -43,6 +43,13 @@ The size and alignment of primitive types are defined below (under a target poin
 | `any` | $W$ | $W$ | Boxed dynamic pointer |
 | `void`, `error` | 0 | 1 | ZSTs (Zero Sized Types) |
 
+### Platform-Dependent Primitive Mappings
+
+For compilation backends (such as the C backend and Cranelift JIT), platform-dependent types map to the corresponding native sized types:
+- **`int` / `IntLiteral`**: Represented as a signed integer of width $W$ bytes (`int64_t` / `int32_t` in C; target `ptr_type` `I64` / `I32` in Cranelift).
+- **`uint`**: Represented as an unsigned integer of width $W$ bytes (`uint64_t` / `uint32_t` in C; target `ptr_type` `I64` / `I32` in Cranelift).
+- **`float` / `FloatLiteral`**: Represented as a double-precision floating-point number (`double` in C; `F64` in Cranelift) across all target architectures.
+
 ---
 
 ## 3. Canonical Fat Pointer Layouts (`str` and `[]T`)
