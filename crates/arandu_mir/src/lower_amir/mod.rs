@@ -20,7 +20,9 @@ mod ctx;
 mod expr;
 mod func;
 mod match_lower;
+mod ops;
 mod pattern;
+mod place;
 mod stmt;
 
 pub(crate) use func::lower_func;

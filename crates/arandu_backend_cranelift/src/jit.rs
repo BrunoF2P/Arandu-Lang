@@ -252,28 +252,28 @@ impl CompiledModule {
             std::mem::size_of::<*const u8>(),
             "Type F must be the size of a function pointer"
         );
-        Some(unsafe { std::ptr::read(&ptr as *const _ as *const F) })
+        Some(unsafe { std::mem::transmute_copy(&ptr) })
     }
 
     /// Returns a callable function pointer for the named function, but first checks
-    /// that the arity (number of parameters) matches the expected arity in the compiled module.
+    /// that the full signature (types and arity) matches the expected signature.
     ///
     /// # Safety
     /// The caller must still guarantee that the type `F` matches the signature's types.
     pub unsafe fn get_fn_checked<F>(
         &self,
         name: &str,
-        expected_arity: usize,
+        expected_sig: &cranelift_codegen::ir::Signature,
     ) -> Result<F, arandu_semantics::JitError> {
         let id = self
             .func_ids
             .get(name)
             .ok_or(arandu_semantics::JitError::NotFound)?;
         let decl = self.module.declarations().get_function_decl(*id);
-        if decl.signature.params.len() != expected_arity {
+        if decl.signature != *expected_sig {
             return Err(arandu_semantics::JitError::SignatureMismatch {
-                expected: expected_arity,
-                actual: decl.signature.params.len(),
+                expected: format!("{:?}", expected_sig),
+                actual: format!("{:?}", decl.signature),
             });
         }
 

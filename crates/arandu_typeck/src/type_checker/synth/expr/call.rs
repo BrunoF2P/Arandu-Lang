@@ -367,25 +367,10 @@ pub(super) fn synth_call_expr(
                             }
                         }
                     }
-                    ExprKind::TypePath { type_name, member } => {
-                        let base = types::type_name_base(type_name);
-                        if matches!(
-                            (base, member.as_str()),
-                            ("Result", "Ok" | "Err") | ("Option", "Some")
-                        ) {
-                            is_direct = true;
-                        } else if let Some(sym_id) = checker.resolved.expr_symbol(current_callee) {
-                            let sym = checker.symbols.get(sym_id);
-                            if matches!(
-                                sym.kind,
-                                arandu_middle::SymbolKind::Func
-                                    | arandu_middle::SymbolKind::ExternFunc
-                                    | arandu_middle::SymbolKind::EnumVariant
-                                    | arandu_middle::SymbolKind::AssociatedFunc
-                            ) {
-                                is_direct = true;
-                            }
-                        }
+                    ExprKind::TypePath { .. } => {
+                        // Any TypePath that resolves to a Func type is a static constructor or associated function.
+                        // It cannot be a local variable or field. Thus, if it's callable, it's a direct call.
+                        is_direct = true;
                     }
                     _ => {}
                 }

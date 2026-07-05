@@ -64,12 +64,4 @@ impl CompiledCode for CompiledModule {
     unsafe fn get_fn<F>(&self, name: &str) -> Option<F> {
         unsafe { self.get_fn(name) }
     }
-
-    unsafe fn get_fn_checked<F>(
-        &self,
-        name: &str,
-        expected_arity: usize,
-    ) -> Result<F, arandu_semantics::JitError> {
-        unsafe { self.get_fn_checked(name, expected_arity) }
-    }
 }

@@ -54,47 +54,6 @@ fn resolve_method_target(
 }
 
 impl LowerCtx<'_> {
-    fn resolve_field_index(&self, base_ty: &ArType, field: &str) -> usize {
-        if let Ok(idx) = field.parse::<usize>() {
-            return idx;
-        }
-        if field.starts_with('_')
-            && let Ok(idx) = field[1..].parse::<usize>()
-        {
-            return idx;
-        }
-        let interner = &self.tc.type_info.type_interner;
-        let struct_id = match base_ty {
-            ArType::Nullable(inner) => {
-                let inner_ty = interner.resolve(*inner);
-                match inner_ty {
-                    ArType::Named(id, _) => Some(*id),
-                    ArType::Ptr(ptr_inner) => {
-                        let ptr_inner_ty = interner.resolve(*ptr_inner);
-                        match ptr_inner_ty {
-                            ArType::Named(id, _) => Some(*id),
-                            _ => None,
-                        }
-                    }
-                    _ => None,
-                }
-            }
-            ArType::Named(id, _) => Some(*id),
-            ArType::Ptr(inner) => {
-                let inner_ty = interner.resolve(*inner);
-                match inner_ty {
-                    ArType::Named(id, _) => Some(*id),
-                    _ => None,
-                }
-            }
-            _ => None,
-        };
-        struct_id
-            .and_then(|sid| self.tc.type_info.struct_field_indices.get(&sid))
-            .and_then(|m| m.get(field).copied())
-            .unwrap_or(0)
-    }
-
     pub(crate) fn expr_is_nil(expr: &HirExpr) -> bool {
         matches!(expr.kind, HirExprKind::Nil)
     }
@@ -501,57 +460,16 @@ impl LowerCtx<'_> {
                 Ok(AmirOperand::Copy(dest))
             }
             HirExprKind::Binary { op, left, right } => {
-                let l_op = self.lower_expr(*left, None, symbols)?;
-                let r_op = self.lower_expr(*right, None, symbols)?;
-                let dest = target.unwrap_or_else(|| self.new_temp(expr.ty.clone()));
-                self.emit_assign_temp(
-                    dest,
-                    AmirRvalue::Binary {
-                        op: *op,
-                        left: l_op,
-                        right: r_op,
-                    },
-                );
-                Ok(AmirOperand::Copy(dest))
+                self.lower_binary(*op, *left, *right, expr.ty.clone(), target, symbols)
             }
             HirExprKind::Unary { op, expr: sub_expr } => {
-                let sub_op = self.lower_expr(*sub_expr, None, symbols)?;
-                let dest = target.unwrap_or_else(|| self.new_temp(expr.ty.clone()));
-                self.emit_assign_temp(
-                    dest,
-                    AmirRvalue::Unary {
-                        op: *op,
-                        operand: sub_op,
-                    },
-                );
-                Ok(AmirOperand::Copy(dest))
+                self.lower_unary(*op, *sub_expr, expr.ty.clone(), target, symbols)
             }
             HirExprKind::Field { base, field } => {
-                let base_op = self.lower_expr(*base, None, symbols)?;
-                let dest = target.unwrap_or_else(|| self.new_temp(expr.ty.clone()));
-                let base_expr = self.hir.pool.expr(*base);
-                let field_idx = self.resolve_field_index(&base_expr.ty, field);
-                self.emit_assign_temp(
-                    dest,
-                    AmirRvalue::FieldAccess {
-                        base: base_op,
-                        field: field_idx,
-                    },
-                );
-                Ok(AmirOperand::Copy(dest))
+                self.lower_field(*base, field, expr.ty.clone(), target, symbols)
             }
             HirExprKind::Index { base, index } => {
-                let base_op = self.lower_expr(*base, None, symbols)?;
-                let idx_op = self.lower_expr(*index, None, symbols)?;
-                let dest = target.unwrap_or_else(|| self.new_temp(expr.ty.clone()));
-                self.emit_assign_temp(
-                    dest,
-                    AmirRvalue::IndexAccess {
-                        base: base_op,
-                        index: idx_op,
-                    },
-                );
-                Ok(AmirOperand::Copy(dest))
+                self.lower_index(*base, *index, expr.ty.clone(), target, symbols)
             }
             HirExprKind::Array { items } => {
                 let items_slice = self.hir.pool.expr_list(*items);

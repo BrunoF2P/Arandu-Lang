@@ -239,7 +239,8 @@ impl FunctionTranslator<'_, '_> {
                 let local_ref = self
                     .module
                     .declare_func_in_func(malloc_func_id, self.builder.func);
-                let size_val = self.builder.ins().iconst(self.ptr_type, 16);
+                let pointer_width = self.ptr_type.bytes() as i64;
+                let size_val = self.builder.ins().iconst(self.ptr_type, pointer_width * 2);
                 let call_inst = self.builder.ins().call(local_ref, &[size_val]);
                 let ptr_val = self.builder.inst_results(call_inst)[0];
 
@@ -253,7 +254,7 @@ impl FunctionTranslator<'_, '_> {
                     cranelift_codegen::ir::MemFlagsData::new(),
                     rhs,
                     ptr_val,
-                    8,
+                    pointer_width as i32,
                 );
                 ptr_val
             }

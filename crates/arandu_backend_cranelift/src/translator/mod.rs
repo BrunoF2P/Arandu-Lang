@@ -4,9 +4,14 @@
 //! emitting Cranelift IR instructions via a [`FunctionBuilder`]. The
 //! [`AmirVisitor`] trait defines the visit callbacks used during traversal.
 
+mod call;
 mod compare;
 mod expr;
+mod memory;
+mod operand;
+mod place;
 mod stmt;
+mod terminator;
 
 use arandu_base::span::Span;
 use arandu_semantics::amir::{
@@ -103,6 +108,12 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
     pub(crate) fn record_ice(&mut self, message: impl Into<String>, span: Span) {
         if self.error.is_none() {
             self.error = Some(Diagnostic::ice(DiagCode::ICEGEN001, message, span));
+        }
+    }
+
+    pub(crate) fn record_error(&mut self, code: DiagCode, message: impl Into<String>, span: Span) {
+        if self.error.is_none() {
+            self.error = Some(Diagnostic::error(code, message, span));
         }
     }
 
