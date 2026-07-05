@@ -170,6 +170,7 @@ pub enum DiagCode {
     T030DuplicateFieldDecl,
     T031Reserved,
     T032AwaitInvalid,
+    T033IndirectCallNotSupported,
 
     // ── Lowering (L) ──
     L001LoweringUnresolvedSymbol,
@@ -269,6 +270,7 @@ impl DiagCode {
             DiagCode::T030DuplicateFieldDecl => "T030",
             DiagCode::T031Reserved => "T031",
             DiagCode::T032AwaitInvalid => "T032",
+            DiagCode::T033IndirectCallNotSupported => "T033",
             DiagCode::L001LoweringUnresolvedSymbol => "L001",
             DiagCode::G001GenericInstantiationCycle => "G001",
             DiagCode::G002GenericInstantiationLimit => "G002",
