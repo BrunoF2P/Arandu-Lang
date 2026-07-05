@@ -611,6 +611,9 @@ impl LowerCtx<'_> {
         });
         let blk = self.hir.pool.block(block);
         for &stmt_id in self.hir.pool.stmt_list(blk.statements) {
+            if self.current_block.is_none() {
+                break;
+            }
             let stmt = self.hir.pool.stmt(stmt_id);
             self.lower_stmt(stmt, symbols)?;
         }
@@ -647,6 +650,9 @@ impl LowerCtx<'_> {
         }
         let last_idx = statements_slice.len() - 1;
         for (i, &stmt_id) in statements_slice.iter().enumerate() {
+            if self.current_block.is_none() {
+                break;
+            }
             let stmt = self.hir.pool.stmt(stmt_id);
             if i == last_idx {
                 if let HirStmtKind::Expr(expr) = stmt.kind {

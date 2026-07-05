@@ -465,7 +465,10 @@ fn check_free_stmt(
                 "`free` requires an `unsafe` block",
                 span,
             )
-            .with_label(span, "`free` is unsafe and must be inside an `unsafe` block"),
+            .with_label(
+                span,
+                "`free` is unsafe and must be inside an `unsafe` block",
+            ),
         );
     }
     let ty_id = super::super::synth::synth_expr(checker, expr);

@@ -1,6 +1,6 @@
 use super::{LowerCtx, amir_unsupported};
 use crate::amir::{AmirConstant, AmirOperand, AmirRvalue, AmirStmt, AmirTerminator, TempId};
-use crate::diagnostics::Diagnostic;
+use crate::diagnostics::{DiagCode, Diagnostic};
 use crate::literal_pool::AmirLiteralEntry;
 use crate::ops::BinaryOp;
 use crate::passes::type_checker::types::{ArType, Primitive, is_option_type, result_ok_err};
@@ -147,8 +147,24 @@ impl LowerCtx<'_> {
         symbols: &SymbolTable,
     ) -> Result<AmirOperand, Diagnostic> {
         let inner = self.hir.pool.expr(inner_id);
-        let (_, err_ty) = result_ok_err(&inner.ty, &self.tc.type_info.type_interner)
-            .expect("try_result on non-result");
+        let ok_err = result_ok_err(&inner.ty, &self.tc.type_info.type_interner);
+        let (_, err_ty) = match ok_err {
+            Some(tup) => tup,
+            None => {
+                if matches!(inner.ty, ArType::Error) {
+                    // Tipo Error = diagnóstico já emitido antes (type checker já rejeitou).
+                    // NÃO é bug interno — bail silenciosamente com um valor poison,
+                    // sem duplicar erro nem gerar ICE.
+                    let dest = target.unwrap_or_else(|| self.new_temp(ArType::Error));
+                    return Ok(AmirOperand::Copy(dest));
+                }
+                return Err(Diagnostic::ice(
+                    DiagCode::ICEGEN001,
+                    "try_result: tipo não-Error mas result_ok_err falhou",
+                    inner.span,
+                ));
+            }
+        };
         let base = self.lower_expr(inner_id, None, symbols)?;
         if self.current_block.is_none() {
             let dest = target.unwrap_or_else(|| self.new_temp(expr_ty));

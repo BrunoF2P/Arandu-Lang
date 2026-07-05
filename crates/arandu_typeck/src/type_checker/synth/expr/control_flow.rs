@@ -52,7 +52,10 @@ pub(super) fn synth_control_flow_expr(
                         "`alloc` requires an `unsafe` block",
                         span,
                     )
-                    .with_label(span, "`alloc` is unsafe and must be inside an `unsafe` block"),
+                    .with_label(
+                        span,
+                        "`alloc` is unsafe and must be inside an `unsafe` block",
+                    ),
                 );
             }
             let inner_id = *inner_expr;

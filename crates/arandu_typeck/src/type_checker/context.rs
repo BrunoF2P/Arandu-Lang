@@ -134,4 +134,3 @@ impl TyCtx {
         self.unsafe_depth > 0
     }
 }
-
