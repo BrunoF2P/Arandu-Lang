@@ -181,32 +181,162 @@ impl<'a> CEmitter<'a> {
 
         // Declare locals and temps strictly at the top
         let mut used_locals = rustc_hash::FxHashSet::default();
+        let mut used_temps = rustc_hash::FxHashSet::default();
         for stmt in func.stmts.payloads.iter() {
             match stmt {
-                AmirStmt::Store { lhs, .. } => {
-                    used_locals.insert(lhs.local.as_usize());
+                AmirStmt::Assign { lhs, rhs } => {
+                    used_temps.insert(lhs.as_usize());
+                    match rhs {
+                        AmirRvalue::Use(op)
+                        | AmirRvalue::Unary { operand: op, .. }
+                        | AmirRvalue::Discriminant { value: op }
+                        | AmirRvalue::EnumPayload { value: op, .. }
+                        | AmirRvalue::Len(op)
+                        | AmirRvalue::Alloc(op) => {
+                            if let AmirOperand::Copy(t) | AmirOperand::Move(t) = op {
+                                used_temps.insert(t.as_usize());
+                            }
+                        }
+                        AmirRvalue::Binary { left, right, .. } => {
+                            if let AmirOperand::Copy(t) | AmirOperand::Move(t) = left {
+                                used_temps.insert(t.as_usize());
+                            }
+                            if let AmirOperand::Copy(t) | AmirOperand::Move(t) = right {
+                                used_temps.insert(t.as_usize());
+                            }
+                        }
+                        AmirRvalue::FieldAccess { base, .. } => {
+                            if let AmirOperand::Copy(t) | AmirOperand::Move(t) = base {
+                                used_temps.insert(t.as_usize());
+                            }
+                        }
+                        AmirRvalue::StructLiteral { fields, .. } => {
+                            for (_, op) in fields {
+                                if let AmirOperand::Copy(t) | AmirOperand::Move(t) = op {
+                                    used_temps.insert(t.as_usize());
+                                }
+                            }
+                        }
+                        AmirRvalue::IndexAccess { base, index } => {
+                            if let AmirOperand::Copy(t) | AmirOperand::Move(t) = base {
+                                used_temps.insert(t.as_usize());
+                            }
+                            if let AmirOperand::Copy(t) | AmirOperand::Move(t) = index {
+                                used_temps.insert(t.as_usize());
+                            }
+                        }
+                        AmirRvalue::Array { items } | AmirRvalue::Tuple { items } => {
+                            for op in items {
+                                if let AmirOperand::Copy(t) | AmirOperand::Move(t) = op {
+                                    used_temps.insert(t.as_usize());
+                                }
+                            }
+                        }
+                        AmirRvalue::EnumConstruct { payload, .. } => {
+                            if let Some(AmirOperand::Copy(t) | AmirOperand::Move(t)) = payload {
+                                used_temps.insert(t.as_usize());
+                            }
+                        }
+                        AmirRvalue::Load(place)
+                        | AmirRvalue::Borrow(place)
+                        | AmirRvalue::BorrowMut(place) => {
+                            used_locals.insert(place.local.as_usize());
+                        }
+                    }
                 }
-                AmirStmt::Destroy(place) => {
-                    used_locals.insert(place.local.as_usize());
+                AmirStmt::Store { lhs, rhs } => {
+                    used_locals.insert(lhs.local.as_usize());
+                    if let AmirOperand::Copy(t) | AmirOperand::Move(t) = rhs {
+                        used_temps.insert(t.as_usize());
+                    }
+                }
+                AmirStmt::Call { lhs, callee, args } => {
+                    if let Some(t) = lhs {
+                        used_temps.insert(t.as_usize());
+                    }
+                    if let AmirOperand::Copy(t) | AmirOperand::Move(t) = callee {
+                        used_temps.insert(t.as_usize());
+                    }
+                    for arg in args {
+                        if let AmirOperand::Copy(t) | AmirOperand::Move(t) = arg {
+                            used_temps.insert(t.as_usize());
+                        }
+                    }
+                }
+                AmirStmt::Free(op) => {
+                    if let AmirOperand::Copy(t) | AmirOperand::Move(t) = op {
+                        used_temps.insert(t.as_usize());
+                    }
                 }
                 AmirStmt::StorageLive(local) | AmirStmt::StorageDead(local) => {
                     used_locals.insert(local.as_usize());
                 }
-                AmirStmt::Assign { rhs, .. } => match rhs {
-                    AmirRvalue::Load(place)
-                    | AmirRvalue::Borrow(place)
-                    | AmirRvalue::BorrowMut(place) => {
-                        used_locals.insert(place.local.as_usize());
-                    }
-                    _ => {}
-                },
-                _ => {}
+                AmirStmt::Destroy(place) => {
+                    used_locals.insert(place.local.as_usize());
+                }
+                AmirStmt::Nop => {}
             }
         }
         for block in &func.blocks {
             for param in &block.params {
+                used_temps.insert(param.id.as_usize());
                 used_locals.insert(param.local.as_usize());
             }
+            match &block.terminator {
+                AmirTerminator::Goto { args, .. } => {
+                    for arg in args {
+                        if let AmirOperand::Copy(t) | AmirOperand::Move(t) = arg {
+                            used_temps.insert(t.as_usize());
+                        }
+                    }
+                }
+                AmirTerminator::Branch {
+                    condition,
+                    true_args,
+                    false_args,
+                    ..
+                } => {
+                    if let AmirOperand::Copy(t) | AmirOperand::Move(t) = condition {
+                        used_temps.insert(t.as_usize());
+                    }
+                    for arg in true_args {
+                        if let AmirOperand::Copy(t) | AmirOperand::Move(t) = arg {
+                            used_temps.insert(t.as_usize());
+                        }
+                    }
+                    for arg in false_args {
+                        if let AmirOperand::Copy(t) | AmirOperand::Move(t) = arg {
+                            used_temps.insert(t.as_usize());
+                        }
+                    }
+                }
+                AmirTerminator::SwitchInt {
+                    discriminant,
+                    targets,
+                    otherwise,
+                    ..
+                } => {
+                    if let AmirOperand::Copy(t) | AmirOperand::Move(t) = discriminant {
+                        used_temps.insert(t.as_usize());
+                    }
+                    for (_, _, args) in targets {
+                        for arg in args {
+                            if let AmirOperand::Copy(t) | AmirOperand::Move(t) = arg {
+                                used_temps.insert(t.as_usize());
+                            }
+                        }
+                    }
+                    for arg in &otherwise.1 {
+                        if let AmirOperand::Copy(t) | AmirOperand::Move(t) = arg {
+                            used_temps.insert(t.as_usize());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        for param in &func.params {
+            used_temps.insert(param.as_usize());
         }
 
         for (i, local) in func.locals.iter().enumerate() {
@@ -216,8 +346,10 @@ impl<'a> CEmitter<'a> {
             }
         }
         for (i, temp) in func.temps.iter().enumerate() {
-            let ty_str = self.format_type(&temp.ty);
-            writeln!(&mut self.output, "    {} t{};", ty_str, i).unwrap();
+            if used_temps.contains(&i) {
+                let ty_str = self.format_type(&temp.ty);
+                writeln!(&mut self.output, "    {} t{};", ty_str, i).unwrap();
+            }
         }
 
         writeln!(&mut self.output).unwrap();
