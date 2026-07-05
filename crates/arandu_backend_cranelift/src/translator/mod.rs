@@ -108,9 +108,7 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
     }
 
     pub(crate) fn poison_i32(&mut self) -> Value {
-        self.builder
-            .ins()
-            .iconst(cranelift_codegen::ir::types::I32, 0)
+        self.builder.ins().iconst(self.ptr_type, 0)
     }
 
     pub(crate) fn temp_span(&self, temp_id: TempId) -> Span {
@@ -187,7 +185,6 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
         let entry_clif = self.block_map[&BlockId::from_usize(0)];
         self.builder
             .append_block_params_for_function_params(entry_clif);
-        self.builder.switch_to_block(entry_clif);
 
         for local in &self.current_func.locals {
             if matches!(local.ty, ArType::Primitive(Primitive::Str)) {
@@ -208,27 +205,6 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
             } else if let ClifType::Concrete(clif_ty) = clif_type(&temp.ty, self.ptr_type) {
                 let var = self.builder.declare_var(clif_ty);
                 self.temp_map.insert(temp.id, var);
-            }
-        }
-
-        let entry_params = self.builder.block_params(entry_clif).to_vec();
-        let mut clif_slot_idx = 0;
-        for &param_temp_id in &self.current_func.params {
-            let param_ty = &self.current_func.temps[param_temp_id.as_usize()].ty;
-            if matches!(param_ty, ArType::Primitive(Primitive::Str)) {
-                let ptr_val = entry_params[clif_slot_idx];
-                let len_val = entry_params[clif_slot_idx + 1];
-                clif_slot_idx += 2;
-                if let Some(&(var_ptr, var_len)) = self.str_temp_map.get(&param_temp_id) {
-                    self.builder.def_var(var_ptr, ptr_val);
-                    self.builder.def_var(var_len, len_val);
-                }
-            } else if let ClifType::Concrete(_) = clif_type(param_ty, self.ptr_type) {
-                let val = entry_params[clif_slot_idx];
-                clif_slot_idx += 1;
-                if let Some(&var) = self.temp_map.get(&param_temp_id) {
-                    self.builder.def_var(var, val);
-                }
             }
         }
 
@@ -255,7 +231,48 @@ impl<'a, 'b> AmirVisitor for FunctionTranslator<'a, 'b> {
         let clif_block = self.block_map[&block.id];
         self.builder.switch_to_block(clif_block);
 
-        if block.id.as_usize() > 0 {
+        if block.id.as_usize() == 0 {
+            for local in &self.current_func.locals {
+                if matches!(local.ty, ArType::Primitive(Primitive::Str)) {
+                    let &(var_ptr, var_len) = &self.str_local_map[&local.id];
+                    let zero_ptr = self.builder.ins().iconst(self.ptr_type, 0);
+                    let zero_len = self.builder.ins().iconst(I64, 0);
+                    self.builder.def_var(var_ptr, zero_ptr);
+                    self.builder.def_var(var_len, zero_len);
+                } else if let Some(&var) = self.local_map.get(&local.id) {
+                    let clif_ty = clif_type(&local.ty, self.ptr_type).concrete().unwrap();
+                    let zero = if clif_ty == cranelift_codegen::ir::types::F32 {
+                        self.builder.ins().f32const(0.0)
+                    } else if clif_ty == cranelift_codegen::ir::types::F64 {
+                        self.builder.ins().f64const(0.0)
+                    } else {
+                        self.builder.ins().iconst(clif_ty, 0)
+                    };
+                    self.builder.def_var(var, zero);
+                }
+            }
+
+            let clif_params = self.builder.block_params(clif_block).to_vec();
+            let mut clif_slot_idx = 0;
+            for &param_temp_id in &self.current_func.params {
+                let param_ty = &self.current_func.temps[param_temp_id.as_usize()].ty;
+                if matches!(param_ty, ArType::Primitive(Primitive::Str)) {
+                    let ptr_val = clif_params[clif_slot_idx];
+                    let len_val = clif_params[clif_slot_idx + 1];
+                    clif_slot_idx += 2;
+                    if let Some(&(var_ptr, var_len)) = self.str_temp_map.get(&param_temp_id) {
+                        self.builder.def_var(var_ptr, ptr_val);
+                        self.builder.def_var(var_len, len_val);
+                    }
+                } else if let ClifType::Concrete(_) = clif_type(param_ty, self.ptr_type) {
+                    let val = clif_params[clif_slot_idx];
+                    clif_slot_idx += 1;
+                    if let Some(&var) = self.temp_map.get(&param_temp_id) {
+                        self.builder.def_var(var, val);
+                    }
+                }
+            }
+        } else {
             let clif_params = self.builder.block_params(clif_block).to_vec();
             let mut clif_slot_idx = 0;
             for param in &block.params {

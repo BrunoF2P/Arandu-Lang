@@ -769,7 +769,7 @@ impl FunctionTranslator<'_, '_> {
             AmirRvalue::Discriminant { value } => {
                 let ptr_val = self.translate_operand(value, Some(self.ptr_type));
                 self.builder.ins().load(
-                    cranelift_codegen::ir::types::I32,
+                    self.ptr_type,
                     cranelift_codegen::ir::MemFlagsData::new(),
                     ptr_val,
                     0,
@@ -836,6 +836,42 @@ impl FunctionTranslator<'_, '_> {
                     cranelift_codegen::ir::MemFlagsData::new(),
                     ptr_val,
                     total_offset,
+                )
+            }
+            AmirRvalue::IndexAccess { base, index } => {
+                let ptr_val = self.translate_operand(base, Some(self.ptr_type));
+                let mut idx_val = self.translate_operand(index, None);
+                let idx_ty = self.builder.func.dfg.value_type(idx_val);
+                if idx_ty != self.ptr_type {
+                    idx_val = self.builder.ins().uextend(self.ptr_type, idx_val);
+                }
+
+                let base_ty = self.get_operand_ar_type(base);
+                let deref_ty = match &base_ty {
+                    ArType::Ptr(inner) => self.type_info.resolve_type_id(*inner),
+                    other => other,
+                };
+                let elem_ty = match deref_ty {
+                    ArType::Array(_, elem) => self.type_info.resolve_type_id(*elem),
+                    ArType::Slice(elem) => self.type_info.resolve_type_id(*elem),
+                    _ => &ArType::Error,
+                };
+
+                let pointer_width = self.ptr_type.bytes() as u64;
+                let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
+                let layout =
+                    engine.layout_of_type(elem_ty, &self.type_info.type_interner, self.type_info);
+
+                let elem_size = self.builder.ins().iconst(self.ptr_type, layout.size as i64);
+                let offset_val = self.builder.ins().imul(idx_val, elem_size);
+                let target_ptr = self.builder.ins().iadd(ptr_val, offset_val);
+
+                let clif_ty = expected_ty.unwrap_or(self.ptr_type);
+                self.builder.ins().load(
+                    clif_ty,
+                    cranelift_codegen::ir::MemFlagsData::new(),
+                    target_ptr,
+                    0,
                 )
             }
             AmirRvalue::Borrow(_) | AmirRvalue::BorrowMut(_) => {

@@ -59,7 +59,7 @@ pub fn ar_type_is_unsigned_integer(ty: &ArType) -> bool {
 pub fn clif_type(ty: &ArType, ptr_type: Type) -> ClifType {
     match ty {
         ArType::Primitive(p) => match p {
-            Primitive::Int | Primitive::Uint => ClifType::Concrete(I32),
+            Primitive::Int | Primitive::Uint => ClifType::Concrete(ptr_type),
             Primitive::Float => ClifType::Concrete(F64),
             Primitive::I8 | Primitive::U8 | Primitive::Byte => ClifType::Concrete(I8),
             Primitive::I16 | Primitive::U16 => ClifType::Concrete(I16),
@@ -81,7 +81,7 @@ pub fn clif_type(ty: &ArType, ptr_type: Type) -> ClifType {
             ClifType::Concrete(ptr_type)
         }
         ArType::Void | ArType::Err | ArType::Error => ClifType::Void,
-        ArType::IntLiteral => ClifType::Concrete(I32),
+        ArType::IntLiteral => ClifType::Concrete(ptr_type),
         ArType::FloatLiteral => ClifType::Concrete(F64),
         ArType::Named(_, _) => {
             // TODO: Named types (structs, enums) should use a proper multi-value ABI.

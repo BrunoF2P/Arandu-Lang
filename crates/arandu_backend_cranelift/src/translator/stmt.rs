@@ -474,7 +474,14 @@ impl FunctionTranslator<'_, '_> {
                 targets,
                 otherwise,
             } => {
-                let disc_val = self.translate_operand(discriminant, None);
+                let mut disc_val = self.translate_operand(discriminant, None);
+                let disc_ty = self.builder.func.dfg.value_type(disc_val);
+                if disc_ty == cranelift_codegen::ir::types::I64 {
+                    disc_val = self
+                        .builder
+                        .ins()
+                        .ireduce(cranelift_codegen::ir::types::I32, disc_val);
+                }
                 let otherwise_block = self.block_map[&otherwise.0];
                 assert!(
                     otherwise.1.is_empty(),

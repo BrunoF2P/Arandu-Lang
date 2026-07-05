@@ -160,8 +160,8 @@ fn jit_signed_div() {
     let backend = CraneliftBackend::new();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
 
-    let result: i32 = unsafe {
-        let f: unsafe fn(i32, i32) -> i32 = module.get_fn("div").unwrap();
+    let result: i64 = unsafe {
+        let f: unsafe fn(i64, i64) -> i64 = module.get_fn("div").unwrap();
         f(-1, 2)
     };
     assert_eq!(result, 0);
@@ -178,8 +178,8 @@ fn jit_signed_mod() {
     let backend = CraneliftBackend::new();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
 
-    let result: i32 = unsafe {
-        let f: unsafe fn(i32, i32) -> i32 = module.get_fn("rem").unwrap();
+    let result: i64 = unsafe {
+        let f: unsafe fn(i64, i64) -> i64 = module.get_fn("rem").unwrap();
         f(-7, 3)
     };
     assert_eq!(result, -1);
@@ -197,7 +197,7 @@ fn jit_signed_comparison() {
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
 
     let result: bool = unsafe {
-        let f: unsafe fn(i32, i32) -> bool = module.get_fn("is_gt").unwrap();
+        let f: unsafe fn(i64, i64) -> bool = module.get_fn("is_gt").unwrap();
         f(-1, 0)
     };
     assert!(!result);
@@ -214,8 +214,8 @@ fn jit_signed_shift_right() {
     let backend = CraneliftBackend::new();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
 
-    let result: i32 = unsafe {
-        let f: unsafe fn(i32) -> i32 = module.get_fn("shr").unwrap();
+    let result: i64 = unsafe {
+        let f: unsafe fn(i64) -> i64 = module.get_fn("shr").unwrap();
         f(-1)
     };
     // Arithmetic shift: -1 >> 1 = -1

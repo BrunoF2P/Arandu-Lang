@@ -37,9 +37,28 @@ impl FunctionTranslator<'_, '_> {
         left_operand: Option<&AmirOperand>,
         right_operand: Option<&AmirOperand>,
     ) -> Value {
-        let ty = self.builder.func.dfg.value_type(lhs);
-        let is_float = ty.is_float();
         let is_unsigned = self.operands_are_unsigned(left_operand, right_operand);
+        let mut lhs = lhs;
+        let mut rhs = rhs;
+        let lhs_ty = self.builder.func.dfg.value_type(lhs);
+        let rhs_ty = self.builder.func.dfg.value_type(rhs);
+        let is_float = lhs_ty.is_float() || rhs_ty.is_float();
+
+        if !is_float && lhs_ty != rhs_ty {
+            if lhs_ty.bits() < rhs_ty.bits() {
+                if is_unsigned {
+                    lhs = self.builder.ins().uextend(rhs_ty, lhs);
+                } else {
+                    lhs = self.builder.ins().sextend(rhs_ty, lhs);
+                }
+            } else {
+                if is_unsigned {
+                    rhs = self.builder.ins().uextend(lhs_ty, rhs);
+                } else {
+                    rhs = self.builder.ins().sextend(lhs_ty, rhs);
+                }
+            }
+        }
 
         match op {
             BinaryOp::Add => {
