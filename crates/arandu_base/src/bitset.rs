@@ -114,6 +114,23 @@ impl<I: IdIndex> BitSet<I> {
         self.words.iter().map(|&w| w.count_ones() as usize).sum()
     }
 
+    /// Returns `true` if this bitset is a superset of `other`.
+    #[must_use]
+    pub fn is_superset_of(&self, other: &Self) -> bool {
+        let min_len = usize::min(self.words.len(), other.words.len());
+        for i in 0..min_len {
+            if (self.words[i] & other.words[i]) != other.words[i] {
+                return false;
+            }
+        }
+        for i in min_len..other.words.len() {
+            if other.words[i] != 0 {
+                return false;
+            }
+        }
+        true
+    }
+
     /// Computes the union in-place (`self |= other`).
     /// Returns `true` if `self` was changed.
     pub fn union_with(&mut self, other: &Self) -> bool {

@@ -367,57 +367,43 @@ impl<T> Default for DenseSlotMap<T> {
 }
 
 /// A deterministic, session-independent identifier for global symbols (like functions, types, and scopes).
-/// Calculated by hashing the symbol's fully qualified path (e.g. `prelude::io::println`) to guarantee stability.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct StableHandle(pub u64);
+use std::sync::Arc;
 
-#[cfg(debug_assertions)]
-pub(crate) mod collision_registry {
-    use super::StableHandle;
-    use rustc_hash::FxHashMap;
-    use std::sync::Mutex;
+/// Calculated by hashing the symbol's fully qualified path (e.g. `prelude::io::println`) to guarantee stability,
+/// while keeping the path string to resolve collisions and guarantee identity.
+#[derive(Debug, Clone, Ord, PartialOrd)]
+pub struct StableHandle {
+    pub hash: u64,
+    pub path: Arc<str>,
+}
 
-    pub(crate) static REGISTRY: Mutex<Option<FxHashMap<u64, String>>> = Mutex::new(None);
+impl PartialEq for StableHandle {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash == other.hash && self.path == other.path
+    }
+}
 
-    pub fn register_handle(handle: StableHandle, path: &str) {
-        let mut collision = false;
-        let mut existing_path = String::new();
-        {
-            // Use unwrap_or_else to recover from a poisoned lock rather than
-            // cascading a double-panic during tests or concurrent debug builds.
-            let mut lock = REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
-            let map = lock.get_or_insert_with(FxHashMap::default);
-            if let Some(existing) = map.get(&handle.0) {
-                if existing != path {
-                    collision = true;
-                    existing_path = existing.clone();
-                }
-            } else {
-                map.insert(handle.0, path.to_string());
-            }
-        }
-        if collision {
-            panic!(
-                "StableHandle collision detected! Both {:?} and {:?} hashed to StableHandle({})",
-                existing_path, path, handle.0
-            );
-        }
+impl Eq for StableHandle {}
+
+impl std::hash::Hash for StableHandle {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.hash.hash(state);
+        self.path.hash(state);
     }
 }
 
 impl StableHandle {
     /// Creates a stable handle by hashing the given qualified path.
-    /// In debug mode, registers the path in a collision check table to detect potential conflicts.
     #[must_use]
     pub fn from_path(path: &str) -> Self {
         use std::hash::Hasher;
         let mut hasher = rustc_hash::FxHasher::default();
         hasher.write(path.as_bytes());
         let hash = hasher.finish();
-        let handle = Self(hash);
-        #[cfg(debug_assertions)]
-        collision_registry::register_handle(handle, path);
-        handle
+        Self {
+            hash,
+            path: Arc::from(path),
+        }
     }
 }
 
@@ -518,13 +504,15 @@ mod tests {
     }
 
     #[test]
-    #[cfg(debug_assertions)]
-    fn test_stable_handle_collision_registry_panics() {
-        let result = std::panic::catch_unwind(|| {
-            let handle = StableHandle(12345);
-            collision_registry::register_handle(handle, "path::one");
-            collision_registry::register_handle(handle, "path::two");
-        });
-        assert!(result.is_err());
+    fn test_stable_handle_collision_safety() {
+        let h1 = StableHandle {
+            hash: 12345,
+            path: std::sync::Arc::from("path::one"),
+        };
+        let h2 = StableHandle {
+            hash: 12345,
+            path: std::sync::Arc::from("path::two"),
+        };
+        assert_ne!(h1, h2);
     }
 }

@@ -16,9 +16,11 @@ pub struct VmReservation {
 #[cfg(unix)]
 impl VmReservation {
     /// Reserves a contiguous address space of the given size.
-    /// The size is rounded up to 64KB (page boundary).
+    /// The size is rounded up to the OS page boundary.
     pub fn reserve(size: usize) -> Result<Self, &'static str> {
-        let size = (size + 65535) & !65535;
+        let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize };
+        let page_mask = page_size - 1;
+        let size = (size + page_mask) & !page_mask;
         let addr = unsafe {
             libc::mmap(
                 ptr::null_mut(),
@@ -40,8 +42,10 @@ impl VmReservation {
         if offset + len > self.size {
             return Err("Commit range is out of bounds");
         }
-        let page_offset = offset & !65535;
-        let page_len = (offset + len - page_offset + 65535) & !65535;
+        let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize };
+        let page_mask = page_size - 1;
+        let page_offset = offset & !page_mask;
+        let page_len = (offset + len - page_offset + page_mask) & !page_mask;
         let commit_addr = unsafe { self.addr.add(page_offset) };
         let ret =
             unsafe { libc::mprotect(commit_addr, page_len, libc::PROT_READ | libc::PROT_WRITE) };

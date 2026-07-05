@@ -49,7 +49,7 @@ pub use arandu_base::vm::VmReservation;
 pub use layout::{DenseRange, EnumPayloadShape, LayoutEngine, StructLayoutProvider, TypeLayout};
 
 pub use amir_validate::validate_amir_program;
-pub use codegen::{CodegenBackend, CompiledCode};
+pub use codegen::{CodegenBackend, CompiledCode, JitError};
 pub use diagnostics::{CodeReplacement, DiagCode, Diagnostic, Hint, Label, Severity};
 pub use resolved::{DocCommentMap, NodeKey, ResolvedNames};
 pub use symbol_table::{ScopeId, Symbol, SymbolId, SymbolKind, SymbolTable};
