@@ -27,7 +27,7 @@ fn compile_src(src: &str) -> (AmirProgram, TypeCheckResult) {
 }
 
 fn execute_cranelift(amir: &AmirProgram, tc: &TypeCheckResult) -> i32 {
-    let backend = CraneliftBackend::new();
+    let backend = CraneliftBackend::try_new().unwrap();
     let compiled = CodegenBackend::compile(backend, amir, &tc.symbols, &tc.type_info)
         .expect("cranelift compile failed");
 

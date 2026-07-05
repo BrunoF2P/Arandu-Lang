@@ -29,34 +29,28 @@ pub struct AranduJit {
     pub module: JITModule,
 }
 
-impl Default for AranduJit {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl AranduJit {
     /// Creates a new [`AranduJit`] with default Cranelift settings.
     ///
     /// Configures the host ISA via `cranelift_native`, disables PIC and
     /// library colocated calls, and sets optimization level to `none` (for
     /// fastest JIT compilation during development/testing).
-    #[must_use]
-    pub fn new() -> Self {
+    pub fn try_new() -> Result<Self, Diagnostic> {
         let mut flag_builder = settings::builder();
         flag_builder.set("use_colocated_libcalls", "false").unwrap();
         flag_builder.set("is_pic", "false").unwrap();
         flag_builder.set("opt_level", "none").unwrap();
 
-        let isa = cranelift_native::builder()
-            .expect("Failed to create Cranelift isa builder")
+        let isa_builder = cranelift_native::builder()
+            .map_err(|e| codegen_ice(format!("Failed to create Cranelift isa builder: {e}")))?;
+        let isa = isa_builder
             .finish(settings::Flags::new(flag_builder))
-            .expect("Failed to build Cranelift isa");
+            .map_err(|e| codegen_ice(format!("Failed to build Cranelift isa: {e}")))?;
 
         let builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
         let module = JITModule::new(builder);
 
-        Self { module }
+        Ok(Self { module })
     }
 
     /// Compiles all functions in `program` to native machine code.

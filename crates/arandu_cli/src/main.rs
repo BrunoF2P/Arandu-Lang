@@ -381,7 +381,10 @@ fn main() {
                 use arandu_semantics::{CodegenBackend, CompiledCode};
                 let output = {
                     arandu_base::time_pass!("codegen");
-                    let backend = arandu_backend_cranelift::CraneliftBackend::new();
+                    let backend = match arandu_backend_cranelift::CraneliftBackend::try_new() {
+                        Ok(backend) => backend,
+                        Err(diag) => print_diagnostics_and_exit(&[diag], &filepath),
+                    };
                     match CodegenBackend::compile(
                         backend,
                         &amir,

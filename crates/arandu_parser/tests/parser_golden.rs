@@ -229,7 +229,7 @@ fn parses_required_v02_examples() {
         "examples/stable/syntax/enums.aru",
         "examples/stable/syntax/match.aru",
         "examples/stable/syntax/generics.aru",
-        "examples/stable/syntax/async.aru",
+        "examples/draft/async.aru",
         "examples/stable/interop/ffi.aru",
         "examples/stable/interop/extern_c.aru",
         "examples/stable/semantics/errors.aru",

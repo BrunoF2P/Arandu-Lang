@@ -151,7 +151,13 @@ impl FunctionTranslator<'_, '_> {
 
                         self.builder.ins().call(local_ref, &clif_args)
                     }
-                    _ => unimplemented!("Indirect function calls not implemented yet"),
+                    _ => {
+                        self.record_ice(
+                            "indirect function calls are not implemented yet in the cranelift backend",
+                            self.func_span(),
+                        );
+                        return;
+                    }
                 };
                 if let Some(lhs_temp) = lhs {
                     let lhs_ty = &self.current_func.temps[lhs_temp.as_usize()].ty;

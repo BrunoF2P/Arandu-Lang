@@ -25,19 +25,12 @@ pub struct CraneliftBackend {
     jit: AranduJit,
 }
 
-impl Default for CraneliftBackend {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl CraneliftBackend {
     /// Creates a new `CraneliftBackend` with a freshly initialized JIT context.
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            jit: AranduJit::new(),
-        }
+    pub fn try_new() -> Result<Self, Diagnostic> {
+        Ok(Self {
+            jit: AranduJit::try_new()?,
+        })
     }
 
     /// Compiles `program` to native code and returns the [`CompiledModule`].

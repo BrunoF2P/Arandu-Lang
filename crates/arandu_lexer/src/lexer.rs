@@ -30,12 +30,16 @@ pub(super) struct Mark {
 impl<'a> Lexer<'a> {
     #[must_use]
     pub fn new(source: &'a str) -> Self {
+        // Average token size is typically around 10-15 bytes in typical code
+        // (including whitespace, idents, punctuation). Preallocating len / 10 
+        // avoids massive overallocation for large files while preventing most reallocations.
+        let capacity = (source.len() / 10).max(32);
         Self {
             source,
             pos: 0,
             line: 1,
             col: 1,
-            tokens: Vec::with_capacity(source.len() / 4),
+            tokens: Vec::with_capacity(capacity),
             prev_significant: None,
             diagnostics: Vec::new(),
             backend: SimdBackendKind::detect(),

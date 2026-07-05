@@ -89,8 +89,7 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
     pub(crate) fn get_temp_clif_type(&self, temp_id: TempId) -> Option<Type> {
         self.current_func
             .temps
-            .iter()
-            .find(|t| t.id == temp_id)
+            .get(temp_id.as_usize())
             .and_then(|t| match clif_type(&t.ty, self.ptr_type) {
                 ClifType::Concrete(ty) => Some(ty),
                 ClifType::Void => None,

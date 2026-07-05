@@ -17,11 +17,15 @@ fn compile_src(
     (amir, tc.symbols, tc.type_info)
 }
 
+fn backend_for_test() -> CraneliftBackend {
+    CraneliftBackend::try_new().expect("JIT setup should not fail in test environment")
+}
+
 #[test]
 fn jit_constant_i32() {
     let src = "func main(): int { return 42; }";
     let (amir, symbols, type_info) = compile_src(src);
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
 
     let result: i32 = unsafe {
@@ -35,7 +39,7 @@ fn jit_constant_i32() {
 fn jit_add_i32() {
     let src = "func add(a: int, b: int): int { return a + b; }";
     let (amir, symbols, type_info) = compile_src(src);
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
 
     let result: i32 = unsafe {
@@ -59,7 +63,7 @@ fn jit_control_flow() {
     }
     "#;
     let (amir, symbols, type_info) = compile_src(src);
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
 
     let result: i32 = unsafe {
@@ -83,7 +87,7 @@ fn jit_unsigned_comparison() {
     }
     "#;
     let (amir, symbols, type_info) = compile_src(src);
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
 
     let result: bool = unsafe {
@@ -101,7 +105,7 @@ fn jit_unsigned_div() {
     }
     "#;
     let (amir, symbols, type_info) = compile_src(src);
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
 
     let result: u32 = unsafe {
@@ -120,7 +124,7 @@ fn jit_unsigned_mod() {
     }
     "#;
     let (amir, symbols, type_info) = compile_src(src);
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
 
     let result: u32 = unsafe {
@@ -138,7 +142,7 @@ fn jit_unsigned_shift_right() {
     }
     "#;
     let (amir, symbols, type_info) = compile_src(src);
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
 
     let result: u32 = unsafe {
@@ -157,7 +161,7 @@ fn jit_signed_div() {
     }
     "#;
     let (amir, symbols, type_info) = compile_src(src);
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
 
     let result: i64 = unsafe {
@@ -175,7 +179,7 @@ fn jit_signed_mod() {
     }
     "#;
     let (amir, symbols, type_info) = compile_src(src);
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
 
     let result: i64 = unsafe {
@@ -193,7 +197,7 @@ fn jit_signed_comparison() {
     }
     "#;
     let (amir, symbols, type_info) = compile_src(src);
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
 
     let result: bool = unsafe {
@@ -211,7 +215,7 @@ fn jit_signed_shift_right() {
     }
     "#;
     let (amir, symbols, type_info) = compile_src(src);
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
 
     let result: i64 = unsafe {
@@ -226,7 +230,7 @@ fn jit_signed_shift_right() {
 fn jit_float_add() {
     let src = "func add(a: float, b: float): float { return a + b; }";
     let (amir, symbols, type_info) = compile_src(src);
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
     let result: f64 = unsafe {
         let f: unsafe fn(f64, f64) -> f64 = module.get_fn("add").unwrap();
@@ -239,7 +243,7 @@ fn jit_float_add() {
 fn jit_float_mul() {
     let src = "func mul(a: float, b: float): float { return a * b; }";
     let (amir, symbols, type_info) = compile_src(src);
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
     let result: f64 = unsafe {
         let f: unsafe fn(f64, f64) -> f64 = module.get_fn("mul").unwrap();
@@ -252,7 +256,7 @@ fn jit_float_mul() {
 fn jit_float_compare() {
     let src = "func is_gt(a: float, b: float): bool { return a > b; }";
     let (amir, symbols, type_info) = compile_src(src);
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
     let result: bool = unsafe {
         let f: unsafe fn(f64, f64) -> bool = module.get_fn("is_gt").unwrap();
@@ -277,7 +281,7 @@ fn jit_cross_function_call() {
     }
     "#;
     let (amir, symbols, type_info) = compile_src(src);
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
     let result: i32 = unsafe {
         let f: unsafe fn() -> i32 = module.get_fn("main").unwrap();
@@ -290,7 +294,7 @@ fn jit_cross_function_call() {
 fn jit_string_literal() {
     let src = r#"func hello(): str { return "hello jit"; }"#;
     let (amir, symbols, type_info) = compile_src(src);
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
     let result: *const u8 = unsafe {
         let f: unsafe fn() -> *const u8 = module.get_fn("hello").unwrap();
@@ -314,7 +318,7 @@ fn jit_struct_field_access() {
     }
     "#;
     let (amir, symbols, type_info) = compile_src(src);
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
     #[repr(C)]
     struct Point {
@@ -338,7 +342,7 @@ fn jit_struct_field_access() {
 fn jit_sub_i32() {
     let src = "func sub(a: int, b: int): int { return a - b; }";
     let (amir, symbols, type_info) = compile_src(src);
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
     let result: i32 = unsafe {
         let f: unsafe fn(i32, i32) -> i32 = module.get_fn("sub").unwrap();
@@ -351,7 +355,7 @@ fn jit_sub_i32() {
 fn jit_neg_i32() {
     let src = "func neg(a: int): int { return -a; }";
     let (amir, symbols, type_info) = compile_src(src);
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
     let result: i32 = unsafe {
         let f: unsafe fn(i32) -> i32 = module.get_fn("neg").unwrap();
@@ -367,7 +371,7 @@ fn jit_equality() {
     func neq(a: int, b: int): bool { return a != b; }
     "#;
     let (amir, symbols, type_info) = compile_src(src);
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
     let result: bool = unsafe {
         let f: unsafe fn(i32, i32) -> bool = module.get_fn("eq").unwrap();
@@ -393,7 +397,7 @@ fn jit_less_than() {
     func lte(a: int, b: int): bool { return a <= b; }
     "#;
     let (amir, symbols, type_info) = compile_src(src);
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
     let result: bool = unsafe {
         let f: unsafe fn(i32, i32) -> bool = module.get_fn("lt").unwrap();
@@ -418,7 +422,7 @@ fn jit_greater_equal() {
     func gte(a: int, b: int): bool { return a >= b; }
     "#;
     let (amir, symbols, type_info) = compile_src(src);
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
     let result: bool = unsafe {
         let f: unsafe fn(i32, i32) -> bool = module.get_fn("gte").unwrap();
@@ -443,7 +447,7 @@ fn jit_logical_not() {
     func not(a: bool): bool { return !a; }
     "#;
     let (amir, symbols, type_info) = compile_src(src);
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
     let result: bool = unsafe {
         let f: unsafe fn(bool) -> bool = module.get_fn("not").unwrap();
@@ -464,7 +468,7 @@ fn jit_logical_or_and() {
     func and(a: bool, b: bool): bool { return a && b; }
     "#;
     let (amir, symbols, type_info) = compile_src(src);
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
     let result: bool = unsafe {
         let f: unsafe fn(bool, bool) -> bool = module.get_fn("or").unwrap();
@@ -496,7 +500,7 @@ fn jit_bitwise_and_or_xor() {
     func bxor(a: int, b: int): int { return a ^ b; }
     "#;
     let (amir, symbols, type_info) = compile_src(src);
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
     let result: i32 = unsafe {
         let f: unsafe fn(i32, i32) -> i32 = module.get_fn("band").unwrap();
@@ -519,7 +523,7 @@ fn jit_bitwise_and_or_xor() {
 fn jit_bitwise_not() {
     let src = "func bnot(a: int): int { return ~a; }";
     let (amir, symbols, type_info) = compile_src(src);
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
     let result: i32 = unsafe {
         let f: unsafe fn(i32) -> i32 = module.get_fn("bnot").unwrap();
@@ -540,7 +544,7 @@ fn jit_int_match() {
     }
     "#;
     let (amir, symbols, type_info) = compile_src(src);
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
     let result: i32 = unsafe {
         let f: unsafe fn(i32) -> i32 = module.get_fn("classify").unwrap();
@@ -585,7 +589,7 @@ fn jit_enum_match() {
     }
     "#;
     let (amir, symbols, type_info) = compile_src(src);
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
     let result_red: i32 = unsafe {
         let f: unsafe fn() -> i32 = module.get_fn("test_red").unwrap();
@@ -629,7 +633,7 @@ fn jit_enum_none_payload_never_read() {
     }
     "#;
     let (amir, symbols, type_info) = compile_src(src);
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
     let result: i32 = unsafe {
         let f: unsafe fn(i32) -> i32 = module.get_fn("run_loop").unwrap();
@@ -654,7 +658,7 @@ fn jit_tuple() {
     }
     "#;
     let (amir, symbols, type_info) = compile_src(src);
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
     let first: i32 = unsafe {
         let f: unsafe fn() -> i32 = module.get_fn("get_first").unwrap();
@@ -681,7 +685,7 @@ fn jit_struct_literal() {
     }
     "#;
     let (amir, symbols, type_info) = compile_src(src);
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
     let sum: i32 = unsafe {
         let f: unsafe fn() -> i32 = module.get_fn("get_sum").unwrap();
@@ -700,7 +704,7 @@ fn jit_returns_ice_on_invalid_literal_pool() {
         }
     }
 
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let err = match backend.compile(&amir, &symbols, &type_info) {
         Err(err) => err,
         Ok(_) => panic!("expected codegen ICE for invalid literal pool"),
@@ -756,7 +760,7 @@ fn jit_enum_cross_variant_name_no_collision() {
         }
     "#;
     let (amir, symbols, type_info) = compile_src(src);
-    let backend = CraneliftBackend::new();
+    let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
 
     let color_tag: i32 = unsafe {
@@ -779,4 +783,28 @@ fn jit_enum_cross_variant_name_no_collision() {
         status_tag, 1,
         "Status.Red must match arm 1 (tag 1 in Status, Yellow is 0)"
     );
+}
+
+#[test]
+fn jit_ice_indirect_call() {
+    use arandu_semantics::amir::{AmirStmt, AmirOperand, AmirConstant, InstrId};
+    let src = "func main(): int { return 0; }";
+    let (mut amir, symbols, type_info) = compile_src(src);
+    
+    // Convert the first statement to an indirect call.
+    let id = amir.funcs[0].blocks[0].statements.iter_ids::<InstrId>().next().unwrap();
+    
+    *amir.funcs[0].stmts.get_mut(id).unwrap() = AmirStmt::Call {
+        lhs: None,
+        callee: AmirOperand::Constant(AmirConstant::Bool(true)),
+        args: Default::default(),
+    };
+    
+    let backend = backend_for_test();
+    let err = match backend.compile(&amir, &symbols, &type_info) {
+        Err(e) => e,
+        Ok(_) => panic!("should return ICE"),
+    };
+    
+    assert!(err.message.contains("indirect function calls are not implemented"), "msg: {}", err.message);
 }
