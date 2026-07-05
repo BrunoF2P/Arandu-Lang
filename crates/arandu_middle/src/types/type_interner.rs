@@ -18,6 +18,7 @@
 //! Interning is additive and append-only; types are never removed.
 
 use super::ar_type::ArType;
+use super::primitive::Primitive;
 use crate::SymbolTable;
 use crate::newtype_index;
 use rustc_hash::FxHashMap;
@@ -35,18 +36,49 @@ pub struct TypeInterner {
     map: FxHashMap<ArType, TypeId>,
     /// Reverse map: TypeId → ArType  (resolution).
     types: Vec<ArType>,
-    /// Incremental compilation generation index for query invalidation.
     pub generation: InternerGeneration,
 }
 
 impl TypeInterner {
     #[must_use]
     pub fn new() -> Self {
-        Self {
+        let mut interner = Self {
             map: FxHashMap::default(),
             types: Vec::new(),
             generation: InternerGeneration(0),
+        };
+        // Pre-intern all Primitive variants
+        let primitives = [
+            Primitive::Int,
+            Primitive::Uint,
+            Primitive::Float,
+            Primitive::I8,
+            Primitive::I16,
+            Primitive::I32,
+            Primitive::I64,
+            Primitive::U8,
+            Primitive::U16,
+            Primitive::U32,
+            Primitive::U64,
+            Primitive::F32,
+            Primitive::F64,
+            Primitive::Bool,
+            Primitive::Byte,
+            Primitive::Char,
+            Primitive::Str,
+            Primitive::Any,
+        ];
+        for prim in primitives {
+            interner.intern(ArType::Primitive(prim));
         }
+        // Pre-intern Void, Err, Error, IntLiteral, FloatLiteral
+        interner.intern(ArType::Void);
+        interner.intern(ArType::Err);
+        interner.intern(ArType::Error);
+        interner.intern(ArType::IntLiteral);
+        interner.intern(ArType::FloatLiteral);
+
+        interner
     }
 
     /// Intern a type, returning its canonical `TypeId`.
@@ -126,7 +158,7 @@ mod tests {
         let id1 = interner.intern(ArType::Primitive(Primitive::Int));
         let id2 = interner.intern(ArType::Primitive(Primitive::Int));
         assert_eq!(id1, id2);
-        assert_eq!(interner.len(), 1);
+        assert_eq!(interner.len(), 23);
     }
 
     #[test]
@@ -135,7 +167,7 @@ mod tests {
         let id1 = interner.intern(ArType::Primitive(Primitive::Int));
         let id2 = interner.intern(ArType::Primitive(Primitive::Bool));
         assert_ne!(id1, id2);
-        assert_eq!(interner.len(), 2);
+        assert_eq!(interner.len(), 23);
     }
 
     #[test]
@@ -150,14 +182,14 @@ mod tests {
     #[test]
     fn test_lookup_returns_none_for_unknown_type() {
         let interner = TypeInterner::new();
-        assert_eq!(interner.lookup(&ArType::Void), None);
+        let dummy_id = TypeId::from_usize(999);
+        assert_eq!(interner.lookup(&ArType::Ptr(dummy_id)), None);
     }
 
     #[test]
     fn test_lookup_returns_id_after_intern() {
-        let mut interner = TypeInterner::new();
-        let id = interner.intern(ArType::Void);
-        assert_eq!(interner.lookup(&ArType::Void), Some(id));
+        let interner = TypeInterner::new();
+        assert!(interner.lookup(&ArType::Void).is_some());
     }
 
     #[test]
@@ -169,7 +201,7 @@ mod tests {
         let id1 = interner.intern(result_ty.clone());
         let id2 = interner.intern(result_ty);
         assert_eq!(id1, id2);
-        assert_eq!(interner.len(), 3);
+        assert_eq!(interner.len(), 24); // 23 pre-interned + 1 Result type
     }
 
     #[test]
@@ -211,6 +243,6 @@ mod tests {
                 }
             }
         }
-        assert_eq!(interner.len(), prims.len());
+        assert_eq!(interner.len(), 23);
     }
 }

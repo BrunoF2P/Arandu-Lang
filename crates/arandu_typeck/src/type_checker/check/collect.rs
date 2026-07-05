@@ -64,12 +64,22 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
                         None => super::super::EnumPayloadShape::Unit,
                         Some(arandu_parser::EnumPayload::Tuple { types, .. }) => {
                             let type_list = checker.pool.type_expr_list(*types).to_vec();
-                            let tys = type_list
+                            let tys: Vec<_> = type_list
                                 .iter()
                                 .map(|&ty_expr| {
-                                    checker.lower_type_expr(ty_expr, checker.symbols.global_scope())
+                                    let ty = checker
+                                        .lower_type_expr(ty_expr, checker.symbols.global_scope());
+                                    checker.intern(ty.clone());
+                                    ty
                                 })
                                 .collect();
+                            let mut tids = Vec::new();
+                            for ty in &tys {
+                                tids.push(checker.intern(ty.clone()));
+                            }
+                            if tids.len() > 1 {
+                                checker.intern(super::super::ArType::Tuple(tids));
+                            }
                             super::super::EnumPayloadShape::Tuple(tys)
                         }
                         _ => super::super::EnumPayloadShape::Unit,

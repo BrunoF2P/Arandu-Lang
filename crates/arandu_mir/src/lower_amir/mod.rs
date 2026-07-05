@@ -11,7 +11,7 @@ use crate::amir::{
 use crate::diagnostics::{DiagCode, Diagnostic, Severity};
 use crate::hir::{HirBlock, HirDecl, HirFunc, HirProgram};
 use crate::literal_pool::AmirLiteralPool;
-use crate::passes::type_checker::types::ArType;
+use crate::passes::type_checker::types::{ArType, Primitive};
 use crate::{SymbolId, TypeCheckResult};
 use arandu_lexer::Span;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -70,6 +70,23 @@ pub fn lower_to_amir(
     }
 }
 
+pub(crate) fn is_memory_type(ty: &ArType) -> bool {
+    match ty {
+        ArType::Primitive(p) => matches!(p, Primitive::Str | Primitive::Any),
+        ArType::IntLiteral | ArType::FloatLiteral | ArType::Void | ArType::Err | ArType::Error => {
+            false
+        }
+        ArType::Ptr(_) | ArType::Nullable(_) | ArType::Func(_, _) | ArType::Slice(_) => false,
+        ArType::Array(_, _)
+        | ArType::Named(_, _)
+        | ArType::Tuple(_)
+        | ArType::Option(_)
+        | ArType::Result(_, _)
+        | ArType::Coroutine(_)
+        | ArType::Range(_) => true,
+    }
+}
+
 pub fn prune_dummy_loads_stores(func: &mut AmirFunc) {
     let mut new_stmts = AmirStmtTable::new();
     let mut new_blocks = Vec::with_capacity(func.blocks.len());
@@ -86,11 +103,17 @@ pub fn prune_dummy_loads_stores(func: &mut AmirFunc) {
                 // yields IDs that were inserted into func.stmts during lowering.
                 .expect("stmt_id from block_stmt_ids is always present in func.stmts");
             let keep = match stmt {
-                AmirStmt::Store { lhs, .. } if lhs.projections.is_empty() => false,
+                AmirStmt::Store { lhs, .. } if lhs.projections.is_empty() => {
+                    let local_ty = &func.locals[lhs.local.as_usize()].ty;
+                    is_memory_type(local_ty)
+                }
                 AmirStmt::Assign {
                     rhs: AmirRvalue::Load(place),
                     ..
-                } if place.projections.is_empty() => false,
+                } if place.projections.is_empty() => {
+                    let local_ty = &func.locals[place.local.as_usize()].ty;
+                    is_memory_type(local_ty)
+                }
                 _ => true,
             };
 

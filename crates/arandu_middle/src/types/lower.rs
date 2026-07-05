@@ -57,10 +57,16 @@ pub fn lower_type_expr_ctx(
     match expr {
         TypeExpr::Primitive { name, .. } => {
             if name == "Err" {
-                return ArType::Err;
+                let ty = ArType::Err;
+                interner.intern(ty.clone());
+                return ty;
             }
             match Primitive::from_name(name) {
-                Some(p) => ArType::Primitive(p),
+                Some(p) => {
+                    let ty = ArType::Primitive(p);
+                    interner.intern(ty.clone());
+                    ty
+                }
                 None => ArType::Error,
             }
         }

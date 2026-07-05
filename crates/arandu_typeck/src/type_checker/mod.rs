@@ -670,6 +670,7 @@ impl arandu_middle::layout::StructLayoutProvider for TypeInfo {
         }
 
         variant_list.sort_by_key(|(tag, _shape)| *tag);
+        variant_list.dedup_by_key(|(tag, _shape)| *tag);
 
         let mut mapped_variants = Vec::new();
         for (_tag, shape) in variant_list {

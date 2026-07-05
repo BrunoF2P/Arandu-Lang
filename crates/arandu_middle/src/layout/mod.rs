@@ -178,15 +178,19 @@ impl LayoutEngine {
                         field_offsets: Vec::new(),
                     }
                 }
-                Primitive::Int
-                | Primitive::Uint
-                | Primitive::I64
-                | Primitive::U64
-                | Primitive::F64 => TypeLayout {
+                Primitive::I64 | Primitive::U64 | Primitive::F64 => TypeLayout {
                     size: 8,
                     align: 8,
                     field_offsets: Vec::new(),
                 },
+                Primitive::Int | Primitive::Uint => {
+                    let align = self.pointer_width;
+                    TypeLayout {
+                        size: self.pointer_width,
+                        align,
+                        field_offsets: Vec::new(),
+                    }
+                }
                 Primitive::Str => {
                     // String (Fat Pointer): ptr: ptr[u8] (size pointer_width) + len: u64 (size 8)
                     let ptr_align = self.pointer_width;
@@ -213,7 +217,15 @@ impl LayoutEngine {
                     }
                 }
             },
-            ArType::IntLiteral | ArType::FloatLiteral => TypeLayout {
+            ArType::IntLiteral => {
+                let align = self.pointer_width;
+                TypeLayout {
+                    size: self.pointer_width,
+                    align,
+                    field_offsets: Vec::new(),
+                }
+            }
+            ArType::FloatLiteral => TypeLayout {
                 size: 8,
                 align: 8,
                 field_offsets: Vec::new(),
@@ -591,6 +603,21 @@ mod tests {
         assert_eq!(layout_str.size, 16); // ptr (4) aligned to len (8) align -> size 16
         assert_eq!(layout_str.align, 8);
         assert_eq!(layout_str.field_offsets, vec![0, 8]);
+
+        let int_id = interner.intern(ArType::Primitive(Primitive::Int));
+        let layout_int = engine.layout_of(int_id, &interner, &provider);
+        assert_eq!(layout_int.size, 4);
+        assert_eq!(layout_int.align, 4);
+
+        let uint_id = interner.intern(ArType::Primitive(Primitive::Uint));
+        let layout_uint = engine.layout_of(uint_id, &interner, &provider);
+        assert_eq!(layout_uint.size, 4);
+        assert_eq!(layout_uint.align, 4);
+
+        let int_lit_id = interner.intern(ArType::IntLiteral);
+        let layout_int_lit = engine.layout_of(int_lit_id, &interner, &provider);
+        assert_eq!(layout_int_lit.size, 4);
+        assert_eq!(layout_int_lit.align, 4);
     }
 
     struct StructMockProvider {
@@ -620,35 +647,40 @@ mod tests {
 
     #[test]
     fn test_all_primitive_layouts() {
-        let engine = LayoutEngine::new(8);
-        let mut interner = TypeInterner::new();
-        let provider = MockProvider;
+        for &ptr_width in &[4u64, 8] {
+            let engine = LayoutEngine::new(ptr_width);
+            let mut interner = TypeInterner::new();
+            let provider = MockProvider;
 
-        let cases = [
-            (Primitive::I8, 1u64, 1u64),
-            (Primitive::U8, 1, 1),
-            (Primitive::Byte, 1, 1),
-            (Primitive::Bool, 1, 1),
-            (Primitive::Char, 1, 1),
-            (Primitive::I16, 2, 2),
-            (Primitive::U16, 2, 2),
-            (Primitive::I32, 4, 4),
-            (Primitive::U32, 4, 4),
-            (Primitive::F32, 4, 4),
-            (Primitive::Float, 8, 8),
-            (Primitive::Int, 8, 8),
-            (Primitive::Uint, 8, 8),
-            (Primitive::I64, 8, 8),
-            (Primitive::U64, 8, 8),
-            (Primitive::F64, 8, 8),
-            (Primitive::Any, 8, 8),
-        ];
-        for (prim, size, align) in cases {
-            let tid = interner.intern(ArType::Primitive(prim));
-            let layout = engine.layout_of(tid, &interner, &provider);
-            assert_eq!(layout.size, size, "{prim:?} size");
-            assert_eq!(layout.align, align, "{prim:?} align");
-            assert!(layout.field_offsets.is_empty());
+            let cases = [
+                (Primitive::I8, 1u64, 1u64),
+                (Primitive::U8, 1, 1),
+                (Primitive::Byte, 1, 1),
+                (Primitive::Bool, 1, 1),
+                (Primitive::Char, 1, 1),
+                (Primitive::I16, 2, 2),
+                (Primitive::U16, 2, 2),
+                (Primitive::I32, 4, 4),
+                (Primitive::U32, 4, 4),
+                (Primitive::F32, 4, 4),
+                (Primitive::Float, ptr_width, ptr_width),
+                (Primitive::Int, ptr_width, ptr_width),
+                (Primitive::Uint, ptr_width, ptr_width),
+                (Primitive::I64, 8, 8),
+                (Primitive::U64, 8, 8),
+                (Primitive::F64, 8, 8),
+                (Primitive::Any, ptr_width, ptr_width),
+            ];
+            for (prim, size, align) in cases {
+                let tid = interner.intern(ArType::Primitive(prim));
+                let layout = engine.layout_of(tid, &interner, &provider);
+                assert_eq!(layout.size, size, "{prim:?} size at ptr_width={ptr_width}");
+                assert_eq!(
+                    layout.align, align,
+                    "{prim:?} align at ptr_width={ptr_width}"
+                );
+                assert!(layout.field_offsets.is_empty());
+            }
         }
     }
 

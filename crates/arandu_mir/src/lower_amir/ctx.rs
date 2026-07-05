@@ -338,7 +338,7 @@ impl LowerCtx<'_> {
 
         // Emit a dummy Load statement
         let ty = self.locals[local.as_usize()].ty.clone();
-        let temp = self.new_temp(ty);
+        let temp = self.new_temp(ty.clone());
         self.push_stmt(AmirStmt::Assign {
             lhs: temp,
             rhs: AmirRvalue::Load(AmirPlace {
@@ -349,7 +349,10 @@ impl LowerCtx<'_> {
         self.temp_origins[temp.as_usize()] = Some(local);
 
         // Register redirection so that rewrite_all_operands replaces temp with the actual SSA value (val)
-        self.redirected_temps.insert(temp, val);
+        // Only do this for register types; memory types must always load from their actual memory place.
+        if !super::is_memory_type(&ty) {
+            self.redirected_temps.insert(temp, val);
+        }
 
         AmirOperand::Copy(temp)
     }
