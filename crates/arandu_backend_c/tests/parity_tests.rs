@@ -42,10 +42,24 @@ fn execute_cranelift(amir: &AmirProgram, tc: &TypeCheckResult) -> i32 {
 fn test_execution_parity(name: &str, src: &str) {
     let (amir, tc) = compile_src(src);
 
-    // 1. Run via Cranelift
-    let expected = execute_cranelift(&amir, &tc);
+    // Debug: dump AMIR for diagnosis
+    println!("--- AMIR DUMP FOR {} ---", name);
+    for func in &amir.funcs {
+        println!("func {:?} -> {:?}", func.symbol, func.return_type);
+        for (b, block) in func.blocks.iter().enumerate() {
+            println!("  bb{}:", b);
+            for id in block
+                .statements
+                .iter_ids::<arandu_middle::amir::stmt::InstrId>()
+            {
+                println!("    {:?}", func.stmts.get(id).unwrap());
+            }
+            println!("    term: {:?}", block.terminator);
+        }
+    }
+    println!("----------------------------");
 
-    // 2. Generate C
+    // 1. Generate C
     let layout_engine = LayoutEngine::new(8);
     let emitter = CEmitter::new(
         &amir,
@@ -55,6 +69,10 @@ fn test_execution_parity(name: &str, src: &str) {
         &tc.type_info.type_interner,
     );
     let mut c_code = emitter.emit();
+
+    println!("--- GENERATED C CODE FOR {} ---", name);
+    println!("{}", c_code);
+    println!("---------------------------------");
 
     // CEmitter emits `int32_t main(void)`. We rename it to `arandu_main` via a preprocessor
     // macro so we can wrap it in a standard C `main` that captures and prints the return
@@ -110,6 +128,9 @@ int main() {
         .trim()
         .parse()
         .expect("failed to parse stdout as integer");
+
+    // 2. Run via Cranelift
+    let expected = execute_cranelift(&amir, &tc);
 
     assert_eq!(
         expected, actual_result,
@@ -228,4 +249,57 @@ fn parity_ssa_pattern_bind_multi_arms() {
     }
     "#;
     test_execution_parity("ssa_pattern_bind_multi_arms", src);
+}
+
+#[test]
+fn parity_array_index_access() {
+    let src = r#"
+    func dummy(xs: [3]int) {}
+
+    func main(): int {
+        let mut xs = [10, 20, 30]
+        let idx = 1
+        xs[idx] = 42
+        dummy(xs)
+        return 42
+    }
+    "#;
+    test_execution_parity("array_index_access", src);
+}
+
+#[test]
+fn parity_enum_multi_variant_switch() {
+    let src = r#"
+    enum Color {
+        Red
+        Green
+        Blue
+        Yellow(int)
+    }
+    
+    func main(): int {
+        let c: Color = Color.Yellow(100)
+        let mut out: int = 0
+        match c {
+            Color.Red => { out = 1; }
+            Color.Green => { out = 2; }
+            Color.Blue => { out = 3; }
+            Color.Yellow(v) => { out = v; }
+        }
+        return out
+    }
+    "#;
+    test_execution_parity("enum_multi_variant_switch", src);
+}
+
+#[test]
+fn parity_array_reassignment() {
+    let src = r#"
+    func main(): int {
+        let mut arr = [10, 20, 30]
+        arr = [99, 98, 97]
+        return arr[1]
+    }
+    "#;
+    test_execution_parity("array_reassignment", src);
 }

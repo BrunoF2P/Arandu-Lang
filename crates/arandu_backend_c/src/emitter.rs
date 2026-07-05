@@ -182,6 +182,7 @@ impl<'a> CEmitter<'a> {
         // Declare locals and temps strictly at the top
         let mut used_locals = rustc_hash::FxHashSet::default();
         let mut used_temps = rustc_hash::FxHashSet::default();
+
         for stmt in func.stmts.payloads.iter() {
             match stmt {
                 AmirStmt::Assign { lhs, rhs } => {
@@ -241,11 +242,26 @@ impl<'a> CEmitter<'a> {
                         | AmirRvalue::Borrow(place)
                         | AmirRvalue::BorrowMut(place) => {
                             used_locals.insert(place.local.as_usize());
+                            for proj in &place.projections {
+                                if let AmirProjection::Index(
+                                    AmirOperand::Copy(t) | AmirOperand::Move(t),
+                                ) = proj
+                                {
+                                    used_temps.insert(t.as_usize());
+                                }
+                            }
                         }
                     }
                 }
                 AmirStmt::Store { lhs, rhs } => {
                     used_locals.insert(lhs.local.as_usize());
+                    for proj in &lhs.projections {
+                        if let AmirProjection::Index(AmirOperand::Copy(t) | AmirOperand::Move(t)) =
+                            proj
+                        {
+                            used_temps.insert(t.as_usize());
+                        }
+                    }
                     if let AmirOperand::Copy(t) | AmirOperand::Move(t) = rhs {
                         used_temps.insert(t.as_usize());
                     }
@@ -273,6 +289,13 @@ impl<'a> CEmitter<'a> {
                 }
                 AmirStmt::Destroy(place) => {
                     used_locals.insert(place.local.as_usize());
+                    for proj in &place.projections {
+                        if let AmirProjection::Index(AmirOperand::Copy(t) | AmirOperand::Move(t)) =
+                            proj
+                        {
+                            used_temps.insert(t.as_usize());
+                        }
+                    }
                 }
                 AmirStmt::Nop => {}
             }
@@ -377,10 +400,16 @@ impl<'a> CEmitter<'a> {
     fn emit_stmt(&mut self, stmt: &AmirStmt, func: &AmirFunc) {
         match stmt {
             AmirStmt::Assign { lhs, rhs } => {
-                let lhs_ty = self.format_type(&func.temps[lhs.as_usize()].ty);
+                let lhs_ty = &func.temps[lhs.as_usize()].ty;
+                let lhs_c_ty = self.format_type(lhs_ty);
                 write!(&mut self.output, "    t{} = ", lhs.as_usize()).unwrap();
-                self.emit_rvalue(rhs, func, &lhs_ty);
+                self.emit_rvalue(rhs, func, lhs_ty, &lhs_c_ty);
                 writeln!(&mut self.output, ";").unwrap();
+            }
+            AmirStmt::Store { lhs, rhs } => {
+                let lhs_str = self.format_place(lhs, func);
+                let rhs_str = self.format_operand(rhs, func);
+                writeln!(&mut self.output, "    {} = {};", lhs_str, rhs_str).unwrap();
             }
             AmirStmt::Call { lhs, callee, args } => {
                 let callee_str = self.format_operand(callee, func);
@@ -399,14 +428,22 @@ impl<'a> CEmitter<'a> {
                 }
                 writeln!(&mut self.output, ");").unwrap();
             }
-            AmirStmt::StorageLive(_) | AmirStmt::StorageDead(_) => {}
-            _ => {
-                writeln!(&mut self.output, "    // unsupported stmt").unwrap();
+            AmirStmt::Free(op) => {
+                let op_str = self.format_operand(op, func);
+                writeln!(&mut self.output, "    free({});", op_str).unwrap();
             }
+            AmirStmt::StorageLive(_) | AmirStmt::StorageDead(_) => {}
+            AmirStmt::Destroy(_) | AmirStmt::Nop => {}
         }
     }
 
-    fn emit_rvalue(&mut self, rvalue: &AmirRvalue, func: &AmirFunc, expected_c_type: &str) {
+    fn emit_rvalue(
+        &mut self,
+        rvalue: &AmirRvalue,
+        func: &AmirFunc,
+        expected_ar_type: &ArType,
+        expected_c_type: &str,
+    ) {
         match rvalue {
             AmirRvalue::Use(op) => {
                 let op_str = self.format_operand(op, func);
@@ -520,52 +557,87 @@ impl<'a> CEmitter<'a> {
                 variant_tag,
                 payload,
             } => {
-                // Uses a GCC statement expression ({ ... }) to construct an enum value as a single
-                // C rvalue. This allows zero-initializing the storage, writing the tag (first 8
-                // bytes) and optionally writing the payload (at offset 8) before returning the
-                // temporary. Both gcc and clang support this GNU extension.
-                // Payload type is inferred via `typeof()` to avoid a separate C type mapping.
-                write!(
-                    &mut self.output,
-                    "({{ {} _tmp = {{0}}; *(int64_t*)&_tmp = {}; ",
-                    expected_c_type, variant_tag
-                )
-                .unwrap();
                 if let Some(p) = payload {
                     let payload_str = self.format_operand(p, func);
+                    let payload_ty = match expected_ar_type {
+                        ArType::Named(id, _) => self
+                            .provider
+                            .get_enum_variants(*id)
+                            .and_then(|variants| {
+                                variants
+                                    .get(*variant_tag)
+                                    .and_then(|v| v.payload_ty)
+                            })
+                            .map(|ty_id| self.interner.resolve(ty_id))
+                            .unwrap_or(&ArType::Error),
+                        ArType::Option(inner) => {
+                            if *variant_tag == 1 {
+                                self.interner.resolve(*inner)
+                            } else {
+                                &ArType::Error
+                            }
+                        }
+                        ArType::Result(ok, err) => {
+                            if *variant_tag == 0 {
+                                self.interner.resolve(*ok)
+                            } else {
+                                self.interner.resolve(*err)
+                            }
+                        }
+                        _ => &ArType::Error,
+                    };
+                    let payload_c_ty = self.format_type(payload_ty);
                     write!(
                         &mut self.output,
-                        "*(typeof({})*)((uint8_t*)&_tmp + 8) = {}; ",
-                        payload_str, payload_str
+                        "*({expected_c_type}*)&(struct {{ int64_t tag; {payload_c_ty} payload; }}){{ {}, {} }}",
+                        variant_tag, payload_str
+                    )
+                    .unwrap();
+                } else {
+                    write!(
+                        &mut self.output,
+                        "*({expected_c_type}*)&(struct {{ int64_t tag; }}){{ {} }}",
+                        variant_tag
                     )
                     .unwrap();
                 }
-                write!(&mut self.output, "_tmp; }})").unwrap();
             }
             AmirRvalue::StructLiteral {
                 struct_symbol,
                 fields,
             } => {
-                write!(&mut self.output, "({{ {} _tmp = {{0}}; ", expected_c_type).unwrap();
+                write!(&mut self.output, "*({expected_c_type}*)&(struct {{").unwrap();
                 let struct_ty = arandu_middle::types::ArType::Named(*struct_symbol, Vec::new());
                 let layout = self
                     .layout
                     .layout_of_type(&struct_ty, self.interner, self.provider);
+                let field_defs = self.provider.get_struct_fields(*struct_symbol).unwrap();
+
+                let mut resolved_fields = Vec::new();
                 for (i, (name, op)) in fields.iter().enumerate() {
                     let field_idx = match self.provider.get_struct_field_indices(*struct_symbol) {
                         Some(indices) => indices.get(name).copied().unwrap_or(i),
                         None => i,
                     };
                     let offset = layout.field_offsets[field_idx];
+                    let field_ty = field_defs.get(name).unwrap();
+                    let field_c_ty = self.format_type(field_ty);
                     let op_str = self.format_operand(op, func);
-                    write!(
-                        &mut self.output,
-                        "*(typeof({})*)((uint8_t*)&_tmp + {}) = {}; ",
-                        op_str, offset, op_str
-                    )
-                    .unwrap();
+                    resolved_fields.push((offset, field_c_ty, op_str));
                 }
-                write!(&mut self.output, "_tmp; }})").unwrap();
+                resolved_fields.sort_by_key(|f| f.0);
+
+                for (offset, field_c_ty, _) in &resolved_fields {
+                    write!(&mut self.output, " {} f_{};", field_c_ty, offset).unwrap();
+                }
+                write!(&mut self.output, "}}){{").unwrap();
+                for (i, (_, _, op_str)) in resolved_fields.iter().enumerate() {
+                    if i > 0 {
+                        write!(&mut self.output, ", ").unwrap();
+                    }
+                    write!(&mut self.output, "{}", op_str).unwrap();
+                }
+                write!(&mut self.output, "}}").unwrap();
             }
             AmirRvalue::Unary { op, operand } => {
                 let op_str = match op {
@@ -590,8 +662,98 @@ impl<'a> CEmitter<'a> {
                 let place_str = self.format_place(place, func);
                 write!(&mut self.output, "&{}", place_str).unwrap();
             }
-            _ => {
-                write!(&mut self.output, "/* unsupported rvalue */").unwrap();
+            AmirRvalue::Array { items } => {
+                let elem_ty = match expected_ar_type {
+                    ArType::Array(_, inner) => self.interner.resolve(*inner),
+                    _ => &ArType::Error,
+                };
+                let elem_c_ty = self.format_type(elem_ty);
+                write!(&mut self.output, "*({expected_c_type}*)&({elem_c_ty}[]){{").unwrap();
+                for (i, op) in items.iter().enumerate() {
+                    if i > 0 {
+                        write!(&mut self.output, ", ").unwrap();
+                    }
+                    let op_str = self.format_operand(op, func);
+                    write!(&mut self.output, "{}", op_str).unwrap();
+                }
+                write!(&mut self.output, "}}").unwrap();
+            }
+            AmirRvalue::Tuple { items } => {
+                let tys = match expected_ar_type {
+                    ArType::Tuple(tys) => tys.as_slice(),
+                    _ => &[],
+                };
+                write!(&mut self.output, "*({expected_c_type}*)&(struct {{").unwrap();
+                for (i, _) in items.iter().enumerate() {
+                    let field_ty = self.interner.resolve(tys[i]);
+                    let field_c_ty = self.format_type(field_ty);
+                    write!(&mut self.output, " {} f_{};", field_c_ty, i).unwrap();
+                }
+                write!(&mut self.output, "}}){{").unwrap();
+                for (i, op) in items.iter().enumerate() {
+                    if i > 0 {
+                        write!(&mut self.output, ", ").unwrap();
+                    }
+                    let op_str = self.format_operand(op, func);
+                    write!(&mut self.output, "{}", op_str).unwrap();
+                }
+                write!(&mut self.output, "}}").unwrap();
+            }
+            AmirRvalue::Len(op) => {
+                let op_str = self.format_operand(op, func);
+                let op_ty = match op {
+                    AmirOperand::Copy(t) | AmirOperand::Move(t) => &func.temps[t.as_usize()].ty,
+                    _ => &ArType::Error,
+                };
+                if matches!(op_ty, ArType::Slice(_)) {
+                    write!(&mut self.output, "*(int64_t*)((uint8_t*)&{} + 8)", op_str).unwrap();
+                } else if let ArType::Array(len, _) = op_ty {
+                    write!(&mut self.output, "{}", len).unwrap();
+                } else {
+                    write!(&mut self.output, "/* unsupported Len operand */").unwrap();
+                }
+            }
+            AmirRvalue::IndexAccess { base, index } => {
+                let base_ty = match base {
+                    AmirOperand::Copy(t) | AmirOperand::Move(t) => &func.temps[t.as_usize()].ty,
+                    _ => &ArType::Error,
+                };
+                let elem_ty = match base_ty {
+                    ArType::Array(_, inner) | ArType::Slice(inner) | ArType::Ptr(inner) => {
+                        self.interner.resolve(*inner)
+                    }
+                    _ => &ArType::Error,
+                };
+                let elem_c_ty = self.format_type(elem_ty);
+                let base_str = self.format_operand(base, func);
+                let index_str = self.format_operand(index, func);
+
+                if matches!(base_ty, ArType::Ptr(_)) {
+                    write!(
+                        &mut self.output,
+                        "(({}*){})[{}]",
+                        elem_c_ty, base_str, index_str
+                    )
+                    .unwrap();
+                } else if matches!(base_ty, ArType::Slice(_)) {
+                    write!(
+                        &mut self.output,
+                        "(({}*)(*(void**)((uint8_t*)&{} + 0)))[{}]",
+                        elem_c_ty, base_str, index_str
+                    )
+                    .unwrap();
+                } else {
+                    write!(
+                        &mut self.output,
+                        "(({}*)&{})[{}]",
+                        elem_c_ty, base_str, index_str
+                    )
+                    .unwrap();
+                }
+            }
+            AmirRvalue::Alloc(_) => {
+                // alloc is handled as Call to standard allocator API
+                write!(&mut self.output, "/* unsupported Alloc rvalue */").unwrap();
             }
         }
     }
@@ -599,7 +761,11 @@ impl<'a> CEmitter<'a> {
     fn emit_terminator(&mut self, term: &AmirTerminator, func: &AmirFunc) {
         match term {
             AmirTerminator::Return => {
-                writeln!(&mut self.output, "    return t0;").unwrap();
+                if matches!(func.return_type, ArType::Void) {
+                    writeln!(&mut self.output, "    return;").unwrap();
+                } else {
+                    writeln!(&mut self.output, "    return t0;").unwrap();
+                }
             }
             AmirTerminator::Goto { target, args } => {
                 self.emit_block_arguments(*target, args, func, "    ");
@@ -725,12 +891,38 @@ impl<'a> CEmitter<'a> {
 
     fn format_type(&self, ty: &ArType) -> String {
         match ty {
-            ArType::Primitive(Primitive::I32)
-            | ArType::Primitive(Primitive::Int)
-            | ArType::IntLiteral => "int32_t".to_string(),
+            ArType::Primitive(Primitive::I8) => "int8_t".to_string(),
+            ArType::Primitive(Primitive::I16) => "int16_t".to_string(),
+            ArType::Primitive(Primitive::I32) => "int32_t".to_string(),
             ArType::Primitive(Primitive::I64) => "int64_t".to_string(),
             ArType::Primitive(Primitive::U8) | ArType::Primitive(Primitive::Byte) => {
                 "uint8_t".to_string()
+            }
+            ArType::Primitive(Primitive::U16) => "uint16_t".to_string(),
+            ArType::Primitive(Primitive::U32) => "uint32_t".to_string(),
+            ArType::Primitive(Primitive::U64) => "uint64_t".to_string(),
+            ArType::Primitive(Primitive::F32) => "float".to_string(),
+            ArType::Primitive(Primitive::F64) => "double".to_string(),
+            ArType::Primitive(Primitive::Uint) => {
+                if self.layout.pointer_width == 8 {
+                    "uint64_t".to_string()
+                } else {
+                    "uint32_t".to_string()
+                }
+            }
+            ArType::IntLiteral => {
+                if self.layout.pointer_width == 8 {
+                    "int64_t".to_string()
+                } else {
+                    "int32_t".to_string()
+                }
+            }
+            ArType::Primitive(Primitive::Int) => {
+                if self.layout.pointer_width == 8 {
+                    "int64_t".to_string()
+                } else {
+                    "int32_t".to_string()
+                }
             }
             ArType::Primitive(Primitive::Bool) => "bool".to_string(),
             ArType::Primitive(Primitive::Str) => "ArStr".to_string(),
@@ -738,6 +930,39 @@ impl<'a> CEmitter<'a> {
             ArType::Void => "void".to_string(),
             ArType::Ptr(inner) => format!("{}*", self.format_type(self.interner.resolve(*inner))),
             ArType::Named(id, _) => sanitize_c_ident(&self.symbols.get(*id).name),
+            ArType::Slice(inner) => {
+                let inner_name = self.format_type(self.interner.resolve(*inner));
+                format!("ArType_Slice_{}", sanitize_c_ident(&inner_name))
+            }
+            ArType::Array(len, inner) => {
+                let inner_name = self.format_type(self.interner.resolve(*inner));
+                format!("ArType_Array_{}_{}", len, sanitize_c_ident(&inner_name))
+            }
+            ArType::Nullable(inner) => {
+                let inner_name = self.format_type(self.interner.resolve(*inner));
+                format!("ArType_Nullable_{}", sanitize_c_ident(&inner_name))
+            }
+            ArType::Option(inner) => {
+                let inner_name = self.format_type(self.interner.resolve(*inner));
+                format!("ArType_Option_{}", sanitize_c_ident(&inner_name))
+            }
+            ArType::Result(ok, err) => {
+                let ok_name = self.format_type(self.interner.resolve(*ok));
+                let err_name = self.format_type(self.interner.resolve(*err));
+                format!(
+                    "ArType_Result_{}_{}",
+                    sanitize_c_ident(&ok_name),
+                    sanitize_c_ident(&err_name)
+                )
+            }
+            ArType::Tuple(tys) => {
+                let mut name = "ArType_Tuple".to_string();
+                for &t in tys {
+                    name.push('_');
+                    name.push_str(&self.format_type(self.interner.resolve(t)));
+                }
+                sanitize_c_ident(&name)
+            }
             _ => format!("ArType_{}", sanitize_c_ident(&format!("{:?}", ty))),
         }
     }
