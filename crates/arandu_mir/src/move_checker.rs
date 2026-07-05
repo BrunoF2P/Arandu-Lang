@@ -85,6 +85,17 @@ impl MoveState {
             }
         }
     }
+    fn is_monotonic_from(&self, old: &Self) -> bool {
+        if !self.moved.is_superset_of(&old.moved) {
+            return false;
+        }
+        for id in old.maybe_moved.iter() {
+            if !self.maybe_moved.contains(id) && !self.moved.contains(id) {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 pub fn check_moves(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagnostic> {
@@ -105,19 +116,16 @@ pub fn check_moves(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagnostic> {
     }
 
     let mut iterations = 0;
-    let sanity_limit = num_blocks * num_blocks + 1000;
+    // Theoretical max height of the dataflow lattice: each local can flip from Available -> MaybeMoved -> Moved.
+    // So the absolute max number of block state updates is `num_blocks * num_locals * 2`.
+    let sanity_limit = num_blocks * num_locals * 2 + 1000;
 
     while let Some(bid) = worklist.pop_front() {
         iterations += 1;
-        if iterations > sanity_limit {
-            return vec![Diagnostic::ice(
-                DiagCode::ICEO001,
-                format!(
-                    "move checker failed to converge after {iterations} iterations ({num_blocks} blocks) — possível bug de monotonicidade no dataflow"
-                ),
-                arandu_lexer::Span::new(0, 0, 0),
-            )];
-        }
+        assert!(
+            iterations <= sanity_limit,
+            "move checker failed to converge within theoretical limit: {iterations} > {sanity_limit} ({num_blocks} blocks) — possível bug de monotonicidade no dataflow"
+        );
 
         let bi = bid.as_usize();
         let block = &func.blocks[bi];
@@ -129,6 +137,12 @@ pub fn check_moves(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagnostic> {
         );
         let mut new_out = new_in.clone();
         apply_block(block.id, func, &temp_origins, &mut new_out, None);
+
+        // Monotonicity check: the dataflow lattice grows (Available -> MaybeMoved -> Moved).
+        debug_assert!(
+            new_out.is_monotonic_from(&block_out[bi]),
+            "Move checker dataflow is not monotonic at block {bi}"
+        );
 
         if new_in != block_in[bi] || new_out != block_out[bi] {
             block_in[bi] = new_in;

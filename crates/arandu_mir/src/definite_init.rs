@@ -87,19 +87,16 @@ pub fn check_definite_init(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagno
     }
 
     let mut iterations = 0;
-    let sanity_limit = num_blocks * num_blocks + 1000;
+    // Theoretical max height of the dataflow lattice: each local can flip from 1 to 0 once per block.
+    // So the absolute max number of block state updates is `num_blocks * num_locals`.
+    let sanity_limit = num_blocks * num_locals + 1000;
 
     while let Some(bid) = worklist.pop_front() {
         iterations += 1;
-        if iterations > sanity_limit {
-            return vec![Diagnostic::ice(
-                DiagCode::ICEO001,
-                format!(
-                    "definite initialization checker failed to converge after {iterations} iterations ({num_blocks} blocks) — possível bug de monotonicidade no dataflow"
-                ),
-                arandu_lexer::Span::new(0, 0, 0),
-            )];
-        }
+        assert!(
+            iterations <= sanity_limit,
+            "definite initialization checker failed to converge within theoretical limit: {iterations} > {sanity_limit} ({num_blocks} blocks) — possível bug de monotonicidade no dataflow"
+        );
 
         let bi = bid.as_usize();
         let block = &func.blocks[bi];
@@ -118,6 +115,13 @@ pub fn check_definite_init(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagno
         // OUT = IN ∪ gen
         let mut new_out = new_in.clone();
         new_out.union_with(&block_gens.row_set(bid));
+
+        // Monotonicity check: intersection dataflow starts at Top (All) and shrinks.
+        // Therefore, new_out must be a subset of old_out.
+        debug_assert!(
+            block_out[bi].is_superset_of(&new_out),
+            "Definite init dataflow is not monotonic at block {bi}"
+        );
 
         if new_out != block_out[bi] {
             block_in[bi] = new_in;
