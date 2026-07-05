@@ -180,7 +180,8 @@ pub(super) fn synth_call_expr(
             let args_range = *args;
             if let Some(callee_sym) = checker.resolved.expr_symbol(callee_id) {
                 let sym = checker.symbols.get(callee_sym);
-                if sym.kind == arandu_middle::SymbolKind::ExternFunc && !checker.ctx.is_in_unsafe() {
+                if sym.kind == arandu_middle::SymbolKind::ExternFunc && !checker.ctx.is_in_unsafe()
+                {
                     checker.diagnostics.push(
                         crate::Diagnostic::error(
                             crate::DiagCode::O013ExternRequiresUnsafe,
@@ -346,6 +347,62 @@ pub(super) fn synth_call_expr(
             let is_error = matches!(callee_ty, ArType::Error);
 
             Some(if let Some((params, ret)) = func_info {
+                let mut is_direct = false;
+                let mut current_callee = callee_id;
+                if let ExprKind::Generic { callee: inner, .. } = checker.pool.expr(current_callee) {
+                    current_callee = *inner;
+                }
+                match checker.pool.expr(current_callee) {
+                    ExprKind::Path { .. } => {
+                        if let Some(sym_id) = checker.resolved.expr_symbol(current_callee) {
+                            let sym = checker.symbols.get(sym_id);
+                            if matches!(
+                                sym.kind,
+                                arandu_middle::SymbolKind::Func
+                                    | arandu_middle::SymbolKind::ExternFunc
+                                    | arandu_middle::SymbolKind::EnumVariant
+                                    | arandu_middle::SymbolKind::AssociatedFunc
+                            ) {
+                                is_direct = true;
+                            }
+                        }
+                    }
+                    ExprKind::TypePath { type_name, member } => {
+                        let base = types::type_name_base(type_name);
+                        if matches!(
+                            (base, member.as_str()),
+                            ("Result", "Ok" | "Err") | ("Option", "Some")
+                        ) {
+                            is_direct = true;
+                        } else if let Some(sym_id) = checker.resolved.expr_symbol(current_callee) {
+                            let sym = checker.symbols.get(sym_id);
+                            if matches!(
+                                sym.kind,
+                                arandu_middle::SymbolKind::Func
+                                    | arandu_middle::SymbolKind::ExternFunc
+                                    | arandu_middle::SymbolKind::EnumVariant
+                                    | arandu_middle::SymbolKind::AssociatedFunc
+                            ) {
+                                is_direct = true;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+
+                if !is_direct {
+                    let diag = crate::Diagnostic::error(
+                        crate::DiagCode::T033IndirectCallNotSupported,
+                        "indirect function calls are not supported",
+                        span,
+                    )
+                    .with_label(
+                        checker.pool.expr_span(callee_id),
+                        "this expression evaluates to a function, but Arandu only supports direct calls",
+                    );
+                    checker.diagnostics.push(diag);
+                }
+
                 if params.len() != arg_ids.len() {
                     let diag = crate::Diagnostic::error(
                         crate::DiagCode::T012WrongArgCount,
@@ -395,7 +452,12 @@ pub(super) fn synth_call_expr(
                         }
                     }
                 }
-                ret
+
+                if !is_direct {
+                    checker.intern(ArType::Error)
+                } else {
+                    ret
+                }
             } else if is_error {
                 checker.intern(ArType::Error)
             } else {

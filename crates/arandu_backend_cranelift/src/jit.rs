@@ -99,6 +99,23 @@ impl AranduJit {
             .map_err(|err| codegen_ice(format!("failed to declare free: {err:?}")))?;
         func_ids.insert("free".to_string(), free_id);
 
+        // Declare fmod as import
+        let mut fmod_sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+        fmod_sig.params.push(cranelift_codegen::ir::AbiParam::new(
+            cranelift_codegen::ir::types::F64,
+        ));
+        fmod_sig.params.push(cranelift_codegen::ir::AbiParam::new(
+            cranelift_codegen::ir::types::F64,
+        ));
+        fmod_sig.returns.push(cranelift_codegen::ir::AbiParam::new(
+            cranelift_codegen::ir::types::F64,
+        ));
+        let fmod_id = self
+            .module
+            .declare_function("fmod", Linkage::Import, &fmod_sig)
+            .map_err(|err| codegen_ice(format!("failed to declare fmod: {err:?}")))?;
+        func_ids.insert("fmod".to_string(), fmod_id);
+
         // 1. Declare all functions first to support cross-calls
         for func in &program.funcs {
             let sym = symbols.get(func.symbol);
@@ -230,6 +247,36 @@ impl CompiledModule {
     pub unsafe fn get_fn<F>(&self, name: &str) -> Option<F> {
         let id = self.func_ids.get(name)?;
         let ptr = self.module.get_finalized_function(*id);
-        Some(unsafe { std::mem::transmute_copy(&ptr) })
+        assert_eq!(
+            std::mem::size_of::<F>(),
+            std::mem::size_of::<*const u8>(),
+            "Type F must be the size of a function pointer"
+        );
+        Some(unsafe { std::ptr::read(&ptr as *const _ as *const F) })
+    }
+
+    /// Returns a callable function pointer for the named function, but first checks
+    /// that the arity (number of parameters) matches the expected arity in the compiled module.
+    ///
+    /// # Safety
+    /// The caller must still guarantee that the type `F` matches the signature's types.
+    pub unsafe fn get_fn_checked<F>(
+        &self,
+        name: &str,
+        expected_arity: usize,
+    ) -> Result<F, arandu_semantics::JitError> {
+        let id = self
+            .func_ids
+            .get(name)
+            .ok_or(arandu_semantics::JitError::NotFound)?;
+        let decl = self.module.declarations().get_function_decl(*id);
+        if decl.signature.params.len() != expected_arity {
+            return Err(arandu_semantics::JitError::SignatureMismatch {
+                expected: expected_arity,
+                actual: decl.signature.params.len(),
+            });
+        }
+
+        unsafe { self.get_fn::<F>(name) }.ok_or(arandu_semantics::JitError::NotFound)
     }
 }

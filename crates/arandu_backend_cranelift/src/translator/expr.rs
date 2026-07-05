@@ -438,8 +438,27 @@ impl FunctionTranslator<'_, '_> {
                     }
                 }
             },
-            AmirOperand::FunctionRef(_) | AmirOperand::GlobalRef(_) => {
-                unimplemented!("Refs as operands not implemented in Cranelift JIT yet");
+            AmirOperand::FunctionRef(sym_id) => {
+                let sym = self.symbol_table.get(*sym_id);
+                let func_id = match self.func_ids.get(&sym.name) {
+                    Some(func_id) => *func_id,
+                    None => {
+                        self.record_ice(
+                            format!("function '{}' was not declared in the JIT module", sym.name),
+                            sym.span,
+                        );
+                        return self.poison_i32();
+                    }
+                };
+                let local_ref = self.module.declare_func_in_func(func_id, self.builder.func);
+                self.builder.ins().func_addr(self.ptr_type, local_ref)
+            }
+            AmirOperand::GlobalRef(_) => {
+                self.record_ice(
+                    "GlobalRef as operand should not appear after BC.2.2 zero-payload tuple fix.",
+                    self.func_span(),
+                );
+                self.poison_i32()
             }
         };
 
@@ -874,14 +893,49 @@ impl FunctionTranslator<'_, '_> {
                     0,
                 )
             }
-            AmirRvalue::Borrow(_) | AmirRvalue::BorrowMut(_) => {
-                unimplemented!("Borrowing of places is not implemented in Cranelift JIT yet");
+            AmirRvalue::Borrow(place) | AmirRvalue::BorrowMut(place) => {
+                let ty = &self.current_func.locals[place.local.as_usize()].ty;
+                let is_memory_backed = !place.projections.is_empty()
+                    || matches!(
+                        ty,
+                        ArType::Tuple(_)
+                            | ArType::Array(_, _)
+                            | ArType::Slice(_)
+                            | ArType::Primitive(Primitive::Str)
+                    )
+                    || matches!(
+                        ty,
+                        ArType::Named(sym_id, _) if matches!(
+                            self.symbol_table.get(*sym_id).kind,
+                            arandu_semantics::SymbolKind::Struct | arandu_semantics::SymbolKind::Enum
+                        )
+                    );
+
+                if is_memory_backed {
+                    let (base_ptr, offset) = self.translate_place_address_for_load(place);
+                    if offset == 0 {
+                        base_ptr
+                    } else {
+                        let offset_val = self.builder.ins().iconst(self.ptr_type, offset as i64);
+                        self.builder.ins().iadd(base_ptr, offset_val)
+                    }
+                } else {
+                    self.record_ice(
+                        "Borrowing of stack locals is not supported in Cranelift JIT yet (requires F2.0)",
+                        self.local_span(place.local),
+                    );
+                    self.poison_i32()
+                }
             }
             _ => {
-                unimplemented!(
-                    "Rvalue kind {:?} not implemented in Cranelift JIT yet",
-                    rvalue
+                self.record_ice(
+                    format!(
+                        "Rvalue kind {:?} not implemented in Cranelift JIT yet",
+                        rvalue
+                    ),
+                    self.func_span(),
                 );
+                self.poison_i32()
             }
         }
     }
@@ -906,13 +960,21 @@ impl FunctionTranslator<'_, '_> {
             }
             UnaryOp::BitNot => self.builder.ins().bnot(val),
             UnaryOp::Await => {
-                unimplemented!("Unary operator Await not implemented in Cranelift JIT yet");
+                self.record_ice(
+                    "Await unary operator is not implemented in Cranelift JIT yet (requires Phase 3)",
+                    self.func_span(),
+                );
+                self.poison_i32()
             }
             _ => {
-                unimplemented!(
-                    "Unary operator {:?} not implemented in Cranelift JIT yet",
-                    op
+                self.record_ice(
+                    format!(
+                        "Unary operator {:?} not implemented in Cranelift JIT yet",
+                        op
+                    ),
+                    self.func_span(),
                 );
+                self.poison_i32()
             }
         }
     }

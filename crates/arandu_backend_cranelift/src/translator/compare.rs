@@ -93,7 +93,12 @@ impl FunctionTranslator<'_, '_> {
             }
             BinaryOp::Mod => {
                 if is_float {
-                    unimplemented!("Float remainder is not implemented")
+                    let Some(fmod_id) = self.fmod_func_id() else {
+                        return self.poison_i32();
+                    };
+                    let local_ref = self.module.declare_func_in_func(fmod_id, self.builder.func);
+                    let call_inst = self.builder.ins().call(local_ref, &[lhs, rhs]);
+                    self.builder.inst_results(call_inst)[0]
                 } else if is_unsigned {
                     self.builder.ins().urem(lhs, rhs)
                 } else {
@@ -252,10 +257,23 @@ impl FunctionTranslator<'_, '_> {
                 );
                 ptr_val
             }
-            _ => unimplemented!(
-                "Binary operator {:?} not implemented in Cranelift JIT yet",
-                op
-            ),
+            BinaryOp::NullCoalesce => {
+                self.record_ice(
+                    "NullCoalesce binary operator is not implemented in Cranelift JIT yet",
+                    self.func_span(),
+                );
+                self.poison_i32()
+            }
+            _ => {
+                self.record_ice(
+                    format!(
+                        "Binary operator {:?} not implemented in Cranelift JIT yet",
+                        op
+                    ),
+                    self.func_span(),
+                );
+                self.poison_i32()
+            }
         }
     }
 }

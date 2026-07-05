@@ -787,24 +787,33 @@ fn jit_enum_cross_variant_name_no_collision() {
 
 #[test]
 fn jit_ice_indirect_call() {
-    use arandu_semantics::amir::{AmirStmt, AmirOperand, AmirConstant, InstrId};
+    use arandu_semantics::amir::{AmirConstant, AmirOperand, AmirStmt, InstrId};
     let src = "func main(): int { return 0; }";
     let (mut amir, symbols, type_info) = compile_src(src);
-    
+
     // Convert the first statement to an indirect call.
-    let id = amir.funcs[0].blocks[0].statements.iter_ids::<InstrId>().next().unwrap();
-    
+    let id = amir.funcs[0].blocks[0]
+        .statements
+        .iter_ids::<InstrId>()
+        .next()
+        .unwrap();
+
     *amir.funcs[0].stmts.get_mut(id).unwrap() = AmirStmt::Call {
         lhs: None,
         callee: AmirOperand::Constant(AmirConstant::Bool(true)),
         args: Default::default(),
     };
-    
+
     let backend = backend_for_test();
     let err = match backend.compile(&amir, &symbols, &type_info) {
         Err(e) => e,
         Ok(_) => panic!("should return ICE"),
     };
-    
-    assert!(err.message.contains("indirect function calls are not implemented"), "msg: {}", err.message);
+
+    assert!(
+        err.message
+            .contains("indirect function calls are not implemented"),
+        "msg: {}",
+        err.message
+    );
 }

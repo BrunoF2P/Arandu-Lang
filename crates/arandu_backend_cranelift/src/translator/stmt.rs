@@ -153,7 +153,7 @@ impl FunctionTranslator<'_, '_> {
                     }
                     _ => {
                         self.record_ice(
-                            "indirect function calls are not implemented yet in the cranelift backend",
+                            "indirect function calls are not implemented (and should have been rejected by the type checker)",
                             self.func_span(),
                         );
                         return;
@@ -326,6 +326,16 @@ impl FunctionTranslator<'_, '_> {
                         0,
                     );
                 }
+            }
+        }
+    }
+
+    pub(super) fn fmod_func_id(&mut self) -> Option<FuncId> {
+        match self.func_ids.get("fmod") {
+            Some(func_id) => Some(*func_id),
+            None => {
+                self.record_ice("fmod was not declared in the JIT module", self.func_span());
+                None
             }
         }
     }

@@ -564,9 +564,7 @@ impl<'a> CEmitter<'a> {
                             .provider
                             .get_enum_variants(*id)
                             .and_then(|variants| {
-                                variants
-                                    .get(*variant_tag)
-                                    .and_then(|v| v.payload_ty)
+                                variants.get(*variant_tag).and_then(|v| v.payload_ty)
                             })
                             .map(|ty_id| self.interner.resolve(ty_id))
                             .unwrap_or(&ArType::Error),
