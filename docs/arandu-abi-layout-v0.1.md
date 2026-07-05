@@ -36,8 +36,9 @@ The size and alignment of primitive types are defined below (under a target poin
 | :--- | :--- | :--- | :--- |
 | `bool`, `byte`, `char`, `i8`, `u8` | 1 | 1 | |
 | `i16`, `u16` | 2 | 2 | |
-| `i32`, `u32`, `f32`, `float` | 4 | 4 | Default floats are 32-bit |
-| `i64`, `u64`, `f64`, `int`, `uint` | 8 | 8 | Default integers are 64-bit |
+| `i32`, `u32`, `f32` | 4 | 4 | |
+| `i64`, `u64`, `f64` | 8 | 8 | Fixed-width types |
+| `int`, `uint`, `float` | $W$ | $W$ | Platform-dependent integer and float types |
 | `ptr[T]` | $W$ | $W$ | Platform-dependent pointer |
 | `any` | $W$ | $W$ | Boxed dynamic pointer |
 | `void`, `error` | 0 | 1 | ZSTs (Zero Sized Types) |

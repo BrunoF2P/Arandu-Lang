@@ -10,9 +10,12 @@ Func mutation_test() -> int
 
   bb0:
     _1 = Point { x: 10, y: 20 }
+    s0 = move _1
     s0.x = 30
     s0.y = 40
-    _3 = move _1.0
-    _5 = move _1.1
+    _2 = s0
+    _3 = _2.0
+    _4 = s0
+    _5 = _4.1
     _0 = add _3, _5
     return

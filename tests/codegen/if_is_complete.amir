@@ -25,9 +25,11 @@ Func test_tuple_pattern() -> int
 
   bb0:
     _1 = call fn@make_pair()
-    _3 = move _1.0
+    s0 = move _1
+    _2 = s0
+    _3 = _2.0
     _4 = and true, true
-    _5 = move _1.1
+    _5 = _2.1
     _6 = eq _5, 10
     _7 = and _4, _6
     branch _7 => bb1, else bb2
@@ -56,9 +58,11 @@ Func test_typetuple_pattern(res: Result) -> int
     s2: int // x
 
   bb0:
-    _3 = discriminant(_1)
+    s0 = _1
+    _2 = s0
+    _3 = discriminant(_2)
     _4 = eq _3, 0
-    _5 = payload(_1 as Ok.0)
+    _5 = payload(_2 as Ok.0)
     _6 = and _4, true
     branch _6 => bb1, else bb2
   bb1:

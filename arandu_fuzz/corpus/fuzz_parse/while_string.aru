@@ -1,6 +1,0 @@
-func main() {
-    let s = "hello";
-    while true {
-        let _ = s;
-    }
-}

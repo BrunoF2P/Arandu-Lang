@@ -16,9 +16,11 @@ Func test_payload(res: Result) -> int
     s2: int // x
 
   bb0:
-    _3 = discriminant(_1)
+    s0 = _1
+    _2 = s0
+    _3 = discriminant(_2)
     _4 = eq _3, 0
-    _5 = payload(_1 as Ok.0)
+    _5 = payload(_2 as Ok.0)
     _6 = and _4, true
     branch _6 => bb1, else bb2
   bb1:

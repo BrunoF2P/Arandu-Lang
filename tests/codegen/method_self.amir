@@ -6,7 +6,9 @@ Func User.greet(shared self: User) -> str
     s0: User // self
 
   bb0:
-    _0 = _1.0
+    s0 = _1
+    _2 = s0
+    _0 = _2.0
     return
 
 Func main() -> void
@@ -21,5 +23,9 @@ Func main() -> void
 
   bb0:
     _1 = User { name: "interpolated" }
-    _4 = call fn@User.greet(move _1, move _1)
+    s0 = move _1
+    _2 = s0
+    _3 = s0
+    _4 = call fn@User.greet(_2, move _3)
+    s1 = move _4
     return

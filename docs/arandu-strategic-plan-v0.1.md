@@ -307,7 +307,17 @@ Integração da análise de código + sessão de correção AMIR/namespace.
 
 ---
 
-## 12. Histórico
+## 13. Paridade de Execução do Backend (C / Cranelift JIT)
+
+Com a consolidação do Backend C (CEmitter) com paridade estrutural completa, registramos as decisões conscientes de cobertura de testes de execução:
+
+- **Cobertura Exaustiva**: O gerador de código C (`emit_rvalue`) e o scanner de variáveis ativas tratam todas as 16 variantes de `AmirRvalue` sem braços coringa (`_ => {}`), garantindo erro de compilação estática no compilador caso novas variantes sejam adicionadas.
+- **Variantes Faltantes de Testes de Paridade**: As variantes `Unary`, `Len`, `Alloc` (como rvalue direto) e `Borrow`/`BorrowMut` estão cobertas pelas regras estáticas de match, mas **não possuem testes dedicados de paridade de execução** na Fase 1/Fase 2 por não possuírem caminhos de emissão direta correspondentes a partir da sintaxe de superfície atual da linguagem (por exemplo, a sintaxe de referências `&x` e ownership completo está planejada para a Fase 3/Fase 4).
+- **Ação Futura**: Testes dedicados de paridade de execução para estas variantes devem ser criados assim que a respectiva sintaxe de superfície e abaixamento (lowering) forem introduzidos no compilador.
+
+---
+
+## 14. Histórico
 
 | Data | Mudança |
 |------|---------|

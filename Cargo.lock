@@ -67,9 +67,11 @@ dependencies = [
 name = "arandu_cli"
 version = "0.1.0"
 dependencies = [
+ "arandu_backend_c",
  "arandu_backend_cranelift",
  "arandu_base",
  "arandu_lexer",
+ "arandu_middle",
  "arandu_parser",
  "arandu_semantics",
  "tracing",
