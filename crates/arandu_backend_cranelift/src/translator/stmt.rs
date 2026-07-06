@@ -54,14 +54,14 @@ impl FunctionTranslator<'_, '_> {
                         );
                     }
                 } else {
-                    let expected_ty = self
-                        .current_func
-                        .locals
-                        .get(lhs.local.as_usize())
-                        .and_then(|l| match clif_type(&l.ty, self.ptr_type) {
-                            ClifType::Concrete(ty) => Some(ty),
-                            ClifType::Void => None,
-                        });
+                    let expected_ty =
+                        self.current_func
+                            .locals
+                            .get(lhs.local.as_usize())
+                            .and_then(|l| match clif_type(&l.ty, self.ptr_type) {
+                                ClifType::Concrete(ty) => Some(ty),
+                                ClifType::Void => None,
+                            });
                     let val = self.translate_operand(rhs, expected_ty);
                     self.translate_store_place(lhs, val);
                 }
