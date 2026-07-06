@@ -323,6 +323,9 @@ pub fn constraint_to_diagnostic(
                     }
                 }
 
+                // Sort candidates alphabetically to ensure deterministic suggestions (fixes golden tests on 32-bit vs 64-bit)
+                candidates.sort_by(|a, b| a.name.cmp(&b.name));
+
                 let max_distance = if field_name.len() <= 4 { 2 } else { 3 };
                 let best_match = candidates
                     .iter()

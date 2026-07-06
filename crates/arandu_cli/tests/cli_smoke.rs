@@ -128,6 +128,7 @@ fn amir_opt_flag_folds_constants_without_changing_default_command() {
 }
 
 #[test]
+#[cfg(target_pointer_width = "64")]
 fn run_returns_main_exit_code() {
     let dir = std::env::temp_dir();
     let file = dir.join("arandu_cli_run_return.aru");
@@ -147,6 +148,7 @@ fn run_returns_main_exit_code() {
 }
 
 #[test]
+#[cfg(target_pointer_width = "64")]
 fn run_signed_integer_arithmetic_exits_successfully() {
     let dir = std::env::temp_dir();
     let file = dir.join("arandu_cli_run_signed.aru");
@@ -174,6 +176,7 @@ fn run_signed_integer_arithmetic_exits_successfully() {
 }
 
 #[test]
+#[cfg(target_pointer_width = "64")]
 fn run_control_flow_returns_expected_code() {
     let dir = std::env::temp_dir();
     let file = dir.join("arandu_cli_run_control_flow.aru");
@@ -201,6 +204,7 @@ fn run_control_flow_returns_expected_code() {
 }
 
 #[test]
+#[cfg(target_pointer_width = "64")]
 fn run_with_ztime_passes_emits_perf_timings() {
     let dir = std::env::temp_dir();
     let file = dir.join("arandu_cli_run_perf.aru");

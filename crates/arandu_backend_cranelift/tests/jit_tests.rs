@@ -1,3 +1,5 @@
+#![cfg(target_pointer_width = "64")]
+
 use arandu_backend_cranelift::CraneliftBackend;
 use arandu_semantics::literal_pool::AmirLiteralEntry;
 use arandu_semantics::{DiagCode, lower_to_amir, lower_to_hir, resolve, type_check};

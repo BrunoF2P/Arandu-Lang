@@ -80,6 +80,8 @@ mod tests {
                     assert_eq!(scalar_res, neon_res, "NEON mismatch for input {:?}", input);
                 }
             }
+            
+            let _ = scalar_res; // Prevent unused warning on archs without SIMD (like ARMv7)
         }
     }
 
@@ -120,6 +122,8 @@ mod tests {
                     assert_eq!(scalar_res, neon_res, "NEON mismatch for input {:?}", input);
                 }
             }
+            
+            let _ = scalar_res; // Prevent unused warning on archs without SIMD (like ARMv7)
         }
     }
 }

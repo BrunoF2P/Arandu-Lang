@@ -1,3 +1,5 @@
+#![cfg(target_pointer_width = "64")]
+
 use arandu_backend_c::CEmitter;
 use arandu_backend_cranelift::CraneliftBackend;
 use arandu_middle::amir::AmirProgram;
