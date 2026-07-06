@@ -57,8 +57,7 @@ impl FunctionTranslator<'_, '_> {
                     let expected_ty = self
                         .current_func
                         .locals
-                        .iter()
-                        .find(|l| l.id == lhs.local)
+                        .get(lhs.local.as_usize())
                         .and_then(|l| match clif_type(&l.ty, self.ptr_type) {
                             ClifType::Concrete(ty) => Some(ty),
                             ClifType::Void => None,

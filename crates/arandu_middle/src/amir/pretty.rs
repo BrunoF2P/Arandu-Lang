@@ -48,8 +48,7 @@ impl AmirFunc {
             .map(|(i, p)| {
                 let ty = self
                     .temps
-                    .iter()
-                    .find(|t| t.id == *p)
+                    .get(p.as_usize())
                     .map_or(crate::types::ArType::Void, |t| t.ty.clone());
                 let prefix = self
                     .receiver

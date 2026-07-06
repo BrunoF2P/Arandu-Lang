@@ -67,7 +67,17 @@ pub fn validate_amir_func(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagnos
         }
     }
 
-    for local in &func.locals {
+    for (i, local) in func.locals.iter().enumerate() {
+        if local.id.as_usize() != i {
+            diags.push(Diagnostic::ice(
+                DiagCode::ICEGEN002,
+                format!(
+                    "local at index {i} has mismatched LocalId s{} (expected s{i}) (TYP-2)",
+                    local.id.as_usize()
+                ),
+                span,
+            ));
+        }
         if local.ty.is_error() {
             diags.push(Diagnostic::ice(
                 DiagCode::ICEGEN002,
@@ -80,7 +90,17 @@ pub fn validate_amir_func(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagnos
         }
     }
 
-    for temp in &func.temps {
+    for (i, temp) in func.temps.iter().enumerate() {
+        if temp.id.as_usize() != i {
+            diags.push(Diagnostic::ice(
+                DiagCode::ICEGEN002,
+                format!(
+                    "temp at index {i} has mismatched TempId _{} (expected _{i}) (TYP-2)",
+                    temp.id.as_usize()
+                ),
+                span,
+            ));
+        }
         if temp.ty.is_error() {
             diags.push(Diagnostic::ice(
                 DiagCode::ICEGEN002,

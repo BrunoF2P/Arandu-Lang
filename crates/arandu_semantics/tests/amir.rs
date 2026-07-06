@@ -483,3 +483,55 @@ fn validate_amir_rejects_poison_temp_with_icegen002() {
     assert_eq!(issues.len(), 1);
     assert_eq!(issues[0].code, DiagCode::ICEGEN002);
 }
+
+#[test]
+fn temp_ids_are_dense_and_positional() {
+    // Confirma a invariante que a otimização depende: para toda AmirFunc,
+    // func.temps[i].id == TempId::from_usize(i) para todo i,
+    // e func.locals[i].id == LocalId::from_usize(i) para todo i.
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+    let root_dir = std::path::Path::new(&manifest_dir)
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let fixtures_dir = root_dir.join("tests").join("codegen");
+
+    if !fixtures_dir.exists() {
+        return;
+    }
+
+    for entry in std::fs::read_dir(&fixtures_dir).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if path.extension().is_some_and(|ext| ext == "aru") {
+            let src = std::fs::read_to_string(&path).unwrap();
+            let program = arandu_parser::parse(&src).expect("Failed to parse");
+            let resolution = resolve(&program);
+            let mut tc = type_check(resolution, &program);
+            let hir = lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
+            let amir = lower_to_amir(&tc, &hir).expect("AMIR lowering failed");
+
+            for func in &amir.funcs {
+                for (i, temp) in func.temps.iter().enumerate() {
+                    assert_eq!(
+                        temp.id.as_usize(),
+                        i,
+                        "Temp at index {i} in function {} has mismatched TempId {:?}",
+                        tc.symbols.get(func.symbol).name,
+                        temp.id
+                    );
+                }
+                for (i, local) in func.locals.iter().enumerate() {
+                    assert_eq!(
+                        local.id.as_usize(),
+                        i,
+                        "Local at index {i} in function {} has mismatched LocalId {:?}",
+                        tc.symbols.get(func.symbol).name,
+                        local.id
+                    );
+                }
+            }
+        }
+    }
+}

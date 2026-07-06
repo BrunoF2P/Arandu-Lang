@@ -124,8 +124,7 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
     pub(crate) fn temp_span(&self, temp_id: TempId) -> Span {
         self.current_func
             .temps
-            .iter()
-            .find(|temp| temp.id == temp_id)
+            .get(temp_id.as_usize())
             .map(|temp| temp.span)
             .unwrap_or_else(|| self.func_span())
     }
@@ -133,8 +132,7 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
     pub(crate) fn local_span(&self, local_id: LocalId) -> Span {
         self.current_func
             .locals
-            .iter()
-            .find(|local| local.id == local_id)
+            .get(local_id.as_usize())
             .map(|local| local.span)
             .unwrap_or_else(|| self.func_span())
     }

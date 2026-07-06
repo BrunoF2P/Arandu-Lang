@@ -14,8 +14,7 @@ impl FunctionTranslator<'_, '_> {
         };
         self.current_func
             .temps
-            .iter()
-            .find(|temp| temp.id == temp_id)
+            .get(temp_id.as_usize())
             .map(|temp| ar_type_is_unsigned_integer(&temp.ty))
     }
 
