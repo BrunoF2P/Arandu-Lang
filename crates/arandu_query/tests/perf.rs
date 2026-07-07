@@ -48,7 +48,10 @@ fn test_salsa_phases_performance() {
     );
 
     // Assert cold compilation is reasonably fast (under 1 second for 50 modules is extremely conservative)
-    assert!(cold_duration.as_micros() < 1_000_000, "Cold compilation is too slow!");
+    assert!(
+        cold_duration.as_micros() < 1_000_000,
+        "Cold compilation is too slow!"
+    );
 
     // 2. Cached Compilation (Hot Cache - no changes)
     let start_hot = Instant::now();
