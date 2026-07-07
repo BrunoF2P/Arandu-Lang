@@ -188,6 +188,7 @@ fn main() {
                     code,
                     std::sync::Arc::new(p.clone()),
                 );
+                db.register_source_file(filepath.clone(), source_file);
                 source_files.push((source_file, filepath, source));
             }
             Err(err) => {

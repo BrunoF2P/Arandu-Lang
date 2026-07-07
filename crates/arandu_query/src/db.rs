@@ -74,6 +74,11 @@ impl DatabaseImpl {
         cache.insert(path, file);
         file
     }
+
+    pub fn register_source_file(&self, path: String, file: SourceFile) {
+        let mut cache = self.module_files.lock().unwrap();
+        cache.insert(path, file);
+    }
 }
 
 impl arandu_middle::db::SourceDatabase for DatabaseImpl {
@@ -146,10 +151,22 @@ impl arandu_middle::db::SourceDatabase for DatabaseImpl {
 
 #[salsa::db]
 impl ArandCompilerDb for DatabaseImpl {
-    fn source_text(&self, _file: FileId) -> Arc<str> {
+    fn source_text(&self, file: FileId) -> Arc<str> {
+        let cache = self.module_files.lock().unwrap();
+        for source_file in cache.values() {
+            if source_file.file_id(self.as_source_db()) == file {
+                return source_file.text(self.as_source_db());
+            }
+        }
         Arc::from("")
     }
-    fn file_path(&self, _file: FileId) -> Arc<PathBuf> {
+    fn file_path(&self, file: FileId) -> Arc<PathBuf> {
+        let cache = self.module_files.lock().unwrap();
+        for source_file in cache.values() {
+            if source_file.file_id(self.as_source_db()) == file {
+                return source_file.path(self.as_source_db());
+            }
+        }
         Arc::new(PathBuf::new())
     }
     fn as_source_db(&self) -> &dyn arandu_middle::db::SourceDatabase {
