@@ -141,10 +141,12 @@ pub fn module_signatures(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<T
 
     let res = match &*program_res {
         Ok(program) => {
+            // Destructure once — avoids 3 separate full clones of ResolutionResult.
+            let ResolutionResult { symbols, resolved, diagnostics, .. } = (*resolved_arc).clone();
             let mut checker = arandu_semantics::TypeChecker::new(
-                (*resolved_arc).clone().symbols,
-                (*resolved_arc).clone().resolved,
-                (*resolved_arc).clone().diagnostics,
+                symbols,
+                resolved,
+                diagnostics,
                 &program.pool,
             );
 
@@ -224,7 +226,8 @@ pub fn type_check(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<TypeChec
     );
 
     let res = match &*program_res {
-        Ok(program) => arandu_semantics::check_bodies_only((*signatures_arc).clone(), program),
+        // Pass by reference — check_bodies_only now takes &TypeCheckResult.
+        Ok(program) => arandu_semantics::check_bodies_only(&signatures_arc, program),
         Err(_) => (*signatures_arc).clone(),
     };
     println!(
@@ -250,6 +253,8 @@ pub fn lower_amir(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<AmirProg
     let program_res = parse(db, file);
     let type_check_result_arc = type_check(db, file);
 
+    // Avoid cloning the full TypeCheckResult — lower_to_hir takes &mut TypeCheckResult.
+    // We clone only if we actually need a mutable owned copy for mutation below.
     let mut type_check_result = (*type_check_result_arc).clone();
 
     let hir = match &*program_res {

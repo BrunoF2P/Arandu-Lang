@@ -60,16 +60,19 @@ pub fn check_signatures_only(resolution: ResolutionResult, program: &Program) ->
 }
 
 /// Runs ONLY the bodies check phase, given a TypeCheckResult from check_signatures_only.
+///
+/// Takes `signatures` by reference to avoid a full clone at the call site — only
+/// the three fields consumed by `TypeChecker` are cloned individually.
 #[must_use]
 #[tracing::instrument(level = "trace", target = "arandu_typeck", skip(signatures, program))]
-pub fn check_bodies_only(signatures: TypeCheckResult, program: &Program) -> TypeCheckResult {
+pub fn check_bodies_only(signatures: &TypeCheckResult, program: &Program) -> TypeCheckResult {
     let mut checker = TypeChecker::new(
-        signatures.symbols,
-        signatures.resolved,
-        signatures.diagnostics,
+        signatures.symbols.clone(),
+        signatures.resolved.clone(),
+        signatures.diagnostics.clone(),
         &program.pool,
     );
-    checker.type_info = signatures.type_info;
+    checker.type_info = signatures.type_info.clone();
 
     println!(
         "check_bodies_only diagnostics BEFORE check_bodies: {:?}",
