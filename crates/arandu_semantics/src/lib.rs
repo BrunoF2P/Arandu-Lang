@@ -24,13 +24,12 @@ pub use arandu_middle::{
 
 pub use arandu_middle::ops::{BinaryOp, SetOp, UnaryOp};
 
-pub mod parallel;
 pub mod passes;
 
 pub use arandu_mir::{check_moves, lower_to_amir, optimize_amir};
-pub use arandu_resolve::{resolve, resolve_with_cache};
+pub use arandu_resolve::{resolve_for_test, resolve_imports_and_bodies, resolve_local};
 pub use arandu_typeck::{
-    SessionMode, TypeCheckResult, TypeInfo, type_check, type_check_with_session,
+    TypeCheckResult, TypeChecker, TypeInfo, check_bodies, check_bodies_only, check_signatures,
+    check_signatures_only, type_check,
 };
-pub use parallel::compile_parallel;
 pub use passes::lower_hir::lower_to_hir;

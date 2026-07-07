@@ -1075,7 +1075,7 @@ mod tests {
     #[test]
     fn pretty_print_empty_program() {
         let pool = HirPool::new();
-        let symbols = SymbolTable::new();
+        let symbols = SymbolTable::new(0);
         let program = HirProgram {
             span: Span::new(0, 0, 0),
             module: None,
@@ -1089,7 +1089,7 @@ mod tests {
 
     #[test]
     fn pretty_print_func_with_body() {
-        let mut symbols = SymbolTable::new();
+        let mut symbols = SymbolTable::new(0);
         let main_sym = symbols
             .define(ScopeId(0), "main", SymbolKind::Func, Span::new(0, 0, 0))
             .unwrap();
@@ -1137,7 +1137,7 @@ mod tests {
     #[test]
     fn pretty_print_with_module() {
         let pool = HirPool::new();
-        let symbols = SymbolTable::new();
+        let symbols = SymbolTable::new(0);
         let program = HirProgram {
             span: Span::new(0, 0, 0),
             module: Some("mymod".into()),
@@ -1151,7 +1151,7 @@ mod tests {
 
     #[test]
     fn pretty_print_multiple_decls() {
-        let mut symbols = SymbolTable::new();
+        let mut symbols = SymbolTable::new(0);
         let _a = symbols
             .define(ScopeId(0), "A", SymbolKind::Const, Span::new(0, 0, 0))
             .unwrap();

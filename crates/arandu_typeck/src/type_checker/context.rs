@@ -51,7 +51,7 @@ impl TyCtx {
 
     /// Record that `symbol` has type `ty`.
     pub fn bind(&mut self, symbol: SymbolId, ty: TypeId) {
-        let idx = symbol.0 as usize;
+        let idx = symbol.local_id.0 as usize;
         if idx >= self.bindings.len() {
             self.bindings.resize(idx + 1, None);
         }
@@ -63,7 +63,11 @@ impl TyCtx {
     /// Reports to the global perf counters when `-Zprofile-queries` is active.
     #[must_use]
     pub fn lookup(&self, symbol: SymbolId) -> Option<TypeId> {
-        let result = self.bindings.get(symbol.0 as usize).copied().flatten();
+        let result = self
+            .bindings
+            .get(symbol.local_id.0 as usize)
+            .copied()
+            .flatten();
         if result.is_some() {
             arandu_base::perf::track_query_hit();
         } else {

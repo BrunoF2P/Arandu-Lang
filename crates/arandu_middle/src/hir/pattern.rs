@@ -16,7 +16,7 @@ mod tests {
         let p = HirPattern::Bind {
             span: S,
             name: "x".into(),
-            symbol: SymbolId(1),
+            symbol: SymbolId::new(0, 1),
         };
         assert_eq!(p.span(), S);
     }
@@ -34,9 +34,9 @@ mod tests {
     fn enum_span() {
         let p = HirPattern::Enum {
             span: S,
-            type_symbol: SymbolId(0),
+            type_symbol: SymbolId::new(0, 0),
             variant: "V".into(),
-            variant_symbol: Some(SymbolId(1)),
+            variant_symbol: Some(SymbolId::new(0, 1)),
             payload: super::super::pool::IndexRange::empty(),
         };
         assert_eq!(p.span(), S);
@@ -46,7 +46,7 @@ mod tests {
     fn struct_span() {
         let p = HirPattern::Struct {
             span: S,
-            struct_symbol: SymbolId(0),
+            struct_symbol: SymbolId::new(0, 0),
             fields: super::super::pool::IndexRange::empty(),
         };
         assert_eq!(p.span(), S);

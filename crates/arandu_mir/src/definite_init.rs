@@ -267,7 +267,7 @@ mod tests {
     use smallvec::smallvec;
 
     fn make_symbol_table() -> SymbolTable {
-        SymbolTable::new()
+        SymbolTable::new(0)
     }
 
     fn make_local(id: usize, sym: Option<SymbolId>) -> AmirLocal {
@@ -324,7 +324,7 @@ mod tests {
     ) -> AmirFunc {
         let cfg = crate::cfg::compute_cfg_edges(&blocks);
         AmirFunc {
-            symbol: SymbolId(0),
+            symbol: SymbolId::new(0, 0),
             return_type: ArType::Void,
             receiver: None,
             params: vec![],

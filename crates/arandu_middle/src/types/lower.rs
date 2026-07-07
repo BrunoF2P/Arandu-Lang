@@ -204,7 +204,7 @@ mod tests {
     }
 
     fn default_symbols() -> SymbolTable {
-        SymbolTable::new()
+        SymbolTable::new(0)
     }
 
     fn default_resolved() -> ResolvedNames {
@@ -441,7 +441,7 @@ mod tests {
     #[test]
     fn lowers_named_type_via_resolved_refs() {
         let mut pool = new_pool();
-        let mut symbols = SymbolTable::new();
+        let mut symbols = SymbolTable::new(0);
         let mut resolved = ResolvedNames::default();
 
         let span = Span::new(0, 4, 0);

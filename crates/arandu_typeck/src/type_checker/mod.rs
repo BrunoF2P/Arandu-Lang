@@ -19,7 +19,7 @@ use types::{ArType, TypeId, TypeInterner};
 
 // ── Results ─────────────────────────────────────────────────────────
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TypeCheckResult {
     pub symbols: SymbolTable,
     pub resolved: ResolvedNames,
@@ -27,82 +27,60 @@ pub struct TypeCheckResult {
     pub diagnostics: Vec<Diagnostic>,
 }
 
-// ── Session mode ────────────────────────────────────────────────────
-
-/// Controls whether `check_program` runs as the top-level shared compilation
-/// unit (user entry file) or as an isolated stdlib module.
-///
-/// - `Shared` — the caller holds a persistent `CompileSession`; prelude
-///   signatures are loaded from disk and merged into the global table.
-/// - `Isolated` — a temporary session created solely for one stdlib module;
-///   prelude loading is skipped (already handled by the outer `Shared` call).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum SessionMode {
-    Shared,
-    Isolated,
-}
-
 // ── Entry point ─────────────────────────────────────────────────────
 
-use arandu_middle::CompileSession;
-
-/// Shared implementation used by both entry points below.
+/// Standalone type-check for tests or isolated modules.
+/// Runs both signature and body checks.
 #[must_use]
-fn type_check_with_mode(
-    resolution: ResolutionResult,
-    program: &Program,
-    session: &mut CompileSession,
-    mode: SessionMode,
-) -> TypeCheckResult {
-    let mut checker = TypeChecker::new_with_interner(
+#[tracing::instrument(level = "trace", target = "arandu_typeck", skip(resolution, program))]
+pub fn type_check(resolution: ResolutionResult, program: &Program) -> TypeCheckResult {
+    let mut checker = TypeChecker::new(
         resolution.symbols,
         resolution.resolved,
         resolution.diagnostics,
         &program.pool,
-        std::mem::take(&mut session.type_interner),
     );
-    checker.session_mode = mode;
-    check::check_program(
-        &mut checker,
-        program,
-        &mut session.parse_cache,
-        &mut session.stdlib_cache,
-    );
-    let res = checker.finish();
-    if mode == SessionMode::Shared {
-        session.type_interner = res.type_info.type_interner.clone();
-    }
-    res
+    check::check_signatures(&mut checker, program);
+    check::check_bodies(&mut checker, program);
+    checker.finish()
 }
 
-/// Type-check within an existing (shared) compilation session.
-/// The `session.type_interner` is preserved so subsequent `type_check_with_session`
-/// calls see previously interned types.
-#[must_use]
-#[tracing::instrument(
-    level = "trace",
-    target = "arandu_typeck",
-    skip(session, resolution, program)
-)]
-pub fn type_check_with_session(
-    resolution: ResolutionResult,
-    program: &Program,
-    session: &mut CompileSession,
-) -> TypeCheckResult {
-    type_check_with_mode(resolution, program, session, SessionMode::Shared)
-}
-
-/// Standalone type-check (for stdlib internal .aru files).
-/// Creates a throw-away session; no prelude loading (handled by outer).
+/// Runs ONLY the signature check phase, producing an initial TypeCheckResult.
 #[must_use]
 #[tracing::instrument(level = "trace", target = "arandu_typeck", skip(resolution, program))]
-pub fn type_check(resolution: ResolutionResult, program: &Program) -> TypeCheckResult {
-    type_check_with_mode(
-        resolution,
-        program,
-        &mut CompileSession::new(),
-        SessionMode::Isolated,
-    )
+pub fn check_signatures_only(resolution: ResolutionResult, program: &Program) -> TypeCheckResult {
+    let mut checker = TypeChecker::new(
+        resolution.symbols,
+        resolution.resolved,
+        resolution.diagnostics,
+        &program.pool,
+    );
+    check::check_signatures(&mut checker, program);
+    checker.finish()
+}
+
+/// Runs ONLY the bodies check phase, given a TypeCheckResult from check_signatures_only.
+#[must_use]
+#[tracing::instrument(level = "trace", target = "arandu_typeck", skip(signatures, program))]
+pub fn check_bodies_only(signatures: TypeCheckResult, program: &Program) -> TypeCheckResult {
+    let mut checker = TypeChecker::new(
+        signatures.symbols,
+        signatures.resolved,
+        signatures.diagnostics,
+        &program.pool,
+    );
+    checker.type_info = signatures.type_info;
+
+    println!(
+        "check_bodies_only diagnostics BEFORE check_bodies: {:?}",
+        checker.diagnostics
+    );
+    check::check_bodies(&mut checker, program);
+    println!(
+        "check_bodies_only diagnostics AFTER check_bodies: {:?}",
+        checker.diagnostics
+    );
+    checker.finish()
 }
 
 // ── TypeChecker state ───────────────────────────────────────────────
@@ -116,10 +94,6 @@ pub struct TypeChecker<'a> {
     /// Scope for lowering type expressions inside the current function body.
     type_scope_id: Option<ScopeId>,
     pub pool: &'a AstPool,
-    /// Whether this checker runs as a top-level shared unit (user file) or an
-    /// isolated stdlib module. Controls prelude-loading behaviour in
-    /// `register_prelude`.
-    pub session_mode: SessionMode,
 }
 
 impl<'a> TypeChecker<'a> {
@@ -149,7 +123,6 @@ impl<'a> TypeChecker<'a> {
             diagnostics,
             type_scope_id: None,
             pool,
-            session_mode: SessionMode::Isolated,
         }
     }
 
@@ -373,7 +346,7 @@ mod tests {
     }
 
     fn empty_symbols() -> SymbolTable {
-        SymbolTable::new()
+        SymbolTable::new(0)
     }
 
     fn dummy_span() -> Span {
@@ -385,7 +358,7 @@ mod tests {
     #[test]
     fn ty_ctx_bind_and_lookup() {
         let mut ctx = TyCtx::new();
-        let sym = SymbolId(0);
+        let sym = SymbolId::new(0, 0);
         let mut i = new_interner();
         let tid = i.intern(ArType::Primitive(Primitive::Int));
         ctx.bind(sym, tid);
@@ -395,7 +368,7 @@ mod tests {
     #[test]
     fn ty_ctx_lookup_missing_returns_none() {
         let ctx = TyCtx::new();
-        assert_eq!(ctx.lookup(SymbolId(999)), None);
+        assert_eq!(ctx.lookup(SymbolId::new(0, 999)), None);
     }
 
     #[test]
@@ -439,12 +412,12 @@ mod tests {
     #[test]
     fn ty_ctx_bind_resizes_vec() {
         let mut ctx = TyCtx::new();
-        let sym = SymbolId(5);
+        let sym = SymbolId::new(0, 5);
         let mut i = new_interner();
         let tid = i.intern(ArType::Primitive(Primitive::Int));
         ctx.bind(sym, tid);
         assert_eq!(ctx.lookup(sym), Some(tid));
-        assert_eq!(ctx.lookup(SymbolId(4)), None);
+        assert_eq!(ctx.lookup(SymbolId::new(0, 4)), None);
     }
 
     // ── TypeInfo ──
@@ -474,7 +447,7 @@ mod tests {
         let mut i = new_interner();
         let tid = i.intern(ArType::Primitive(Primitive::Bool));
         let mut info = TypeInfo::with_interner(i);
-        let sym = SymbolId(1);
+        let sym = SymbolId::new(0, 1);
         info.record_decl_type(sym, tid);
         assert_eq!(
             info.decl_type(sym),
@@ -486,16 +459,16 @@ mod tests {
     #[test]
     fn type_info_missing_decl_returns_none() {
         let info = TypeInfo::new();
-        assert_eq!(info.decl_type(SymbolId(0)), None);
+        assert_eq!(info.decl_type(SymbolId::new(0, 0)), None);
     }
 
     #[test]
     fn type_info_enum_variant_tag() {
         let mut info = TypeInfo::new();
-        info.record_enum_variant_tag(SymbolId(0), 0);
-        info.record_enum_variant_tag(SymbolId(1), 1);
-        assert_eq!(info.enum_variant_tags.get(&SymbolId(0)), Some(&0));
-        assert_eq!(info.enum_variant_tags.get(&SymbolId(1)), Some(&1));
+        info.record_enum_variant_tag(SymbolId::new(0, 0), 0);
+        info.record_enum_variant_tag(SymbolId::new(0, 1), 1);
+        assert_eq!(info.enum_variant_tags.get(&SymbolId::new(0, 0)), Some(&0));
+        assert_eq!(info.enum_variant_tags.get(&SymbolId::new(0, 1)), Some(&1));
     }
 
     // ── translate_type ──
@@ -512,11 +485,14 @@ mod tests {
     fn translate_named_with_args() {
         let mut from = new_interner();
         let int_id = from.intern(ArType::Primitive(Primitive::Int));
-        let named = ArType::Named(SymbolId(0), vec![int_id]);
+        let named = ArType::Named(SymbolId::new(0, 0), vec![int_id]);
         let mut to = new_interner();
         let result = translate_type(&named, &from, &mut to);
         let expected_int = to.intern(ArType::Primitive(Primitive::Int));
-        assert_eq!(result, ArType::Named(SymbolId(0), vec![expected_int]));
+        assert_eq!(
+            result,
+            ArType::Named(SymbolId::new(0, 0), vec![expected_int])
+        );
     }
 
     #[test]
@@ -590,10 +566,10 @@ mod tests {
         let int_id = i.intern(ArType::Primitive(Primitive::Int));
         let mut from_info = TypeInfo::with_interner(i);
         let mut to_info = TypeInfo::new();
-        from_info.decl_types.insert(SymbolId(1), int_id);
+        from_info.decl_types.insert(SymbolId::new(0, 1), int_id);
         to_info.merge_from(&from_info);
         assert_eq!(
-            to_info.decl_type(SymbolId(1)),
+            to_info.decl_type(SymbolId::new(0, 1)),
             Some(&ArType::Primitive(Primitive::Int))
         );
     }
@@ -602,14 +578,14 @@ mod tests {
     fn merge_from_struct_fields() {
         let mut from_info = TypeInfo::new();
         from_info.struct_fields.insert(
-            SymbolId(0),
+            SymbolId::new(0, 0),
             [("x".to_string(), ArType::Primitive(Primitive::Int))]
                 .into_iter()
                 .collect(),
         );
         let mut to_info = TypeInfo::new();
         to_info.merge_from(&from_info);
-        let fields = to_info.struct_fields.get(&SymbolId(0));
+        let fields = to_info.struct_fields.get(&SymbolId::new(0, 0));
         assert!(fields.is_some());
         assert_eq!(
             fields.unwrap().get("x"),
@@ -620,14 +596,15 @@ mod tests {
     #[test]
     fn merge_from_enum_variants() {
         let mut from_info = TypeInfo::new();
-        from_info
-            .enum_variants
-            .insert(SymbolId(1), (SymbolId(0), EnumPayloadShape::Unit));
+        from_info.enum_variants.insert(
+            SymbolId::new(0, 1),
+            (SymbolId::new(0, 0), EnumPayloadShape::Unit),
+        );
         let mut to_info = TypeInfo::new();
         to_info.merge_from(&from_info);
         assert_eq!(
-            to_info.enum_variants.get(&SymbolId(1)),
-            Some(&(SymbolId(0), EnumPayloadShape::Unit))
+            to_info.enum_variants.get(&SymbolId::new(0, 1)),
+            Some(&(SymbolId::new(0, 0), EnumPayloadShape::Unit))
         );
     }
 
@@ -635,40 +612,47 @@ mod tests {
     fn merge_from_enum_payload_shape_tuple() {
         let mut from_info = TypeInfo::new();
         from_info.enum_variants.insert(
-            SymbolId(2),
+            SymbolId::new(0, 2),
             (
-                SymbolId(0),
+                SymbolId::new(0, 0),
                 EnumPayloadShape::Tuple(vec![ArType::Primitive(Primitive::Int)]),
             ),
         );
         let mut to_info = TypeInfo::new();
         to_info.merge_from(&from_info);
-        let variant = to_info.enum_variants.get(&SymbolId(2));
+        let variant = to_info.enum_variants.get(&SymbolId::new(0, 2));
         assert!(matches!(variant, Some((_, EnumPayloadShape::Tuple(_)))));
     }
 
     #[test]
     fn merge_from_enum_variant_tags() {
         let mut from_info = TypeInfo::new();
-        from_info.enum_variant_tags.insert(SymbolId(0), 0);
-        from_info.enum_variant_tags.insert(SymbolId(1), 1);
+        from_info.enum_variant_tags.insert(SymbolId::new(0, 0), 0);
+        from_info.enum_variant_tags.insert(SymbolId::new(0, 1), 1);
         let mut to_info = TypeInfo::new();
         to_info.merge_from(&from_info);
-        assert_eq!(to_info.enum_variant_tags.get(&SymbolId(0)), Some(&0));
-        assert_eq!(to_info.enum_variant_tags.get(&SymbolId(1)), Some(&1));
+        assert_eq!(
+            to_info.enum_variant_tags.get(&SymbolId::new(0, 0)),
+            Some(&0)
+        );
+        assert_eq!(
+            to_info.enum_variant_tags.get(&SymbolId::new(0, 1)),
+            Some(&1)
+        );
     }
 
     #[test]
     fn merge_from_generic_params() {
         let mut from_info = TypeInfo::new();
-        from_info
-            .generic_params
-            .insert(SymbolId(0), vec![SymbolId(1), SymbolId(2)]);
+        from_info.generic_params.insert(
+            SymbolId::new(0, 0),
+            vec![SymbolId::new(0, 1), SymbolId::new(0, 2)],
+        );
         let mut to_info = TypeInfo::new();
         to_info.merge_from(&from_info);
         assert_eq!(
-            to_info.generic_params.get(&SymbolId(0)),
-            Some(&vec![SymbolId(1), SymbolId(2)])
+            to_info.generic_params.get(&SymbolId::new(0, 0)),
+            Some(&vec![SymbolId::new(0, 1), SymbolId::new(0, 2)])
         );
     }
 
@@ -677,12 +661,12 @@ mod tests {
         let mut from_info = TypeInfo::new();
         from_info
             .param_constraints
-            .insert(SymbolId(1), vec![SymbolId(2)]);
+            .insert(SymbolId::new(0, 1), vec![SymbolId::new(0, 2)]);
         let mut to_info = TypeInfo::new();
         to_info.merge_from(&from_info);
         assert_eq!(
-            to_info.param_constraints.get(&SymbolId(1)),
-            Some(&vec![SymbolId(2)])
+            to_info.param_constraints.get(&SymbolId::new(0, 1)),
+            Some(&vec![SymbolId::new(0, 2)])
         );
     }
 
@@ -690,14 +674,14 @@ mod tests {
     fn merge_from_interfaces() {
         let mut from_info = TypeInfo::new();
         from_info.interfaces.insert(
-            SymbolId(0),
+            SymbolId::new(0, 0),
             InterfaceInfo {
                 methods: Vec::new(),
             },
         );
         let mut to_info = TypeInfo::new();
         to_info.merge_from(&from_info);
-        assert!(to_info.interfaces.contains_key(&SymbolId(0)));
+        assert!(to_info.interfaces.contains_key(&SymbolId::new(0, 0)));
     }
 
     #[test]
@@ -957,7 +941,7 @@ mod tests {
 
     #[test]
     fn constraint_undefined_field() {
-        let mut symbols = SymbolTable::new();
+        let mut symbols = SymbolTable::new(0);
         let sym = symbols
             .define(ScopeId(0), "MyStruct", SymbolKind::Struct, dummy_span())
             .unwrap();

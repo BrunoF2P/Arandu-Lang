@@ -51,7 +51,7 @@ mod tests {
     fn alloc_and_get_decl() {
         let mut pool = HirPool::new();
         let decl = HirDecl::Const(HirConst {
-            symbol: SymbolId(0),
+            symbol: SymbolId::new(0, 0),
             ty: INT.clone(),
             value: HirExprId::from_usize(0),
             span: S,
@@ -82,7 +82,7 @@ mod tests {
     fn alloc_param_list() {
         let mut pool = HirPool::new();
         let params = vec![crate::hir::HirParam {
-            symbol: SymbolId(0),
+            symbol: SymbolId::new(0, 0),
             ty: INT.clone(),
             span: S,
             is_receiver: false,
@@ -96,7 +96,7 @@ mod tests {
     fn alloc_struct_field_list() {
         let mut pool = HirPool::new();
         let fields = vec![crate::hir::HirStructField {
-            symbol: SymbolId(1),
+            symbol: SymbolId::new(0, 1),
             ty: FLOAT.clone(),
             span: S,
         }];
@@ -108,13 +108,13 @@ mod tests {
     fn alloc_binding_list_and_place_list() {
         let mut pool = HirPool::new();
         let b_range = pool.alloc_binding_list(&[crate::hir::HirBindingItem {
-            symbol: SymbolId(2),
+            symbol: SymbolId::new(0, 2),
             ty: INT.clone(),
             span: S,
         }]);
         assert_eq!(pool.bindings_list(b_range).len(), 1);
         let p_range = pool.alloc_place_list(&[crate::hir::HirPlace {
-            root_symbol: SymbolId(3),
+            root_symbol: SymbolId::new(0, 3),
             suffixes: smallvec::SmallVec::new(),
             ty: INT.clone(),
             span: S,

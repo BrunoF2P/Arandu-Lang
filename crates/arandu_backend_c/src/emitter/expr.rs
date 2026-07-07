@@ -99,7 +99,7 @@ impl<'a> CEmitter<'a> {
                 };
                 let enum_id = match enum_ty {
                     ArType::Named(id, _) => *id,
-                    _ => arandu_middle::SymbolId(0),
+                    _ => arandu_middle::SymbolId::DUMMY,
                 };
 
                 let mut payload_offset = 0;

@@ -20,7 +20,7 @@ mod tests {
         let local = AmirLocal {
             id: LocalId::from_usize(0),
             ty: ArType::Primitive(Primitive::Int),
-            symbol: Some(SymbolId(1)),
+            symbol: Some(SymbolId::new(0, 1)),
             span: Span::new(0, 0, 0),
             use_span: None,
         };

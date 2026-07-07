@@ -5,24 +5,24 @@ mod tests {
 
     #[test]
     fn new_table_has_global_scope() {
-        let table = SymbolTable::new();
+        let table = SymbolTable::new(0);
         assert_eq!(table.global_scope(), ScopeId(0));
     }
 
     #[test]
     fn define_and_get_symbol() {
-        let mut table = SymbolTable::new();
+        let mut table = SymbolTable::new(0);
         let id = table
             .define(ScopeId(0), "foo", SymbolKind::Func, S)
             .unwrap();
-        assert_eq!(id, SymbolId(0));
+        assert_eq!(id, SymbolId::new(0, 0));
         assert_eq!(table.get(id).name, "foo");
         assert_eq!(table.get(id).kind, SymbolKind::Func);
     }
 
     #[test]
     fn define_duplicate_in_same_scope_fails() {
-        let mut table = SymbolTable::new();
+        let mut table = SymbolTable::new(0);
         table
             .define(ScopeId(0), "dup", SymbolKind::Const, S)
             .unwrap();
@@ -32,7 +32,7 @@ mod tests {
 
     #[test]
     fn lookup_any_walks_scope_chain() {
-        let mut table = SymbolTable::new();
+        let mut table = SymbolTable::new(0);
         let outer = ScopeId(0);
         let inner = table.new_scope(outer);
         table.define(outer, "a", SymbolKind::Const, S).unwrap();
@@ -41,13 +41,13 @@ mod tests {
 
     #[test]
     fn lookup_any_not_found() {
-        let table = SymbolTable::new();
+        let table = SymbolTable::new(0);
         assert!(table.lookup_any(ScopeId(0), "nonexistent").is_none());
     }
 
     #[test]
     fn lookup_value_skips_type_symbols() {
-        let mut table = SymbolTable::new();
+        let mut table = SymbolTable::new(0);
         table
             .define(ScopeId(0), "MyType", SymbolKind::Struct, S)
             .unwrap();
@@ -57,7 +57,7 @@ mod tests {
 
     #[test]
     fn new_scope_increases_scope_count() {
-        let mut table = SymbolTable::new();
+        let mut table = SymbolTable::new(0);
         assert_eq!(table.scopes.len(), 1);
         let child = table.new_scope(ScopeId(0));
         assert_eq!(child, ScopeId(1));
@@ -66,7 +66,7 @@ mod tests {
 
     #[test]
     fn module_members_basic() {
-        let mut table = SymbolTable::new();
+        let mut table = SymbolTable::new(0);
         let id = table.define_module_member("mod1", "foo", S).unwrap();
         assert_eq!(table.lookup_module_member("mod1", "foo"), Some(id));
         assert_eq!(table.lookup_module_member("mod1", "bar"), None);
@@ -74,7 +74,7 @@ mod tests {
 
     #[test]
     fn associated_members_basic() {
-        let mut table = SymbolTable::new();
+        let mut table = SymbolTable::new(0);
         let id = table
             .define_associated_member("MyStruct", "method", S)
             .unwrap();
@@ -86,7 +86,7 @@ mod tests {
 
     #[test]
     fn value_candidates_filters_type() {
-        let mut table = SymbolTable::new();
+        let mut table = SymbolTable::new(0);
         table
             .define(ScopeId(0), "fn1", SymbolKind::Func, S)
             .unwrap();
@@ -100,7 +100,7 @@ mod tests {
 
     #[test]
     fn type_candidates_filters_value() {
-        let mut table = SymbolTable::new();
+        let mut table = SymbolTable::new(0);
         table
             .define(ScopeId(0), "fn1", SymbolKind::Func, S)
             .unwrap();
@@ -114,8 +114,8 @@ mod tests {
 
     #[test]
     fn merge_from_basic() {
-        let mut table1 = SymbolTable::new();
-        let mut table2 = SymbolTable::new();
+        let mut table1 = SymbolTable::new(0);
+        let mut table2 = SymbolTable::new(0);
         let _id = table2
             .define(ScopeId(0), "other", SymbolKind::Const, S)
             .unwrap();
@@ -127,7 +127,7 @@ mod tests {
 
     #[test]
     fn iter_includes_all_symbols() {
-        let mut table = SymbolTable::new();
+        let mut table = SymbolTable::new(0);
         table.define(ScopeId(0), "a", SymbolKind::Func, S).unwrap();
         table.define(ScopeId(0), "b", SymbolKind::Const, S).unwrap();
         let names: Vec<&str> = table.iter().map(|s| s.name.as_str()).collect();
@@ -151,12 +151,32 @@ use rustc_hash::FxHashMap;
 use arandu_lexer::Span;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct SymbolId(pub u32);
+pub struct LocalSymbolId(pub u32);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SymbolId {
+    pub file_id: crate::db::FileId,
+    pub local_id: LocalSymbolId,
+}
+
+impl SymbolId {
+    pub const DUMMY: Self = Self {
+        file_id: 0,
+        local_id: LocalSymbolId(u32::MAX),
+    };
+
+    pub fn new(file_id: crate::db::FileId, local_id: u32) -> Self {
+        Self {
+            file_id,
+            local_id: LocalSymbolId(local_id),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ScopeId(pub u32);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SymbolKind {
     Module,
     ImportValue,
@@ -223,9 +243,11 @@ pub struct Scope {
 
 #[derive(Debug, Clone)]
 pub struct SymbolTable {
+    pub file_id: crate::db::FileId,
     scopes: Vec<Scope>,
     symbols: Vec<Symbol>,
-    module_members: FxHashMap<String, FxHashMap<String, SymbolId>>,
+    pub imported_symbols: FxHashMap<SymbolId, Symbol>,
+    pub module_members: FxHashMap<String, FxHashMap<String, SymbolId>>,
     pub associated_members: FxHashMap<String, FxHashMap<String, SymbolId>>,
     global_scope_id: ScopeId,
     pub builtin_alloc: Option<SymbolId>,
@@ -234,19 +256,21 @@ pub struct SymbolTable {
 
 impl Default for SymbolTable {
     fn default() -> Self {
-        Self::new()
+        Self::new(0)
     }
 }
 
 impl SymbolTable {
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(file_id: crate::db::FileId) -> Self {
         Self {
+            file_id,
             scopes: vec![Scope {
                 parent: None,
                 symbols: Vec::new(),
             }],
             symbols: Vec::new(),
+            imported_symbols: FxHashMap::default(),
             module_members: FxHashMap::default(),
             associated_members: FxHashMap::default(),
             global_scope_id: ScopeId(0),
@@ -271,8 +295,12 @@ impl SymbolTable {
             }
         };
 
-        let map_symbol =
-            |old_symbol: SymbolId| -> SymbolId { SymbolId(old_symbol.0 + self_symbols_len) };
+        let map_symbol = |old_symbol: SymbolId| -> SymbolId {
+            SymbolId {
+                file_id: self.file_id,
+                local_id: LocalSymbolId(old_symbol.local_id.0 + self_symbols_len),
+            }
+        };
 
         // 1. Merge other's global scope symbols into self's global scope symbols
         for old_symbol_id in &other.scopes[other_global.0 as usize].symbols {
@@ -340,11 +368,11 @@ impl SymbolTable {
         for symbol in other.symbols.iter().skip(base_count) {
             // Sanity: the ID must match the current length.
             assert_eq!(
-                symbol.id.0 as usize,
+                symbol.id.local_id.0 as usize,
                 self.symbols.len(),
                 "symbol ID mismatch during extend: expected {} got {}",
                 self.symbols.len(),
-                symbol.id.0
+                symbol.id.local_id.0
             );
             // Only add to the symbols vector for get(id) access.
             // Do NOT add to any scope to avoid polluting name lookup.
@@ -389,7 +417,12 @@ impl SymbolTable {
             return Err(existing);
         }
 
-        let id = SymbolId(u32::try_from(self.symbols.len()).expect("symbol count overflow"));
+        let id = SymbolId {
+            file_id: self.file_id,
+            local_id: LocalSymbolId(
+                u32::try_from(self.symbols.len()).expect("symbol count overflow"),
+            ),
+        };
         self.symbols.push(Symbol {
             id,
             name: name.to_string(),
@@ -401,13 +434,43 @@ impl SymbolTable {
         Ok(id)
     }
 
+    /// Inserts an imported symbol into the global scope.
+    ///
+    /// # Errors
+    /// Returns `Err(existing)` if a different symbol with the same name already exists in the global scope.
+    pub fn insert_imported(&mut self, symbol: Symbol) -> Result<(), SymbolId> {
+        if let Some(existing) = self.find_in_scope(self.global_scope_id, &symbol.name) {
+            if existing == symbol.id {
+                return Ok(()); // exact same symbol already imported
+            }
+            return Err(existing);
+        }
+
+        let id = symbol.id;
+        self.imported_symbols.insert(id, symbol);
+        self.scope_mut(self.global_scope_id).symbols.push(id);
+        Ok(())
+    }
+
+    /// Registers a symbol from another file so it can be looked up by ID,
+    /// but DOES NOT put it into the global scope.
+    pub fn register_imported_symbol(&mut self, symbol: Symbol) {
+        self.imported_symbols.insert(symbol.id, symbol);
+    }
+
     #[must_use]
     pub fn get(&self, id: SymbolId) -> &Symbol {
-        &self.symbols[id.0 as usize]
+        if id.file_id == self.file_id {
+            &self.symbols[id.local_id.0 as usize]
+        } else {
+            self.imported_symbols
+                .get(&id)
+                .expect("imported symbol not found")
+        }
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Symbol> {
-        self.symbols.iter()
+        self.symbols.iter().chain(self.imported_symbols.values())
     }
 
     #[must_use]
@@ -547,7 +610,8 @@ impl SymbolTable {
         out
     }
 
-    fn find_in_scope(&self, scope: ScopeId, name: &str) -> Option<SymbolId> {
+    #[must_use]
+    pub fn find_in_scope(&self, scope: ScopeId, name: &str) -> Option<SymbolId> {
         self.scope(scope)
             .symbols
             .iter()

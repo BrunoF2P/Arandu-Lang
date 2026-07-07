@@ -533,7 +533,7 @@ mod tests {
     use smallvec::smallvec;
 
     fn non_copy_ty() -> ArType {
-        ArType::Named(crate::SymbolId(0), Vec::new())
+        ArType::Named(crate::SymbolId::new(0, 0), Vec::new())
     }
 
     fn int_ty() -> ArType {
@@ -587,7 +587,7 @@ mod tests {
     ) -> AmirFunc {
         let cfg = crate::cfg::compute_cfg_edges(&blocks);
         AmirFunc {
-            symbol: crate::SymbolId(0),
+            symbol: crate::SymbolId::new(0, 0),
             return_type: ArType::Void,
             receiver: None,
             params: Vec::new(),
@@ -611,7 +611,7 @@ mod tests {
             Vec::new(),
             stmts,
         );
-        let symbols = SymbolTable::new();
+        let symbols = SymbolTable::new(0);
         let diags = check_moves(&func, &symbols);
 
         assert!(
@@ -636,7 +636,7 @@ mod tests {
             vec![temp(0, non_copy_ty())],
             stmts,
         );
-        let symbols = SymbolTable::new();
+        let symbols = SymbolTable::new(0);
         assert!(check_moves(&func, &symbols).is_empty());
     }
 
@@ -662,7 +662,7 @@ mod tests {
             vec![temp(0, non_copy_ty())],
             stmts,
         );
-        let symbols = SymbolTable::new();
+        let symbols = SymbolTable::new(0);
         let diags = check_moves(&func, &symbols);
         assert!(diags.iter().any(|d| d.code == DiagCode::O001UseAfterMove));
     }
@@ -739,7 +739,7 @@ mod tests {
             vec![temp(0, non_copy_ty())],
             stmts,
         );
-        let symbols = SymbolTable::new();
+        let symbols = SymbolTable::new(0);
         let diags = check_moves(&func, &symbols);
         assert!(
             diags
@@ -769,7 +769,7 @@ mod tests {
             vec![temp(0, int_ty())],
             stmts,
         );
-        let symbols = SymbolTable::new();
+        let symbols = SymbolTable::new(0);
 
         assert!(check_moves(&func, &symbols).is_empty());
     }

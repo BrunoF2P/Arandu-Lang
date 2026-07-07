@@ -246,7 +246,7 @@ mod tests {
     fn void_func(blocks: Vec<AmirBasicBlock>, stmts: AmirStmtTable) -> AmirFunc {
         let cfg = compute_cfg_edges(&blocks);
         AmirFunc {
-            symbol: crate::SymbolId(0),
+            symbol: crate::SymbolId::new(0, 0),
             return_type: ArType::Void,
             receiver: None,
             params: Vec::new(),

@@ -82,7 +82,7 @@ mod tests {
         }];
         let cfg = compute_cfg_edges(&blocks);
         AmirFunc {
-            symbol: crate::SymbolId(0),
+            symbol: crate::SymbolId::new(0, 0),
             return_type: ArType::Void,
             receiver: None,
             params: Vec::new(),
@@ -285,7 +285,7 @@ mod tests {
             rhs: AmirOperand::Constant(AmirConstant::Bool(false)),
         });
         let mut func = AmirFunc {
-            symbol: crate::SymbolId(0),
+            symbol: crate::SymbolId::new(0, 0),
             return_type: ArType::Void,
             receiver: None,
             params: Vec::new(),
@@ -403,7 +403,7 @@ mod tests {
         let mut f = func(
             vec![AmirStmt::Call {
                 lhs: Some(TempId::from_usize(0)),
-                callee: AmirOperand::FunctionRef(crate::SymbolId(1)),
+                callee: AmirOperand::FunctionRef(crate::SymbolId::new(0, 1)),
                 args: smallvec::smallvec![],
             }],
             vec![bool_temp(0)],
@@ -441,7 +441,7 @@ mod tests {
             rhs: AmirOperand::Constant(AmirConstant::Bool(false)),
         });
         let mut func = AmirFunc {
-            symbol: crate::SymbolId(0),
+            symbol: crate::SymbolId::new(0, 0),
             return_type: ArType::Void,
             receiver: None,
             params: Vec::new(),

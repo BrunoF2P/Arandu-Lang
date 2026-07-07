@@ -229,7 +229,7 @@ mod tests {
     fn make_func(blocks: Vec<AmirBasicBlock>) -> AmirFunc {
         let cfg = crate::cfg::compute_cfg_edges(&blocks);
         AmirFunc {
-            symbol: SymbolId(0),
+            symbol: SymbolId::new(0, 0),
             return_type: ArType::Void,
             receiver: None,
             params: Vec::new(),

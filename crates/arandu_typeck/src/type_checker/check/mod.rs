@@ -11,5 +11,5 @@ mod validate;
 pub use block::check_block;
 pub use condition::check_condition;
 pub use func::check_func_body;
-pub use program::check_program;
+pub use program::{check_bodies, check_signatures};
 pub use stmt::check_stmt;

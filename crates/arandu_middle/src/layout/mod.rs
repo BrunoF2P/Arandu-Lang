@@ -844,7 +844,7 @@ mod tests {
         };
 
         // Create ZST struct "GlobalAllocator"
-        let zst_id = SymbolId(100);
+        let zst_id = SymbolId::new(0, 100);
         provider
             .fields
             .insert(zst_id, FxHashMap::<String, ArType>::default()); // No fields = ZST
@@ -859,7 +859,7 @@ mod tests {
         assert_eq!(zst_layout.align, 1);
 
         // Create Vec struct with ZST field
-        let vec_id = SymbolId(101);
+        let vec_id = SymbolId::new(0, 101);
         let mut vec_fields = FxHashMap::<String, ArType>::default();
         vec_fields.insert("data".to_string(), ArType::Primitive(Primitive::I64)); // simplified pointer
         vec_fields.insert("len".to_string(), ArType::Primitive(Primitive::U64));
@@ -911,7 +911,7 @@ mod tests {
         let engine = LayoutEngine::new(8);
         let mut interner = TypeInterner::new();
 
-        let struct_sym = SymbolId(1234);
+        let struct_sym = SymbolId::new(0, 1234);
 
         let mut fields = FxHashMap::<String, ArType>::default();
         fields.insert("a".to_string(), ArType::Primitive(Primitive::U8));
@@ -953,7 +953,7 @@ mod tests {
     fn test_struct_missing_fields_fallback() {
         let engine = LayoutEngine::new(8);
         let mut interner = TypeInterner::new();
-        let struct_sym = SymbolId(9999);
+        let struct_sym = SymbolId::new(0, 9999);
         let struct_ty = ArType::Named(struct_sym, Vec::new());
         let struct_id = interner.intern(struct_ty);
         let provider = MockProvider;
@@ -968,8 +968,8 @@ mod tests {
         let engine = LayoutEngine::new(8);
         let mut interner = TypeInterner::new();
 
-        let struct_sym = SymbolId(42);
-        let param_sym = SymbolId(1);
+        let struct_sym = SymbolId::new(0, 42);
+        let param_sym = SymbolId::new(0, 1);
 
         let param_ty = ArType::Named(param_sym, vec![]);
 

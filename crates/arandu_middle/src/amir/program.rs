@@ -7,7 +7,7 @@ use crate::layout::DenseRange;
 use crate::literal_pool::AmirLiteralPool;
 use crate::types::ArType;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AmirProgram {
     pub funcs: Vec<AmirFunc>,
     pub literal_pool: AmirLiteralPool,
@@ -15,7 +15,7 @@ pub struct AmirProgram {
         rustc_hash::FxHashMap<crate::SymbolId, (Vec<crate::types::ArType>, crate::types::ArType)>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AmirFunc {
     pub symbol: SymbolId,
     pub return_type: ArType,
@@ -113,7 +113,7 @@ mod tests {
 
     fn func() -> AmirFunc {
         AmirFunc {
-            symbol: SymbolId(0),
+            symbol: SymbolId::new(0, 0),
             return_type: ArType::Void,
             receiver: None,
             params: Vec::new(),

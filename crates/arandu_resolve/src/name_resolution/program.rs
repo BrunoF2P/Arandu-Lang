@@ -1,6 +1,4 @@
 use arandu_lexer::Span;
-use arandu_middle::StdlibPathCache;
-use arandu_middle::parse_cache::ParseCache;
 use arandu_parser::Program;
 
 use crate::{DocCommentMap, NodeKey, ResolutionResult, ResolvedNames, SymbolKind, SymbolTable};
@@ -9,14 +7,13 @@ use super::Resolver;
 
 impl<'a> Resolver<'a> {
     pub(crate) fn new(
+        file_id: u32,
         pool: &'a arandu_parser::ast_pool::AstPool,
         program: Option<&Program>,
-        cache: &mut ParseCache,
-        stdlib_cache: &mut StdlibPathCache,
     ) -> Self {
         let current_module = program.and_then(|p| p.module.as_ref().map(|m| m.path.join(".")));
         let mut resolver = Self {
-            symbols: SymbolTable::new(),
+            symbols: SymbolTable::new(file_id),
             resolved: ResolvedNames::default(),
             docs: DocCommentMap::default(),
             diagnostics: Vec::new(),
@@ -26,12 +23,12 @@ impl<'a> Resolver<'a> {
             imported_symbols: rustc_hash::FxHashMap::default(),
             used_symbols: rustc_hash::FxHashSet::default(),
         };
-        resolver.define_prelude(program, cache, stdlib_cache);
+        resolver.define_prelude(program);
         resolver.symbols.setup_prelude_scope();
         resolver
     }
 
-    pub(crate) fn resolve_program(mut self, program: &Program) -> ResolutionResult {
+    pub(crate) fn resolve_local(mut self, program: &Program) -> ResolutionResult {
         for doc in &program.docs {
             self.docs
                 .entry(NodeKey::from(doc.target_span))
@@ -46,23 +43,13 @@ impl<'a> Resolver<'a> {
             self.define(global, root, SymbolKind::Module, module.span);
         }
 
-        for import in &program.imports {
-            self.collect_import(global, import);
-        }
-
         for decl_id in &program.decls {
             let decl = self.pool.decl(*decl_id);
             self.collect_top_level(global, decl);
         }
 
-        for decl_id in &program.decls {
-            let decl = self.pool.decl(*decl_id);
-            self.resolve_top_level(global, decl);
-        }
-
-        self.check_unused_imports();
-
         ResolutionResult {
+            is_cycle_fallback: false,
             symbols: self.symbols,
             resolved: self.resolved,
             docs: self.docs,
@@ -70,12 +57,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    pub(crate) fn define_prelude(
-        &mut self,
-        program: Option<&Program>,
-        cache: &mut ParseCache,
-        stdlib_cache: &mut StdlibPathCache,
-    ) {
+    pub(crate) fn define_prelude(&mut self, _program: Option<&Program>) {
         let span = Span::new(0, 0, 0);
         for (module, members) in [
             ("io", ["println", "create", "remove"].as_slice()),
@@ -94,16 +76,14 @@ impl<'a> Resolver<'a> {
             .symbols
             .define(global_scope, "free", SymbolKind::Func, span)
             .ok();
-        let current_module = program.and_then(|p| p.module.as_ref().map(|m| m.path.join(".")));
-        super::load_stdlib_transitively(
-            &mut self.symbols,
-            "stdlib/core/prelude.aru",
-            current_module.as_deref(),
-            program,
-            cache,
-            stdlib_cache,
-            &mut self.diagnostics,
-        );
+
+        let _ = self
+            .symbols
+            .define(global_scope, "Result", SymbolKind::Enum, span);
+        let _ = self
+            .symbols
+            .define(global_scope, "Option", SymbolKind::Enum, span);
+
         let global = self.symbols.global_scope();
         let has_result = self.symbols.lookup_type(global, "Result").is_some();
         let has_option = self.symbols.lookup_type(global, "Option").is_some();

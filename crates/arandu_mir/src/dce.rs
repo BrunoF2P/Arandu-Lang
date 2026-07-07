@@ -287,7 +287,7 @@ mod tests {
         }];
         let cfg = crate::cfg::compute_cfg_edges(&blocks);
         AmirFunc {
-            symbol: crate::SymbolId(0),
+            symbol: crate::SymbolId::new(0, 0),
             return_type: ArType::Void,
             receiver: None,
             params: Vec::new(),
@@ -304,7 +304,7 @@ mod tests {
         let mut f = func(
             vec![AmirStmt::Call {
                 lhs: Some(TempId::from_usize(0)),
-                callee: AmirOperand::FunctionRef(crate::SymbolId(1)),
+                callee: AmirOperand::FunctionRef(crate::SymbolId::new(0, 1)),
                 args: smallvec::smallvec![],
             }],
             vec![bool_temp(0)],

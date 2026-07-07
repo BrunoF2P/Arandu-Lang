@@ -16,21 +16,18 @@ pub mod amir;
 pub mod amir_validate;
 pub mod cfg;
 pub mod codegen;
+pub mod db;
 pub mod diagnostics;
 pub mod hir;
 pub mod layout;
 pub mod literal_pool;
 pub mod ops;
-pub mod parse_cache;
 pub mod resolved;
 pub mod session;
-pub mod stdlib_cache;
 pub mod symbol_table;
 pub mod types;
 
-pub use parse_cache::ParseCache;
 pub use session::CompileSession;
-pub use stdlib_cache::StdlibPathCache;
 
 pub use arandu_base::arena;
 pub use arandu_base::bitset;
@@ -54,15 +51,32 @@ pub use diagnostics::{CodeReplacement, DiagCode, Diagnostic, Hint, Label, Severi
 pub use resolved::{DocCommentMap, NodeKey, ResolvedNames};
 pub use symbol_table::{ScopeId, Symbol, SymbolId, SymbolKind, SymbolTable};
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ExportedSymbolTable {
+    pub symbols: std::collections::BTreeMap<String, (SymbolId, SymbolKind)>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ResolutionResult {
     pub symbols: SymbolTable,
     pub resolved: ResolvedNames,
     pub docs: DocCommentMap,
     pub diagnostics: Vec<Diagnostic>,
+    pub is_cycle_fallback: bool,
 }
 
 impl ResolutionResult {
+    #[must_use]
+    pub fn cycle_fallback() -> Self {
+        Self {
+            symbols: SymbolTable::new(0),
+            resolved: ResolvedNames::default(),
+            docs: DocCommentMap::default(),
+            diagnostics: Vec::new(),
+            is_cycle_fallback: true,
+        }
+    }
+
     #[must_use]
     pub fn has_errors(&self) -> bool {
         self.diagnostics

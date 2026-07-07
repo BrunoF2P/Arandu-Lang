@@ -64,16 +64,16 @@ impl ResolvedNames {
             return;
         }
         for val in self.definitions.values_mut() {
-            val.0 += offset;
+            val.local_id.0 += offset;
         }
         for val in self.expr_symbols.iter_mut().flatten() {
-            val.0 += offset;
+            val.local_id.0 += offset;
         }
         for val in self.value_refs.values_mut() {
-            val.0 += offset;
+            val.local_id.0 += offset;
         }
         for val in self.type_refs.values_mut() {
-            val.0 += offset;
+            val.local_id.0 += offset;
         }
     }
 }

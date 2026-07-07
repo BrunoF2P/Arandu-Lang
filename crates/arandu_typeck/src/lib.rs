@@ -1,7 +1,8 @@
 pub mod type_checker;
 
 pub use type_checker::{
-    EnumPayloadShape, SessionMode, TypeCheckResult, TypeInfo, type_check, type_check_with_session,
+    EnumPayloadShape, TypeCheckResult, TypeChecker, TypeInfo, check::check_bodies,
+    check::check_signatures, check_bodies_only, check_signatures_only, type_check,
 };
 
 pub use arandu_middle::{

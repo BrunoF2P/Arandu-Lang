@@ -279,7 +279,7 @@ mod tests {
             ArType::Primitive(Primitive::Bool),
             ArType::Void,
             ArType::Err,
-            ArType::Named(SymbolId(42), vec![]),
+            ArType::Named(SymbolId::new(0, 42), vec![]),
             ArType::Nullable(int_t(&mut i)),
             ArType::Slice(int_t(&mut i)),
             ArType::Array(3, int_t(&mut i)),
@@ -315,7 +315,7 @@ mod tests {
             ArType::Primitive(Primitive::Bool),
             ArType::Void,
             ArType::Err,
-            ArType::Named(SymbolId(1), vec![]),
+            ArType::Named(SymbolId::new(0, 1), vec![]),
             ArType::Nullable(int_t(&mut i)),
             ArType::Slice(int_t(&mut i)),
             ArType::Result(int_t(&mut i), int_t(&mut i)),
@@ -418,8 +418,8 @@ mod tests {
     fn named_same_id_no_args() {
         let i = new_interner();
         assert!(unify(
-            &ArType::Named(SymbolId(1), vec![]),
-            &ArType::Named(SymbolId(1), vec![]),
+            &ArType::Named(SymbolId::new(0, 1), vec![]),
+            &ArType::Named(SymbolId::new(0, 1), vec![]),
             &i
         ));
     }
@@ -428,8 +428,8 @@ mod tests {
     fn named_different_id_no_args() {
         let i = new_interner();
         assert!(!unify(
-            &ArType::Named(SymbolId(1), vec![]),
-            &ArType::Named(SymbolId(2), vec![]),
+            &ArType::Named(SymbolId::new(0, 1), vec![]),
+            &ArType::Named(SymbolId::new(0, 2), vec![]),
             &i
         ));
     }
@@ -440,8 +440,8 @@ mod tests {
         let int = int_t(&mut i);
         let args = vec![int];
         assert!(unify(
-            &ArType::Named(SymbolId(1), args.clone()),
-            &ArType::Named(SymbolId(1), args),
+            &ArType::Named(SymbolId::new(0, 1), args.clone()),
+            &ArType::Named(SymbolId::new(0, 1), args),
             &i
         ));
     }
@@ -449,16 +449,16 @@ mod tests {
     #[test]
     fn named_with_args_different_length() {
         let mut i = new_interner();
-        let a = ArType::Named(SymbolId(1), vec![int_t(&mut i)]);
-        let b = ArType::Named(SymbolId(1), vec![]);
+        let a = ArType::Named(SymbolId::new(0, 1), vec![int_t(&mut i)]);
+        let b = ArType::Named(SymbolId::new(0, 1), vec![]);
         assert!(!unify(&a, &b, &i));
     }
 
     #[test]
     fn named_with_args_different_inner_type() {
         let mut i = new_interner();
-        let a = ArType::Named(SymbolId(1), vec![int_t(&mut i)]);
-        let b = ArType::Named(SymbolId(1), vec![bool_t(&mut i)]);
+        let a = ArType::Named(SymbolId::new(0, 1), vec![int_t(&mut i)]);
+        let b = ArType::Named(SymbolId::new(0, 1), vec![bool_t(&mut i)]);
         assert!(!unify(&a, &b, &i));
     }
 
@@ -711,7 +711,7 @@ mod tests {
         let i = new_interner();
         assert!(!unify(
             &ArType::Primitive(Primitive::Int),
-            &ArType::Named(SymbolId(1), vec![]),
+            &ArType::Named(SymbolId::new(0, 1), vec![]),
             &i
         ));
     }
@@ -723,7 +723,11 @@ mod tests {
         let null_int = ArType::Nullable(int_id);
         assert!(unify(&null_int, &ArType::Primitive(Primitive::Int), &i));
         // Nullable<Int> and plain Named do NOT unify
-        assert!(!unify(&null_int, &ArType::Named(SymbolId(1), vec![]), &i));
+        assert!(!unify(
+            &null_int,
+            &ArType::Named(SymbolId::new(0, 1), vec![]),
+            &i
+        ));
     }
 
     // ── unify_return ──

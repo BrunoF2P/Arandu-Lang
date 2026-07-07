@@ -16,7 +16,7 @@ mod tests {
     use arandu_middle::types::{ArType, Primitive, TypeInterner};
 
     fn setup() -> (SymbolTable, TypeInterner) {
-        (SymbolTable::new(), TypeInterner::new())
+        (SymbolTable::new(0), TypeInterner::new())
     }
 
     fn define_symbol(st: &mut SymbolTable, name: &str) -> SymbolId {
@@ -277,7 +277,7 @@ func main() {
 }
 "#;
         let program = arandu_parser::parse(src).expect("parse failed");
-        let resolution = crate::passes::name_resolution::resolve(&program);
+        let resolution = arandu_resolve::resolve_for_test(0, &program);
         let mut tc = crate::passes::type_checker::type_check(resolution, &program);
         assert!(
             tc.diagnostics.is_empty(),

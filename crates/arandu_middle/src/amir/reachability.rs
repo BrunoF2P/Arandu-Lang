@@ -55,7 +55,7 @@ mod tests {
     fn func_with_blocks(blocks: Vec<AmirBasicBlock>) -> AmirFunc {
         let cfg = compute_cfg_edges(&blocks);
         AmirFunc {
-            symbol: SymbolId(0),
+            symbol: SymbolId::new(0, 0),
             return_type: ArType::Void,
             receiver: None,
             params: Vec::new(),

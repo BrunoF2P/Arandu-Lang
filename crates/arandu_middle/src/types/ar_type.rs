@@ -239,7 +239,7 @@ mod tests {
     use crate::types::Primitive;
 
     fn empty_symbols() -> SymbolTable {
-        SymbolTable::new()
+        SymbolTable::new(0)
     }
 
     fn new_interner() -> TypeInterner {
@@ -420,7 +420,7 @@ mod tests {
 
     #[test]
     fn named_func_slice_array_tuple_are_not_copy() {
-        assert!(!ArType::Named(SymbolId(1), vec![]).is_copy_v01());
+        assert!(!ArType::Named(SymbolId::new(0, 1), vec![]).is_copy_v01());
         let mut i = new_interner();
         let int = i.intern(ArType::Primitive(Primitive::Int));
         assert!(!ArType::Func(vec![int], int).is_copy_v01());

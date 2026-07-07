@@ -137,7 +137,11 @@ impl<'a> Resolver<'a> {
         kind: SymbolKind,
         span: Span,
     ) -> Option<crate::SymbolId> {
-        if name == "alloc" || name == "free" {
+        // A name is reserved if it is already defined in the prelude (ScopeId(0))
+        // and we are currently not inside the prelude/std.* itself.
+        let is_reserved =
+            scope != ScopeId(0) && self.symbols.find_in_scope(ScopeId(0), name).is_some();
+        if is_reserved {
             let is_std = self
                 .current_module
                 .as_ref()
@@ -146,9 +150,7 @@ impl<'a> Resolver<'a> {
             if !is_std {
                 self.diagnostics.push(Diagnostic::error(
                     DiagCode::N003RedefinedName,
-                    format!(
-                        "name '{name}' is a reserved builtin function name and cannot be redefined"
-                    ),
+                    format!("name '{name}' is a reserved builtin and cannot be redefined"),
                     span,
                 ));
                 return None;

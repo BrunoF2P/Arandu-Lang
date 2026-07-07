@@ -52,26 +52,31 @@ struct CheckedProgram {
     type_check: arandu_semantics::TypeCheckResult,
 }
 
-fn parse_and_check(source: &str, filepath: &str) -> CheckedProgram {
-    let mut registry = arandu_base::SourceRegistry::default();
-    let file_id = registry.register(filepath, source);
-
-    let program = match arandu_parser::parse_with_file_id(source, file_id) {
-        Ok(program) => program,
-        Err(err) => print_parse_error_and_exit(&err, filepath),
+fn parse_and_check(
+    db: &dyn arandu_query::db::ArandCompilerDb,
+    file: arandu_query::db::SourceFile,
+    filepath: &str,
+) -> CheckedProgram {
+    let program_res = arandu_query::passes::parse(db, file);
+    let program = match &*program_res {
+        Ok(program) => program.clone(),
+        Err(err) => print_parse_error_and_exit(err, filepath),
     };
 
-    let mut session = arandu_semantics::CompileSession::new();
-    let resolution = arandu_semantics::resolve_with_cache(&program, &mut session);
-    let type_check = arandu_semantics::type_check_with_session(resolution, &program, &mut session);
+    let type_check = arandu_query::passes::type_check(db, file);
 
-    if !type_check.diagnostics.is_empty() {
-        print_diagnostics_and_exit(&type_check.diagnostics, filepath);
+    let diagnostics = arandu_query::passes::type_check::accumulated::<
+        arandu_middle::db::DiagnosticsAccumulator,
+    >(db, file);
+    let diags: Vec<_> = diagnostics.into_iter().map(|d| d.0.clone()).collect();
+
+    if !diags.is_empty() {
+        print_diagnostics_and_exit(&diags, filepath);
     }
 
     CheckedProgram {
         program,
-        type_check,
+        type_check: (*type_check).clone(),
     }
 }
 
@@ -168,70 +173,38 @@ fn main() {
             );
             process::exit(1);
         }
+    }
 
-        match arandu_semantics::compile_parallel(paths.clone()) {
-            Ok(output) => match command.as_str() {
-                "check" => {
-                    println!("ok");
-                }
-                "hir" => {
-                    for (i, hir) in output.hirs.iter().enumerate() {
-                        let filepath = output.paths[i].to_string_lossy();
-                        println!("--- HIR for {} ---", filepath);
-                        if debug {
-                            println!("{hir:#?}");
-                        } else {
-                            let ctx = arandu_semantics::hir::HirPrettyCtx {
-                                pool: &hir.pool,
-                                symbols: &output.symbols[i],
-                                show_spans: false,
-                                type_interner: Some(&output.type_interners[i]),
-                            };
-                            print!("{}", hir.pretty_print(&ctx));
-                        }
-                    }
-                }
-                "amir" => {
-                    for (i, amir) in output.amirs.iter().enumerate() {
-                        let filepath = output.paths[i].to_string_lossy();
-                        println!("--- AMIR for {} ---", filepath);
-                        if debug {
-                            println!("{amir:#?}");
-                        } else {
-                            print!(
-                                "{}",
-                                amir.pretty_print(&output.symbols[i], &output.type_interners[i])
-                            );
-                        }
-                    }
-                }
-                _ => unreachable!(),
-            },
-            Err(diags) => {
-                let mut registry = arandu_base::SourceRegistry::default();
-                for p in &paths {
-                    if let Ok(source) = fs::read_to_string(p) {
-                        registry.register(&p.to_string_lossy(), &source);
-                    }
-                }
-                for diag in diags {
-                    eprintln!("{}", diag.format_for_cli(&registry));
-                }
+    let db = arandu_query::db::DatabaseImpl::default();
+    let mut registry = arandu_base::SourceRegistry::default();
+
+    let mut source_files = Vec::new();
+    for p in &paths {
+        match fs::read_to_string(p) {
+            Ok(source) => {
+                let filepath = p.to_string_lossy().into_owned();
+                let file_id = registry.register(&filepath, &source);
+                let code = std::sync::Arc::from(source.clone());
+                let source_file = arandu_query::db::SourceFile::new(
+                    &db,
+                    file_id,
+                    code,
+                    std::sync::Arc::new(p.clone()),
+                );
+                source_files.push((source_file, filepath, source));
+            }
+            Err(err) => {
+                eprintln!("failed to read {}: {err}", p.display());
                 process::exit(1);
             }
         }
-    } else {
-        let source = match fs::read_to_string(path) {
-            Ok(source) => source,
-            Err(err) => {
-                eprintln!("failed to read {}: {err}", path.display());
+    }
 
-                process::exit(1);
-            }
-        };
-
-        let filepath = path.to_string_lossy();
-
+    use rayon::prelude::*;
+    let process_file = |source_file: arandu_query::db::SourceFile,
+                        filepath: String,
+                        source: String,
+                        db: arandu_query::db::DatabaseImpl| {
         match command.as_str() {
             "lex" => match arandu_lexer::lex_to_string(&source) {
                 Ok(output) => println!("{output}"),
@@ -252,9 +225,9 @@ fn main() {
             "check" => {
                 let mut checked = {
                     arandu_base::time_pass!("parse+check");
-                    parse_and_check(&source, &filepath)
+                    parse_and_check(&db, source_file, &filepath)
                 };
-                tracing::info!("Syntax analysis and type-check completed");
+                tracing::info!("Syntax analysis and type-check completed for {}", filepath);
 
                 let hir = {
                     arandu_base::time_pass!("lower-hir");
@@ -264,7 +237,7 @@ fn main() {
                         Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
                     }
                 };
-                tracing::info!("HIR lowering completed");
+                tracing::info!("HIR lowering completed for {}", filepath);
 
                 validate_hir_and_analyze(&hir, &checked.type_check, &filepath);
                 {
@@ -273,14 +246,17 @@ fn main() {
                         print_diagnostics_and_exit(&diags, &filepath);
                     }
                 }
-                tracing::info!("Compilation verified successfully — no errors found");
-                println!("ok");
+                tracing::info!(
+                    "Compilation verified successfully — no errors found for {}",
+                    filepath
+                );
+                println!("ok {}", filepath);
             }
 
             "hir" => {
                 let mut checked = {
                     arandu_base::time_pass!("parse+check");
-                    parse_and_check(&source, &filepath)
+                    parse_and_check(&db, source_file, &filepath)
                 };
                 let hir = {
                     arandu_base::time_pass!("lower-hir");
@@ -301,6 +277,7 @@ fn main() {
                         show_spans: false,
                         type_interner: Some(&checked.type_check.type_info.type_interner),
                     };
+                    println!("--- HIR for {} ---", filepath);
                     print!("{}", hir.pretty_print(&ctx));
                 }
             }
@@ -308,7 +285,7 @@ fn main() {
             "amir" => {
                 let mut checked = {
                     arandu_base::time_pass!("parse+check");
-                    parse_and_check(&source, &filepath)
+                    parse_and_check(&db, source_file, &filepath)
                 };
                 let hir = {
                     arandu_base::time_pass!("lower-hir");
@@ -322,11 +299,10 @@ fn main() {
 
                 let mut amir = {
                     arandu_base::time_pass!("lower-amir");
-                    match arandu_semantics::lower_to_amir(&checked.type_check, &hir) {
-                        Ok(amir) => amir,
-                        Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
-                    }
+                    let amir_program = arandu_query::passes::lower_amir(&db, source_file);
+                    (*amir_program).clone()
                 };
+
                 if opt {
                     arandu_base::time_pass!("optimize-amir");
                     arandu_semantics::optimize_amir(&mut amir);
@@ -335,6 +311,7 @@ fn main() {
                 if debug {
                     println!("{amir:#?}");
                 } else {
+                    println!("--- AMIR for {} ---", filepath);
                     print!(
                         "{}",
                         amir.pretty_print(
@@ -348,7 +325,7 @@ fn main() {
             "run" => {
                 let mut checked = {
                     arandu_base::time_pass!("parse+check");
-                    parse_and_check(&source, &filepath)
+                    parse_and_check(&db, source_file, &filepath)
                 };
                 tracing::info!("Syntax analysis and type-check completed");
 
@@ -365,10 +342,8 @@ fn main() {
 
                 let mut amir = {
                     arandu_base::time_pass!("lower-amir");
-                    match arandu_semantics::lower_to_amir(&checked.type_check, &hir) {
-                        Ok(amir) => amir,
-                        Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
-                    }
+                    let amir_program = arandu_query::passes::lower_amir(&db, source_file);
+                    (*amir_program).clone()
                 };
                 tracing::info!("AMIR lowering completed");
 
@@ -397,9 +372,6 @@ fn main() {
                 };
                 tracing::info!("Machine code generated (Cranelift JIT backend)");
 
-                arandu_base::print_perf_summary();
-                arandu_base::finalize_self_profile();
-
                 unsafe {
                     if let Some(main_fn) =
                         CompiledCode::get_fn::<unsafe fn() -> i32>(&output, "main")
@@ -414,6 +386,20 @@ fn main() {
             }
 
             _ => unreachable!(),
+        }
+    };
+
+    if use_parallel {
+        let db_mutex = std::sync::Mutex::new(db);
+        source_files
+            .into_par_iter()
+            .for_each(|(source_file, filepath, source)| {
+                let thread_db = db_mutex.lock().unwrap().clone();
+                process_file(source_file, filepath, source, thread_db);
+            });
+    } else {
+        for (source_file, filepath, source) in source_files {
+            process_file(source_file, filepath, source, db.clone());
         }
     }
 

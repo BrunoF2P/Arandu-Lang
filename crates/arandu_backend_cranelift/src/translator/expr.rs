@@ -98,7 +98,7 @@ impl FunctionTranslator<'_, '_> {
                 };
                 let enum_id = match enum_ty {
                     ArType::Named(enum_id, _) => *enum_id,
-                    _ => arandu_semantics::SymbolId(0),
+                    _ => arandu_semantics::SymbolId::DUMMY,
                 };
 
                 let mut payload_offset = 0;
@@ -495,7 +495,7 @@ impl FunctionTranslator<'_, '_> {
                 };
                 let enum_id = match enum_ty {
                     ArType::Named(enum_id, _) => *enum_id,
-                    _ => arandu_semantics::SymbolId(0),
+                    _ => arandu_semantics::SymbolId::DUMMY,
                 };
 
                 let mut payload_offset = 0;

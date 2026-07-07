@@ -12,7 +12,9 @@ members = [
     "crates/arandu_semantics",
     "crates/arandu_cli",
     "crates/arandu_backend_cranelift",
-    "crates/arandu_test_support", "crates/arandu_backend_c",
+    "crates/arandu_test_support",
+    "crates/arandu_backend_c",
+    "crates/arandu_query",
 ]
 resolver = "3"
 
@@ -23,6 +25,8 @@ authors = ["Arandu Language Contributors"]
 [workspace.dependencies]
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+salsa = "0.27.2"                                                               # Salsa's new version (salsa-2022 tracked-based macro API)
+blake3 = "1.8.5"
 
 [workspace.lints]
 # Intentionally empty: use default toolchain lint levels.

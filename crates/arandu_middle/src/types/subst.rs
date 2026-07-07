@@ -124,18 +124,18 @@ mod tests {
     #[test]
     fn build_subst_single() {
         let subst = build_subst(
-            &[SymbolId(1)],
+            &[SymbolId::new(0, 1)],
             &[ArType::Primitive(super::super::Primitive::Int)],
         );
         assert_eq!(subst.len(), 1);
-        assert_eq!(subst[0].0, SymbolId(1));
+        assert_eq!(subst[0].0, SymbolId::new(0, 1));
         assert_eq!(subst[0].1, ArType::Primitive(super::super::Primitive::Int));
     }
 
     #[test]
     fn build_subst_multiple() {
         let subst = build_subst(
-            &[SymbolId(1), SymbolId(2)],
+            &[SymbolId::new(0, 1), SymbolId::new(0, 2)],
             &[
                 ArType::Primitive(super::super::Primitive::Int),
                 ArType::Primitive(super::super::Primitive::Bool),
@@ -147,7 +147,7 @@ mod tests {
     #[test]
     fn build_subst_ignores_extra_params() {
         let subst = build_subst(
-            &[SymbolId(1), SymbolId(2)],
+            &[SymbolId::new(0, 1), SymbolId::new(0, 2)],
             &[ArType::Primitive(super::super::Primitive::Int)],
         );
         assert_eq!(subst.len(), 1);
@@ -159,10 +159,10 @@ mod tests {
     fn substitute_simple_named() {
         let mut i = new_interner();
         let subst = build_subst(
-            &[SymbolId(1)],
+            &[SymbolId::new(0, 1)],
             &[ArType::Primitive(super::super::Primitive::Int)],
         );
-        let ty = ArType::Named(SymbolId(1), vec![]);
+        let ty = ArType::Named(SymbolId::new(0, 1), vec![]);
         let result = substitute_type(&ty, &subst, &mut i);
         assert_eq!(result, ArType::Primitive(super::super::Primitive::Int));
     }
@@ -171,35 +171,38 @@ mod tests {
     fn substitute_non_param_named_unchanged() {
         let mut i = new_interner();
         let subst = build_subst(
-            &[SymbolId(1)],
+            &[SymbolId::new(0, 1)],
             &[ArType::Primitive(super::super::Primitive::Int)],
         );
-        let ty = ArType::Named(SymbolId(2), vec![]);
+        let ty = ArType::Named(SymbolId::new(0, 2), vec![]);
         let result = substitute_type(&ty, &subst, &mut i);
-        assert_eq!(result, ArType::Named(SymbolId(2), vec![]));
+        assert_eq!(result, ArType::Named(SymbolId::new(0, 2), vec![]));
     }
 
     #[test]
     fn substitute_named_with_generic_args() {
         let mut i = new_interner();
-        let inner = i.intern(ArType::Named(SymbolId(1), vec![]));
-        let ty = ArType::Named(SymbolId(3), vec![inner]);
+        let inner = i.intern(ArType::Named(SymbolId::new(0, 1), vec![]));
+        let ty = ArType::Named(SymbolId::new(0, 3), vec![inner]);
         let subst = build_subst(
-            &[SymbolId(1)],
+            &[SymbolId::new(0, 1)],
             &[ArType::Primitive(super::super::Primitive::Int)],
         );
         let result = substitute_type(&ty, &subst, &mut i);
         let expected_inner = i.intern(ArType::Primitive(super::super::Primitive::Int));
-        assert_eq!(result, ArType::Named(SymbolId(3), vec![expected_inner]));
+        assert_eq!(
+            result,
+            ArType::Named(SymbolId::new(0, 3), vec![expected_inner])
+        );
     }
 
     #[test]
     fn substitute_nullable() {
         let mut i = new_interner();
-        let inner = i.intern(ArType::Named(SymbolId(1), vec![]));
+        let inner = i.intern(ArType::Named(SymbolId::new(0, 1), vec![]));
         let ty = ArType::Nullable(inner);
         let subst = build_subst(
-            &[SymbolId(1)],
+            &[SymbolId::new(0, 1)],
             &[ArType::Primitive(super::super::Primitive::Int)],
         );
         let result = substitute_type(&ty, &subst, &mut i);
@@ -210,10 +213,10 @@ mod tests {
     #[test]
     fn substitute_option() {
         let mut i = new_interner();
-        let inner = i.intern(ArType::Named(SymbolId(1), vec![]));
+        let inner = i.intern(ArType::Named(SymbolId::new(0, 1), vec![]));
         let ty = ArType::Option(inner);
         let subst = build_subst(
-            &[SymbolId(1)],
+            &[SymbolId::new(0, 1)],
             &[ArType::Primitive(super::super::Primitive::Int)],
         );
         let result = substitute_type(&ty, &subst, &mut i);
@@ -224,11 +227,11 @@ mod tests {
     #[test]
     fn substitute_result() {
         let mut i = new_interner();
-        let ok_inner = i.intern(ArType::Named(SymbolId(1), vec![]));
-        let err_inner = i.intern(ArType::Named(SymbolId(2), vec![]));
+        let ok_inner = i.intern(ArType::Named(SymbolId::new(0, 1), vec![]));
+        let err_inner = i.intern(ArType::Named(SymbolId::new(0, 2), vec![]));
         let ty = ArType::Result(ok_inner, err_inner);
         let subst = build_subst(
-            &[SymbolId(1), SymbolId(2)],
+            &[SymbolId::new(0, 1), SymbolId::new(0, 2)],
             &[
                 ArType::Primitive(super::super::Primitive::Int),
                 ArType::Primitive(super::super::Primitive::Str),
@@ -243,10 +246,10 @@ mod tests {
     #[test]
     fn substitute_slice() {
         let mut i = new_interner();
-        let inner = i.intern(ArType::Named(SymbolId(1), vec![]));
+        let inner = i.intern(ArType::Named(SymbolId::new(0, 1), vec![]));
         let ty = ArType::Slice(inner);
         let subst = build_subst(
-            &[SymbolId(1)],
+            &[SymbolId::new(0, 1)],
             &[ArType::Primitive(super::super::Primitive::Int)],
         );
         let result = substitute_type(&ty, &subst, &mut i);
@@ -257,10 +260,10 @@ mod tests {
     #[test]
     fn substitute_array() {
         let mut i = new_interner();
-        let inner = i.intern(ArType::Named(SymbolId(1), vec![]));
+        let inner = i.intern(ArType::Named(SymbolId::new(0, 1), vec![]));
         let ty = ArType::Array(4, inner);
         let subst = build_subst(
-            &[SymbolId(1)],
+            &[SymbolId::new(0, 1)],
             &[ArType::Primitive(super::super::Primitive::Int)],
         );
         let result = substitute_type(&ty, &subst, &mut i);
@@ -271,10 +274,10 @@ mod tests {
     #[test]
     fn substitute_ptr() {
         let mut i = new_interner();
-        let inner = i.intern(ArType::Named(SymbolId(1), vec![]));
+        let inner = i.intern(ArType::Named(SymbolId::new(0, 1), vec![]));
         let ty = ArType::Ptr(inner);
         let subst = build_subst(
-            &[SymbolId(1)],
+            &[SymbolId::new(0, 1)],
             &[ArType::Primitive(super::super::Primitive::Int)],
         );
         let result = substitute_type(&ty, &subst, &mut i);
@@ -285,11 +288,11 @@ mod tests {
     #[test]
     fn substitute_tuple() {
         let mut i = new_interner();
-        let a = i.intern(ArType::Named(SymbolId(1), vec![]));
-        let b = i.intern(ArType::Named(SymbolId(2), vec![]));
+        let a = i.intern(ArType::Named(SymbolId::new(0, 1), vec![]));
+        let b = i.intern(ArType::Named(SymbolId::new(0, 2), vec![]));
         let ty = ArType::Tuple(vec![a, b]);
         let subst = build_subst(
-            &[SymbolId(1), SymbolId(2)],
+            &[SymbolId::new(0, 1), SymbolId::new(0, 2)],
             &[
                 ArType::Primitive(super::super::Primitive::Int),
                 ArType::Primitive(super::super::Primitive::Bool),
@@ -304,11 +307,11 @@ mod tests {
     #[test]
     fn substitute_func() {
         let mut i = new_interner();
-        let param = i.intern(ArType::Named(SymbolId(1), vec![]));
-        let ret = i.intern(ArType::Named(SymbolId(2), vec![]));
+        let param = i.intern(ArType::Named(SymbolId::new(0, 1), vec![]));
+        let ret = i.intern(ArType::Named(SymbolId::new(0, 2), vec![]));
         let ty = ArType::Func(vec![param], ret);
         let subst = build_subst(
-            &[SymbolId(1), SymbolId(2)],
+            &[SymbolId::new(0, 1), SymbolId::new(0, 2)],
             &[
                 ArType::Primitive(super::super::Primitive::Int),
                 ArType::Primitive(super::super::Primitive::Bool),
@@ -324,7 +327,7 @@ mod tests {
     fn substitute_primitive_unchanged() {
         let mut i = new_interner();
         let subst = build_subst(
-            &[SymbolId(1)],
+            &[SymbolId::new(0, 1)],
             &[ArType::Primitive(super::super::Primitive::Int)],
         );
         assert_eq!(
@@ -340,10 +343,10 @@ mod tests {
     #[test]
     fn substitute_range() {
         let mut i = new_interner();
-        let inner = i.intern(ArType::Named(SymbolId(1), vec![]));
+        let inner = i.intern(ArType::Named(SymbolId::new(0, 1), vec![]));
         let ty = ArType::Range(inner);
         let subst = build_subst(
-            &[SymbolId(1)],
+            &[SymbolId::new(0, 1)],
             &[ArType::Primitive(super::super::Primitive::Int)],
         );
         let result = substitute_type(&ty, &subst, &mut i);
@@ -355,7 +358,7 @@ mod tests {
     fn substitute_void_err_literals_unchanged() {
         let mut i = new_interner();
         let subst = build_subst(
-            &[SymbolId(1)],
+            &[SymbolId::new(0, 1)],
             &[ArType::Primitive(super::super::Primitive::Int)],
         );
         assert_eq!(substitute_type(&ArType::Void, &subst, &mut i), ArType::Void);

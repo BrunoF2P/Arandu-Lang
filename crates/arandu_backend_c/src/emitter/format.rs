@@ -140,7 +140,7 @@ impl<'a> CEmitter<'a> {
                 AmirProjection::Field(field_symbol_id) => {
                     let struct_id = match &current_ty {
                         ArType::Named(id, _) => *id,
-                        _ => arandu_middle::SymbolId(0),
+                        _ => arandu_middle::SymbolId::DUMMY,
                     };
                     let layout =
                         self.layout

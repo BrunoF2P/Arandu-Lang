@@ -303,7 +303,7 @@ mod tests {
     fn create_dummy_ctx() -> LowerCtx<'static> {
         use crate::ResolvedNames;
         let pool = Box::new(arandu_parser::ast_pool::AstPool::new());
-        let symbols = Box::new(crate::SymbolTable::new());
+        let symbols = Box::new(crate::SymbolTable::new(0));
         let resolved = Box::new(ResolvedNames::default());
         LowerCtx {
             pool: Box::leak(pool),

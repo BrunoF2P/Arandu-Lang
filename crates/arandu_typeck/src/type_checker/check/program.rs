@@ -1,5 +1,3 @@
-use arandu_middle::StdlibPathCache;
-use arandu_middle::parse_cache::ParseCache;
 use arandu_parser::{Program, TopLevelDecl};
 
 use super::super::TypeChecker;
@@ -9,24 +7,18 @@ use super::func::check_func_body;
 use super::prelude::register_prelude;
 use super::validate::validate_top_level_any;
 
-#[tracing::instrument(
-    level = "trace",
-    target = "arandu_typeck",
-    skip(checker, program, cache, stdlib_cache)
-)]
-pub fn check_program(
-    checker: &mut TypeChecker<'_>,
-    program: &Program,
-    cache: &mut ParseCache,
-    stdlib_cache: &mut StdlibPathCache,
-) {
-    register_prelude(checker, program, cache, stdlib_cache);
+#[tracing::instrument(level = "trace", target = "arandu_typeck", skip(checker, program))]
+pub fn check_signatures(checker: &mut TypeChecker<'_>, program: &Program) {
+    register_prelude(checker, program);
     collect_type_shapes(checker, program);
     collect_signature_types(checker, program);
     collect_interfaces_and_constraints(checker, program);
 
     duplicate_module_member_info(checker, program);
+}
 
+#[tracing::instrument(level = "trace", target = "arandu_typeck", skip(checker, program))]
+pub fn check_bodies(checker: &mut TypeChecker<'_>, program: &Program) {
     for decl_id in &program.decls {
         let decl = checker.pool.decl(*decl_id);
         validate_top_level_any(checker, decl);

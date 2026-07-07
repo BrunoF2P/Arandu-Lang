@@ -120,7 +120,7 @@ mod tests {
 
     #[test]
     fn place_with_field_projection() {
-        let sym = SymbolId(99);
+        let sym = SymbolId::new(0, 99);
         let proj = AmirProjection::Field(sym);
         let mut projections = SmallVec::new();
         projections.push(proj);
