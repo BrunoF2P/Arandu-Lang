@@ -1,18 +1,18 @@
-Func on_err() -> void
+Func onErr() -> void
   locals:
     _0: void // return
 
   bb0:
     return
 
-Func on_ok() -> void
+Func onOk() -> void
   locals:
     _0: void // return
 
   bb0:
     return
 
-Func test_success() -> Result<void, Err>
+Func testSuccess() -> Result<void, Err>
   locals:
     _0: Result<void, Err> // return
     _1: int
@@ -24,14 +24,14 @@ Func test_success() -> Result<void, Err>
     _2 = eq _1, 1
     branch _2 => bb1, else bb2
   bb1:
-    call fn@on_err()
-    call fn@on_ok()
+    call fn@onErr()
+    call fn@onOk()
     return
   bb2:
-    call fn@on_ok()
+    call fn@onOk()
     return
 
-Func test_error() -> Result<void, Err>
+Func testError() -> Result<void, Err>
   locals:
     _0: Result<void, Err> // return
     _1: Err
@@ -45,9 +45,9 @@ Func test_error() -> Result<void, Err>
     _3 = eq _2, 1
     branch _3 => bb1, else bb2
   bb1:
-    call fn@on_err()
-    call fn@on_ok()
+    call fn@onErr()
+    call fn@onOk()
     return
   bb2:
-    call fn@on_ok()
+    call fn@onOk()
     return

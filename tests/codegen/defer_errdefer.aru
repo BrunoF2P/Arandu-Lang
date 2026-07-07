@@ -1,27 +1,27 @@
 import err
 
-func on_err() {
+func onErr() {
 }
 
-func on_ok() {
+func onOk() {
 }
 
-func test_success(): Result<void, Err> {
+func testSuccess(): Result<void, Err> {
     errdefer {
-        on_err()
+        onErr()
     }
     defer {
-        on_ok()
+        onOk()
     }
     return nil
 }
 
-func test_error(): Result<void, Err> {
+func testError(): Result<void, Err> {
     errdefer {
-        on_err()
+        onErr()
     }
     defer {
-        on_ok()
+        onOk()
     }
     return Result.Err(err.new("boom"))
 }

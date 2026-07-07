@@ -1,4 +1,4 @@
-Func control_flow(x: int) -> int
+Func controlFlow(x: int) -> int
   locals:
     _0: int // return
     _1: int
@@ -20,7 +20,7 @@ Func control_flow(x: int) -> int
     _0 = _4
     return
 
-Func test_for_in(items: []int) -> void
+Func testForIn(items: []int) -> void
   locals:
     _0: void // return
     _1: []int
@@ -38,7 +38,7 @@ Func test_for_in(items: []int) -> void
     s1: int
     s2: int
     s3: int // item
-    s4: int // item_val
+    s4: int // itemVal
 
   bb0:
     _3 = len(_1)

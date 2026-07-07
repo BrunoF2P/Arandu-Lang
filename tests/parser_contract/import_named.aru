@@ -1,2 +1,2 @@
 module tests.contract.imports
-import { Button, Window } from ui
+from ui import { Button, Window }

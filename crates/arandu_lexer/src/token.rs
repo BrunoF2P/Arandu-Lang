@@ -614,7 +614,6 @@ static TOKEN_FLAGS_TABLE: [TokenFlags; 131] = {
                 | TokenKind::KwCatch
                 | TokenKind::KwAs
                 | TokenKind::KwWhere
-                | TokenKind::KwFrom
         );
         table[i] = TokenFlags { can_end, prevents };
         i += 1;

@@ -1,4 +1,4 @@
-Func test_enum(state: LoadState) -> int
+Func testEnum(state: LoadState) -> int
   locals:
     _0: int // return
     _1: LoadState

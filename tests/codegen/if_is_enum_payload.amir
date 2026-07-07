@@ -1,4 +1,4 @@
-Func test_payload(res: MyResult) -> int
+Func testPayload(res: MyResult) -> int
   locals:
     _0: int // return
     _1: MyResult

@@ -1,4 +1,4 @@
-Func test_alloc_free() -> void
+Func testAllocFree() -> void
   locals:
     _0: void // return
     _1: ptr[int]
@@ -10,7 +10,7 @@ Func test_alloc_free() -> void
     free _1
     return
 
-Func test_defer() -> int
+Func testDefer() -> int
   locals:
     _0: int // return
     _1: int
@@ -20,7 +20,7 @@ Func test_defer() -> int
     _0 = 0
     return
 
-Func test_defer_scope() -> int
+Func testDeferScope() -> int
   locals:
     _0: int // return
     _1: int

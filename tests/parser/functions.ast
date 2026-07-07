@@ -1,5 +1,5 @@
 Program @1:1-17:2
-  Import @1:1-1:11 err
+  Import @1:1-1:11 err as err
   Func @3:1-5:2 add(@3:10-3:16 a Type @3:13-3:16 int, @3:18-3:24 b Type @3:21-3:24 int) -> Type @3:27-3:30 int
     Return @4:5-4:17 Binary @4:12-4:17(+, Path @4:12-4:13(a), Path @4:16-4:17(b))
   Func @7:1-13:2 divide(@7:13-7:19 a Type @7:16-7:19 int, @7:21-7:27 b Type @7:24-7:27 int) -> Type @7:30-7:46 @7:30-7:36 Result<Type @7:37-7:40 int, Type @7:42-7:45 @7:42-7:45 Err>

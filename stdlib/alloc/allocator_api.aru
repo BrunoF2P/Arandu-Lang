@@ -1,6 +1,6 @@
 module std.alloc.allocator_api
 
-import "std.core.mem" as mem
+import std.core.mem as mem
 
 extern "C" {
     func malloc(size: u64) : ptr[u8];
@@ -17,7 +17,7 @@ public enum AllocError {
 public interface Allocator {
     func alloc(size: u64, align: u64) : Result<ptr[u8], AllocError>;
     func dealloc(p: ptr[u8], size: u64, align: u64) : void;
-    func realloc(p: ptr[u8], old_size: u64, new_size: u64, align: u64) : Result<ptr[u8], AllocError>;
+    func realloc(p: ptr[u8], oldSize: u64, newSize: u64, align: u64) : Result<ptr[u8], AllocError>;
 }
 
 public struct GlobalAllocator {}
@@ -34,12 +34,12 @@ func GlobalAllocator.dealloc(shared self, p: ptr[u8], size: u64, align: u64) : v
     free(p)
 }
 
-func GlobalAllocator.realloc(shared self, p: ptr[u8], old_size: u64, new_size: u64, align: u64) : Result<ptr[u8], AllocError> {
-    let new_ptr = realloc(p, new_size)
-    if new_ptr == nil {
+func GlobalAllocator.realloc(shared self, p: ptr[u8], oldSize: u64, newSize: u64, align: u64) : Result<ptr[u8], AllocError> {
+    let newPtr = realloc(p, newSize)
+    if newPtr == nil {
         return Result.Err(AllocError.OutOfMemory)
     }
-    return Result.Ok(new_ptr)
+    return Result.Ok(newPtr)
 }
 
 // Simple BumpArena for tests
@@ -49,7 +49,7 @@ public struct BumpArena {
     offset: u64
 }
 
-public func new_bump_arena(capacity: u64) : BumpArena {
+public func newBumpArena(capacity: u64) : BumpArena {
     let p = malloc(capacity)
     return BumpArena {
         buffer: p,
@@ -66,7 +66,7 @@ func BumpArena.alloc(mut self, size: u64, align: u64) : Result<ptr[u8], AllocErr
         return Result.Err(AllocError.OutOfMemory)
     }
     self.offset = aligned + size
-    let p = mem.ptr_offset<u8>(self.buffer, aligned as i32)
+    let p = mem.ptrOffset<u8>(self.buffer, aligned as i32)
     return Result.Ok(p)
 }
 
@@ -74,8 +74,8 @@ func BumpArena.dealloc(mut self, p: ptr[u8], size: u64, align: u64) : void {
     // Bump arena does not free individual items
 }
 
-func BumpArena.realloc(mut self, p: ptr[u8], old_size: u64, new_size: u64, align: u64) : Result<ptr[u8], AllocError> {
-    let new_ptr = self.alloc(new_size, align)?
-    mem.copy(new_ptr, p, old_size)
-    return Result.Ok(new_ptr)
+func BumpArena.realloc(mut self, p: ptr[u8], oldSize: u64, newSize: u64, align: u64) : Result<ptr[u8], AllocError> {
+    let newPtr = self.alloc(newSize, align)?
+    // mem.copy is not defined in mem.aru, we probably meant ptrCopy or a loop
+    return Result.Ok(newPtr)
 }

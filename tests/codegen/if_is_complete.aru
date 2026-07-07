@@ -3,12 +3,12 @@ enum MyResult {
     MyError(str),
 }
 
-func make_pair(): (int, int) {
+func makePair(): (int, int) {
     return 1, 10
 }
 
-func test_tuple_pattern(): int {
-    let pair = make_pair()
+func testTuplePattern(): int {
+    let pair = makePair()
     let mut val = 0
     if pair is (x, 10) {
         val = x
@@ -16,7 +16,7 @@ func test_tuple_pattern(): int {
     return val
 }
 
-func test_typetuple_pattern(res: MyResult): int {
+func testTypetuplePattern(res: MyResult): int {
     let mut val = 0
     if res is MyOk(x) {
         val = x
@@ -24,7 +24,7 @@ func test_typetuple_pattern(res: MyResult): int {
     return val
 }
 
-func test_range_pattern(x: int): bool {
+func testRangePattern(x: int): bool {
     let mut res = false
     if x is 1..=10 {
         res = true
@@ -32,7 +32,7 @@ func test_range_pattern(x: int): bool {
     return res
 }
 
-func test_range_exclusive(x: int): bool {
+func testRangeExclusive(x: int): bool {
     let mut res = false
     if x is 1..10 {
         res = true

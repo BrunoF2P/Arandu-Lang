@@ -1,6 +1,6 @@
 module tests.namedImport
 
-import { Button, Window as AppWindow, text as label } from ui
+from ui import { Button, Window as AppWindow, text as label }
 
 func main() {
     label("ok")

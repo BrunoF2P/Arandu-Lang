@@ -143,7 +143,7 @@ fn resolves_named_import_aliases_by_identifier_casing() {
         r#"
 module tests.named_imports
 
-import { Button, Window as AppWindow, text as label } from ui
+from ui import { Button, Window as AppWindow, text as label }
 
 func render(window: AppWindow): Button {
     return label("ok")

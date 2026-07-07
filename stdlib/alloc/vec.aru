@@ -1,25 +1,25 @@
 module std.alloc.vec
 
-import "std.core.mem" as mem
-import "std.alloc.allocator_api" as alloc_api
+import std.core.mem as mem
+import std.alloc.allocator_api as allocApi
 
-public struct Vec<T, A: alloc_api.Allocator> {
+public struct Vec<T, A: allocApi.Allocator> {
     data: ptr[T]
     len: u64
     capacity: u64
     allocator: A
 }
 
-public func new<T>() : Vec<T, alloc_api.GlobalAllocator> {
-    return Vec<T, alloc_api.GlobalAllocator> {
+public func new<T>() : Vec<T, allocApi.GlobalAllocator> {
+    return Vec<T, allocApi.GlobalAllocator> {
         data: nil,
         len: 0,
         capacity: 0,
-        allocator: alloc_api.GlobalAllocator{},
+        allocator: allocApi.GlobalAllocator{},
     }
 }
 
-public func new_in<T, A: alloc_api.Allocator>(allocator: A) : Vec<T, A> {
+public func newIn<T, A: allocApi.Allocator>(allocator: A) : Vec<T, A> {
     return Vec<T, A> {
         data: nil,
         len: 0,
@@ -28,72 +28,72 @@ public func new_in<T, A: alloc_api.Allocator>(allocator: A) : Vec<T, A> {
     }
 }
 
-func Vec.grow<T, A: alloc_api.Allocator>(mut self) : void {
-    let new_cap = if self.capacity == 0 { 8 as u64; } else { self.capacity * 2; }
-    let new_size = new_cap * mem.size_of<T>()
-    let old_size = self.capacity * mem.size_of<T>()
-    let align = mem.align_of<T>()
+func Vec.grow<T, A: allocApi.Allocator>(mut self) : void {
+    let newCap = if self.capacity == 0 { 8 as u64; } else { self.capacity * 2; }
+    let newSize = newCap * mem.sizeOf<T>()
+    let oldSize = self.capacity * mem.sizeOf<T>()
+    let align = mem.alignOf<T>()
 
     if self.capacity > 0 {
-        let new_data = self.allocator
-            .realloc(self.data as ptr[u8], old_size, new_size, align)
-            .expect_or_abort("Out of Memory (OOM) realocando vetor")
+        let newData = self.allocator
+            .realloc(self.data as ptr[u8], oldSize, newSize, align)
+            .expectOrAbort("Out of Memory (OOM) realocando vetor")
         
-        self.data = new_data as ptr[T]
-        self.capacity = new_cap
+        self.data = newData as ptr[T]
+        self.capacity = newCap
     } else {
-        let new_data = self.allocator
-            .alloc(new_size, align)
-            .expect_or_abort("Out of Memory (OOM) alocando vetor")
+        let newData = self.allocator
+            .alloc(newSize, align)
+            .expectOrAbort("Out of Memory (OOM) alocando vetor")
         
-        self.data = new_data as ptr[T]
-        self.capacity = new_cap
+        self.data = newData as ptr[T]
+        self.capacity = newCap
     }
 }
 
-public func Vec.push<T, A: alloc_api.Allocator>(mut self, value: T) : void {
+public func Vec.push<T, A: allocApi.Allocator>(mut self, value: T) : void {
     if self.len == self.capacity {
         self.grow()
     }
-    let dest_ptr = mem.ptr_offset<T>(self.data, self.len as i32)
-    mem.ptr_write<T>(dest_ptr, value)
+    let destPtr = mem.ptrOffset<T>(self.data, self.len as i32)
+    mem.ptrWrite<T>(destPtr, value)
     self.len = self.len + 1
 }
 
-public func Vec.pop<T, A: alloc_api.Allocator>(mut self) : Option<T> {
+public func Vec.pop<T, A: allocApi.Allocator>(mut self) : Option<T> {
     if self.len == 0 {
         return Option.None
     }
     self.len = self.len - 1
-    let elem_ptr = mem.ptr_offset<T>(self.data, self.len as i32)
-    return Option.Some(mem.ptr_read<T>(elem_ptr))
+    let elemPtr = mem.ptrOffset<T>(self.data, self.len as i32)
+    return Option.Some(mem.ptrRead<T>(elemPtr))
 }
 
-public func Vec.get<T, A: alloc_api.Allocator>(shared self, index: u64) : Option<T> {
+public func Vec.get<T, A: allocApi.Allocator>(shared self, index: u64) : Option<T> {
     if index >= self.len {
         return Option.None
     }
-    let elem_ptr = mem.ptr_offset<T>(self.data, index as i32)
-    return Option.Some(mem.ptr_read<T>(elem_ptr))
+    let elemPtr = mem.ptrOffset<T>(self.data, index as i32)
+    return Option.Some(mem.ptrRead<T>(elemPtr))
 }
 
-public func Vec.put<T, A: alloc_api.Allocator>(mut self, index: u64, value: T) : bool {
+public func Vec.put<T, A: allocApi.Allocator>(mut self, index: u64, value: T) : bool {
     if index >= self.len {
         return false
     }
-    let elem_ptr = mem.ptr_offset<T>(self.data, index as i32)
-    mem.ptr_write<T>(elem_ptr, value)
+    let elemPtr = mem.ptrOffset<T>(self.data, index as i32)
+    mem.ptrWrite<T>(elemPtr, value)
     return true
 }
 
-public func Vec.clear<T, A: alloc_api.Allocator>(mut self) : void {
+public func Vec.clear<T, A: allocApi.Allocator>(mut self) : void {
     self.len = 0
 }
 
-public func Vec.free<T, A: alloc_api.Allocator>(mut self) : void {
+public func Vec.free<T, A: allocApi.Allocator>(mut self) : void {
     if self.capacity > 0 {
-        let size = self.capacity * mem.size_of<T>()
-        let align = mem.align_of<T>()
+        let size = self.capacity * mem.sizeOf<T>()
+        let align = mem.alignOf<T>()
         self.allocator.dealloc(self.data as ptr[u8], size, align)
         self.data = nil
         self.capacity = 0

@@ -1,5 +1,5 @@
 module std.core.prelude
 
-import "std.core.option" as option
-import "std.core.result" as result
-import "std.core.pointer" as pointer
+import std.core.option as option
+import std.core.result as result
+import std.core.pointer as pointer

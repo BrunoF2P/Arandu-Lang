@@ -9,7 +9,7 @@ public enum Option<T> {
     None,
 }
 
-public func Option.expect_or_abort<T>(self, reason: str) : T {
+public func Option.expectOrAbort<T>(self, reason: str) : T {
     match self {
         Some(v) => {
             return v;

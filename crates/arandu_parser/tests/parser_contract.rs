@@ -197,7 +197,7 @@ fn module_contextual_keyword() {
 fn import_module() {
     assert_contract_ast(
         "import_module",
-        "Program @1:1-2:10\n  Module @1:1-1:30 tests.contract.imports\n  Import @2:1-2:10 io",
+        "Program @1:1-2:10\n  Module @1:1-1:30 tests.contract.imports\n  Import @2:1-2:10 io as io",
     );
 }
 
@@ -205,7 +205,7 @@ fn import_module() {
 fn import_named() {
     assert_contract_ast(
         "import_named",
-        "Program @1:1-2:34\n  Module @1:1-1:30 tests.contract.imports\n  Import @2:1-2:34 { @2:10-2:16 Button, @2:18-2:24 Window } from ui",
+        "Program @1:1-2:34\n  Module @1:1-1:30 tests.contract.imports\n  From ui Import @2:1-2:34 { @2:18-2:24 Button, @2:26-2:32 Window }",
     );
 }
 
@@ -213,7 +213,7 @@ fn import_named() {
 fn import_alias() {
     assert_contract_ast(
         "import_alias",
-        "Program @1:1-2:39\n  Module @1:1-1:30 tests.contract.imports\n  Import @2:1-2:39 { @2:10-2:29 Window as AppWindow } from ui",
+        "Program @1:1-2:39\n  Module @1:1-1:30 tests.contract.imports\n  From ui Import @2:1-2:39 { @2:18-2:37 Window as AppWindow }",
     );
 }
 
@@ -229,7 +229,7 @@ fn import_external() {
 fn list_trailing_comma() {
     assert_contract_ast(
         "list_trailing_comma",
-        "Program @1:1-2:27\n  Module @1:1-1:28 tests.contract.lists\n  Import @2:1-2:27 { @2:10-2:16 Button } from ui",
+        "Program @1:1-2:27\n  Module @1:1-1:28 tests.contract.lists\n  From ui Import @2:1-2:27 { @2:18-2:24 Button }",
     );
 }
 
@@ -304,7 +304,7 @@ fn where_on_new_line() {
 
 #[test]
 fn from_on_new_line() {
-    let _program = parse("module test\nimport {\n  Button\n}\nfrom ui\n")
+    let _program = parse("module test\nfrom ui import {\n  Button\n}\n")
         .expect("parser should accept from on a new line");
 }
 

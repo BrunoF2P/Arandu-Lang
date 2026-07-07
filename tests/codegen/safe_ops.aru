@@ -2,7 +2,7 @@ func load(): Result<int, Err> {
     return Result.Ok(0)
 }
 
-func test_try(): int {
+func testTry(): int {
     let x = load()?
     return x * 2
 }
@@ -12,14 +12,14 @@ struct Point {
     y: int
 }
 
-func test_safe_field(p: Point?): int {
+func testSafeField(p: Point?): int {
     return p?.x ?? 0
 }
 
-func test_safe_index(arr: []int, idx: int): int {
+func testSafeIndex(arr: []int, idx: int): int {
     return arr?[idx] ?? -1
 }
 
-func test_null_coalesce(a: int?, b: int): int {
+func testNullCoalesce(a: int?, b: int): int {
     return a ?? b
 }

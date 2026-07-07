@@ -161,7 +161,7 @@ impl<'a> Parser<'a> {
             if self.at_kind_name("EOF") {
                 break;
             }
-            if self.at_kind_name("KW_IMPORT") {
+            if self.at_kind_name("KW_IMPORT") || self.at_kind_name("KW_FROM") {
                 match self.parse_import() {
                     Ok(import) => imports.push(import),
                     Err(err) => {
@@ -431,6 +431,7 @@ impl<'a> Parser<'a> {
                 | TokenKind::KwType
                 | TokenKind::KwConst
                 | TokenKind::KwImport
+                | TokenKind::KwFrom
                 | TokenKind::KwModule
         ) {
             return;
@@ -447,6 +448,7 @@ impl<'a> Parser<'a> {
                     | TokenKind::KwType
                     | TokenKind::KwConst
                     | TokenKind::KwImport
+                    | TokenKind::KwFrom
                     | TokenKind::KwModule
             ) {
                 break;

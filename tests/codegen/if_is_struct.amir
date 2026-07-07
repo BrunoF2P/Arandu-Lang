@@ -1,4 +1,4 @@
-Func test_struct_pattern(user: User) -> int
+Func testStructPattern(user: User) -> int
   locals:
     _0: int // return
     _1: User

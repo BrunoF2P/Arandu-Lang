@@ -1,7 +1,7 @@
 module std.core.pointer
 
-import "std.core.mem" as mem
+import std.core.mem as mem
 
 func offset<T>(p: ptr[T], count: i32): ptr[T] {
-    return mem.ptr_offset<T>(p, count)
+    return mem.ptrOffset<T>(p, count)
 }

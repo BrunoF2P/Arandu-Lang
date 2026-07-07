@@ -1,4 +1,4 @@
-Func test_literal(x: int) -> int
+Func testLiteral(x: int) -> int
   locals:
     _0: int // return
     _1: int
@@ -20,7 +20,7 @@ Func test_literal(x: int) -> int
     _0 = _4
     return
 
-Func test_wildcard(x: int) -> int
+Func testWildcard(x: int) -> int
   locals:
     _0: int // return
     _1: int

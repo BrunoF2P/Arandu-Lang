@@ -6,7 +6,7 @@ Func load() -> Result<int, Err>
     _0 = enumConstruct(0, 10)
     return
 
-Func test_try() -> int
+Func testTry() -> int
   locals:
     _0: int // return
     _1: Result<int, Err>

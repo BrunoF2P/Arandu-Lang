@@ -3,7 +3,7 @@ enum MyResult {
     MyError(str),
 }
 
-func test_payload(res: MyResult): int {
+func testPayload(res: MyResult): int {
     let mut val = 0
     if res is MyResult.MyOk(x) {
         val = x

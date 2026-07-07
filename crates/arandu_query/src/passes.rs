@@ -151,7 +151,8 @@ pub fn module_signatures(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<T
             // Merge imported type info
             for import in &program.imports {
                 let module_path = match import {
-                    arandu_parser::ImportDecl::Module { path, .. } => {
+                    arandu_parser::ImportDecl::ModuleAlias { path, .. }
+                    | arandu_parser::ImportDecl::Named { path, .. } => {
                         let path_str = path.join("/");
                         if let Some(stripped) = path_str.strip_prefix("std/core/") {
                             Some(format!("stdlib/core/{}.aru", stripped))
@@ -161,23 +162,14 @@ pub fn module_signatures(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<T
                             Some(format!("{path_str}.aru"))
                         }
                     }
-                    arandu_parser::ImportDecl::External { source, .. } => {
+                    arandu_parser::ImportDecl::ExternalAlias { source, .. }
+                    | arandu_parser::ImportDecl::ExternalNamed { source, .. } => {
                         if let Some(stripped) = source.strip_prefix("std.core.") {
                             Some(format!("stdlib/core/{}.aru", stripped))
-                        } else {
-                            source
-                                .strip_prefix("std.alloc.")
-                                .map(|stripped| format!("stdlib/alloc/{}.aru", stripped))
-                        }
-                    }
-                    arandu_parser::ImportDecl::Named { from, .. } => {
-                        let path_str = from.join("/");
-                        if let Some(stripped) = path_str.strip_prefix("std/core/") {
-                            Some(format!("stdlib/core/{}.aru", stripped))
-                        } else if let Some(stripped) = path_str.strip_prefix("std/alloc/") {
+                        } else if let Some(stripped) = source.strip_prefix("std.alloc.") {
                             Some(format!("stdlib/alloc/{}.aru", stripped))
                         } else {
-                            Some(format!("{path_str}.aru"))
+                            Some(source.clone())
                         }
                     }
                 };

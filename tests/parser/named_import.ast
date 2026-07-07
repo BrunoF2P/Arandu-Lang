@@ -1,5 +1,5 @@
 Program @1:1-7:2
   Module @1:1-1:25 tests.namedImport
-  Import @3:1-3:62 { @3:10-3:16 Button, @3:18-3:37 Window as AppWindow, @3:39-3:52 text as label } from ui
+  From ui Import @3:1-3:62 { @3:18-3:24 Button, @3:26-3:45 Window as AppWindow, @3:47-3:60 text as label }
   Func @5:1-7:2 main() -> void
     Expr @6:5-6:16 Call @6:5-6:16(Path @6:5-6:10(label), [String @6:11-6:15("ok")])

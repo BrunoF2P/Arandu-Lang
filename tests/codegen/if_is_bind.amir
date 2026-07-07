@@ -1,4 +1,4 @@
-Func test_bind(x: int) -> int
+Func testBind(x: int) -> int
   locals:
     _0: int // return
     _1: int

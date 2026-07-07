@@ -1,2 +1,2 @@
 module tests.contract.imports
-import { Window as AppWindow } from ui
+from ui import { Window as AppWindow }

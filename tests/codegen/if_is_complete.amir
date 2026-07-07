@@ -1,4 +1,4 @@
-Func make_pair() -> (int, int)
+Func makePair() -> (int, int)
   locals:
     _0: (int, int) // return
 
@@ -6,7 +6,7 @@ Func make_pair() -> (int, int)
     _0 = (1, 10)
     return
 
-Func test_tuple_pattern() -> int
+Func testTuplePattern() -> int
   locals:
     _0: int // return
     _1: (int, int)
@@ -24,7 +24,7 @@ Func test_tuple_pattern() -> int
     s2: int // x
 
   bb0:
-    _1 = call fn@make_pair()
+    _1 = call fn@makePair()
     s0 = move _1
     _2 = s0
     _3 = _2.0
@@ -41,7 +41,7 @@ Func test_tuple_pattern() -> int
     _0 = _9
     return
 
-Func test_typetuple_pattern(res: MyResult) -> int
+Func testTypetuplePattern(res: MyResult) -> int
   locals:
     _0: int // return
     _1: MyResult
@@ -73,7 +73,7 @@ Func test_typetuple_pattern(res: MyResult) -> int
     _0 = _8
     return
 
-Func test_range_pattern(x: int) -> bool
+Func testRangePattern(x: int) -> bool
   locals:
     _0: bool // return
     _1: int
@@ -99,7 +99,7 @@ Func test_range_pattern(x: int) -> bool
     _0 = _6
     return
 
-Func test_range_exclusive(x: int) -> bool
+Func testRangeExclusive(x: int) -> bool
   locals:
     _0: bool // return
     _1: int

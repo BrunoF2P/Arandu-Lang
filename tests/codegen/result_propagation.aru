@@ -2,6 +2,6 @@ func load(): Result<int, Err> {
     return Result.Ok(10)
 }
 
-func test_try(): int {
+func testTry(): int {
     return load()? * 2
 }

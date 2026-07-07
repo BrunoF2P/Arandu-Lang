@@ -1,4 +1,4 @@
-func test_bind(x: int): int {
+func testBind(x: int): int {
     let mut res = 0
     if x is y {
         res = y

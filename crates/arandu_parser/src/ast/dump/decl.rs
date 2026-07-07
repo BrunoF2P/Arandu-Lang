@@ -207,10 +207,10 @@ fn dump_signature(pool: &AstPool, signature: &FuncSignature, out: &mut Vec<Strin
 
 pub(super) fn dump_import(_pool: &AstPool, import: &ImportDecl) -> String {
     match import {
-        ImportDecl::Module { span, path } => {
-            format!("Import {} {}", dump_span(*span), path.join("."))
+        ImportDecl::ModuleAlias { span, path, alias } => {
+            format!("Import {} {} as {alias}", dump_span(*span), path.join("."))
         }
-        ImportDecl::Named { span, items, from } => {
+        ImportDecl::Named { span, items, path } => {
             let items = items
                 .iter()
                 .map(|item| match &item.alias {
@@ -220,17 +220,36 @@ pub(super) fn dump_import(_pool: &AstPool, import: &ImportDecl) -> String {
                 .collect::<Vec<_>>()
                 .join(", ");
             format!(
-                "Import {} {{ {items} }} from {}",
-                dump_span(*span),
-                from.join(".")
+                "From {} Import {} {{ {items} }}",
+                path.join("."),
+                dump_span(*span)
             )
         }
-        ImportDecl::External {
+        ImportDecl::ExternalNamed {
+            span,
+            items,
+            source,
+        } => {
+            let items = items
+                .iter()
+                .map(|item| match &item.alias {
+                    Some(alias) => format!("{} {} as {alias}", dump_span(item.span), item.name),
+                    None => format!("{} {}", dump_span(item.span), item.name),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "From \"{}\" Import {} {{ {items} }}",
+                source,
+                dump_span(*span)
+            )
+        }
+        ImportDecl::ExternalAlias {
             span,
             source,
             alias,
         } => {
-            format!("Import {} \"{}\" as {}", dump_span(*span), source, alias)
+            format!("Import {} \"{}\" as {alias}", dump_span(*span), source)
         }
     }
 }

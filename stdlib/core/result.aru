@@ -9,7 +9,7 @@ public enum Result<T, E> {
     Err(E),
 }
 
-public func Result.expect_or_abort<T, E>(self, reason: str) : T {
+public func Result.expectOrAbort<T, E>(self, reason: str) : T {
     match self {
         Ok(v) => {
             return v;

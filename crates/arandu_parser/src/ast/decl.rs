@@ -26,16 +26,26 @@ pub struct ModuleDecl {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ImportDecl {
-    Module {
+    /// `import path.to.module as alias`
+    ModuleAlias {
         span: Span,
         path: Vec<String>,
+        alias: String,
     },
+    /// `from path.to.module import { Item, Other }`
     Named {
         span: Span,
         items: Vec<ImportItem>,
-        from: Vec<String>,
+        path: Vec<String>,
     },
-    External {
+    /// `from "external" import { Item }`
+    ExternalNamed {
+        span: Span,
+        items: Vec<ImportItem>,
+        source: String,
+    },
+    /// `import "external" as alias`
+    ExternalAlias {
         span: Span,
         source: String,
         alias: String,
@@ -46,9 +56,10 @@ impl ImportDecl {
     #[must_use]
     pub fn span(&self) -> Span {
         match self {
-            ImportDecl::Module { span, .. }
+            ImportDecl::ModuleAlias { span, .. }
             | ImportDecl::Named { span, .. }
-            | ImportDecl::External { span, .. } => *span,
+            | ImportDecl::ExternalNamed { span, .. }
+            | ImportDecl::ExternalAlias { span, .. } => *span,
         }
     }
 }

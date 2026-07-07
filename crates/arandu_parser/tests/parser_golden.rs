@@ -200,7 +200,7 @@ fn parses_span_dump_fixture() {
 #[test]
 fn parses_trailing_commas_in_named_imports_and_generics() {
     assert_parses_source(
-        "module tests.inline\nimport { Button, } from ui\ntype Box<T,> = T\nfunc id<T,>(value: T): T { return value; }\n",
+        "module tests.inline\nfrom ui import { Button, }\ntype Box<T,> = T\nfunc id<T,>(value: T): T { return value; }\n",
     );
 }
 

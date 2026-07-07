@@ -6,7 +6,7 @@ Func load() -> Result<int, Err>
     _0 = enumConstruct(0, 0)
     return
 
-Func test_try() -> int
+Func testTry() -> int
   locals:
     _0: int // return
     _1: Result<int, Err>
@@ -33,7 +33,7 @@ Func test_try() -> int
     _0 = mul _6, 2
     return
 
-Func test_safe_field(p: Point?) -> int
+Func testSafeField(p: Point?) -> int
   locals:
     _0: int // return
     _1: Point?
@@ -64,7 +64,7 @@ Func test_safe_field(p: Point?) -> int
   bb6:
     return
 
-Func test_safe_index(arr: []int, idx: int) -> int
+Func testSafeIndex(arr: []int, idx: int) -> int
   locals:
     _0: int // return
     _1: []int
@@ -98,7 +98,7 @@ Func test_safe_index(arr: []int, idx: int) -> int
   bb6:
     return
 
-Func test_null_coalesce(a: int?, b: int) -> int
+Func testNullCoalesce(a: int?, b: int) -> int
   locals:
     _0: int // return
     _1: int?

@@ -1,8 +1,8 @@
 use super::{
     Attribute, ConstDecl, EnumDecl, EnumPayload, EnumVariant, ExternDecl, FieldDecl, FuncDecl,
     FuncName, FuncSignature, ImportDecl, ImportItem, InterfaceDecl, ModuleDecl, ParseError,
-    ParseErrorCode, Parser, StructDecl, TokenKind, TopLevelDecl, TypeAliasDecl, Visibility,
-    is_contextual_module_segment,
+    ParseErrorCode, Parser, StructDecl, TokenKind, TopLevelDecl, TypeAliasDecl, TypeName,
+    Visibility, is_contextual_module_segment,
 };
 
 impl<'a> Parser<'a> {
@@ -15,7 +15,8 @@ impl<'a> Parser<'a> {
                 || self.at_kind_name("KW_IMPORT")
                 || matches!(
                     self.current().kind,
-                    TokenKind::At
+                    TokenKind::KwFrom
+                        | TokenKind::At
                         | TokenKind::KwPublic
                         | TokenKind::KwConst
                         | TokenKind::KwType
@@ -52,42 +53,77 @@ impl<'a> Parser<'a> {
         self.collect_doc_comments();
         let docs = self.take_pending_docs();
         let start = self.mark();
-        self.expect_name("KW_IMPORT")?;
-        if self.eat_name("LBRACE") {
-            let items = self.parse_comma_separated_list("RBRACE", 1, |parser| {
-                let item_start = parser.mark();
-                let name = parser.expect_import_name()?;
-                let alias = if parser.eat_name("KW_AS") {
-                    Some(parser.expect_import_name()?)
-                } else {
-                    None
+
+        if self.at_kind_name("KW_FROM") {
+            self.advance();
+            if self.at_kind_name("STRING_START") {
+                let source = self.parse_string_literal()?;
+                self.expect_name("KW_IMPORT")?;
+                self.expect_name("LBRACE")?;
+                let items = self.parse_comma_separated_list("RBRACE", 1, |parser| {
+                    let item_start = parser.mark();
+                    let name = parser.expect_import_name()?;
+                    let alias = if parser.eat_name("KW_AS") {
+                        Some(parser.expect_import_name()?)
+                    } else {
+                        None
+                    };
+                    Ok(ImportItem {
+                        span: parser.span_from_mark(item_start),
+                        name,
+                        alias,
+                    })
+                })?;
+                self.skip_semicolons();
+                self.expect_name("RBRACE")?;
+                self.expect_optional_semicolon_after_module_path()?;
+                let import = ImportDecl::ExternalNamed {
+                    span: self.span_from_mark(start),
+                    source,
+                    items,
                 };
-                Ok(ImportItem {
-                    span: parser.span_from_mark(item_start),
-                    name,
-                    alias,
-                })
-            })?;
-            self.skip_semicolons();
-            self.expect_name("RBRACE")?;
-            self.expect_name("KW_FROM")?;
-            let from = self.parse_module_path()?;
-            self.expect_optional_semicolon_after_module_path()?;
-            let import = ImportDecl::Named {
-                span: self.span_from_mark(start),
-                items,
-                from,
-            };
-            self.attach_docs(docs, import.span());
-            return Ok(import);
+                self.attach_docs(docs, import.span());
+                return Ok(import);
+            } else {
+                let path = self.parse_module_path()?;
+                self.expect_name("KW_IMPORT")?;
+                self.expect_name("LBRACE")?;
+                let items = self.parse_comma_separated_list("RBRACE", 1, |parser| {
+                    let item_start = parser.mark();
+                    let name = parser.expect_import_name()?;
+                    let alias = if parser.eat_name("KW_AS") {
+                        Some(parser.expect_import_name()?)
+                    } else {
+                        None
+                    };
+                    Ok(ImportItem {
+                        span: parser.span_from_mark(item_start),
+                        name,
+                        alias,
+                    })
+                })?;
+                self.skip_semicolons();
+                self.expect_name("RBRACE")?;
+                self.expect_optional_semicolon_after_module_path()?;
+                let import = ImportDecl::Named {
+                    span: self.span_from_mark(start),
+                    path,
+                    items,
+                };
+                self.attach_docs(docs, import.span());
+                return Ok(import);
+            }
         }
+
+        // `import <path> as <alias>` or `import "<source>" as <alias>`
+        self.expect_name("KW_IMPORT")?;
 
         if self.at_kind_name("STRING_START") {
             let source = self.parse_string_literal()?;
             self.expect_name("KW_AS")?;
             let alias = self.expect_import_name()?;
             self.expect_optional_semicolon_after_module_path()?;
-            let import = ImportDecl::External {
+            let import = ImportDecl::ExternalAlias {
                 span: self.span_from_mark(start),
                 source,
                 alias,
@@ -97,10 +133,16 @@ impl<'a> Parser<'a> {
         }
 
         let path = self.parse_module_path()?;
+        let alias = if self.eat_name("KW_AS") {
+            self.expect_import_name()?
+        } else {
+            path.last().unwrap().clone()
+        };
         self.expect_optional_semicolon_after_module_path()?;
-        let import = ImportDecl::Module {
+        let import = ImportDecl::ModuleAlias {
             span: self.span_from_mark(start),
             path,
+            alias,
         };
         self.attach_docs(docs, import.span());
         Ok(import)
@@ -422,9 +464,18 @@ impl<'a> Parser<'a> {
         let name = self.expect_ident_type()?;
         let generic_params = self.parse_generic_params()?;
         let where_clause = self.parse_where_clause("LBRACE")?;
+
+        // Build a synthetic receiver TypeName so that `self` inside interface
+        // method signatures doesn't require an explicit type annotation —
+        // matching Rust's trait behaviour where `self` implicitly means `Self`.
+        let self_receiver = TypeName {
+            span: arandu_lexer::Span::new(0, 0, 0),
+            path: vec![name.clone()],
+        };
+
         let members = self.parse_braced_member_list(|parser| {
             let attrs = parser.parse_attributes()?;
-            parser.parse_func_signature(attrs)
+            parser.parse_func_signature_with_receiver(attrs, Some(&self_receiver))
         })?;
         Ok(InterfaceDecl {
             span: self.span_from_mark(start),
@@ -482,6 +533,14 @@ impl<'a> Parser<'a> {
         &mut self,
         attrs: Vec<Attribute>,
     ) -> Result<FuncSignature, ParseError> {
+        self.parse_func_signature_with_receiver(attrs, None)
+    }
+
+    pub(super) fn parse_func_signature_with_receiver(
+        &mut self,
+        attrs: Vec<Attribute>,
+        receiver: Option<&TypeName>,
+    ) -> Result<FuncSignature, ParseError> {
         self.collect_doc_comments();
         let docs = self.take_pending_docs();
         let start = self.mark();
@@ -489,7 +548,7 @@ impl<'a> Parser<'a> {
         let name = self.expect_ident_value()?;
         let generic_params = self.parse_generic_params()?;
         self.expect_name("LPAREN")?;
-        let params = self.parse_params(None)?;
+        let params = self.parse_params(receiver)?;
         self.expect_name("RPAREN")?;
         let result = if self.eat_name("COLON") {
             Some(self.parse_result_type()?)

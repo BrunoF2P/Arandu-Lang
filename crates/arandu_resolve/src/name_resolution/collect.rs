@@ -8,17 +8,9 @@ use super::util::is_type_case;
 impl<'a> Resolver<'a> {
     pub(crate) fn collect_import(&mut self, scope: ScopeId, import: &ImportDecl) {
         match import {
-            ImportDecl::Module { span, path } => {
-                if let Some(root) = path.first() {
-                    if let Some(sym) = self.define(scope, root, SymbolKind::Module, *span) {
-                        self.record_import_symbol(sym, root.to_string(), *span);
-                    }
-                } else {
-                    self.diagnostics.push(Diagnostic::error(
-                        DiagCode::M001UnresolvedImport,
-                        "empty import path",
-                        *span,
-                    ));
+            ImportDecl::ModuleAlias { span, alias, .. } => {
+                if let Some(sym) = self.define(scope, alias, SymbolKind::Module, *span) {
+                    self.record_import_symbol(sym, alias.to_string(), *span);
                 }
             }
             ImportDecl::Named { items, .. } => {
@@ -34,7 +26,7 @@ impl<'a> Resolver<'a> {
                     }
                 }
             }
-            ImportDecl::External {
+            ImportDecl::ExternalAlias {
                 span,
                 source,
                 alias,
@@ -43,6 +35,19 @@ impl<'a> Resolver<'a> {
                     self.record_import_symbol(sym, alias.to_string(), *span);
                 }
                 self.import_aliases.insert(alias.clone(), source.clone());
+            }
+            ImportDecl::ExternalNamed { items, .. } => {
+                for item in items {
+                    let name = item.alias.as_ref().unwrap_or(&item.name);
+                    let kind = if is_type_case(name) {
+                        SymbolKind::ImportType
+                    } else {
+                        SymbolKind::ImportValue
+                    };
+                    if let Some(sym) = self.define(scope, name, kind, item.span) {
+                        self.record_import_symbol(sym, name.to_string(), item.span);
+                    }
+                }
             }
         }
     }

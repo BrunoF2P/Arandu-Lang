@@ -1,2 +1,2 @@
 module tests.contract.lists
-import { Button, } from ui
+from ui import { Button, }

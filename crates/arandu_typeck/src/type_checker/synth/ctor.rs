@@ -143,8 +143,13 @@ pub(crate) fn synth_method_call(
 
     let (params, ret, method_sym_recorded) = if let Some(method_sig) = resolved_method {
         if let ArType::Func(params, ret) = method_sig {
+            // The interface method signature already has `self` as params[0]
+            // (typed as the interface). Replace it with the actual base type
+            // so the receiver unification works correctly and arg count matches.
             let mut new_params = vec![actual_base_ty_id];
-            new_params.extend(params);
+            if params.len() > 1 {
+                new_params.extend_from_slice(&params[1..]);
+            }
             (new_params, ret, None)
         } else {
             return None;

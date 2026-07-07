@@ -1,9 +1,9 @@
-func test_alloc_free() {
+func testAllocFree() {
     let buffer = alloc(64)
     free(buffer)
 }
 
-func test_defer(): int {
+func testDefer(): int {
     let mut x = 0
     defer {
         x = 1
@@ -11,7 +11,7 @@ func test_defer(): int {
     return x
 }
 
-func test_defer_scope(): int {
+func testDeferScope(): int {
     let mut x = 0
     if true {
         defer {

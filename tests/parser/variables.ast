@@ -1,6 +1,6 @@
 Program @1:1-16:2
   Module @1:1-1:40 examples.stable.syntax.variables
-  Import @3:1-3:10 io
+  Import @3:1-3:10 io as io
   Func @5:1-16:2 main() -> void
     Var @6:5-6:28 @6:9-6:18 name Type @6:15-6:18 str = String @6:21-6:28("Bruno")
     Var @7:5-7:26 @7:9-7:21 mut age Type @7:18-7:21 int = Int @7:24-7:26(25)
