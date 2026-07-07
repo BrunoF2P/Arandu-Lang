@@ -40,8 +40,6 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                 let val_ty = checker.resolve(value_ty);
 
                 if let ArType::Result(ok_id, err_id) = val_ty {
-                    let ok_id = ok_id;
-                    let err_id = err_id;
                     match variant.as_str() {
                         "Ok" => {
                             if payload.len != 1 {
@@ -82,7 +80,6 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                         }
                     }
                 } else if let ArType::Option(inner_id) = val_ty {
-                    let inner_id = inner_id;
                     match variant.as_str() {
                         "Some" => {
                             if payload.len != 1 {
