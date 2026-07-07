@@ -16,3 +16,4 @@ arandu_resolve = { path = "../arandu_resolve" }
 arandu_typeck = { path = "../arandu_typeck" }
 arandu_mir = { path = "../arandu_mir" }
 arandu_semantics = { path = "../arandu_semantics" }
+petgraph = { workspace = true }

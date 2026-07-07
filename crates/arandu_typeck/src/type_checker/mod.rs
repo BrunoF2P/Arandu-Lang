@@ -429,10 +429,7 @@ mod tests {
         let mut info = TypeInfo::with_interner(i);
         let eid = ExprId::new(3);
         info.record_expr_type(eid, tid);
-        assert_eq!(
-            info.expr_type(eid),
-            Some(&ArType::Primitive(Primitive::Int))
-        );
+        assert_eq!(info.expr_type(eid), Some(ArType::Primitive(Primitive::Int)));
         assert_eq!(info.expr_type_id(eid), Some(tid));
     }
 
@@ -451,7 +448,7 @@ mod tests {
         info.record_decl_type(sym, tid);
         assert_eq!(
             info.decl_type(sym),
-            Some(&ArType::Primitive(Primitive::Bool))
+            Some(ArType::Primitive(Primitive::Bool))
         );
         assert_eq!(info.decl_type_id(sym), Some(tid));
     }
@@ -570,7 +567,7 @@ mod tests {
         to_info.merge_from(&from_info);
         assert_eq!(
             to_info.decl_type(SymbolId::new(0, 1)),
-            Some(&ArType::Primitive(Primitive::Int))
+            Some(ArType::Primitive(Primitive::Int))
         );
     }
 

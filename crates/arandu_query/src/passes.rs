@@ -290,3 +290,68 @@ pub fn lower_amir(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<AmirProg
     };
     HashEq::new(amir)
 }
+
+#[salsa::tracked]
+pub fn module_dependency_graph(
+    db: &dyn ArandCompilerDb,
+    root: SourceFile,
+) -> HashEq<petgraph::Graph<u32, ()>> {
+    use petgraph::Graph;
+    let mut graph = Graph::new();
+    let mut visited = std::collections::HashMap::new();
+
+    fn walk(
+        db: &dyn ArandCompilerDb,
+        file: SourceFile,
+        graph: &mut Graph<u32, ()>,
+        visited: &mut std::collections::HashMap<u32, petgraph::graph::NodeIndex>,
+    ) -> petgraph::graph::NodeIndex {
+        let file_id = file.file_id(db.as_source_db());
+        if let Some(&node) = visited.get(&file_id) {
+            return node;
+        }
+
+        let node = graph.add_node(file_id);
+        visited.insert(file_id, node);
+
+        let program_res = crate::passes::parse(db, file);
+        if let Ok(program) = &*program_res {
+            for import in &program.imports {
+                let module_path = match import {
+                    arandu_parser::ImportDecl::ModuleAlias { path, .. }
+                    | arandu_parser::ImportDecl::Named { path, .. } => {
+                        let path_str = path.join("/");
+                        if let Some(stripped) = path_str.strip_prefix("std/core/") {
+                            Some(format!("stdlib/core/{}.aru", stripped))
+                        } else if let Some(stripped) = path_str.strip_prefix("std/alloc/") {
+                            Some(format!("stdlib/alloc/{}.aru", stripped))
+                        } else {
+                            Some(format!("{path_str}.aru"))
+                        }
+                    }
+                    arandu_parser::ImportDecl::ExternalAlias { source, .. }
+                    | arandu_parser::ImportDecl::ExternalNamed { source, .. } => {
+                        if let Some(stripped) = source.strip_prefix("std.core.") {
+                            Some(format!("stdlib/core/{}.aru", stripped))
+                        } else if let Some(stripped) = source.strip_prefix("std.alloc.") {
+                            Some(format!("stdlib/alloc/{}.aru", stripped))
+                        } else {
+                            Some(source.to_string())
+                        }
+                    }
+                };
+                if let Some(path) = module_path {
+                    if let Some(imported_file) = db.as_source_db().resolve_module_path(&path) {
+                        let imported_node = walk(db, imported_file, graph, visited);
+                        graph.add_edge(node, imported_node, ());
+                    }
+                }
+            }
+        }
+
+        node
+    }
+
+    walk(db, root, &mut graph, &mut visited);
+    HashEq::new(graph)
+}

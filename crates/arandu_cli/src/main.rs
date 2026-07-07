@@ -5,29 +5,26 @@ use std::{
     process,
 };
 
-fn print_diagnostics_and_exit(diagnostics: &[arandu_semantics::Diagnostic], filepath: &str) -> ! {
-    let mut registry = arandu_base::SourceRegistry::default();
-    if !filepath.is_empty() {
-        if let Ok(source) = fs::read_to_string(filepath) {
-            registry.register(filepath, &source);
-        }
-    }
+fn print_diagnostics_and_exit(diagnostics: &[arandu_middle::Diagnostic], filepath: &str) -> ! {
+    let source = if !filepath.is_empty() {
+        fs::read_to_string(filepath).unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    let named_source = miette::NamedSource::new(filepath, source);
+
     for diagnostic in diagnostics {
-        eprintln!("{}", diagnostic.format_for_cli(&registry));
+        let report = miette::Report::new(diagnostic.clone()).with_source_code(named_source.clone());
+        eprintln!("{:?}", report);
     }
 
     process::exit(1);
 }
 
 fn print_parse_error_and_exit(err: &arandu_parser::ParseError, filepath: &str) -> ! {
-    let mut registry = arandu_base::SourceRegistry::default();
-    if !filepath.is_empty() {
-        if let Ok(source) = fs::read_to_string(filepath) {
-            registry.register(filepath, &source);
-        }
-    }
-    eprintln!("{}", err.format_for_cli(&registry));
-    process::exit(1);
+    let diag = arandu_middle::Diagnostic::from(err.clone());
+    print_diagnostics_and_exit(&[diag], filepath);
 }
 
 fn validate_hir_and_analyze(
@@ -82,7 +79,7 @@ fn parse_and_check(
 
 fn usage_and_exit() -> ! {
     eprintln!(
-        "usage: arandu_cli <lex|parse|check|hir|amir|run> <path> [--debug] [--opt] [--parallel]"
+        "usage: arandu_cli <lex|parse|check|hir|amir|run|graph> <path> [--debug] [--opt] [--parallel]"
     );
     eprintln!("       -Z flags: -Ztime-passes  -Zprofile-queries  -Zprint-alloc-stats  -Zdump-mir");
     eprintln!(
@@ -140,7 +137,7 @@ fn main() {
 
     if !matches!(
         command.as_str(),
-        "lex" | "parse" | "check" | "hir" | "amir" | "run"
+        "lex" | "parse" | "check" | "hir" | "amir" | "run" | "graph"
     ) {
         usage_and_exit();
     }
@@ -383,6 +380,24 @@ fn main() {
                         process::exit(1);
                     }
                 }
+            }
+            "graph" => {
+                use arandu_query::db::ArandCompilerDb;
+                let dep_graph = arandu_query::passes::module_dependency_graph(&db, source_file);
+                let mut dot_graph = petgraph::Graph::<String, ()>::new();
+                let mut node_map = std::collections::HashMap::new();
+                for node in dep_graph.node_indices() {
+                    let file_id = dep_graph[node];
+                    let path = db.file_path(file_id);
+                    let path_str = path.to_string_lossy().into_owned();
+                    let new_node = dot_graph.add_node(path_str);
+                    node_map.insert(node, new_node);
+                }
+                for edge in dep_graph.edge_indices() {
+                    let (source, target) = dep_graph.edge_endpoints(edge).unwrap();
+                    dot_graph.add_edge(node_map[&source], node_map[&target], ());
+                }
+                println!("{:?}", petgraph::dot::Dot::with_config(&dot_graph, &[]));
             }
 
             _ => unreachable!(),

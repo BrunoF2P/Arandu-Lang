@@ -551,6 +551,59 @@ impl fmt::Display for Diagnostic {
     }
 }
 
+impl std::error::Error for Diagnostic {}
+
+impl miette::Diagnostic for Diagnostic {
+    fn code<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
+        Some(Box::new(self.code.to_string()))
+    }
+
+    fn severity(&self) -> Option<miette::Severity> {
+        match self.severity {
+            Severity::Error => Some(miette::Severity::Error),
+            Severity::Warning => Some(miette::Severity::Warning),
+            Severity::Note => Some(miette::Severity::Advice),
+            Severity::Hint => Some(miette::Severity::Advice),
+        }
+    }
+
+    fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
+        let mut spans = vec![miette::LabeledSpan::new_primary_with_span(
+            None,
+            miette::SourceSpan::new(
+                (self.span.start as usize).into(),
+                ((self.span.end - self.span.start) as usize).into(),
+            ),
+        )];
+
+        for label in &self.labels {
+            spans.push(miette::LabeledSpan::new_with_span(
+                Some(label.message.clone()),
+                miette::SourceSpan::new(
+                    (label.span.start as usize).into(),
+                    ((label.span.end - label.span.start) as usize).into(),
+                ),
+            ));
+        }
+
+        Some(Box::new(spans.into_iter()))
+    }
+
+    fn help<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
+        if self.hints.is_empty() {
+            None
+        } else {
+            let hints_str = self
+                .hints
+                .iter()
+                .map(|h| h.message.clone())
+                .collect::<Vec<_>>()
+                .join("\n");
+            Some(Box::new(hints_str))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

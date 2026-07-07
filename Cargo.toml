@@ -29,6 +29,9 @@ salsa = "0.27.2"                                                               #
 blake3 = "1.8.5"
 smol_str = "0.3.1"
 smallvec = "1.13.2"
+miette = { version = "7.2.0", features = ["fancy"] }
+thiserror = "1.0.56"
+petgraph = "0.6.4"
 
 [workspace.lints]
 # Intentionally empty: use default toolchain lint levels.
