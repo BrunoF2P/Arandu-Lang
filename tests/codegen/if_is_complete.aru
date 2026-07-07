@@ -1,6 +1,6 @@
-enum Result {
-    Ok(int),
-    Error(str),
+enum MyResult {
+    MyOk(int),
+    MyError(str),
 }
 
 func make_pair(): (int, int) {
@@ -16,9 +16,9 @@ func test_tuple_pattern(): int {
     return val
 }
 
-func test_typetuple_pattern(res: Result): int {
+func test_typetuple_pattern(res: MyResult): int {
     let mut val = 0
-    if res is Ok(x) {
+    if res is MyOk(x) {
         val = x
     }
     return val

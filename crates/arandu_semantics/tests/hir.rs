@@ -1,10 +1,10 @@
 use arandu_semantics::hir::*;
 use arandu_semantics::passes::type_checker::types::ArType;
-use arandu_semantics::{SymbolTable, lower_to_hir, resolve, type_check};
+use arandu_semantics::{SymbolTable, lower_to_hir, resolve_for_test, type_check};
 
 fn lower(src: &str) -> (HirProgram, SymbolTable) {
     let program = arandu_parser::parse(src).expect("parse failed");
-    let resolution = resolve(&program);
+    let resolution = resolve_for_test(0, &program);
     let mut tc = type_check(resolution, &program);
     assert!(
         tc.diagnostics.is_empty(),
@@ -55,7 +55,7 @@ func main() {
 "#,
     )
     .expect("parse");
-    let resolution = resolve(&program);
+    let resolution = resolve_for_test(0, &program);
     let tc = type_check(resolution, &program);
     let scope = tc.symbols.global_scope();
     assert!(
@@ -233,7 +233,7 @@ fn path_expr_resolves_symbol() {
             match &hir.pool.stmt(statements[1]).kind {
                 HirStmtKind::VarDecl { value, .. } => match &hir.pool.expr(*value).kind {
                     HirExprKind::Path { symbol } => {
-                        assert!(symbol.0 != 0, "symbol should be resolved");
+                        assert!(symbol.local_id.0 != 0, "symbol should be resolved");
                     }
                     other => panic!("expected Path, got {other:?}"),
                 },
@@ -452,7 +452,10 @@ fn lowers_struct_literal() {
                         struct_symbol,
                         fields,
                     } => {
-                        assert!(struct_symbol.0 != 0, "struct symbol should be resolved");
+                        assert!(
+                            struct_symbol.local_id.0 != 0,
+                            "struct symbol should be resolved"
+                        );
                         let fields_slice = hir.pool.field_inits_list(*fields);
                         assert_eq!(fields_slice.len(), 2);
                         assert_eq!(fields_slice[0].name, "x");
@@ -536,7 +539,7 @@ fn test_hir_golden_files() {
         let program = arandu_parser::parse(&src).unwrap_or_else(|err| {
             panic!("failed to parse {name}: {err:?}");
         });
-        let resolution = resolve(&program);
+        let resolution = resolve_for_test(0, &program);
         let mut tc = type_check(resolution, &program);
         assert!(
             tc.diagnostics.is_empty(),

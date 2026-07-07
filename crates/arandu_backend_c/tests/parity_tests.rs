@@ -5,8 +5,7 @@ use arandu_backend_cranelift::CraneliftBackend;
 use arandu_middle::amir::AmirProgram;
 use arandu_middle::layout::LayoutEngine;
 use arandu_semantics::{
-    CodegenBackend, CompileSession, TypeCheckResult, lower_to_amir, lower_to_hir, resolve,
-    type_check_with_session,
+    CodegenBackend, TypeCheckResult, lower_to_amir, lower_to_hir, resolve_for_test, type_check,
 };
 use std::env;
 use std::fs;
@@ -14,9 +13,8 @@ use std::process::Command;
 
 fn compile_src(src: &str) -> (AmirProgram, TypeCheckResult) {
     let program = arandu_parser::parse(src).expect("parse failed");
-    let mut session = CompileSession::new();
-    let resolution = resolve(&program);
-    let mut tc = type_check_with_session(resolution, &program, &mut session);
+    let resolution = resolve_for_test(0, &program);
+    let mut tc = type_check(resolution, &program);
     assert!(
         tc.diagnostics.is_empty(),
         "type check failed: {:?}",

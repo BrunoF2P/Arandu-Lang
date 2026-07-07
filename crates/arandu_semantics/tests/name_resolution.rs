@@ -1,9 +1,9 @@
 use arandu_lexer::Span;
-use arandu_semantics::{DiagCode, SymbolKind, SymbolTable, resolve};
+use arandu_semantics::{DiagCode, SymbolKind, SymbolTable, resolve_for_test};
 
 fn resolve_source(source: &str) -> arandu_semantics::ResolutionResult {
     let program = arandu_parser::parse(source).expect("parser should accept fixture");
-    resolve(&program)
+    resolve_for_test(0, &program)
 }
 
 fn codes(result: &arandu_semantics::ResolutionResult) -> Vec<DiagCode> {
@@ -307,7 +307,7 @@ func main() {
 
 #[test]
 fn symbol_table_keeps_value_and_type_namespaces_distinguishable() {
-    let mut symbols = SymbolTable::new();
+    let mut symbols = SymbolTable::new(0);
     let scope = symbols.global_scope();
     let span = Span::new(0, 4, 5);
 

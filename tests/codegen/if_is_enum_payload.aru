@@ -1,11 +1,11 @@
-enum Result {
-    Ok(int),
-    Error(str),
+enum MyResult {
+    MyOk(int),
+    MyError(str),
 }
 
-func test_payload(res: Result): int {
+func test_payload(res: MyResult): int {
     let mut val = 0
-    if res is Result.Ok(x) {
+    if res is MyResult.MyOk(x) {
         val = x
     } else {
         val = -1

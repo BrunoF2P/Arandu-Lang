@@ -1,6 +1,6 @@
 use arandu_lexer::lex_recovering;
 use arandu_parser::parse_recovering;
-use arandu_semantics::resolve;
+use arandu_semantics::resolve_for_test;
 use std::fs;
 use std::path::PathBuf;
 
@@ -118,7 +118,7 @@ fn test_recovery_name_resolution() {
     // Case 1: undefined_value_suggestion.aru
     let src_val = fs::read_to_string(nr_dir.join("undefined_value_suggestion.aru")).unwrap();
     let output_val = parse_recovering(&src_val);
-    let res_val = resolve(&output_val.program);
+    let res_val = resolve_for_test(0, &output_val.program);
     assert!(
         !res_val.diagnostics.is_empty(),
         "undefined value should have diagnostics"
@@ -143,7 +143,7 @@ fn test_recovery_name_resolution() {
     // Case 2: undefined_type_suggestion.aru
     let src_ty = fs::read_to_string(nr_dir.join("undefined_type_suggestion.aru")).unwrap();
     let output_ty = parse_recovering(&src_ty);
-    let res_ty = resolve(&output_ty.program);
+    let res_ty = resolve_for_test(0, &output_ty.program);
     assert!(
         !res_ty.diagnostics.is_empty(),
         "undefined type should have diagnostics"

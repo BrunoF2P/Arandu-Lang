@@ -2,7 +2,7 @@
 
 use arandu_backend_cranelift::CraneliftBackend;
 use arandu_semantics::literal_pool::AmirLiteralEntry;
-use arandu_semantics::{DiagCode, lower_to_amir, lower_to_hir, resolve, type_check};
+use arandu_semantics::{DiagCode, lower_to_amir, lower_to_hir, resolve_for_test, type_check};
 
 fn compile_src(
     src: &str,
@@ -12,7 +12,7 @@ fn compile_src(
     arandu_semantics::TypeInfo,
 ) {
     let program = arandu_parser::parse(src).expect("parse failed");
-    let resolution = resolve(&program);
+    let resolution = resolve_for_test(0, &program);
     let mut tc = type_check(resolution, &program);
     let hir = lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
     let amir = lower_to_amir(&tc, &hir).expect("AMIR lowering failed");

@@ -10,7 +10,7 @@ use arandu_semantics::passes::liveness::analyze_local_liveness;
 use arandu_semantics::passes::optimize::optimize_amir_func;
 use arandu_semantics::passes::type_checker::types::ArType;
 use arandu_semantics::{
-    DiagCode, SymbolId, SymbolKind, lower_to_amir, lower_to_hir, resolve, type_check,
+    DiagCode, SymbolId, SymbolKind, lower_to_amir, lower_to_hir, resolve_for_test, type_check,
     validate_amir_program,
 };
 
@@ -47,7 +47,7 @@ fn test_amir_golden_files() {
         let program = arandu_parser::parse(&src).unwrap_or_else(|err| {
             panic!("failed to parse {name}: {err:?}");
         });
-        let resolution = resolve(&program);
+        let resolution = resolve_for_test(0, &program);
         let mut tc = type_check(resolution, &program);
         let errors: Vec<_> = tc
             .diagnostics
@@ -87,7 +87,7 @@ func main() {
 }
 "#;
     let program = arandu_parser::parse(src).expect("parse failed");
-    let resolution = resolve(&program);
+    let resolution = resolve_for_test(0, &program);
     let mut tc = type_check(resolution, &program);
     let x_symbol = tc
         .symbols
@@ -128,7 +128,7 @@ func main() {
 }
 "#;
     let program = arandu_parser::parse(src).expect("parse failed");
-    let resolution = resolve(&program);
+    let resolution = resolve_for_test(0, &program);
     let mut tc = type_check(resolution, &program);
     let hir = lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
     let diagnostics = lower_to_amir(&tc, &hir).expect_err("expected use after move diagnostic");
@@ -151,7 +151,7 @@ func main() {
 }
 "#;
     let program = arandu_parser::parse(src).expect("parse failed");
-    let resolution = resolve(&program);
+    let resolution = resolve_for_test(0, &program);
     let mut tc = type_check(resolution, &program);
     let hir = lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
     let amir = lower_to_amir(&tc, &hir).expect("AMIR lowering failed");
@@ -178,7 +178,7 @@ func main(cond: bool) {
 }
 "#;
     let program = arandu_parser::parse(src).expect("parse failed");
-    let resolution = resolve(&program);
+    let resolution = resolve_for_test(0, &program);
     let mut tc = type_check(resolution, &program);
     let hir = lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
     let diagnostics = lower_to_amir(&tc, &hir).expect_err("expected branch move diagnostic");
@@ -204,7 +204,7 @@ func main(cond: bool) {
 }
 "#;
     let program = arandu_parser::parse(src).expect("parse failed");
-    let resolution = resolve(&program);
+    let resolution = resolve_for_test(0, &program);
     let mut tc = type_check(resolution, &program);
     let hir = lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
     let amir = lower_to_amir(&tc, &hir).expect("OSSA lowering failed");
@@ -294,7 +294,7 @@ fn place(id: usize) -> AmirPlace {
 }
 
 fn symbol(id: u32) -> SymbolId {
-    SymbolId(id)
+    SymbolId::new(0, id)
 }
 
 fn dummy_span() -> Span {
@@ -470,7 +470,7 @@ fn validate_amir_rejects_poison_temp_with_icegen002() {
         vec![func_block],
         AmirStmtTable::new(),
     );
-    let mut symbols = arandu_semantics::SymbolTable::new();
+    let mut symbols = arandu_semantics::SymbolTable::new(0);
     symbols
         .define(
             symbols.global_scope(),
@@ -507,7 +507,7 @@ fn temp_ids_are_dense_and_positional() {
         if path.extension().is_some_and(|ext| ext == "aru") {
             let src = std::fs::read_to_string(&path).unwrap();
             let program = arandu_parser::parse(&src).expect("Failed to parse");
-            let resolution = resolve(&program);
+            let resolution = resolve_for_test(0, &program);
             let mut tc = type_check(resolution, &program);
             let hir = lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
             let amir = lower_to_amir(&tc, &hir).expect("AMIR lowering failed");
