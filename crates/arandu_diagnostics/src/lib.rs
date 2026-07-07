@@ -571,7 +571,7 @@ impl miette::Diagnostic for Diagnostic {
             None,
             miette::SourceSpan::new(
                 (self.span.start as usize).into(),
-                ((self.span.end - self.span.start) as usize).into(),
+                (self.span.end - self.span.start) as usize,
             ),
         )];
 
@@ -580,7 +580,7 @@ impl miette::Diagnostic for Diagnostic {
                 Some(label.message.clone()),
                 miette::SourceSpan::new(
                     (label.span.start as usize).into(),
-                    ((label.span.end - label.span.start) as usize).into(),
+                    (label.span.end - label.span.start) as usize,
                 ),
             ));
         }

@@ -359,7 +359,7 @@ mod tests {
     fn ty_ctx_bind_and_lookup() {
         let mut ctx = TyCtx::new();
         let sym = SymbolId::new(0, 0);
-        let mut i = new_interner();
+        let i = new_interner();
         let tid = i.intern(ArType::Primitive(Primitive::Int));
         ctx.bind(sym, tid);
         assert_eq!(ctx.lookup(sym), Some(tid));
@@ -374,7 +374,7 @@ mod tests {
     #[test]
     fn ty_ctx_return_stack() {
         let mut ctx = TyCtx::new();
-        let mut i = new_interner();
+        let i = new_interner();
         let int_id = i.intern(ArType::Primitive(Primitive::Int));
         let bool_id = i.intern(ArType::Primitive(Primitive::Bool));
         assert_eq!(ctx.current_return(), None);
@@ -413,7 +413,7 @@ mod tests {
     fn ty_ctx_bind_resizes_vec() {
         let mut ctx = TyCtx::new();
         let sym = SymbolId::new(0, 5);
-        let mut i = new_interner();
+        let i = new_interner();
         let tid = i.intern(ArType::Primitive(Primitive::Int));
         ctx.bind(sym, tid);
         assert_eq!(ctx.lookup(sym), Some(tid));
@@ -424,7 +424,7 @@ mod tests {
 
     #[test]
     fn type_info_record_and_lookup_expr() {
-        let mut i = new_interner();
+        let i = new_interner();
         let tid = i.intern(ArType::Primitive(Primitive::Int));
         let mut info = TypeInfo::with_interner(i);
         let eid = ExprId::new(3);
@@ -441,7 +441,7 @@ mod tests {
 
     #[test]
     fn type_info_record_and_lookup_decl() {
-        let mut i = new_interner();
+        let i = new_interner();
         let tid = i.intern(ArType::Primitive(Primitive::Bool));
         let mut info = TypeInfo::with_interner(i);
         let sym = SymbolId::new(0, 1);
@@ -480,7 +480,7 @@ mod tests {
 
     #[test]
     fn translate_named_with_args() {
-        let mut from = new_interner();
+        let from = new_interner();
         let int_id = from.intern(ArType::Primitive(Primitive::Int));
         let named = ArType::Named(SymbolId::new(0, 0), vec![int_id]);
         let mut to = new_interner();
@@ -494,7 +494,7 @@ mod tests {
 
     #[test]
     fn translate_func() {
-        let mut from = new_interner();
+        let from = new_interner();
         let int_id = from.intern(ArType::Primitive(Primitive::Int));
         let void_id = from.intern(ArType::Void);
         let func = ArType::Func(vec![int_id], void_id);
@@ -507,7 +507,7 @@ mod tests {
 
     #[test]
     fn translate_nullable() {
-        let mut from = new_interner();
+        let from = new_interner();
         let inner = from.intern(ArType::Primitive(Primitive::Int));
         let nullable = ArType::Nullable(inner);
         let mut to = new_interner();
@@ -520,7 +520,7 @@ mod tests {
 
     #[test]
     fn translate_slice_ptr_array_tuple_result_option_coroutine_range() {
-        let mut from = new_interner();
+        let from = new_interner();
         let int_id = from.intern(ArType::Primitive(Primitive::Int));
         let bool_id = from.intern(ArType::Primitive(Primitive::Bool));
         let variants: &[ArType] = &[
@@ -559,7 +559,7 @@ mod tests {
 
     #[test]
     fn merge_from_decl_types() {
-        let mut i = TypeInterner::new();
+        let i = TypeInterner::new();
         let int_id = i.intern(ArType::Primitive(Primitive::Int));
         let mut from_info = TypeInfo::with_interner(i);
         let mut to_info = TypeInfo::new();

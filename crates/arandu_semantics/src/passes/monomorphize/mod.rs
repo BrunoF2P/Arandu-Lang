@@ -31,7 +31,7 @@ mod tests {
 
     #[test]
     fn test_graph_deduplication() {
-        let (mut st, mut interner) = setup();
+        let (mut st, interner) = setup();
         let sym = define_symbol(&mut st, "identity");
         let int_id = interner.intern(ArType::Primitive(Primitive::Int));
 
@@ -49,7 +49,7 @@ mod tests {
 
     #[test]
     fn test_different_type_args_different_nodes() {
-        let (mut st, mut interner) = setup();
+        let (mut st, interner) = setup();
         let sym = define_symbol(&mut st, "identity");
         let int_id = interner.intern(ArType::Primitive(Primitive::Int));
         let str_id = interner.intern(ArType::Primitive(Primitive::Str));
@@ -81,7 +81,7 @@ mod tests {
 
     #[test]
     fn test_recursion_limit() {
-        let (mut st, mut interner) = setup();
+        let (mut st, interner) = setup();
         let sym = define_symbol(&mut st, "recursive");
 
         let mut graph = InstantiationGraph::with_recursion_limit(3);
@@ -121,7 +121,7 @@ mod tests {
 
     #[test]
     fn test_cycle_detection() {
-        let (mut st, mut interner) = setup();
+        let (mut st, interner) = setup();
         let sym_a = define_symbol(&mut st, "funcA");
         let sym_b = define_symbol(&mut st, "funcB");
         let tid = interner.intern(ArType::Primitive(Primitive::Int));
@@ -157,7 +157,7 @@ mod tests {
 
     #[test]
     fn test_no_cycle_in_dag() {
-        let (mut st, mut interner) = setup();
+        let (mut st, interner) = setup();
         let sym_a = define_symbol(&mut st, "funcA");
         let sym_b = define_symbol(&mut st, "funcB");
         let sym_c = define_symbol(&mut st, "funcC");
@@ -204,7 +204,7 @@ mod tests {
 
     #[test]
     fn test_mangling_simple() {
-        let (mut st, mut interner) = setup();
+        let (mut st, interner) = setup();
         let sym = define_symbol(&mut st, "identity");
         let tid = interner.intern(ArType::Primitive(Primitive::Int));
 
@@ -221,7 +221,7 @@ mod tests {
 
     #[test]
     fn test_mangling_multi_arg() {
-        let (mut st, mut interner) = setup();
+        let (mut st, interner) = setup();
         let sym = define_symbol(&mut st, "swap");
         let int_id = interner.intern(ArType::Primitive(Primitive::Int));
         let str_id = interner.intern(ArType::Primitive(Primitive::Str));
@@ -246,7 +246,7 @@ mod tests {
 
     #[test]
     fn test_mangled_names_are_unique() {
-        let (mut st, mut interner) = setup();
+        let (mut st, interner) = setup();
         let sym = define_symbol(&mut st, "identity");
         let int_id = interner.intern(ArType::Primitive(Primitive::Int));
         let bool_id = interner.intern(ArType::Primitive(Primitive::Bool));

@@ -92,7 +92,7 @@ pub fn unify(a: &ArType, b: &ArType, interner: &TypeInterner) -> bool {
                     if x == y {
                         return true;
                     }
-                    unify(&&interner.resolve(x), &&interner.resolve(y), interner)
+                    unify(&interner.resolve(x), &interner.resolve(y), interner)
                 })
         }
         (ArType::Func(params_a, ret_a), ArType::Func(params_b, ret_b)) => {
@@ -101,12 +101,12 @@ pub fn unify(a: &ArType, b: &ArType, interner: &TypeInterner) -> bool {
                     if x == y {
                         return true;
                     }
-                    unify(&&interner.resolve(x), &&interner.resolve(y), interner)
+                    unify(&interner.resolve(x), &interner.resolve(y), interner)
                 })
                 && (*ret_a == *ret_b
                     || unify(
-                        &&interner.resolve(*ret_a),
-                        &&interner.resolve(*ret_b),
+                        &interner.resolve(*ret_a),
+                        &interner.resolve(*ret_b),
                         interner,
                     ))
         }
@@ -119,7 +119,7 @@ pub fn unify(a: &ArType, b: &ArType, interner: &TypeInterner) -> bool {
                 )
         }
         (ArType::Nullable(inner), other) | (other, ArType::Nullable(inner)) => {
-            unify(&&interner.resolve(*inner), other, interner)
+            unify(&interner.resolve(*inner), other, interner)
         }
         (ArType::Slice(inner_a), ArType::Slice(inner_b)) => {
             *inner_a == *inner_b
@@ -152,20 +152,20 @@ pub fn unify(a: &ArType, b: &ArType, interner: &TypeInterner) -> bool {
                     if x == y {
                         return true;
                     }
-                    unify(&&interner.resolve(x), &&interner.resolve(y), interner)
+                    unify(&interner.resolve(x), &interner.resolve(y), interner)
                 })
         }
         (ArType::Result(ok_a, err_a), ArType::Result(ok_b, err_b)) => {
             (*ok_a == *ok_b
                 || unify(
-                    &&interner.resolve(*ok_a),
-                    &&interner.resolve(*ok_b),
+                    &interner.resolve(*ok_a),
+                    &interner.resolve(*ok_b),
                     interner,
                 ))
                 && (*err_a == *err_b
                     || unify(
-                        &&interner.resolve(*err_a),
-                        &&interner.resolve(*err_b),
+                        &interner.resolve(*err_a),
+                        &interner.resolve(*err_b),
                         interner,
                     ))
         }
@@ -767,7 +767,7 @@ mod tests {
 
     #[test]
     fn return_unifies_result_void_err_with_nil() {
-        let mut i = new_interner();
+        let i = new_interner();
         let void_id = i.intern(ArType::Void);
         let err_type_id = i.intern(ArType::Error);
         let expected = ArType::Result(void_id, i.intern(ArType::Err));
@@ -777,7 +777,7 @@ mod tests {
 
     #[test]
     fn return_unifies_both_err() {
-        let mut i = new_interner();
+        let i = new_interner();
         let void_id = i.intern(ArType::Void);
         let err_id = i.intern(ArType::Err);
         let expected = ArType::Result(void_id, err_id);

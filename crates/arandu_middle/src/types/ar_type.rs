@@ -406,7 +406,7 @@ mod tests {
     fn literals_ptr_nullable_are_copy() {
         assert!(ArType::IntLiteral.is_copy_v01());
         assert!(ArType::FloatLiteral.is_copy_v01());
-        let mut i = new_interner();
+        let i = new_interner();
         assert!(ArType::Ptr(i.intern(ArType::Primitive(Primitive::Int))).is_copy_v01());
         assert!(ArType::Nullable(i.intern(ArType::Primitive(Primitive::Int))).is_copy_v01());
     }
@@ -421,7 +421,7 @@ mod tests {
     #[test]
     fn named_func_slice_array_tuple_are_not_copy() {
         assert!(!ArType::Named(SymbolId::new(0, 1), vec![]).is_copy_v01());
-        let mut i = new_interner();
+        let i = new_interner();
         let int = i.intern(ArType::Primitive(Primitive::Int));
         assert!(!ArType::Func(vec![int], int).is_copy_v01());
         assert!(!ArType::Slice(int).is_copy_v01());
@@ -479,7 +479,7 @@ mod tests {
                 span,
             )
             .unwrap();
-        let mut i = new_interner();
+        let i = new_interner();
         let int_tid = i.intern(ArType::Named(int_id, vec![]));
         assert_eq!(
             ArType::Named(list_id, vec![int_tid]).display(&syms, &i),
@@ -499,7 +499,7 @@ mod tests {
                 span,
             )
             .unwrap();
-        let mut i = new_interner();
+        let i = new_interner();
         let int_tid = i.intern(ArType::Named(sym, vec![]));
         let ret = i.intern(ArType::Void);
         let f = ArType::Func(vec![int_tid, int_tid], ret);
@@ -526,7 +526,7 @@ mod tests {
                 span,
             )
             .unwrap();
-        let mut i = new_interner();
+        let i = new_interner();
         let int_tid = i.intern(ArType::Named(int_sym, vec![]));
         let bool_tid = i.intern(ArType::Named(bool_sym, vec![]));
         let f = ArType::Func(vec![int_tid], bool_tid);
@@ -545,7 +545,7 @@ mod tests {
                 span,
             )
             .unwrap();
-        let mut i = new_interner();
+        let i = new_interner();
         let int_tid = i.intern(ArType::Named(int_sym, vec![]));
         assert_eq!(ArType::Nullable(int_tid).display(&syms, &i), "int?");
         assert_eq!(ArType::Slice(int_tid).display(&syms, &i), "[]int");
@@ -573,7 +573,7 @@ mod tests {
                 span,
             )
             .unwrap();
-        let mut i = new_interner();
+        let i = new_interner();
         let int_tid = i.intern(ArType::Named(int_sym, vec![]));
         let str_tid = i.intern(ArType::Named(str_sym, vec![]));
         assert_eq!(
@@ -590,7 +590,7 @@ mod tests {
     #[test]
     fn display_coroutine_range_err_void_literals() {
         let syms = empty_symbols();
-        let mut i = new_interner();
+        let i = new_interner();
         let int_tid = i.intern(ArType::Primitive(Primitive::Int));
         assert_eq!(
             ArType::Coroutine(int_tid).display(&syms, &i),

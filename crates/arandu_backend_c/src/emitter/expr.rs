@@ -187,7 +187,7 @@ impl<'a> CEmitter<'a> {
                     };
                     let offset = layout.field_offsets[field_idx];
                     let field_ty = field_defs.get(name).unwrap();
-                    let field_c_ty = self.format_type(&field_ty);
+                    let field_c_ty = self.format_type(field_ty);
                     let op_str = self.format_operand(op, func);
                     resolved_fields.push((offset, field_c_ty, op_str));
                 }

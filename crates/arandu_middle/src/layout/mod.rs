@@ -572,7 +572,7 @@ mod tests {
     #[test]
     fn test_primitive_layouts_64bit() {
         let engine = LayoutEngine::new(8);
-        let mut interner = TypeInterner::new();
+        let interner = TypeInterner::new();
         let provider = MockProvider;
 
         let u8_id = interner.intern(ArType::Primitive(Primitive::U8));
@@ -595,7 +595,7 @@ mod tests {
     #[test]
     fn test_primitive_layouts_32bit() {
         let engine = LayoutEngine::new(4);
-        let mut interner = TypeInterner::new();
+        let interner = TypeInterner::new();
         let provider = MockProvider;
 
         let str_id = interner.intern(ArType::Primitive(Primitive::Str));
@@ -649,7 +649,7 @@ mod tests {
     fn test_all_primitive_layouts() {
         for &ptr_width in &[4u64, 8] {
             let engine = LayoutEngine::new(ptr_width);
-            let mut interner = TypeInterner::new();
+            let interner = TypeInterner::new();
             let provider = MockProvider;
 
             let cases = [
@@ -688,7 +688,7 @@ mod tests {
     fn test_ptr_layout() {
         for &ptr_width in &[4u64, 8] {
             let engine = LayoutEngine::new(ptr_width);
-            let mut interner = TypeInterner::new();
+            let interner = TypeInterner::new();
             let provider = MockProvider;
             let inner = interner.intern(ArType::Primitive(Primitive::I32));
             let ptr_ty = ArType::Ptr(inner);
@@ -703,7 +703,7 @@ mod tests {
     fn test_slice_layout() {
         for &ptr_width in &[4u64, 8] {
             let engine = LayoutEngine::new(ptr_width);
-            let mut interner = TypeInterner::new();
+            let interner = TypeInterner::new();
             let provider = MockProvider;
             let inner = interner.intern(ArType::Primitive(Primitive::I32));
             let slice_ty = ArType::Slice(inner);
@@ -718,7 +718,7 @@ mod tests {
     #[test]
     fn test_array_layout() {
         let engine = LayoutEngine::new(8);
-        let mut interner = TypeInterner::new();
+        let interner = TypeInterner::new();
         let provider = MockProvider;
         let elem = interner.intern(ArType::Primitive(Primitive::I32));
         let arr_ty = ArType::Array(5, elem);
@@ -731,7 +731,7 @@ mod tests {
     #[test]
     fn test_void_error_layout() {
         let engine = LayoutEngine::new(8);
-        let mut interner = TypeInterner::new();
+        let interner = TypeInterner::new();
         let provider = MockProvider;
         for ty in [ArType::Void, ArType::Err, ArType::Error] {
             let tid = interner.intern(ty);
@@ -744,7 +744,7 @@ mod tests {
     #[test]
     fn test_func_layout() {
         let engine = LayoutEngine::new(8);
-        let mut interner = TypeInterner::new();
+        let interner = TypeInterner::new();
         let provider = MockProvider;
         let int_id = interner.intern(ArType::Primitive(Primitive::Int));
         let func_ty = ArType::Func(vec![int_id, int_id], int_id);
@@ -757,7 +757,7 @@ mod tests {
     #[test]
     fn test_nullable_layout_delegates_to_inner() {
         let engine = LayoutEngine::new(8);
-        let mut interner = TypeInterner::new();
+        let interner = TypeInterner::new();
         let provider = MockProvider;
         let inner = interner.intern(ArType::Primitive(Primitive::I32));
         let nullable = ArType::Nullable(inner);
@@ -770,7 +770,7 @@ mod tests {
     #[test]
     fn test_tuple_layout() {
         let engine = LayoutEngine::new(8);
-        let mut interner = TypeInterner::new();
+        let interner = TypeInterner::new();
         let provider = MockProvider;
         let u8_id = interner.intern(ArType::Primitive(Primitive::U8));
         let i32_id = interner.intern(ArType::Primitive(Primitive::I32));
@@ -787,7 +787,7 @@ mod tests {
     #[test]
     fn test_result_layout() {
         let engine = LayoutEngine::new(8);
-        let mut interner = TypeInterner::new();
+        let interner = TypeInterner::new();
         let provider = MockProvider;
         let ok = interner.intern(ArType::Primitive(Primitive::I32));
         let err = interner.intern(ArType::Primitive(Primitive::U8));
@@ -803,7 +803,7 @@ mod tests {
     #[test]
     fn test_option_layout() {
         let engine = LayoutEngine::new(8);
-        let mut interner = TypeInterner::new();
+        let interner = TypeInterner::new();
         let provider = MockProvider;
         let inner = interner.intern(ArType::Primitive(Primitive::I32));
         let opt_ty = ArType::Option(inner);
@@ -818,7 +818,7 @@ mod tests {
     #[test]
     fn test_range_layout() {
         let engine = LayoutEngine::new(8);
-        let mut interner = TypeInterner::new();
+        let interner = TypeInterner::new();
         let provider = MockProvider;
         let inner = interner.intern(ArType::Primitive(Primitive::I32));
         let range_ty = ArType::Range(inner);
@@ -833,7 +833,7 @@ mod tests {
     #[test]
     fn test_zst_allocator_field_adds_no_size() {
         let engine = LayoutEngine::new(8);
-        let mut interner = TypeInterner::new();
+        let interner = TypeInterner::new();
 
         // Setup mock provider for ZST
         let mut provider = StructMockProvider {
@@ -887,7 +887,7 @@ mod tests {
     #[test]
     fn test_int_literal_layout() {
         let engine = LayoutEngine::new(8);
-        let mut interner = TypeInterner::new();
+        let interner = TypeInterner::new();
         let provider = MockProvider;
         let tid = interner.intern(ArType::IntLiteral);
         let layout = engine.layout_of(tid, &interner, &provider);
@@ -898,7 +898,7 @@ mod tests {
     #[test]
     fn test_float_literal_layout() {
         let engine = LayoutEngine::new(8);
-        let mut interner = TypeInterner::new();
+        let interner = TypeInterner::new();
         let provider = MockProvider;
         let tid = interner.intern(ArType::FloatLiteral);
         let layout = engine.layout_of(tid, &interner, &provider);
@@ -909,7 +909,7 @@ mod tests {
     #[test]
     fn test_struct_layout_and_padding() {
         let engine = LayoutEngine::new(8);
-        let mut interner = TypeInterner::new();
+        let interner = TypeInterner::new();
 
         let struct_sym = SymbolId::new(0, 1234);
 
@@ -952,7 +952,7 @@ mod tests {
     #[test]
     fn test_struct_missing_fields_fallback() {
         let engine = LayoutEngine::new(8);
-        let mut interner = TypeInterner::new();
+        let interner = TypeInterner::new();
         let struct_sym = SymbolId::new(0, 9999);
         let struct_ty = ArType::Named(struct_sym, Vec::new());
         let struct_id = interner.intern(struct_ty);
@@ -966,7 +966,7 @@ mod tests {
     #[test]
     fn test_struct_generic_substitution() {
         let engine = LayoutEngine::new(8);
-        let mut interner = TypeInterner::new();
+        let interner = TypeInterner::new();
 
         let struct_sym = SymbolId::new(0, 42);
         let param_sym = SymbolId::new(0, 1);

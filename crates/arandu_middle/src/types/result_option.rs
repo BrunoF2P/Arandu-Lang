@@ -120,7 +120,7 @@ mod tests {
 
     #[test]
     fn nullable_err_is_err_type() {
-        let mut i = interner();
+        let i = interner();
         let inner = i.intern(ArType::Err);
         assert!(is_err_type(&ArType::Nullable(inner), &i));
     }
@@ -217,7 +217,7 @@ mod tests {
 
     #[test]
     fn try_ok_from_nullable_err_returns_none() {
-        let mut i = interner();
+        let i = interner();
         let inner = i.intern(ArType::Err);
         let null_err = ArType::Nullable(inner);
         assert_eq!(try_ok_type(&null_err, &i), None);
@@ -245,7 +245,7 @@ mod tests {
 
     #[test]
     fn nullable_err_is_not_tryable() {
-        let mut i = interner();
+        let i = interner();
         let inner = i.intern(ArType::Err);
         assert!(!is_tryable_type(&ArType::Nullable(inner), &i));
     }

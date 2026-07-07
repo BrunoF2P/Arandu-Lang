@@ -158,6 +158,16 @@ impl Default for TypeInterner {
     }
 }
 
+impl Clone for TypeInterner {
+    fn clone(&self) -> Self {
+        Self {
+            map: std::sync::RwLock::new(self.map.read().unwrap().clone()),
+            types: std::sync::RwLock::new(self.types.read().unwrap().clone()),
+            generation: self.generation,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -255,15 +265,5 @@ mod tests {
             }
         }
         assert_eq!(interner.len(), 23);
-    }
-}
-
-impl Clone for TypeInterner {
-    fn clone(&self) -> Self {
-        Self {
-            map: std::sync::RwLock::new(self.map.read().unwrap().clone()),
-            types: std::sync::RwLock::new(self.types.read().unwrap().clone()),
-            generation: self.generation,
-        }
     }
 }
