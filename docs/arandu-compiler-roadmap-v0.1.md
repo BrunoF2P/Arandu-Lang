@@ -53,8 +53,11 @@ Fase 2 — A Construção da Infraestrutura & Execução (v0.2) · [EM ANDAMENTO
 [x] A7     Portable SIMD Infrastructure (AVX2/NEON UTF-8 validation e keyword matching)
 [x] A8     Parallel Task Scheduler (work-stealing DAG, thread-local arenas, affinity)
 [x] A9     Dense Bitset Infrastructure (dataflow, liveness, OSSA/DCE bits)
-[x] A10    Stable ID Infrastructure (generational IDs, slotmaps, stable handles)
-[x] A11    Token & String Storage Engine (packed tokens, SSO, string interning)
+[~] A10    Stable ID Infrastructure
+   ├─ [x] A10.a  IDs inteiros estáveis (ExprId, TypeId, SymbolId — NonZeroU32 + IndexVec) — em uso em todo o compilador
+   ├─ [x] A10.b  StableHandle por hash estrutural — removido (código morto, nunca integrado)
+   └─ [ ] A10.c  Generational IDs (index + generation) para detecção de referências stale no LSP — aguarda Fase 3/DX.6; adotar crate `slotmap` quando chegar
+[x] A11    Token & String Storage Engine (packed tokens, SSO via smol_str, string interning)
 [x] BC     Backend Cranelift (Dev/Debug com compilador em memória)
    ├─ [x] BC.1   Fat Pointer String JIT (tratar String como ptr + len na convenção de chamadas do Cranelift)
    ├─ [x] BC.2   Implementar EnumPayload & Discriminant no Cranelift JIT (Garantia estática contra double-free depende de M2; atualmente mitigado via poison-check em debug)
@@ -489,9 +492,9 @@ As análises de fluxo de dados (dataflow), tempo de vida (liveness), dominadores
 
 O compilador do Arandu evita expressamente ponteiros brutos e referências cruzadas que inviabilizariam a compilação incremental e criariam pointer chasing complexo. Toda a infraestrutura do compilador (AST, HIR, AMIR, caches e queries) baseia-se em IDs Estáveis:
 
-* **Generational IDs**: Identificadores compostos por `Index (u32)` + `Generation (u32)`. Permite a detecção instantânea de referências dangling ou stale geradas por edições incrementais no LSP;
-* **Slotmaps & Dense Indices**: Mapeamento de IDs estáveis para vetores densos de estruturas contíguas na memória física;
-* **Stable Handles**: Entidades globais (como definições de funções, tipos e escopos) são referenciadas através de hashes estruturais e IDs determinísticos estáveis entre sessões de compilação;
+* **IDs inteiros estáveis** (`NonZeroU32` em `ExprId`, `TypeId`, `SymbolId`, `FileId`, etc.) indexando `IndexVec`s contíguos — **implementado e em uso em todo o compilador**.
+* **Generational IDs** (`Index (u32)` + `Generation (u32)`) para detecção de referências stale no LSP — **não implementado ainda**. A implementação manual (`stable_id.rs`) foi removida por ser código morto. Quando o LSP (DX.6) for iniciado, adotar a crate `slotmap` que resolve isso com API idiomática e zero `unsafe`.
+* **Stable Handles**: removidos (código morto, nunca integrados ao compilador). A identidade estável entre sessões de compilação é provida pelos IDs inteiros determinísticos do Salsa.
 * **Zero Overhead de Serialização**: Como os IDs não dependem do endereço de memória virtual, salvar e restaurar caches de compilação do disco é um dump contíguo e direto de bytes.
 
 #### A11 — Token & String Storage Engine
@@ -512,13 +515,13 @@ O frontend textual evita alocações individuais de tokens e strings, tratando o
 
 O Arandu assume oficialmente a diretriz **"Memory Architecture First"**. A performance e escalabilidade de um compilador dependem da redução de pointer chasing, cache misses, fragmentação e contention de threads. Portanto, o pipeline é desenhado com estratégias de memória e alocadores sob medida para cada etapa.
 
-### 1. Base do Compilador: VM Reservation Layer + Lazy Commit
+### 1. Base do Compilador: Arenas de Scratch por Passe
 
-O compilador não conversa com o alocador geral do sistema operacional a cada pequena alocação. Em vez disso:
+> **Nota de implementação (2026-07):** A implementação manual de `VmReservation` (`mmap`/`VirtualAlloc`) e `BumpArena` foi removida do codebase por ser código morto — nenhuma fase do compilador a utilizava. Os dois arquivos continham bugs de segurança (integer overflow em bounds check e granularidade errada de commit no Windows). A estratégia de memória adotada é:
 
-* **Reserva de Memória Virtual Anônima**: No início do processo, o compilador faz uma chamada única do sistema (`mmap` no Linux/macOS com `MAP_ANONYMOUS`, `VirtualAlloc` no Windows) reservando uma região virtual contígua gigante (ex: 4 GB a 64 GB).
-* **Lazy Commit & Page Allocation**: O sistema operacional não aloca RAM real imediatamente. A RAM física só é mapeada na tabela de páginas via *page fault* silenciosa quando o compilador efetivamente toca em uma página virtual (geralmente dividida em blocos de 64 KB).
-* **NUMA Awareness**: Para CPUs modernas multi-socket ou com topologias multi-chiplet, a página física de memória é alocada no nó local onde a thread de trabalho está executando, maximizando a taxa de transferência e eliminando gargalos de barramento (bus congestion).
+* **Alocador padrão do sistema** para todas as estruturas persistentes (AST pools, tabelas de símbolos, AMIR). O design SoA com `IndexVec` já garante localidade de cache L1 sem precisar de arena customizada.
+* **`bumpalo`** (crate portável, segura, zero `unsafe` exposta, suporta WASM) como arena de scratch nos passes de otimização onde dados temporários são alocados e descartados em massa: monomorphization graph, scratch buffers do move checker, grafos temporários de CFG. **[ ] A implementar — próxima etapa da Fase 3.**
+* **NUMA Awareness** e **thread-local arenas por worker** permanecem como objetivo de longo prazo para quando o scheduler paralelo por arquivo (A8) for expandido além do estado atual.
 
 ---
 
@@ -880,6 +883,7 @@ O Arandu garante a reprodutibilidade de compilação byte a byte (byte-by-byte b
 | 2026-05 | Antigravity | **Integração Memory-First**: Inclusão formal do subsistema detalhado de alocação de memória por estágio do compilador (Lexer, Parser, AST, SSA, CFG, Parallel, Incremental e IDE/LSP). |
 | 2026-05 | Antigravity | **Execution Architecture (A5–A11)**: Inclusão formal dos subsistemas de Data-Oriented Layout (SoA, pointer compression), CPU-Oriented Execution Model (branchless, table-driven), Portable SIMD (SSE2/AVX2/NEON), Parallel Task Scheduler (work-stealing DAG), Cache-Aware Optimization Pipeline (RPO, arena recycling), Dense Bitset Engine, Token & String Storage Engine, Register Allocation Strategy e Hot/Cold Path Separation. |
 | 2026-05 | Antigravity | **Semantics, DX & Tooling**: Inclusão formal das especificações de Semântica e Sintaxe da Linguagem (closures, async canônico), Filosofia de Runtime, ABI/Layout Stability, Abort/Panic Model, Fase DX (Rich Diagnostics Engine, Recovery, JSON output), Fase PERF (Compiler instrumentation), Hot/Cold separation e Stable Serialization. |
+| 2026-07 | Antigravity | **Auditoria de Honestidade A10/A11/VM**: Removidos `vm.rs`, `arena.rs`, `stable_id.rs` e `string_pool.rs` (~1.080 LOC, 16 blocos `unsafe`) — código morto nunca integrado ao compilador. A10 corrigido para `[~]` parcial: IDs inteiros estáveis em uso, Generational IDs aguardam LSP (Fase 3) com `slotmap`. VM Reservation substituída por plano `bumpalo` para arenas de scratch nos passes de otimização. A11 permanece `[x]` via `smol_str`. |
 
 ---
 
