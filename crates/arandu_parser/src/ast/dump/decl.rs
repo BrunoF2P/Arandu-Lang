@@ -274,7 +274,7 @@ pub(super) fn dump_param(pool: &AstPool, param: &Param) -> String {
 
 fn dump_func_name(name: &FuncName) -> String {
     match name {
-        FuncName::Free { name, .. } => name.clone(),
+        FuncName::Free { name, .. } => name.to_string(),
         FuncName::Method { receiver, name, .. } => {
             format!("{}.{}", dump_type_name(receiver), name)
         }

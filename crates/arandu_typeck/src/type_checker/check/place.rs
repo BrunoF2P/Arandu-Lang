@@ -68,13 +68,13 @@ pub(crate) fn synth_place(checker: &mut TypeChecker<'_>, place: &arandu_parser::
                         struct_id,
                         &resolved_args,
                     ) {
-                        fields_map.get(name).cloned()
+                        fields_map.get(name.as_str()).cloned()
                     } else {
                         checker
                             .type_info
                             .struct_fields
                             .get(&struct_id)
-                            .and_then(|fields| fields.get(name).cloned())
+                            .and_then(|fields| fields.get(name.as_str()).cloned())
                     }
                 } else {
                     None
@@ -90,7 +90,7 @@ pub(crate) fn synth_place(checker: &mut TypeChecker<'_>, place: &arandu_parser::
                         ConstraintOrigin::UndefinedField {
                             base_span: place.span,
                             field_span: *span,
-                            field_name: name.clone(),
+                            field_name: name.to_string(),
                         },
                     );
                     current_ty_id = err_id;

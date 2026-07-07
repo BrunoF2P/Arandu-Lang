@@ -218,7 +218,7 @@ mod tests {
         let mut pool = new_pool();
         let id = pool.alloc_type_expr(TypeExpr::Primitive {
             span: Span::new(0, 1, 0),
-            name: "int".to_string(),
+            name: "int".into(),
         });
         let mut i = new_interner();
         let symbols = default_symbols();
@@ -240,7 +240,7 @@ mod tests {
         let mut pool = new_pool();
         let id = pool.alloc_type_expr(TypeExpr::Primitive {
             span: Span::new(0, 3, 0),
-            name: "Err".to_string(),
+            name: "Err".into(),
         });
         let mut i = new_interner();
         let symbols = default_symbols();
@@ -259,7 +259,7 @@ mod tests {
         let mut pool = new_pool();
         let id = pool.alloc_type_expr(TypeExpr::Primitive {
             span: Span::new(0, 5, 0),
-            name: "unknown".to_string(),
+            name: "unknown".into(),
         });
         let mut i = new_interner();
         let symbols = default_symbols();
@@ -280,7 +280,7 @@ mod tests {
         let mut pool = new_pool();
         let inner = pool.alloc_type_expr(TypeExpr::Primitive {
             span: Span::new(0, 3, 0),
-            name: "int".to_string(),
+            name: "int".into(),
         });
         let id = pool.alloc_type_expr(TypeExpr::Nullable {
             span: Span::new(0, 4, 0),
@@ -307,7 +307,7 @@ mod tests {
         let mut pool = new_pool();
         let inner = pool.alloc_type_expr(TypeExpr::Primitive {
             span: Span::new(0, 3, 0),
-            name: "int".to_string(),
+            name: "int".into(),
         });
         let id = pool.alloc_type_expr(TypeExpr::Pointer {
             span: Span::new(0, 8, 0),
@@ -334,7 +334,7 @@ mod tests {
         let mut pool = new_pool();
         let inner = pool.alloc_type_expr(TypeExpr::Primitive {
             span: Span::new(0, 3, 0),
-            name: "int".to_string(),
+            name: "int".into(),
         });
         let id = pool.alloc_type_expr(TypeExpr::Slice {
             span: Span::new(0, 5, 0),
@@ -361,11 +361,11 @@ mod tests {
         let mut pool = new_pool();
         let elem = pool.alloc_type_expr(TypeExpr::Primitive {
             span: Span::new(0, 3, 0),
-            name: "float".to_string(),
+            name: "float".into(),
         });
         let id = pool.alloc_type_expr(TypeExpr::Array {
             span: Span::new(0, 8, 0),
-            size: "10".to_string(),
+            size: "10".into(),
             elem,
         });
         let mut i = new_interner();
@@ -387,11 +387,11 @@ mod tests {
         let mut pool = new_pool();
         let elem = pool.alloc_type_expr(TypeExpr::Primitive {
             span: Span::new(0, 3, 0),
-            name: "int".to_string(),
+            name: "int".into(),
         });
         let id = pool.alloc_type_expr(TypeExpr::Array {
             span: Span::new(0, 8, 0),
-            size: "abc".to_string(),
+            size: "abc".into(),
             elem,
         });
         let mut i = new_interner();
@@ -415,7 +415,7 @@ mod tests {
         let mut pool = new_pool();
         let inner = pool.alloc_type_expr(TypeExpr::Primitive {
             span: Span::new(0, 3, 0),
-            name: "bool".to_string(),
+            name: "bool".into(),
         });
         let id = pool.alloc_type_expr(TypeExpr::Group {
             span: Span::new(0, 5, 0),
@@ -452,7 +452,7 @@ mod tests {
 
         let name = TypeName {
             span,
-            path: vec!["User".to_string()],
+            path: vec!["User".into()].into(),
         };
         let id = pool.alloc_type_expr(TypeExpr::Named {
             span,
@@ -480,7 +480,7 @@ mod tests {
 
         let name = TypeName {
             span: Span::new(0, 4, 0),
-            path: vec!["Unknown".to_string()],
+            path: vec!["Unknown".into()].into(),
         };
         let id = pool.alloc_type_expr(TypeExpr::Named {
             span: Span::new(0, 4, 0),
@@ -505,7 +505,7 @@ mod tests {
         let mut pool = new_pool();
         let param = pool.alloc_type_expr(TypeExpr::Primitive {
             span: Span::new(0, 3, 0),
-            name: "int".to_string(),
+            name: "int".into(),
         });
         let params_range = pool.alloc_type_expr_list(&[param]);
         let id = pool.alloc_type_expr(TypeExpr::Func {
@@ -534,11 +534,11 @@ mod tests {
         let mut pool = new_pool();
         let param = pool.alloc_type_expr(TypeExpr::Primitive {
             span: Span::new(0, 3, 0),
-            name: "int".to_string(),
+            name: "int".into(),
         });
         let ret_expr = pool.alloc_type_expr(TypeExpr::Primitive {
             span: Span::new(0, 4, 0),
-            name: "bool".to_string(),
+            name: "bool".into(),
         });
         let params_range = pool.alloc_type_expr_list(&[param]);
         let id = pool.alloc_type_expr(TypeExpr::Func {
@@ -572,7 +572,7 @@ mod tests {
         let mut pool = new_pool();
         let inner = pool.alloc_type_expr(TypeExpr::Primitive {
             span: Span::new(0, 3, 0),
-            name: "int".to_string(),
+            name: "int".into(),
         });
         let result = ResultType::Single {
             span: Span::new(0, 3, 0),
@@ -601,7 +601,7 @@ mod tests {
         let pool = new_pool();
         let name = TypeName {
             span: Span::new(0, 4, 0),
-            path: vec!["void".to_string()],
+            path: vec!["void".into()].into(),
         };
         let mut i = new_interner();
         let symbols = default_symbols();

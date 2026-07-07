@@ -231,7 +231,7 @@ fn remove_unreachable_blocks(func: &mut AmirFunc) -> bool {
         }
         let new_term = remap_terminator(&func.blocks[old].terminator, &old_to_new);
         new_blocks.push(AmirBasicBlock {
-            id: old_to_new[old].unwrap(),
+            id: old_to_new[old].expect("ICE: reachable block has no new ID in simplify_cfg"),
             statements: func.blocks[old].statements,
             params: func.blocks[old].params.clone(),
             terminator: new_term,

@@ -4,6 +4,8 @@ use super::{
     ParseErrorCode, Parser, StructDecl, TokenKind, TopLevelDecl, TypeAliasDecl, TypeName,
     Visibility, is_contextual_module_segment,
 };
+use smallvec::SmallVec;
+use smol_str::SmolStr;
 
 impl<'a> Parser<'a> {
     pub(super) fn expect_optional_semicolon_after_module_path(&mut self) -> Result<(), ParseError> {
@@ -148,7 +150,7 @@ impl<'a> Parser<'a> {
         Ok(import)
     }
 
-    pub(super) fn parse_string_literal(&mut self) -> Result<String, ParseError> {
+    pub(super) fn parse_string_literal(&mut self) -> Result<SmolStr, ParseError> {
         self.expect_name("STRING_START")?;
         let mut text = String::new();
         while !self.at_kind_name("STRING_END") {
@@ -169,7 +171,7 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect_name("STRING_END")?;
-        Ok(text)
+        Ok(text.into())
     }
 
     pub(super) fn parse_top_level_decl(&mut self) -> Result<TopLevelDecl, ParseError> {
@@ -235,7 +237,7 @@ impl<'a> Parser<'a> {
         self.expect_semicolon()?;
         Ok(ConstDecl {
             span: self.span_from_mark(start),
-            attrs,
+            attrs: attrs.into(),
             visibility,
             name,
             ty,
@@ -257,7 +259,7 @@ impl<'a> Parser<'a> {
         self.expect_semicolon()?;
         Ok(TypeAliasDecl {
             span: self.span_from_mark(start),
-            attrs,
+            attrs: attrs.into(),
             visibility,
             name,
             generic_params,
@@ -291,7 +293,7 @@ impl<'a> Parser<'a> {
         let body = self.parse_block()?;
         Ok(FuncDecl {
             span: self.span_from_mark(start),
-            attrs,
+            attrs: attrs.into(),
             visibility,
             is_async,
             name,
@@ -336,7 +338,7 @@ impl<'a> Parser<'a> {
         self.skip_semicolons();
         Ok(StructDecl {
             span: self.span_from_mark(start),
-            attrs,
+            attrs: attrs.into(),
             visibility,
             name,
             generic_params,
@@ -362,7 +364,7 @@ impl<'a> Parser<'a> {
         }
         let field = FieldDecl {
             span: self.span_from_mark(start),
-            attrs,
+            attrs: attrs.into(),
             visibility,
             name,
             ty,
@@ -408,7 +410,7 @@ impl<'a> Parser<'a> {
         self.skip_semicolons();
         Ok(EnumDecl {
             span: self.span_from_mark(start),
-            attrs,
+            attrs: attrs.into(),
             visibility,
             name,
             generic_params,
@@ -446,7 +448,7 @@ impl<'a> Parser<'a> {
         };
         let variant = EnumVariant {
             span: self.span_from_mark(start),
-            attrs,
+            attrs: attrs.into(),
             name,
             payload,
         };
@@ -470,7 +472,11 @@ impl<'a> Parser<'a> {
         // matching Rust's trait behaviour where `self` implicitly means `Self`.
         let self_receiver = TypeName {
             span: arandu_lexer::Span::new(0, 0, 0),
-            path: vec![name.clone()],
+            path: {
+                let mut path = SmallVec::new();
+                path.push(name.clone());
+                path
+            },
         };
 
         let members = self.parse_braced_member_list(|parser| {
@@ -479,7 +485,7 @@ impl<'a> Parser<'a> {
         })?;
         Ok(InterfaceDecl {
             span: self.span_from_mark(start),
-            attrs,
+            attrs: attrs.into(),
             visibility,
             name,
             generic_params,
@@ -501,17 +507,17 @@ impl<'a> Parser<'a> {
         })?;
         Ok(ExternDecl {
             span: self.span_from_mark(start),
-            attrs,
+            attrs: attrs.into(),
             abi,
             members,
         })
     }
 
-    pub(super) fn parse_abi_literal(&mut self) -> Result<String, ParseError> {
+    pub(super) fn parse_abi_literal(&mut self) -> Result<SmolStr, ParseError> {
         self.expect_name("STRING_START")?;
         let abi = match &self.current().kind {
             TokenKind::StringText => {
-                let text = self.current_text().to_string();
+                let text = SmolStr::new(self.current_text());
                 self.advance();
                 text
             }
@@ -558,7 +564,7 @@ impl<'a> Parser<'a> {
         let where_clause = self.parse_where_clause("SEMICOLON")?;
         let signature = FuncSignature {
             span: self.span_from_mark(start),
-            attrs,
+            attrs: attrs.into(),
             name,
             generic_params,
             params,
@@ -677,8 +683,9 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub(super) fn parse_module_path(&mut self) -> Result<Vec<String>, ParseError> {
-        let mut path = vec![self.expect_module_segment()?];
+    pub(super) fn parse_module_path(&mut self) -> Result<SmallVec<[SmolStr; 3]>, ParseError> {
+        let mut path = SmallVec::new();
+        path.push(self.expect_module_segment()?);
         while self.eat_name("DOT") {
             path.push(self.expect_module_segment()?);
         }
@@ -711,7 +718,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    pub(super) fn expect_import_name(&mut self) -> Result<String, ParseError> {
+    pub(super) fn expect_import_name(&mut self) -> Result<SmolStr, ParseError> {
         self.expect_name_like()
     }
 }

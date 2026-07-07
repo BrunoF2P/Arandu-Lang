@@ -93,7 +93,7 @@ pub(crate) fn lower_decl(
                 for f in &d.fields {
                     let field_symbol = require_def_symbol(&type_check.resolved, f.span)?;
                     let field_ty = struct_fields_map
-                        .get(&f.name)
+                        .get(f.name.as_str())
                         .cloned()
                         .unwrap_or(ArType::Error);
                     fields.push(HirStructField {
@@ -194,7 +194,7 @@ pub(crate) fn lower_decl(
             }
             let members = hir_pool.alloc_func_signature_list(&members);
             Ok(Some(HirDecl::Extern(HirExtern {
-                abi: d.abi.clone(),
+                abi: d.abi.to_string(),
                 members,
                 span: d.span,
             })))

@@ -37,10 +37,7 @@ fn builtin_ctor_variant(pool: &AstPool, callee: ExprId) -> Option<crate::hir::Re
     else {
         return None;
     };
-    let base = type_name
-        .path
-        .last()
-        .map_or("", std::string::String::as_str);
+    let base = type_name.path.last().map_or("", |s| s.as_str());
     match (base, member.as_str()) {
         ("Result", "Ok") => Some(crate::hir::ResultCtorVariant::Ok),
         ("Result", "Err") => Some(crate::hir::ResultCtorVariant::Err),
@@ -167,7 +164,7 @@ pub(crate) fn lower_expr_raw(
                 let base_vid = lower_expr(type_check, pool, hir_pool, base_id)?;
                 HirExprKind::Field {
                     base: base_vid,
-                    field: field.clone(),
+                    field: field.to_string(),
                 }
             }
         }
@@ -181,7 +178,7 @@ pub(crate) fn lower_expr_raw(
                 let base_vid = lower_expr(type_check, pool, hir_pool, base_id)?;
                 HirExprKind::SafeField {
                     base: base_vid,
-                    field: field.clone(),
+                    field: field.to_string(),
                 }
             }
         }
@@ -282,7 +279,7 @@ pub(crate) fn lower_expr_raw(
                 let value_id = lower_expr(type_check, pool, hir_pool, f.value)?;
                 hir_fields.push(HirFieldInit {
                     span: f.span,
-                    name: f.name.clone(),
+                    name: f.name.to_string(),
                     value: value_id,
                 });
             }
@@ -397,7 +394,7 @@ pub(crate) fn lower_expr_raw(
                     let b = super::stmt::lower_block(type_check, pool, hir_pool, block)?;
                     HirCatchHandler::Block {
                         error_symbol,
-                        error_name: Some(error.clone()),
+                        error_name: Some(error.to_string()),
                         block: b,
                     }
                 }
@@ -462,10 +459,10 @@ pub(crate) fn lower_expr_raw(
                 right: right_id,
             }
         }
-        ExprKind::Int { value } => HirExprKind::Int(value.clone()),
-        ExprKind::Float { value } => HirExprKind::Float(value.clone()),
+        ExprKind::Int { value } => HirExprKind::Int(value.to_string()),
+        ExprKind::Float { value } => HirExprKind::Float(value.to_string()),
         ExprKind::Bool { value } => HirExprKind::Bool(*value),
-        ExprKind::Char { value } => HirExprKind::Char(value.clone()),
+        ExprKind::Char { value } => HirExprKind::Char(value.to_string()),
         ExprKind::InterpolatedString { .. } => HirExprKind::Str("interpolated".to_string()),
         ExprKind::Nil => HirExprKind::Nil,
         ExprKind::Error => HirExprKind::Error,

@@ -17,10 +17,10 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
                         checker.lower_type_expr(field.ty, checker.symbols.global_scope());
                     let field_key = crate::NodeKey::from(field.span);
                     if let Some(field_symbol) = checker.resolved.definitions.get(&field_key) {
-                        field_symbols.insert(field.name.clone(), *field_symbol);
+                        field_symbols.insert(field.name.to_string(), *field_symbol);
                     }
-                    fields.insert(field.name.clone(), field_ty);
-                    field_indices.insert(field.name.clone(), idx);
+                    fields.insert(field.name.to_string(), field_ty);
+                    field_indices.insert(field.name.to_string(), idx);
                 }
                 let struct_key = crate::NodeKey::from(struct_decl.span);
                 if let Some(symbol_id) = checker.resolved.definitions.get(&struct_key).copied() {

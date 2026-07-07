@@ -317,7 +317,7 @@ pub fn constraint_to_diagnostic(
                 if let Some(methods) = symbols.associated_members.get(struct_name) {
                     for m_name in methods.keys() {
                         candidates.push(Candidate {
-                            name: m_name.clone(),
+                            name: m_name.to_string(),
                             is_method: true,
                         });
                     }

@@ -143,7 +143,7 @@ impl<'a> Resolver<'a> {
             scope,
             &TypeName {
                 span: item.span,
-                path: vec![item.name.clone()],
+                path: vec![item.name.clone()].into(),
             },
         );
         for constraint in &item.constraints {

@@ -53,7 +53,7 @@ pub fn exported_symbols(
     let global_scope = locals.symbols.global_scope();
     for symbol in locals.symbols.iter() {
         if symbol.scope == global_scope {
-            map.insert(symbol.name.clone(), (symbol.id, symbol.kind));
+            map.insert(symbol.name.to_string(), (symbol.id, symbol.kind));
         }
     }
 
@@ -169,7 +169,7 @@ pub fn module_signatures(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<T
                         } else if let Some(stripped) = source.strip_prefix("std.alloc.") {
                             Some(format!("stdlib/alloc/{}.aru", stripped))
                         } else {
-                            Some(source.clone())
+                            Some(source.to_string())
                         }
                     }
                 };

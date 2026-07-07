@@ -93,7 +93,7 @@ impl<'a> Resolver<'a> {
             if let Some(expanded) = self.import_aliases.get(first) {
                 let rest: Vec<&str> = segments.collect();
                 if rest.is_empty() {
-                    expanded.clone()
+                    expanded.to_string()
                 } else {
                     format!("{expanded}.{}", rest.join("."))
                 }
@@ -207,6 +207,6 @@ impl<'a> Resolver<'a> {
             })
             .filter(|(_, dist)| *dist <= max_distance)
             .min_by_key(|(_, dist)| *dist)
-            .map(|(symbol, _)| symbol.name.clone())
+            .map(|(symbol, _)| symbol.name.to_string())
     }
 }

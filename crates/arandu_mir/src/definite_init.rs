@@ -238,7 +238,7 @@ fn emit_uninit_diag(
     let name = local_info
         .symbol
         .map_or("<compiler local>".to_string(), |s| {
-            symbols.get(s).name.clone()
+            symbols.get(s).name.to_string()
         });
     diagnostics.push(
         Diagnostic::error(

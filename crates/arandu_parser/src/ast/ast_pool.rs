@@ -3,6 +3,8 @@ use super::{
     TopLevelDecl, TypeExpr,
 };
 use arandu_lexer::Span;
+use smallvec::SmallVec;
+use smol_str::SmolStr;
 use std::num::NonZeroU32;
 
 // ─── ID Types ──────────────────────────────────────────────────────────────────
@@ -125,11 +127,11 @@ impl IndexRange {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExprKind {
     Path {
-        path: Vec<String>,
+        path: SmallVec<[SmolStr; 3]>,
     },
     TypePath {
         type_name: super::TypeName,
-        member: String,
+        member: SmolStr,
     },
     Generic {
         callee: ExprId,
@@ -137,11 +139,11 @@ pub enum ExprKind {
     }, // type_expr_ids range
     Field {
         base: ExprId,
-        field: String,
+        field: SmolStr,
     },
     SafeField {
         base: ExprId,
-        field: String,
+        field: SmolStr,
     },
     Index {
         base: ExprId,
@@ -214,16 +216,16 @@ pub enum ExprKind {
         right: ExprId,
     },
     Int {
-        value: String,
+        value: SmolStr,
     },
     Float {
-        value: String,
+        value: SmolStr,
     },
     Bool {
         value: bool,
     },
     Char {
-        value: String,
+        value: SmolStr,
     },
     InterpolatedString {
         parts: IndexRange,
@@ -276,9 +278,6 @@ pub struct AstPool {
     pub match_arm_ids: Vec<MatchArmId>,
     pub pattern_ids: Vec<PatternId>,
     pub field_pattern_ids: Vec<FieldPatternId>,
-
-    // ── String content (identifiers, literal values, etc.) ─────────────────
-    pub string_buffer: String,
 }
 
 impl AstPool {

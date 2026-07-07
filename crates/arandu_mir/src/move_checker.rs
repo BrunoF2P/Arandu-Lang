@@ -502,7 +502,7 @@ fn local_name(local: LocalId, func: &AmirFunc, symbols: &SymbolTable) -> String 
         .and_then(|local| local.symbol)
         .map_or_else(
             || format!("s{}", local.as_usize()),
-            |symbol| symbols.get(symbol).name.clone(),
+            |symbol| symbols.get(symbol).name.to_string(),
         )
 }
 

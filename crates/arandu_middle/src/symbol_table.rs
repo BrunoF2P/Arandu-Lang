@@ -147,6 +147,7 @@ mod tests {
 }
 
 use rustc_hash::FxHashMap;
+use smol_str::SmolStr;
 
 use arandu_lexer::Span;
 
@@ -229,7 +230,7 @@ impl SymbolKind {
 #[derive(Debug, Clone)]
 pub struct Symbol {
     pub id: SymbolId,
-    pub name: String,
+    pub name: SmolStr,
     pub kind: SymbolKind,
     pub span: Span,
     pub scope: ScopeId,
@@ -247,8 +248,8 @@ pub struct SymbolTable {
     scopes: Vec<Scope>,
     symbols: Vec<Symbol>,
     pub imported_symbols: FxHashMap<SymbolId, Symbol>,
-    pub module_members: FxHashMap<String, FxHashMap<String, SymbolId>>,
-    pub associated_members: FxHashMap<String, FxHashMap<String, SymbolId>>,
+    pub module_members: FxHashMap<SmolStr, FxHashMap<SmolStr, SymbolId>>,
+    pub associated_members: FxHashMap<SmolStr, FxHashMap<SmolStr, SymbolId>>,
     global_scope_id: ScopeId,
     pub builtin_alloc: Option<SymbolId>,
     pub builtin_free: Option<SymbolId>,
@@ -425,7 +426,7 @@ impl SymbolTable {
         };
         self.symbols.push(Symbol {
             id,
-            name: name.to_string(),
+            name: name.into(),
             kind,
             span,
             scope,
@@ -528,9 +529,9 @@ impl SymbolTable {
             span,
         )?;
         self.module_members
-            .entry(module.to_string())
+            .entry(module.into())
             .or_default()
-            .insert(member.to_string(), id);
+            .insert(member.into(), id);
         Ok(id)
     }
 
@@ -561,9 +562,9 @@ impl SymbolTable {
             span,
         )?;
         self.associated_members
-            .entry(base_ty.to_string())
+            .entry(base_ty.into())
             .or_default()
-            .insert(member.to_string(), id);
+            .insert(member.into(), id);
         Ok(id)
     }
 

@@ -3,6 +3,7 @@ use super::{
     ParseErrorCode, Parser, Place, PlaceSuffix, SetOp, SimpleStmt, Stmt, TokenKind,
 };
 use crate::ast::ExprKind;
+use smol_str::SmolStr;
 
 impl<'a> Parser<'a> {
     pub(super) fn parse_block(&mut self) -> Result<Block, ParseError> {
@@ -205,10 +206,10 @@ impl<'a> Parser<'a> {
         let root = match &self.current().kind {
             TokenKind::KwSelf => {
                 self.advance();
-                "self".to_string()
+                SmolStr::new("self")
             }
             TokenKind::IdentValue => {
-                let name = self.current_text().to_string();
+                let name = SmolStr::new(self.current_text());
                 self.advance();
                 name
             }

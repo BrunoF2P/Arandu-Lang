@@ -80,7 +80,7 @@ impl<'a> Parser<'a> {
                     span: self.span_from_mark(start),
                     type_name: TypeName {
                         span: type_start_span,
-                        path: vec![name],
+                        path: vec![name].into(),
                     },
                     variant,
                     payload,
@@ -117,7 +117,7 @@ impl<'a> Parser<'a> {
                     span: self.span_from_mark(start),
                     type_name: TypeName {
                         span: type_start_span,
-                        path: vec![name],
+                        path: vec![name].into(),
                     },
                     fields: range,
                 }));

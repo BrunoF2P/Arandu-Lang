@@ -1,5 +1,6 @@
 use super::{Block, TypeExprId};
 use arandu_lexer::Span;
+use smol_str::SmolStr;
 
 pub use super::ast_pool::ExprId as Expr;
 pub use super::ast_pool::ExprId;
@@ -40,14 +41,14 @@ pub enum BinaryOp {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FieldInit {
     pub span: Span,
-    pub name: String,
+    pub name: SmolStr,
     pub value: ExprId,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LambdaParam {
     pub span: Span,
-    pub name: String,
+    pub name: SmolStr,
     pub ty: Option<TypeExprId>,
 }
 
@@ -65,13 +66,13 @@ pub enum CatchHandler {
     },
     Block {
         span: Span,
-        error: String,
+        error: SmolStr,
         block: Block,
     },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum StringPart {
-    Text { span: Span, text: String },
+    Text { span: Span, text: SmolStr },
     Expr { span: Span, expr: ExprId },
 }

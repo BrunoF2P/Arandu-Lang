@@ -28,18 +28,23 @@ fn result_type_must_use_result_generic(
     }
 }
 
+use smallvec::SmallVec;
+use smol_str::SmolStr;
+
 impl<'a> Parser<'a> {
-    pub(super) fn parse_generic_params(&mut self) -> Result<Vec<GenericParam>, ParseError> {
+    pub(super) fn parse_generic_params(
+        &mut self,
+    ) -> Result<SmallVec<[GenericParam; 2]>, ParseError> {
         if !self.eat_name("LT") {
-            return Ok(Vec::new());
+            return Ok(SmallVec::new());
         }
-        let params = self.parse_comma_separated_list("GT", 1, |parser| {
+        let params_vec = self.parse_comma_separated_list("GT", 1, |parser| {
             let start = parser.mark();
             let name = parser.expect_ident_type()?;
             let constraints = if parser.eat_name("COLON") {
-                parser.parse_constraint_list()?
+                parser.parse_constraint_list()?.into()
             } else {
-                Vec::new()
+                SmallVec::new()
             };
             Ok(GenericParam {
                 span: parser.span_from_mark(start),
@@ -48,7 +53,7 @@ impl<'a> Parser<'a> {
             })
         })?;
         self.expect_name("GT")?;
-        Ok(params)
+        Ok(params_vec.into())
     }
 
     pub(super) fn parse_generic_args(&mut self) -> Result<IndexRange, ParseError> {
@@ -62,16 +67,16 @@ impl<'a> Parser<'a> {
     pub(super) fn parse_where_clause(
         &mut self,
         end_name: &str,
-    ) -> Result<Vec<WhereItem>, ParseError> {
+    ) -> Result<SmallVec<[WhereItem; 2]>, ParseError> {
         if !self.eat_name("KW_WHERE") {
-            return Ok(Vec::new());
+            return Ok(SmallVec::new());
         }
-        let mut items = Vec::new();
+        let mut items = SmallVec::new();
         loop {
             let start = self.mark();
             let name = self.expect_ident_type()?;
             self.expect_name("COLON")?;
-            let constraints = self.parse_constraint_list()?;
+            let constraints = self.parse_constraint_list()?.into();
             items.push(WhereItem {
                 span: self.span_from_mark(start),
                 name,
@@ -116,7 +121,7 @@ impl<'a> Parser<'a> {
             let attrs = parser.parse_attributes()?;
             let ownership = parser.parse_ownership();
             let name = if parser.eat_name("KW_SELF") {
-                "self".to_string()
+                SmolStr::new("self")
             } else {
                 parser.expect_ident_value()?
             };
@@ -148,7 +153,7 @@ impl<'a> Parser<'a> {
             let is_variadic = parser.eat_name("ELLIPSIS");
             Ok(Param {
                 span: parser.span_from_mark(start),
-                attrs,
+                attrs: attrs.into(),
                 ownership,
                 name,
                 ty,
@@ -218,7 +223,7 @@ impl<'a> Parser<'a> {
             }
             let size = match &self.current().kind {
                 TokenKind::IntDec => {
-                    let value = self.current_text().to_string();
+                    let value = SmolStr::new(self.current_text());
                     self.advance();
                     value
                 }
@@ -280,7 +285,7 @@ impl<'a> Parser<'a> {
             let span = self.span_from_mark(start);
             return Ok(self.pool.alloc_type_expr(TypeExpr::Primitive {
                 span,
-                name: name.to_string(),
+                name: name.into(),
             }));
         }
         if matches!(
@@ -321,12 +326,12 @@ impl<'a> Parser<'a> {
         }
         let last = match &self.current().kind {
             TokenKind::IdentType => {
-                let name = self.current_text().to_string();
+                let name = SmolStr::new(self.current_text());
                 self.advance();
                 name
             }
             TokenKind::IdentValue if self.current_text() == "void" => {
-                let name = self.current_text().to_string();
+                let name = SmolStr::new(self.current_text());
                 self.advance();
                 name
             }
@@ -335,7 +340,7 @@ impl<'a> Parser<'a> {
         path.push(last);
         Ok(TypeName {
             span: self.span_from_mark(start),
-            path,
+            path: path.into(),
         })
     }
 

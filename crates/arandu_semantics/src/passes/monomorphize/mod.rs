@@ -41,8 +41,8 @@ mod tests {
             type_args: vec![int_id],
         };
 
-        let id1 = graph.get_or_insert(key.clone(), &interner, &st).unwrap();
-        let id2 = graph.get_or_insert(key, &interner, &st).unwrap();
+        let id1 = graph.get_or_insert(&key, &interner, &st).unwrap();
+        let id2 = graph.get_or_insert(&key, &interner, &st).unwrap();
         assert_eq!(id1, id2);
         assert!(!graph.is_empty());
     }
@@ -57,7 +57,7 @@ mod tests {
         let mut graph = InstantiationGraph::new();
         let id1 = graph
             .get_or_insert(
-                InstantiationKey {
+                &InstantiationKey {
                     symbol: sym,
                     type_args: vec![int_id],
                 },
@@ -67,7 +67,7 @@ mod tests {
             .unwrap();
         let id2 = graph
             .get_or_insert(
-                InstantiationKey {
+                &InstantiationKey {
                     symbol: sym,
                     type_args: vec![str_id],
                 },
@@ -90,7 +90,7 @@ mod tests {
             let tid = interner.intern(ArType::Array(i, int_id));
             graph
                 .get_or_insert(
-                    InstantiationKey {
+                    &InstantiationKey {
                         symbol: sym,
                         type_args: vec![tid],
                     },
@@ -103,7 +103,7 @@ mod tests {
         let int_id = interner.intern(ArType::Primitive(Primitive::Int));
         let tid = interner.intern(ArType::Array(99, int_id));
         let result = graph.get_or_insert(
-            InstantiationKey {
+            &InstantiationKey {
                 symbol: sym,
                 type_args: vec![tid],
             },
@@ -129,7 +129,7 @@ mod tests {
         let mut graph = InstantiationGraph::new();
         let id_a = graph
             .get_or_insert(
-                InstantiationKey {
+                &InstantiationKey {
                     symbol: sym_a,
                     type_args: vec![tid],
                 },
@@ -139,7 +139,7 @@ mod tests {
             .unwrap();
         let id_b = graph
             .get_or_insert(
-                InstantiationKey {
+                &InstantiationKey {
                     symbol: sym_b,
                     type_args: vec![tid],
                 },
@@ -166,7 +166,7 @@ mod tests {
         let mut graph = InstantiationGraph::new();
         let id_a = graph
             .get_or_insert(
-                InstantiationKey {
+                &InstantiationKey {
                     symbol: sym_a,
                     type_args: vec![tid],
                 },
@@ -176,7 +176,7 @@ mod tests {
             .unwrap();
         let id_b = graph
             .get_or_insert(
-                InstantiationKey {
+                &InstantiationKey {
                     symbol: sym_b,
                     type_args: vec![tid],
                 },
@@ -186,7 +186,7 @@ mod tests {
             .unwrap();
         let id_c = graph
             .get_or_insert(
-                InstantiationKey {
+                &InstantiationKey {
                     symbol: sym_c,
                     type_args: vec![tid],
                 },

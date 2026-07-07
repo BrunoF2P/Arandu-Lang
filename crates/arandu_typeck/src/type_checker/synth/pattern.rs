@@ -432,7 +432,7 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                         .type_info
                         .struct_fields
                         .get(&struct_symbol_id)
-                        .and_then(|df| df.get(&field.name).cloned());
+                        .and_then(|df| df.get(field.name.as_str()).cloned());
                     if let Some(field_ty) = field_ty_opt {
                         let field_ty_id = checker.type_info.type_interner.intern(field_ty);
                         if let Some(pat_id) = field.pattern {

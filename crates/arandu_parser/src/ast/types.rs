@@ -7,17 +7,20 @@ pub enum ResultType {
     Multi { span: Span, types: IndexRange },
 }
 
+use smallvec::SmallVec;
+use smol_str::SmolStr;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeName {
     pub span: Span,
-    pub path: Vec<String>,
+    pub path: SmallVec<[SmolStr; 3]>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeExpr {
     Primitive {
         span: Span,
-        name: String,
+        name: SmolStr,
     },
     Named {
         span: Span,
@@ -38,7 +41,7 @@ pub enum TypeExpr {
     },
     Array {
         span: Span,
-        size: String,
+        size: SmolStr,
         elem: TypeExprId,
     },
     Func {

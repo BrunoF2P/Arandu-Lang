@@ -10,7 +10,7 @@ impl<'a> Resolver<'a> {
         match import {
             ImportDecl::ModuleAlias { span, alias, .. } => {
                 if let Some(sym) = self.define(scope, alias, SymbolKind::Module, *span) {
-                    self.record_import_symbol(sym, alias.to_string(), *span);
+                    self.record_import_symbol(sym, alias.clone(), *span);
                 }
             }
             ImportDecl::Named { items, .. } => {
@@ -22,7 +22,7 @@ impl<'a> Resolver<'a> {
                         SymbolKind::ImportValue
                     };
                     if let Some(sym) = self.define(scope, name, kind, item.span) {
-                        self.record_import_symbol(sym, name.to_string(), item.span);
+                        self.record_import_symbol(sym, name.clone(), item.span);
                     }
                 }
             }
@@ -32,7 +32,7 @@ impl<'a> Resolver<'a> {
                 alias,
             } => {
                 if let Some(sym) = self.define(scope, alias, SymbolKind::Module, *span) {
-                    self.record_import_symbol(sym, alias.to_string(), *span);
+                    self.record_import_symbol(sym, alias.clone(), *span);
                 }
                 self.import_aliases.insert(alias.clone(), source.clone());
             }
@@ -45,7 +45,7 @@ impl<'a> Resolver<'a> {
                         SymbolKind::ImportValue
                     };
                     if let Some(sym) = self.define(scope, name, kind, item.span) {
-                        self.record_import_symbol(sym, name.to_string(), item.span);
+                        self.record_import_symbol(sym, name.clone(), item.span);
                     }
                 }
             }

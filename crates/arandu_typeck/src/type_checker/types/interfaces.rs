@@ -13,7 +13,7 @@ use arandu_middle::types::lower::{lower_result_type_ctx, lower_type_expr_ctx};
 #[derive(Debug, Clone)]
 pub struct InterfaceInfo {
     /// Method name → function type **without** receiver (params are only explicit parameters).
-    pub methods: Vec<(String, ArType)>,
+    pub methods: Vec<(smol_str::SmolStr, ArType)>,
 }
 
 /// Collect interface method signatures and per-type-parameter trait constraints.
@@ -183,7 +183,7 @@ fn collect_decl_constraints(
             .or_insert_with(|| param_symbols.clone());
     }
 
-    let name_to_sym: FxHashMap<String, SymbolId> = generic_params
+    let name_to_sym: FxHashMap<smol_str::SmolStr, SymbolId> = generic_params
         .iter()
         .zip(param_symbols.iter())
         .map(|(gp, sym)| (gp.name.clone(), *sym))
@@ -357,7 +357,7 @@ fn missing_interface_methods(
             substitute_type(required, &iface_subst, &mut checker.type_info.type_interner);
         let Some(provided) = lookup_method_type(checker, &type_name, method) else {
             let mut similar = Vec::new();
-            if let Some(methods) = checker.symbols.associated_members.get(&type_name) {
+            if let Some(methods) = checker.symbols.associated_members.get(type_name.as_str()) {
                 let max_distance = if method.len() <= 4 { 2 } else { 3 };
                 for prov_name in methods.keys() {
                     let dist = if prov_name.to_lowercase() == method.to_lowercase() {
@@ -366,7 +366,7 @@ fn missing_interface_methods(
                         strsim::levenshtein(method, prov_name)
                     };
                     if dist <= max_distance {
-                        similar.push(prov_name.clone());
+                        similar.push(prov_name.to_string());
                     }
                 }
             }
@@ -390,7 +390,7 @@ fn missing_interface_methods(
 
 fn concrete_type_name(checker: &TypeChecker, ty: &ArType) -> Option<String> {
     match ty {
-        ArType::Named(id, _) => Some(checker.symbols.get(*id).name.clone()),
+        ArType::Named(id, _) => Some(checker.symbols.get(*id).name.to_string()),
         _ => None,
     }
 }

@@ -55,11 +55,11 @@ impl InstantiationGraph {
 
     pub fn get_or_insert(
         &mut self,
-        key: InstantiationKey,
+        key: &InstantiationKey,
         interner: &TypeInterner,
         symbols: &SymbolTable,
     ) -> Result<InstantiationNodeId, MonoError> {
-        if let Some(&id) = self.index.get(&key) {
+        if let Some(&id) = self.index.get(key) {
             return Ok(id);
         }
 
@@ -75,7 +75,7 @@ impl InstantiationGraph {
             });
         }
 
-        let mangled = super::demangle::mangle_symbol(&key, interner, symbols);
+        let mangled = super::demangle::mangle_symbol(key, interner, symbols);
         let id = InstantiationNodeId::from_usize(self.nodes.len());
         self.nodes.push(InstantiationNode {
             id,

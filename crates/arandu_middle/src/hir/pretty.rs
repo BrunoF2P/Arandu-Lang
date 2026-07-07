@@ -654,7 +654,7 @@ impl HirExpr {
             HirExprKind::Str(v) => format!("\"{v}\""),
             HirExprKind::Nil => "nil".to_string(),
             HirExprKind::Error => "<ErrorExpr>".to_string(),
-            HirExprKind::Path { symbol } => ctx.symbols.get(*symbol).name.clone(),
+            HirExprKind::Path { symbol } => ctx.symbols.get(*symbol).name.to_string(),
             HirExprKind::Binary { op, left, right } => {
                 format!(
                     "{} {} {}",

@@ -13,7 +13,7 @@ pub fn result_type_decl_span(result: &ResultType) -> arandu_lexer::Span {
 
 #[must_use]
 pub fn type_name_base(name: &TypeName) -> &str {
-    name.path.last().map_or("", std::string::String::as_str)
+    name.path.last().map_or("", |s| s.as_str())
 }
 
 #[must_use]
@@ -264,7 +264,7 @@ mod tests {
     fn type_name_base_single_path() {
         let name = arandu_parser::TypeName {
             span: arandu_lexer::Span::new(0, 0, 0),
-            path: vec!["Result".to_string()],
+            path: vec![smol_str::SmolStr::new("Result")].into(),
         };
         assert_eq!(type_name_base(&name), "Result");
     }
@@ -273,7 +273,12 @@ mod tests {
     fn type_name_base_multi_path() {
         let name = arandu_parser::TypeName {
             span: arandu_lexer::Span::new(0, 0, 0),
-            path: vec!["std".to_string(), "core".to_string(), "String".to_string()],
+            path: vec![
+                smol_str::SmolStr::new("std"),
+                smol_str::SmolStr::new("core"),
+                smol_str::SmolStr::new("String"),
+            ]
+            .into(),
         };
         assert_eq!(type_name_base(&name), "String");
     }
@@ -282,7 +287,7 @@ mod tests {
     fn type_name_base_empty_path() {
         let name = arandu_parser::TypeName {
             span: arandu_lexer::Span::new(0, 0, 0),
-            path: vec![],
+            path: smallvec::SmallVec::new(),
         };
         assert_eq!(type_name_base(&name), "");
     }
@@ -294,7 +299,7 @@ mod tests {
         let mut i = interner();
         let name = arandu_parser::TypeName {
             span: arandu_lexer::Span::new(0, 0, 0),
-            path: vec!["NonExistent".to_string()],
+            path: vec![smol_str::SmolStr::new("NonExistent")].into(),
         };
         let result = lower_builtin_generic(&name, &[], &create_dummy_ctx(), &mut i);
         assert!(result.is_none());

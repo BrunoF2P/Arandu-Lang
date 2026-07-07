@@ -15,6 +15,8 @@ pub enum MatchArmBody {
     Block { span: Span, block: Block },
 }
 
+use smol_str::SmolStr;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pattern {
     Wildcard {
@@ -22,7 +24,7 @@ pub enum Pattern {
     },
     Bind {
         span: Span,
-        name: String,
+        name: SmolStr,
     },
     Literal {
         span: Span,
@@ -31,12 +33,12 @@ pub enum Pattern {
     Enum {
         span: Span,
         type_name: TypeName,
-        variant: String,
+        variant: SmolStr,
         payload: IndexRange, // IndexRange referencing PatternId
     },
     TypeTuple {
         span: Span,
-        name: String,
+        name: SmolStr,
         payload: IndexRange, // IndexRange referencing PatternId
     },
     Struct {
@@ -59,7 +61,7 @@ pub enum Pattern {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FieldPattern {
     pub span: Span,
-    pub name: String,
+    pub name: SmolStr,
     pub pattern: Option<PatternId>,
 }
 

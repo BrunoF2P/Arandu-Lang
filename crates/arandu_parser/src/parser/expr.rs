@@ -3,6 +3,7 @@ use super::{
     Parser, Stmt, StringPart, TokenKind, TypeExpr, UnaryOp, merge_text_parts, span_between,
 };
 use crate::ast::ast_pool::{ExprId, ExprKind};
+use smol_str::SmolStr;
 
 impl<'a> Parser<'a> {
     pub(super) fn parse_expr(&mut self, min_bp: u8) -> Result<ExprId, ParseError> {
@@ -291,7 +292,7 @@ impl<'a> Parser<'a> {
                 let span = self.span_from_mark(start);
                 Ok(self.pool.alloc_expr(
                     ExprKind::Path {
-                        path: vec!["self".to_string()],
+                        path: vec![SmolStr::new("self")].into(),
                     },
                     span,
                 ))
@@ -310,20 +311,23 @@ impl<'a> Parser<'a> {
                 } else {
                     let name = self.expect_ident_value()?;
                     let span = self.span_from_mark(start);
-                    Ok(self
-                        .pool
-                        .alloc_expr(ExprKind::Path { path: vec![name] }, span))
+                    Ok(self.pool.alloc_expr(
+                        ExprKind::Path {
+                            path: vec![name].into(),
+                        },
+                        span,
+                    ))
                 }
             }
             TokenKind::IdentType => self.parse_type_led_expr(),
             TokenKind::IntDec | TokenKind::IntHex | TokenKind::IntBin | TokenKind::IntOct => {
-                let value = self.current_text().to_string();
+                let value = SmolStr::new(self.current_text());
                 self.advance();
                 let span = self.span_from_mark(start);
                 Ok(self.pool.alloc_expr(ExprKind::Int { value }, span))
             }
             TokenKind::Float => {
-                let value = self.current_text().to_string();
+                let value = SmolStr::new(self.current_text());
                 self.advance();
                 let span = self.span_from_mark(start);
                 Ok(self.pool.alloc_expr(ExprKind::Float { value }, span))
@@ -339,7 +343,7 @@ impl<'a> Parser<'a> {
                 Ok(self.pool.alloc_expr(ExprKind::Bool { value: false }, span))
             }
             TokenKind::Char => {
-                let value = self.current().char_content(self.source).to_string();
+                let value = SmolStr::new(self.current().char_content(self.source));
                 self.advance();
                 let span = self.span_from_mark(start);
                 Ok(self.pool.alloc_expr(ExprKind::Char { value }, span))
@@ -354,7 +358,7 @@ impl<'a> Parser<'a> {
                 self.parse_string_like("MULTILINE_STRING_START", "MULTILINE_STRING_END")
             }
             TokenKind::RawString => {
-                let value = self.current().raw_string_content(self.source).to_string();
+                let value = SmolStr::new(self.current().raw_string_content(self.source));
                 self.advance();
                 let span = self.span_from_mark(start);
                 let text_part = StringPart::Text { span, text: value };
@@ -662,7 +666,7 @@ impl<'a> Parser<'a> {
             match &self.current().kind {
                 TokenKind::StringText | TokenKind::StringEscape => {
                     let span = self.current().span(self.file_id);
-                    let text = self.current_text().to_string();
+                    let text = SmolStr::new(self.current_text());
                     self.advance();
                     parts.push(StringPart::Text { span, text });
                 }

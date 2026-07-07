@@ -27,6 +27,8 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 salsa = "0.27.2"                                                               # Salsa's new version (salsa-2022 tracked-based macro API)
 blake3 = "1.8.5"
+smol_str = "0.3.1"
+smallvec = "1.13.2"
 
 [workspace.lints]
 # Intentionally empty: use default toolchain lint levels.

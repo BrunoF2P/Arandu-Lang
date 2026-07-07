@@ -12,7 +12,7 @@ pub struct BlockParam {
     pub id: TempId,
     pub local: LocalId,
     pub ty: ArType,
-    pub from: Option<String>,
+    pub from: Option<smol_str::SmolStr>,
     pub moved: bool,
 }
 

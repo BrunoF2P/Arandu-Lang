@@ -46,7 +46,7 @@ pub(crate) fn resolve_namespace_member_type(
 pub(crate) fn resolve_field(
     checker: &mut TypeChecker<'_>,
     base: ExprId,
-    field: &String,
+    field: &str,
     field_span: arandu_lexer::Span,
     safe: bool,
 ) -> TypeId {
@@ -110,10 +110,8 @@ pub(crate) fn resolve_field(
         if let Some(field_ty) = field_from_struct {
             field_ty
         } else {
-            let struct_name = checker.symbols.get(struct_id).name.clone();
-            if let Some(method_sym) = checker
-                .symbols
-                .lookup_associated_member(&struct_name, field)
+            let struct_name = &checker.symbols.get(struct_id).name;
+            if let Some(method_sym) = checker.symbols.lookup_associated_member(struct_name, field)
                 && let Some(ArType::Func(params, ret)) = checker.decl_type(method_sym)
             {
                 ArType::Func(params, ret)
@@ -143,7 +141,7 @@ pub(crate) fn resolve_field(
                         ConstraintOrigin::UndefinedField {
                             base_span: checker.pool.expr_span(base),
                             field_span,
-                            field_name: field.clone(),
+                            field_name: field.to_string(),
                         },
                     );
                     return checker.intern(ArType::Error);
@@ -155,7 +153,7 @@ pub(crate) fn resolve_field(
                     ConstraintOrigin::UndefinedField {
                         base_span: checker.pool.expr_span(base),
                         field_span,
-                        field_name: field.clone(),
+                        field_name: field.to_string(),
                     },
                 );
                 return checker.intern(ArType::Error);
@@ -168,7 +166,7 @@ pub(crate) fn resolve_field(
             ConstraintOrigin::UndefinedField {
                 base_span: checker.pool.expr_span(base),
                 field_span,
-                field_name: field.clone(),
+                field_name: field.to_string(),
             },
         );
         return checker.intern(ArType::Error);

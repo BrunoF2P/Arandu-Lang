@@ -1,5 +1,7 @@
 use super::{Block, DeclId, Expr, IndexRange, TypeExprId, TypeName};
 use arandu_lexer::Span;
+use smallvec::SmallVec;
+use smol_str::SmolStr;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
@@ -14,14 +16,14 @@ pub struct Program {
 #[derive(Debug, Clone, PartialEq)]
 pub struct DocCommentAttachment {
     pub span: Span,
-    pub text: String,
+    pub text: SmolStr,
     pub target_span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModuleDecl {
     pub span: Span,
-    pub path: Vec<String>,
+    pub path: SmallVec<[SmolStr; 3]>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -29,26 +31,26 @@ pub enum ImportDecl {
     /// `import path.to.module as alias`
     ModuleAlias {
         span: Span,
-        path: Vec<String>,
-        alias: String,
+        path: SmallVec<[SmolStr; 3]>,
+        alias: SmolStr,
     },
     /// `from path.to.module import { Item, Other }`
     Named {
         span: Span,
         items: Vec<ImportItem>,
-        path: Vec<String>,
+        path: SmallVec<[SmolStr; 3]>,
     },
     /// `from "external" import { Item }`
     ExternalNamed {
         span: Span,
         items: Vec<ImportItem>,
-        source: String,
+        source: SmolStr,
     },
     /// `import "external" as alias`
     ExternalAlias {
         span: Span,
-        source: String,
-        alias: String,
+        source: SmolStr,
+        alias: SmolStr,
     },
 }
 
@@ -67,8 +69,8 @@ impl ImportDecl {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImportItem {
     pub span: Span,
-    pub name: String,
-    pub alias: Option<String>,
+    pub name: SmolStr,
+    pub alias: Option<SmolStr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -102,7 +104,7 @@ impl TopLevelDecl {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Attribute {
     pub span: Span,
-    pub name: String,
+    pub name: SmolStr,
     pub args: Vec<Expr>,
 }
 
@@ -115,23 +117,23 @@ pub enum Visibility {
 #[derive(Debug, Clone, PartialEq)]
 pub struct GenericParam {
     pub span: Span,
-    pub name: String,
-    pub constraints: Vec<TypeName>,
+    pub name: SmolStr,
+    pub constraints: SmallVec<[TypeName; 2]>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WhereItem {
     pub span: Span,
-    pub name: String,
-    pub constraints: Vec<TypeName>,
+    pub name: SmolStr,
+    pub constraints: SmallVec<[TypeName; 2]>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConstDecl {
     pub span: Span,
-    pub attrs: Vec<Attribute>,
+    pub attrs: SmallVec<[Attribute; 2]>,
     pub visibility: Visibility,
-    pub name: String,
+    pub name: SmolStr,
     pub ty: Option<TypeExprId>,
     pub value: Expr,
 }
@@ -139,24 +141,24 @@ pub struct ConstDecl {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeAliasDecl {
     pub span: Span,
-    pub attrs: Vec<Attribute>,
+    pub attrs: SmallVec<[Attribute; 2]>,
     pub visibility: Visibility,
-    pub name: String,
-    pub generic_params: Vec<GenericParam>,
+    pub name: SmolStr,
+    pub generic_params: SmallVec<[GenericParam; 2]>,
     pub ty: TypeExprId,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FuncDecl {
     pub span: Span,
-    pub attrs: Vec<Attribute>,
+    pub attrs: SmallVec<[Attribute; 2]>,
     pub visibility: Visibility,
     pub is_async: bool,
     pub name: FuncName,
-    pub generic_params: Vec<GenericParam>,
+    pub generic_params: SmallVec<[GenericParam; 2]>,
     pub params: Vec<Param>,
     pub result: Option<super::ResultType>,
-    pub where_clause: Vec<WhereItem>,
+    pub where_clause: SmallVec<[WhereItem; 2]>,
     pub body: Block,
 }
 
@@ -164,62 +166,62 @@ pub struct FuncDecl {
 pub enum FuncName {
     Free {
         span: Span,
-        name: String,
+        name: SmolStr,
     },
     Method {
         span: Span,
         receiver: TypeName,
-        name: String,
+        name: SmolStr,
     },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FuncSignature {
     pub span: Span,
-    pub attrs: Vec<Attribute>,
-    pub name: String,
-    pub generic_params: Vec<GenericParam>,
+    pub attrs: SmallVec<[Attribute; 2]>,
+    pub name: SmolStr,
+    pub generic_params: SmallVec<[GenericParam; 2]>,
     pub params: Vec<Param>,
     pub result: Option<super::ResultType>,
-    pub where_clause: Vec<WhereItem>,
+    pub where_clause: SmallVec<[WhereItem; 2]>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructDecl {
     pub span: Span,
-    pub attrs: Vec<Attribute>,
+    pub attrs: SmallVec<[Attribute; 2]>,
     pub visibility: Visibility,
-    pub name: String,
-    pub generic_params: Vec<GenericParam>,
-    pub where_clause: Vec<WhereItem>,
+    pub name: SmolStr,
+    pub generic_params: SmallVec<[GenericParam; 2]>,
+    pub where_clause: SmallVec<[WhereItem; 2]>,
     pub fields: Vec<FieldDecl>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FieldDecl {
     pub span: Span,
-    pub attrs: Vec<Attribute>,
+    pub attrs: SmallVec<[Attribute; 2]>,
     pub visibility: Visibility,
-    pub name: String,
+    pub name: SmolStr,
     pub ty: TypeExprId,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumDecl {
     pub span: Span,
-    pub attrs: Vec<Attribute>,
+    pub attrs: SmallVec<[Attribute; 2]>,
     pub visibility: Visibility,
-    pub name: String,
-    pub generic_params: Vec<GenericParam>,
-    pub where_clause: Vec<WhereItem>,
+    pub name: SmolStr,
+    pub generic_params: SmallVec<[GenericParam; 2]>,
+    pub where_clause: SmallVec<[WhereItem; 2]>,
     pub variants: Vec<EnumVariant>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumVariant {
     pub span: Span,
-    pub attrs: Vec<Attribute>,
-    pub name: String,
+    pub attrs: SmallVec<[Attribute; 2]>,
+    pub name: SmolStr,
     pub payload: Option<EnumPayload>,
 }
 
@@ -232,28 +234,28 @@ pub enum EnumPayload {
 #[derive(Debug, Clone, PartialEq)]
 pub struct InterfaceDecl {
     pub span: Span,
-    pub attrs: Vec<Attribute>,
+    pub attrs: SmallVec<[Attribute; 2]>,
     pub visibility: Visibility,
-    pub name: String,
-    pub generic_params: Vec<GenericParam>,
-    pub where_clause: Vec<WhereItem>,
+    pub name: SmolStr,
+    pub generic_params: SmallVec<[GenericParam; 2]>,
+    pub where_clause: SmallVec<[WhereItem; 2]>,
     pub members: Vec<FuncSignature>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExternDecl {
     pub span: Span,
-    pub attrs: Vec<Attribute>,
-    pub abi: String,
+    pub attrs: SmallVec<[Attribute; 2]>,
+    pub abi: SmolStr,
     pub members: Vec<FuncSignature>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     pub span: Span,
-    pub attrs: Vec<Attribute>,
+    pub attrs: SmallVec<[Attribute; 2]>,
     pub ownership: Option<Ownership>,
-    pub name: String,
+    pub name: SmolStr,
     pub ty: TypeExprId,
     pub is_variadic: bool,
     /// `true` when this parameter is the method receiver (`self`).

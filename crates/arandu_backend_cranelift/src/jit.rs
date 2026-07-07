@@ -135,7 +135,7 @@ impl AranduJit {
                         sym.name
                     ))
                 })?;
-            func_ids.insert(sym.name.clone(), func_id);
+            func_ids.insert(sym.name.to_string(), func_id);
 
             // Also find all NamespaceMember symbols that refer to this function (by matching name ending and span)
             // and map them to the same func_id!
@@ -145,7 +145,7 @@ impl AranduJit {
                     && s.name.ends_with(&format!(".{}", sym.name))
                     && s.span == sym.span
                 {
-                    func_ids.insert(s.name.clone(), func_id);
+                    func_ids.insert(s.name.to_string(), func_id);
                 }
             }
         }
@@ -153,7 +153,7 @@ impl AranduJit {
         // Declare all extern functions as imports
         for (&symbol_id, (param_types, return_type)) in &program.extern_funcs {
             let sym = symbols.get(symbol_id);
-            if func_ids.contains_key(&sym.name) {
+            if func_ids.contains_key(sym.name.as_str()) {
                 continue;
             }
             let c_name = sym.name.split('.').next_back().unwrap_or(&sym.name);
@@ -170,7 +170,7 @@ impl AranduJit {
                         ))
                     })?
             };
-            func_ids.insert(sym.name.clone(), func_id);
+            func_ids.insert(sym.name.to_string(), func_id);
             if c_name != sym.name {
                 func_ids.insert(c_name.to_string(), func_id);
             }
@@ -182,7 +182,7 @@ impl AranduJit {
         for func in &program.funcs {
             let mut builder_context = FunctionBuilderContext::new();
             let sym = symbols.get(func.symbol);
-            let func_id = func_ids[&sym.name];
+            let func_id = func_ids[sym.name.as_str()];
 
             let param_types: Vec<_> = func
                 .params

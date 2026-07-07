@@ -1,4 +1,5 @@
 use arandu_parser::{FuncName, Program, TopLevelDecl};
+use smol_str::SmolStr;
 
 use crate::{ResolutionResult, ResolvedNames, SymbolKind, SymbolTable};
 
@@ -131,61 +132,85 @@ pub fn resolve_imports_and_bodies(
             }
         };
 
-        if let Some(path) = module_path
-            && let Some(imported_file) = db.resolve_module_path(&path)
-        {
-            let exports = db.exported_symbols(imported_file);
-            match import {
-                arandu_parser::ImportDecl::ModuleAlias { alias, .. }
-                | arandu_parser::ImportDecl::ExternalAlias { alias, .. } => {
-                    let module_name = alias.clone();
-                    for (name, &(id, kind)) in &exports.symbols {
-                        let sym = arandu_middle::Symbol {
-                            id,
-                            name: name.clone(),
-                            kind,
-                            span: import.span(),
-                            scope: global,
-                        };
-                        resolver.symbols.register_imported_symbol(sym);
-                        resolver
-                            .symbols
-                            .module_members
-                            .entry(module_name.clone())
-                            .or_default()
-                            .insert(name.clone(), id);
-                    }
-                }
-                arandu_parser::ImportDecl::Named { items, .. }
-                | arandu_parser::ImportDecl::ExternalNamed { items, .. } => {
-                    for item in items {
-                        if let Some(&(id, kind)) = exports.symbols.get(&item.name) {
-                            let import_name = item.alias.as_ref().unwrap_or(&item.name).clone();
+        if let Some(path) = &module_path {
+            if let Some(imported_file) = db.resolve_module_path(path) {
+                let exports = db.exported_symbols(imported_file);
+                match import {
+                    arandu_parser::ImportDecl::ModuleAlias { alias, .. }
+                    | arandu_parser::ImportDecl::ExternalAlias { alias, .. } => {
+                        let module_name = alias.clone();
+                        for (name, &(id, kind)) in &exports.symbols {
                             let sym = arandu_middle::Symbol {
                                 id,
-                                name: import_name.clone(),
+                                name: name.clone().into(),
                                 kind,
-                                span: item.span,
+                                span: import.span(),
                                 scope: global,
                             };
-                            if let Err(existing) = resolver.symbols.insert_imported(sym) {
-                                let existing_span = resolver.symbols.get(existing).span;
-                                resolver.diagnostics.push(
-                                    arandu_middle::Diagnostic::error(
-                                        arandu_middle::DiagCode::N006ImportConflict,
-                                        format!(
-                                            "import `{}` conflicts with an existing declaration",
-                                            import_name
-                                        ),
-                                        item.span,
-                                    )
-                                    .with_label(existing_span, "already defined here"),
-                                );
+                            resolver.symbols.register_imported_symbol(sym);
+                            resolver
+                                .symbols
+                                .module_members
+                                .entry(module_name.clone())
+                                .or_default()
+                                .insert(name.clone().into(), id);
+                        }
+                    }
+                    arandu_parser::ImportDecl::Named { items, .. }
+                    | arandu_parser::ImportDecl::ExternalNamed { items, .. } => {
+                        for item in items {
+                            if let Some(&(id, kind)) = exports.symbols.get(item.name.as_str()) {
+                                let import_name = item.alias.as_ref().unwrap_or(&item.name).clone();
+                                let sym = arandu_middle::Symbol {
+                                    id,
+                                    name: import_name.clone(),
+                                    kind,
+                                    span: item.span,
+                                    scope: global,
+                                };
+                                if let Err(existing) = resolver.symbols.insert_imported(sym) {
+                                    let existing_span = resolver.symbols.get(existing).span;
+                                    resolver.diagnostics.push(
+                                        arandu_middle::Diagnostic::error(
+                                            arandu_middle::DiagCode::N006ImportConflict,
+                                            format!(
+                                                "import `{}` conflicts with an existing declaration",
+                                                import_name
+                                            ),
+                                            item.span,
+                                        )
+                                        .with_label(existing_span, "already defined here"),
+                                    );
+                                }
                             }
                         }
                     }
                 }
+            } else {
+                let import_name = match import {
+                    arandu_parser::ImportDecl::ModuleAlias { path, .. }
+                    | arandu_parser::ImportDecl::Named { path, .. } => path.join("."),
+                    arandu_parser::ImportDecl::ExternalAlias { source, .. }
+                    | arandu_parser::ImportDecl::ExternalNamed { source, .. } => source.to_string(),
+                };
+                resolver.diagnostics.push(arandu_middle::Diagnostic::error(
+                    arandu_middle::DiagCode::M001UnresolvedImport,
+                    format!("unresolved import: `{}`", import_name),
+                    import.span(),
+                ));
             }
+        } else {
+            let import_name = match import {
+                arandu_parser::ImportDecl::ModuleAlias { path, .. }
+                | arandu_parser::ImportDecl::Named { path, .. } => path.join("."),
+                arandu_parser::ImportDecl::ExternalAlias { source, .. }
+                | arandu_parser::ImportDecl::ExternalNamed { source, .. } => source.to_string(),
+            };
+            resolver.diagnostics.push(arandu_middle::Diagnostic::error(
+                arandu_middle::DiagCode::M001UnresolvedImport,
+                format!("unresolved import: `{}`", import_name),
+                import.span(),
+            ));
         }
     }
 
@@ -232,7 +257,7 @@ pub fn collect_symbols(
             .docs
             .entry(crate::NodeKey::from(doc.target_span))
             .or_default()
-            .push(doc.text.clone());
+            .push(doc.text.to_string());
     }
 
     let global = resolver.symbols.global_scope();
@@ -361,9 +386,9 @@ struct Resolver<'a> {
     docs: crate::DocCommentMap,
     diagnostics: Vec<crate::Diagnostic>,
     pool: &'a arandu_parser::ast_pool::AstPool,
-    import_aliases: rustc_hash::FxHashMap<String, String>,
+    import_aliases: rustc_hash::FxHashMap<SmolStr, SmolStr>,
     current_module: Option<String>,
-    imported_symbols: rustc_hash::FxHashMap<crate::SymbolId, (String, arandu_lexer::Span)>,
+    imported_symbols: rustc_hash::FxHashMap<crate::SymbolId, (SmolStr, arandu_lexer::Span)>,
     used_symbols: rustc_hash::FxHashSet<crate::SymbolId>,
 }
 
@@ -394,7 +419,7 @@ impl<'a> Resolver<'a> {
     pub(crate) fn record_import_symbol(
         &mut self,
         symbol: crate::SymbolId,
-        name: String,
+        name: SmolStr,
         span: arandu_lexer::Span,
     ) {
         self.imported_symbols.insert(symbol, (name, span));
@@ -426,6 +451,8 @@ impl<'a> Resolver<'a> {
 #[cfg(test)]
 mod tests {
     use arandu_lexer::Span;
+    use smallvec::SmallVec;
+    use smol_str::SmolStr;
 
     use crate::{DiagCode, NodeKey, ResolvedNames, ScopeId, SymbolId, SymbolKind, SymbolTable};
 
@@ -474,7 +501,7 @@ mod tests {
     fn dummy_type_name(name: &str) -> arandu_parser::TypeName {
         arandu_parser::TypeName {
             span: dummy_span(),
-            path: vec![name.to_string()],
+            path: vec![SmolStr::new(name)].into(),
         }
     }
 
@@ -552,7 +579,7 @@ mod tests {
     fn expand_namespace_with_alias() {
         let mut r = resolver_no_pool();
         r.import_aliases
-            .insert("fmt".to_string(), "std.core.format".to_string());
+            .insert("fmt".into(), "std.core.format".into());
         assert_eq!(
             r.expand_namespace_alias("fmt.println"),
             "std.core.format.println"
@@ -562,8 +589,7 @@ mod tests {
     #[test]
     fn expand_namespace_alias_only() {
         let mut r = resolver_no_pool();
-        r.import_aliases
-            .insert("io".to_string(), "std.core.io".to_string());
+        r.import_aliases.insert("io".into(), "std.core.io".into());
         assert_eq!(r.expand_namespace_alias("io"), "std.core.io");
     }
 
@@ -574,7 +600,7 @@ mod tests {
         let r = resolver_no_pool();
         let syms = vec![crate::Symbol {
             id: SymbolId::new(0, 0),
-            name: "println".to_string(),
+            name: "println".into(),
             kind: SymbolKind::Func,
             span: dummy_span(),
             scope: ScopeId(0),
@@ -590,7 +616,7 @@ mod tests {
         let r = resolver_no_pool();
         let syms = vec![crate::Symbol {
             id: SymbolId::new(0, 0),
-            name: "println".to_string(),
+            name: "println".into(),
             kind: SymbolKind::Func,
             span: dummy_span(),
             scope: ScopeId(0),
@@ -603,7 +629,7 @@ mod tests {
         let r = resolver_no_pool();
         let syms = vec![crate::Symbol {
             id: SymbolId::new(0, 0),
-            name: "println".to_string(),
+            name: "println".into(),
             kind: SymbolKind::Func,
             span: dummy_span(),
             scope: ScopeId(0),
@@ -616,7 +642,7 @@ mod tests {
         let r = resolver_no_pool();
         let syms = vec![crate::Symbol {
             id: SymbolId::new(0, 0),
-            name: "Println".to_string(),
+            name: "Println".into(),
             kind: SymbolKind::Func,
             span: dummy_span(),
             scope: ScopeId(0),
@@ -635,8 +661,7 @@ mod tests {
         let sym = r
             .define(ScopeId(0), "foo", SymbolKind::ImportValue, dummy_span())
             .unwrap();
-        r.imported_symbols
-            .insert(sym, ("foo".to_string(), dummy_span()));
+        r.imported_symbols.insert(sym, ("foo".into(), dummy_span()));
         r.check_unused_imports();
         assert_eq!(r.diagnostics.len(), 1);
         assert_eq!(r.diagnostics[0].code, DiagCode::W007UnusedImport);
@@ -648,8 +673,7 @@ mod tests {
         let sym = r
             .define(ScopeId(0), "foo", SymbolKind::ImportValue, dummy_span())
             .unwrap();
-        r.imported_symbols
-            .insert(sym, ("foo".to_string(), dummy_span()));
+        r.imported_symbols.insert(sym, ("foo".into(), dummy_span()));
         r.used_symbols.insert(sym);
         r.check_unused_imports();
         assert!(r.diagnostics.is_empty());
@@ -662,8 +686,8 @@ mod tests {
         let mut r = resolver_no_pool();
         let import = arandu_parser::ImportDecl::ModuleAlias {
             span: dummy_span(),
-            path: vec!["std".to_string(), "io".to_string()],
-            alias: "std".to_string(),
+            path: vec![SmolStr::new("std"), SmolStr::new("io")].into(),
+            alias: SmolStr::new("std"),
         };
         r.collect_import(ScopeId(0), &import);
         let sym = r.symbols.lookup_module(ScopeId(0), "std");
@@ -675,13 +699,10 @@ mod tests {
         let mut r = resolver_no_pool();
         let import = arandu_parser::ImportDecl::ModuleAlias {
             span: dummy_span(),
-            path: vec![],
-            alias: "empty".to_string(),
+            path: SmallVec::new(),
+            alias: SmolStr::new("empty"),
         };
         r.collect_import(ScopeId(0), &import);
-        // We removed the error in collect_import for empty alias paths since the parser guarantees paths aren't empty,
-        // but if we need an error, we should check what we actually implemented.
-        // I'll just clear this test or change it since we removed empty path errors in the new parser/resolver.
     }
 
     #[test]
@@ -689,10 +710,10 @@ mod tests {
         let mut r = resolver_no_pool();
         let import = arandu_parser::ImportDecl::Named {
             span: dummy_span(),
-            path: vec!["std".to_string()],
+            path: vec![SmolStr::new("std")].into(),
             items: vec![arandu_parser::ImportItem {
                 span: dummy_span(),
-                name: "String".to_string(),
+                name: SmolStr::new("String"),
                 alias: None,
             }],
         };
@@ -706,10 +727,10 @@ mod tests {
         let mut r = resolver_no_pool();
         let import = arandu_parser::ImportDecl::Named {
             span: dummy_span(),
-            path: vec!["std".to_string()],
+            path: vec![SmolStr::new("std")].into(),
             items: vec![arandu_parser::ImportItem {
                 span: dummy_span(),
-                name: "println".to_string(),
+                name: SmolStr::new("println"),
                 alias: None,
             }],
         };
@@ -723,11 +744,11 @@ mod tests {
         let mut r = resolver_no_pool();
         let import = arandu_parser::ImportDecl::Named {
             span: dummy_span(),
-            path: vec!["std".to_string()],
+            path: vec![SmolStr::new("std")].into(),
             items: vec![arandu_parser::ImportItem {
                 span: dummy_span(),
-                name: "println".to_string(),
-                alias: Some("print".to_string()),
+                name: SmolStr::new("println"),
+                alias: Some(SmolStr::new("print")),
             }],
         };
         r.collect_import(ScopeId(0), &import);
@@ -740,13 +761,16 @@ mod tests {
         let mut r = resolver_no_pool();
         let import = arandu_parser::ImportDecl::ExternalAlias {
             span: dummy_span(),
-            source: "std.core.io".to_string(),
-            alias: "io".to_string(),
+            source: SmolStr::new("std.core.io"),
+            alias: SmolStr::new("io"),
         };
         r.collect_import(ScopeId(0), &import);
         let sym = r.symbols.lookup_module(ScopeId(0), "io");
         assert!(sym.is_some());
-        assert_eq!(r.import_aliases.get("io"), Some(&"std.core.io".to_string()));
+        assert_eq!(
+            r.import_aliases.get("io"),
+            Some(&SmolStr::new("std.core.io"))
+        );
     }
 
     // ── collect_top_level ──
@@ -756,9 +780,9 @@ mod tests {
         let mut r = resolver_no_pool();
         let decl = arandu_parser::TopLevelDecl::Const(arandu_parser::ConstDecl {
             span: dummy_span(),
-            attrs: Vec::new(),
+            attrs: Vec::new().into(),
             visibility: arandu_parser::Visibility::Private,
-            name: "MAX".to_string(),
+            name: "MAX".into(),
             ty: None,
             value: dummy_expr(),
         });
@@ -772,10 +796,10 @@ mod tests {
         let mut r = resolver_no_pool();
         let decl = arandu_parser::TopLevelDecl::TypeAlias(arandu_parser::TypeAliasDecl {
             span: dummy_span(),
-            attrs: Vec::new(),
+            attrs: Vec::new().into(),
             visibility: arandu_parser::Visibility::Private,
-            name: "MyInt".to_string(),
-            generic_params: Vec::new(),
+            name: "MyInt".into(),
+            generic_params: Vec::new().into(),
             ty: arandu_parser::TypeExprId::new(0),
         });
         r.collect_top_level(ScopeId(0), &decl);
@@ -788,17 +812,17 @@ mod tests {
         let mut r = resolver_no_pool();
         let decl = arandu_parser::TopLevelDecl::Func(arandu_parser::FuncDecl {
             span: dummy_span(),
-            attrs: Vec::new(),
+            attrs: Vec::new().into(),
             visibility: arandu_parser::Visibility::Private,
             is_async: false,
             name: arandu_parser::FuncName::Free {
                 span: dummy_span(),
-                name: "main".to_string(),
+                name: "main".into(),
             },
-            generic_params: Vec::new(),
+            generic_params: Vec::new().into(),
             params: Vec::new(),
             result: None,
-            where_clause: Vec::new(),
+            where_clause: Vec::new().into(),
             body: dummy_block(),
         });
         r.collect_top_level(ScopeId(0), &decl);
@@ -812,18 +836,18 @@ mod tests {
         let _ = r.define(ScopeId(0), "Foo", SymbolKind::Struct, dummy_span());
         let decl = arandu_parser::TopLevelDecl::Func(arandu_parser::FuncDecl {
             span: dummy_span(),
-            attrs: Vec::new(),
+            attrs: Vec::new().into(),
             visibility: arandu_parser::Visibility::Private,
             is_async: false,
             name: arandu_parser::FuncName::Method {
                 span: dummy_span(),
                 receiver: dummy_type_name("Foo"),
-                name: "bar".to_string(),
+                name: "bar".into(),
             },
-            generic_params: Vec::new(),
+            generic_params: Vec::new().into(),
             params: Vec::new(),
             result: None,
-            where_clause: Vec::new(),
+            where_clause: Vec::new().into(),
             body: dummy_block(),
         });
         r.collect_top_level(ScopeId(0), &decl);
@@ -836,11 +860,11 @@ mod tests {
         let mut r = resolver_no_pool();
         let decl = arandu_parser::TopLevelDecl::Struct(arandu_parser::StructDecl {
             span: dummy_span(),
-            attrs: Vec::new(),
+            attrs: Vec::new().into(),
             visibility: arandu_parser::Visibility::Private,
-            name: "Point".to_string(),
-            generic_params: Vec::new(),
-            where_clause: Vec::new(),
+            name: "Point".into(),
+            generic_params: Vec::new().into(),
+            where_clause: Vec::new().into(),
             fields: Vec::new(),
         });
         r.collect_top_level(ScopeId(0), &decl);
@@ -853,22 +877,22 @@ mod tests {
         let mut r = resolver_no_pool();
         let decl = arandu_parser::TopLevelDecl::Enum(arandu_parser::EnumDecl {
             span: dummy_span(),
-            attrs: Vec::new(),
+            attrs: Vec::new().into(),
             visibility: arandu_parser::Visibility::Private,
-            name: "Color".to_string(),
-            generic_params: Vec::new(),
-            where_clause: Vec::new(),
+            name: "Color".into(),
+            generic_params: Vec::new().into(),
+            where_clause: Vec::new().into(),
             variants: vec![
                 arandu_parser::EnumVariant {
                     span: dummy_span(),
-                    attrs: Vec::new(),
-                    name: "Red".to_string(),
+                    attrs: Vec::new().into(),
+                    name: "Red".into(),
                     payload: None,
                 },
                 arandu_parser::EnumVariant {
                     span: dummy_span(),
-                    attrs: Vec::new(),
-                    name: "Blue".to_string(),
+                    attrs: Vec::new().into(),
+                    name: "Blue".into(),
                     payload: None,
                 },
             ],
@@ -889,11 +913,11 @@ mod tests {
         let mut r = resolver_no_pool();
         let decl = arandu_parser::TopLevelDecl::Interface(arandu_parser::InterfaceDecl {
             span: dummy_span(),
-            attrs: Vec::new(),
+            attrs: Vec::new().into(),
             visibility: arandu_parser::Visibility::Private,
-            name: "Stringable".to_string(),
-            generic_params: Vec::new(),
-            where_clause: Vec::new(),
+            name: "Stringable".into(),
+            generic_params: Vec::new().into(),
+            where_clause: Vec::new().into(),
             members: Vec::new(),
         });
         r.collect_top_level(ScopeId(0), &decl);
@@ -906,16 +930,16 @@ mod tests {
         let mut r = resolver_no_pool();
         let decl = arandu_parser::TopLevelDecl::Extern(arandu_parser::ExternDecl {
             span: dummy_span(),
-            attrs: Vec::new(),
-            abi: "C".to_string(),
+            attrs: Vec::new().into(),
+            abi: "C".into(),
             members: vec![arandu_parser::FuncSignature {
                 span: dummy_span(),
-                attrs: Vec::new(),
-                name: "malloc".to_string(),
-                generic_params: Vec::new(),
+                attrs: Vec::new().into(),
+                name: "malloc".into(),
+                generic_params: Vec::new().into(),
                 params: Vec::new(),
                 result: None,
-                where_clause: Vec::new(),
+                where_clause: Vec::new().into(),
             }],
         });
         r.collect_top_level(ScopeId(0), &decl);

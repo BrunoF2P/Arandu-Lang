@@ -110,7 +110,7 @@ impl ArType {
             ArType::Named(id, args) => {
                 let name = &symbols.get(*id).name;
                 if args.is_empty() {
-                    name.clone()
+                    name.to_string()
                 } else {
                     let args_str: Vec<String> = args
                         .iter()

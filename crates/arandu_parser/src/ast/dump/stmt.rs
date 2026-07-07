@@ -174,7 +174,7 @@ fn dump_for_clause(pool: &AstPool, clause: &ForClause) -> String {
                     if binding.mutable {
                         format!("mut {}", binding.name)
                     } else {
-                        binding.name.clone()
+                        binding.name.to_string()
                     }
                 })
                 .collect::<Vec<_>>()

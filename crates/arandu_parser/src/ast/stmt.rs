@@ -1,5 +1,6 @@
 use super::{Expr, StmtId, TypeExprId};
 use arandu_lexer::Span;
+use smol_str::SmolStr;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Block {
@@ -128,7 +129,7 @@ pub enum ForClause {
 pub struct ForBinding {
     pub span: Span,
     pub mutable: bool,
-    pub name: String,
+    pub name: SmolStr,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -160,20 +161,20 @@ pub enum DeferBody {
 pub struct BindingItem {
     pub span: Span,
     pub mutable: bool,
-    pub name: String,
+    pub name: SmolStr,
     pub ty: Option<TypeExprId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Place {
     pub span: Span,
-    pub root: String,
+    pub root: SmolStr,
     pub suffixes: Vec<PlaceSuffix>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PlaceSuffix {
-    Field { span: Span, name: String },
+    Field { span: Span, name: SmolStr },
     Index { span: Span, expr: Expr },
 }
 

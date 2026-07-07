@@ -22,10 +22,7 @@ impl<'a> Resolver<'a> {
                 }
             }
             ExprKind::TypePath { type_name, member } => {
-                let base = type_name
-                    .path
-                    .last()
-                    .map_or("", std::string::String::as_str);
+                let base = type_name.path.last().map_or("", |s| s.as_str());
                 if matches!(
                     (base, member.as_str()),
                     ("Result", "Ok" | "Err") | ("Option", "Some")
@@ -43,7 +40,7 @@ impl<'a> Resolver<'a> {
                             format!("associated function '{ty}.{member}' is not declared"),
                             span,
                         );
-                        if let Some(methods) = self.symbols.associated_members.get(&ty) {
+                        if let Some(methods) = self.symbols.associated_members.get(ty.as_str()) {
                             let max_distance = if member.len() <= 4 { 2 } else { 3 };
                             let best_match = methods
                                 .keys()
@@ -311,6 +308,6 @@ impl<'a> Resolver<'a> {
         segments.reverse();
         let member = segments.pop()?;
         let namespace = segments.join(".");
-        Some((namespace, member))
+        Some((namespace, member.to_string()))
     }
 }

@@ -76,7 +76,7 @@ impl InstantiationAnalyzer<'_> {
     fn insert_key(&mut self, key: InstantiationKey, span: Span) -> Option<InstantiationNodeId> {
         match self
             .graph
-            .get_or_insert(key, &self.interner, &self.tc.symbols)
+            .get_or_insert(&key, &self.interner, &self.tc.symbols)
         {
             Ok(node) => Some(node),
             Err(MonoError::RecursionLimitExceeded { symbol, limit }) => {

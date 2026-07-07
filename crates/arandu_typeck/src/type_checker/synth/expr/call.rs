@@ -296,7 +296,7 @@ pub(super) fn synth_call_expr(
                                     _ => None,
                                 };
                                 let struct_name = struct_id.map_or("Struct".to_string(), |id| {
-                                    checker.symbols.get(id).name.clone()
+                                    checker.symbols.get(id).name.to_string()
                                 });
                                 let diag = crate::Diagnostic::error(
                                     crate::DiagCode::T012WrongArgCount,

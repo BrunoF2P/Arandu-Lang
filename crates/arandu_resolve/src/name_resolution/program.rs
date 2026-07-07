@@ -33,7 +33,7 @@ impl<'a> Resolver<'a> {
             self.docs
                 .entry(NodeKey::from(doc.target_span))
                 .or_default()
-                .push(doc.text.clone());
+                .push(doc.text.to_string());
         }
 
         let global = self.symbols.global_scope();

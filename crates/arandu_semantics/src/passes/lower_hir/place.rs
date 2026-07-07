@@ -39,7 +39,7 @@ pub(crate) fn lower_place(
                 PlaceSuffix::Field { span, name } => {
                     suffixes.push(HirPlaceSuffix::Field {
                         span: *span,
-                        name: name.clone(),
+                        name: name.to_string(),
                         field_symbol: None,
                         ty: ArType::Error,
                     });
@@ -73,13 +73,13 @@ pub(crate) fn lower_place(
                 };
                 let (field_ty, field_symbol) = if let Some(struct_id) = struct_id_opt
                     && let Some(fields) = type_check.type_info.struct_fields.get(&struct_id)
-                    && let Some(ty) = fields.get(name)
+                    && let Some(ty) = fields.get(name.as_str())
                 {
                     let symbol = type_check
                         .type_info
                         .struct_field_symbols
                         .get(&struct_id)
-                        .and_then(|fields| fields.get(name))
+                        .and_then(|fields| fields.get(name.as_str()))
                         .copied();
                     (ty.clone(), symbol)
                 } else {
@@ -88,7 +88,7 @@ pub(crate) fn lower_place(
                 current_ty = field_ty.clone();
                 suffixes.push(HirPlaceSuffix::Field {
                     span: *span,
-                    name: name.clone(),
+                    name: name.to_string(),
                     field_symbol,
                     ty: field_ty,
                 });

@@ -48,7 +48,7 @@ impl FunctionTranslator<'_, '_> {
         let call_inst = match callee {
             AmirOperand::FunctionRef(sym_id) => {
                 let sym = self.symbol_table.get(*sym_id);
-                let func_id = match self.func_ids.get(&sym.name) {
+                let func_id = match self.func_ids.get(sym.name.as_str()) {
                     Some(func_id) => *func_id,
                     None => {
                         self.record_ice(

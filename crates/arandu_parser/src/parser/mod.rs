@@ -8,6 +8,7 @@ mod types;
 pub use error::{ParseError, ParseErrorCode};
 
 use arandu_lexer::{Span, Token, TokenKind};
+use smol_str::SmolStr;
 
 use crate::{
     Attribute, BinaryOp, BindingItem, Block, CatchHandler, Condition, ConstDecl, DeferBody,
@@ -112,7 +113,7 @@ pub struct Parser<'a> {
 #[derive(Debug, Clone)]
 pub(super) struct PendingDoc {
     span: Span,
-    text: String,
+    text: SmolStr,
 }
 
 impl<'a> Parser<'a> {
@@ -221,7 +222,7 @@ impl<'a> Parser<'a> {
         while matches!(self.current().kind, TokenKind::DocComment) {
             self.pending_docs.push(PendingDoc {
                 span: self.current().span(self.file_id),
-                text: self.current_text().to_string(),
+                text: SmolStr::new(self.current_text()),
             });
             self.advance();
             self.skip_semicolons();
@@ -250,10 +251,10 @@ impl<'a> Parser<'a> {
         self.expect_name("SEMICOLON")
     }
 
-    pub(super) fn expect_ident_value(&mut self) -> Result<String, ParseError> {
+    pub(super) fn expect_ident_value(&mut self) -> Result<SmolStr, ParseError> {
         match &self.current().kind {
             TokenKind::IdentValue => {
-                let name = self.current_text().to_string();
+                let name = SmolStr::new(self.current_text());
                 self.advance();
                 Ok(name)
             }
@@ -268,10 +269,10 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub(super) fn expect_ident_type(&mut self) -> Result<String, ParseError> {
+    pub(super) fn expect_ident_type(&mut self) -> Result<SmolStr, ParseError> {
         match &self.current().kind {
             TokenKind::IdentType | TokenKind::TypeErr => {
-                let name = self.current_text().to_string();
+                let name = SmolStr::new(self.current_text());
                 self.advance();
                 Ok(name)
             }
@@ -286,10 +287,10 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub(super) fn expect_name_like(&mut self) -> Result<String, ParseError> {
+    pub(super) fn expect_name_like(&mut self) -> Result<SmolStr, ParseError> {
         match &self.current().kind {
             TokenKind::TypeErr | TokenKind::IdentValue | TokenKind::IdentType => {
-                let name = self.current_text().to_string();
+                let name = SmolStr::new(self.current_text());
                 self.advance();
                 Ok(name)
             }
@@ -304,15 +305,15 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub(super) fn expect_module_segment(&mut self) -> Result<String, ParseError> {
+    pub(super) fn expect_module_segment(&mut self) -> Result<SmolStr, ParseError> {
         match &self.current().kind {
             TokenKind::IdentValue => {
-                let name = self.current_text().to_string();
+                let name = SmolStr::new(self.current_text());
                 self.advance();
                 Ok(name)
             }
             kind if is_contextual_module_segment(kind) => {
-                let text = self.current_text().to_string();
+                let text = SmolStr::new(self.current_text());
                 self.advance();
                 Ok(text)
             }
@@ -665,7 +666,7 @@ pub(super) fn merge_text_parts(parts: Vec<StringPart>) -> Vec<StringPart> {
                 }),
                 StringPart::Text { span, text: next },
             ) => {
-                existing.push_str(&next);
+                *existing = SmolStr::new(format!("{}{}", existing, next));
                 *existing_span = span_between(*existing_span, span);
             }
             (_, part) => merged.push(part),

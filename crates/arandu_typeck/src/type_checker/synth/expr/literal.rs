@@ -106,7 +106,7 @@ pub(super) fn synth_literal_expr(
                     for fid in &field_ids {
                         let field = checker.pool.field_init(*fid);
                         let field_val_ty_id = synth_expr(checker, field.value);
-                        let defined_field_ty_opt = fields_def.get(&field.name).cloned();
+                        let defined_field_ty_opt = fields_def.get(field.name.as_str()).cloned();
                         if let Some(defined_field_ty) = defined_field_ty_opt {
                             let field_val_ty = checker.resolve(field_val_ty_id);
                             if !types::unify(
@@ -119,7 +119,7 @@ pub(super) fn synth_literal_expr(
                                     field_val_ty_id,
                                     ConstraintOrigin::FieldInit {
                                         struct_span: span,
-                                        field_name: field.name.clone(),
+                                        field_name: field.name.to_string(),
                                         field_span: field.span,
                                         value_span: checker.pool.expr_span(field.value),
                                     },
@@ -132,7 +132,7 @@ pub(super) fn synth_literal_expr(
                                 ConstraintOrigin::UndefinedField {
                                     base_span: checker.pool.type_expr_span(ty_id),
                                     field_span: field.span,
-                                    field_name: field.name.clone(),
+                                    field_name: field.name.to_string(),
                                 },
                             );
                         }
