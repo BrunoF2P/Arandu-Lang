@@ -167,7 +167,15 @@ Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
 [ ] SL_R   Async Runtime: arandu_std::runtime (scheduler cooperativo/work-stealing e reactor OS epoll/kqueue/io_uring)
 [ ] SL_T   Testing Harness: arandu_std::testing (test runner integrado e benchmark engine)
 
-Fase 4 — Otimização Global, CodeGen & Ecossistema (v0.4+) · [NÃO INICIADA]
+Fase 4 — Expressividade de Linguagem e Tipagem (v0.35) · [NÃO INICIADA]
+[ ] SYN.1  Retorno implícito na última expressão de bloco (parser: parse_block)
+[ ] SYN.2  Interpolação de String ($name e ${expr}) no Lexer
+[ ] SYN.3  Açúcar Sintático para Opcionais (T? mapeando para Option<T> e nil para .None)
+[ ] SYN.4  Pattern Matching Avançado (wildcards, bindings e ranges)
+[ ] TYP.1  Interfaces Implícitas / Structural Typing (Go-style duck typing no Type Checker)
+[ ] TYP.2  Constraints de Generics (cláusula `where` e sintaxe `<T: Trait>`)
+
+Fase 5 — Otimização Global, CodeGen & Ecossistema (v0.4+) · [NÃO INICIADA]
 [ ] LLVM   Backend LLVM (Release Optimizer, LTO, PGO profile-guided optimization pipeline)
 [ ] REG    Register Allocation (Linear Scan para Cranelift, Graph Coloring para LLVM)
 [ ] GEN    Adaptive Monomorphization (Witness tables para cold paths vs Lazy Monomorphization para loops)
@@ -177,7 +185,7 @@ Fase 4 — Otimização Global, CodeGen & Ecossistema (v0.4+) · [NÃO INICIADA]
 * Mover json e xml para arandu_ext::serialization
 [ ] EXT    Ecosystem Extensions: arandu_ext (ecs, game loop, renderer, audio, media, physics, gui)
 
-Fase 5 — Bootstrap & Auto-Hospedagem (v1.0) · [NÃO INICIADA]
+Fase 6 — Bootstrap & Auto-Hospedagem (v1.0) · [NÃO INICIADA]
 [ ] HOST   Self-Hosting: compilador Arandu compilando a si mesmo de forma convergente (3-passos)
 [ ] BOOT   Remoção total de dependências do compilador Rust para build releases
 [ ] MS     Completa compilação paralela usando o runtime nativo de concorrência com compilação < 3 segundos
