@@ -546,8 +546,7 @@ impl Diagnostic {
 
 impl fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let registry = SourceRegistry::default();
-        f.write_str(&self.format_for_cli(&registry))
+        f.write_str(&self.message)
     }
 }
 
@@ -909,10 +908,9 @@ mod tests {
     // ── Display ──
 
     #[test]
-    fn display_delegates_to_format_for_cli() {
+    fn display_outputs_message() {
         let d = Diagnostic::error(DiagCode::T001CannotInferType, "x", dummy_span());
         let display = d.to_string();
-        let formatted = d.format_for_cli(&SourceRegistry::default());
-        assert_eq!(display, formatted);
+        assert_eq!(display, "x");
     }
 }
