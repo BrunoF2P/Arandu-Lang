@@ -1,5 +1,7 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+
 pub type FileId = u32;
 
 pub trait StableHash {
@@ -51,11 +53,38 @@ pub trait ArandCompilerDb: salsa::Database {
 
 pub use arandu_middle::db::SourceFile;
 
+/// Internal shared state for the file registry.
+///
+/// Two maps are kept in sync at every insertion point:
+/// - `by_path`  — `String → SourceFile` for import path resolution (O(1) by path)
+/// - `by_id`    — `FileId → SourceFile` for Salsa queries (O(1) by FileId)
+///
+/// Before this change both `source_text` and `file_path` performed an O(N)
+/// linear scan over `by_path.values()` to find a file by its numeric ID.
+#[derive(Default, Clone)]
+struct FileRegistry {
+    by_path: HashMap<String, SourceFile>,
+    by_id: HashMap<FileId, SourceFile>,
+}
+
+impl FileRegistry {
+    /// Insert a file into both indexes simultaneously.
+    fn insert(&mut self, path: String, file_id: FileId, file: SourceFile) {
+        self.by_path.insert(path, file);
+        self.by_id.insert(file_id, file);
+    }
+
+    /// Next available FileId (starts at 100 to avoid collisions with test stubs).
+    fn next_id(&self) -> FileId {
+        self.by_path.len() as FileId + 100
+    }
+}
+
 #[derive(Default, Clone)]
 #[salsa::db]
 pub struct DatabaseImpl {
     storage: salsa::Storage<Self>,
-    module_files: Arc<std::sync::Mutex<std::collections::HashMap<String, SourceFile>>>,
+    files: Arc<std::sync::Mutex<FileRegistry>>,
 }
 
 #[salsa::db]
@@ -63,21 +92,22 @@ impl salsa::Database for DatabaseImpl {}
 
 impl DatabaseImpl {
     pub fn new_file(&mut self, path: String, text: String) -> SourceFile {
-        let mut cache = self.module_files.lock().unwrap();
-        let file_id = cache.len() as u32 + 100;
+        let mut reg = self.files.lock().unwrap();
+        let file_id = reg.next_id();
         let file = SourceFile::new(
             self,
             file_id,
             Arc::from(text),
             Arc::new(std::path::PathBuf::from(&path)),
         );
-        cache.insert(path, file);
+        reg.insert(path, file_id, file);
         file
     }
 
     pub fn register_source_file(&self, path: String, file: SourceFile) {
-        let mut cache = self.module_files.lock().unwrap();
-        cache.insert(path, file);
+        let mut reg = self.files.lock().unwrap();
+        let file_id = file.file_id(self.as_source_db());
+        reg.insert(path, file_id, file);
     }
 }
 
@@ -106,15 +136,15 @@ impl arandu_middle::db::SourceDatabase for DatabaseImpl {
     }
 
     fn resolve_module_path(&self, path: &str) -> Option<SourceFile> {
-        // Fast path: check cache
+        // Fast path: O(1) lookup by import path string.
         {
-            let cache = self.module_files.lock().unwrap();
-            if let Some(file) = cache.get(path) {
+            let reg = self.files.lock().unwrap();
+            if let Some(file) = reg.by_path.get(path) {
                 return Some(*file);
             }
         }
 
-        // Uncached path resolution
+        // Uncached: walk up the directory tree until we find the file.
         let mut current = std::env::current_dir().ok()?;
         let mut found_path = None;
         loop {
@@ -133,17 +163,15 @@ impl arandu_middle::db::SourceDatabase for DatabaseImpl {
         let found_path = found_path?;
         let text = std::fs::read_to_string(&found_path).ok()?;
 
-        let mut cache = self.module_files.lock().unwrap();
-        // Check again in case another thread inserted it while we were reading
-        if let Some(file) = cache.get(path) {
+        let mut reg = self.files.lock().unwrap();
+        // Double-check: another thread may have inserted it while we were reading.
+        if let Some(file) = reg.by_path.get(path) {
             return Some(*file);
         }
 
-        // Generate a new unique FileId using the number of items in the cache + 100
-        // (starting at 100 to avoid colliding with small file IDs used in tests or prelude)
-        let file_id = cache.len() as u32 + 100;
+        let file_id = reg.next_id();
         let file = SourceFile::new(self, file_id, Arc::from(text), Arc::new(found_path));
-        cache.insert(path.to_string(), file);
+        reg.insert(path.to_string(), file_id, file);
 
         Some(file)
     }
@@ -151,24 +179,24 @@ impl arandu_middle::db::SourceDatabase for DatabaseImpl {
 
 #[salsa::db]
 impl ArandCompilerDb for DatabaseImpl {
+    /// O(1) lookup by FileId via the reverse index.
     fn source_text(&self, file: FileId) -> Arc<str> {
-        let cache = self.module_files.lock().unwrap();
-        for source_file in cache.values() {
-            if source_file.file_id(self.as_source_db()) == file {
-                return source_file.text(self.as_source_db());
-            }
-        }
-        Arc::from("")
+        let reg = self.files.lock().unwrap();
+        reg.by_id
+            .get(&file)
+            .map(|f| f.text(self.as_source_db()))
+            .unwrap_or_else(|| Arc::from(""))
     }
+
+    /// O(1) lookup by FileId via the reverse index.
     fn file_path(&self, file: FileId) -> Arc<PathBuf> {
-        let cache = self.module_files.lock().unwrap();
-        for source_file in cache.values() {
-            if source_file.file_id(self.as_source_db()) == file {
-                return source_file.path(self.as_source_db());
-            }
-        }
-        Arc::new(PathBuf::new())
+        let reg = self.files.lock().unwrap();
+        reg.by_id
+            .get(&file)
+            .map(|f| f.path(self.as_source_db()))
+            .unwrap_or_else(|| Arc::new(PathBuf::new()))
     }
+
     fn as_source_db(&self) -> &dyn arandu_middle::db::SourceDatabase {
         self
     }
