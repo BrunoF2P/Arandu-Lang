@@ -450,11 +450,11 @@ fn method_types_compatible(required: &ArType, provided: &ArType, interner: &Type
                 }
                 let ty_a = interner.resolve(a);
                 let ty_b = interner.resolve(b);
-                unify(ty_a, ty_b, interner)
+                unify(&ty_a, &ty_b, interner)
             }) && (*req_ret == *prov_ret || {
                 let ty_a = interner.resolve(*req_ret);
                 let ty_b = interner.resolve(*prov_ret);
-                unify(ty_a, ty_b, interner)
+                unify(&ty_a, &ty_b, interner)
             })
         }
         _ => unify(required, provided, interner),

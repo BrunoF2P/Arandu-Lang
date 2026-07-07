@@ -18,7 +18,7 @@ pub fn analyze_instantiations(
     let mut analyzer = InstantiationAnalyzer {
         tc,
         hir,
-        interner: tc.type_info.type_interner.clone(),
+        interner: &tc.type_info.type_interner,
         graph: InstantiationGraph::new(),
         diagnostics: Vec::new(),
     };
@@ -58,7 +58,7 @@ pub fn analyze_instantiations(
 struct InstantiationAnalyzer<'a> {
     tc: &'a TypeCheckResult,
     hir: &'a HirProgram,
-    interner: TypeInterner,
+    interner: &'a TypeInterner,
     graph: InstantiationGraph,
     diagnostics: Vec<Diagnostic>,
 }

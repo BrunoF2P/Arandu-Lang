@@ -123,7 +123,7 @@ pub fn check_match_exhaustiveness(
     }
 
     // Collect all variant SymbolIds — O(V) where V = #variants.
-    let all_variants = enum_variant_symbol_ids(checker, *enum_id);
+    let all_variants = enum_variant_symbol_ids(checker, enum_id);
     if all_variants.is_empty() {
         return;
     }
@@ -140,14 +140,14 @@ pub fn check_match_exhaustiveness(
     // no heap allocations on the hot path).
     let mut covered: FxHashSet<crate::SymbolId> = FxHashSet::default();
     for arm in arms {
-        if let Some(sym) = pattern_to_variant_symbol_id(checker, *enum_id, arm.pattern) {
+        if let Some(sym) = pattern_to_variant_symbol_id(checker, enum_id, arm.pattern) {
             covered.insert(sym);
         }
     }
 
     // Compute missing variants. String names are only materialised here,
     // which is the cold (error) path.
-    let enum_name = checker.symbols.get(*enum_id).name.clone();
+    let enum_name = checker.symbols.get(enum_id).name.clone();
     let mut missing: Vec<String> = all_variants
         .difference(&covered)
         .map(|&sym| {

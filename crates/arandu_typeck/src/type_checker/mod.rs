@@ -19,7 +19,7 @@ use types::{ArType, TypeId, TypeInterner};
 
 // ── Results ─────────────────────────────────────────────────────────
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone)]
 pub struct TypeCheckResult {
     pub symbols: SymbolTable,
     pub resolved: ResolvedNames,
@@ -131,7 +131,7 @@ impl<'a> TypeChecker<'a> {
     }
 
     #[must_use]
-    pub fn resolve(&self, id: TypeId) -> &ArType {
+    pub fn resolve(&self, id: TypeId) -> ArType {
         self.type_info.type_interner.resolve(id)
     }
 
@@ -148,7 +148,7 @@ impl<'a> TypeChecker<'a> {
     #[must_use]
     pub fn result_ok_err_ids(&self, id: TypeId) -> Option<(TypeId, TypeId)> {
         match self.type_info.type_interner.resolve(id) {
-            ArType::Result(ok, err) => Some((*ok, *err)),
+            ArType::Result(ok, err) => Some((ok, err)),
             _ => None,
         }
     }
@@ -161,15 +161,15 @@ impl<'a> TypeChecker<'a> {
     #[must_use]
     pub fn try_ok_type_id(&self, id: TypeId) -> Option<TypeId> {
         match self.type_info.type_interner.resolve(id) {
-            ArType::Result(ok, _) => Some(*ok),
-            ArType::Option(inner) => Some(*inner),
+            ArType::Result(ok, _) => Some(ok),
+            ArType::Option(inner) => Some(inner),
             _ => None,
         }
     }
 
     #[must_use]
     pub fn is_result_type_id(&self, id: TypeId) -> bool {
-        self.is_result_type(self.resolve(id))
+        self.is_result_type(&self.resolve(id))
     }
 
     #[must_use]
@@ -300,7 +300,7 @@ impl TypeChecker<'_> {
 
     #[must_use]
     pub(crate) fn decl_type(&self, symbol: SymbolId) -> Option<ArType> {
-        self.type_info.decl_type(symbol).cloned()
+        self.type_info.decl_type(symbol)
     }
 
     #[must_use]
@@ -314,7 +314,7 @@ impl TypeChecker<'_> {
         }
         let a_ty = self.type_info.resolve_type_id(a);
         let b_ty = self.type_info.resolve_type_id(b);
-        types::unify(a_ty, b_ty, &self.type_info.type_interner)
+        types::unify(&a_ty, &b_ty, &self.type_info.type_interner)
     }
 
     #[must_use]

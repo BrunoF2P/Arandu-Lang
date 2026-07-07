@@ -70,7 +70,7 @@ pub(super) fn synth_literal_expr(
             let struct_ty = checker.lower_type_expr(ty_id, checker.type_scope());
             let struct_ty_id = checker.intern(struct_ty);
             let struct_info = match checker.resolve(struct_ty_id) {
-                ArType::Named(symbol_id, generic_args) => Some((*symbol_id, generic_args.clone())),
+                ArType::Named(symbol_id, generic_args) => Some((symbol_id, generic_args.clone())),
                 _ => None,
             };
             if let Some((symbol_id, generic_args)) = struct_info {
@@ -111,7 +111,7 @@ pub(super) fn synth_literal_expr(
                             let field_val_ty = checker.resolve(field_val_ty_id);
                             if !types::unify(
                                 &defined_field_ty,
-                                field_val_ty,
+                                &field_val_ty,
                                 &checker.type_info.type_interner,
                             ) {
                                 checker.add_constraint(
@@ -184,8 +184,8 @@ pub(super) fn synth_literal_expr(
                     let elem_ty = checker.resolve(elem_ty_id);
                     let item_ty = checker.resolve(item_ty_id);
                     if !array_element_types_compatible(
-                        elem_ty,
-                        item_ty,
+                        &elem_ty,
+                        &item_ty,
                         &checker.type_info.type_interner,
                     ) {
                         checker.add_constraint(

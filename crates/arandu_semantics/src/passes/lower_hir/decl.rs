@@ -21,7 +21,6 @@ pub(crate) fn lower_decl(
             let ty = type_check
                 .type_info
                 .decl_type(symbol)
-                .cloned()
                 .unwrap_or(ArType::Error);
             let value_vid = super::expr::lower_expr(type_check, pool, hir_pool, d.value)?;
             Ok(Some(HirDecl::Const(HirConst {
@@ -36,7 +35,6 @@ pub(crate) fn lower_decl(
             let target = type_check
                 .type_info
                 .decl_type(symbol)
-                .cloned()
                 .unwrap_or(ArType::Error);
             Ok(Some(HirDecl::TypeAlias(HirTypeAlias {
                 symbol,
@@ -53,7 +51,6 @@ pub(crate) fn lower_decl(
             let decl_ty = type_check
                 .type_info
                 .decl_type(symbol)
-                .cloned()
                 .unwrap_or(ArType::Error);
             let return_type = match decl_ty {
                 ArType::Func(_, ret) => type_check.type_info.type_interner.resolve(ret).clone(),
@@ -65,7 +62,6 @@ pub(crate) fn lower_decl(
                 let p_ty = type_check
                     .type_info
                     .decl_type(p_symbol)
-                    .cloned()
                     .unwrap_or(ArType::Error);
                 params.push(HirParam {
                     symbol: p_symbol,
@@ -128,7 +124,7 @@ pub(crate) fn lower_decl(
                                 } else if tys.len() == 1 {
                                     Some(tys[0].clone())
                                 } else {
-                                    let mut interner = type_check.type_info.type_interner.clone();
+                                    let interner = &type_check.type_info.type_interner;
                                     let tys_ids =
                                         tys.iter().map(|t| interner.intern(t.clone())).collect();
                                     Some(ArType::Tuple(tys_ids))
@@ -162,7 +158,6 @@ pub(crate) fn lower_decl(
                 let m_ty = type_check
                     .type_info
                     .decl_type(symbol)
-                    .cloned()
                     .unwrap_or(ArType::Error);
                 let return_type = match m_ty {
                     ArType::Func(_, ret) => type_check.type_info.type_interner.resolve(ret).clone(),
@@ -174,7 +169,6 @@ pub(crate) fn lower_decl(
                     let p_ty = type_check
                         .type_info
                         .decl_type(p_symbol)
-                        .cloned()
                         .unwrap_or(ArType::Error);
                     params.push(HirParam {
                         symbol: p_symbol,

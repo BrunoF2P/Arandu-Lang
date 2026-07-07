@@ -20,7 +20,7 @@ pub fn unify_return_type(expected: &ArType, actual: &ArType, interner: &TypeInte
         }
         // `return nil` on `Result<void, Err>`
         if matches!(ok_exp, ArType::Void)
-            && matches!(actual, ArType::Nullable(inner) if matches!(interner.resolve(*inner), ArType::Error))
+            && matches!(actual, ArType::Nullable(inner) if matches!(&interner.resolve(*inner), ArType::Error))
         {
             return true;
         }
@@ -92,7 +92,7 @@ pub fn unify(a: &ArType, b: &ArType, interner: &TypeInterner) -> bool {
                     if x == y {
                         return true;
                     }
-                    unify(interner.resolve(x), interner.resolve(y), interner)
+                    unify(&&interner.resolve(x), &&interner.resolve(y), interner)
                 })
         }
         (ArType::Func(params_a, ret_a), ArType::Func(params_b, ret_b)) => {
@@ -101,27 +101,31 @@ pub fn unify(a: &ArType, b: &ArType, interner: &TypeInterner) -> bool {
                     if x == y {
                         return true;
                     }
-                    unify(interner.resolve(x), interner.resolve(y), interner)
+                    unify(&&interner.resolve(x), &&interner.resolve(y), interner)
                 })
                 && (*ret_a == *ret_b
-                    || unify(interner.resolve(*ret_a), interner.resolve(*ret_b), interner))
+                    || unify(
+                        &&interner.resolve(*ret_a),
+                        &&interner.resolve(*ret_b),
+                        interner,
+                    ))
         }
         (ArType::Nullable(inner_a), ArType::Nullable(inner_b)) => {
             *inner_a == *inner_b
                 || unify(
-                    interner.resolve(*inner_a),
-                    interner.resolve(*inner_b),
+                    &interner.resolve(*inner_a),
+                    &interner.resolve(*inner_b),
                     interner,
                 )
         }
         (ArType::Nullable(inner), other) | (other, ArType::Nullable(inner)) => {
-            unify(interner.resolve(*inner), other, interner)
+            unify(&&interner.resolve(*inner), other, interner)
         }
         (ArType::Slice(inner_a), ArType::Slice(inner_b)) => {
             *inner_a == *inner_b
                 || unify(
-                    interner.resolve(*inner_a),
-                    interner.resolve(*inner_b),
+                    &interner.resolve(*inner_a),
+                    &interner.resolve(*inner_b),
                     interner,
                 )
         }
@@ -129,16 +133,16 @@ pub fn unify(a: &ArType, b: &ArType, interner: &TypeInterner) -> bool {
             n_a == n_b
                 && (*elem_a == *elem_b
                     || unify(
-                        interner.resolve(*elem_a),
-                        interner.resolve(*elem_b),
+                        &interner.resolve(*elem_a),
+                        &interner.resolve(*elem_b),
                         interner,
                     ))
         }
         (ArType::Ptr(inner_a), ArType::Ptr(inner_b)) => {
             *inner_a == *inner_b
                 || unify(
-                    interner.resolve(*inner_a),
-                    interner.resolve(*inner_b),
+                    &interner.resolve(*inner_a),
+                    &interner.resolve(*inner_b),
                     interner,
                 )
         }
@@ -148,35 +152,44 @@ pub fn unify(a: &ArType, b: &ArType, interner: &TypeInterner) -> bool {
                     if x == y {
                         return true;
                     }
-                    unify(interner.resolve(x), interner.resolve(y), interner)
+                    unify(&&interner.resolve(x), &&interner.resolve(y), interner)
                 })
         }
         (ArType::Result(ok_a, err_a), ArType::Result(ok_b, err_b)) => {
-            (*ok_a == *ok_b || unify(interner.resolve(*ok_a), interner.resolve(*ok_b), interner))
+            (*ok_a == *ok_b
+                || unify(
+                    &&interner.resolve(*ok_a),
+                    &&interner.resolve(*ok_b),
+                    interner,
+                ))
                 && (*err_a == *err_b
-                    || unify(interner.resolve(*err_a), interner.resolve(*err_b), interner))
+                    || unify(
+                        &&interner.resolve(*err_a),
+                        &&interner.resolve(*err_b),
+                        interner,
+                    ))
         }
         (ArType::Option(inner_a), ArType::Option(inner_b)) => {
             *inner_a == *inner_b
                 || unify(
-                    interner.resolve(*inner_a),
-                    interner.resolve(*inner_b),
+                    &interner.resolve(*inner_a),
+                    &interner.resolve(*inner_b),
                     interner,
                 )
         }
         (ArType::Coroutine(inner_a), ArType::Coroutine(inner_b)) => {
             *inner_a == *inner_b
                 || unify(
-                    interner.resolve(*inner_a),
-                    interner.resolve(*inner_b),
+                    &interner.resolve(*inner_a),
+                    &interner.resolve(*inner_b),
                     interner,
                 )
         }
         (ArType::Range(inner_a), ArType::Range(inner_b)) => {
             *inner_a == *inner_b
                 || unify(
-                    interner.resolve(*inner_a),
-                    interner.resolve(*inner_b),
+                    &interner.resolve(*inner_a),
+                    &interner.resolve(*inner_b),
                     interner,
                 )
         }

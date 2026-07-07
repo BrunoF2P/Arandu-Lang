@@ -158,7 +158,7 @@ pub(super) fn synth_call_expr(
             let inner_id = *inner_expr;
             let inner_ty_id = synth_expr(checker, inner_id);
             let inner_ty = checker.resolve(inner_ty_id);
-            Some(if let Some(ok_ty) = checker.try_ok_type(inner_ty) {
+            Some(if let Some(ok_ty) = checker.try_ok_type(&inner_ty) {
                 checker.intern(ok_ty)
             } else if inner_ty.is_error() {
                 checker.intern(ArType::Error)
@@ -272,7 +272,7 @@ pub(super) fn synth_call_expr(
                             && !params.is_empty()
                         {
                             let actual_base_ty_id = match checker.resolve(base_ty_id) {
-                                ArType::Nullable(inner) => *inner,
+                                ArType::Nullable(inner) => inner,
                                 _ => base_ty_id,
                             };
                             let receiver_ty_id = params[0];
@@ -292,7 +292,7 @@ pub(super) fn synth_call_expr(
                             let arg_ids = checker.pool.expr_list(args_range).to_vec();
                             if explicit_params.len() != arg_ids.len() {
                                 let struct_id = match checker.resolve(actual_base_ty_id) {
-                                    ArType::Named(id, _) => Some(*id),
+                                    ArType::Named(id, _) => Some(id),
                                     _ => None,
                                 };
                                 let struct_name = struct_id.map_or("Struct".to_string(), |id| {
@@ -339,8 +339,8 @@ pub(super) fn synth_call_expr(
             let callee_ty_id = synth_expr(checker, callee_id);
             let arg_ids = checker.pool.expr_list(args_range).to_vec();
             let callee_ty = checker.resolve(callee_ty_id);
-            let func_info = if let ArType::Func(params, ret) = callee_ty {
-                Some((params.clone(), *ret))
+            let func_info = if let ArType::Func(ref params, ret) = callee_ty {
+                Some((params.clone(), ret))
             } else {
                 None
             };

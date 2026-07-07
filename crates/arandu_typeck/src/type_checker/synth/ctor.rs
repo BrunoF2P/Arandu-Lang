@@ -109,14 +109,14 @@ pub(crate) fn synth_method_call(
     }
 
     let actual_base_ty_id = match checker.resolve(base_ty_id) {
-        ArType::Nullable(inner) => *inner,
+        ArType::Nullable(inner) => inner,
         _ => base_ty_id,
     };
 
     let struct_id = match checker.resolve(actual_base_ty_id) {
-        ArType::Named(id, _) => Some(*id),
-        ArType::Ptr(inner) => match checker.resolve(*inner) {
-            ArType::Named(id, _) => Some(*id),
+        ArType::Named(id, _) => Some(id),
+        ArType::Ptr(inner) => match checker.resolve(inner) {
+            ArType::Named(id, _) => Some(id),
             _ => None,
         },
         _ => None,

@@ -30,8 +30,8 @@ pub fn is_err_type(ty: &ArType, interner: &TypeInterner) -> bool {
 pub fn result_ok_err(ty: &ArType, interner: &TypeInterner) -> Option<(ArType, ArType)> {
     match ty {
         ArType::Result(ok, err) => {
-            let ok_ty = interner.resolve(*ok).clone();
-            let err_ty = interner.resolve(*err).clone();
+            let ok_ty = interner.resolve(*ok);
+            let err_ty = interner.resolve(*err);
             Some((ok_ty, err_ty))
         }
         _ => None,
@@ -55,10 +55,8 @@ pub fn try_ok_type(ty: &ArType, interner: &TypeInterner) -> Option<ArType> {
         return Some(ok);
     }
     match ty {
-        ArType::Option(inner) => Some(interner.resolve(*inner).clone()),
-        ArType::Nullable(inner) if !is_err_type(ty, interner) => {
-            Some(interner.resolve(*inner).clone())
-        }
+        ArType::Option(inner) => Some(interner.resolve(*inner)),
+        ArType::Nullable(inner) if !is_err_type(ty, interner) => Some(interner.resolve(*inner)),
         _ => None,
     }
 }

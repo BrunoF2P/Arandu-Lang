@@ -15,7 +15,7 @@ pub fn mangle_symbol(
             mangled.push('_');
         }
         mangled.push('_');
-        mangle_type_into(&mut mangled, interner.resolve(tid), symbols, interner);
+        mangle_type_into(&mut mangled, &interner.resolve(tid), symbols, interner);
     }
     mangled.push_str("_$E");
     mangled
@@ -41,58 +41,58 @@ fn mangle_type_into(out: &mut String, ty: &ArType, symbols: &SymbolTable, intern
             out.push_str(&symbols.get(*id).name);
             for &arg in args {
                 out.push('_');
-                mangle_type_into(out, interner.resolve(arg), symbols, interner);
+                mangle_type_into(out, &interner.resolve(arg), symbols, interner);
             }
         }
         ArType::Nullable(inner) => {
             out.push_str("opt_");
-            mangle_type_into(out, interner.resolve(*inner), symbols, interner);
+            mangle_type_into(out, &interner.resolve(*inner), symbols, interner);
         }
         ArType::Ptr(inner) => {
             out.push_str("ptr_");
-            mangle_type_into(out, interner.resolve(*inner), symbols, interner);
+            mangle_type_into(out, &interner.resolve(*inner), symbols, interner);
         }
         ArType::Slice(inner) => {
             out.push_str("slice_");
-            mangle_type_into(out, interner.resolve(*inner), symbols, interner);
+            mangle_type_into(out, &interner.resolve(*inner), symbols, interner);
         }
         ArType::Array(n, inner) => {
             out.push_str(&format!("arr{n}_"));
-            mangle_type_into(out, interner.resolve(*inner), symbols, interner);
+            mangle_type_into(out, &interner.resolve(*inner), symbols, interner);
         }
         ArType::Tuple(items) => {
             out.push_str("tup");
             for &item in items {
                 out.push('_');
-                mangle_type_into(out, interner.resolve(item), symbols, interner);
+                mangle_type_into(out, &interner.resolve(item), symbols, interner);
             }
         }
         ArType::Func(params, ret) => {
             out.push_str("fn");
             for &param in params {
                 out.push('_');
-                mangle_type_into(out, interner.resolve(param), symbols, interner);
+                mangle_type_into(out, &interner.resolve(param), symbols, interner);
             }
             out.push_str("_R_");
-            mangle_type_into(out, interner.resolve(*ret), symbols, interner);
+            mangle_type_into(out, &interner.resolve(*ret), symbols, interner);
         }
         ArType::Result(ok, err) => {
             out.push_str("res_");
-            mangle_type_into(out, interner.resolve(*ok), symbols, interner);
+            mangle_type_into(out, &interner.resolve(*ok), symbols, interner);
             out.push('_');
-            mangle_type_into(out, interner.resolve(*err), symbols, interner);
+            mangle_type_into(out, &interner.resolve(*err), symbols, interner);
         }
         ArType::Option(inner) => {
             out.push_str("option_");
-            mangle_type_into(out, interner.resolve(*inner), symbols, interner);
+            mangle_type_into(out, &interner.resolve(*inner), symbols, interner);
         }
         ArType::Coroutine(inner) => {
             out.push_str("coro_");
-            mangle_type_into(out, interner.resolve(*inner), symbols, interner);
+            mangle_type_into(out, &interner.resolve(*inner), symbols, interner);
         }
         ArType::Range(inner) => {
             out.push_str("range_");
-            mangle_type_into(out, interner.resolve(*inner), symbols, interner);
+            mangle_type_into(out, &interner.resolve(*inner), symbols, interner);
         }
         ArType::Void => out.push_str("void"),
         ArType::Err => out.push_str("err"),

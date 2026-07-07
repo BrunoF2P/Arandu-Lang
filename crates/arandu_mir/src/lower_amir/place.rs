@@ -20,11 +20,11 @@ impl LowerCtx<'_> {
             ArType::Nullable(inner) => {
                 let inner_ty = interner.resolve(*inner);
                 match inner_ty {
-                    ArType::Named(id, _) => Some(*id),
+                    ArType::Named(id, _) => Some(id),
                     ArType::Ptr(ptr_inner) => {
-                        let ptr_inner_ty = interner.resolve(*ptr_inner);
+                        let ptr_inner_ty = interner.resolve(ptr_inner);
                         match ptr_inner_ty {
-                            ArType::Named(id, _) => Some(*id),
+                            ArType::Named(id, _) => Some(id),
                             _ => None,
                         }
                     }
@@ -35,7 +35,7 @@ impl LowerCtx<'_> {
             ArType::Ptr(inner) => {
                 let inner_ty = interner.resolve(*inner);
                 match inner_ty {
-                    ArType::Named(id, _) => Some(*id),
+                    ArType::Named(id, _) => Some(id),
                     _ => None,
                 }
             }

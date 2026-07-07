@@ -73,7 +73,6 @@ fn expr_type_for_kind(
         HirExprKind::Path { symbol } => type_check
             .type_info
             .decl_type(*symbol)
-            .cloned()
             .filter(|ty| !ty.is_error())
             .unwrap_or(fallback),
         HirExprKind::Call { callee, .. } => {
@@ -82,7 +81,7 @@ fn expr_type_for_kind(
             if !callee_expr.ty.is_error() {
                 match &callee_expr.ty {
                     ArType::Func(_, ret) => {
-                        return interner.resolve(*ret).clone();
+                        return interner.resolve(*ret);
                     }
                     other => return other.clone(),
                 }
@@ -92,7 +91,7 @@ fn expr_type_for_kind(
                     .type_info
                     .decl_type(*symbol)
                     .and_then(|ty| match ty {
-                        ArType::Func(_, ret) => Some(interner.resolve(*ret).clone()),
+                        ArType::Func(_, ret) => Some(interner.resolve(ret)),
                         _ => None,
                     })
                     .unwrap_or(fallback),
@@ -114,7 +113,6 @@ pub(crate) fn lower_expr_raw(
     let fallback_ty = type_check
         .type_info
         .expr_type(expr)
-        .cloned()
         .unwrap_or(ArType::Error);
 
     let kind = match pool.expr(expr) {
@@ -263,7 +261,7 @@ pub(crate) fn lower_expr_raw(
         }
         ExprKind::StructLiteral { ty: _, fields, .. } => {
             let struct_symbol = match &fallback_ty {
-                ArType::Named(id, _) => *id,
+                ArType::Named(id, _) => id,
                 _ => {
                     return Err(Diagnostic::error(
                         crate::diagnostics::DiagCode::L001LoweringUnresolvedSymbol,
@@ -285,7 +283,7 @@ pub(crate) fn lower_expr_raw(
             }
             let fields_range = hir_pool.alloc_field_init_list(&hir_fields);
             HirExprKind::StructLiteral {
-                struct_symbol,
+                struct_symbol: *struct_symbol,
                 fields: fields_range,
             }
         }
@@ -307,7 +305,6 @@ pub(crate) fn lower_expr_raw(
                 let p_ty = type_check
                     .type_info
                     .decl_type(symbol)
-                    .cloned()
                     .unwrap_or(ArType::Error);
                 hir_params.push(HirLambdaParam {
                     span: p.span,

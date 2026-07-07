@@ -91,27 +91,27 @@ impl<'a> CEmitter<'a> {
             ArType::Primitive(Primitive::Str) => "ArStr".to_string(),
             ArType::Primitive(Primitive::Float) | ArType::FloatLiteral => "double".to_string(),
             ArType::Void => "void".to_string(),
-            ArType::Ptr(inner) => format!("{}*", self.format_type(self.interner.resolve(*inner))),
+            ArType::Ptr(inner) => format!("{}*", self.format_type(&self.interner.resolve(*inner))),
             ArType::Named(id, _) => sanitize_c_ident(&self.symbols.get(*id).name),
             ArType::Slice(inner) => {
-                let inner_name = self.format_type(self.interner.resolve(*inner));
+                let inner_name = self.format_type(&self.interner.resolve(*inner));
                 format!("ArType_Slice_{}", sanitize_c_ident(&inner_name))
             }
             ArType::Array(len, inner) => {
-                let inner_name = self.format_type(self.interner.resolve(*inner));
+                let inner_name = self.format_type(&self.interner.resolve(*inner));
                 format!("ArType_Array_{}_{}", len, sanitize_c_ident(&inner_name))
             }
             ArType::Nullable(inner) => {
-                let inner_name = self.format_type(self.interner.resolve(*inner));
+                let inner_name = self.format_type(&self.interner.resolve(*inner));
                 format!("ArType_Nullable_{}", sanitize_c_ident(&inner_name))
             }
             ArType::Option(inner) => {
-                let inner_name = self.format_type(self.interner.resolve(*inner));
+                let inner_name = self.format_type(&self.interner.resolve(*inner));
                 format!("ArType_Option_{}", sanitize_c_ident(&inner_name))
             }
             ArType::Result(ok, err) => {
-                let ok_name = self.format_type(self.interner.resolve(*ok));
-                let err_name = self.format_type(self.interner.resolve(*err));
+                let ok_name = self.format_type(&self.interner.resolve(*ok));
+                let err_name = self.format_type(&self.interner.resolve(*err));
                 format!(
                     "ArType_Result_{}_{}",
                     sanitize_c_ident(&ok_name),
@@ -122,7 +122,7 @@ impl<'a> CEmitter<'a> {
                 let mut name = "ArType_Tuple".to_string();
                 for &t in tys {
                     name.push('_');
-                    name.push_str(&self.format_type(self.interner.resolve(t)));
+                    name.push_str(&self.format_type(&self.interner.resolve(t)));
                 }
                 sanitize_c_ident(&name)
             }
@@ -169,7 +169,7 @@ impl<'a> CEmitter<'a> {
                 AmirProjection::Index(index_op) => {
                     let elem_ty = match &current_ty {
                         ArType::Array(_, inner) | ArType::Slice(inner) | ArType::Ptr(inner) => {
-                            self.interner.resolve(*inner).clone()
+                            self.interner.resolve(*inner)
                         }
                         _ => ArType::Error,
                     };

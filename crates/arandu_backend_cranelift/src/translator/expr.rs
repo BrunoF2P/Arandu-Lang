@@ -54,12 +54,15 @@ impl FunctionTranslator<'_, '_> {
                     arandu_semantics::types::ArType::Ptr(inner) => {
                         self.type_info.resolve_type_id(*inner)
                     }
-                    other => other,
+                    other => other.clone(),
                 };
                 let pointer_width = self.ptr_type.bytes() as u64;
                 let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
-                let layout =
-                    engine.layout_of_type(struct_ty, &self.type_info.type_interner, self.type_info);
+                let layout = engine.layout_of_type(
+                    &struct_ty,
+                    &self.type_info.type_interner,
+                    self.type_info,
+                );
                 let offset = layout.field_offsets[*field] as i32;
 
                 let loaded_ptr = self.builder.ins().load(
@@ -94,10 +97,10 @@ impl FunctionTranslator<'_, '_> {
                     arandu_semantics::types::ArType::Ptr(inner) => {
                         self.type_info.resolve_type_id(*inner)
                     }
-                    other => other,
+                    other => other.clone(),
                 };
                 let enum_id = match enum_ty {
-                    ArType::Named(enum_id, _) => *enum_id,
+                    ArType::Named(enum_id, _) => enum_id,
                     _ => arandu_semantics::SymbolId::DUMMY,
                 };
 
@@ -119,7 +122,7 @@ impl FunctionTranslator<'_, '_> {
                             let payload_ty = self.type_info.resolve_type_id(payload_ty_id);
                             let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
                             let payload_layout = engine.layout_of_type(
-                                payload_ty,
+                                &payload_ty,
                                 &self.type_info.type_interner,
                                 self.type_info,
                             );
@@ -387,12 +390,15 @@ impl FunctionTranslator<'_, '_> {
                     arandu_semantics::types::ArType::Ptr(inner) => {
                         self.type_info.resolve_type_id(*inner)
                     }
-                    other => other,
+                    other => other.clone(),
                 };
                 let pointer_width = self.ptr_type.bytes() as u64;
                 let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
-                let layout =
-                    engine.layout_of_type(struct_ty, &self.type_info.type_interner, self.type_info);
+                let layout = engine.layout_of_type(
+                    &struct_ty,
+                    &self.type_info.type_interner,
+                    self.type_info,
+                );
                 let offset = layout.field_offsets[*field] as i32;
 
                 let clif_ty = expected_ty.unwrap_or(self.ptr_type);
@@ -491,10 +497,10 @@ impl FunctionTranslator<'_, '_> {
                     arandu_semantics::types::ArType::Ptr(inner) => {
                         self.type_info.resolve_type_id(*inner)
                     }
-                    other => other,
+                    other => other.clone(),
                 };
                 let enum_id = match enum_ty {
-                    ArType::Named(enum_id, _) => *enum_id,
+                    ArType::Named(enum_id, _) => enum_id,
                     _ => arandu_semantics::SymbolId::DUMMY,
                 };
 
@@ -516,7 +522,7 @@ impl FunctionTranslator<'_, '_> {
                             let payload_ty = self.type_info.resolve_type_id(payload_ty_id);
                             let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
                             let payload_layout = engine.layout_of_type(
-                                payload_ty,
+                                &payload_ty,
                                 &self.type_info.type_interner,
                                 self.type_info,
                             );
@@ -547,18 +553,18 @@ impl FunctionTranslator<'_, '_> {
                 let base_ty = self.get_operand_ar_type(base);
                 let deref_ty = match &base_ty {
                     ArType::Ptr(inner) => self.type_info.resolve_type_id(*inner),
-                    other => other,
+                    other => other.clone(),
                 };
                 let elem_ty = match deref_ty {
-                    ArType::Array(_, elem) => self.type_info.resolve_type_id(*elem),
-                    ArType::Slice(elem) => self.type_info.resolve_type_id(*elem),
-                    _ => &ArType::Error,
+                    ArType::Array(_, elem) => self.type_info.resolve_type_id(elem),
+                    ArType::Slice(elem) => self.type_info.resolve_type_id(elem),
+                    _ => ArType::Error,
                 };
 
                 let pointer_width = self.ptr_type.bytes() as u64;
                 let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
                 let layout =
-                    engine.layout_of_type(elem_ty, &self.type_info.type_interner, self.type_info);
+                    engine.layout_of_type(&elem_ty, &self.type_info.type_interner, self.type_info);
 
                 let elem_size = self.builder.ins().iconst(self.ptr_type, layout.size as i64);
                 let offset_val = self.builder.ins().imul(idx_val, elem_size);

@@ -42,7 +42,7 @@ pub(super) fn synth_binary_unary_expr(
             let left_ty = interner.resolve(left_ty_id);
             match left_ty {
                 ArType::Nullable(inner) => {
-                    let inner_id = *inner;
+                    let inner_id = inner;
                     if !checker.unify_ids(inner_id, right_ty_id) {
                         checker.add_constraint(
                             inner_id,
@@ -89,7 +89,7 @@ pub(super) fn synth_binary_unary_expr(
             let target_ty_id = checker.intern(target_ty);
             let found_ty = checker.resolve(found_ty_id);
             let target_ty = checker.resolve(target_ty_id);
-            if !cast_types_compatible(found_ty, target_ty, &checker.type_info.type_interner) {
+            if !cast_types_compatible(&found_ty, &target_ty, &checker.type_info.type_interner) {
                 checker.add_constraint(
                     target_ty_id,
                     found_ty_id,
@@ -129,7 +129,7 @@ pub(super) fn synth_binary_unary_expr(
                     }
                 }
                 UnaryOp::Not => {
-                    if types::unify(expr_ty, &ArType::Primitive(Primitive::Bool), interner) {
+                    if types::unify(&expr_ty, &ArType::Primitive(Primitive::Bool), interner) {
                         Some(checker.intern(ArType::Primitive(Primitive::Bool)))
                     } else {
                         checker.add_constraint(
@@ -162,7 +162,7 @@ pub(super) fn synth_binary_unary_expr(
                     if expr_ty.is_error() {
                         Some(checker.intern(ArType::Error))
                     } else if let ArType::Coroutine(inner) = expr_ty {
-                        Some(*inner)
+                        Some(inner)
                     } else {
                         checker.add_constraint(
                             ArType::Error,
@@ -205,7 +205,7 @@ pub(super) fn synth_binary_unary_expr(
                         );
                         return Some(checker.intern(ArType::Error));
                     }
-                    Some(checker.intern(types::resolve_literal_pair(left_ty, right_ty)))
+                    Some(checker.intern(types::resolve_literal_pair(&left_ty, &right_ty)))
                 }
                 BinaryOp::Equal
                 | BinaryOp::NotEqual
@@ -243,7 +243,8 @@ pub(super) fn synth_binary_unary_expr(
                         );
                         return Some(checker.intern(ArType::Error));
                     }
-                    let inner_ty = types::resolve_literal_pair(left_ty, right_ty).default_literal();
+                    let inner_ty =
+                        types::resolve_literal_pair(&left_ty, &right_ty).default_literal();
                     let inner_id = checker.intern(inner_ty);
                     Some(checker.intern(ArType::Range(inner_id)))
                 }

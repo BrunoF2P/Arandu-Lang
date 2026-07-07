@@ -52,11 +52,11 @@ impl<'a> CEmitter<'a> {
                 };
                 let struct_ty = match base_ty {
                     ArType::Ptr(inner) => self.interner.resolve(*inner),
-                    other => other,
+                    other => other.clone(),
                 };
                 let layout = self
                     .layout
-                    .layout_of_type(struct_ty, self.interner, self.provider);
+                    .layout_of_type(&struct_ty, self.interner, self.provider);
                 let offset = layout.field_offsets[*field];
 
                 let base_temp = match base {
@@ -95,10 +95,10 @@ impl<'a> CEmitter<'a> {
                 let base_ty = &func.temps[base_temp].ty;
                 let enum_ty = match base_ty {
                     ArType::Ptr(inner) => self.interner.resolve(*inner),
-                    other => other,
+                    other => other.clone(),
                 };
                 let enum_id = match enum_ty {
-                    ArType::Named(id, _) => *id,
+                    ArType::Named(id, _) => id,
                     _ => arandu_middle::SymbolId::DUMMY,
                 };
 
@@ -135,12 +135,12 @@ impl<'a> CEmitter<'a> {
                                 variants.get(*variant_tag).and_then(|v| v.payload_ty)
                             })
                             .map(|ty_id| self.interner.resolve(ty_id))
-                            .unwrap_or(&ArType::Error),
+                            .unwrap_or(ArType::Error),
                         ArType::Option(inner) => {
                             if *variant_tag == 1 {
                                 self.interner.resolve(*inner)
                             } else {
-                                &ArType::Error
+                                ArType::Error
                             }
                         }
                         ArType::Result(ok, err) => {
@@ -150,9 +150,9 @@ impl<'a> CEmitter<'a> {
                                 self.interner.resolve(*err)
                             }
                         }
-                        _ => &ArType::Error,
+                        _ => ArType::Error,
                     };
-                    let payload_c_ty = self.format_type(payload_ty);
+                    let payload_c_ty = self.format_type(&payload_ty);
                     write!(
                         &mut self.output,
                         "*({expected_c_type}*)&(struct {{ int64_t tag; {payload_c_ty} payload; }}){{ {}, {} }}",
@@ -187,7 +187,7 @@ impl<'a> CEmitter<'a> {
                     };
                     let offset = layout.field_offsets[field_idx];
                     let field_ty = field_defs.get(name).unwrap();
-                    let field_c_ty = self.format_type(field_ty);
+                    let field_c_ty = self.format_type(&field_ty);
                     let op_str = self.format_operand(op, func);
                     resolved_fields.push((offset, field_c_ty, op_str));
                 }
@@ -231,9 +231,9 @@ impl<'a> CEmitter<'a> {
             AmirRvalue::Array { items } => {
                 let elem_ty = match expected_ar_type {
                     ArType::Array(_, inner) => self.interner.resolve(*inner),
-                    _ => &ArType::Error,
+                    _ => ArType::Error,
                 };
-                let elem_c_ty = self.format_type(elem_ty);
+                let elem_c_ty = self.format_type(&elem_ty);
                 write!(&mut self.output, "*({expected_c_type}*)&({elem_c_ty}[]){{").unwrap();
                 for (i, op) in items.iter().enumerate() {
                     if i > 0 {
@@ -252,7 +252,7 @@ impl<'a> CEmitter<'a> {
                 write!(&mut self.output, "*({expected_c_type}*)&(struct {{").unwrap();
                 for (i, _) in items.iter().enumerate() {
                     let field_ty = self.interner.resolve(tys[i]);
-                    let field_c_ty = self.format_type(field_ty);
+                    let field_c_ty = self.format_type(&field_ty);
                     write!(&mut self.output, " {} f_{};", field_c_ty, i).unwrap();
                 }
                 write!(&mut self.output, "}}){{").unwrap();
@@ -288,9 +288,9 @@ impl<'a> CEmitter<'a> {
                     ArType::Array(_, inner) | ArType::Slice(inner) | ArType::Ptr(inner) => {
                         self.interner.resolve(*inner)
                     }
-                    _ => &ArType::Error,
+                    _ => ArType::Error,
                 };
-                let elem_c_ty = self.format_type(elem_ty);
+                let elem_c_ty = self.format_type(&elem_ty);
                 let base_str = self.format_operand(base, func);
                 let index_str = self.format_operand(index, func);
 

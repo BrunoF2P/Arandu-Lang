@@ -134,7 +134,7 @@ impl LayoutEngine {
         interner: &TypeInterner,
         provider: &dyn StructLayoutProvider,
     ) -> TypeLayout {
-        self.layout_of_type(interner.resolve(type_id), interner, provider)
+        self.layout_of_type(&interner.resolve(type_id), interner, provider)
     }
 
     /// Compute the memory layout of a structural `ArType`.
@@ -433,13 +433,13 @@ fn substitute(ty: &ArType, subst: &FxHashMap<SymbolId, TypeId>, interner: &TypeI
     match ty {
         ArType::Named(id, args) => {
             if let Some(&concrete_id) = subst.get(id) {
-                interner.resolve(concrete_id).clone()
+                interner.resolve(concrete_id)
             } else {
                 let new_args = args
                     .iter()
                     .map(|&arg_id| {
                         let arg_ty = interner.resolve(arg_id);
-                        let substituted_arg = substitute(arg_ty, subst, interner);
+                        let substituted_arg = substitute(&arg_ty, subst, interner);
                         interner.lookup(&substituted_arg).unwrap_or(arg_id)
                     })
                     .collect();
@@ -451,36 +451,36 @@ fn substitute(ty: &ArType, subst: &FxHashMap<SymbolId, TypeId>, interner: &TypeI
                 .iter()
                 .map(|&param_id| {
                     let param_ty = interner.resolve(param_id);
-                    let substituted_param = substitute(param_ty, subst, interner);
+                    let substituted_param = substitute(&param_ty, subst, interner);
                     interner.lookup(&substituted_param).unwrap_or(param_id)
                 })
                 .collect();
             let ret_ty = interner.resolve(*ret);
-            let substituted_ret = substitute(ret_ty, subst, interner);
+            let substituted_ret = substitute(&ret_ty, subst, interner);
             let new_ret = interner.lookup(&substituted_ret).unwrap_or(*ret);
             ArType::Func(new_params, new_ret)
         }
         ArType::Nullable(inner) => {
             let inner_ty = interner.resolve(*inner);
-            let substituted_inner = substitute(inner_ty, subst, interner);
+            let substituted_inner = substitute(&inner_ty, subst, interner);
             let new_inner = interner.lookup(&substituted_inner).unwrap_or(*inner);
             ArType::Nullable(new_inner)
         }
         ArType::Slice(inner) => {
             let inner_ty = interner.resolve(*inner);
-            let substituted_inner = substitute(inner_ty, subst, interner);
+            let substituted_inner = substitute(&inner_ty, subst, interner);
             let new_inner = interner.lookup(&substituted_inner).unwrap_or(*inner);
             ArType::Slice(new_inner)
         }
         ArType::Array(len, inner) => {
             let inner_ty = interner.resolve(*inner);
-            let substituted_inner = substitute(inner_ty, subst, interner);
+            let substituted_inner = substitute(&inner_ty, subst, interner);
             let new_inner = interner.lookup(&substituted_inner).unwrap_or(*inner);
             ArType::Array(*len, new_inner)
         }
         ArType::Ptr(inner) => {
             let inner_ty = interner.resolve(*inner);
-            let substituted_inner = substitute(inner_ty, subst, interner);
+            let substituted_inner = substitute(&inner_ty, subst, interner);
             let new_inner = interner.lookup(&substituted_inner).unwrap_or(*inner);
             ArType::Ptr(new_inner)
         }
@@ -489,7 +489,7 @@ fn substitute(ty: &ArType, subst: &FxHashMap<SymbolId, TypeId>, interner: &TypeI
                 .iter()
                 .map(|&ty_id| {
                     let item_ty = interner.resolve(ty_id);
-                    let substituted_item = substitute(item_ty, subst, interner);
+                    let substituted_item = substitute(&item_ty, subst, interner);
                     interner.lookup(&substituted_item).unwrap_or(ty_id)
                 })
                 .collect();
@@ -497,30 +497,30 @@ fn substitute(ty: &ArType, subst: &FxHashMap<SymbolId, TypeId>, interner: &TypeI
         }
         ArType::Result(ok, err) => {
             let ok_ty = interner.resolve(*ok);
-            let substituted_ok = substitute(ok_ty, subst, interner);
+            let substituted_ok = substitute(&ok_ty, subst, interner);
             let new_ok = interner.lookup(&substituted_ok).unwrap_or(*ok);
 
             let err_ty = interner.resolve(*err);
-            let substituted_err = substitute(err_ty, subst, interner);
+            let substituted_err = substitute(&err_ty, subst, interner);
             let new_err = interner.lookup(&substituted_err).unwrap_or(*err);
 
             ArType::Result(new_ok, new_err)
         }
         ArType::Option(inner) => {
             let inner_ty = interner.resolve(*inner);
-            let substituted_inner = substitute(inner_ty, subst, interner);
+            let substituted_inner = substitute(&inner_ty, subst, interner);
             let new_inner = interner.lookup(&substituted_inner).unwrap_or(*inner);
             ArType::Option(new_inner)
         }
         ArType::Coroutine(inner) => {
             let inner_ty = interner.resolve(*inner);
-            let substituted_inner = substitute(inner_ty, subst, interner);
+            let substituted_inner = substitute(&inner_ty, subst, interner);
             let new_inner = interner.lookup(&substituted_inner).unwrap_or(*inner);
             ArType::Coroutine(new_inner)
         }
         ArType::Range(inner) => {
             let inner_ty = interner.resolve(*inner);
-            let substituted_inner = substitute(inner_ty, subst, interner);
+            let substituted_inner = substitute(&inner_ty, subst, interner);
             let new_inner = interner.lookup(&substituted_inner).unwrap_or(*inner);
             ArType::Range(new_inner)
         }

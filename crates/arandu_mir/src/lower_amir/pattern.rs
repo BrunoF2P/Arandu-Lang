@@ -196,7 +196,6 @@ impl LowerCtx<'_> {
                     .tc
                     .type_info
                     .decl_type(*symbol)
-                    .cloned()
                     .unwrap_or(ArType::Error);
                 let local_id = self.new_local(ty, *symbol, pattern.span());
                 self.emit_store_place(

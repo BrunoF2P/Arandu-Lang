@@ -60,13 +60,13 @@ pub(crate) fn lower_place(
         match suffix {
             PlaceSuffix::Field { span, name } => {
                 let actual_base_ty = match &current_ty {
-                    ArType::Nullable(inner) => interner.resolve(*inner).clone(),
+                    ArType::Nullable(inner) => interner.resolve(*inner),
                     other => other.clone(),
                 };
                 let struct_id_opt = match &actual_base_ty {
                     ArType::Named(id, _) => Some(*id),
                     ArType::Ptr(inner) => match interner.resolve(*inner) {
-                        ArType::Named(id, _) => Some(*id),
+                        ArType::Named(id, _) => Some(id),
                         _ => None,
                     },
                     _ => None,
@@ -95,13 +95,11 @@ pub(crate) fn lower_place(
             }
             PlaceSuffix::Index { span, expr } => {
                 let actual_base_ty = match &current_ty {
-                    ArType::Nullable(inner) => interner.resolve(*inner).clone(),
+                    ArType::Nullable(inner) => interner.resolve(*inner),
                     other => other.clone(),
                 };
                 let elem_ty = match &actual_base_ty {
-                    ArType::Array(_, inner) | ArType::Slice(inner) => {
-                        interner.resolve(*inner).clone()
-                    }
+                    ArType::Array(_, inner) | ArType::Slice(inner) => interner.resolve(*inner),
                     _ => ArType::Error,
                 };
                 current_ty = elem_ty.clone();

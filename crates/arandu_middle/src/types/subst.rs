@@ -32,26 +32,26 @@ pub fn substitute_type(ty: &ArType, subst: &GenericSubst, interner: &mut TypeInt
             ArType::Named(*id, new_args)
         }
         ArType::Nullable(inner) => {
-            let resolved = interner.resolve(*inner).clone();
+            let resolved = interner.resolve(*inner);
             let substituted = substitute_type(&resolved, subst, interner);
             let id = interner.intern(substituted);
             ArType::Nullable(id)
         }
         ArType::Option(inner) => {
-            let resolved = interner.resolve(*inner).clone();
+            let resolved = interner.resolve(*inner);
             let substituted = substitute_type(&resolved, subst, interner);
             let id = interner.intern(substituted);
             ArType::Option(id)
         }
         ArType::Range(inner) => {
-            let resolved = interner.resolve(*inner).clone();
+            let resolved = interner.resolve(*inner);
             let substituted = substitute_type(&resolved, subst, interner);
             let id = interner.intern(substituted);
             ArType::Range(id)
         }
         ArType::Result(ok, err) => {
-            let resolved_ok = interner.resolve(*ok).clone();
-            let resolved_err = interner.resolve(*err).clone();
+            let resolved_ok = interner.resolve(*ok);
+            let resolved_err = interner.resolve(*err);
             let subst_ok = substitute_type(&resolved_ok, subst, interner);
             let ok_id = interner.intern(subst_ok);
             let subst_err = substitute_type(&resolved_err, subst, interner);
@@ -59,19 +59,19 @@ pub fn substitute_type(ty: &ArType, subst: &GenericSubst, interner: &mut TypeInt
             ArType::Result(ok_id, err_id)
         }
         ArType::Ptr(inner) => {
-            let resolved = interner.resolve(*inner).clone();
+            let resolved = interner.resolve(*inner);
             let substituted = substitute_type(&resolved, subst, interner);
             let id = interner.intern(substituted);
             ArType::Ptr(id)
         }
         ArType::Slice(inner) => {
-            let resolved = interner.resolve(*inner).clone();
+            let resolved = interner.resolve(*inner);
             let substituted = substitute_type(&resolved, subst, interner);
             let id = interner.intern(substituted);
             ArType::Slice(id)
         }
         ArType::Array(n, inner) => {
-            let resolved = interner.resolve(*inner).clone();
+            let resolved = interner.resolve(*inner);
             let substituted = substitute_type(&resolved, subst, interner);
             let id = interner.intern(substituted);
             ArType::Array(*n, id)

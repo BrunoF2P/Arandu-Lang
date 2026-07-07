@@ -25,7 +25,7 @@ pub(crate) fn synth_place(checker: &mut TypeChecker<'_>, place: &arandu_parser::
             arandu_parser::PlaceSuffix::Field { span, name } => {
                 let interner = &checker.type_info.type_interner;
                 let (actual_base_ty_id, was_nullable) = match checker.resolve(current_ty_id) {
-                    ArType::Nullable(inner) => (*inner, true),
+                    ArType::Nullable(inner) => (inner, true),
                     _ => (current_ty_id, false),
                 };
                 let actual_base_ty = checker.resolve(actual_base_ty_id);
@@ -53,9 +53,9 @@ pub(crate) fn synth_place(checker: &mut TypeChecker<'_>, place: &arandu_parser::
                     break;
                 }
                 let struct_info_opt = match actual_base_ty {
-                    ArType::Named(id, args) => Some((*id, args.clone())),
-                    ArType::Ptr(inner) => match interner.resolve(*inner) {
-                        ArType::Named(id, args) => Some((*id, args.clone())),
+                    ArType::Named(id, args) => Some((id, args.clone())),
+                    ArType::Ptr(inner) => match interner.resolve(inner) {
+                        ArType::Named(id, args) => Some((id, args.clone())),
                         _ => None,
                     },
                     _ => None,
@@ -100,7 +100,7 @@ pub(crate) fn synth_place(checker: &mut TypeChecker<'_>, place: &arandu_parser::
                 let index_ty_id = super::super::synth::synth_expr(checker, *expr);
                 let interner = &checker.type_info.type_interner;
                 let (actual_base_ty_id, was_nullable) = match checker.resolve(current_ty_id) {
-                    ArType::Nullable(inner) => (*inner, true),
+                    ArType::Nullable(inner) => (inner, true),
                     _ => (current_ty_id, false),
                 };
                 let actual_base_ty = checker.resolve(actual_base_ty_id);
@@ -130,7 +130,7 @@ pub(crate) fn synth_place(checker: &mut TypeChecker<'_>, place: &arandu_parser::
                 }
                 match actual_base_ty {
                     ArType::Array(_, inner) | ArType::Slice(inner) => {
-                        current_ty_id = *inner;
+                        current_ty_id = inner;
                     }
                     _ => {
                         let err_id = checker.intern(ArType::Error);

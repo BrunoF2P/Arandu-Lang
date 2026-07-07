@@ -152,20 +152,20 @@ impl FunctionTranslator<'_, '_> {
                             arandu_semantics::types::ArType::Ptr(inner) => {
                                 self.type_info.resolve_type_id(*inner)
                             }
-                            other => other,
+                            other => other.clone(),
                         };
                         let inner_ty = match struct_ty {
                             arandu_semantics::types::ArType::Slice(inner)
                             | arandu_semantics::types::ArType::Array(_, inner)
                             | arandu_semantics::types::ArType::Ptr(inner) => {
-                                self.type_info.resolve_type_id(*inner)
+                                self.type_info.resolve_type_id(inner)
                             }
-                            _ => &arandu_semantics::types::ArType::Error,
+                            _ => arandu_semantics::types::ArType::Error,
                         };
                         let pointer_width = self.ptr_type.bytes() as u64;
                         let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
                         let layout = engine.layout_of_type(
-                            inner_ty,
+                            &inner_ty,
                             &self.type_info.type_interner,
                             self.type_info,
                         );
@@ -205,20 +205,20 @@ impl FunctionTranslator<'_, '_> {
                         arandu_semantics::types::ArType::Ptr(inner) => {
                             self.type_info.resolve_type_id(*inner)
                         }
-                        other => other,
+                        other => other.clone(),
                     };
                     let inner_ty = match struct_ty {
                         arandu_semantics::types::ArType::Slice(inner)
                         | arandu_semantics::types::ArType::Array(_, inner)
                         | arandu_semantics::types::ArType::Ptr(inner) => {
-                            self.type_info.resolve_type_id(*inner)
+                            self.type_info.resolve_type_id(inner)
                         }
-                        _ => &arandu_semantics::types::ArType::Error,
+                        _ => arandu_semantics::types::ArType::Error,
                     };
                     let pointer_width = self.ptr_type.bytes() as u64;
                     let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
                     let layout = engine.layout_of_type(
-                        inner_ty,
+                        &inner_ty,
                         &self.type_info.type_interner,
                         self.type_info,
                     );
@@ -246,82 +246,83 @@ impl FunctionTranslator<'_, '_> {
 
         let struct_ty = match &*current_ty {
             arandu_semantics::types::ArType::Ptr(inner) => self.type_info.resolve_type_id(*inner),
-            other => other,
+            other => other.clone(),
         };
 
-        let (field_idx, next_ty) = if let arandu_semantics::types::ArType::Named(
-            struct_symbol,
-            generic_args,
-        ) = struct_ty
-        {
-            let idx = self
-                .type_info
-                .struct_field_indices
-                .get(struct_symbol)
-                .and_then(|m| m.get(name.as_str()).copied())
-                .unwrap_or(0);
+        let (field_idx, next_ty) =
+            if let arandu_semantics::types::ArType::Named(struct_symbol, ref generic_args) =
+                struct_ty
+            {
+                let idx = self
+                    .type_info
+                    .struct_field_indices
+                    .get(&struct_symbol)
+                    .and_then(|m| m.get(name.as_str()).copied())
+                    .unwrap_or(0);
 
-            let fields_def = self.type_info.struct_fields.get(struct_symbol);
-            let field_ty = fields_def
-                .and_then(|m| m.get(name.as_str()).cloned())
-                .unwrap_or(arandu_semantics::types::ArType::Error);
+                let fields_def = self.type_info.struct_fields.get(&struct_symbol);
+                let field_ty = fields_def
+                    .and_then(|m| m.get(name.as_str()).cloned())
+                    .unwrap_or(arandu_semantics::types::ArType::Error);
 
-            let generic_params = self
-                .type_info
-                .generic_params
-                .get(struct_symbol)
-                .map(|v| v.as_slice())
-                .unwrap_or(&[]);
-            let subst: rustc_hash::FxHashMap<
-                arandu_semantics::SymbolId,
-                arandu_semantics::types::TypeId,
-            > = generic_params
-                .iter()
-                .copied()
-                .zip(generic_args.iter().copied())
-                .collect();
+                let generic_params = self
+                    .type_info
+                    .generic_params
+                    .get(&struct_symbol)
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]);
+                let subst: rustc_hash::FxHashMap<
+                    arandu_semantics::SymbolId,
+                    arandu_semantics::types::TypeId,
+                > = generic_params
+                    .iter()
+                    .copied()
+                    .zip(generic_args.iter().copied())
+                    .collect();
 
-            let substituted =
-                substitute_projection_type(&field_ty, &subst, &self.type_info.type_interner);
-            (idx, substituted)
-        } else if let arandu_semantics::types::ArType::Result(ok, err) = struct_ty {
-            let idx = if name == "ok" { 0 } else { 1 };
-            let item_ty = if idx == 0 { *ok } else { *err };
-            (idx, self.type_info.resolve_type_id(item_ty).clone())
-        } else if let arandu_semantics::types::ArType::Option(inner) = struct_ty {
-            let idx = if name == "some" { 1 } else { 0 };
-            (idx, self.type_info.resolve_type_id(*inner).clone())
-        } else if matches!(
-            struct_ty,
-            arandu_semantics::types::ArType::Primitive(arandu_semantics::types::Primitive::Str)
-        ) || matches!(struct_ty, arandu_semantics::types::ArType::Slice(_))
-        {
-            let idx = match name.as_str() {
-                "buf" | "ptr" => 0,
-                "len" => 1,
-                _ => 0,
-            };
-            let item_ty = if idx == 0 {
-                arandu_semantics::types::ArType::Ptr(
-                    self.type_info
-                        .type_interner
-                        .lookup(&arandu_semantics::types::ArType::Primitive(
-                            arandu_semantics::types::Primitive::U8,
-                        ))
-                        .unwrap_or_else(|| arandu_semantics::types::TypeId::from_usize(5)),
-                )
+                let substituted =
+                    substitute_projection_type(&field_ty, &subst, &self.type_info.type_interner);
+                (idx, substituted)
+            } else if let arandu_semantics::types::ArType::Result(ok, err) = struct_ty {
+                let idx = if name == "ok" { 0 } else { 1 };
+                let item_ty = if idx == 0 { ok } else { err };
+                (idx, self.type_info.resolve_type_id(item_ty).clone())
+            } else if let arandu_semantics::types::ArType::Option(inner) = struct_ty {
+                let idx = if name == "some" { 1 } else { 0 };
+                (idx, self.type_info.resolve_type_id(inner))
+            } else if matches!(
+                struct_ty,
+                arandu_semantics::types::ArType::Primitive(arandu_semantics::types::Primitive::Str)
+            ) || matches!(struct_ty, arandu_semantics::types::ArType::Slice(_))
+            {
+                let idx = match name.as_str() {
+                    "buf" | "ptr" => 0,
+                    "len" => 1,
+                    _ => 0,
+                };
+                let item_ty = if idx == 0 {
+                    arandu_semantics::types::ArType::Ptr(
+                        self.type_info
+                            .type_interner
+                            .lookup(&arandu_semantics::types::ArType::Primitive(
+                                arandu_semantics::types::Primitive::U8,
+                            ))
+                            .unwrap_or_else(|| arandu_semantics::types::TypeId::from_usize(5)),
+                    )
+                } else {
+                    arandu_semantics::types::ArType::Primitive(
+                        arandu_semantics::types::Primitive::U64,
+                    )
+                };
+                (idx, item_ty)
             } else {
-                arandu_semantics::types::ArType::Primitive(arandu_semantics::types::Primitive::U64)
+                (0, arandu_semantics::types::ArType::Error)
             };
-            (idx, item_ty)
-        } else {
-            (0, arandu_semantics::types::ArType::Error)
-        };
 
         let pointer_width = self.ptr_type.bytes() as u64;
         let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
         let layout =
-            engine.layout_of_type(struct_ty, &self.type_info.type_interner, self.type_info);
+            engine.layout_of_type(&struct_ty, &self.type_info.type_interner, self.type_info);
         let offset = layout.field_offsets[field_idx] as i32;
 
         *current_ty = next_ty;
@@ -337,13 +338,13 @@ pub(super) fn substitute_projection_type(
     match ty {
         arandu_semantics::types::ArType::Named(id, args) => {
             if let Some(&concrete_id) = subst.get(id) {
-                interner.resolve(concrete_id).clone()
+                interner.resolve(concrete_id)
             } else {
                 let new_args = args
                     .iter()
                     .map(|&arg_id| {
                         let arg_ty = interner.resolve(arg_id);
-                        let substituted_arg = substitute_projection_type(arg_ty, subst, interner);
+                        let substituted_arg = substitute_projection_type(&arg_ty, subst, interner);
                         interner.lookup(&substituted_arg).unwrap_or(arg_id)
                     })
                     .collect();
@@ -355,36 +356,36 @@ pub(super) fn substitute_projection_type(
                 .iter()
                 .map(|&param_id| {
                     let param_ty = interner.resolve(param_id);
-                    let substituted_param = substitute_projection_type(param_ty, subst, interner);
+                    let substituted_param = substitute_projection_type(&param_ty, subst, interner);
                     interner.lookup(&substituted_param).unwrap_or(param_id)
                 })
                 .collect();
             let ret_ty = interner.resolve(*ret);
-            let substituted_ret = substitute_projection_type(ret_ty, subst, interner);
+            let substituted_ret = substitute_projection_type(&ret_ty, subst, interner);
             let new_ret = interner.lookup(&substituted_ret).unwrap_or(*ret);
             arandu_semantics::types::ArType::Func(new_params, new_ret)
         }
         arandu_semantics::types::ArType::Nullable(inner) => {
             let inner_ty = interner.resolve(*inner);
-            let substituted_inner = substitute_projection_type(inner_ty, subst, interner);
+            let substituted_inner = substitute_projection_type(&inner_ty, subst, interner);
             let new_inner = interner.lookup(&substituted_inner).unwrap_or(*inner);
             arandu_semantics::types::ArType::Nullable(new_inner)
         }
         arandu_semantics::types::ArType::Slice(inner) => {
             let inner_ty = interner.resolve(*inner);
-            let substituted_inner = substitute_projection_type(inner_ty, subst, interner);
+            let substituted_inner = substitute_projection_type(&inner_ty, subst, interner);
             let new_inner = interner.lookup(&substituted_inner).unwrap_or(*inner);
             arandu_semantics::types::ArType::Slice(new_inner)
         }
         arandu_semantics::types::ArType::Array(len, inner) => {
             let inner_ty = interner.resolve(*inner);
-            let substituted_inner = substitute_projection_type(inner_ty, subst, interner);
+            let substituted_inner = substitute_projection_type(&inner_ty, subst, interner);
             let new_inner = interner.lookup(&substituted_inner).unwrap_or(*inner);
             arandu_semantics::types::ArType::Array(*len, new_inner)
         }
         arandu_semantics::types::ArType::Ptr(inner) => {
             let inner_ty = interner.resolve(*inner);
-            let substituted_inner = substitute_projection_type(inner_ty, subst, interner);
+            let substituted_inner = substitute_projection_type(&inner_ty, subst, interner);
             let new_inner = interner.lookup(&substituted_inner).unwrap_or(*inner);
             arandu_semantics::types::ArType::Ptr(new_inner)
         }
@@ -393,7 +394,7 @@ pub(super) fn substitute_projection_type(
                 .iter()
                 .map(|&ty_id| {
                     let item_ty = interner.resolve(ty_id);
-                    let substituted_item = substitute_projection_type(item_ty, subst, interner);
+                    let substituted_item = substitute_projection_type(&item_ty, subst, interner);
                     interner.lookup(&substituted_item).unwrap_or(ty_id)
                 })
                 .collect();
@@ -401,30 +402,30 @@ pub(super) fn substitute_projection_type(
         }
         arandu_semantics::types::ArType::Result(ok, err) => {
             let ok_ty = interner.resolve(*ok);
-            let substituted_ok = substitute_projection_type(ok_ty, subst, interner);
+            let substituted_ok = substitute_projection_type(&ok_ty, subst, interner);
             let new_ok = interner.lookup(&substituted_ok).unwrap_or(*ok);
 
             let err_ty = interner.resolve(*err);
-            let substituted_err = substitute_projection_type(err_ty, subst, interner);
+            let substituted_err = substitute_projection_type(&err_ty, subst, interner);
             let new_err = interner.lookup(&substituted_err).unwrap_or(*err);
 
             arandu_semantics::types::ArType::Result(new_ok, new_err)
         }
         arandu_semantics::types::ArType::Option(inner) => {
             let inner_ty = interner.resolve(*inner);
-            let substituted_inner = substitute_projection_type(inner_ty, subst, interner);
+            let substituted_inner = substitute_projection_type(&inner_ty, subst, interner);
             let new_inner = interner.lookup(&substituted_inner).unwrap_or(*inner);
             arandu_semantics::types::ArType::Option(new_inner)
         }
         arandu_semantics::types::ArType::Coroutine(inner) => {
             let inner_ty = interner.resolve(*inner);
-            let substituted_inner = substitute_projection_type(inner_ty, subst, interner);
+            let substituted_inner = substitute_projection_type(&inner_ty, subst, interner);
             let new_inner = interner.lookup(&substituted_inner).unwrap_or(*inner);
             arandu_semantics::types::ArType::Coroutine(new_inner)
         }
         arandu_semantics::types::ArType::Range(inner) => {
             let inner_ty = interner.resolve(*inner);
-            let substituted_inner = substitute_projection_type(inner_ty, subst, interner);
+            let substituted_inner = substitute_projection_type(&inner_ty, subst, interner);
             let new_inner = interner.lookup(&substituted_inner).unwrap_or(*inner);
             arandu_semantics::types::ArType::Range(new_inner)
         }

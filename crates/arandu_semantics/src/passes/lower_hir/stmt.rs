@@ -79,14 +79,13 @@ fn lower_stmt_raw(
         Stmt::VarDecl {
             bindings, value, ..
         } => {
-            let value_ty = type_check.type_info.expr_type(*value).cloned();
+            let value_ty = type_check.type_info.expr_type(*value);
             let mut hir_bindings = Vec::new();
             for (i, b) in bindings.iter().enumerate() {
                 let symbol = require_def_symbol(&type_check.resolved, b.span)?;
                 let ty = type_check
                     .type_info
                     .decl_type(symbol)
-                    .cloned()
                     .or_else(|| {
                         value_ty.as_ref().and_then(|val_ty| match val_ty {
                             ArType::Tuple(elems) => elems.get(i).map(|&tid| {
@@ -302,7 +301,6 @@ pub(crate) fn lower_for_clause(
                 let ty = type_check
                     .type_info
                     .decl_type(symbol)
-                    .cloned()
                     .unwrap_or(ArType::Error);
                 hir_bindings.push(HirForBinding {
                     symbol,
@@ -362,7 +360,6 @@ pub(crate) fn lower_simple_stmt(
                 let ty = type_check
                     .type_info
                     .decl_type(symbol)
-                    .cloned()
                     .unwrap_or(ArType::Error);
                 hir_bindings.push(HirBindingItem {
                     symbol,

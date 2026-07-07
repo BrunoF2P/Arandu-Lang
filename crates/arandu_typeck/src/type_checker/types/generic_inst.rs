@@ -228,7 +228,7 @@ fn resolve_generic_callee_symbol(
             let struct_id = match &actual_base_ty {
                 ArType::Named(id, _) => Some(*id),
                 ArType::Ptr(inner) => match checker.resolve(*inner) {
-                    ArType::Named(id, _) => Some(*id),
+                    ArType::Named(id, _) => Some(id),
                     _ => None,
                 },
                 _ => None,

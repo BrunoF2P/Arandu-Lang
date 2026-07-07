@@ -27,11 +27,11 @@ fn resolve_method_target(
         ArType::Nullable(inner) => {
             let inner_ty = interner.resolve(*inner);
             match inner_ty {
-                ArType::Named(id, _) => Some(*id),
+                ArType::Named(id, _) => Some(id),
                 ArType::Ptr(ptr_inner) => {
-                    let ptr_inner_ty = interner.resolve(*ptr_inner);
+                    let ptr_inner_ty = interner.resolve(ptr_inner);
                     match ptr_inner_ty {
-                        ArType::Named(id, _) => Some(*id),
+                        ArType::Named(id, _) => Some(id),
                         _ => None,
                     }
                 }
@@ -42,7 +42,7 @@ fn resolve_method_target(
         ArType::Ptr(inner) => {
             let inner_ty = interner.resolve(*inner);
             match inner_ty {
-                ArType::Named(id, _) => Some(*id),
+                ArType::Named(id, _) => Some(id),
                 _ => None,
             }
         }
@@ -491,7 +491,7 @@ impl LowerCtx<'_> {
                             ArType::Named(id, _) => Some(*id),
                             ArType::Func(_, ret) => {
                                 match self.tc.type_info.type_interner.resolve(*ret) {
-                                    ArType::Named(id, _) => Some(*id),
+                                    ArType::Named(id, _) => Some(id),
                                     _ => None,
                                 }
                             }

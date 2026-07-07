@@ -157,7 +157,7 @@ fn check_single_var_decl(
         });
 
         let val_ty = checker.resolve(val_ty_id);
-        if checker.result_ok_err(val_ty).is_some() && !annotated_as_result {
+        if checker.result_ok_err(&val_ty).is_some() && !annotated_as_result {
             checker.diagnostics.push(crate::Diagnostic::warning(
                 crate::DiagCode::W006UnhandledResult,
                 "Result value must be handled with `?` or `value, err = f()`",
@@ -232,11 +232,11 @@ fn check_set_stmt(
         }
 
         let is_result = checker
-            .result_ok_err(checker.resolve(final_val_ty_id))
+            .result_ok_err(&checker.resolve(final_val_ty_id))
             .is_some();
         if is_result
             && checker
-                .result_ok_err(checker.resolve(expected_ty_id))
+                .result_ok_err(&checker.resolve(expected_ty_id))
                 .is_none()
         {
             checker.diagnostics.push(crate::Diagnostic::warning(
@@ -347,7 +347,7 @@ fn check_for_stmt(
             let iterable_ty = checker.resolve(iterable_ty_id).clone();
             let elem_ty = match &iterable_ty {
                 ArType::Array(_, inner) | ArType::Slice(inner) | ArType::Range(inner) => {
-                    checker.type_info.type_interner.resolve(*inner).clone()
+                    checker.type_info.type_interner.resolve(*inner)
                 }
                 ArType::Error => ArType::Error,
                 _ => {

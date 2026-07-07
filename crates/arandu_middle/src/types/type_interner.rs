@@ -22,6 +22,7 @@ use super::primitive::Primitive;
 use crate::SymbolTable;
 use crate::newtype_index;
 use rustc_hash::FxHashMap;
+use std::sync::RwLock;
 
 newtype_index!(TypeId);
 
@@ -30,21 +31,21 @@ newtype_index!(TypeId);
 pub struct InternerGeneration(pub u32);
 
 /// A global interner that assigns a unique `TypeId` to every structural `ArType`.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct TypeInterner {
     /// Forward map: ArType → TypeId  (deduplication).
-    map: FxHashMap<ArType, TypeId>,
+    map: RwLock<FxHashMap<ArType, TypeId>>,
     /// Reverse map: TypeId → ArType  (resolution).
-    types: Vec<ArType>,
+    types: RwLock<Vec<ArType>>,
     pub generation: InternerGeneration,
 }
 
 impl TypeInterner {
     #[must_use]
     pub fn new() -> Self {
-        let mut interner = Self {
-            map: FxHashMap::default(),
-            types: Vec::new(),
+        let interner = Self {
+            map: RwLock::new(FxHashMap::default()),
+            types: RwLock::new(Vec::new()),
             generation: InternerGeneration(0),
         };
         // Pre-intern all Primitive variants
@@ -83,13 +84,22 @@ impl TypeInterner {
 
     /// Intern a type, returning its canonical `TypeId`.
     /// If the type has been interned before, returns the same id.
-    pub fn intern(&mut self, ty: ArType) -> TypeId {
-        if let Some(&id) = self.map.get(&ty) {
+    pub fn intern(&self, ty: ArType) -> TypeId {
+        if let Some(&id) = self.map.read().unwrap().get(&ty) {
             return id;
         }
-        let id = TypeId::from_usize(self.types.len());
-        self.map.insert(ty.clone(), id);
-        self.types.push(ty);
+
+        let mut map = self.map.write().unwrap();
+        let mut types = self.types.write().unwrap();
+
+        // Double checked locking
+        if let Some(&id) = map.get(&ty) {
+            return id;
+        }
+
+        let id = TypeId::from_usize(types.len());
+        map.insert(ty.clone(), id);
+        types.push(ty);
         id
     }
 
@@ -98,33 +108,33 @@ impl TypeInterner {
     /// # Panics
     /// Panics if `id` was not produced by this interner.
     #[must_use]
-    pub fn resolve(&self, id: TypeId) -> &ArType {
-        &self.types[id.as_usize()]
+    pub fn resolve(&self, id: TypeId) -> ArType {
+        self.types.read().unwrap()[id.as_usize()].clone()
     }
 
     /// Try to resolve a `TypeId`, returning `None` if out of range.
     #[must_use]
-    pub fn try_resolve(&self, id: TypeId) -> Option<&ArType> {
-        self.types.get(id.as_usize())
+    pub fn try_resolve(&self, id: TypeId) -> Option<ArType> {
+        self.types.read().unwrap().get(id.as_usize()).cloned()
     }
 
     /// Look up a type without interning it. Returns `None` if the type
     /// has never been interned.
     #[must_use]
     pub fn lookup(&self, ty: &ArType) -> Option<TypeId> {
-        self.map.get(ty).copied()
+        self.map.read().unwrap().get(ty).copied()
     }
 
     /// Number of unique types interned so far.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.types.len()
+        self.types.read().unwrap().len()
     }
 
     /// Returns `true` if no types have been interned.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.types.is_empty()
+        self.types.read().unwrap().is_empty()
     }
 
     /// Display a `TypeId` using the symbol table for named types.
@@ -134,8 +144,9 @@ impl TypeInterner {
     }
 
     /// Merge all types from another interner into self.
-    pub fn merge_from(&mut self, other: &Self) {
-        for ty in &other.types {
+    pub fn merge_from(&self, other: &Self) {
+        let types = other.types.read().unwrap();
+        for ty in types.iter() {
             self.intern(ty.clone());
         }
     }
@@ -154,7 +165,7 @@ mod tests {
 
     #[test]
     fn test_intern_returns_same_id_for_same_type() {
-        let mut interner = TypeInterner::new();
+        let interner = TypeInterner::new();
         let id1 = interner.intern(ArType::Primitive(Primitive::Int));
         let id2 = interner.intern(ArType::Primitive(Primitive::Int));
         assert_eq!(id1, id2);
@@ -163,7 +174,7 @@ mod tests {
 
     #[test]
     fn test_intern_returns_different_id_for_different_types() {
-        let mut interner = TypeInterner::new();
+        let interner = TypeInterner::new();
         let id1 = interner.intern(ArType::Primitive(Primitive::Int));
         let id2 = interner.intern(ArType::Primitive(Primitive::Bool));
         assert_ne!(id1, id2);
@@ -172,11 +183,11 @@ mod tests {
 
     #[test]
     fn test_resolve_roundtrip() {
-        let mut interner = TypeInterner::new();
+        let interner = TypeInterner::new();
         let str_id = interner.intern(ArType::Primitive(Primitive::Str));
         let ty = ArType::Nullable(str_id);
         let id = interner.intern(ty.clone());
-        assert_eq!(*interner.resolve(id), ty);
+        assert_eq!(interner.resolve(id), ty);
     }
 
     #[test]
@@ -194,7 +205,7 @@ mod tests {
 
     #[test]
     fn test_complex_recursive_type_dedup() {
-        let mut interner = TypeInterner::new();
+        let interner = TypeInterner::new();
         let int_id = interner.intern(ArType::Primitive(Primitive::Int));
         let err_id = interner.intern(ArType::Err);
         let result_ty = ArType::Result(int_id, err_id);
@@ -206,18 +217,18 @@ mod tests {
 
     #[test]
     fn test_func_type_interning() {
-        let mut interner = TypeInterner::new();
+        let interner = TypeInterner::new();
         let int_id = interner.intern(ArType::Primitive(Primitive::Int));
         let str_id = interner.intern(ArType::Primitive(Primitive::Str));
         let bool_id = interner.intern(ArType::Primitive(Primitive::Bool));
         let func_ty = ArType::Func(vec![int_id, str_id], bool_id);
         let id = interner.intern(func_ty.clone());
-        assert_eq!(*interner.resolve(id), func_ty);
+        assert_eq!(interner.resolve(id), func_ty);
     }
 
     #[test]
     fn test_all_primitives_get_unique_ids() {
-        let mut interner = TypeInterner::new();
+        let interner = TypeInterner::new();
         let prims = [
             Primitive::Int,
             Primitive::Uint,
@@ -244,5 +255,15 @@ mod tests {
             }
         }
         assert_eq!(interner.len(), 23);
+    }
+}
+
+impl Clone for TypeInterner {
+    fn clone(&self) -> Self {
+        Self {
+            map: std::sync::RwLock::new(self.map.read().unwrap().clone()),
+            types: std::sync::RwLock::new(self.types.read().unwrap().clone()),
+            generation: self.generation,
+        }
     }
 }

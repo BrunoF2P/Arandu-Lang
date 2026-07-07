@@ -56,7 +56,7 @@ pub(crate) fn resolve_field(
     }
 
     let (actual_base_ty_id, was_nullable) = match checker.resolve(base_ty_id) {
-        ArType::Nullable(inner) => (*inner, true),
+        ArType::Nullable(inner) => (inner, true),
         _ => (base_ty_id, false),
     };
     let actual_base_ty = checker.resolve(actual_base_ty_id);
@@ -85,9 +85,9 @@ pub(crate) fn resolve_field(
     }
 
     let struct_info_opt = match actual_base_ty {
-        ArType::Named(id, args) => Some((*id, args.clone())),
-        ArType::Ptr(inner) => match checker.resolve(*inner) {
-            ArType::Named(id, args) => Some((*id, args.clone())),
+        ArType::Named(id, args) => Some((id, args.clone())),
+        ArType::Ptr(inner) => match checker.resolve(inner) {
+            ArType::Named(id, args) => Some((id, args.clone())),
             _ => None,
         },
         _ => None,
@@ -195,7 +195,7 @@ pub(crate) fn resolve_index(
     }
 
     let (actual_base_ty_id, was_nullable) = match checker.resolve(base_ty_id) {
-        ArType::Nullable(inner) => (*inner, true),
+        ArType::Nullable(inner) => (inner, true),
         _ => (base_ty_id, false),
     };
     let actual_base_ty = checker.resolve(actual_base_ty_id);
@@ -223,7 +223,7 @@ pub(crate) fn resolve_index(
     }
 
     let elem_ty_id = match actual_base_ty {
-        ArType::Array(_, inner) | ArType::Slice(inner) => *inner,
+        ArType::Array(_, inner) | ArType::Slice(inner) => inner,
         _ => {
             checker.add_constraint(
                 actual_base_ty_id,

@@ -289,7 +289,7 @@ pub fn constraint_to_diagnostic(
                     ArType::Named(id, _) => Some(*id),
                     ArType::Ptr(inner) | ArType::Nullable(inner) => {
                         let inner_ty = interner.resolve(*inner);
-                        get_struct_id(inner_ty, interner)
+                        get_struct_id(&inner_ty, interner)
                     }
                     _ => None,
                 }

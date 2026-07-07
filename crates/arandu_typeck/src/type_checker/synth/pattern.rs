@@ -40,8 +40,8 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                 let val_ty = checker.resolve(value_ty);
 
                 if let ArType::Result(ok_id, err_id) = val_ty {
-                    let ok_id = *ok_id;
-                    let err_id = *err_id;
+                    let ok_id = ok_id;
+                    let err_id = err_id;
                     match variant.as_str() {
                         "Ok" => {
                             if payload.len != 1 {
@@ -82,7 +82,7 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                         }
                     }
                 } else if let ArType::Option(inner_id) = val_ty {
-                    let inner_id = *inner_id;
+                    let inner_id = inner_id;
                     match variant.as_str() {
                         "Some" => {
                             if payload.len != 1 {
@@ -122,7 +122,7 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                 } else {
                     let expected_enum_ty = ArType::Named(enum_symbol_id, vec![]);
                     if !super::super::types::unify(
-                        val_ty,
+                        &val_ty,
                         &expected_enum_ty,
                         &checker.type_info.type_interner,
                     ) {
@@ -216,9 +216,9 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                 Option(TypeId),
             }
             let enum_info = match checker.resolve(value_ty) {
-                ArType::Named(enum_symbol_id, _) => Some(EnumInfo::Named(*enum_symbol_id)),
-                ArType::Result(ok_id, err_id) => Some(EnumInfo::Result(*ok_id, *err_id)),
-                ArType::Option(inner_id) => Some(EnumInfo::Option(*inner_id)),
+                ArType::Named(enum_symbol_id, _) => Some(EnumInfo::Named(enum_symbol_id)),
+                ArType::Result(ok_id, err_id) => Some(EnumInfo::Result(ok_id, err_id)),
+                ArType::Option(inner_id) => Some(EnumInfo::Option(inner_id)),
                 _ => None,
             };
             if let Some(info) = enum_info {
@@ -413,7 +413,7 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                 let expected_struct_ty = ArType::Named(struct_symbol_id, vec![]);
                 let val_ty = checker.resolve(value_ty);
                 if !super::super::types::unify(
-                    val_ty,
+                    &val_ty,
                     &expected_struct_ty,
                     &checker.type_info.type_interner,
                 ) {

@@ -11,7 +11,7 @@ pub enum EnumPayloadShape {
     Tuple(Vec<ArType>),
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct TypeInfo {
     pub type_interner: TypeInterner,
     pub expr_types: Vec<Option<TypeId>>,
@@ -66,7 +66,7 @@ pub(crate) fn translate_type(ty: &ArType, from: &TypeInterner, to: &mut TypeInte
                 .iter()
                 .map(|&arg_id| {
                     let resolved = from.resolve(arg_id);
-                    let translated = translate_type(resolved, from, to);
+                    let translated = translate_type(&resolved, from, to);
                     to.intern(translated)
                 })
                 .collect();
@@ -77,36 +77,36 @@ pub(crate) fn translate_type(ty: &ArType, from: &TypeInterner, to: &mut TypeInte
                 .iter()
                 .map(|&param_id| {
                     let resolved = from.resolve(param_id);
-                    let translated = translate_type(resolved, from, to);
+                    let translated = translate_type(&resolved, from, to);
                     to.intern(translated)
                 })
                 .collect();
             let resolved_ret = from.resolve(*ret);
-            let translated_ret = translate_type(resolved_ret, from, to);
+            let translated_ret = translate_type(&resolved_ret, from, to);
             let new_ret = to.intern(translated_ret);
             ArType::Func(new_params, new_ret)
         }
         ArType::Nullable(inner) => {
             let resolved = from.resolve(*inner);
-            let translated = translate_type(resolved, from, to);
+            let translated = translate_type(&resolved, from, to);
             let new_inner = to.intern(translated);
             ArType::Nullable(new_inner)
         }
         ArType::Slice(inner) => {
             let resolved = from.resolve(*inner);
-            let translated = translate_type(resolved, from, to);
+            let translated = translate_type(&resolved, from, to);
             let new_inner = to.intern(translated);
             ArType::Slice(new_inner)
         }
         ArType::Array(n, inner) => {
             let resolved = from.resolve(*inner);
-            let translated = translate_type(resolved, from, to);
+            let translated = translate_type(&resolved, from, to);
             let new_inner = to.intern(translated);
             ArType::Array(*n, new_inner)
         }
         ArType::Ptr(inner) => {
             let resolved = from.resolve(*inner);
-            let translated = translate_type(resolved, from, to);
+            let translated = translate_type(&resolved, from, to);
             let new_inner = to.intern(translated);
             ArType::Ptr(new_inner)
         }
@@ -115,7 +115,7 @@ pub(crate) fn translate_type(ty: &ArType, from: &TypeInterner, to: &mut TypeInte
                 .iter()
                 .map(|&item_id| {
                     let resolved = from.resolve(item_id);
-                    let translated = translate_type(resolved, from, to);
+                    let translated = translate_type(&resolved, from, to);
                     to.intern(translated)
                 })
                 .collect();
@@ -123,30 +123,30 @@ pub(crate) fn translate_type(ty: &ArType, from: &TypeInterner, to: &mut TypeInte
         }
         ArType::Result(ok, err) => {
             let resolved_ok = from.resolve(*ok);
-            let translated_ok = translate_type(resolved_ok, from, to);
+            let translated_ok = translate_type(&resolved_ok, from, to);
             let new_ok = to.intern(translated_ok);
 
             let resolved_err = from.resolve(*err);
-            let translated_err = translate_type(resolved_err, from, to);
+            let translated_err = translate_type(&resolved_err, from, to);
             let new_err = to.intern(translated_err);
 
             ArType::Result(new_ok, new_err)
         }
         ArType::Option(inner) => {
             let resolved = from.resolve(*inner);
-            let translated = translate_type(resolved, from, to);
+            let translated = translate_type(&resolved, from, to);
             let new_inner = to.intern(translated);
             ArType::Option(new_inner)
         }
         ArType::Coroutine(inner) => {
             let resolved = from.resolve(*inner);
-            let translated = translate_type(resolved, from, to);
+            let translated = translate_type(&resolved, from, to);
             let new_inner = to.intern(translated);
             ArType::Coroutine(new_inner)
         }
         ArType::Range(inner) => {
             let resolved = from.resolve(*inner);
-            let translated = translate_type(resolved, from, to);
+            let translated = translate_type(&resolved, from, to);
             let new_inner = to.intern(translated);
             ArType::Range(new_inner)
         }
@@ -163,7 +163,7 @@ impl TypeInfo {
         for (&symbol, &other_type_id) in &other.decl_types {
             let other_type = other.type_interner.resolve(other_type_id);
             let translated =
-                translate_type(other_type, &other.type_interner, &mut self.type_interner);
+                translate_type(&other_type, &other.type_interner, &mut self.type_interner);
             let id = self.type_interner.intern(translated);
             self.record_decl_type(symbol, id);
         }
@@ -238,7 +238,7 @@ impl TypeInfo {
     }
 
     #[must_use]
-    pub fn expr_type(&self, expr: ExprId) -> Option<&ArType> {
+    pub fn expr_type(&self, expr: ExprId) -> Option<ArType> {
         self.expr_types
             .get(expr.as_usize())
             .and_then(|id| id.as_ref().map(|id| self.type_interner.resolve(*id)))
@@ -250,7 +250,7 @@ impl TypeInfo {
     }
 
     #[must_use]
-    pub fn decl_type(&self, symbol: SymbolId) -> Option<&ArType> {
+    pub fn decl_type(&self, symbol: SymbolId) -> Option<ArType> {
         self.decl_types
             .get(&symbol)
             .map(|id| self.type_interner.resolve(*id))
@@ -262,7 +262,7 @@ impl TypeInfo {
     }
 
     #[must_use]
-    pub fn resolve_type_id(&self, id: TypeId) -> &ArType {
+    pub fn resolve_type_id(&self, id: TypeId) -> ArType {
         self.type_interner.resolve(id)
     }
 }
