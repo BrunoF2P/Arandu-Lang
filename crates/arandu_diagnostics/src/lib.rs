@@ -360,7 +360,6 @@ pub struct Diagnostic {
 
 pub mod registry;
 pub use arandu_base::index_vec;
-pub use arandu_base::stable_id;
 
 impl Diagnostic {
     /// Creates a user-facing error diagnostic.

@@ -16,8 +16,8 @@ arandu_resolve = { path = "../arandu_resolve" }
 arandu_typeck = { path = "../arandu_typeck" }
 arandu_mir = { path = "../arandu_mir" }
 arandu_diagnostics = { path = "../arandu_diagnostics" }
-arandu_base = { path = "../arandu_base", features = ["vm"] }
-libc = "0.2.186"
+arandu_base = { path = "../arandu_base" }
+
 rustc-hash = "2.1.2"
 tracing.workspace = true
 

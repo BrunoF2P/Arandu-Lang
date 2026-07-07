@@ -12,7 +12,7 @@ workspace = true
 arandu_lexer = { path = "../arandu_lexer" }
 arandu_parser = { path = "../arandu_parser" }
 arandu_diagnostics = { path = "../arandu_diagnostics" }
-arandu_base = { path = "../arandu_base", features = ["vm"] }
+arandu_base = { path = "../arandu_base" }
 smallvec = "1.15.2"
 rustc-hash = "2.1.2"
 tracing.workspace = true

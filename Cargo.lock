@@ -71,11 +71,9 @@ dependencies = [
 name = "arandu_base"
 version = "0.1.0"
 dependencies = [
- "libc",
  "rustc-hash",
  "tracing",
  "tracing-subscriber",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -199,7 +197,6 @@ dependencies = [
  "arandu_resolve",
  "arandu_test_support",
  "arandu_typeck",
- "libc",
  "rustc-hash",
  "tracing",
 ]

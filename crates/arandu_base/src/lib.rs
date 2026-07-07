@@ -5,15 +5,7 @@ pub mod perf;
 pub mod scratch;
 pub mod source_registry;
 pub mod span;
-pub mod stable_id;
-pub mod string_pool;
 pub mod tracing_bridge;
-
-#[cfg(feature = "vm")]
-pub mod vm;
-
-#[cfg(feature = "vm")]
-pub mod arena;
 
 // Re-export core items for ease of use
 pub use bitset::{BitMatrix, BitSet};
@@ -26,11 +18,4 @@ pub use perf::{
 pub use scratch::with_scratch;
 pub use source_registry::{SourceFile, SourceRegistry};
 pub use span::Span;
-pub use stable_id::{DenseSlotMap, GenerationalId, SlotMap, StableHandle};
-pub use string_pool::{SsoString, StringId, StringPool};
 pub use tracing_bridge::finalize_self_profile;
-
-#[cfg(feature = "vm")]
-pub use arena::BumpArena;
-#[cfg(feature = "vm")]
-pub use vm::VmReservation;

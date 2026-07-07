@@ -9,7 +9,7 @@
 //! - **Diagnostics** (`diagnostics`): re-exported from `arandu_diagnostics`.
 //! - **Parse cache** and **stdlib path cache**: incremental compilation helpers.
 //!
-//! Re-exports from `arandu_base` (arena, bitset, index_vec, stable_id, etc.)
+//! Re-exports from `arandu_base` (bitset, index_vec, span, etc.)
 //! are provided so downstream crates need only depend on this crate.
 
 pub mod amir;
@@ -29,20 +29,12 @@ pub mod types;
 
 pub use session::CompileSession;
 
-pub use arandu_base::arena;
 pub use arandu_base::bitset;
 pub use arandu_base::index_vec;
 pub use arandu_base::span::Span;
-pub use arandu_base::stable_id;
-pub use arandu_base::string_pool;
-pub use arandu_base::vm;
 
-pub use arandu_base::arena::BumpArena;
 pub use arandu_base::bitset::{BitMatrix, BitSet};
 pub use arandu_base::newtype_index;
-pub use arandu_base::stable_id::{DenseSlotMap, GenerationalId, SlotMap, StableHandle};
-pub use arandu_base::string_pool::{SsoString, StringId, StringPool};
-pub use arandu_base::vm::VmReservation;
 pub use layout::{DenseRange, EnumPayloadShape, LayoutEngine, StructLayoutProvider, TypeLayout};
 
 pub use amir_validate::validate_amir_program;

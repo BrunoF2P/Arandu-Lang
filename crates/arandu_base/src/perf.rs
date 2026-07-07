@@ -98,27 +98,13 @@ fn use_color() -> bool {
 
 /// Returns `(hour, minute, second)` in local time.
 fn local_hms() -> (u8, u8, u8) {
-    #[cfg(all(unix, feature = "vm"))]
-    {
-        // SAFETY: `localtime_r` is thread-safe on POSIX. We read the result
-        // immediately into a stack-allocated `tm` struct.
-        unsafe {
-            let t = libc::time(std::ptr::null_mut());
-            let mut tm: libc::tm = std::mem::zeroed();
-            libc::localtime_r(&t, &mut tm);
-            (tm.tm_hour as u8, tm.tm_min as u8, tm.tm_sec as u8)
-        }
-    }
-    #[cfg(not(all(unix, feature = "vm")))]
-    {
-        // Fallback: UTC seconds since epoch.
-        let secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        let s = (secs % 86400) as u32;
-        ((s / 3600) as u8, ((s % 3600) / 60) as u8, (s % 60) as u8)
-    }
+    // UTC seconds since epoch (portable, no libc needed).
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let s = (secs % 86400) as u32;
+    ((s / 3600) as u8, ((s % 3600) / 60) as u8, (s % 60) as u8)
 }
 
 // ── Formatting helpers ────────────────────────────────────────────────────────
