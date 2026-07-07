@@ -72,8 +72,8 @@ Fase 2 — A Construção da Infraestrutura & Execução (v0.2) · [EM ANDAMENTO
 [x] DOC1   docs/ossa-virtual-anchoring.md — RFC retroativo documentando a técnica de âncoras virtuais + poda
 
 Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
-[ ] A1     Query System (Incremental Semantic Database, Salsa-like O(1) invalidation)
-   ├─ [ ] A1.1   Salsa Integration / CompilerDatabase migration
+[x] A1     Query System (Incremental Semantic Database, Salsa-like O(1) invalidation)
+   ├─ [x] A1.1   Salsa Integration / CompilerDatabase migration
    ├─ [ ] DX.5   Causal-Chain explain-rebuild (mostrar por que uma query recompilou através do Salsa dependency graph)
    └─ [ ] DX.6   LSP incremental nativo via Salsa (migrado da Fase 2 para após A1)
 [ ] A2     Effect System (pure, readonly, noalloc, nothrow, nosuspend)
