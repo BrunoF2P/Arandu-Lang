@@ -142,13 +142,14 @@ pub fn module_signatures(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<T
     let res = match &*program_res {
         Ok(program) => {
             // Destructure once — avoids 3 separate full clones of ResolutionResult.
-            let ResolutionResult { symbols, resolved, diagnostics, .. } = (*resolved_arc).clone();
-            let mut checker = arandu_semantics::TypeChecker::new(
+            let ResolutionResult {
                 symbols,
                 resolved,
                 diagnostics,
-                &program.pool,
-            );
+                ..
+            } = (*resolved_arc).clone();
+            let mut checker =
+                arandu_semantics::TypeChecker::new(symbols, resolved, diagnostics, &program.pool);
 
             // Merge imported type info
             for import in &program.imports {

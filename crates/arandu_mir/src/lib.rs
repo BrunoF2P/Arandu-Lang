@@ -12,9 +12,9 @@ pub use move_checker::check_moves;
 pub use optimize::optimize_amir;
 
 pub use arandu_middle::{
-    BitMatrix, BitSet, CodeReplacement, DiagCode, Diagnostic, DocCommentMap, Label,
-    NodeKey, ResolvedNames, ScopeId, Severity, Span, SymbolId, SymbolKind, SymbolTable, amir,
-    amir_validate, cfg, diagnostics, hir, layout, literal_pool, ops, types,
+    BitMatrix, BitSet, CodeReplacement, DiagCode, Diagnostic, DocCommentMap, Label, NodeKey,
+    ResolvedNames, ScopeId, Severity, Span, SymbolId, SymbolKind, SymbolTable, amir, amir_validate,
+    cfg, diagnostics, hir, layout, literal_pool, ops, types,
 };
 
 pub use arandu_typeck::TypeCheckResult;

@@ -77,8 +77,26 @@ Fase 2 — A Construção da Infraestrutura & Execução (v0.2) · [EM ANDAMENTO
 Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
 [x] A1     Query System (Incremental Semantic Database, Salsa-like O(1) invalidation)
    ├─ [x] A1.1   Salsa Integration / CompilerDatabase migration
+   ├─ [x] A1.2   O(1) FileId lookup em DatabaseImpl (índice reverso FileId→SourceFile via FxHashMap)
    ├─ [ ] DX.5   Causal-Chain explain-rebuild (mostrar por que uma query recompilou através do Salsa dependency graph)
    └─ [ ] DX.6   LSP incremental nativo via Salsa (migrado da Fase 2 para após A1)
+[ ] PERF.5  Arc nos campos pesados de TypeCheckResult (pré-requisito para DX.6)
+   │  Motivação: cada clone de TypeCheckResult (em type_check e lower_amir) copia
+   │  60–430 KB de tabelas hash (SymbolTable + ResolvedNames + TypeInfo). Com Arc nos
+   │  campos, o clone vira 3 atomic adds (~15ns) independente do tamanho do projeto.
+   │  O ganho é marginal hoje (arquivos pequenos, Salsa cacheia), mas crítico no LSP
+   │  onde cada keystroke recompila dependentes e o custo se multiplica por arquivo.
+   │
+   │  Plano:
+   │  - TypeCheckResult.symbols:   SymbolTable   → Arc<SymbolTable>
+   │  - TypeCheckResult.resolved:  ResolvedNames → Arc<ResolvedNames>
+   │  - TypeCheckResult.type_info: TypeInfo      → Arc<TypeInfo>
+   │  - TypeCheckResult.diagnostics: Vec<Diagnostic> (manter por valor — pequeno)
+   │  - Atualizar TypeChecker::new e check_signatures_only para receber Arc
+   │  - Atualizar todos os call sites em passes.rs, lower_hir, lower_amir
+   │
+   │  Fazer ANTES de DX.6 para que o LSP não nasça com esse custo.
+   └─ Dependência: DX.6
 [ ] A2     Effect System (pure, readonly, noalloc, nothrow, nosuspend)
 [ ] A3     Modelo Async Semântico Colorless (coroutine splitting, zero heap stack-first, OSSA checks)
 [ ] A4     Memory Layout Optimization Engine (field reordering, niche tags, SOO)

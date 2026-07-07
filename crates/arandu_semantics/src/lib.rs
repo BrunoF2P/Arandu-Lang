@@ -13,14 +13,12 @@
 )]
 
 pub use arandu_middle::{
-    BitMatrix, BitSet, CodeReplacement, CodegenBackend, CompileSession, CompiledCode,
-    DenseRange, DiagCode, Diagnostic, DocCommentMap, Hint, JitError,
-    Label, NodeKey, ResolutionResult, ResolvedNames, ScopeId, Severity, Symbol, SymbolId,
-    SymbolKind, SymbolTable, amir, amir_validate, bitset, cfg, diagnostics, hir, index_vec,
-    layout, literal_pool, newtype_index, ops, resolved, symbol_table, types,
-    validate_amir_program,
+    BitMatrix, BitSet, CodeReplacement, CodegenBackend, CompileSession, CompiledCode, DenseRange,
+    DiagCode, Diagnostic, DocCommentMap, Hint, JitError, Label, NodeKey, ResolutionResult,
+    ResolvedNames, ScopeId, Severity, Symbol, SymbolId, SymbolKind, SymbolTable, amir,
+    amir_validate, bitset, cfg, diagnostics, hir, index_vec, layout, literal_pool, newtype_index,
+    ops, resolved, symbol_table, types, validate_amir_program,
 };
-
 
 pub use arandu_middle::ops::{BinaryOp, SetOp, UnaryOp};
 

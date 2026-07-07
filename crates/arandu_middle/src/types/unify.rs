@@ -156,12 +156,7 @@ pub fn unify(a: &ArType, b: &ArType, interner: &TypeInterner) -> bool {
                 })
         }
         (ArType::Result(ok_a, err_a), ArType::Result(ok_b, err_b)) => {
-            (*ok_a == *ok_b
-                || unify(
-                    &interner.resolve(*ok_a),
-                    &interner.resolve(*ok_b),
-                    interner,
-                ))
+            (*ok_a == *ok_b || unify(&interner.resolve(*ok_a), &interner.resolve(*ok_b), interner))
                 && (*err_a == *err_b
                     || unify(
                         &interner.resolve(*err_a),
