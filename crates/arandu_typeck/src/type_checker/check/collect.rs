@@ -198,18 +198,14 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &P
                 };
                 let name_key = crate::NodeKey::from(name_span);
                 if let Some(symbol_id) = checker.resolved.definitions.get(&name_key).copied() {
-                    let params = super::super::types::extract_generic_param_symbols(
+                    let method_params = super::super::types::extract_generic_param_symbols(
                         checker,
                         &func_decl.generic_params,
                     );
-                    if !params.is_empty() {
-                        checker
-                            .type_info
-                            .generic_params
-                            .insert(symbol_id, std::sync::Arc::new(params.clone()));
-                    }
                     // Generic struct receivers: `self: List` → `List<T>` using the
                     // *struct*'s type parameters — never the method's own params.
+                    let mut struct_params_for_mono: Option<std::sync::Arc<Vec<crate::SymbolId>>> =
+                        None;
                     if let arandu_parser::FuncName::Method { .. } = &func_decl.name
                         && let Some(first_param) = func_decl.params.first()
                         && first_param.name.as_str() == "self"
@@ -229,7 +225,21 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &P
                             }
                             let new_first_ty = ArType::Named(struct_id, new_args);
                             *first_ty_id = checker.intern(new_first_ty);
+                            struct_params_for_mono = Some(struct_params);
                         }
+                    }
+                    // Mono key params = struct type params (if method) ++ method type params.
+                    // Enables specializing `Box.get` when only the receiver carries `T`.
+                    let mut all_params = Vec::new();
+                    if let Some(sp) = struct_params_for_mono {
+                        all_params.extend(sp.iter().copied());
+                    }
+                    all_params.extend(method_params);
+                    if !all_params.is_empty() {
+                        checker
+                            .type_info
+                            .generic_params
+                            .insert(symbol_id, std::sync::Arc::new(all_params));
                     }
                     let ret_id = checker.intern(ret_ty);
                     let func_ty = ArType::Func(param_types, ret_id);

@@ -1215,8 +1215,8 @@ fn rewrite_expr_calls(
             if let Some(b) = trailing_block {
                 rewrite_block_calls(hir, *b, specialized, tc);
             }
-            // Rewrite Call(Generic(Path(F), tys), …) → Call(Path(F_spec), …)
-            try_rewrite_generic_call(hir, expr_id, *callee, specialized, tc);
+            // Rewrite Call(Generic(...), …) or Call(Field/Path template, …) → Path(spec).
+            try_rewrite_generic_call(hir, expr_id, *callee, *args, specialized, tc);
         }
         HirExprKind::StructLiteral { fields, .. } => {
             let vals: Vec<_> = hir
@@ -1288,52 +1288,66 @@ fn try_rewrite_generic_call(
     hir: &mut HirProgram,
     call_expr_id: HirExprId,
     callee_id: HirExprId,
+    args: arandu_middle::hir::IndexRange,
     specialized: &FxHashMap<InstantiationKey, SymbolId>,
     tc: &TypeCheckResult,
 ) {
-    let HirExprKind::Generic {
-        callee: inner_callee,
-        args: type_args,
-    } = hir.pool.expr(callee_id).kind.clone()
-    else {
-        return;
-    };
-    let symbol = match &hir.pool.expr(inner_callee).kind {
-        HirExprKind::Path { symbol } => *symbol,
-        HirExprKind::TypePath { member_symbol, .. } => *member_symbol,
-        HirExprKind::Field { base, field } | HirExprKind::SafeField { base, field } => {
-            let base_ty = tc.type_info.type_interner.resolve(hir.pool.expr(*base).ty);
-            let actual = match base_ty {
-                ArType::Nullable(inner) => tc.type_info.type_interner.resolve(inner),
-                other => other,
+    let key = match hir.pool.expr(callee_id).kind.clone() {
+        HirExprKind::Generic {
+            callee: inner_callee,
+            args: type_args,
+        } => {
+            let symbol = match &hir.pool.expr(inner_callee).kind {
+                HirExprKind::Path { symbol } => *symbol,
+                HirExprKind::TypePath { member_symbol, .. } => *member_symbol,
+                HirExprKind::Field { base, field } | HirExprKind::SafeField { base, field } => {
+                    let base_ty = tc.type_info.type_interner.resolve(hir.pool.expr(*base).ty);
+                    let actual = match base_ty {
+                        ArType::Nullable(inner) => tc.type_info.type_interner.resolve(inner),
+                        other => other,
+                    };
+                    let struct_id = match actual {
+                        ArType::Named(id, _) => Some(id),
+                        ArType::Ptr(inner) => match tc.type_info.type_interner.resolve(inner) {
+                            ArType::Named(id, _) => Some(id),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    let Some(struct_id) = struct_id else {
+                        return;
+                    };
+                    let struct_name = tc.symbols.get(struct_id).name.as_str();
+                    let Some(sym) = tc
+                        .symbols
+                        .lookup_associated_member(struct_name, field.as_str())
+                    else {
+                        return;
+                    };
+                    sym
+                }
+                _ => return,
             };
-            let struct_id = match actual {
-                ArType::Named(id, _) => Some(id),
-                ArType::Ptr(inner) => match tc.type_info.type_interner.resolve(inner) {
-                    ArType::Named(id, _) => Some(id),
-                    _ => None,
-                },
-                _ => None,
-            };
-            let Some(struct_id) = struct_id else {
-                return;
-            };
-            let struct_name = tc.symbols.get(struct_id).name.as_str();
-            let Some(sym) = tc
-                .symbols
-                .lookup_associated_member(struct_name, field.as_str())
-            else {
-                return;
-            };
-            sym
+            InstantiationKey { symbol, type_args }
         }
-        _ => return,
+        // Receiver-driven method mono or free-func inferred mono (no Generic node).
+        _ => {
+            let Some(key) = super::collect::instantiation_key_for_call(
+                hir,
+                tc,
+                callee_id,
+                args,
+                hir.pool.expr(call_expr_id).span,
+            ) else {
+                return;
+            };
+            key
+        }
     };
-    let key = InstantiationKey { symbol, type_args };
     let Some(&spec_sym) = specialized.get(&key) else {
         return;
     };
-    // Overwrite Generic → Path(specialized). Method calls already include receiver in args.
+    // Overwrite callee → Path(specialized). Method calls already include receiver in args.
     let call_ty = hir.pool.expr(call_expr_id).ty;
     let path_ty = tc.type_info.decl_type_id(spec_sym).unwrap_or(call_ty);
     let span = hir.pool.expr(callee_id).span;

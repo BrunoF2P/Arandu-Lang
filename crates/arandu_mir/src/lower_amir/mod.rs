@@ -16,6 +16,7 @@ use crate::{SymbolId, TypeCheckResult};
 use arandu_lexer::Span;
 use rustc_hash::{FxHashMap, FxHashSet};
 
+mod arg_modes;
 mod ctx;
 mod expr;
 mod func;
@@ -25,6 +26,7 @@ mod pattern;
 mod place;
 mod stmt;
 
+pub(crate) use arg_modes::CalleeArgModes;
 pub(crate) use func::lower_func;
 
 /// Lowers a [`HirProgram`] into an [`AmirProgram`].
@@ -44,6 +46,8 @@ pub fn lower_to_amir(
     let mut funcs = Vec::new();
     let mut diagnostics = Vec::new();
     let mut literal_pool = AmirLiteralPool::default();
+    // Single post-mono table: receiver Shared/Mut/Own → Copy vs Move at call sites.
+    let arg_modes = CalleeArgModes::from_hir(hir);
 
     for &decl_id in &hir.decls {
         if let HirDecl::Func(
@@ -57,7 +61,15 @@ pub fn lower_to_amir(
             if tc.type_info.generic_params.contains_key(&f.symbol) {
                 continue;
             }
-            match lower_func(f, *body, tc, hir, &mut literal_pool, &mut diagnostics) {
+            match lower_func(
+                f,
+                *body,
+                tc,
+                hir,
+                &arg_modes,
+                &mut literal_pool,
+                &mut diagnostics,
+            ) {
                 Ok(amir_f) => {
                     funcs.push(amir_f);
                 }
@@ -160,6 +172,8 @@ pub(crate) struct DeferFrame {
 pub(crate) struct LowerCtx<'a> {
     tc: &'a TypeCheckResult,
     hir: &'a HirProgram,
+    /// Shared/mut/own modes for every callable (incl. mono specializations).
+    arg_modes: &'a CalleeArgModes,
     func_return_type: crate::types::TypeId,
     locals: Vec<AmirLocal>,
     temps: Vec<AmirTemp>,

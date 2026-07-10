@@ -138,3 +138,104 @@ func main(): int {
         Err(diags) => panic!("lower_to_amir failed: {diags:?}"),
     }
 }
+
+#[test]
+fn generic_struct_method_monos() {
+    let src = r#"
+struct BoxG<T> {
+    v: T
+}
+
+func BoxG.get(shared self): T {
+    return self.v
+}
+
+func main(): int {
+    let b = BoxG { v: 42 }
+    return b.get()
+}
+"#;
+    let program = arandu_parser::parse(src).expect("parse");
+    let resolution = resolve_for_test(0, &program);
+    let mut tc = type_check(resolution, &program);
+    assert!(tc.diagnostics.is_empty(), "typeck: {:?}", tc.diagnostics);
+    let mut hir = lower_to_hir(&mut tc, &program).expect("hir");
+    let n = monomorphize_program(&mut tc, &mut hir).expect("mono");
+    assert!(n >= 1, "expected specialization, got {n}");
+    let amir = arandu_semantics::lower_to_amir(&tc, &hir).expect("amir");
+    assert!(
+        amir.funcs
+            .iter()
+            .any(|f| tc.symbols.get(f.symbol).name == "main"),
+        "need main"
+    );
+    assert!(
+        amir.funcs.iter().any(|f| {
+            let name = tc.symbols.get(f.symbol).name.as_str();
+            name.starts_with("_A$") && name.contains("get")
+        }),
+        "need mangled get specialization"
+    );
+}
+
+#[test]
+fn free_func_type_arg_inference_monos() {
+    let src = r#"
+func id<T>(x: T): T {
+    return x
+}
+
+func main(): int {
+    return id(41) + 1
+}
+"#;
+    let program = arandu_parser::parse(src).expect("parse");
+    let resolution = resolve_for_test(0, &program);
+    let mut tc = type_check(resolution, &program);
+    assert!(tc.diagnostics.is_empty(), "typeck: {:?}", tc.diagnostics);
+    let mut hir = lower_to_hir(&mut tc, &program).expect("hir");
+    let n = monomorphize_program(&mut tc, &mut hir).expect("mono");
+    assert!(n >= 1, "expected id specialization, got {n}");
+}
+
+#[test]
+fn generic_struct_dual_int_str_methods() {
+    let src = r#"
+struct BoxG<T> {
+    v: T
+}
+
+func BoxG.get(shared self): T {
+    return self.v
+}
+
+func main(): int {
+    let a = BoxG { v: 41 }
+    let b = BoxG { v: "hi" }
+    let s = b.get()
+    return a.get() + 1
+}
+"#;
+    let program = arandu_parser::parse(src).expect("parse");
+    let resolution = resolve_for_test(0, &program);
+    let mut tc = type_check(resolution, &program);
+    assert!(tc.diagnostics.is_empty(), "typeck: {:?}", tc.diagnostics);
+    let mut hir = lower_to_hir(&mut tc, &program).expect("hir");
+    let n = monomorphize_program(&mut tc, &mut hir).expect("mono");
+    assert!(n >= 2, "expected int+str specializations, got {n}");
+    let amir = arandu_semantics::lower_to_amir(&tc, &hir).expect("amir");
+    let mangled: Vec<_> = amir
+        .funcs
+        .iter()
+        .map(|f| tc.symbols.get(f.symbol).name.clone())
+        .filter(|n| n.starts_with("_A$"))
+        .collect();
+    assert!(
+        mangled.iter().any(|n| n.contains("int")),
+        "missing int mono: {mangled:?}"
+    );
+    assert!(
+        mangled.iter().any(|n| n.contains("str")),
+        "missing str mono: {mangled:?}"
+    );
+}

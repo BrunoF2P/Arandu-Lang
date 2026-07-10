@@ -250,6 +250,9 @@ pub struct SymbolTable {
     pub imported_symbols: FxHashMap<SymbolId, Symbol>,
     pub module_members: FxHashMap<SmolStr, FxHashMap<SmolStr, SymbolId>>,
     pub associated_members: FxHashMap<SmolStr, FxHashMap<SmolStr, SymbolId>>,
+    /// Type-parameter symbols for named types (`struct` / `enum` / …), in declaration order.
+    /// Used so methods on `Box<T>` can import `T` into their type scope.
+    pub type_params: FxHashMap<SymbolId, smallvec::SmallVec<[SymbolId; 4]>>,
     global_scope_id: ScopeId,
     pub builtin_alloc: Option<SymbolId>,
     pub builtin_free: Option<SymbolId>,
@@ -274,6 +277,7 @@ impl SymbolTable {
             imported_symbols: FxHashMap::default(),
             module_members: FxHashMap::default(),
             associated_members: FxHashMap::default(),
+            type_params: FxHashMap::default(),
             global_scope_id: ScopeId(0),
             builtin_alloc: None,
             builtin_free: None,
@@ -350,6 +354,43 @@ impl SymbolTable {
             for (member, old_symbol_id) in members {
                 entry.insert(member, map_symbol(old_symbol_id));
             }
+        }
+
+        // 5. Merge type-parameter tables
+        for (type_id, params) in other.type_params {
+            let mapped: smallvec::SmallVec<[SymbolId; 4]> =
+                params.into_iter().map(map_symbol).collect();
+            self.type_params.insert(map_symbol(type_id), mapped);
+        }
+    }
+
+    /// Record ordered type parameters for a named type (struct/enum/alias).
+    pub fn record_type_params(
+        &mut self,
+        type_id: SymbolId,
+        params: impl IntoIterator<Item = SymbolId>,
+    ) {
+        self.type_params
+            .insert(type_id, params.into_iter().collect());
+    }
+
+    /// Type parameters of a named type, if any.
+    #[must_use]
+    pub fn type_params_of(&self, type_id: SymbolId) -> &[SymbolId] {
+        self.type_params
+            .get(&type_id)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Bind an already-defined symbol into `scope` for name lookup (no new Symbol).
+    ///
+    /// Used to import a parent type's type parameters into a method scope so
+    /// `func Box.get(): T` can resolve `T`.
+    pub fn bind_existing(&mut self, scope: ScopeId, symbol: SymbolId) {
+        let name = self.get(symbol).name.clone();
+        if self.find_in_scope(scope, &name).is_none() {
+            self.scope_mut(scope).symbols.push(symbol);
         }
     }
 

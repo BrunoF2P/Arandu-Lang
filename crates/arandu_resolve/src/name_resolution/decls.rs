@@ -45,10 +45,13 @@ impl<'a> Resolver<'a> {
     pub(crate) fn resolve_func(&mut self, scope: ScopeId, decl: &FuncDecl) {
         self.resolve_attrs(scope, &decl.attrs);
         let func_scope = self.symbols.new_scope(scope);
-        self.define_generics(func_scope, &decl.generic_params);
+        // Methods on generic types must see the receiver type's type params
+        // (`func Box.get(): T` needs `T` from `struct Box<T>`).
         if let FuncName::Method { receiver, .. } = &decl.name {
+            self.import_receiver_type_params(func_scope, receiver);
             self.resolve_type_name(func_scope, receiver);
         }
+        self.define_generics(func_scope, &decl.generic_params);
         for where_item in &decl.where_clause {
             self.resolve_where_item(func_scope, where_item);
         }
@@ -61,10 +64,30 @@ impl<'a> Resolver<'a> {
         self.resolve_block_in_scope(func_scope, self.pool, &decl.body);
     }
 
+    /// Bind parent type parameters into a method scope (same `SymbolId`s as the type).
+    fn import_receiver_type_params(&mut self, func_scope: ScopeId, receiver: &TypeName) {
+        let Some(root) = receiver.path.first() else {
+            return;
+        };
+        let Some(type_id) = self.symbols.lookup_type(self.symbols.global_scope(), root) else {
+            return;
+        };
+        let params: smallvec::SmallVec<[crate::SymbolId; 4]> = self
+            .symbols
+            .type_params_of(type_id)
+            .iter()
+            .copied()
+            .collect();
+        for param in params {
+            self.symbols.bind_existing(func_scope, param);
+        }
+    }
+
     pub(crate) fn resolve_struct(&mut self, scope: ScopeId, decl: &StructDecl) {
         self.resolve_attrs(scope, &decl.attrs);
         let struct_scope = self.symbols.new_scope(scope);
         self.define_generics(struct_scope, &decl.generic_params);
+        self.record_named_type_params(decl.span, &decl.generic_params);
         for where_item in &decl.where_clause {
             self.resolve_where_item(struct_scope, where_item);
         }
@@ -94,6 +117,7 @@ impl<'a> Resolver<'a> {
         self.resolve_attrs(scope, &decl.attrs);
         let enum_scope = self.symbols.new_scope(scope);
         self.define_generics(enum_scope, &decl.generic_params);
+        self.record_named_type_params(decl.span, &decl.generic_params);
         for where_item in &decl.where_clause {
             self.resolve_where_item(enum_scope, where_item);
         }
@@ -135,6 +159,30 @@ impl<'a> Resolver<'a> {
             for constraint in &generic.constraints {
                 self.resolve_type_name(scope, constraint);
             }
+        }
+    }
+
+    /// After `define_generics`, attach the param symbols to the named type's SymbolId.
+    fn record_named_type_params(
+        &mut self,
+        type_span: arandu_lexer::Span,
+        generics: &[GenericParam],
+    ) {
+        let type_key = crate::NodeKey::from(type_span);
+        let Some(type_id) = self.resolved.definitions.get(&type_key).copied() else {
+            return;
+        };
+        let params: smallvec::SmallVec<[crate::SymbolId; 4]> = generics
+            .iter()
+            .filter_map(|gp| {
+                self.resolved
+                    .definitions
+                    .get(&crate::NodeKey::from(gp.span))
+                    .copied()
+            })
+            .collect();
+        if !params.is_empty() {
+            self.symbols.record_type_params(type_id, params);
         }
     }
 

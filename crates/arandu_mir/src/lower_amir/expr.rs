@@ -5,9 +5,7 @@ use crate::ops::BinaryOp;
 use crate::passes::type_checker::types::{ArType, Primitive, is_option_type, result_ok_err_id};
 use crate::{SymbolKind, SymbolTable};
 
-use crate::hir::{
-    HirDecl, HirExpr, HirExprId, HirExprKind, HirProgram, ReceiverKind, ResultCtorVariant,
-};
+use crate::hir::{HirExpr, HirExprId, HirExprKind, ResultCtorVariant};
 
 fn resolve_method_target(
     callee: &HirExpr,
@@ -52,28 +50,6 @@ fn resolve_method_target(
 
     let struct_name = symbols.get(struct_id).name.clone();
     symbols.lookup_associated_member(&struct_name, field)
-}
-
-/// `shared`/`mut` receivers borrow; only `own` (or non-receiver) args move.
-fn receiver_is_borrow(hir: &HirProgram, callee_symbol: crate::SymbolId) -> bool {
-    for &decl_id in &hir.decls {
-        if let HirDecl::Func(f) = hir.pool.decl(decl_id)
-            && f.symbol == callee_symbol
-        {
-            let params = hir.pool.params_list(f.params);
-            let Some(first) = params.first() else {
-                return false;
-            };
-            if !first.is_receiver {
-                return false;
-            }
-            return matches!(
-                first.receiver_kind,
-                Some(ReceiverKind::Shared) | Some(ReceiverKind::Mut) | None
-            );
-        }
-    }
-    false
 }
 
 impl LowerCtx<'_> {
@@ -810,15 +786,14 @@ impl LowerCtx<'_> {
                 let inject_receiver = method_target.is_some()
                     && !formal_params.is_empty()
                     && args_slice.len() < formal_params.len();
-                // `shared`/`mut self` borrow the receiver; do not move it at the call site.
-                let borrow_receiver =
-                    callee_symbol.is_some_and(|sym| receiver_is_borrow(self.hir, sym));
+                // Arg consume modes from the post-mono `CalleeArgModes` table (O(1)).
+                let callee_for_modes = callee_symbol.unwrap_or(crate::SymbolId::DUMMY);
                 if inject_receiver
                     && let HirExprKind::Field { base, .. } | HirExprKind::SafeField { base, .. } =
                         &callee_expr.kind
                 {
                     let base_op = self.lower_expr(*base, None, symbols)?;
-                    let base_op = if borrow_receiver {
+                    let base_op = if self.arg_modes.is_borrowed(callee_for_modes, 0) {
                         base_op
                     } else {
                         self.consume_operand(base_op)?
@@ -830,8 +805,7 @@ impl LowerCtx<'_> {
                     let arg_expr = self.hir.pool.expr(arg);
                     let arg_op = self.lower_expr(arg, None, symbols)?;
                     let formal_i = i + arg_param_offset;
-                    let is_borrowed_recv = borrow_receiver && formal_i == 0;
-                    let arg_op = if is_borrowed_recv {
+                    let arg_op = if self.arg_modes.is_borrowed(callee_for_modes, formal_i) {
                         arg_op
                     } else {
                         self.consume_operand(arg_op)?

@@ -8,6 +8,45 @@ use crate::type_checker::constraints::ConstraintOrigin;
 use crate::type_checker::types::{self, ArType, Primitive};
 use arandu_middle::types::type_interner::TypeId;
 
+/// Infer `struct` type arguments from field initializers.
+///
+/// For each type parameter `P`, finds a field whose template type is exactly
+/// `Named(P, [])` and uses the field value's type. Returns `None` if any
+/// parameter cannot be resolved to a non-error concrete type.
+fn infer_struct_type_args(
+    checker: &mut TypeChecker<'_>,
+    params: &[arandu_middle::SymbolId],
+    template_fields: &rustc_hash::FxHashMap<String, TypeId>,
+    field_ids: &[arandu_parser::ast_pool::FieldInitId],
+) -> Option<Vec<TypeId>> {
+    let mut out = Vec::with_capacity(params.len());
+    for &param in params {
+        let mut found: Option<TypeId> = None;
+        for &fid in field_ids {
+            let field = checker.pool.field_init(fid);
+            let Some(&tmpl_tid) = template_fields.get(field.name.as_str()) else {
+                continue;
+            };
+            let tmpl = checker.resolve(tmpl_tid);
+            let matches_param = matches!(
+                tmpl,
+                ArType::Named(id, ref args) if id == param && args.is_empty()
+            );
+            if !matches_param {
+                continue;
+            }
+            let val_tid = synth_expr(checker, field.value);
+            if checker.resolve(val_tid).is_error() {
+                continue;
+            }
+            found = Some(val_tid);
+            break;
+        }
+        out.push(found?);
+    }
+    Some(out)
+}
+
 /// Stricter than `unify` for array literals: int and float literals must not mix.
 pub(super) fn array_element_types_compatible(
     a: &ArType,
@@ -88,12 +127,28 @@ pub(super) fn synth_literal_expr(
             let ty_id = *ty;
             let fields_range = *fields;
             let struct_ty = checker.lower_type_expr(ty_id, checker.type_scope());
-            let struct_ty_id = checker.intern(struct_ty);
+            let mut struct_ty_id = checker.intern(struct_ty);
             let struct_info = match checker.resolve(struct_ty_id) {
                 ArType::Named(symbol_id, generic_args) => Some((symbol_id, generic_args.clone())),
                 _ => None,
             };
-            if let Some((symbol_id, generic_args)) = struct_info {
+            if let Some((symbol_id, mut generic_args)) = struct_info {
+                let field_ids = checker.pool.field_init_list(fields_range).to_vec();
+
+                // Infer missing type args from field values: `BoxG { v: 42 }` → `BoxG<int>`.
+                if generic_args.is_empty()
+                    && let Some(params) = checker.type_info.generic_params.get(&symbol_id).cloned()
+                    && !params.is_empty()
+                    && let Some(template_fields) =
+                        checker.type_info.struct_fields.get(&symbol_id).cloned()
+                    && let Some(inferred) =
+                        infer_struct_type_args(checker, &params, &template_fields, &field_ids)
+                {
+                    generic_args = inferred;
+                    let concrete = ArType::Named(symbol_id, generic_args.clone());
+                    struct_ty_id = checker.intern(concrete);
+                }
+
                 let resolved_args: Vec<ArType> = generic_args
                     .iter()
                     .map(|&arg_id| checker.resolve(arg_id))
@@ -113,7 +168,6 @@ pub(super) fn synth_literal_expr(
                                 })
                         },
                     );
-                let field_ids = checker.pool.field_init_list(fields_range).to_vec();
 
                 let mut seen_fields = SmallVec::<[(&str, Span); 8]>::new();
                 for &fid in &field_ids {

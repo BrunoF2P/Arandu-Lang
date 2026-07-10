@@ -231,6 +231,15 @@ impl InstantiationAnalyzer<'_> {
                 if let Some(block) = trailing_block {
                     self.visit_block(*block, current);
                 }
+                // Methods/funcs whose type args come only from the receiver or
+                // argument types (no `Generic` node): still need mono keys.
+                if let Some(key) =
+                    instantiation_key_for_call(self.hir, self.tc, *callee, *args, expr.span)
+                    && let Some(callee_node) = self.insert_key(key, expr.span)
+                    && let Some(caller_node) = current
+                {
+                    self.graph.add_edge(caller_node, callee_node);
+                }
             }
             HirExprKind::ResultCtor { value, .. } => self.visit_expr(*value, current),
             HirExprKind::StructLiteral { fields, .. } => {
@@ -313,24 +322,277 @@ fn generic_callee_symbol(
         HirExprKind::Path { symbol } => Some(*symbol),
         HirExprKind::TypePath { member_symbol, .. } => Some(*member_symbol),
         HirExprKind::Field { base, field } | HirExprKind::SafeField { base, field } => {
-            // `obj.m<T>` — resolve method via receiver type + associated members.
+            method_symbol_from_field(pool, tc, *base, field.as_str())
+        }
+        _ => None,
+    }
+}
+
+fn method_symbol_from_field(
+    pool: &arandu_middle::hir::HirPool,
+    tc: &TypeCheckResult,
+    base: HirExprId,
+    field: &str,
+) -> Option<SymbolId> {
+    let base_ty = tc.type_info.type_interner.resolve(pool.expr(base).ty);
+    let actual = match base_ty {
+        ArType::Nullable(inner) => tc.type_info.type_interner.resolve(inner),
+        other => other,
+    };
+    let struct_id = match actual {
+        ArType::Named(id, _) => Some(id),
+        ArType::Ptr(inner) => match tc.type_info.type_interner.resolve(inner) {
+            ArType::Named(id, _) => Some(id),
+            _ => None,
+        },
+        _ => None,
+    }?;
+    let struct_name = tc.symbols.get(struct_id).name.as_str();
+    tc.symbols.lookup_associated_member(struct_name, field)
+}
+
+/// Build an instantiation key for a call that is not wrapped in `Generic`.
+///
+/// Covers:
+/// - method calls `obj.m(...)` where type args come from the receiver (`BoxG<int>.get`)
+/// - free calls `f(x)` where type args are inferred from argument types (`id(41)`)
+///
+/// Returns `None` when the callee is not generic or type args cannot be recovered.
+pub(super) fn instantiation_key_for_call(
+    hir: &HirProgram,
+    tc: &TypeCheckResult,
+    callee_id: HirExprId,
+    args: arandu_middle::hir::IndexRange,
+    _span: arandu_lexer::Span,
+) -> Option<InstantiationKey> {
+    let pool = &hir.pool;
+    let callee = pool.expr(callee_id);
+
+    // Already handled by the Generic branch when the call is `f<T>(...)`.
+    if matches!(callee.kind, HirExprKind::Generic { .. }) {
+        return None;
+    }
+
+    let (symbol, type_args) = match &callee.kind {
+        HirExprKind::Field { base, field } | HirExprKind::SafeField { base, field } => {
+            let sym = method_symbol_from_field(pool, tc, *base, field.as_str())?;
+            let params = tc.type_info.generic_params.get(&sym)?;
+            if params.is_empty() {
+                return None;
+            }
+            // Type args from receiver `Named(S, [T1,…])` (struct params prefix).
             let base_ty = tc.type_info.type_interner.resolve(pool.expr(*base).ty);
             let actual = match base_ty {
                 ArType::Nullable(inner) => tc.type_info.type_interner.resolve(inner),
                 other => other,
             };
-            let struct_id = match actual {
-                ArType::Named(id, _) => Some(id),
+            let recv_args: Vec<_> = match actual {
+                ArType::Named(_, args) => args.clone(),
                 ArType::Ptr(inner) => match tc.type_info.type_interner.resolve(inner) {
-                    ArType::Named(id, _) => Some(id),
-                    _ => None,
+                    ArType::Named(_, args) => args.clone(),
+                    _ => Vec::new(),
                 },
-                _ => None,
-            }?;
-            let struct_name = tc.symbols.get(struct_id).name.as_str();
-            tc.symbols
-                .lookup_associated_member(struct_name, field.as_str())
+                _ => Vec::new(),
+            };
+            if recv_args.is_empty() {
+                return None;
+            }
+            // Method may have extra type params after the struct's; only receiver-driven
+            // specializations are collected here (method type args need `Generic`).
+            if recv_args.len() > params.len() {
+                return None;
+            }
+            // If method has more params than receiver args, require Generic for the rest.
+            if recv_args.len() != params.len() {
+                return None;
+            }
+            (sym, recv_args)
         }
-        _ => None,
+        HirExprKind::Path { symbol } => {
+            let params = tc.type_info.generic_params.get(symbol)?.clone();
+            if params.is_empty() {
+                return None;
+            }
+            let inferred = infer_free_func_type_args(tc, *symbol, &params, pool, args)?;
+            (*symbol, inferred)
+        }
+        HirExprKind::TypePath { member_symbol, .. } => {
+            let params = tc.type_info.generic_params.get(member_symbol)?.clone();
+            if params.is_empty() {
+                return None;
+            }
+            let inferred = infer_free_func_type_args(tc, *member_symbol, &params, pool, args)?;
+            (*member_symbol, inferred)
+        }
+        _ => return None,
+    };
+
+    // Skip identity template keys (T -> T).
+    if is_identity_args(tc, symbol, &type_args) {
+        return None;
+    }
+    Some(InstantiationKey { symbol, type_args })
+}
+
+fn is_identity_args(
+    tc: &TypeCheckResult,
+    symbol: SymbolId,
+    type_args: &[arandu_middle::types::TypeId],
+) -> bool {
+    let Some(params) = tc.type_info.generic_params.get(&symbol) else {
+        return false;
+    };
+    if params.len() != type_args.len() {
+        return false;
+    }
+    let interner = &tc.type_info.type_interner;
+    params.iter().zip(type_args.iter()).all(|(&param, &tid)| {
+        matches!(
+            interner.resolve(tid),
+            ArType::Named(id, ref args) if id == param && args.is_empty()
+        )
+    })
+}
+
+/// Infer free-function type arguments by matching formal param types against arg expr types.
+fn infer_free_func_type_args(
+    tc: &TypeCheckResult,
+    symbol: SymbolId,
+    params: &[SymbolId],
+    pool: &arandu_middle::hir::HirPool,
+    args: arandu_middle::hir::IndexRange,
+) -> Option<Vec<arandu_middle::types::TypeId>> {
+    let func_ty = tc.type_info.decl_type(symbol)?;
+    let ArType::Func(formals, _) = func_ty else {
+        return None;
+    };
+    let arg_ids = pool.expr_list(args);
+    if formals.len() != arg_ids.len() {
+        return None;
+    }
+
+    // param_sym → concrete TypeId
+    let mut bindings: rustc_hash::FxHashMap<SymbolId, arandu_middle::types::TypeId> =
+        rustc_hash::FxHashMap::default();
+    let interner = &tc.type_info.type_interner;
+
+    for (&formal_id, &arg_eid) in formals.iter().zip(arg_ids.iter()) {
+        let formal = interner.resolve(formal_id);
+        let arg_ty_id = pool.expr(arg_eid).ty;
+        collect_param_bindings(interner, params, &formal, arg_ty_id, &mut bindings);
+    }
+
+    let mut out = Vec::with_capacity(params.len());
+    for &p in params {
+        let tid = *bindings.get(&p)?;
+        if matches!(interner.resolve(tid), ArType::Error) {
+            return None;
+        }
+        out.push(tid);
+    }
+    Some(out)
+}
+
+fn collect_param_bindings(
+    interner: &arandu_middle::types::TypeInterner,
+    type_params: &[SymbolId],
+    formal: &ArType,
+    actual_id: arandu_middle::types::TypeId,
+    bindings: &mut rustc_hash::FxHashMap<SymbolId, arandu_middle::types::TypeId>,
+) {
+    match formal {
+        ArType::Named(id, args) if args.is_empty() && type_params.contains(id) => {
+            bindings.entry(*id).or_insert(actual_id);
+        }
+        ArType::Named(_, args) => {
+            let actual = interner.resolve(actual_id);
+            if let ArType::Named(_, act_args) = actual
+                && args.len() == act_args.len()
+            {
+                for (&fa, &aa) in args.iter().zip(act_args.iter()) {
+                    let fty = interner.resolve(fa);
+                    collect_param_bindings(interner, type_params, &fty, aa, bindings);
+                }
+            }
+        }
+        ArType::Ptr(inner)
+        | ArType::Nullable(inner)
+        | ArType::Slice(inner)
+        | ArType::Option(inner)
+        | ArType::Array(_, inner)
+        | ArType::Coroutine(inner)
+        | ArType::Range(inner) => {
+            let actual = interner.resolve(actual_id);
+            let act_inner = match actual {
+                ArType::Ptr(i)
+                | ArType::Nullable(i)
+                | ArType::Slice(i)
+                | ArType::Option(i)
+                | ArType::Array(_, i)
+                | ArType::Coroutine(i)
+                | ArType::Range(i) => Some(i),
+                _ => None,
+            };
+            if let Some(ai) = act_inner {
+                let fty = interner.resolve(*inner);
+                collect_param_bindings(interner, type_params, &fty, ai, bindings);
+            }
+        }
+        ArType::Result(ok, err) => {
+            if let ArType::Result(aok, aerr) = interner.resolve(actual_id) {
+                collect_param_bindings(
+                    interner,
+                    type_params,
+                    &interner.resolve(*ok),
+                    aok,
+                    bindings,
+                );
+                collect_param_bindings(
+                    interner,
+                    type_params,
+                    &interner.resolve(*err),
+                    aerr,
+                    bindings,
+                );
+            }
+        }
+        ArType::Func(fps, fret) => {
+            if let ArType::Func(aps, aret) = interner.resolve(actual_id)
+                && fps.len() == aps.len()
+            {
+                for (&fp, &ap) in fps.iter().zip(aps.iter()) {
+                    collect_param_bindings(
+                        interner,
+                        type_params,
+                        &interner.resolve(fp),
+                        ap,
+                        bindings,
+                    );
+                }
+                collect_param_bindings(
+                    interner,
+                    type_params,
+                    &interner.resolve(*fret),
+                    aret,
+                    bindings,
+                );
+            }
+        }
+        ArType::Tuple(items) => {
+            if let ArType::Tuple(acts) = interner.resolve(actual_id)
+                && items.len() == acts.len()
+            {
+                for (&fi, &ai) in items.iter().zip(acts.iter()) {
+                    collect_param_bindings(
+                        interner,
+                        type_params,
+                        &interner.resolve(fi),
+                        ai,
+                        bindings,
+                    );
+                }
+            }
+        }
+        _ => {}
     }
 }

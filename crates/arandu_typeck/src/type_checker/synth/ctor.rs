@@ -219,6 +219,17 @@ pub(crate) fn synth_method_call(
         (params, ret, Some(sym))
     };
 
+    // Instantiate template method type with the receiver's concrete type args
+    // so `BoxG<int>.get` sees `Func([BoxG<int>], int)` not `Func([BoxG<T>], T)`.
+    let (params, ret) = instantiate_method_sig_for_receiver(
+        checker,
+        struct_id,
+        actual_base_ty_id,
+        params,
+        ret,
+        method_sym_recorded,
+    );
+
     if params.is_empty() {
         return None;
     }
@@ -276,4 +287,62 @@ pub(crate) fn synth_method_call(
     checker.record_expr_type(callee, func_id);
 
     Some(ret)
+}
+
+/// Substitute struct type parameters in a method signature using the concrete
+/// receiver type (`BoxG<int>` → replace `T` with `int` in params/return).
+fn instantiate_method_sig_for_receiver(
+    checker: &mut TypeChecker<'_>,
+    struct_id: arandu_middle::SymbolId,
+    actual_base_ty_id: TypeId,
+    params: Vec<TypeId>,
+    ret: TypeId,
+    method_sym: Option<arandu_middle::SymbolId>,
+) -> (Vec<TypeId>, TypeId) {
+    use crate::type_checker::types::{build_subst, substitute_type};
+
+    let recv_args: Vec<ArType> = match checker.resolve(actual_base_ty_id) {
+        ArType::Named(id, args) if id == struct_id => {
+            args.iter().map(|&a| checker.resolve(a)).collect()
+        }
+        ArType::Ptr(inner) => match checker.resolve(inner) {
+            ArType::Named(id, args) if id == struct_id => {
+                args.iter().map(|&a| checker.resolve(a)).collect()
+            }
+            _ => return (params, ret),
+        },
+        _ => return (params, ret),
+    };
+    if recv_args.is_empty() {
+        return (params, ret);
+    }
+
+    // Prefer method-level generic_params prefix (struct params first), else struct params.
+    let param_syms: Vec<arandu_middle::SymbolId> = if let Some(sym) = method_sym
+        && let Some(gp) = checker.type_info.generic_params.get(&sym)
+    {
+        let n = recv_args.len().min(gp.len());
+        gp.iter().copied().take(n).collect()
+    } else if let Some(gp) = checker.type_info.generic_params.get(&struct_id) {
+        gp.iter().copied().take(recv_args.len()).collect()
+    } else {
+        return (params, ret);
+    };
+    if param_syms.len() != recv_args.len() {
+        return (params, ret);
+    }
+
+    let subst = build_subst(&param_syms, &recv_args);
+    let new_params: Vec<TypeId> = params
+        .iter()
+        .map(|&pid| {
+            let ty = checker.resolve(pid);
+            let inst = substitute_type(&ty, &subst, &checker.type_info.type_interner);
+            checker.intern(inst)
+        })
+        .collect();
+    let ret_ty = checker.resolve(ret);
+    let ret_inst = substitute_type(&ret_ty, &subst, &checker.type_info.type_interner);
+    let new_ret = checker.intern(ret_inst);
+    (new_params, new_ret)
 }

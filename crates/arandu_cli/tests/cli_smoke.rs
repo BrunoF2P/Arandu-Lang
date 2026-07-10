@@ -733,3 +733,196 @@ func main(): int {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+/// Generic struct + method monomorphization from receiver type args (`BoxG<int>.get`).
+#[test]
+fn run_generic_struct_method_exits_42() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_generic_struct_method.aru");
+    fs::write(
+        &file,
+        r#"struct BoxG<T> {
+    v: T
+}
+
+func BoxG.get(shared self): T {
+    return self.v
+}
+
+func main(): int {
+    let b = BoxG { v: 42 }
+    return b.get()
+}
+"#,
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+    let amir = run_cli(&["amir", &path]);
+    assert!(
+        amir.status.success(),
+        "amir dump failed: {}",
+        String::from_utf8_lossy(&amir.stderr)
+    );
+    let dump = String::from_utf8_lossy(&amir.stdout);
+    assert!(
+        dump.contains("_A$") && dump.contains("get") && dump.contains("int"),
+        "expected specialized BoxG.get monomorph, got:\n{dump}"
+    );
+    assert!(
+        !dump.contains("Func BoxG.get("),
+        "generic method template must not lower to AMIR:\n{dump}"
+    );
+    let output = run_cli(&["run", &path]);
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// Free-function type-arg inference: `id(41)` without explicit `<int>`.
+#[test]
+fn run_generic_id_inferred_exits_42() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_generic_id_inferred.aru");
+    fs::write(
+        &file,
+        r#"func id<T>(x: T): T {
+    return x
+}
+
+func main(): int {
+    return id(41) + 1
+}
+"#,
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+    let output = run_cli(&["run", &path]);
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// Dual struct monomorphs for `BoxG<int>` and `BoxG<str>` methods.
+#[test]
+fn run_generic_struct_method_str_and_int_coexist() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_generic_struct_dual.aru");
+    fs::write(
+        &file,
+        r#"struct BoxG<T> {
+    v: T
+}
+
+func BoxG.get(shared self): T {
+    return self.v
+}
+
+func main(): int {
+    let a = BoxG { v: 41 }
+    let b = BoxG { v: "hi" }
+    let s = b.get()
+    return a.get() + 1
+}
+"#,
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+    let amir = run_cli(&["amir", &path]);
+    assert!(
+        amir.status.success(),
+        "amir dump failed: {}",
+        String::from_utf8_lossy(&amir.stderr)
+    );
+    let dump = String::from_utf8_lossy(&amir.stdout);
+    assert!(
+        dump.contains("_A$")
+            && dump.contains("get")
+            && dump.contains("int")
+            && dump.contains("str"),
+        "expected int+str specialized get monomorphs, got:\n{dump}"
+    );
+    let output = run_cli(&["run", &path]);
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// `own self` moves the receiver; use-after-move is O001.
+#[test]
+fn check_own_self_use_after_move_fails() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_own_self_uam.aru");
+    fs::write(
+        &file,
+        r#"struct Holder {
+    v: int
+}
+
+func Holder.take(own self): int {
+    return self.v
+}
+
+func main(): int {
+    let b = Holder { v: 10 }
+    let n = b.take()
+    return n + b.v
+}
+"#,
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+    let output = run_cli(&["check", &path]);
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "expected O001 failure, stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let err = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        err.contains("O001") || err.contains("moved"),
+        "expected move diagnostic, got:\n{err}"
+    );
+}
+
+/// `shared self` does not move; receiver field usable after call.
+#[test]
+fn run_shared_self_reuse_exits_40() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_shared_self_reuse.aru");
+    fs::write(
+        &file,
+        r#"struct Holder {
+    v: int
+}
+
+func Holder.get(shared self): int {
+    return self.v
+}
+
+func main(): int {
+    let b = Holder { v: 20 }
+    let n = b.get()
+    return n + b.v
+}
+"#,
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+    let output = run_cli(&["run", &path]);
+    assert_eq!(
+        output.status.code(),
+        Some(40),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

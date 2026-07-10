@@ -1,6 +1,6 @@
 #![allow(clippy::collapsible_if)]
 
-use super::{LowerCtx, MoveState};
+use super::{CalleeArgModes, LowerCtx, MoveState};
 use crate::TypeCheckResult;
 use crate::amir::{AmirFunc, AmirOperand, AmirStmtTable, AmirTemp, AmirTerminator, TempId};
 use crate::diagnostics::Diagnostic;
@@ -13,12 +13,14 @@ pub(crate) fn lower_func(
     body: HirBlockId,
     tc: &TypeCheckResult,
     hir: &HirProgram,
+    arg_modes: &CalleeArgModes,
     literal_pool: &mut AmirLiteralPool,
     func_diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<AmirFunc, Diagnostic> {
     let mut ctx = LowerCtx {
         tc,
         hir,
+        arg_modes,
         func_return_type: f.return_type,
         locals: Vec::new(),
         temps: Vec::new(),
