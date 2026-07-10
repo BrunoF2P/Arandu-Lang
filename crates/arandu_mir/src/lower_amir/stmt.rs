@@ -20,6 +20,14 @@ impl LowerCtx<'_> {
             return Ok(());
         }
 
+        self.with_span(stmt.span, |this| this.lower_stmt_inner(stmt, symbols))
+    }
+
+    fn lower_stmt_inner(
+        &mut self,
+        stmt: &HirStmt,
+        symbols: &SymbolTable,
+    ) -> Result<(), Diagnostic> {
         match &stmt.kind {
             HirStmtKind::VarDecl { bindings, value } => {
                 let bindings_slice = self.hir.pool.bindings_list(*bindings);
@@ -395,6 +403,9 @@ impl LowerCtx<'_> {
             }
             HirStmtKind::Free(expr) => {
                 let op = self.lower_expr(*expr, None, symbols)?;
+                if let AmirOperand::Copy(t) | AmirOperand::Move(t) = op {
+                    self.note_temp_origin_use(t);
+                }
                 self.push_stmt(AmirStmt::Free(op));
             }
             HirStmtKind::Error => {}
@@ -456,16 +467,16 @@ impl LowerCtx<'_> {
     ) -> Result<(), Diagnostic> {
         if places.len() == 1 {
             let place = &places[0];
-            if let Some(&local_id) = self.symbol_map.get(&place.root_symbol) {
-                let projection_types: Vec<ArType> = place
-                    .suffixes
-                    .iter()
-                    .map(|s| match s {
-                        HirPlaceSuffix::Field { ty, .. } | HirPlaceSuffix::Index { ty, .. } => {
-                            ty.clone()
-                        }
-                    })
-                    .collect();
+            return self.with_span(place.span, |this| {
+                this.lower_set_one_place(place, op, val_op, symbols)
+            });
+        }
+        // Multi-place destructure: `a, b = pair` → field i of val_op into each place.
+        for (i, place) in places.iter().enumerate() {
+            self.with_span(place.span, |this| -> Result<(), Diagnostic> {
+                let Some(&local_id) = this.symbol_map.get(&place.root_symbol) else {
+                    return Ok(());
+                };
                 let projections: Result<Vec<_>, Diagnostic> = place
                     .suffixes
                     .iter()
@@ -476,127 +487,141 @@ impl LowerCtx<'_> {
                         } => Ok(AmirProjection::Field(*symbol)),
                         HirPlaceSuffix::Field { span, name, .. } => Err(crate::Diagnostic::error(
                             crate::DiagCode::L001LoweringUnresolvedSymbol,
-                            format!("cannot lower field projection `{name}`: symbol not resolved"),
+                            format!(
+                                "cannot lower field projection `{name}`: symbol not resolved"
+                            ),
                             *span,
                         )),
                         HirPlaceSuffix::Index { expr, .. } => Ok(AmirProjection::Index(
-                            self.lower_expr(*expr, None, symbols)?,
+                            this.lower_expr(*expr, None, symbols)?,
                         )),
                     })
                     .collect();
-                let amir_place = AmirPlace {
-                    local: local_id,
-                    projections: projections?.into(),
-                };
-
-                if amir_place.projections.is_empty() {
-                    let final_val = if *op == SetOp::Assign {
-                        val_op.clone()
-                    } else {
-                        let bin_op = match op {
-                            SetOp::AddAssign => BinaryOp::Add,
-                            SetOp::SubAssign => BinaryOp::Sub,
-                            SetOp::MulAssign => BinaryOp::Mul,
-                            SetOp::DivAssign => BinaryOp::Div,
-                            SetOp::ModAssign => BinaryOp::Mod,
-                            SetOp::BitAndAssign => BinaryOp::BitAnd,
-                            SetOp::BitOrAssign => BinaryOp::BitOr,
-                            SetOp::BitXorAssign => BinaryOp::BitXor,
-                            SetOp::ShiftLeftAssign => BinaryOp::ShiftLeft,
-                            SetOp::ShiftRightAssign => BinaryOp::ShiftRight,
-                            _ => BinaryOp::Add,
-                        };
-                        let old_val = self.read_variable_source(local_id);
-                        let temp = self.new_temp(place.ty.clone());
-                        self.emit_assign_temp(
-                            temp,
-                            AmirRvalue::Binary {
-                                op: bin_op,
-                                left: old_val,
-                                right: val_op.clone(),
-                            },
-                        );
-                        AmirOperand::Copy(temp)
-                    };
-                    let consumed = self.consume_operand(final_val)?;
-                    self.write_variable_source(local_id, consumed);
+                let projections = projections?;
+                let temp = this.new_temp(place.ty.clone());
+                this.emit_assign_temp(
+                    temp,
+                    AmirRvalue::FieldAccess {
+                        base: val_op.clone(),
+                        field: i,
+                    },
+                );
+                let val_to_store = this.consume_operand(AmirOperand::Copy(temp))?;
+                if projections.is_empty() {
+                    this.write_variable_source(local_id, val_to_store);
                 } else {
-                    if *op == SetOp::Assign {
-                        self.emit_store_place(amir_place, val_op.clone())?;
-                    } else {
-                        let bin_op = match op {
-                            SetOp::AddAssign => BinaryOp::Add,
-                            SetOp::SubAssign => BinaryOp::Sub,
-                            SetOp::MulAssign => BinaryOp::Mul,
-                            SetOp::DivAssign => BinaryOp::Div,
-                            SetOp::ModAssign => BinaryOp::Mod,
-                            SetOp::BitAndAssign => BinaryOp::BitAnd,
-                            SetOp::BitOrAssign => BinaryOp::BitOr,
-                            SetOp::BitXorAssign => BinaryOp::BitXor,
-                            SetOp::ShiftLeftAssign => BinaryOp::ShiftLeft,
-                            SetOp::ShiftRightAssign => BinaryOp::ShiftRight,
-                            _ => BinaryOp::Add,
-                        };
-                        let old_val =
-                            self.load_place(&amir_place, place.ty.clone(), &projection_types)?;
-                        let temp = self.new_temp(place.ty.clone());
-                        self.emit_assign_temp(
-                            temp,
-                            AmirRvalue::Binary {
-                                op: bin_op,
-                                left: old_val,
-                                right: val_op.clone(),
-                            },
-                        );
-                        self.emit_store_place(amir_place, AmirOperand::Copy(temp))?;
-                    }
-                }
-            }
-        } else {
-            for (i, place) in places.iter().enumerate() {
-                if let Some(&local_id) = self.symbol_map.get(&place.root_symbol) {
-                    let projections: Result<Vec<_>, Diagnostic> = place
-                        .suffixes
-                        .iter()
-                        .map(|s| match s {
-                            HirPlaceSuffix::Field {
-                                field_symbol: Some(symbol),
-                                ..
-                            } => Ok(AmirProjection::Field(*symbol)),
-                            HirPlaceSuffix::Field { span, name, .. } => {
-                                Err(crate::Diagnostic::error(
-                                    crate::DiagCode::L001LoweringUnresolvedSymbol,
-                                    format!("cannot lower field projection `{name}`: symbol not resolved"),
-                                    *span,
-                                ))
-                            }
-                            HirPlaceSuffix::Index { expr, .. } => {
-                                Ok(AmirProjection::Index(self.lower_expr(*expr, None, symbols)?))
-                            }
-                        })
-                        .collect();
-                    let projections = projections?;
-                    let temp_ty = place.ty.clone();
-                    let temp = self.new_temp(temp_ty);
-                    self.emit_assign_temp(
-                        temp,
-                        AmirRvalue::FieldAccess {
-                            base: val_op.clone(),
-                            field: i,
-                        },
-                    );
-                    let val_to_store = self.consume_operand(AmirOperand::Copy(temp))?;
-                    if projections.is_empty() {
-                        self.write_variable_source(local_id, val_to_store);
-                    } else {
-                        let amir_place = AmirPlace {
+                    this.emit_store_place(
+                        AmirPlace {
                             local: local_id,
                             projections: projections.into(),
-                        };
-                        self.emit_store_place(amir_place, val_to_store)?;
-                    }
+                        },
+                        val_to_store,
+                    )?;
                 }
-            }
+                Ok(())
+            })?;
+        }
+        Ok(())
+    }
+
+    fn lower_set_one_place(
+        &mut self,
+        place: &HirPlace,
+        op: &SetOp,
+        val_op: &AmirOperand,
+        symbols: &SymbolTable,
+    ) -> Result<(), Diagnostic> {
+        let Some(&local_id) = self.symbol_map.get(&place.root_symbol) else {
+            return Ok(());
+        };
+        let projection_types: Vec<ArType> = place
+            .suffixes
+            .iter()
+            .map(|s| match s {
+                HirPlaceSuffix::Field { ty, .. } | HirPlaceSuffix::Index { ty, .. } => ty.clone(),
+            })
+            .collect();
+        let projections: Result<Vec<_>, Diagnostic> = place
+            .suffixes
+            .iter()
+            .map(|s| match s {
+                HirPlaceSuffix::Field {
+                    field_symbol: Some(symbol),
+                    ..
+                } => Ok(AmirProjection::Field(*symbol)),
+                HirPlaceSuffix::Field { span, name, .. } => Err(crate::Diagnostic::error(
+                    crate::DiagCode::L001LoweringUnresolvedSymbol,
+                    format!("cannot lower field projection `{name}`: symbol not resolved"),
+                    *span,
+                )),
+                HirPlaceSuffix::Index { expr, .. } => Ok(AmirProjection::Index(
+                    self.lower_expr(*expr, None, symbols)?,
+                )),
+            })
+            .collect();
+        let amir_place = AmirPlace {
+            local: local_id,
+            projections: projections?.into(),
+        };
+
+        if amir_place.projections.is_empty() {
+            let final_val = if *op == SetOp::Assign {
+                val_op.clone()
+            } else {
+                let bin_op = match op {
+                    SetOp::AddAssign => BinaryOp::Add,
+                    SetOp::SubAssign => BinaryOp::Sub,
+                    SetOp::MulAssign => BinaryOp::Mul,
+                    SetOp::DivAssign => BinaryOp::Div,
+                    SetOp::ModAssign => BinaryOp::Mod,
+                    SetOp::BitAndAssign => BinaryOp::BitAnd,
+                    SetOp::BitOrAssign => BinaryOp::BitOr,
+                    SetOp::BitXorAssign => BinaryOp::BitXor,
+                    SetOp::ShiftLeftAssign => BinaryOp::ShiftLeft,
+                    SetOp::ShiftRightAssign => BinaryOp::ShiftRight,
+                    _ => BinaryOp::Add,
+                };
+                let old_val = self.read_variable_source(local_id);
+                let temp = self.new_temp(place.ty.clone());
+                self.emit_assign_temp(
+                    temp,
+                    AmirRvalue::Binary {
+                        op: bin_op,
+                        left: old_val,
+                        right: val_op.clone(),
+                    },
+                );
+                AmirOperand::Copy(temp)
+            };
+            let consumed = self.consume_operand(final_val)?;
+            self.write_variable_source(local_id, consumed);
+        } else if *op == SetOp::Assign {
+            self.emit_store_place(amir_place, val_op.clone())?;
+        } else {
+            let bin_op = match op {
+                SetOp::AddAssign => BinaryOp::Add,
+                SetOp::SubAssign => BinaryOp::Sub,
+                SetOp::MulAssign => BinaryOp::Mul,
+                SetOp::DivAssign => BinaryOp::Div,
+                SetOp::ModAssign => BinaryOp::Mod,
+                SetOp::BitAndAssign => BinaryOp::BitAnd,
+                SetOp::BitOrAssign => BinaryOp::BitOr,
+                SetOp::BitXorAssign => BinaryOp::BitXor,
+                SetOp::ShiftLeftAssign => BinaryOp::ShiftLeft,
+                SetOp::ShiftRightAssign => BinaryOp::ShiftRight,
+                _ => BinaryOp::Add,
+            };
+            let old_val = self.load_place(&amir_place, place.ty.clone(), &projection_types)?;
+            let temp = self.new_temp(place.ty.clone());
+            self.emit_assign_temp(
+                temp,
+                AmirRvalue::Binary {
+                    op: bin_op,
+                    left: old_val,
+                    right: val_op.clone(),
+                },
+            );
+            self.emit_store_place(amir_place, AmirOperand::Copy(temp))?;
         }
         Ok(())
     }

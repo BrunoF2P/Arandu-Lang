@@ -40,14 +40,14 @@ pub(crate) fn lower_func(
         current_span: arandu_lexer::Span::new(0, 0, 0),
     };
 
-    // Return register is TempId(0)
+    // Return register is TempId(0) — span is the function header.
     let ret_is_copy = f.return_type.is_copy_v01();
     let ret_ty = ctx.intern_ty(f.return_type.clone());
     ctx.temps.push(AmirTemp {
         id: TempId(0),
         ty: ret_ty,
         is_copy: ret_is_copy,
-        span: arandu_lexer::Span::new(0, 0, 0),
+        span: f.span,
     });
     ctx.temp_states.push(MoveState::Available);
     ctx.temp_origins.push(None);
@@ -61,7 +61,7 @@ pub(crate) fn lower_func(
     ctx.current_block = Some(bb0);
 
     for param in hir.pool.params_list(f.params) {
-        let p_temp = ctx.new_temp(param.ty.clone());
+        let p_temp = ctx.with_span(param.span, |this| this.new_temp(param.ty.clone()));
         if param.is_receiver {
             receiver = Some(crate::amir::AmirReceiver {
                 temp: p_temp,
@@ -76,6 +76,7 @@ pub(crate) fn lower_func(
         ctx.write_variable_source(p_local, AmirOperand::Copy(p_temp));
     }
 
+    ctx.current_span = f.span;
     ctx.lower_block(body, &tc.symbols)?;
 
     // If last block does not have a terminator, implicitly return

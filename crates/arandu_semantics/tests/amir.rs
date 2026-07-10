@@ -544,3 +544,47 @@ fn temp_ids_are_dense_and_positional() {
         }
     }
 }
+
+#[test]
+fn path_use_records_nonempty_use_span_on_local() {
+    // Full pipeline: reading `x` in `return x` must set AmirLocal.use_span.
+    let src = r#"
+func main(): int {
+    let x = 42
+    return x
+}
+"#;
+    let program = arandu_parser::parse(src).expect("parse");
+    let resolution = resolve_for_test(0, &program);
+    let mut tc = type_check(resolution, &program);
+    assert!(
+        tc.diagnostics
+            .iter()
+            .all(|d| d.severity != arandu_semantics::Severity::Error),
+        "typeck: {:?}",
+        tc.diagnostics
+    );
+    let hir = lower_to_hir(&mut tc, &program).expect("hir");
+    let amir = lower_to_amir(&tc, &hir).expect("amir");
+    let func = &amir.funcs[0];
+    let x = func
+        .locals
+        .iter()
+        .find(|l| {
+            l.symbol
+                .map(|s| tc.symbols.get(s).name.as_str() == "x")
+                .unwrap_or(false)
+        })
+        .expect("local x");
+    let use_sp = x.use_span.expect("use_span must be set after path load of x");
+    assert!(
+        use_sp.start != use_sp.end,
+        "use_span must be non-empty, got {use_sp:?}"
+    );
+    // Path `x` in return appears after the `let x = 42` declaration in the source.
+    assert!(
+        use_sp.start >= x.span.start,
+        "use_span {use_sp:?} should not start before decl {:?}",
+        x.span
+    );
+}

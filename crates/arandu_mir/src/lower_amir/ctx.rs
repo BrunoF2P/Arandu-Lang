@@ -30,15 +30,49 @@ impl LowerCtx<'_> {
         self.tc.type_info.type_interner.intern(ty)
     }
 
+    /// Non-empty source span (start != end). Empty spans are treated as unknown.
+    #[inline]
+    pub(crate) fn span_is_usable(span: Span) -> bool {
+        span.start != span.end
+    }
+
+    /// Best available span for diagnostics: prefer non-empty `preferred`, else `current_span`.
+    #[inline]
+    pub(crate) fn diag_span(&self, preferred: Span) -> Span {
+        if Self::span_is_usable(preferred) {
+            preferred
+        } else if Self::span_is_usable(self.current_span) {
+            self.current_span
+        } else {
+            Span::new(0, 0, 0)
+        }
+    }
+
+    /// Run `f` with `current_span` set to `span` when usable (restores previous after).
+    pub(crate) fn with_span<R>(&mut self, span: Span, f: impl FnOnce(&mut Self) -> R) -> R {
+        let prev = self.current_span;
+        if Self::span_is_usable(span) {
+            self.current_span = span;
+        }
+        let out = f(self);
+        self.current_span = prev;
+        out
+    }
+
     pub(crate) fn new_temp(&mut self, ty: ArType) -> TempId {
         let is_copy = ty.is_copy_v01();
         let ty = self.intern_ty(ty);
         let id = self.next_temp_id();
+        let span = if Self::span_is_usable(self.current_span) {
+            self.current_span
+        } else {
+            Span::new(0, 0, 0)
+        };
         self.temps.push(AmirTemp {
             id,
             ty,
             is_copy,
-            span: Span::new(0, 0, 0),
+            span,
         });
         self.temp_states.push(MoveState::Available);
         self.temp_origins.push(None);
@@ -254,6 +288,10 @@ impl LowerCtx<'_> {
         rhs: AmirOperand,
     ) -> Result<(), Diagnostic> {
         let rhs = self.consume_operand(rhs)?;
+        // Projection store reads the base local (field/index write).
+        if !lhs.projections.is_empty() {
+            self.note_local_use(lhs.local, self.current_span);
+        }
         if lhs.projections.is_empty() {
             self.local_states[lhs.local.as_usize()] = MoveState::Available;
             if let Some(block) = self.current_block {
@@ -268,11 +306,18 @@ impl LowerCtx<'_> {
     /// `use_span` over declaration span so O008/move point at the use site.
     pub(crate) fn note_local_use(&mut self, local: LocalId, span: Span) {
         // Skip empty spans so synthetic lowers don't wipe a real use site.
-        if span.start == span.end {
+        if !Self::span_is_usable(span) {
             return;
         }
         if let Some(loc) = self.locals.get_mut(local.as_usize()) {
             loc.use_span = Some(span);
+        }
+    }
+
+    /// Note use of the stack origin of a temp, if any (move / free / call args).
+    pub(crate) fn note_temp_origin_use(&mut self, temp: TempId) {
+        if let Some(Some(local)) = self.temp_origins.get(temp.as_usize()) {
+            self.note_local_use(*local, self.current_span);
         }
     }
 
@@ -299,6 +344,8 @@ impl LowerCtx<'_> {
         if self.temp_states[idx] == MoveState::Moved {
             return Err(self.move_diag(format!("use of moved temporary _{idx}")));
         }
+        // Consuming a non-copy temp is a use of its origin local at this site.
+        self.note_temp_origin_use(temp);
         if self.temps[idx].is_copy {
             return Ok(AmirOperand::Copy(temp));
         }
@@ -310,7 +357,7 @@ impl LowerCtx<'_> {
         Diagnostic::error(
             crate::DiagCode::U001FeatureNotSupported,
             message.into(),
-            Span::new(0, 0, 0),
+            self.diag_span(self.current_span),
         )
     }
 
@@ -376,11 +423,16 @@ impl LowerCtx<'_> {
         let is_copy = ty.is_copy_v01();
         let is_mem = super::is_memory_type(&ty);
         let temp = self.next_temp_id();
+        let span = if Self::span_is_usable(self.current_span) {
+            self.current_span
+        } else {
+            Span::new(0, 0, 0)
+        };
         self.temps.push(AmirTemp {
             id: temp,
             ty: ty_id,
             is_copy,
-            span: Span::new(0, 0, 0),
+            span,
         });
         self.temp_states.push(MoveState::Available);
         self.temp_origins.push(Some(local));

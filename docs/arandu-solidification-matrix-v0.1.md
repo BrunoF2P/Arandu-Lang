@@ -48,6 +48,8 @@ Still used widely as a thin wrapper over `resolve_imports_and_bodies` + `EmptyMo
 ## Solidification order
 
 1. **S1** — populate `use_span`; dual-resolve policy docs/tests — **done**  
+   - Extended: `with_span` on stmts/places, note origin on consume/free, temp spans from current_span, O* fallback use→decl→symbol  
+
 2. **S2** — fat-pointer `usize` len, no magic `+8`, layout W=4/8 — **done** (full i686 DataLayout later)  
 3. **S3** — host C↔Cranelift parity expand + C ArStr audit — **done** (parity quiet + control_flow + audit)  
 4. **S4** — AMIR `TypeId` on locals/temps/return + denormalized `is_copy`/`is_memory` — **done**  

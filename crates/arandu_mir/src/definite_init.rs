@@ -237,8 +237,28 @@ fn emit_uninit_diag(
         .map_or("<compiler local>".to_string(), |s| {
             symbols.get(s).name.to_string()
         });
-    // Prefer use site when recorded; otherwise declaration span (RC-SPAN-ZERO).
-    let span = local_info.use_span.unwrap_or(local_info.span);
+    // Prefer use site → declaration → symbol span (S-SPAN-THREAD).
+    let span = {
+        if let Some(u) = local_info.use_span {
+            if u.start != u.end {
+                u
+            } else if local_info.span.start != local_info.span.end {
+                local_info.span
+            } else {
+                local_info
+                    .symbol
+                    .map(|s| symbols.get(s).span)
+                    .unwrap_or(local_info.span)
+            }
+        } else if local_info.span.start != local_info.span.end {
+            local_info.span
+        } else {
+            local_info
+                .symbol
+                .map(|s| symbols.get(s).span)
+                .unwrap_or(local_info.span)
+        }
+    };
     diagnostics.push(
         Diagnostic::error(
             DiagCode::O008UseBeforeInit,

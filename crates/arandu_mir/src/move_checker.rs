@@ -453,13 +453,30 @@ fn move_diag(
     note: &str,
 ) -> Diagnostic {
     let name = local_name(local, func, symbols);
-    // Prefer use site when recorded; otherwise declaration span (RC-SPAN-ZERO).
-    let span = func
-        .locals
-        .get(local.as_usize())
-        .map(|l| l.use_span.unwrap_or(l.span))
-        .unwrap_or_else(|| Span::new(0, 0, 0));
+    let span = local_diag_span(local, func, symbols);
     Diagnostic::error(code, format!("{prefix} `{name}`"), span).with_note(note)
+}
+
+/// Prefer use site → declaration → symbol span → zero (S-SPAN-THREAD).
+fn local_diag_span(local: LocalId, func: &AmirFunc, symbols: &SymbolTable) -> Span {
+    let Some(l) = func.locals.get(local.as_usize()) else {
+        return Span::new(0, 0, 0);
+    };
+    if let Some(u) = l.use_span {
+        if u.start != u.end {
+            return u;
+        }
+    }
+    if l.span.start != l.span.end {
+        return l.span;
+    }
+    if let Some(sym) = l.symbol {
+        let s = symbols.get(sym).span;
+        if s.start != s.end {
+            return s;
+        }
+    }
+    Span::new(0, 0, 0)
 }
 
 fn local_name(local: LocalId, func: &AmirFunc, symbols: &SymbolTable) -> String {
@@ -594,6 +611,32 @@ mod tests {
                 .iter()
                 .any(|diag| diag.code == DiagCode::O005DoubleFree)
         );
+    }
+
+    #[test]
+    fn local_diag_span_prefers_use_over_decl() {
+        let symbols = SymbolTable::new(0);
+        let mut stmts = AmirStmtTable::new();
+        let func = make_func(
+            vec![block(
+                vec![AmirStmt::Destroy(place(0)), AmirStmt::Destroy(place(0))],
+                &mut stmts,
+            )],
+            {
+                let mut l = local(0, non_copy_ty());
+                l.span = Span::new(0, 1, 2);
+                l.use_span = Some(Span::new(0, 10, 15));
+                vec![l]
+            },
+            Vec::new(),
+            stmts,
+        );
+        let diags = check_moves(&func, &symbols);
+        let d = diags
+            .iter()
+            .find(|d| d.code == DiagCode::O005DoubleFree)
+            .expect("O005");
+        assert_eq!(d.span, Span::new(0, 10, 15));
     }
 
     #[test]
