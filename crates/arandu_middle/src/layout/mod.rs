@@ -127,6 +127,31 @@ impl LayoutEngine {
         }
     }
 
+    /// Fat pointer ABI for `str` and `[]T`: `{ ptr, len }` where `len` is
+    /// target `usize` (same width as a pointer). Offsets: ptr@0, len@W.
+    /// 64-bit → size 16; 32-bit → size 8 (matches `arandu-abi-layout`).
+    #[must_use]
+    pub fn fat_pointer_layout(&self) -> TypeLayout {
+        let w = self.pointer_width;
+        TypeLayout {
+            size: w * 2,
+            align: w,
+            field_offsets: vec![0, w],
+        }
+    }
+
+    /// Byte offset of the `len` field in a fat pointer (`str` / slice).
+    #[must_use]
+    pub fn fat_ptr_len_offset(&self) -> u64 {
+        self.pointer_width
+    }
+
+    /// Byte size of the `len` field (`usize` of the target).
+    #[must_use]
+    pub fn fat_ptr_len_size(&self) -> u64 {
+        self.pointer_width
+    }
+
     /// Compute the memory layout of any canonical `TypeId`.
     pub fn layout_of(
         &self,
@@ -191,23 +216,7 @@ impl LayoutEngine {
                         field_offsets: Vec::new(),
                     }
                 }
-                Primitive::Str => {
-                    // String (Fat Pointer): ptr: ptr[u8] (size pointer_width) + len: u64 (size 8)
-                    let ptr_align = self.pointer_width;
-                    let len_align = 8;
-                    let max_align = ptr_align.max(len_align);
-
-                    let ptr_offset = 0;
-                    let len_offset =
-                        (ptr_offset + self.pointer_width + len_align - 1) & !(len_align - 1);
-                    let total_size = (len_offset + 8 + max_align - 1) & !(max_align - 1);
-
-                    TypeLayout {
-                        size: total_size,
-                        align: max_align,
-                        field_offsets: vec![ptr_offset, len_offset],
-                    }
-                }
+                Primitive::Str => self.fat_pointer_layout(),
                 Primitive::Any => {
                     // Any is dynamic box pointer
                     TypeLayout {
@@ -244,23 +253,7 @@ impl LayoutEngine {
                 // If it is inner nullable, layout matches inner size/alignment (since ptr can be null)
                 self.layout_of(*inner, interner, provider)
             }
-            ArType::Slice(_) => {
-                // Slice (Fat Pointer): ptr + len
-                let ptr_align = self.pointer_width;
-                let len_align = 8;
-                let max_align = ptr_align.max(len_align);
-
-                let ptr_offset = 0;
-                let len_offset =
-                    (ptr_offset + self.pointer_width + len_align - 1) & !(len_align - 1);
-                let total_size = (len_offset + 8 + max_align - 1) & !(max_align - 1);
-
-                TypeLayout {
-                    size: total_size,
-                    align: max_align,
-                    field_offsets: vec![ptr_offset, len_offset],
-                }
-            }
+            ArType::Slice(_) => self.fat_pointer_layout(),
             ArType::Array(len, inner) => {
                 let inner_layout = self.layout_of(*inner, interner, provider);
                 TypeLayout {
@@ -600,9 +593,11 @@ mod tests {
 
         let str_id = interner.intern(ArType::Primitive(Primitive::Str));
         let layout_str = engine.layout_of(str_id, &interner, &provider);
-        assert_eq!(layout_str.size, 16); // ptr (4) aligned to len (8) align -> size 16
-        assert_eq!(layout_str.align, 8);
-        assert_eq!(layout_str.field_offsets, vec![0, 8]);
+        // Fat pointer: ptr(4) + len as usize(4) → size 8 on 32-bit.
+        assert_eq!(layout_str.size, 8);
+        assert_eq!(layout_str.align, 4);
+        assert_eq!(layout_str.field_offsets, vec![0, 4]);
+        assert_eq!(engine.fat_ptr_len_offset(), 4);
 
         let int_id = interner.intern(ArType::Primitive(Primitive::Int));
         let layout_int = engine.layout_of(int_id, &interner, &provider);
@@ -709,9 +704,10 @@ mod tests {
             let slice_ty = ArType::Slice(inner);
             let tid = interner.intern(slice_ty);
             let layout = engine.layout_of(tid, &interner, &provider);
-            // ptr(ptr_width) + len(u64=8), aligned to max(ptr_width, 8)
-            assert_eq!(layout.field_offsets, vec![0, ptr_width.max(8)]);
-            assert_eq!(layout.align, ptr_width.max(8));
+            // Fat pointer: ptr(W) + len as usize(W)
+            assert_eq!(layout.field_offsets, vec![0, ptr_width]);
+            assert_eq!(layout.size, ptr_width * 2);
+            assert_eq!(layout.align, ptr_width);
         }
     }
 
