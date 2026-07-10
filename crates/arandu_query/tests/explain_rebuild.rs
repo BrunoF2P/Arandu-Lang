@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use arandu_query::any_execute;
 use arandu_query::db::DatabaseImpl;
 use arandu_query::passes::type_check;

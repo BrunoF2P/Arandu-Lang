@@ -1,1 +1,6 @@
 too-many-lines-threshold = 500
+
+# Tests may use unwrap/expect; production code still lints them as warn
+# (promoted to error under CI `-D warnings`).
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true

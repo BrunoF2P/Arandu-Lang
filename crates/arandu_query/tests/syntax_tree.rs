@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! P5 — Salsa `syntax_tree` (CST-first) + incremental reparse_subtree via cache.
 
 use arandu_query::db::DatabaseImpl;

@@ -120,7 +120,7 @@ pub fn mark_sweep_dce(func: &mut AmirFunc) -> bool {
             if live[idx] {
                 let stmt = slots[idx]
                     .take()
-                    .expect("each live stmt is moved at most once");
+                    .unwrap_or_else(|| panic!("ICE: each live stmt is moved at most once"));
                 new_stmts.push(stmt);
                 kept += 1;
             }

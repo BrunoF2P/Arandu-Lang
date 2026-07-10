@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use arandu_lexer::lex_to_string;
 use arandu_test_support::{assert_golden_text, read_golden_text};
 

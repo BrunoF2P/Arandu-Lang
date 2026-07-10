@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Regression tests for root-cause frontend fixes (RC-SET, RC-GUARD, RC-NEST,
 //! RC-F64, RC-ERR-NIL). Each case previously required example workarounds.
 

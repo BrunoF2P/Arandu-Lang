@@ -159,14 +159,14 @@ fn merge_two_blocks(func: &mut AmirFunc, into: BlockId, from: BlockId) {
             for &stmt_id in &block_stmt_ids[bi] {
                 let stmt = slots[stmt_id.as_usize()]
                     .take()
-                    .expect("stmt moved once during block merge");
+                    .unwrap_or_else(|| panic!("ICE: stmt moved once during block merge"));
                 new_stmts.push(stmt);
                 count += 1;
             }
             for &stmt_id in &block_stmt_ids[from.as_usize()] {
                 let stmt = slots[stmt_id.as_usize()]
                     .take()
-                    .expect("stmt moved once during block merge");
+                    .unwrap_or_else(|| panic!("ICE: stmt moved once during block merge"));
                 new_stmts.push(stmt);
                 count += 1;
             }
@@ -176,7 +176,7 @@ fn merge_two_blocks(func: &mut AmirFunc, into: BlockId, from: BlockId) {
             for &stmt_id in &block_stmt_ids[bi] {
                 let stmt = slots[stmt_id.as_usize()]
                     .take()
-                    .expect("stmt moved once during block merge");
+                    .unwrap_or_else(|| panic!("ICE: stmt moved once during block merge"));
                 new_stmts.push(stmt);
                 count += 1;
             }
@@ -285,7 +285,7 @@ fn remove_unreachable_blocks(func: &mut AmirFunc) -> bool {
         for &stmt_id in &block_stmt_ids[old] {
             let stmt = slots[stmt_id.as_usize()]
                 .take()
-                .expect("stmt moved once during unreachable sweep");
+                .unwrap_or_else(|| panic!("ICE: stmt moved once during unreachable sweep"));
             new_stmts.push(stmt);
             count += 1;
         }

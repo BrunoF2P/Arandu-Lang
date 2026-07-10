@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Guardrails: Salsa boundary purity (no ad-hoc source I/O in analysis crates).
 
 use std::fs;

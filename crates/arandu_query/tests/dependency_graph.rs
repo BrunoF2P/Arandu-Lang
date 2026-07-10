@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use arandu_query::DatabaseImpl;
 
 #[test]

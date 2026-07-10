@@ -424,7 +424,7 @@ impl LowerCtx<'_> {
                 // Always materialize ToStr (even for `str` identity is a no-op in maybe_to_str).
                 let str_op = self.maybe_to_str(op, value_expr.ty)?;
                 if let Some(dest) = target {
-                    self.emit_assign_temp(dest, AmirRvalue::Use(str_op.clone()));
+                    self.emit_assign_temp(dest, AmirRvalue::Use(str_op));
                     Ok(AmirOperand::Copy(dest))
                 } else {
                     Ok(str_op)

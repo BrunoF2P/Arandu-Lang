@@ -18,9 +18,19 @@ macro_rules! define_id {
 
         impl $name {
             /// Creates a new ID from a 0-based index.
+            ///
+            /// # Panics
+            /// Panics if `index == usize::MAX` (would overflow the NonZero encoding).
             #[must_use]
             pub fn new(index: usize) -> Self {
-                Self(NonZeroU32::new(index as u32 + 1).unwrap())
+                let raw = u32::try_from(index)
+                    .ok()
+                    .and_then(|i| i.checked_add(1))
+                    .and_then(NonZeroU32::new);
+                match raw {
+                    Some(n) => Self(n),
+                    None => panic!("{}: dense id overflow at index {index}", stringify!($name)),
+                }
             }
 
             /// Returns the 0-based index of this ID.

@@ -1,4 +1,5 @@
 #![cfg(target_pointer_width = "64")]
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use arandu_backend_cranelift::CraneliftBackend;
 use arandu_middle::amir::AmirProgram;

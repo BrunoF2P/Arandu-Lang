@@ -68,7 +68,7 @@ impl FunctionTranslator<'_, '_> {
                     // Route through translate_rvalue so `T?` stores box scalars
                     // (`int? = 0` must not store a null pointer handle).
                     let val = self.translate_rvalue(
-                        &arandu_semantics::amir::AmirRvalue::Use(rhs.clone()),
+                        &arandu_semantics::amir::AmirRvalue::Use(*rhs),
                         expected_ty,
                         Some(&lhs_ar),
                     );

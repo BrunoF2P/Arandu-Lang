@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! F2 — type-aware semantic highlights.
 
 use arandu_query::db::DatabaseImpl;

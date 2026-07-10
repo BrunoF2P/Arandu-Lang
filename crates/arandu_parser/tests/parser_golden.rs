@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use std::fs;
 
 use arandu_parser::{ParseErrorCode, parse_to_string};

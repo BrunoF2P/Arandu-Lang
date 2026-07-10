@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! CST-first pipeline: syntax_tree owns structure; parse lowers from CST.
 
 use arandu_query::db::DatabaseImpl;

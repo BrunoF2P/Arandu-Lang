@@ -138,7 +138,16 @@ impl<'a> Parser<'a> {
         let alias = if self.eat_name("KW_AS") {
             self.expect_import_name()?
         } else {
-            path.last().unwrap().clone()
+            // `parse_module_path` always pushes at least one segment.
+            path.last().cloned().ok_or_else(|| {
+                ParseError::new(
+                    ParseErrorCode::ExpectedToken,
+                    "expected module path segment",
+                    self.current(),
+                    self.file_id,
+                    self.source,
+                )
+            })?
         };
         self.expect_optional_semicolon_after_module_path()?;
         let import = ImportDecl::ModuleAlias {

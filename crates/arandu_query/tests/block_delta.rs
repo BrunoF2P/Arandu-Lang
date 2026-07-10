@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! F4 — per-function / per-block dataflow early cutoff.
 //!
 //! Editing function B must not re-execute `block_dataflow_facts` for function A

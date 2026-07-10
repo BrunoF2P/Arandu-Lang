@@ -1,4 +1,5 @@
 #![cfg(target_pointer_width = "64")]
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use arandu_backend_cranelift::CraneliftBackend;
 use arandu_semantics::literal_pool::AmirLiteralEntry;
@@ -849,7 +850,7 @@ fn jit_returns_ice_on_invalid_literal_pool() {
     let (mut amir, symbols, type_info) = compile_src("func main(): int { return 42; }");
     for entry in &mut amir.literal_pool.entries {
         if let AmirLiteralEntry::Int(value) = entry {
-            *value = "not_an_int".to_string();
+            *value = "not_an_int".into();
             break;
         }
     }

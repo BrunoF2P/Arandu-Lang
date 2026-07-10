@@ -163,7 +163,8 @@ mod tests {
 
     #[test]
     fn parse_float_accepts_underscores() {
-        assert_eq!(parse_float_literal("3.14"), Some(3.14));
+        // Use a non-approx value so clippy::approx_constant does not fire.
+        assert_eq!(parse_float_literal("2.5"), Some(2.5));
         assert!((parse_float_literal("1_000.5").unwrap() - 1000.5).abs() < f64::EPSILON);
     }
 }

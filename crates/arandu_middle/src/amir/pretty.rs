@@ -331,7 +331,7 @@ impl AmirRvalue {
 }
 
 impl AmirOperand {
-    fn to_pretty_string(&self, symbols: &SymbolTable, pool: &AmirLiteralPool) -> String {
+    fn to_pretty_string(self, symbols: &SymbolTable, pool: &AmirLiteralPool) -> String {
         let mut out = String::new();
         self.pretty_print_to(&mut out, symbols, pool);
         out

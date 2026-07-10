@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! P1/P2 — fine-grained typeck early cutoff across sibling items.
 
 use arandu_query::db::DatabaseImpl;

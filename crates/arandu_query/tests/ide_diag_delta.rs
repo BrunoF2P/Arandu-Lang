@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! P3 — per-item IDE diagnostic memos early-cutoff on sibling edits.
 
 use arandu_query::dataflow::ITEM_IDE_DIAGS_EXEC_COUNT;

@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use arandu_lexer::Span;
 use arandu_semantics::{DiagCode, SymbolKind, SymbolTable, resolve_for_test};
 

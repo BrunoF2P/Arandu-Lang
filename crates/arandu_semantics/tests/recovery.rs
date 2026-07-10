@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use arandu_lexer::lex_recovering;
 use arandu_parser::parse_recovering;
 use arandu_semantics::resolve_for_test;

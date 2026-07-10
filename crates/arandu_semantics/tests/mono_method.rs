@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use arandu_middle::types::ArType;
 use arandu_semantics::{lower_to_hir, monomorphize_program, resolve_for_test, type_check};
 

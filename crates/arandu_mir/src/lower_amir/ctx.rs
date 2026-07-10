@@ -392,7 +392,7 @@ impl LowerCtx<'_> {
         if lhs.projections.is_empty() {
             self.local_states[lhs.local.as_usize()] = MoveState::Available;
             if let Some(block) = self.current_block {
-                self.write_variable(block, lhs.local, rhs.clone());
+                self.write_variable(block, lhs.local, rhs);
             }
         }
         self.push_stmt(AmirStmt::Store { lhs, rhs });
@@ -533,7 +533,7 @@ impl LowerCtx<'_> {
 
     pub(crate) fn read_variable(&mut self, block: BlockId, local: LocalId) -> AmirOperand {
         if let Some(val) = self.current_def.get(&(block, local)) {
-            val.clone()
+            *val
         } else {
             self.read_variable_recursive(block, local)
         }
@@ -657,7 +657,7 @@ impl LowerCtx<'_> {
                 op
             }
         };
-        self.write_variable(block, local, val.clone());
+        self.write_variable(block, local, val);
         val
     }
 
@@ -701,7 +701,7 @@ impl LowerCtx<'_> {
         {
             return AmirOperand::Copy(temp_id);
         }
-        self.redirected_temps.insert(temp_id, val.clone());
+        self.redirected_temps.insert(temp_id, val);
         val
     }
 
@@ -931,14 +931,14 @@ impl LowerCtx<'_> {
             }
             AmirStmt::Store { lhs, rhs } => {
                 Self::resolve_place(redirected_temps, lhs);
-                *rhs = Self::resolve_operand(redirected_temps, rhs.clone());
+                *rhs = Self::resolve_operand(redirected_temps, *rhs);
             }
             AmirStmt::Call {
                 lhs: _,
                 callee,
                 args,
             } => {
-                *callee = Self::resolve_operand(redirected_temps, callee.clone());
+                *callee = Self::resolve_operand(redirected_temps, *callee);
                 for arg in args {
                     *arg = Self::resolve_operand(redirected_temps, *arg);
                 }
@@ -970,7 +970,7 @@ impl LowerCtx<'_> {
                 if_false: _,
                 false_args,
             } => {
-                *condition = Self::resolve_operand(redirected_temps, condition.clone());
+                *condition = Self::resolve_operand(redirected_temps, *condition);
                 for arg in true_args {
                     *arg = Self::resolve_operand(redirected_temps, *arg);
                 }
@@ -983,7 +983,7 @@ impl LowerCtx<'_> {
                 targets,
                 otherwise,
             } => {
-                *discriminant = Self::resolve_operand(redirected_temps, discriminant.clone());
+                *discriminant = Self::resolve_operand(redirected_temps, *discriminant);
                 for (_, _, target_args) in targets {
                     for arg in target_args {
                         *arg = Self::resolve_operand(redirected_temps, *arg);
@@ -1059,7 +1059,7 @@ impl LowerCtx<'_> {
                 ..
             } => {
                 if *if_true == target_block {
-                    true_args.push(val.clone());
+                    true_args.push(val);
                 }
                 if *if_false == target_block {
                     false_args.push(val);
@@ -1070,7 +1070,7 @@ impl LowerCtx<'_> {
             } => {
                 for (_, dest, target_args) in targets {
                     if *dest == target_block {
-                        target_args.push(val.clone());
+                        target_args.push(val);
                     }
                 }
                 if otherwise.0 == target_block {
@@ -1090,7 +1090,7 @@ impl LowerCtx<'_> {
         let term = &mut self.blocks[pred.as_usize()].terminator;
         match term {
             AmirTerminator::Goto { target, args } if *target == target_block => {
-                *args = keep_indices.iter().map(|&i| args[i].clone()).collect();
+                *args = keep_indices.iter().map(|&i| args[i]).collect();
             }
             AmirTerminator::Branch {
                 if_true,
@@ -1100,13 +1100,10 @@ impl LowerCtx<'_> {
                 ..
             } => {
                 if *if_true == target_block {
-                    *true_args = keep_indices.iter().map(|&i| true_args[i].clone()).collect();
+                    *true_args = keep_indices.iter().map(|&i| true_args[i]).collect();
                 }
                 if *if_false == target_block {
-                    *false_args = keep_indices
-                        .iter()
-                        .map(|&i| false_args[i].clone())
-                        .collect();
+                    *false_args = keep_indices.iter().map(|&i| false_args[i]).collect();
                 }
             }
             AmirTerminator::SwitchInt {
@@ -1114,17 +1111,11 @@ impl LowerCtx<'_> {
             } => {
                 for (_, dest, target_args) in targets {
                     if *dest == target_block {
-                        *target_args = keep_indices
-                            .iter()
-                            .map(|&i| target_args[i].clone())
-                            .collect();
+                        *target_args = keep_indices.iter().map(|&i| target_args[i]).collect();
                     }
                 }
                 if otherwise.0 == target_block {
-                    otherwise.1 = keep_indices
-                        .iter()
-                        .map(|&i| otherwise.1[i].clone())
-                        .collect();
+                    otherwise.1 = keep_indices.iter().map(|&i| otherwise.1[i]).collect();
                 }
             }
             _ => {}

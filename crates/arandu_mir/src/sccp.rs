@@ -392,11 +392,11 @@ fn fold_unary(
         (UnaryOp::Not, AmirConstant::Bool(b)) => Some(AmirConstant::Bool(!b)),
         (UnaryOp::Neg, v) => {
             let val = const_as_i128(&v, pool)?;
-            Some(AmirConstant::Pool(pool.intern_int(&(-val).to_string())))
+            Some(AmirConstant::Pool(pool.intern_int((-val).to_string())))
         }
         (UnaryOp::BitNot, v) => {
             let val = const_as_i128(&v, pool)?;
-            Some(AmirConstant::Pool(pool.intern_int(&(!val).to_string())))
+            Some(AmirConstant::Pool(pool.intern_int((!val).to_string())))
         }
         (UnaryOp::Await, _) => None,
         _ => None,
@@ -460,7 +460,7 @@ fn const_as_i128(c: &AmirConstant, pool: &AmirLiteralPool) -> Option<i128> {
 }
 
 fn int_const(val: i128, pool: &mut AmirLiteralPool) -> AmirConstant {
-    AmirConstant::Pool(pool.intern_int(&val.to_string()))
+    AmirConstant::Pool(pool.intern_int(val.to_string()))
 }
 
 fn checked_int(val: Option<i128>, pool: &mut AmirLiteralPool) -> Option<AmirConstant> {

@@ -517,20 +517,21 @@ pub(crate) fn lower_expr_raw(
                 HirExprKind::StringInterp { parts: hir_parts }
             } else {
                 // Pure text — collapse segments into a single Str literal.
-                let combined = if hir_parts.len() == 1 {
-                    match hir_parts.pop().unwrap() {
-                        HirStringPart::Text(t) => t,
-                        HirStringPart::Expr(_) => unreachable!(),
-                    }
-                } else {
-                    let mut buf = String::new();
-                    for p in hir_parts {
-                        match p {
-                            HirStringPart::Text(t) => buf.push_str(&t),
-                            HirStringPart::Expr(_) => unreachable!(),
+                let combined = match hir_parts.as_slice() {
+                    [HirStringPart::Text(t)] => t.clone(),
+                    [HirStringPart::Expr(_)] => unreachable!("pure-text branch with Expr part"),
+                    _ => {
+                        let mut buf = String::new();
+                        for p in hir_parts {
+                            match p {
+                                HirStringPart::Text(t) => buf.push_str(&t),
+                                HirStringPart::Expr(_) => {
+                                    unreachable!("pure-text branch with Expr part")
+                                }
+                            }
                         }
+                        crate::SmolStr::new(buf)
                     }
-                    crate::SmolStr::new(buf)
                 };
                 HirExprKind::Str(combined)
             }
