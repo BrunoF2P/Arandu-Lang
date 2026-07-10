@@ -62,13 +62,20 @@ pub fn parse_tokens_to_program(source: &str, file_id: u32) -> ParseOutput {
         .into_iter()
         .map(|err| ParseError::from_lex(err, file_id))
         .collect();
-    parse_token_stream(lexed.source, lexed.tokens, file_id, lex_diags)
+    parse_token_stream(
+        lexed.source,
+        std::sync::Arc::new(lexed.tokens),
+        file_id,
+        lex_diags,
+    )
 }
 
 /// RD lower from an **already-lexed** token stream (no lex). Used by CST-first lower.
+///
+/// Takes [`std::sync::Arc`] so CST lower can share the token buffer without cloning.
 pub fn parse_token_stream(
     source: &str,
-    tokens: Vec<arandu_lexer::Token>,
+    tokens: std::sync::Arc<Vec<arandu_lexer::Token>>,
     file_id: u32,
     mut diagnostics: Vec<ParseError>,
 ) -> ParseOutput {
@@ -112,7 +119,8 @@ pub fn parse_to_string(source: &str) -> Result<String, ParseError> {
 
 pub struct Parser<'a> {
     source: &'a str,
-    tokens: Vec<Token>,
+    /// Shared token buffer (CST lower reuses the same `Arc` — no full-stream clone).
+    tokens: std::sync::Arc<Vec<Token>>,
     pos: usize,
     allow_block_calls: bool,
     docs: Vec<DocCommentAttachment>,
@@ -131,10 +139,10 @@ pub(super) struct PendingDoc {
 
 impl<'a> Parser<'a> {
     #[must_use]
-    pub fn new(source: &'a str, tokens: Vec<Token>) -> Self {
+    pub fn new(source: &'a str, tokens: impl Into<std::sync::Arc<Vec<Token>>>) -> Self {
         Self {
             source,
-            tokens,
+            tokens: tokens.into(),
             pos: 0,
             allow_block_calls: true,
             docs: Vec::new(),

@@ -106,28 +106,43 @@ impl StableHash for TypeCheckResult {
 
 impl StableHash for Result<Program, ParseError> {
     fn stable_hash(&self) -> blake3::Hash {
-        let mut h = Hasher::new();
         match self {
-            Ok(program) => {
-                h.update(&[1]);
-                h.update(&u32_le(program.span.file_id));
-                h.update(&u32_le(program.span.start));
-                h.update(&u32_le(program.span.end));
-                h.update(&u64_le(program.decls.len() as u64));
-                h.update(&u64_le(program.imports.len() as u64));
-                h.update(&u64_le(program.pool.exprs.len() as u64));
-                h.update(&u64_le(program.pool.stmts.len() as u64));
-            }
-            Err(err) => {
-                h.update(&[0]);
-                h.update(format!("{:?}", err.code).as_bytes());
-                h.update(&u32_le(err.span.start));
-                h.update(&u32_le(err.span.end));
-                h.update(err.message.as_bytes());
-            }
+            Ok(program) => hash_program(program),
+            Err(err) => hash_parse_err(err),
         }
-        finish(h)
     }
+}
+
+impl StableHash for Result<std::sync::Arc<Program>, ParseError> {
+    fn stable_hash(&self) -> blake3::Hash {
+        match self {
+            Ok(program) => hash_program(program),
+            Err(err) => hash_parse_err(err),
+        }
+    }
+}
+
+fn hash_program(program: &Program) -> blake3::Hash {
+    let mut h = Hasher::new();
+    h.update(&[1]);
+    h.update(&u32_le(program.span.file_id));
+    h.update(&u32_le(program.span.start));
+    h.update(&u32_le(program.span.end));
+    h.update(&u64_le(program.decls.len() as u64));
+    h.update(&u64_le(program.imports.len() as u64));
+    h.update(&u64_le(program.pool.exprs.len() as u64));
+    h.update(&u64_le(program.pool.stmts.len() as u64));
+    finish(h)
+}
+
+fn hash_parse_err(err: &ParseError) -> blake3::Hash {
+    let mut h = Hasher::new();
+    h.update(&[0]);
+    h.update(format!("{:?}", err.code).as_bytes());
+    h.update(&u32_le(err.span.start));
+    h.update(&u32_le(err.span.end));
+    h.update(err.message.as_bytes());
+    finish(h)
 }
 
 impl StableHash for AmirProgram {
@@ -278,12 +293,19 @@ impl StableHash for crate::passes::ItemSourceInput {
 impl StableHash for arandu_parser::SyntaxTree {
     fn stable_hash(&self) -> blake3::Hash {
         let mut h = Hasher::new();
-        h.update(b"SyntaxTree/v1");
+        h.update(b"SyntaxTree/v2");
         h.update(self.text().as_bytes());
-        let items = self.item_texts();
-        h.update(&u64_le(items.len() as u64));
-        for t in items {
-            h.update(t.as_bytes());
+        // Hash ranges (no per-item String alloc).
+        let ranges = self.item_ranges();
+        h.update(&u64_le(ranges.len() as u64));
+        let text = self.text();
+        let bytes = text.as_bytes();
+        for (s, e) in ranges {
+            h.update(&u32_le(s));
+            h.update(&u32_le(e));
+            let s = (s as usize).min(bytes.len());
+            let e = (e as usize).min(bytes.len()).max(s);
+            h.update(&bytes[s..e]);
         }
         finish(h)
     }

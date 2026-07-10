@@ -30,6 +30,22 @@ impl<T: StableHash> HashEq<T> {
             hash,
         }
     }
+
+    /// Wrap an existing `Arc` (compute hash once).
+    #[must_use]
+    pub fn from_arc(value: Arc<T>) -> Self {
+        let hash = value.stable_hash();
+        Self { value, hash }
+    }
+
+    /// Share the same `Arc` and hash without re-hashing or deep-cloning `T`.
+    #[must_use]
+    pub fn share(other: &Self) -> Self {
+        Self {
+            value: Arc::clone(&other.value),
+            hash: other.hash,
+        }
+    }
 }
 
 impl<T> PartialEq for HashEq<T> {
@@ -181,27 +197,28 @@ impl DatabaseImpl {
     }
 
     /// Build or reuse CST for `file_id`/`text` via [`arandu_parser::reparse_subtree`] when possible.
-    pub(crate) fn syntax_tree_for_text(
+    /// Shares the `Arc<str>` buffer with the tree (no extra text copy).
+    pub(crate) fn syntax_tree_for_arc(
         &self,
         file_id: FileId,
-        text: &str,
+        text: Arc<str>,
     ) -> arandu_parser::SyntaxTree {
         let mut cache = self.cst_cache.lock().unwrap();
         if let Some(prev) = cache.by_file.get(&file_id) {
-            if prev.text() == text {
+            if prev.text() == text.as_ref() {
                 return prev.clone();
             }
             if let Some((start, end, repl)) =
-                arandu_parser::single_contiguous_edit(prev.text(), text)
+                arandu_parser::single_contiguous_edit(prev.text(), text.as_ref())
             {
                 let (_src, tree) = arandu_parser::reparse_subtree(prev, start, end, &repl);
-                if tree.text() == text {
+                if tree.text() == text.as_ref() {
                     cache.by_file.insert(file_id, tree.clone());
                     return tree;
                 }
             }
         }
-        let tree = arandu_parser::parse_syntax(text);
+        let tree = arandu_parser::parse_syntax_arc(text);
         cache.by_file.insert(file_id, tree.clone());
         tree
     }
@@ -222,7 +239,7 @@ impl arandu_middle::db::SourceDatabase for DatabaseImpl {
     ) -> Result<Arc<arandu_parser::Program>, arandu_parser::ParseError> {
         let res = crate::passes::parse(self, file);
         match &*res {
-            Ok(p) => Ok(Arc::new(p.clone())),
+            Ok(p) => Ok(Arc::clone(p)),
             Err(e) => Err(e.clone()),
         }
     }

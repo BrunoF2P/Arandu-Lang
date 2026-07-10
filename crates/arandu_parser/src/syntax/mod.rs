@@ -11,8 +11,8 @@ mod kind;
 pub use build::{
     SyntaxTree, apply_text_edit, find_top_level_item_spans, for_each_highlight_token,
     highlight_spans, lower_syntax_to_program, lower_syntax_to_program_recovering, parse_syntax,
-    parse_syntax_with_item_spans, reparse_edit, reparse_subtree, single_contiguous_edit,
-    text_range,
+    parse_syntax_arc, parse_syntax_with_item_spans, reparse_edit, reparse_subtree,
+    single_contiguous_edit, splice_tokens_for_item_edit, text_range,
 };
 pub use kind::{AranduLanguage, SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};
 
@@ -114,12 +114,16 @@ mod tests {
 
     #[test]
     fn lower_reuses_cst_tokens_without_independent_relex_path() {
-        // Documented contract: lower goes through parse_token_stream(tree.tokens).
+        // Documented contract: lower shares Arc tokens (no full-stream Vec clone).
         let src = main_func_oneline();
         let tree = parse_syntax(src);
         let via_lower = lower_syntax_to_program(&tree, 0).expect("lower");
-        let via_stream =
-            crate::parse_token_stream(tree.text(), tree.tokens().to_vec(), 0, Vec::new());
+        let via_stream = crate::parse_token_stream(
+            tree.text(),
+            std::sync::Arc::clone(tree.tokens_arc()),
+            0,
+            Vec::new(),
+        );
         assert!(
             via_stream.diagnostics.is_empty(),
             "{:?}",

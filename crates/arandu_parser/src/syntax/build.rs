@@ -9,10 +9,12 @@ use std::sync::Arc;
 ///
 /// Tokens are produced by the **same** lex that builds the green tree. Lower
 /// reuses them so typeck never pays a second full-file lex.
+///
+/// Cheap to clone: all heavy fields are `Arc` (or green Arc).
 #[derive(Debug, Clone)]
 pub struct SyntaxTree {
     green: GreenNode,
-    text: String,
+    text: Arc<str>,
     tokens: Arc<Vec<Token>>,
     /// Lex diagnostics from the same pass that produced [`Self::tokens`].
     lex_diagnostics: Arc<Vec<arandu_lexer::LexError>>,
@@ -29,9 +31,21 @@ impl SyntaxTree {
         &self.text
     }
 
+    /// Shared text buffer (can alias `SourceFile.text`).
+    #[must_use]
+    pub fn text_arc(&self) -> &Arc<str> {
+        &self.text
+    }
+
     /// Cached token stream from CST construction (includes ASI-inserted `;`).
     #[must_use]
     pub fn tokens(&self) -> &[Token] {
+        &self.tokens
+    }
+
+    /// Shared token buffer for zero-copy lower.
+    #[must_use]
+    pub fn tokens_arc(&self) -> &Arc<Vec<Token>> {
         &self.tokens
     }
 
@@ -54,11 +68,24 @@ impl SyntaxTree {
             .collect()
     }
 
+    /// Borrow item text as a slice of the shared source (no allocation).
+    #[must_use]
+    pub fn item_text(&self, index: usize) -> Option<&str> {
+        let (s, e) = self.item_ranges().get(index).copied()?;
+        let s = s as usize;
+        let e = (e as usize).min(self.text.len()).max(s);
+        Some(&self.text[s..e])
+    }
+
     #[must_use]
     pub fn item_texts(&self) -> Vec<String> {
-        self.items()
+        self.item_ranges()
             .into_iter()
-            .map(|n| n.text().to_string())
+            .map(|(s, e)| {
+                let s = s as usize;
+                let e = (e as usize).min(self.text.len()).max(s);
+                self.text[s..e].to_string()
+            })
             .collect()
     }
 
@@ -93,9 +120,26 @@ fn tree_from_lexed(
     let green = build_green(source, &lexed.tokens, spans);
     SyntaxTree {
         green,
-        text: source.to_string(),
+        text: Arc::from(source),
         tokens: Arc::new(lexed.tokens),
         lex_diagnostics: Arc::new(lexed.diagnostics),
+    }
+}
+
+/// Build a tree from an existing shared text buffer (Salsa path shares `SourceFile.text`).
+#[must_use]
+pub fn parse_syntax_arc(text: Arc<str>) -> SyntaxTree {
+    let (green, tokens, diags) = {
+        let lexed = lex_recovering(text.as_ref());
+        let spans = find_top_level_item_spans(&lexed.tokens, text.len() as u32);
+        let green = build_green(text.as_ref(), &lexed.tokens, &spans);
+        (green, lexed.tokens, lexed.diagnostics)
+    };
+    SyntaxTree {
+        green,
+        text,
+        tokens: Arc::new(tokens),
+        lex_diagnostics: Arc::new(diags),
     }
 }
 
@@ -122,7 +166,7 @@ fn lex_diags_as_parse(tree: &SyntaxTree, file_id: u32) -> Vec<crate::ParseError>
         .collect()
 }
 
-/// Lower CST → AST using the **cached token stream** (no re-lex).
+/// Lower CST → AST using the **cached token stream** (no re-lex, no token `Vec` clone).
 ///
 /// Typeck/resolve consume [`crate::Program`]; the source of truth is the CST.
 pub fn lower_syntax_to_program(
@@ -131,7 +175,7 @@ pub fn lower_syntax_to_program(
 ) -> Result<crate::Program, crate::ParseError> {
     let output = crate::parser::parse_token_stream(
         tree.text(),
-        tree.tokens().to_vec(),
+        Arc::clone(tree.tokens_arc()),
         file_id,
         lex_diags_as_parse(tree, file_id),
     );
@@ -142,12 +186,12 @@ pub fn lower_syntax_to_program(
     }
 }
 
-/// Recovering lower (keeps parse diagnostics); no re-lex.
+/// Recovering lower (keeps parse diagnostics); no re-lex / no token clone.
 #[must_use]
 pub fn lower_syntax_to_program_recovering(tree: &SyntaxTree, file_id: u32) -> crate::ParseOutput {
     crate::parser::parse_token_stream(
         tree.text(),
-        tree.tokens().to_vec(),
+        Arc::clone(tree.tokens_arc()),
         file_id,
         lex_diags_as_parse(tree, file_id),
     )
@@ -441,6 +485,78 @@ pub fn reparse_edit(
     (new_source.clone(), parse_syntax(&new_source))
 }
 
+/// Splice tokens for an edited ITEM: re-lex only the item slice; shift siblings.
+///
+/// Tokens with `start` in `[old_s, old_e)` are replaced by `item_tokens` (already
+/// absolute-offset). Tokens with `start >= old_e` have `start += delta`.
+#[must_use]
+pub fn splice_tokens_for_item_edit(
+    old_tokens: &[Token],
+    old_s: u32,
+    old_e: u32,
+    delta: i64,
+    item_tokens: &[Token],
+) -> Vec<Token> {
+    let mut out = Vec::with_capacity(old_tokens.len() + item_tokens.len());
+    let mut i = 0;
+    // Prefix: tokens that start before the edited item.
+    while i < old_tokens.len() {
+        let t = old_tokens[i];
+        if matches!(t.kind, TokenKind::Eof) {
+            i += 1;
+            continue;
+        }
+        if t.start < old_s {
+            out.push(t);
+            i += 1;
+        } else {
+            break;
+        }
+    }
+    // Skip old tokens that start inside [old_s, old_e).
+    while i < old_tokens.len() {
+        let t = old_tokens[i];
+        if matches!(t.kind, TokenKind::Eof) {
+            i += 1;
+            continue;
+        }
+        if t.start < old_e {
+            i += 1;
+        } else {
+            break;
+        }
+    }
+    // Insert new item tokens (absolute starts).
+    for t in item_tokens {
+        if !matches!(t.kind, TokenKind::Eof) {
+            out.push(*t);
+        }
+    }
+    // Suffix: shift by delta.
+    while i < old_tokens.len() {
+        let mut t = old_tokens[i];
+        if !matches!(t.kind, TokenKind::Eof) {
+            let new_start = (t.start as i64) + delta;
+            if new_start >= 0 {
+                t.start = new_start as u32;
+                out.push(t);
+            }
+        }
+        i += 1;
+    }
+    let eof_start = out
+        .last()
+        .map(|t| t.start.saturating_add(t.len))
+        .unwrap_or(0);
+    out.push(Token {
+        start: eof_start,
+        len: 0,
+        kind: TokenKind::Eof,
+        inserted: false,
+    });
+    out
+}
+
 /// Reparse **only the ITEM subtree** covering the edit when the edit stays inside one item.
 ///
 /// Algorithm:
@@ -448,7 +564,7 @@ pub fn reparse_edit(
 /// 2. If the edit range is contained in a single [`SyntaxKind::ITEM`], re-lex **only that
 ///    ITEM's new text**, rebuild its green node, and [`GreenNodeData::replace_child`] on the
 ///    root so **sibling ITEM green nodes are reused** (cheap `Arc` clone).
-/// 3. Refresh the file token stream with one lex of the new source (for lower; green is incremental).
+/// 3. **Splice** the token stream (no full-file re-lex) for lower.
 /// 4. Otherwise fall back to full [`parse_syntax`].
 #[must_use]
 pub fn reparse_subtree(
@@ -522,13 +638,25 @@ pub fn reparse_subtree(
         return (new_source.clone(), parse_syntax(&new_source));
     }
 
-    // Token stream for lower: one full lex of the new source (green was local).
-    let file_lexed = lex_recovering(&new_source);
+    // Absolute-offset tokens for the new item region.
+    let item_diags = item_lexed.diagnostics;
+    let item_tokens: Vec<Token> = item_lexed
+        .tokens
+        .into_iter()
+        .filter(|t| !matches!(t.kind, TokenKind::Eof))
+        .map(|mut t| {
+            t.start = t.start.saturating_add(new_s);
+            t
+        })
+        .collect();
+    let spliced = splice_tokens_for_item_edit(old.tokens(), old_s, old_e, delta, &item_tokens);
+
     let tree = SyntaxTree {
         green: new_green,
-        text: new_source.clone(),
-        tokens: Arc::new(file_lexed.tokens),
-        lex_diagnostics: Arc::new(file_lexed.diagnostics),
+        text: Arc::from(new_source.as_str()),
+        tokens: Arc::new(spliced),
+        // Lex diags from item only; rare full-file issues need full reparse.
+        lex_diagnostics: Arc::new(item_diags),
     };
     // If a local edit introduced/removed top-level items (rare), prefer full structure.
     if tree.items().len() != old_items.len() {

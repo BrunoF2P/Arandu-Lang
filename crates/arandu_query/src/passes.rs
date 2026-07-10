@@ -102,16 +102,18 @@ pub fn syntax_tree(
 ) -> HashEq<arandu_parser::SyntaxTree> {
     let text = file.text(db);
     let file_id = file.file_id(db);
-    // Prefer DatabaseImpl incremental path; other Db impls full-parse.
+    // Prefer DatabaseImpl incremental path; share Arc text with SourceFile.
     let tree = if let Some(impl_db) = db.as_db_impl() {
-        impl_db.syntax_tree_for_text(file_id, &text)
+        impl_db.syntax_tree_for_arc(file_id, Arc::clone(&text))
     } else {
-        arandu_parser::parse_syntax(&text)
+        arandu_parser::parse_syntax_arc(Arc::clone(&text))
     };
     HashEq::new(tree)
 }
 
 /// AST for typeck/resolve: **lowered from CST tokens** (no re-lex, no dual parse).
+///
+/// Memo stores `Arc<Program>` so per-item queries share the same program without deep-clone.
 #[salsa::tracked]
 #[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
     query = "parse",
@@ -120,10 +122,10 @@ pub fn syntax_tree(
 pub fn parse(
     db: &dyn ArandCompilerDb,
     file: SourceFile,
-) -> HashEq<Result<Program, arandu_parser::ParseError>> {
+) -> HashEq<Result<Arc<Program>, arandu_parser::ParseError>> {
     let tree = syntax_tree(db, file);
     match arandu_parser::lower_syntax_to_program(&tree, file.file_id(db)) {
-        Ok(program) => HashEq::new(Ok(program)),
+        Ok(program) => HashEq::new(Ok(Arc::new(program))),
         Err(err) => HashEq::new(Err(err)),
     }
 }
@@ -264,9 +266,9 @@ pub fn item_source_input(
         });
     };
 
-    // Prefer CST ITEM text (P5) when available — same content as source slice,
-    // but establishes a dependency on `syntax_tree` for green reuse metrics.
+    // Depend on CST for incremental invalidation; fingerprint from text slices (no String alloc).
     let tree = syntax_tree(db, file);
+    let ranges = tree.item_ranges();
 
     let mut body_fp = blake3::hash(b"item-missing");
     for decl_id in &program.decls {
@@ -288,22 +290,28 @@ pub fn item_source_input(
         let span = arandu_semantics::item_source_span(decl);
         let start = (span.start as usize).min(text.len());
         let end = (span.end as usize).min(text.len()).max(start);
-        let slice = &text[start..end];
-        // Prefer CST ITEM text when it matches the AST span slice.
-        let item_text = tree
-            .item_texts()
-            .into_iter()
-            .find(|t| t == slice)
-            .unwrap_or_else(|| slice.to_string());
         let mut h = blake3::Hasher::new();
-        h.update(b"item_body_v3_cst");
-        h.update(item_text.as_bytes());
+        h.update(b"item_body_v4");
+        // Prefer covering CST ITEM range (zero-copy slice of shared text).
+        let mut used_cst = false;
+        for &(s, e) in &ranges {
+            if s <= span.start && span.end <= e {
+                let s = (s as usize).min(text.len());
+                let e = (e as usize).min(text.len()).max(s);
+                h.update(text[s..e].as_bytes());
+                used_cst = true;
+                break;
+            }
+        }
+        if !used_cst {
+            h.update(text[start..end].as_bytes());
+        }
         body_fp = h.finalize();
         break;
     }
 
     HashEq::new(ItemSourceInput {
-        program: Arc::new(program.clone()),
+        program: Arc::clone(program),
         item_sym,
         body_fp,
     })
@@ -418,8 +426,8 @@ pub fn type_check(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<TypeChec
         arandu_middle::db::DiagnosticsAccumulator(diag.clone()).accumulate(db);
     }
 
-    // Return same HashEq identity as view (clone Arc contents via HashEq).
-    HashEq::new((*res).clone())
+    // Share the same Arc as `file_typeck_view` — no deep clone of TypeCheckResult.
+    HashEq::share(&res)
 }
 
 #[salsa::tracked]
