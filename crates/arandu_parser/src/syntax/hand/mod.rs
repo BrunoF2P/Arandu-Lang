@@ -7,6 +7,7 @@
 mod cursor;
 mod decl;
 mod expr;
+mod pattern;
 mod stmt;
 mod ty;
 

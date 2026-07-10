@@ -88,18 +88,21 @@ fn parse_visibility(cur: &mut Cursor<'_>) -> Visibility {
 /// `@name` or `@name(...)` — args must be hand-lowerable exprs.
 fn parse_attributes(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<Vec<Attribute>> {
     let mut attrs = Vec::new();
-    while cur.eat(TokenKind::At) {
+    while cur.peek_kind() == Some(TokenKind::At) {
+        let at = cur.bump()?;
         let name_tok = cur.peek()?;
         if !matches!(name_tok.kind, TokenKind::IdentValue | TokenKind::IdentType) {
             return None;
         }
         let name = SmolStr::new(ctx.text(name_tok)?);
-        let start = name_tok.start.saturating_sub(1); // include @
+        let start = at.start;
         cur.bump();
         let mut args = Vec::new();
+        let mut end = name_tok.start + name_tok.len;
         if cur.eat(TokenKind::LParen) {
             if cur.peek_kind() != Some(TokenKind::RParen) {
                 loop {
+                    // Attr args may be bare string literals
                     args.push(try_hand_lower_expr(ctx, cur, 0)?);
                     if cur.eat(TokenKind::Comma) {
                         continue;
@@ -107,17 +110,9 @@ fn parse_attributes(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<Vec<A
                     break;
                 }
             }
-            cur.expect(TokenKind::RParen)?;
+            let close = cur.expect(TokenKind::RParen)?;
+            end = close.start + close.len;
         }
-        let end = cur
-            .peek_at(0)
-            .map(|t| t.start)
-            .unwrap_or(name_tok.start + name_tok.len);
-        let _ = end;
-        let end = args
-            .last()
-            .map(|e| ctx.pool.expr_span(*e).end)
-            .unwrap_or(name_tok.start + name_tok.len);
         attrs.push(Attribute {
             span: ctx.span(start, end),
             name,
@@ -567,12 +562,17 @@ pub fn try_hand_lower_import(
             });
         }
         let path = parse_dotted_ident_path(&ctx, &mut cur)?;
-        cur.expect(TokenKind::KwAs)?;
-        let alias_tok = cur
-            .peek()
-            .filter(|t| matches!(t.kind, TokenKind::IdentValue | TokenKind::IdentType))?;
-        let alias = SmolStr::new(ctx.text(alias_tok)?);
-        cur.bump();
+        let alias = if cur.eat(TokenKind::KwAs) {
+            let alias_tok = cur
+                .peek()
+                .filter(|t| matches!(t.kind, TokenKind::IdentValue | TokenKind::IdentType))?;
+            let alias = SmolStr::new(ctx.text(alias_tok)?);
+            cur.bump();
+            alias
+        } else {
+            // RD default: last path segment
+            path.last()?.clone()
+        };
         if !cur.at_end() {
             return None;
         }
@@ -1002,8 +1002,15 @@ fn try_hand_lower_extern(
     if !cur.at_end() {
         return None;
     }
+    // Span starts at `extern` (attrs attached separately), ends at last token.
+    let start = toks
+        .iter()
+        .find(|t| matches!(t.kind, TokenKind::KwExtern))
+        .map(|t| t.start)
+        .or_else(|| toks.first().map(|t| t.start))?;
+    let end = toks.last().map(|t| t.start + t.len)?;
     Some(ExternDecl {
-        span: token_bounds_span(file_id, &toks)?,
+        span: Span::new(file_id, start, end),
         attrs: attrs.into(),
         abi,
         members,

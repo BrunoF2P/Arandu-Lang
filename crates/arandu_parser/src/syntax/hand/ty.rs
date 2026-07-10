@@ -8,6 +8,19 @@ use smallvec::smallvec;
 use smol_str::SmolStr;
 
 #[must_use]
+pub fn can_start_type_kind(kind: TokenKind) -> bool {
+    matches!(
+        kind,
+        TokenKind::IdentType
+            | TokenKind::IdentValue
+            | TokenKind::KwPtr
+            | TokenKind::LBracket
+            | TokenKind::LParen
+            | TokenKind::KwFunc
+    ) || primitive_type_token_name(kind).is_some()
+}
+
+#[must_use]
 pub fn primitive_type_token_name(kind: TokenKind) -> Option<&'static str> {
     match kind {
         TokenKind::TypeInt => Some("int"),
@@ -59,17 +72,18 @@ pub fn parse_type(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<TypeExp
     let start_tok = cur.peek()?;
     let start = start_tok.start;
 
-    // ptr T / *T-style via KwPtr
+    // `ptr[T]` (RD requires brackets after KwPtr)
     if cur.eat(TokenKind::KwPtr) {
+        cur.expect(TokenKind::LBracket)?;
         let inner = parse_type(ctx, cur)?;
-        let end = ctx.pool.type_expr_span(inner).end;
+        let close = cur.expect(TokenKind::RBracket)?;
         return Some(ctx.pool.alloc_type_expr(TypeExpr::Pointer {
-            span: ctx.span(start, end),
+            span: ctx.span(start, close.start + close.len),
             inner,
         }));
     }
 
-    // []T slice
+    // `[]T` slice or `[N]T` array
     if cur.eat(TokenKind::LBracket) {
         if cur.eat(TokenKind::RBracket) {
             let inner = parse_type(ctx, cur)?;
@@ -79,7 +93,6 @@ pub fn parse_type(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<TypeExp
                 inner,
             }));
         }
-        // [N]T array — N is int literal
         let size_tok = cur.peek()?;
         if !matches!(
             size_tok.kind,
@@ -118,21 +131,53 @@ pub fn parse_type(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<TypeExp
         })
     } else {
         match t.kind {
-            TokenKind::IdentType | TokenKind::IdentValue => {
+            // Type name: IdentType alone, or (IdentValue .)+ IdentType/IdentValue.
+            // Do not swallow `Type.member` (e.g. Result.Ok) used in expressions.
+            TokenKind::IdentType => {
                 let text = ctx.text(t)?;
-                let mut path = smallvec![SmolStr::new(text)];
-                // dotted TypeName: a.b.C
-                while cur.eat(TokenKind::Dot) {
-                    let seg = cur.peek()?;
-                    if !matches!(seg.kind, TokenKind::IdentType | TokenKind::IdentValue) {
-                        return None;
-                    }
-                    path.push(SmolStr::new(ctx.text(seg)?));
-                    cur.bump();
-                }
-                let name_end = path_end_span(ctx, t, &path);
+                let path = smallvec![SmolStr::new(text)];
                 let name = TypeName {
-                    span: ctx.span(start, name_end),
+                    span: ctx.span(start, t.start + t.len),
+                    path,
+                };
+                let (args, args_end) = if cur.peek_kind() == Some(TokenKind::Lt) {
+                    parse_generic_type_args(ctx, cur)?
+                } else {
+                    (ctx.pool.alloc_type_expr_list(&[]), name.span.end)
+                };
+                ctx.pool.alloc_type_expr(TypeExpr::Named {
+                    span: ctx.span(start, args_end),
+                    name,
+                    args,
+                })
+            }
+            TokenKind::IdentValue => {
+                let mut path = smallvec![SmolStr::new(ctx.text(t)?)];
+                let mut end = t.start + t.len;
+                // module segments: value.value...
+                while cur.peek_kind() == Some(TokenKind::Dot)
+                    && cur
+                        .peek_at(1)
+                        .is_some_and(|n| matches!(n.kind, TokenKind::IdentValue))
+                {
+                    cur.bump(); // Dot
+                    let seg = cur.bump()?;
+                    path.push(SmolStr::new(ctx.text(seg)?));
+                    end = seg.start + seg.len;
+                }
+                // optional final Type after modules: a.b.Type
+                if cur.peek_kind() == Some(TokenKind::Dot)
+                    && cur
+                        .peek_at(1)
+                        .is_some_and(|n| matches!(n.kind, TokenKind::IdentType))
+                {
+                    cur.bump();
+                    let seg = cur.bump()?;
+                    path.push(SmolStr::new(ctx.text(seg)?));
+                    end = seg.start + seg.len;
+                }
+                let name = TypeName {
+                    span: ctx.span(start, end),
                     path,
                 };
                 let (args, args_end) = if cur.peek_kind() == Some(TokenKind::Lt) {
@@ -160,16 +205,6 @@ pub fn parse_type(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<TypeExp
     }
 
     Some(ty)
-}
-
-fn path_end_span(_ctx: &HandCtx<'_>, first: &Token, path: &smallvec::SmallVec<[SmolStr; 3]>) -> u32 {
-    // Best-effort: first token end if single segment.
-    if path.len() == 1 {
-        first.start + first.len
-    } else {
-        // without back-ref to last token, use first + rough
-        first.start + first.len
-    }
 }
 
 fn parse_generic_type_args(

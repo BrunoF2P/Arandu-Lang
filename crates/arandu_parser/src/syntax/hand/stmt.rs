@@ -1,15 +1,16 @@
-//! Hand-lower statements and blocks.
+//! Hand-lower statements and blocks (token-first, green-optional).
 
-use super::cursor::{Cursor, HandCtx, drop_trailing_semi, set_op_from_token, tokens_in_range};
-use super::expr::{try_hand_lower_expr, try_hand_lower_expr_all};
+use super::cursor::{Cursor, HandCtx, set_op_from_token, stmt_tokens};
+use super::expr::try_hand_lower_expr;
+use super::pattern::parse_pattern;
 use super::ty::parse_type;
 use crate::ast::ast_pool::{AstPool, StmtId};
-use crate::syntax::kind::{SyntaxKind, SyntaxNode};
+use crate::syntax::kind::SyntaxNode;
 use crate::{
     BindingItem, Block, Condition, DeferBody, ForBinding, ForClause, Place, PlaceSuffix, SimpleStmt,
     Stmt,
 };
-use arandu_lexer::{Span, Token, TokenKind};
+use arandu_lexer::{Token, TokenKind};
 use smol_str::SmolStr;
 
 /// Hand-lower a green `STMT` without RD.
@@ -22,167 +23,288 @@ pub fn try_hand_lower_stmt(
     file_id: u32,
 ) -> Option<StmtId> {
     let r = stmt.text_range();
-    let s = u32::from(r.start());
-    let e = u32::from(r.end());
-    let mut toks = tokens_in_range(tokens, s, e);
-    drop_trailing_semi(&mut toks);
+    let toks = stmt_tokens(tokens, u32::from(r.start()), u32::from(r.end()));
     if toks.is_empty() {
         return None;
     }
-    // Prefer token bounds (green STMT ranges often include leading whitespace).
-    let first = toks[0];
-    let last = toks[toks.len() - 1];
-    let span = Span::new(file_id, first.start, last.start + last.len);
     let mut ctx = HandCtx {
         pool,
         source,
         file_id,
     };
-    lower_stmt(&mut ctx, tokens, stmt, &toks, span)
+    let mut cur = Cursor::new(&toks);
+    let id = parse_stmt_tokens(&mut ctx, &mut cur)?;
+    cur.skip_semis();
+    if !cur.at_end() {
+        return None;
+    }
+    Some(id)
 }
 
-fn lower_stmt(
-    ctx: &mut HandCtx<'_>,
+/// Hand-lower every direct `STMT` of a green `BLOCK` (requires real `}`).
+#[must_use]
+pub fn try_hand_lower_block(
+    pool: &mut AstPool,
+    source: &str,
     tokens: &[Token],
-    stmt: &SyntaxNode,
-    toks: &[&Token],
-    span: Span,
-) -> Option<StmtId> {
-    match toks[0].kind {
-        TokenKind::KwBreak if toks.len() == 1 => Some(ctx.pool.alloc_stmt(Stmt::Break { span })),
-        TokenKind::KwContinue if toks.len() == 1 => {
-            Some(ctx.pool.alloc_stmt(Stmt::Continue { span }))
+    block: &SyntaxNode,
+    file_id: u32,
+) -> Option<Block> {
+    let r = block.text_range();
+    let bs = u32::from(r.start());
+    let be = u32::from(r.end());
+    let has_rbrace = tokens.iter().any(|t| {
+        matches!(t.kind, TokenKind::RBrace) && !t.inserted && t.start > bs && t.start <= be
+    });
+    if !has_rbrace {
+        return None;
+    }
+
+    // Token-first over the block span (robust to bad green STMT ranges).
+    let mut toks: Vec<&Token> = tokens
+        .iter()
+        .filter(|t| {
+            !matches!(t.kind, TokenKind::Eof)
+                && t.start >= bs
+                && t.start <= be
+                && !(t.kind == TokenKind::Semicolon && t.inserted)
+        })
+        .collect();
+    // Include closing RBrace if end-exclusive green range missed it.
+    if !toks.iter().any(|t| matches!(t.kind, TokenKind::RBrace))
+        && let Some(rb) = tokens
+            .iter()
+            .find(|t| matches!(t.kind, TokenKind::RBrace) && !t.inserted && t.start >= bs)
+    {
+        toks.push(rb);
+    }
+    let mut ctx = HandCtx {
+        pool,
+        source,
+        file_id,
+    };
+    let mut cur = Cursor::new(&toks);
+    parse_block_tokens(&mut ctx, &mut cur)
+}
+
+/// Parse `{ ... }` from the cursor (token-first).
+pub fn parse_block_tokens(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<Block> {
+    let open = cur.expect(TokenKind::LBrace)?;
+    let start = open.start;
+    let mut statements = Vec::new();
+    loop {
+        cur.skip_semis();
+        if cur.peek_kind() == Some(TokenKind::RBrace) {
+            let close = cur.bump()?;
+            return Some(Block {
+                span: ctx.span(start, close.start + close.len),
+                statements,
+            });
         }
-        TokenKind::KwReturn => {
-            let values = if toks.len() == 1 {
-                Vec::new()
-            } else {
-                // multi-return: a, b
-                let mut cur = Cursor::new(&toks[1..]);
-                let mut values = vec![try_hand_lower_expr(ctx, &mut cur, 0)?];
-                while cur.eat(TokenKind::Comma) {
-                    values.push(try_hand_lower_expr(ctx, &mut cur, 0)?);
-                }
-                if !cur.at_end() {
-                    return None;
-                }
-                values
-            };
-            Some(ctx.pool.alloc_stmt(Stmt::Return { span, values }))
+        if cur.at_end() {
+            return None;
         }
+        statements.push(parse_stmt_tokens(ctx, cur)?);
+    }
+}
+
+/// Parse one statement from the cursor (does not require trailing `;`).
+pub fn parse_stmt_tokens(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<StmtId> {
+    let start = cur.peek()?.start;
+    match cur.peek_kind()? {
+        TokenKind::KwBreak => {
+            let t = cur.bump()?;
+            let _ = cur.eat(TokenKind::Semicolon);
+            Some(ctx.pool.alloc_stmt(Stmt::Break {
+                span: ctx.token_span(t),
+            }))
+        }
+        TokenKind::KwContinue => {
+            let t = cur.bump()?;
+            let _ = cur.eat(TokenKind::Semicolon);
+            Some(ctx.pool.alloc_stmt(Stmt::Continue {
+                span: ctx.token_span(t),
+            }))
+        }
+        TokenKind::KwReturn => lower_return(ctx, cur, start),
         TokenKind::KwFree => {
-            let expr = try_hand_lower_expr_all(ctx.pool, ctx.source, &toks[1..], ctx.file_id)?;
-            Some(ctx.pool.alloc_stmt(Stmt::Free { span, expr }))
+            cur.bump();
+            let expr = try_hand_lower_expr(ctx, cur, 0)?;
+            let _ = cur.eat(TokenKind::Semicolon);
+            let end = ctx.pool.expr_span(expr).end;
+            Some(ctx.pool.alloc_stmt(Stmt::Free {
+                span: ctx.span(start, end),
+                expr,
+            }))
         }
-        TokenKind::KwLet => lower_let(ctx, toks, span),
-        TokenKind::KwIf => lower_if(ctx, tokens, stmt, toks, span),
-        TokenKind::KwWhile => lower_while(ctx, tokens, stmt, toks, span),
-        TokenKind::KwFor => lower_for(ctx, tokens, stmt, toks, span),
-        TokenKind::KwDefer => lower_defer(ctx, tokens, stmt, toks, span, false),
-        TokenKind::KwErrdefer => lower_defer(ctx, tokens, stmt, toks, span, true),
-        TokenKind::KwUnsafe => lower_unsafe(ctx, tokens, stmt, toks, span),
-        TokenKind::KwSet => lower_set(ctx, toks, span, true),
-        TokenKind::IdentValue | TokenKind::KwSelf => {
-            if let Some(id) = lower_set(ctx, toks, span, false) {
-                return Some(id);
-            }
-            let expr = try_hand_lower_expr_all(ctx.pool, ctx.source, toks, ctx.file_id)?;
-            // match expr as stmt
-            if matches!(ctx.pool.expr(expr), crate::ast::ast_pool::ExprKind::Match { .. }) {
+        TokenKind::KwLet => lower_let(ctx, cur, start),
+        TokenKind::KwIf => lower_if(ctx, cur, start),
+        TokenKind::KwWhile => lower_while(ctx, cur, start),
+        TokenKind::KwFor => lower_for(ctx, cur, start),
+        TokenKind::KwDefer => lower_defer(ctx, cur, start, false),
+        TokenKind::KwErrdefer => lower_defer(ctx, cur, start, true),
+        TokenKind::KwUnsafe => {
+            cur.bump();
+            let block = parse_block_tokens(ctx, cur)?;
+            let end = block.span.end;
+            Some(ctx.pool.alloc_stmt(Stmt::Unsafe {
+                span: ctx.span(start, end),
+                block,
+            }))
+        }
+        TokenKind::KwSet => lower_set(ctx, cur, start, true),
+        TokenKind::KwMatch => {
+            let expr = try_hand_lower_expr(ctx, cur, 0)?;
+            let _ = cur.eat(TokenKind::Semicolon);
+            let end = ctx.pool.expr_span(expr).end;
+            Some(ctx.pool.alloc_stmt(Stmt::Match {
+                span: ctx.span(start, end),
+                expr,
+            }))
+        }
+        TokenKind::IdentValue | TokenKind::KwSelf => lower_ident_stmt(ctx, cur, start),
+        _ => {
+            // expr stmt
+            let expr = try_hand_lower_expr(ctx, cur, 0)?;
+            let _ = cur.eat(TokenKind::Semicolon);
+            let end = ctx.pool.expr_span(expr).end;
+            let span = ctx.span(start, end);
+            if matches!(
+                ctx.pool.expr(expr),
+                crate::ast::ast_pool::ExprKind::Match { .. }
+            ) {
                 Some(ctx.pool.alloc_stmt(Stmt::Match { span, expr }))
             } else {
                 Some(ctx.pool.alloc_stmt(Stmt::Expr { span, expr }))
             }
         }
-        TokenKind::KwMatch => {
-            let expr = try_hand_lower_expr_all(ctx.pool, ctx.source, toks, ctx.file_id)?;
-            Some(ctx.pool.alloc_stmt(Stmt::Match { span, expr }))
-        }
-        TokenKind::Minus
-        | TokenKind::Bang
-        | TokenKind::Tilde
-        | TokenKind::KwAwait
-        | TokenKind::IntDec
-        | TokenKind::IntHex
-        | TokenKind::IntBin
-        | TokenKind::IntOct
-        | TokenKind::Float
-        | TokenKind::BoolTrue
-        | TokenKind::BoolFalse
-        | TokenKind::Char
-        | TokenKind::Nil
-        | TokenKind::LParen
-        | TokenKind::LBracket
-        | TokenKind::StringStart
-        | TokenKind::MultilineStringStart
-        | TokenKind::RawString
-        | TokenKind::IdentType => {
-            let expr = try_hand_lower_expr_all(ctx.pool, ctx.source, toks, ctx.file_id)?;
-            Some(ctx.pool.alloc_stmt(Stmt::Expr { span, expr }))
-        }
-        _ => None,
     }
 }
 
-fn lower_let(ctx: &mut HandCtx<'_>, toks: &[&Token], span: Span) -> Option<StmtId> {
-    let mut cur = Cursor::new(toks);
-    cur.expect(TokenKind::KwLet)?;
-    let bind_start_tok = cur.peek()?;
-    let mutable = cur.eat(TokenKind::KwMut);
-    let name_tok = cur.expect(TokenKind::IdentValue)?;
-    let name = SmolStr::new(ctx.text(name_tok)?);
-    let bind_start = if mutable {
-        bind_start_tok.start
-    } else {
-        name_tok.start
-    };
-    let ty = if cur.eat(TokenKind::Colon) {
-        Some(parse_type(ctx, &mut cur)?)
-    } else {
-        None
-    };
-    let bind_end = ty
-        .map(|id| ctx.pool.type_expr_span(id).end)
-        .unwrap_or(name_tok.start + name_tok.len);
-    cur.expect(TokenKind::Equal)?;
-    let value = try_hand_lower_expr(ctx, &mut cur, 0)?;
-    if !cur.at_end() {
-        return None;
+fn lower_ident_stmt(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>, start: u32) -> Option<StmtId> {
+    // Lookahead: place [, place]* set_op  → assignment (incl. multi-place).
+    let toks = cur.remaining();
+    let mut probe = Cursor::new(toks);
+    if parse_place(ctx, &mut probe).is_some() {
+        while probe.eat(TokenKind::Comma) {
+            if parse_place(ctx, &mut probe).is_none() {
+                break;
+            }
+        }
+        if probe
+            .peek_kind()
+            .is_some_and(|k| set_op_from_token(k).is_some())
+        {
+            return try_lower_set(ctx, cur, start, false);
+        }
     }
-    let binding = BindingItem {
-        span: ctx.span(bind_start, bind_end),
-        mutable,
-        name,
-        ty,
+    let expr = try_hand_lower_expr(ctx, cur, 0)?;
+    let _ = cur.eat(TokenKind::Semicolon);
+    let end = ctx.pool.expr_span(expr).end;
+    Some(ctx.pool.alloc_stmt(Stmt::Expr {
+        span: ctx.span(start, end),
+        expr,
+    }))
+}
+
+fn lower_return(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>, start: u32) -> Option<StmtId> {
+    cur.expect(TokenKind::KwReturn)?;
+    let values = if matches!(
+        cur.peek_kind(),
+        None | Some(TokenKind::Semicolon) | Some(TokenKind::RBrace)
+    ) {
+        Vec::new()
+    } else {
+        let mut values = vec![try_hand_lower_expr(ctx, cur, 0)?];
+        while cur.eat(TokenKind::Comma) {
+            values.push(try_hand_lower_expr(ctx, cur, 0)?);
+        }
+        values
     };
+    let _ = cur.eat(TokenKind::Semicolon);
+    let end = values
+        .last()
+        .map(|e| ctx.pool.expr_span(*e).end)
+        .unwrap_or(start + 6);
+    Some(ctx.pool.alloc_stmt(Stmt::Return {
+        span: ctx.span(start, end),
+        values,
+    }))
+}
+
+fn lower_let(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>, start: u32) -> Option<StmtId> {
+    cur.expect(TokenKind::KwLet)?;
+    let mut bindings = Vec::new();
+    loop {
+        let bind_start_tok = cur.peek()?;
+        let mutable = cur.eat(TokenKind::KwMut);
+        let name_tok = cur.expect(TokenKind::IdentValue)?;
+        let name = SmolStr::new(ctx.text(name_tok)?);
+        let bind_start = if mutable {
+            bind_start_tok.start
+        } else {
+            name_tok.start
+        };
+        let ty = if cur.eat(TokenKind::Colon) {
+            Some(parse_type(ctx, cur)?)
+        } else {
+            None
+        };
+        let bind_end = ty
+            .map(|id| ctx.pool.type_expr_span(id).end)
+            .unwrap_or(name_tok.start + name_tok.len);
+        bindings.push(BindingItem {
+            span: ctx.span(bind_start, bind_end),
+            mutable,
+            name,
+            ty,
+        });
+        if cur.eat(TokenKind::Comma) {
+            continue;
+        }
+        break;
+    }
+    cur.expect(TokenKind::Equal)?;
+    let value = try_hand_lower_expr(ctx, cur, 0)?;
+    let _ = cur.eat(TokenKind::Semicolon);
+    let end = ctx.pool.expr_span(value).end;
     Some(ctx.pool.alloc_stmt(Stmt::VarDecl {
-        span,
-        bindings: vec![binding],
+        span: ctx.span(start, end),
+        bindings,
         value,
     }))
 }
 
-fn lower_set(
+fn try_lower_set(
     ctx: &mut HandCtx<'_>,
-    toks: &[&Token],
-    span: Span,
+    cur: &mut Cursor<'_>,
+    start: u32,
     explicit_set: bool,
 ) -> Option<StmtId> {
-    let mut cur = Cursor::new(toks);
+    lower_set(ctx, cur, start, explicit_set)
+}
+
+fn lower_set(
+    ctx: &mut HandCtx<'_>,
+    cur: &mut Cursor<'_>,
+    start: u32,
+    explicit_set: bool,
+) -> Option<StmtId> {
     if explicit_set {
         cur.expect(TokenKind::KwSet)?;
     }
-    let place = parse_place(ctx, &mut cur)?;
-    let op_tok = cur.peek()?;
-    let op = set_op_from_token(op_tok.kind)?;
-    cur.bump();
-    let value = try_hand_lower_expr(ctx, &mut cur, 0)?;
-    if !cur.at_end() {
-        return None;
+    let mut places = vec![parse_place(ctx, cur)?];
+    while cur.eat(TokenKind::Comma) {
+        places.push(parse_place(ctx, cur)?);
     }
+    let op = set_op_from_token(cur.peek_kind()?)?;
+    cur.bump();
+    let value = try_hand_lower_expr(ctx, cur, 0)?;
+    let _ = cur.eat(TokenKind::Semicolon);
+    let end = ctx.pool.expr_span(value).end;
     Some(ctx.pool.alloc_stmt(Stmt::Set {
-        span,
-        places: vec![place],
+        span: ctx.span(start, end),
+        places,
         op,
         value,
     }))
@@ -234,211 +356,114 @@ fn parse_place(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<Place> {
     })
 }
 
-/// Hand-lower every direct `STMT` of a green `BLOCK` (requires real `}`).
-#[must_use]
-pub fn try_hand_lower_block(
-    pool: &mut AstPool,
-    source: &str,
-    tokens: &[Token],
-    block: &SyntaxNode,
-    file_id: u32,
-) -> Option<Block> {
-    let r = block.text_range();
-    let bs = u32::from(r.start());
-    let be = u32::from(r.end());
-    let has_rbrace = tokens.iter().any(|t| {
-        matches!(t.kind, TokenKind::RBrace) && !t.inserted && t.start > bs && t.start <= be
-    });
-    if !has_rbrace {
+fn parse_condition(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<Condition> {
+    let toks = cur.remaining();
+    let brace_at = find_depth0(toks, TokenKind::LBrace)?;
+    if brace_at == 0 {
         return None;
     }
-    let span = Span::new(file_id, bs, be);
-    let mut statements = Vec::new();
-    for child in block.children() {
-        if child.kind() != SyntaxKind::STMT {
-            continue;
-        }
-        statements.push(try_hand_lower_stmt(pool, source, tokens, &child, file_id)?);
+    let cond_toks = &toks[..brace_at];
+    for _ in 0..brace_at {
+        cur.bump();
     }
-    Some(Block { span, statements })
-}
-
-fn block_children(stmt: &SyntaxNode) -> Vec<SyntaxNode> {
-    stmt.children()
-        .filter(|n| n.kind() == SyntaxKind::BLOCK)
-        .collect()
-}
-
-fn lower_if(
-    ctx: &mut HandCtx<'_>,
-    tokens: &[Token],
-    stmt: &SyntaxNode,
-    toks: &[&Token],
-    span: Span,
-) -> Option<StmtId> {
-    let blocks = block_children(stmt);
-    if blocks.is_empty() {
-        return None;
-    }
-    let cond_end = toks
+    let span = ctx.span(
+        cond_toks[0].start,
+        cond_toks.last().map(|t| t.start + t.len).unwrap_or(cond_toks[0].start),
+    );
+    if let Some(is_idx) = cond_toks
         .iter()
-        .position(|t| matches!(t.kind, TokenKind::LBrace))
-        .filter(|&p| p > 0)?;
-    let cond_expr = try_hand_lower_expr_all(ctx.pool, ctx.source, &toks[1..cond_end], ctx.file_id)?;
-    let condition = Condition::Expr {
-        span: ctx.pool.expr_span(cond_expr),
-        expr: cond_expr,
-    };
-    let then_block = try_hand_lower_block(ctx.pool, ctx.source, tokens, &blocks[0], ctx.file_id)?;
-    let then_start = u32::from(blocks[0].text_range().start());
-    let then_end = u32::from(blocks[0].text_range().end());
-
-    let else_block = if let Some(else_idx) = toks.iter().position(|t| {
-        matches!(t.kind, TokenKind::KwElse) && t.start >= then_start
-    }) {
-        // else if → nested If stmt in synthetic block
-        if toks
-            .get(else_idx + 1)
-            .is_some_and(|t| matches!(t.kind, TokenKind::KwIf))
-        {
-            let rest = &toks[else_idx + 1..];
-            // Build nested if using remaining green blocks (all after first).
-            if blocks.len() < 2 {
-                return None;
-            }
-            let nested = lower_if_from_parts(ctx, tokens, &blocks[1..], rest, span)?;
-            let nested_id = ctx.pool.alloc_stmt(nested);
-            Some(Block {
-                span: ctx.span(
-                    toks[else_idx].start,
-                    u32::from(blocks.last()?.text_range().end()),
-                ),
-                statements: vec![nested_id],
-            })
-        } else if blocks.len() >= 2 {
-            Some(try_hand_lower_block(
-                ctx.pool,
-                ctx.source,
-                tokens,
-                &blocks[1],
-                ctx.file_id,
-            )?)
-        } else {
+        .position(|t| matches!(t.kind, TokenKind::KwIs))
+    {
+        let mut ecur = Cursor::new(&cond_toks[..is_idx]);
+        let expr = try_hand_lower_expr(ctx, &mut ecur, 0)?;
+        if !ecur.at_end() {
             return None;
+        }
+        let mut pcur = Cursor::new(&cond_toks[is_idx + 1..]);
+        let pattern = parse_pattern(ctx, &mut pcur)?;
+        if !pcur.at_end() {
+            return None;
+        }
+        return Some(Condition::Is {
+            span,
+            expr,
+            pattern,
+        });
+    }
+    let mut ccur = Cursor::new(cond_toks);
+    let expr = try_hand_lower_expr(ctx, &mut ccur, 0)?;
+    if !ccur.at_end() {
+        return None;
+    }
+    Some(Condition::Expr {
+        span: ctx.pool.expr_span(expr),
+        expr,
+    })
+}
+
+fn find_depth0(toks: &[&Token], target: TokenKind) -> Option<usize> {
+    let mut depth = 0i32;
+    for (i, t) in toks.iter().enumerate() {
+        if depth == 0 && t.kind == target {
+            return Some(i);
+        }
+        match t.kind {
+            TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => depth += 1,
+            TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => {
+                depth = depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn lower_if(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>, start: u32) -> Option<StmtId> {
+    cur.expect(TokenKind::KwIf)?;
+    let condition = parse_condition(ctx, cur)?;
+    let then_block = parse_block_tokens(ctx, cur)?;
+    let else_block = if cur.eat(TokenKind::KwElse) {
+        if cur.peek_kind() == Some(TokenKind::KwIf) {
+            let nested = lower_if(ctx, cur, cur.peek()?.start)?;
+            Some(Block {
+                span: ctx.pool.stmt_span(nested),
+                statements: vec![nested],
+            })
+        } else {
+            Some(parse_block_tokens(ctx, cur)?)
         }
     } else {
         None
     };
-    let _ = then_end;
+    let end = else_block
+        .as_ref()
+        .map(|b| b.span.end)
+        .unwrap_or(then_block.span.end);
     Some(ctx.pool.alloc_stmt(Stmt::If {
-        span,
+        span: ctx.span(start, end),
         condition,
         then_block,
         else_block,
     }))
 }
 
-/// Nested `if` starting at toks[0] == KwIf, blocks are its then/else blocks in order.
-fn lower_if_from_parts(
-    ctx: &mut HandCtx<'_>,
-    tokens: &[Token],
-    blocks: &[SyntaxNode],
-    toks: &[&Token],
-    outer_span: Span,
-) -> Option<Stmt> {
-    if blocks.is_empty() || toks.is_empty() || !matches!(toks[0].kind, TokenKind::KwIf) {
-        return None;
-    }
-    let cond_end = toks
-        .iter()
-        .position(|t| matches!(t.kind, TokenKind::LBrace))
-        .filter(|&p| p > 0)?;
-    let cond_expr = try_hand_lower_expr_all(ctx.pool, ctx.source, &toks[1..cond_end], ctx.file_id)?;
-    let condition = Condition::Expr {
-        span: ctx.pool.expr_span(cond_expr),
-        expr: cond_expr,
-    };
-    let then_block = try_hand_lower_block(ctx.pool, ctx.source, tokens, &blocks[0], ctx.file_id)?;
-    let then_start = u32::from(blocks[0].text_range().start());
-    let else_block = if let Some(else_idx) = toks.iter().position(|t| {
-        matches!(t.kind, TokenKind::KwElse) && t.start >= then_start
-    }) {
-        if toks
-            .get(else_idx + 1)
-            .is_some_and(|t| matches!(t.kind, TokenKind::KwIf))
-        {
-            if blocks.len() < 2 {
-                return None;
-            }
-            let nested = lower_if_from_parts(ctx, tokens, &blocks[1..], &toks[else_idx + 1..], outer_span)?;
-            let nested_id = ctx.pool.alloc_stmt(nested);
-            Some(Block {
-                span: outer_span,
-                statements: vec![nested_id],
-            })
-        } else if blocks.len() >= 2 {
-            Some(try_hand_lower_block(
-                ctx.pool,
-                ctx.source,
-                tokens,
-                &blocks[1],
-                ctx.file_id,
-            )?)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-    Some(Stmt::If {
-        span: outer_span,
-        condition,
-        then_block,
-        else_block,
-    })
-}
-
-fn lower_while(
-    ctx: &mut HandCtx<'_>,
-    tokens: &[Token],
-    stmt: &SyntaxNode,
-    toks: &[&Token],
-    span: Span,
-) -> Option<StmtId> {
-    let block = block_children(stmt).into_iter().next()?;
-    let cond_end = toks
-        .iter()
-        .position(|t| matches!(t.kind, TokenKind::LBrace))
-        .filter(|&p| p > 0)?;
-    let cond_expr = try_hand_lower_expr_all(ctx.pool, ctx.source, &toks[1..cond_end], ctx.file_id)?;
-    let condition = Condition::Expr {
-        span: ctx.pool.expr_span(cond_expr),
-        expr: cond_expr,
-    };
-    let body = try_hand_lower_block(ctx.pool, ctx.source, tokens, &block, ctx.file_id)?;
+fn lower_while(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>, start: u32) -> Option<StmtId> {
+    cur.expect(TokenKind::KwWhile)?;
+    let condition = parse_condition(ctx, cur)?;
+    let body = parse_block_tokens(ctx, cur)?;
+    let end = body.span.end;
     Some(ctx.pool.alloc_stmt(Stmt::While {
-        span,
+        span: ctx.span(start, end),
         condition,
         body,
     }))
 }
 
-fn lower_for(
-    ctx: &mut HandCtx<'_>,
-    tokens: &[Token],
-    stmt: &SyntaxNode,
-    toks: &[&Token],
-    span: Span,
-) -> Option<StmtId> {
-    let block = block_children(stmt).into_iter().next()?;
-    // for [mut] x [, y] in expr { body }
-    let mut cur = Cursor::new(toks);
+fn lower_for(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>, start: u32) -> Option<StmtId> {
     cur.expect(TokenKind::KwFor)?;
-    // detect for-in vs c-style: look for `in` before first `{`
-    let brace = toks
-        .iter()
-        .position(|t| matches!(t.kind, TokenKind::LBrace))?;
-    let head = &toks[1..brace];
+    let toks = cur.remaining();
+    let brace_at = find_depth0(toks, TokenKind::LBrace)?;
+    let head = &toks[..brace_at];
     let has_in = head.iter().any(|t| matches!(t.kind, TokenKind::KwIn));
     let clause = if has_in {
         let mut h = Cursor::new(head);
@@ -463,70 +488,74 @@ fn lower_for(
             return None;
         }
         ForClause::In {
-            span: ctx.span(toks[1].start, ctx.pool.expr_span(iterable).end),
+            span: ctx.span(head[0].start, ctx.pool.expr_span(iterable).end),
             bindings,
             iterable,
         }
     } else {
-        // C-style for init; cond; step — best-effort with `;` separators
         let mut parts: Vec<&[&Token]> = Vec::new();
-        let mut start = 0usize;
+        let mut s = 0usize;
         for (i, t) in head.iter().enumerate() {
             if matches!(t.kind, TokenKind::Semicolon) {
-                parts.push(&head[start..i]);
-                start = i + 1;
+                parts.push(&head[s..i]);
+                s = i + 1;
             }
         }
-        parts.push(&head[start..]);
+        parts.push(&head[s..]);
         if parts.len() != 3 {
             return None;
         }
         let init = if parts[0].is_empty() {
             None
         } else {
-            Some(lower_simple_stmt(ctx, parts[0])?)
+            Some(lower_simple(ctx, parts[0])?)
         };
         let condition = if parts[1].is_empty() {
             None
         } else {
-            Some(try_hand_lower_expr_all(
-                ctx.pool,
-                ctx.source,
-                parts[1],
-                ctx.file_id,
-            )?)
+            let mut c = Cursor::new(parts[1]);
+            let e = try_hand_lower_expr(ctx, &mut c, 0)?;
+            if !c.at_end() {
+                return None;
+            }
+            Some(e)
         };
         let step = if parts[2].is_empty() {
             None
         } else {
-            Some(lower_simple_stmt(ctx, parts[2])?)
+            Some(lower_simple(ctx, parts[2])?)
         };
         ForClause::CStyle {
             span: ctx.span(
-                toks.get(1).map(|t| t.start).unwrap_or(span.start),
-                toks[brace].start,
+                head.first().map(|t| t.start).unwrap_or(start),
+                head.last().map(|t| t.start + t.len).unwrap_or(start),
             ),
             init,
             condition,
             step,
         }
     };
-    let body = try_hand_lower_block(ctx.pool, ctx.source, tokens, &block, ctx.file_id)?;
-    let _ = cur;
+    // advance past head
+    for _ in 0..brace_at {
+        cur.bump();
+    }
+    let body = parse_block_tokens(ctx, cur)?;
+    let end = body.span.end;
     Some(ctx.pool.alloc_stmt(Stmt::For {
-        span,
+        span: ctx.span(start, end),
         clause,
         body,
     }))
 }
 
-fn lower_simple_stmt(ctx: &mut HandCtx<'_>, toks: &[&Token]) -> Option<SimpleStmt> {
-    if toks.is_empty() {
-        return None;
-    }
-    let span = ctx.span(toks[0].start, toks.last()?.start + toks.last()?.len);
-    if matches!(toks[0].kind, TokenKind::KwLet) {
-        let id = lower_let(ctx, toks, span)?;
+fn lower_simple(ctx: &mut HandCtx<'_>, toks: &[&Token]) -> Option<SimpleStmt> {
+    let mut cur = Cursor::new(toks);
+    let start = cur.peek()?.start;
+    if cur.peek_kind() == Some(TokenKind::KwLet) {
+        let id = lower_let(ctx, &mut cur, start)?;
+        if !cur.at_end() {
+            return None;
+        }
         let Stmt::VarDecl {
             span,
             bindings,
@@ -541,7 +570,9 @@ fn lower_simple_stmt(ctx: &mut HandCtx<'_>, toks: &[&Token]) -> Option<SimpleStm
             value,
         });
     }
-    if let Some(id) = lower_set(ctx, toks, span, matches!(toks[0].kind, TokenKind::KwSet))
+    let explicit_set = matches!(cur.peek_kind(), Some(TokenKind::KwSet));
+    if let Some(id) = try_lower_set(ctx, &mut cur, start, explicit_set)
+        && cur.at_end()
         && let Stmt::Set {
             span,
             places,
@@ -556,49 +587,55 @@ fn lower_simple_stmt(ctx: &mut HandCtx<'_>, toks: &[&Token]) -> Option<SimpleStm
             value,
         });
     }
-    let expr = try_hand_lower_expr_all(ctx.pool, ctx.source, toks, ctx.file_id)?;
-    Some(SimpleStmt::Expr { span, expr })
+    let mut cur = Cursor::new(toks);
+    let expr = try_hand_lower_expr(ctx, &mut cur, 0)?;
+    if !cur.at_end() {
+        return None;
+    }
+    Some(SimpleStmt::Expr {
+        span: ctx.span(start, ctx.pool.expr_span(expr).end),
+        expr,
+    })
 }
 
 fn lower_defer(
     ctx: &mut HandCtx<'_>,
-    tokens: &[Token],
-    stmt: &SyntaxNode,
-    toks: &[&Token],
-    span: Span,
+    cur: &mut Cursor<'_>,
+    start: u32,
     is_err: bool,
 ) -> Option<StmtId> {
-    let blocks = block_children(stmt);
-    let body = if let Some(block) = blocks.first() {
-        let b = try_hand_lower_block(ctx.pool, ctx.source, tokens, block, ctx.file_id)?;
+    if is_err {
+        cur.expect(TokenKind::KwErrdefer)?;
+    } else {
+        cur.expect(TokenKind::KwDefer)?;
+    }
+    let body = if cur.peek_kind() == Some(TokenKind::LBrace) {
+        let block = parse_block_tokens(ctx, cur)?;
         DeferBody::Block {
-            span: b.span,
-            block: b,
+            span: block.span,
+            block,
         }
     } else {
-        // defer expr;
-        let expr = try_hand_lower_expr_all(ctx.pool, ctx.source, &toks[1..], ctx.file_id)?;
+        let expr = try_hand_lower_expr(ctx, cur, 0)?;
+        let _ = cur.eat(TokenKind::Semicolon);
         DeferBody::Expr {
             span: ctx.pool.expr_span(expr),
             expr,
         }
     };
+    let end = match &body {
+        DeferBody::Block { span, .. } | DeferBody::Expr { span, .. } => span.end,
+    };
     Some(ctx.pool.alloc_stmt(if is_err {
-        Stmt::ErrDefer { span, body }
+        Stmt::ErrDefer {
+            span: ctx.span(start, end),
+            body,
+        }
     } else {
-        Stmt::Defer { span, body }
+        Stmt::Defer {
+            span: ctx.span(start, end),
+            body,
+        }
     }))
-}
-
-fn lower_unsafe(
-    ctx: &mut HandCtx<'_>,
-    tokens: &[Token],
-    stmt: &SyntaxNode,
-    _toks: &[&Token],
-    span: Span,
-) -> Option<StmtId> {
-    let block = block_children(stmt).into_iter().next()?;
-    let block = try_hand_lower_block(ctx.pool, ctx.source, tokens, &block, ctx.file_id)?;
-    Some(ctx.pool.alloc_stmt(Stmt::Unsafe { span, block }))
 }
 

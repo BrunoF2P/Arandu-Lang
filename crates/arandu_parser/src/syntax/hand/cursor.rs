@@ -30,7 +30,7 @@ impl HandCtx<'_> {
     }
 }
 
-/// Non-EOF, non-inserted-semicolon tokens inside `[start, end)`.
+/// Non-EOF tokens inside `[start, end)`, dropping inserted ASI semis.
 #[must_use]
 pub fn tokens_in_range(tokens: &[Token], start: u32, end: u32) -> Vec<&Token> {
     tokens
@@ -42,6 +42,42 @@ pub fn tokens_in_range(tokens: &[Token], start: u32, end: u32) -> Vec<&Token> {
                 && !(t.kind == TokenKind::Semicolon && t.inserted)
         })
         .collect()
+}
+
+/// Tokens for a green STMT node, trimmed of overspill (leading semis, outer `}`).
+#[must_use]
+pub fn stmt_tokens(tokens: &[Token], start: u32, end: u32) -> Vec<&Token> {
+    let mut toks = tokens_in_range(tokens, start, end);
+    trim_stmt_token_slice(&mut toks);
+    toks
+}
+
+/// Drop leading semis and trailing closers that belong to outer constructs.
+pub fn trim_stmt_token_slice(toks: &mut Vec<&Token>) {
+    while toks
+        .first()
+        .is_some_and(|t| matches!(t.kind, TokenKind::Semicolon))
+    {
+        toks.remove(0);
+    }
+    // Drop trailing tokens once delimiter depth returns to 0 and we see an outer closer.
+    let mut depth: i32 = 0;
+    let mut cut = toks.len();
+    for (i, t) in toks.iter().enumerate() {
+        match t.kind {
+            TokenKind::LBrace | TokenKind::LParen | TokenKind::LBracket => depth += 1,
+            TokenKind::RBrace | TokenKind::RParen | TokenKind::RBracket => {
+                if depth == 0 {
+                    cut = i;
+                    break;
+                }
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    toks.truncate(cut);
+    drop_trailing_semi(toks);
 }
 
 #[inline]
@@ -131,34 +167,13 @@ impl<'a> Cursor<'a> {
         }
     }
 
-    /// Drop a trailing explicit `;` if present.
-    pub fn trim_trailing_semi(&mut self) {
-        if self
-            .toks
-            .last()
-            .is_some_and(|t| matches!(t.kind, TokenKind::Semicolon))
-            && self.pos <= self.toks.len().saturating_sub(1)
-        {
-            // Rebuild view without trailing semi when at start of full slice.
-        }
-    }
-
-    /// Tokens from current position to end, excluding a trailing semicolon.
-    #[must_use]
-    pub fn rest_no_trailing_semi(self) -> &'a [&'a Token] {
-        let rest = self.remaining();
-        if rest
-            .last()
-            .is_some_and(|t| matches!(t.kind, TokenKind::Semicolon))
-        {
-            &rest[..rest.len() - 1]
-        } else {
-            rest
-        }
+    /// Skip explicit semis.
+    pub fn skip_semis(&mut self) {
+        while self.eat(TokenKind::Semicolon) {}
     }
 }
 
-/// Drop trailing semicolon from a owned token vec (used by stmt entry).
+/// Drop trailing semicolon from a owned token vec.
 pub fn drop_trailing_semi(toks: &mut Vec<&Token>) {
     if toks
         .last()
@@ -188,30 +203,36 @@ pub fn set_op_from_token(kind: TokenKind) -> Option<crate::SetOp> {
     }
 }
 
-/// Binary op binding powers (left, right) — subset aligned with RD.
+/// Binary op binding powers (left, right) — same scale as RD `BINARY_OP_TABLE`.
+/// Catch uses left_bp=10 (looser than all of these).
 #[must_use]
 pub fn bin_bp(kind: TokenKind) -> Option<(u8, u8, crate::BinaryOp)> {
     use crate::BinaryOp;
-    match kind {
-        TokenKind::NullCoalesce => Some((1, 2, BinaryOp::NullCoalesce)),
-        TokenKind::LogicalOr => Some((3, 4, BinaryOp::Or)),
-        TokenKind::LogicalAnd => Some((5, 6, BinaryOp::And)),
-        TokenKind::EqualEqual => Some((7, 8, BinaryOp::Equal)),
-        TokenKind::BangEqual => Some((7, 8, BinaryOp::NotEqual)),
-        TokenKind::Lt => Some((9, 10, BinaryOp::Lt)),
-        TokenKind::Gt => Some((9, 10, BinaryOp::Gt)),
-        TokenKind::LtEqual => Some((9, 10, BinaryOp::LtEqual)),
-        TokenKind::GtEqual => Some((9, 10, BinaryOp::GtEqual)),
-        TokenKind::Pipe => Some((11, 12, BinaryOp::BitOr)),
-        TokenKind::Caret => Some((13, 14, BinaryOp::BitXor)),
-        TokenKind::Amp => Some((15, 16, BinaryOp::BitAnd)),
-        TokenKind::ShiftLeft => Some((17, 18, BinaryOp::ShiftLeft)),
-        TokenKind::ShiftRight => Some((17, 18, BinaryOp::ShiftRight)),
-        TokenKind::Plus => Some((19, 20, BinaryOp::Add)),
-        TokenKind::Minus => Some((19, 20, BinaryOp::Sub)),
-        TokenKind::Star => Some((21, 22, BinaryOp::Mul)),
-        TokenKind::Slash => Some((21, 22, BinaryOp::Div)),
-        TokenKind::Percent => Some((21, 22, BinaryOp::Mod)),
-        _ => None,
-    }
+    // RD uses (bp, bp+1) as (left, right).
+    let (op, bp) = match kind {
+        TokenKind::NullCoalesce => (BinaryOp::NullCoalesce, 20),
+        TokenKind::LogicalOr => (BinaryOp::Or, 30),
+        TokenKind::LogicalAnd => (BinaryOp::And, 40),
+        TokenKind::EqualEqual => (BinaryOp::Equal, 50),
+        TokenKind::BangEqual => (BinaryOp::NotEqual, 50),
+        TokenKind::Lt => (BinaryOp::Lt, 60),
+        TokenKind::Gt => (BinaryOp::Gt, 60),
+        TokenKind::LtEqual => (BinaryOp::LtEqual, 60),
+        TokenKind::GtEqual => (BinaryOp::GtEqual, 60),
+        TokenKind::RangeExclusive => (BinaryOp::RangeExclusive, 70),
+        TokenKind::RangeInclusive => (BinaryOp::RangeInclusive, 70),
+        TokenKind::Pipe => (BinaryOp::BitOr, 80),
+        TokenKind::Caret => (BinaryOp::BitXor, 90),
+        TokenKind::Amp => (BinaryOp::BitAnd, 100),
+        TokenKind::ShiftLeft => (BinaryOp::ShiftLeft, 110),
+        TokenKind::ShiftRight => (BinaryOp::ShiftRight, 110),
+        TokenKind::Plus => (BinaryOp::Add, 120),
+        TokenKind::Minus => (BinaryOp::Sub, 120),
+        TokenKind::Star => (BinaryOp::Mul, 130),
+        TokenKind::Slash => (BinaryOp::Div, 130),
+        TokenKind::Percent => (BinaryOp::Mod, 130),
+        _ => return None,
+    };
+    Some((bp, bp + 1, op))
 }
+

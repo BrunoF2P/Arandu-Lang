@@ -1,9 +1,13 @@
-//! Hand-lower expressions (Pratt + postfix).
+//! Hand-lower expressions (Pratt + postfix + primary forms).
 
 use super::cursor::{Cursor, HandCtx, bin_bp};
-use super::ty::parse_type;
+use super::pattern::parse_match_arm;
+use super::stmt::parse_block_tokens;
+use super::ty::{can_start_type_kind, parse_type, primitive_type_token_name};
 use crate::ast::ast_pool::{ExprId, ExprKind};
-use crate::{StringPart, UnaryOp};
+use crate::{
+    CatchHandler, Condition, FieldInit, LambdaBody, LambdaParam, StringPart, TypeExpr, UnaryOp,
+};
 use arandu_lexer::{Token, TokenKind};
 use smallvec::smallvec;
 use smol_str::SmolStr;
@@ -25,6 +29,7 @@ pub fn try_hand_lower_expr_all(
     };
     let mut cur = Cursor::new(toks);
     let expr = try_hand_lower_expr(&mut ctx, &mut cur, 0)?;
+    cur.skip_semis();
     if !cur.at_end() {
         return None;
     }
@@ -39,27 +44,93 @@ pub fn try_hand_lower_expr(
 ) -> Option<ExprId> {
     let mut left = parse_unary_primary_post(ctx, cur)?;
 
-    while let Some(kind) = cur.peek_kind() {
+    loop {
+        // catch / as as postfix-infix
+        match cur.peek_kind() {
+            Some(TokenKind::KwCatch) if min_bp <= 10 => {
+                let span_start = ctx.pool.expr_span(left).start;
+                cur.bump(); // catch
+                let handler = if cur.peek_kind() == Some(TokenKind::Pipe) {
+                    let pipe = cur.bump()?;
+                    let err_tok = cur.expect(TokenKind::IdentValue)?;
+                    let error = SmolStr::new(ctx.text(err_tok)?);
+                    cur.expect(TokenKind::Pipe)?;
+                    let block = parse_block_tokens(ctx, cur)?;
+                    let catch_handler = CatchHandler::Block {
+                        span: ctx.span(pipe.start, block.span.end),
+                        error,
+                        block,
+                    };
+                    ctx.pool.alloc_catch_handler(catch_handler)
+                } else {
+                    let expr = try_hand_lower_expr(ctx, cur, 10)?;
+                    let catch_handler = CatchHandler::Expr {
+                        span: ctx.pool.expr_span(expr),
+                        expr,
+                    };
+                    ctx.pool.alloc_catch_handler(catch_handler)
+                };
+                let end = match ctx.pool.catch_handler(handler) {
+                    CatchHandler::Block { span, .. } | CatchHandler::Expr { span, .. } => span.end,
+                };
+                left = ctx.pool.alloc_expr(
+                    ExprKind::Catch {
+                        expr: left,
+                        handler,
+                    },
+                    ctx.span(span_start, end),
+                );
+                continue;
+            }
+            Some(TokenKind::KwAs) if min_bp <= 140 => {
+                // cast bp 140 matches RD
+                let span_start = ctx.pool.expr_span(left).start;
+                cur.bump();
+                let ty = parse_type(ctx, cur)?;
+                let end = ctx.pool.type_expr_span(ty).end;
+                left = ctx.pool.alloc_expr(
+                    ExprKind::Cast { expr: left, ty },
+                    ctx.span(span_start, end),
+                );
+                continue;
+            }
+            _ => {}
+        }
+
+        let Some(kind) = cur.peek_kind() else {
+            break;
+        };
         let Some((l_bp, r_bp, op)) = bin_bp(kind) else {
             break;
         };
         if l_bp < min_bp {
             break;
         }
+        // chained ranges need parens
+        if matches!(
+            op,
+            crate::BinaryOp::RangeExclusive | crate::BinaryOp::RangeInclusive
+        ) && matches!(
+            ctx.pool.expr(left),
+            ExprKind::Binary {
+                op: crate::BinaryOp::RangeExclusive | crate::BinaryOp::RangeInclusive,
+                ..
+            }
+        ) {
+            return None;
+        }
         cur.bump();
         let right = try_hand_lower_expr(ctx, cur, r_bp)?;
         let left_span = ctx.pool.expr_span(left);
         let right_span = ctx.pool.expr_span(right);
         let span = ctx.span(left_span.start, right_span.end);
-        if op == crate::BinaryOp::NullCoalesce {
-            left = ctx
-                .pool
-                .alloc_expr(ExprKind::NullCoalesce { left, right }, span);
+        left = if op == crate::BinaryOp::NullCoalesce {
+            ctx.pool
+                .alloc_expr(ExprKind::NullCoalesce { left, right }, span)
         } else {
-            left = ctx
-                .pool
-                .alloc_expr(ExprKind::Binary { op, left, right }, span);
-        }
+            ctx.pool
+                .alloc_expr(ExprKind::Binary { op, left, right }, span)
+        };
     }
 
     Some(left)
@@ -78,12 +149,21 @@ fn parse_unary_primary_post(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Opti
             };
             let start = t.start;
             cur.bump();
-            // Unary binds tighter than most binary; use high min_bp on recursive.
             let expr = try_hand_lower_expr(ctx, cur, 100)?;
             let end = ctx.pool.expr_span(expr).end;
             Some(
                 ctx.pool
                     .alloc_expr(ExprKind::Unary { op, expr }, ctx.span(start, end)),
+            )
+        }
+        TokenKind::KwAlloc => {
+            let start = t.start;
+            cur.bump();
+            let expr = try_hand_lower_expr(ctx, cur, 100)?;
+            let end = ctx.pool.expr_span(expr).end;
+            Some(
+                ctx.pool
+                    .alloc_expr(ExprKind::Alloc { expr }, ctx.span(start, end)),
             )
         }
         _ => parse_primary_post(ctx, cur),
@@ -110,15 +190,70 @@ fn parse_primary_post(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<Exp
                 let close = cur.expect(TokenKind::RParen)?;
                 let args_range = ctx.pool.alloc_expr_list(&args);
                 let left_span = ctx.pool.expr_span(left);
-                let span = ctx.span(left_span.start, close.start + close.len);
+                let mut end = close.start + close.len;
+                // trailing block call: f(args) { ... }
+                let trailing = if cur.peek_kind() == Some(TokenKind::LBrace) {
+                    let block = parse_block_tokens(ctx, cur)?;
+                    end = block.span.end;
+                    Some(ctx.pool.alloc_block(block))
+                } else {
+                    None
+                };
                 left = ctx.pool.alloc_expr(
                     ExprKind::Call {
                         callee: left,
                         args: args_range,
-                        trailing_block: None,
+                        trailing_block: trailing,
                     },
-                    span,
+                    ctx.span(left_span.start, end),
                 );
+            }
+            Some(TokenKind::LBrace) if allows_trailing_block(ctx, left) => {
+                // bare trailing block call: f { ... }
+                let left_span = ctx.pool.expr_span(left);
+                let block = parse_block_tokens(ctx, cur)?;
+                let end = block.span.end;
+                let block_id = ctx.pool.alloc_block(block);
+                let empty = ctx.pool.alloc_expr_list(&[]);
+                left = ctx.pool.alloc_expr(
+                    ExprKind::Call {
+                        callee: left,
+                        args: empty,
+                        trailing_block: Some(block_id),
+                    },
+                    ctx.span(left_span.start, end),
+                );
+            }
+            Some(TokenKind::Lt) if looks_like_generic_args(cur) => {
+                cur.bump();
+                let mut type_args = Vec::new();
+                if cur.peek_kind() != Some(TokenKind::Gt) {
+                    loop {
+                        type_args.push(parse_type(ctx, cur)?);
+                        if cur.eat(TokenKind::Comma) {
+                            continue;
+                        }
+                        break;
+                    }
+                }
+                let gt = cur.expect(TokenKind::Gt)?;
+                let args = ctx.pool.alloc_type_expr_list(&type_args);
+                let left_span = ctx.pool.expr_span(left);
+                left = ctx.pool.alloc_expr(
+                    ExprKind::Generic {
+                        callee: left,
+                        args,
+                    },
+                    ctx.span(left_span.start, gt.start + gt.len),
+                );
+                // generic must be followed by call or trailing block
+                if cur.peek_kind() == Some(TokenKind::LParen) {
+                    continue; // loop will handle call
+                }
+                if cur.peek_kind() == Some(TokenKind::LBrace) {
+                    continue;
+                }
+                return None;
             }
             Some(TokenKind::Dot) => {
                 cur.bump();
@@ -165,27 +300,52 @@ fn parse_primary_post(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<Exp
                     .alloc_expr(ExprKind::SafeIndex { base: left, index }, span);
             }
             Some(TokenKind::Question) => {
-                // postfix try `expr?`
                 let q = cur.bump()?;
                 let left_span = ctx.pool.expr_span(left);
                 let span = ctx.span(left_span.start, q.start + q.len);
                 left = ctx.pool.alloc_expr(ExprKind::Try { expr: left }, span);
-            }
-            Some(TokenKind::KwAs) => {
-                cur.bump();
-                let ty = parse_type(ctx, cur)?;
-                let left_span = ctx.pool.expr_span(left);
-                let ty_end = ctx.pool.type_expr_span(ty).end;
-                let span = ctx.span(left_span.start, ty_end);
-                left = ctx
-                    .pool
-                    .alloc_expr(ExprKind::Cast { expr: left, ty }, span);
             }
             _ => break,
         }
     }
 
     Some(left)
+}
+
+fn allows_trailing_block(ctx: &HandCtx<'_>, left: ExprId) -> bool {
+    matches!(
+        ctx.pool.expr(left),
+        ExprKind::Path { .. }
+            | ExprKind::Field { .. }
+            | ExprKind::Generic { .. }
+            | ExprKind::TypePath { .. }
+    )
+}
+
+fn looks_like_generic_args(cur: &Cursor<'_>) -> bool {
+    // scan for matching `>` then `( ` or `{`
+    let mut depth = 0i32;
+    let mut i = 0usize;
+    while let Some(t) = cur.peek_at(i) {
+        match t.kind {
+            TokenKind::Lt => depth += 1,
+            TokenKind::Gt => {
+                depth -= 1;
+                if depth == 0 {
+                    return cur.peek_at(i + 1).is_some_and(|n| {
+                        matches!(n.kind, TokenKind::LParen | TokenKind::LBrace)
+                    });
+                }
+            }
+            TokenKind::Eof => return false,
+            _ => {}
+        }
+        i += 1;
+        if i > 64 {
+            return false;
+        }
+    }
+    false
 }
 
 fn parse_primary(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<ExprId> {
@@ -229,48 +389,18 @@ fn parse_primary(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<ExprId> 
             cur.bump();
             Some(ctx.pool.alloc_expr(ExprKind::Nil, ctx.token_span(t)))
         }
-        TokenKind::IdentValue | TokenKind::KwSelf => {
-            let text = if matches!(t.kind, TokenKind::KwSelf) {
-                "self"
-            } else {
-                ctx.text(t)?
-            };
+        TokenKind::KwSelf => {
             cur.bump();
-            // multi-segment path: a.b only as field in postfix; bare path is single
             Some(ctx.pool.alloc_expr(
                 ExprKind::Path {
-                    path: smallvec![SmolStr::new(text)],
+                    path: smallvec![SmolStr::new_static("self")],
                 },
                 ctx.token_span(t),
             ))
         }
-        TokenKind::IdentType => {
-            // Type-led: Type.member or Type path
+        TokenKind::IdentValue => {
             let text = ctx.text(t)?;
             cur.bump();
-            if cur.eat(TokenKind::Dot) {
-                let mem = cur.peek()?;
-                if !matches!(mem.kind, TokenKind::IdentValue | TokenKind::IdentType) {
-                    return None;
-                }
-                let member = SmolStr::new(ctx.text(mem)?);
-                cur.bump();
-                let type_name = TypeNameish {
-                    span: ctx.token_span(t),
-                    path: smallvec![SmolStr::new(text)],
-                };
-                let span = ctx.span(start, mem.start + mem.len);
-                return Some(ctx.pool.alloc_expr(
-                    ExprKind::TypePath {
-                        type_name: crate::TypeName {
-                            span: type_name.span,
-                            path: type_name.path,
-                        },
-                        member,
-                    },
-                    span,
-                ));
-            }
             Some(ctx.pool.alloc_expr(
                 ExprKind::Path {
                     path: smallvec![SmolStr::new(text)],
@@ -278,9 +408,11 @@ fn parse_primary(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<ExprId> 
                 ctx.token_span(t),
             ))
         }
+        TokenKind::IdentType => parse_type_led(ctx, cur, start),
+        // type token as type-led (int is TypeInt etc.)
+        k if primitive_type_token_name(k).is_some() => parse_type_led(ctx, cur, start),
         TokenKind::LParen => {
             cur.bump();
-            // lambda `(a, b) => expr` or group
             if looks_like_lambda(cur) {
                 return parse_lambda(ctx, cur, start);
             }
@@ -299,10 +431,7 @@ fn parse_primary(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<ExprId> 
             let value = SmolStr::new(t.raw_string_content(ctx.source));
             cur.bump();
             let span = ctx.token_span(t);
-            let part = StringPart::Text {
-                span,
-                text: value,
-            };
+            let part = StringPart::Text { span, text: value };
             let part_id = ctx.pool.alloc_string_part(part);
             let range = ctx.pool.alloc_string_part_list(&[part_id]);
             Some(
@@ -311,7 +440,6 @@ fn parse_primary(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<ExprId> 
             )
         }
         TokenKind::LBracket => {
-            // array literal [a, b]
             cur.bump();
             let mut items = Vec::new();
             if cur.peek_kind() != Some(TokenKind::RBracket) {
@@ -330,17 +458,205 @@ fn parse_primary(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<ExprId> 
                 ctx.span(start, close.start + close.len),
             ))
         }
+        TokenKind::KwIf => parse_if_expr(ctx, cur, start),
+        TokenKind::KwMatch => parse_match_expr(ctx, cur, start),
+        TokenKind::KwAsync => {
+            cur.bump();
+            let block = parse_block_tokens(ctx, cur)?;
+            let end = block.span.end;
+            let block_id = ctx.pool.alloc_block(block);
+            Some(
+                ctx.pool
+                    .alloc_expr(ExprKind::AsyncBlock { block: block_id }, ctx.span(start, end)),
+            )
+        }
+        TokenKind::KwUnsafe => {
+            cur.bump();
+            let block = parse_block_tokens(ctx, cur)?;
+            let end = block.span.end;
+            let block_id = ctx.pool.alloc_block(block);
+            Some(
+                ctx.pool
+                    .alloc_expr(ExprKind::UnsafeBlock { block: block_id }, ctx.span(start, end)),
+            )
+        }
         _ => None,
     }
 }
 
-struct TypeNameish {
-    span: arandu_lexer::Span,
-    path: smallvec::SmallVec<[SmolStr; 3]>,
+fn parse_type_led(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>, start: u32) -> Option<ExprId> {
+    let ty = parse_type(ctx, cur)?;
+    if cur.eat(TokenKind::LBrace) {
+        let mut fields = Vec::new();
+        if cur.peek_kind() != Some(TokenKind::RBrace) {
+            loop {
+                let name_tok = cur.expect(TokenKind::IdentValue)?;
+                let name = SmolStr::new(ctx.text(name_tok)?);
+                let fstart = name_tok.start;
+                cur.expect(TokenKind::Colon)?;
+                let value = try_hand_lower_expr(ctx, cur, 0)?;
+                let fend = ctx.pool.expr_span(value).end;
+                let init_id = ctx.pool.alloc_field_init(FieldInit {
+                    span: ctx.span(fstart, fend),
+                    name,
+                    value,
+                });
+                fields.push(init_id);
+                if !cur.eat(TokenKind::Comma) {
+                    break;
+                }
+                if cur.peek_kind() == Some(TokenKind::RBrace) {
+                    break;
+                }
+            }
+        }
+        let close = cur.expect(TokenKind::RBrace)?;
+        let range = ctx.pool.alloc_field_init_list(&fields);
+        return Some(ctx.pool.alloc_expr(
+            ExprKind::StructLiteral { ty, fields: range },
+            ctx.span(start, close.start + close.len),
+        ));
+    }
+    // Type.member
+    if let TypeExpr::Named { name, args, .. } = ctx.pool.type_expr(ty)
+        && args.is_empty()
+        && cur.eat(TokenKind::Dot)
+    {
+        let type_name = name.clone();
+        let mem = cur.peek()?;
+        if !matches!(
+            mem.kind,
+            TokenKind::IdentValue | TokenKind::IdentType
+        ) {
+            return None;
+        }
+        let member = SmolStr::new(ctx.text(mem)?);
+        cur.bump();
+        return Some(ctx.pool.alloc_expr(
+            ExprKind::TypePath { type_name, member },
+            ctx.span(start, mem.start + mem.len),
+        ));
+    }
+    None
+}
+
+fn parse_if_expr(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>, start: u32) -> Option<ExprId> {
+    cur.expect(TokenKind::KwIf)?;
+    // Condition tokens until depth-0 `{` (avoid trailing-block absorption).
+    let toks = cur.remaining();
+    let mut depth = 0i32;
+    let mut brace_at = None;
+    for (i, t) in toks.iter().enumerate() {
+        if depth == 0 && matches!(t.kind, TokenKind::LBrace) {
+            brace_at = Some(i);
+            break;
+        }
+        match t.kind {
+            TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => depth += 1,
+            TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => {
+                depth = depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+    }
+    let brace_at = brace_at?;
+    if brace_at == 0 {
+        return None;
+    }
+    let mut ccur = Cursor::new(&toks[..brace_at]);
+    let cond_expr = try_hand_lower_expr(ctx, &mut ccur, 0)?;
+    if !ccur.at_end() {
+        return None;
+    }
+    for _ in 0..brace_at {
+        cur.bump();
+    }
+    let condition = Condition::Expr {
+        span: ctx.pool.expr_span(cond_expr),
+        expr: cond_expr,
+    };
+    let then_block = parse_block_tokens(ctx, cur)?;
+    let else_block = if cur.eat(TokenKind::KwElse) {
+        if cur.peek_kind() == Some(TokenKind::KwIf) {
+            let nested_start = cur.peek()?.start;
+            let nested = parse_if_expr(ctx, cur, nested_start)?;
+            let nested_id = ctx.pool.alloc_stmt(crate::Stmt::Expr {
+                span: ctx.pool.expr_span(nested),
+                expr: nested,
+            });
+            crate::Block {
+                span: ctx.pool.expr_span(nested),
+                statements: vec![nested_id],
+            }
+        } else {
+            parse_block_tokens(ctx, cur)?
+        }
+    } else {
+        return None;
+    };
+    let then_id = ctx.pool.alloc_block(then_block);
+    let else_id = ctx.pool.alloc_block(else_block);
+    let end = ctx.pool.block(else_id).span.end;
+    Some(ctx.pool.alloc_expr(
+        ExprKind::If {
+            condition,
+            then_block: then_id,
+            else_block: else_id,
+        },
+        ctx.span(start, end),
+    ))
+}
+
+fn parse_match_expr(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>, start: u32) -> Option<ExprId> {
+    cur.expect(TokenKind::KwMatch)?;
+    // Value stops before `{` (no trailing-block call).
+    let toks = cur.remaining();
+    let mut depth = 0i32;
+    let mut brace_at = None;
+    for (i, t) in toks.iter().enumerate() {
+        if depth == 0 && matches!(t.kind, TokenKind::LBrace) {
+            brace_at = Some(i);
+            break;
+        }
+        match t.kind {
+            TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => depth += 1,
+            TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => {
+                depth = depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+    }
+    let brace_at = brace_at?;
+    if brace_at == 0 {
+        return None;
+    }
+    let mut vcur = Cursor::new(&toks[..brace_at]);
+    let value = try_hand_lower_expr(ctx, &mut vcur, 0)?;
+    if !vcur.at_end() {
+        return None;
+    }
+    for _ in 0..brace_at {
+        cur.bump();
+    }
+    cur.expect(TokenKind::LBrace)?;
+    let mut arms = Vec::new();
+    while cur.peek_kind() != Some(TokenKind::RBrace) && !cur.at_end() {
+        cur.skip_semis();
+        if cur.peek_kind() == Some(TokenKind::RBrace) {
+            break;
+        }
+        let arm = parse_match_arm(ctx, cur)?;
+        arms.push(ctx.pool.alloc_match_arm(arm));
+    }
+    let close = cur.expect(TokenKind::RBrace)?;
+    let range = ctx.pool.alloc_match_arm_list(&arms);
+    Some(ctx.pool.alloc_expr(
+        ExprKind::Match { value, arms: range },
+        ctx.span(start, close.start + close.len),
+    ))
 }
 
 fn looks_like_lambda(cur: &Cursor<'_>) -> bool {
-    // Scan from current (after LParen already consumed) for `) =>`
     let mut depth = 1i32;
     let mut i = 0usize;
     while let Some(t) = cur.peek_at(i) {
@@ -366,14 +682,13 @@ fn looks_like_lambda(cur: &Cursor<'_>) -> bool {
 }
 
 fn parse_lambda(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>, start: u32) -> Option<ExprId> {
-    use crate::{LambdaBody, LambdaParam};
     let mut params = Vec::new();
     if cur.peek_kind() != Some(TokenKind::RParen) {
         loop {
             let name_tok = cur.expect(TokenKind::IdentValue)?;
             let name = SmolStr::new(ctx.text(name_tok)?);
             let p_start = name_tok.start;
-            let ty = if cur.peek_kind().is_some_and(can_start_type) {
+            let ty = if cur.peek_kind().is_some_and(can_start_type_kind) {
                 Some(parse_type(ctx, cur)?)
             } else {
                 None
@@ -394,17 +709,40 @@ fn parse_lambda(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>, start: u32) -> Opti
     }
     cur.expect(TokenKind::RParen)?;
     cur.expect(TokenKind::FatArrow)?;
-    let expr = try_hand_lower_expr(ctx, cur, 0)?;
-    let end = ctx.pool.expr_span(expr).end;
+    let body = if cur.peek_kind() == Some(TokenKind::LBrace) {
+        let block = parse_block_tokens(ctx, cur)?;
+        let end = block.span.end;
+        let body = LambdaBody::Block {
+            span: block.span,
+            block,
+        };
+        let param_ids: Vec<_> = params
+            .into_iter()
+            .map(|p| ctx.pool.alloc_lambda_param(p))
+            .collect();
+        let params_range = ctx.pool.alloc_lambda_param_list(&param_ids);
+        return Some(ctx.pool.alloc_expr(
+            ExprKind::Lambda {
+                params: params_range,
+                body,
+            },
+            ctx.span(start, end),
+        ));
+    } else {
+        let expr = try_hand_lower_expr(ctx, cur, 0)?;
+        LambdaBody::Expr {
+            span: ctx.pool.expr_span(expr),
+            expr,
+        }
+    };
+    let end = match &body {
+        LambdaBody::Expr { span, .. } | LambdaBody::Block { span, .. } => span.end,
+    };
     let param_ids: Vec<_> = params
         .into_iter()
         .map(|p| ctx.pool.alloc_lambda_param(p))
         .collect();
     let params_range = ctx.pool.alloc_lambda_param_list(&param_ids);
-    let body = LambdaBody::Expr {
-        span: ctx.pool.expr_span(expr),
-        expr,
-    };
     Some(ctx.pool.alloc_expr(
         ExprKind::Lambda {
             params: params_range,
@@ -412,17 +750,6 @@ fn parse_lambda(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>, start: u32) -> Opti
         },
         ctx.span(start, end),
     ))
-}
-
-fn can_start_type(kind: TokenKind) -> bool {
-    matches!(
-        kind,
-        TokenKind::IdentType
-            | TokenKind::IdentValue
-            | TokenKind::KwPtr
-            | TokenKind::LBracket
-            | TokenKind::LParen
-    ) || super::ty::primitive_type_token_name(kind).is_some()
 }
 
 fn parse_string(
@@ -444,7 +771,7 @@ fn parse_string(
                     ctx.span(start, end_tok.start + end_tok.len),
                 ));
             }
-            TokenKind::StringText => {
+            TokenKind::StringText | TokenKind::StringEscape => {
                 let text = SmolStr::new(ctx.text(t)?);
                 let span = ctx.token_span(t);
                 cur.bump();
@@ -453,21 +780,11 @@ fn parse_string(
             TokenKind::InterpStart => {
                 let interp_start = cur.bump()?;
                 let expr = try_hand_lower_expr(ctx, cur, 0)?;
-                let mut end = ctx.pool.expr_span(expr).end;
-                // optional end interp token
-                if matches!(
-                    cur.peek_kind(),
-                    Some(TokenKind::RBrace) | Some(TokenKind::InterpEnd)
-                ) {
-                    let close = cur.bump()?;
-                    end = close.start + close.len;
-                }
-                // RD spans the whole `${…}` including braces.
-                let span = ctx.span(interp_start.start, end);
+                let close = cur.expect(TokenKind::InterpEnd)?;
+                let span = ctx.span(interp_start.start, close.start + close.len);
                 parts.push(ctx.pool.alloc_string_part(StringPart::Expr { span, expr }));
             }
             _ => {
-                // treat unknown as text if possible
                 let text = SmolStr::new(ctx.text(t).unwrap_or(""));
                 let span = ctx.token_span(t);
                 cur.bump();
