@@ -189,34 +189,93 @@ impl<'a> Parser<'a> {
     pub(super) fn try_parse_top_level_decl(&mut self) -> Result<TopLevelDecl, ParseError> {
         self.collect_doc_comments();
         let docs = self.take_pending_docs();
-        let attrs = self.parse_attributes()?;
-        let visibility = self.parse_visibility();
-        let decl = match self.current().kind {
-            TokenKind::KwConst => Ok(TopLevelDecl::Const(self.parse_const(attrs, visibility)?)),
-            TokenKind::KwType => Ok(TopLevelDecl::TypeAlias(
-                self.parse_type_alias(attrs, visibility)?,
-            )),
-            TokenKind::KwAsync | TokenKind::KwFunc => {
-                Ok(TopLevelDecl::Func(self.parse_func(attrs, visibility)?))
+        let item_kind = self.peek_top_level_item_kind();
+        self.start_node(item_kind);
+        let result = (|| {
+            let attrs = self.parse_attributes()?;
+            let visibility = self.parse_visibility();
+            match self.current().kind {
+                TokenKind::KwConst => Ok(TopLevelDecl::Const(self.parse_const(attrs, visibility)?)),
+                TokenKind::KwType => Ok(TopLevelDecl::TypeAlias(
+                    self.parse_type_alias(attrs, visibility)?,
+                )),
+                TokenKind::KwAsync | TokenKind::KwFunc => {
+                    Ok(TopLevelDecl::Func(self.parse_func(attrs, visibility)?))
+                }
+                TokenKind::KwStruct => Ok(TopLevelDecl::Struct(
+                    self.parse_struct_decl(attrs, visibility)?,
+                )),
+                TokenKind::KwEnum => {
+                    Ok(TopLevelDecl::Enum(self.parse_enum_decl(attrs, visibility)?))
+                }
+                TokenKind::KwInterface => Ok(TopLevelDecl::Interface(
+                    self.parse_interface_decl(attrs, visibility)?,
+                )),
+                TokenKind::KwExtern => Ok(TopLevelDecl::Extern(self.parse_extern_decl(attrs)?)),
+                _ => Err(ParseError::new(
+                    ParseErrorCode::ExpectedTopLevelDecl,
+                    "expected top-level declaration",
+                    self.current(),
+                    self.file_id,
+                    self.source,
+                )),
             }
-            TokenKind::KwStruct => Ok(TopLevelDecl::Struct(
-                self.parse_struct_decl(attrs, visibility)?,
-            )),
-            TokenKind::KwEnum => Ok(TopLevelDecl::Enum(self.parse_enum_decl(attrs, visibility)?)),
-            TokenKind::KwInterface => Ok(TopLevelDecl::Interface(
-                self.parse_interface_decl(attrs, visibility)?,
-            )),
-            TokenKind::KwExtern => Ok(TopLevelDecl::Extern(self.parse_extern_decl(attrs)?)),
-            _ => Err(ParseError::new(
-                ParseErrorCode::ExpectedTopLevelDecl,
-                "expected top-level declaration",
-                self.current(),
-                self.file_id,
-                self.source,
-            )),
-        }?;
+        })();
+        self.finish_node();
+        let decl = result?;
         self.attach_docs(docs, decl.span());
         Ok(decl)
+    }
+
+    /// Look ahead past `@attr` / `public` / `async` to classify the green item kind.
+    fn peek_top_level_item_kind(&self) -> crate::syntax::SyntaxKind {
+        use crate::syntax::SyntaxKind;
+        let mut i = self.pos;
+        while i < self.tokens.len() {
+            match self.tokens[i].kind {
+                TokenKind::At => {
+                    i += 1;
+                    // skip attr name and optional ( … )
+                    if i < self.tokens.len()
+                        && matches!(
+                            self.tokens[i].kind,
+                            TokenKind::IdentValue | TokenKind::IdentType
+                        )
+                    {
+                        i += 1;
+                    }
+                    if i < self.tokens.len() && matches!(self.tokens[i].kind, TokenKind::LParen) {
+                        let mut depth = 0i32;
+                        while i < self.tokens.len() {
+                            match self.tokens[i].kind {
+                                TokenKind::LParen => depth += 1,
+                                TokenKind::RParen => {
+                                    depth -= 1;
+                                    i += 1;
+                                    if depth == 0 {
+                                        break;
+                                    }
+                                    continue;
+                                }
+                                TokenKind::Eof => break,
+                                _ => {}
+                            }
+                            i += 1;
+                        }
+                    }
+                }
+                TokenKind::KwPublic | TokenKind::KwAsync | TokenKind::Semicolon => i += 1,
+                TokenKind::KwConst => return SyntaxKind::CONST_ITEM,
+                TokenKind::KwType => return SyntaxKind::TYPE_ALIAS_ITEM,
+                TokenKind::KwFunc => return SyntaxKind::FUNC_ITEM,
+                TokenKind::KwStruct => return SyntaxKind::STRUCT_ITEM,
+                TokenKind::KwEnum => return SyntaxKind::ENUM_ITEM,
+                TokenKind::KwInterface => return SyntaxKind::INTERFACE_ITEM,
+                TokenKind::KwExtern => return SyntaxKind::EXTERN_ITEM,
+                _ => return SyntaxKind::ITEM,
+            }
+        }
+        SyntaxKind::ITEM
     }
 
     pub(super) fn parse_const(
@@ -315,6 +374,7 @@ impl<'a> Parser<'a> {
         let name = self.expect_ident_type()?;
         let generic_params = self.parse_generic_params()?;
         let where_clause = self.parse_where_clause("LBRACE")?;
+        self.start_node(crate::syntax::SyntaxKind::BLOCK);
         self.expect_name("LBRACE")?;
         let mut fields = Vec::new();
         while !self.at_kind_name("RBRACE") {
@@ -332,9 +392,12 @@ impl<'a> Parser<'a> {
                 ));
                 break;
             }
+            self.start_node(crate::syntax::SyntaxKind::STMT);
             fields.push(self.parse_field_decl(true)?);
+            self.finish_node();
         }
         self.expect_name("RBRACE")?;
+        self.finish_node(); // BLOCK
         self.skip_semicolons();
         Ok(StructDecl {
             span: self.span_from_mark(start),
@@ -383,6 +446,7 @@ impl<'a> Parser<'a> {
         let name = self.expect_ident_type()?;
         let generic_params = self.parse_generic_params()?;
         let where_clause = self.parse_where_clause("LBRACE")?;
+        self.start_node(crate::syntax::SyntaxKind::BLOCK);
         self.expect_name("LBRACE")?;
         let mut variants = Vec::new();
         while !self.at_kind_name("RBRACE") {
@@ -400,13 +464,16 @@ impl<'a> Parser<'a> {
                 ));
                 break;
             }
+            self.start_node(crate::syntax::SyntaxKind::STMT);
             variants.push(self.parse_enum_variant()?);
+            self.finish_node();
             if self.eat_name("COMMA") {
                 continue;
             }
             self.skip_semicolons();
         }
         self.expect_name("RBRACE")?;
+        self.finish_node(); // BLOCK
         self.skip_semicolons();
         Ok(EnumDecl {
             span: self.span_from_mark(start),
@@ -650,6 +717,7 @@ impl<'a> Parser<'a> {
     where
         F: FnMut(&mut Self) -> Result<T, ParseError>,
     {
+        self.start_node(crate::syntax::SyntaxKind::BLOCK);
         self.expect_name("LBRACE")?;
         let mut items = Vec::new();
         while !self.at_kind_name("RBRACE") {
@@ -667,10 +735,13 @@ impl<'a> Parser<'a> {
                 ));
                 break;
             }
+            self.start_node(crate::syntax::SyntaxKind::STMT);
             items.push(parse_item(self)?);
             self.expect_semicolon()?;
+            self.finish_node();
         }
         self.expect_name("RBRACE")?;
+        self.finish_node(); // BLOCK
         self.skip_semicolons();
         Ok(items)
     }

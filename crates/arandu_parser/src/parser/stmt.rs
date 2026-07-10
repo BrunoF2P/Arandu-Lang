@@ -7,6 +7,8 @@ use smol_str::SmolStr;
 
 impl<'a> Parser<'a> {
     pub(super) fn parse_block(&mut self) -> Result<Block, ParseError> {
+        use crate::syntax::SyntaxKind;
+        self.start_node(SyntaxKind::BLOCK);
         let start = self.mark();
         self.expect_name("LBRACE")?;
         let mut statements = Vec::new();
@@ -29,6 +31,7 @@ impl<'a> Parser<'a> {
             statements.push(self.parse_stmt()?);
         }
         self.expect_name("RBRACE")?;
+        self.finish_node();
         Ok(Block {
             span: self.span_from_mark(start),
             statements,
@@ -36,8 +39,10 @@ impl<'a> Parser<'a> {
     }
 
     pub(super) fn parse_stmt(&mut self) -> Result<crate::ast_pool::StmtId, ParseError> {
+        use crate::syntax::SyntaxKind;
+        self.start_node(SyntaxKind::STMT);
         let start = self.mark();
-        match self.try_parse_stmt() {
+        let result = match self.try_parse_stmt() {
             Ok(stmt) => Ok(stmt),
             Err(err) => {
                 self.report_error(err);
@@ -46,7 +51,9 @@ impl<'a> Parser<'a> {
                     .pool
                     .alloc_stmt(Stmt::Error(self.span_from_mark(start))))
             }
-        }
+        };
+        self.finish_node();
+        result
     }
 
     pub(super) fn try_parse_stmt(&mut self) -> Result<crate::ast_pool::StmtId, ParseError> {

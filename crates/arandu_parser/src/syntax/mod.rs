@@ -1,11 +1,12 @@
-//! CST-first pipeline via [`rowan`] (P5 + F1 structured green).
+//! CST-first pipeline via [`rowan`] (P5 + F1 structured green + event sink).
 //!
-//! 1. Lex → green tree with typed top-level items (`FUNC_ITEM`, …) and `BLOCK` bodies.
-//! 2. Lower: green-guided walk over top-level items (RD at each seek) with full-RD fallback.
-//! 3. Subtree reparse via [`reparse_subtree`] when an edit stays inside one item.
-//! 4. [`BLOCK`] contains [`STMT`] fragments (semicolon-split); see [`lower`].
+//! 1. Lex → **RD with [`events`]** → green (`SOURCE_FILE` / `FUNC_ITEM` / `BLOCK` / `STMT`).
+//! 2. Fallback heuristic green if events are unbalanced.
+//! 3. Lower: green-guided walk (RD at each item seek) with full-RD fallback; see [`lower`].
+//! 4. Subtree reparse via [`reparse_subtree`] for local ITEM edits.
 
 mod build;
+pub mod events;
 mod kind;
 pub mod lower;
 
@@ -13,10 +14,11 @@ pub use build::{
     SyntaxTree, apply_text_edit, build_item_green, classify_item_kind, find_top_level_item_spans,
     for_each_highlight_token, highlight_spans, lower_syntax_to_program,
     lower_syntax_to_program_rd_only, lower_syntax_to_program_recovering,
-    lower_syntax_to_program_recovering_rd_only, parse_syntax, parse_syntax_arc,
+    lower_syntax_to_program_recovering_rd_only, map_token_kind, parse_syntax, parse_syntax_arc,
     parse_syntax_with_item_spans, reparse_edit, reparse_subtree, single_contiguous_edit,
     splice_tokens_for_item_edit, text_range,
 };
+pub use events::{ParseEvent, build_green_from_events, events_balanced};
 pub use kind::{AranduLanguage, SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};
 pub use lower::{
     GreenStructure, block_stmt_count, first_func_item, func_body_block, inspect_green_structure,

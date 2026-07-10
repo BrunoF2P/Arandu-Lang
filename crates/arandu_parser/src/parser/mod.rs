@@ -129,6 +129,8 @@ pub struct Parser<'a> {
     pub(crate) diagnostics: Vec<ParseError>,
     pub file_id: u32,
     pub suppression_window: u32,
+    /// Optional event sink for green-tree construction (F1 event-driven CST).
+    pub(crate) events: Option<Vec<crate::syntax::events::ParseEvent>>,
 }
 
 #[derive(Debug, Clone)]
@@ -151,6 +153,7 @@ impl<'a> Parser<'a> {
             pool: crate::ast::ast_pool::AstPool::new(),
             file_id: 0,
             suppression_window: 0,
+            events: None,
         }
     }
 
@@ -158,6 +161,45 @@ impl<'a> Parser<'a> {
     pub fn with_file_id(mut self, file_id: u32) -> Self {
         self.file_id = file_id;
         self
+    }
+
+    /// Enable recording of [`crate::syntax::events::ParseEvent`]s for green building.
+    #[must_use]
+    pub fn with_events(mut self) -> Self {
+        self.events = Some(Vec::with_capacity(256));
+        self
+    }
+
+    /// Take recorded events (empty if recording was off).
+    #[must_use]
+    pub fn take_events(&mut self) -> Vec<crate::syntax::events::ParseEvent> {
+        self.events.take().unwrap_or_default()
+    }
+
+    #[inline]
+    pub(crate) fn start_node(&mut self, kind: crate::syntax::SyntaxKind) {
+        if let Some(ev) = &mut self.events {
+            ev.push(crate::syntax::events::ParseEvent::Start(kind));
+        }
+    }
+
+    #[inline]
+    pub(crate) fn finish_node(&mut self) {
+        if let Some(ev) = &mut self.events {
+            ev.push(crate::syntax::events::ParseEvent::Finish);
+        }
+    }
+
+    #[inline]
+    fn emit_token_event(&mut self, token: &Token) {
+        if let Some(ev) = &mut self.events {
+            let kind = crate::syntax::map_token_kind(token.kind);
+            ev.push(crate::syntax::events::ParseEvent::Token {
+                kind,
+                start: token.start,
+                end: token.start.saturating_add(token.len),
+            });
+        }
     }
 
     /// Seek to the first non-EOF token whose `start >= offset` (green-guided lower).
@@ -185,15 +227,23 @@ impl<'a> Parser<'a> {
 
     /// Parses a full program, collecting recoverable errors in [`Self::diagnostics`].
     ///
+    /// When event recording is enabled ([`Self::with_events`]), emits
+    /// `SOURCE_FILE` / item / `BLOCK` / `STMT` structure for green trees.
+    ///
     /// # Errors
     ///
     /// Returns a fatal [`ParseError`] when parsing cannot continue (for example at EOF).
     pub fn parse_program(&mut self) -> Result<Program, ParseError> {
+        use crate::syntax::SyntaxKind;
+        self.start_node(SyntaxKind::SOURCE_FILE);
         let start = self.mark();
         self.skip_semicolons();
         self.collect_doc_comments();
         let module = if self.at_kind_name("KW_MODULE") {
-            Some(self.parse_module()?)
+            self.start_node(SyntaxKind::MODULE_ITEM);
+            let m = self.parse_module();
+            self.finish_node();
+            Some(m?)
         } else {
             None
         };
@@ -207,9 +257,14 @@ impl<'a> Parser<'a> {
                 break;
             }
             if self.at_kind_name("KW_IMPORT") || self.at_kind_name("KW_FROM") {
+                self.start_node(SyntaxKind::IMPORT_ITEM);
                 match self.parse_import() {
-                    Ok(import) => imports.push(import),
+                    Ok(import) => {
+                        self.finish_node();
+                        imports.push(import);
+                    }
                     Err(err) => {
+                        self.finish_node();
                         self.report_error(err);
                         self.synchronize_top_level();
                     }
@@ -228,6 +283,7 @@ impl<'a> Parser<'a> {
             }
         }
 
+        self.finish_node(); // SOURCE_FILE
         Ok(Program {
             span: self.span_from_mark(start),
             module,
@@ -460,11 +516,13 @@ impl<'a> Parser<'a> {
     }
 
     pub(super) fn advance_raw(&mut self) -> &Token {
-        let token = &self.tokens[self.pos];
+        let idx = self.pos;
+        let token = self.tokens[idx];
+        self.emit_token_event(&token);
         if self.pos < self.tokens.len() - 1 {
             self.pos += 1;
         }
-        token
+        &self.tokens[idx]
     }
 
     pub(crate) fn report_error(&mut self, err: ParseError) {

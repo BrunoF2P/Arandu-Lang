@@ -15,9 +15,9 @@ pub use parser::{
 };
 pub use syntax::lower;
 pub use syntax::{
-    GreenStructure, SyntaxKind, SyntaxNode, SyntaxTree, for_each_highlight_token, highlight_spans,
-    inspect_green_structure, lower_syntax_to_program, parse_dual, parse_dual_with_file_id,
-    parse_from_cst, parse_from_cst_with_file_id, parse_syntax, parse_syntax_arc,
-    parse_syntax_with_item_spans, reparse_edit, reparse_subtree, single_contiguous_edit,
-    splice_tokens_for_item_edit,
+    GreenStructure, ParseEvent, SyntaxKind, SyntaxNode, SyntaxTree, build_green_from_events,
+    events_balanced, for_each_highlight_token, highlight_spans, inspect_green_structure,
+    lower_syntax_to_program, parse_dual, parse_dual_with_file_id, parse_from_cst,
+    parse_from_cst_with_file_id, parse_syntax, parse_syntax_arc, parse_syntax_with_item_spans,
+    reparse_edit, reparse_subtree, single_contiguous_edit, splice_tokens_for_item_edit,
 };

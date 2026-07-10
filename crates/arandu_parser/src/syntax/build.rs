@@ -137,31 +137,42 @@ fn tree_from_lexed(
 }
 
 /// Build a tree from an existing shared text buffer (Salsa path shares `SourceFile.text`).
+///
+/// Primary path: RD parse with [`crate::syntax::events`] → green.
+/// Fallback: brace-aware heuristic items (same as pre-event sink).
 #[must_use]
 pub fn parse_syntax_arc(text: Arc<str>) -> SyntaxTree {
-    let (green, tokens, diags) = {
-        let lexed = lex_recovering(text.as_ref());
-        let spans = find_top_level_item_spans(&lexed.tokens, text.len() as u32);
-        let green = build_green(text.as_ref(), &lexed.tokens, &spans);
-        (green, lexed.tokens, lexed.diagnostics)
-    };
+    let lexed = lex_recovering(text.as_ref());
+    let tokens = Arc::new(lexed.tokens);
+    let diags = Arc::new(lexed.diagnostics);
+
+    let mut parser = crate::parser::Parser::new(text.as_ref(), Arc::clone(&tokens)).with_events();
+    let _ = parser.parse_program();
+    let events = parser.take_events();
+
+    let green =
+        super::events::build_green_from_events(text.as_ref(), &events).unwrap_or_else(|| {
+            let spans = find_top_level_item_spans(&tokens, text.len() as u32);
+            build_green(text.as_ref(), &tokens, &spans)
+        });
+
     SyntaxTree {
         green,
         text,
-        tokens: Arc::new(tokens),
-        lex_diagnostics: Arc::new(diags),
+        tokens,
+        lex_diagnostics: diags,
     }
 }
 
-/// CST-first parse: one lex → green ITEM tree + token cache (no AST).
+/// CST-first parse: one lex → **RD with event sink** → green + token cache.
+///
+/// Falls back to heuristic ITEM spans if events are unbalanced (severe recovery).
 #[must_use]
 pub fn parse_syntax(source: &str) -> SyntaxTree {
-    let lexed = lex_recovering(source);
-    let spans = find_top_level_item_spans(&lexed.tokens, source.len() as u32);
-    tree_from_lexed(source, lexed, &spans)
+    parse_syntax_arc(Arc::from(source))
 }
 
-/// Build CST with explicit item spans (advanced / tests).
+/// Build CST with explicit item spans (advanced / tests) — heuristic builder.
 #[must_use]
 pub fn parse_syntax_with_item_spans(source: &str, item_spans: &[(u32, u32)]) -> SyntaxTree {
     let lexed = lex_recovering(source);
@@ -708,7 +719,9 @@ fn emit_tokens(
     }
 }
 
-pub(crate) fn map_token_kind(kind: TokenKind) -> SyntaxKind {
+/// Map lexer token kinds to CST token kinds (shared with event sink).
+#[must_use]
+pub fn map_token_kind(kind: TokenKind) -> SyntaxKind {
     use TokenKind::*;
     match kind {
         DocComment => SyntaxKind::COMMENT,
@@ -939,25 +952,17 @@ pub fn reparse_subtree(
         return (new_source.clone(), parse_syntax(&new_source));
     }
 
-    // Absolute-offset tokens for the new item region.
-    let item_diags = item_lexed.diagnostics;
-    let item_tokens: Vec<Token> = item_lexed
-        .tokens
-        .into_iter()
-        .filter(|t| !matches!(t.kind, TokenKind::Eof))
-        .map(|mut t| {
-            t.start = t.start.saturating_add(new_s);
-            t
-        })
-        .collect();
-    let spliced = splice_tokens_for_item_edit(old.tokens(), old_s, old_e, delta, &item_tokens);
+    // Tokens: full-file re-lex for correctness (ASI at item boundaries). Green stays
+    // incremental via replace_child. (Splice alone drops zero-width ASI glued to the
+    // next item's leading whitespace gap under event-built trees.)
+    let file_lexed = lex_recovering(&new_source);
+    let _ = item_lexed; // used for green only
 
     let tree = SyntaxTree {
         green: new_green,
         text: Arc::from(new_source.as_str()),
-        tokens: Arc::new(spliced),
-        // Lex diags from item only; rare full-file issues need full reparse.
-        lex_diagnostics: Arc::new(item_diags),
+        tokens: Arc::new(file_lexed.tokens),
+        lex_diagnostics: Arc::new(file_lexed.diagnostics),
     };
     // If a local edit introduced/removed top-level items (rare), prefer full structure.
     if tree.items().len() != old_items.len() {
