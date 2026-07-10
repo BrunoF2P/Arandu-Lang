@@ -652,6 +652,7 @@ impl HirExpr {
             HirExprKind::Bool(v) => v.to_string(),
             HirExprKind::Char(v) => format!("'{v}'"),
             HirExprKind::Str(v) => format!("\"{v}\""),
+            HirExprKind::StringInterp { .. } => "<StringInterp>".to_string(),
             HirExprKind::Nil => "nil".to_string(),
             HirExprKind::Error => "<ErrorExpr>".to_string(),
             HirExprKind::Path { symbol } => ctx.symbols.get(*symbol).name.to_string(),
@@ -989,6 +990,23 @@ impl HirExpr {
                     v,
                     display_type(&self.ty, ctx)
                 ));
+            }
+            HirExprKind::StringInterp { parts } => {
+                out.push_str(&format!(
+                    "{}StringInterp: {}\n",
+                    ind,
+                    display_type(&self.ty, ctx)
+                ));
+                for part in parts {
+                    match part {
+                        crate::hir::HirStringPart::Text(t) => {
+                            out.push_str(&format!("{}  Text({:?})\n", ind, t));
+                        }
+                        crate::hir::HirStringPart::Expr(e) => {
+                            ctx.pool.expr(*e).pretty_print_to(out, indent + 2, ctx);
+                        }
+                    }
+                }
             }
             HirExprKind::Nil => {
                 out.push_str(&format!("{}Nil: {}\n", ind, display_type(&self.ty, ctx)));

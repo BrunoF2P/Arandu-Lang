@@ -306,6 +306,13 @@ impl AmirRvalue {
                 out.push_str("&mut ");
                 place.pretty_print_to(out, symbols, pool);
             }
+            AmirRvalue::StringInterp { parts } => {
+                let parts_str: Vec<String> = parts
+                    .iter()
+                    .map(|p| p.to_pretty_string(symbols, pool))
+                    .collect();
+                out.push_str(&format!("stringInterp({})", parts_str.join(", ")));
+            }
         }
     }
 }

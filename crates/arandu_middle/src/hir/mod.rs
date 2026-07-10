@@ -381,8 +381,22 @@ pub enum HirExprKind {
     Bool(bool),
     Char(String),
     Str(String),
+    /// String interpolation: a sequence of literal text segments and sub-expressions
+    /// that are concatenated at runtime to produce a `str` value.
+    StringInterp {
+        parts: Vec<HirStringPart>,
+    },
     Nil,
     Error,
+}
+
+/// One segment of an interpolated string.
+#[derive(Debug, Clone)]
+pub enum HirStringPart {
+    /// A literal text segment (already known at compile time).
+    Text(String),
+    /// A sub-expression whose runtime value is converted to string and concatenated.
+    Expr(HirExprId),
 }
 
 #[derive(Debug, Clone)]
@@ -819,6 +833,13 @@ impl HirExpr {
             HirExprKind::Binary { left, right, .. } => {
                 pool.expr(*left).validate_invariants(pool, symbols)?;
                 pool.expr(*right).validate_invariants(pool, symbols)?;
+            }
+            HirExprKind::StringInterp { parts } => {
+                for part in parts {
+                    if let HirStringPart::Expr(e) = part {
+                        pool.expr(*e).validate_invariants(pool, symbols)?;
+                    }
+                }
             }
             HirExprKind::Int(_)
             | HirExprKind::Float(_)
