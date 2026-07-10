@@ -6,7 +6,9 @@ use arandu_query::passes::{module_signatures, parse, type_check};
 use arandu_query::{file_ide_diagnostics, ide_diags_fingerprint, item_ide_diagnostics, SourceFile};
 use salsa::Setter;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+
+static COUNTER_LOCK: Mutex<()> = Mutex::new(());
 
 fn body_items(db: &DatabaseImpl, file: SourceFile) -> Vec<arandu_middle::SymbolId> {
     let program = parse(db, file);
@@ -33,6 +35,7 @@ func beta(): int {{
 
 #[test]
 fn item_ide_diags_beta_edit_skips_alpha() {
+    let _guard = COUNTER_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut db = DatabaseImpl::new();
     let file = db.new_file("p3.aru".into(), two_funcs(2));
 

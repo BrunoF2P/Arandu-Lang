@@ -118,6 +118,7 @@ version = "0.1.0"
 dependencies = [
  "arandu_base",
  "arandu_middle",
+ "arandu_parser",
  "arandu_query",
  "arandu_semantics",
  "crossbeam-channel",

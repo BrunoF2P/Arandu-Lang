@@ -40,7 +40,8 @@ Implemented:
   - Formatted buffers use `malloc` (process-lifetime leak OK for debug; free/ownership later).
   - User `Display` / custom formatting for structs is later.
 - **Salsa query DB** (`arandu_query`) — incremental `parse` → `resolve` → `type_check` → `lower_amir`; DX.5 `-Zexplain-rebuild`.
-- **LSP gold** (`arandu-lsp`) — `lsp-server`, main-thread + VFS debounce, worker pool, `DocumentId` + `AnalysisRevision`; diagnostics (delta por item), goto-def, hover, completion, signature help, references, rename, document/workspace symbols.
+- **LSP gold** (`arandu-lsp`) — `lsp-server`, VFS debounce, worker pool; diagnostics delta, goto/hover/complete/signatureHelp/refs/rename/symbols, **semantic tokens via CST**.  
+- **CST-first** (rowan): `syntax_tree` → lower AST para typeck; reparse de subtree por ITEM.
 
 Not implemented yet:
 

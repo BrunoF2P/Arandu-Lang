@@ -8,7 +8,8 @@ use arandu_query::{AnalysisSnapshot, SourceFile};
 use arandu_semantics::TypeCheckResult;
 use lsp_types::{
     CompletionItem, CompletionItemKind, Documentation, Hover, HoverContents, Location,
-    MarkedString, Position, SymbolInformation, SymbolKind as LspSymbolKind, Url,
+    MarkedString, Position, SemanticToken, SemanticTokenType, SemanticTokens, SemanticTokensLegend,
+    SymbolInformation, SymbolKind as LspSymbolKind, Url,
 };
 use rustc_hash::FxHashMap;
 use std::collections::HashMap;
@@ -386,6 +387,83 @@ pub fn signature_help(
     })
 }
 
+/// Legend order for semantic tokens (must match encoding below).
+#[must_use]
+pub fn semantic_tokens_legend() -> SemanticTokensLegend {
+    SemanticTokensLegend {
+        token_types: vec![
+            SemanticTokenType::KEYWORD,
+            SemanticTokenType::VARIABLE,
+            SemanticTokenType::TYPE,
+            SemanticTokenType::NUMBER,
+            SemanticTokenType::STRING,
+            SemanticTokenType::COMMENT,
+            SemanticTokenType::OPERATOR,
+        ],
+        token_modifiers: vec![],
+    }
+}
+
+fn highlight_class_to_type_index(class: &str) -> Option<u32> {
+    Some(match class {
+        "keyword" => 0,
+        "variable" => 1,
+        "type" => 2,
+        "number" => 3,
+        "string" => 4,
+        "comment" => 5,
+        "operator" => 6,
+        _ => return None,
+    })
+}
+
+/// Build LSP semantic tokens from the file's CST (`syntax_tree` query).
+#[must_use]
+pub fn semantic_tokens(snap: &AnalysisSnapshot, source: SourceFile) -> SemanticTokens {
+    let tree = arandu_query::syntax_tree(&snap.db, source);
+    let text = tree.text();
+    let index = LineIndex::new(text);
+    let spans = arandu_parser::highlight_spans(&tree);
+
+    let mut data = Vec::new();
+    let mut prev_line = 0u32;
+    let mut prev_start = 0u32;
+    for (start, end, class) in spans {
+        let Some(token_type) = highlight_class_to_type_index(class) else {
+            continue;
+        };
+        let start_pos = offset_to_position_local(&index, start);
+        let length = end.saturating_sub(start);
+        let delta_line = start_pos.line.saturating_sub(prev_line);
+        let delta_start = if delta_line == 0 {
+            start_pos.character.saturating_sub(prev_start)
+        } else {
+            start_pos.character
+        };
+        data.push(SemanticToken {
+            delta_line,
+            delta_start,
+            length,
+            token_type,
+            token_modifiers_bitset: 0,
+        });
+        prev_line = start_pos.line;
+        prev_start = start_pos.character;
+    }
+    SemanticTokens {
+        result_id: None,
+        data,
+    }
+}
+
+fn offset_to_position_local(index: &LineIndex, offset: u32) -> Position {
+    let (line1, col1) = index.line_col(offset);
+    Position {
+        line: line1.saturating_sub(1),
+        character: col1.saturating_sub(1),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -416,6 +494,18 @@ mod tests {
             items.iter().any(|i| i.label == "func" || i.label == "main"),
             "expected keyword or main in completions, got {} items",
             items.len()
+        );
+    }
+
+    #[test]
+    fn semantic_tokens_from_cst_nonempty() {
+        let mut host = AnalysisHost::new();
+        let file = host.new_file("st.aru".into(), "func main(): int { return 1 }\n".into());
+        let snap = host.snapshot();
+        let tokens = semantic_tokens(&snap, file);
+        assert!(
+            !tokens.data.is_empty(),
+            "expected semantic tokens from CST keywords/idents"
         );
     }
 

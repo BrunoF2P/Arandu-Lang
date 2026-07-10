@@ -87,26 +87,7 @@ pub fn symbol_span(
     arandu_base::Span::new(span.file_id, span.start, span.end)
 }
 
-#[salsa::tracked]
-#[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
-    query = "parse",
-    file = ?file.file_id(db),
-))]
-pub fn parse(
-    db: &dyn ArandCompilerDb,
-    file: SourceFile,
-) -> HashEq<Result<Program, arandu_parser::ParseError>> {
-    let text = file.text(db);
-    match arandu_parser::parse_with_file_id(&text, file.file_id(db)) {
-        Ok(program) => HashEq::new(Ok(program)),
-        Err(err) => HashEq::new(Err(err)),
-    }
-}
-
-/// P5: Rowan CST dual of `parse` — ITEM nodes grouped by AST decl spans.
-///
-/// Green interning reuses identical item text across edits; HashEq fingerprints
-/// the full tree text + item texts for memo identity.
+/// P5: authoritative CST (rowan). Built from source alone — no AST dependency.
 #[salsa::tracked]
 #[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
     query = "syntax_tree",
@@ -117,24 +98,24 @@ pub fn syntax_tree(
     file: SourceFile,
 ) -> HashEq<arandu_parser::SyntaxTree> {
     let text = file.text(db);
-    let program_res = parse(db, file);
-    let spans: Vec<(u32, u32)> = match &*program_res {
-        Ok(program) => program
-            .decls
-            .iter()
-            .map(|id| {
-                let sp = program.pool.decl(*id).span();
-                (sp.start, sp.end)
-            })
-            .collect(),
-        Err(_) => Vec::new(),
-    };
-    let tree = if spans.is_empty() {
-        arandu_parser::parse_syntax(&text)
-    } else {
-        arandu_parser::parse_syntax_with_item_spans(&text, &spans)
-    };
-    HashEq::new(tree)
+    HashEq::new(arandu_parser::parse_syntax(&text))
+}
+
+/// AST for typeck/resolve: **lowered from CST** (not an independent dual parse).
+#[salsa::tracked]
+#[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
+    query = "parse",
+    file = ?file.file_id(db),
+))]
+pub fn parse(
+    db: &dyn ArandCompilerDb,
+    file: SourceFile,
+) -> HashEq<Result<Program, arandu_parser::ParseError>> {
+    let tree = syntax_tree(db, file);
+    match arandu_parser::lower_syntax_to_program(&tree, file.file_id(db)) {
+        Ok(program) => HashEq::new(Ok(program)),
+        Err(err) => HashEq::new(Err(err)),
+    }
 }
 
 #[salsa::tracked(cycle_result = cycle_recover)]

@@ -8,7 +8,10 @@ use arandu_query::passes::{
 use arandu_query::SourceFile;
 use salsa::Setter;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+
+/// Global exec counters are process-wide; serialize tests that reset them.
+static COUNTER_LOCK: Mutex<()> = Mutex::new(());
 
 fn free_func_list(db: &DatabaseImpl, file: SourceFile) -> Vec<arandu_middle::SymbolId> {
     let program = parse(db, file);
@@ -44,6 +47,7 @@ func beta(): int {{
 
 #[test]
 fn body_edit_beta_skips_alpha_item_body_typeck() {
+    let _guard = COUNTER_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut db = DatabaseImpl::new();
     let file = db.new_file("two.aru".into(), two_funcs(2));
 
@@ -100,6 +104,7 @@ const B = {b_val}
 
 #[test]
 fn const_edit_b_skips_const_a() {
+    let _guard = COUNTER_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut db = DatabaseImpl::new();
     let file = db.new_file("consts.aru".into(), two_consts(2));
 
@@ -148,6 +153,7 @@ func main(): int {{
 
 #[test]
 fn func_edit_skips_struct_item() {
+    let _guard = COUNTER_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut db = DatabaseImpl::new();
     let file = db.new_file("mix.aru".into(), struct_and_func(1));
 

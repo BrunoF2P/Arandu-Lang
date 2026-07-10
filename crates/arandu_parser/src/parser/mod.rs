@@ -35,9 +35,11 @@ pub fn parse(source: &str) -> Result<Program, ParseError> {
     parse_with_file_id(source, 0)
 }
 
+/// Parse source: **CST-first**, then lower green-tree text → AST for typeck/resolve.
 #[tracing::instrument(level = "trace", target = "arandu_parser", skip(source))]
 pub fn parse_with_file_id(source: &str, file_id: u32) -> Result<Program, ParseError> {
-    let output = parse_recovering_with_file_id(source, file_id);
+    let tree = crate::syntax::parse_syntax(source);
+    let output = parse_tokens_to_program(tree.text(), file_id);
     if let Some(err) = output.diagnostics.into_iter().next() {
         Err(err)
     } else {
@@ -49,7 +51,15 @@ pub fn parse_recovering(source: &str) -> ParseOutput {
     parse_recovering_with_file_id(source, 0)
 }
 
+/// Recovering parse: CST-first, then RD lower on CST text.
 pub fn parse_recovering_with_file_id(source: &str, file_id: u32) -> ParseOutput {
+    let tree = crate::syntax::parse_syntax(source);
+    parse_tokens_to_program(tree.text(), file_id)
+}
+
+/// Recursive-descent lower from source text (used by CST lower; no second CST build).
+#[doc(hidden)]
+pub fn parse_tokens_to_program(source: &str, file_id: u32) -> ParseOutput {
     let lexed = arandu_lexer::lex_recovering(source);
     let mut parser = Parser::new(lexed.source, lexed.tokens).with_file_id(file_id);
     let mut diagnostics: Vec<ParseError> = lexed
@@ -58,13 +68,10 @@ pub fn parse_recovering_with_file_id(source: &str, file_id: u32) -> ParseOutput 
         .map(|err| ParseError::from_lex(err, file_id))
         .collect();
 
-    // We expect parse_program to finish without returning Err
-    // for recoverable nodes, but if it does return Err (e.g. at EOF), we catch it.
     let program = match parser.parse_program() {
         Ok(prog) => prog,
         Err(err) => {
             parser.diagnostics.push(err);
-            // Construct a fallback program
             Program {
                 span: Span {
                     file_id: parser.file_id,

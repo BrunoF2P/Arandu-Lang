@@ -1,4 +1,4 @@
-//! P5 — Salsa `syntax_tree` dual + item stability across sibling edits.
+//! P5 — Salsa `syntax_tree` (CST-first) + item stability across sibling edits.
 
 use arandu_query::db::DatabaseImpl;
 use arandu_query::passes::syntax_tree;
@@ -18,7 +18,7 @@ fn syntax_tree_has_items() {
     let tree = syntax_tree(&db, file);
     assert!(
         tree.items().len() >= 2,
-        "expected ITEM nodes from dual parse, got {}",
+        "expected ITEM nodes from CST heuristic, got {}",
         tree.items().len()
     );
 }

@@ -67,12 +67,14 @@
 - Early cutoff entre itens (testes `item_body_cutoff`, `ide_diag_delta`).  
 - Typeck monólito substituído por compose P1/P2; wire LSP ainda manda lista full (protocolo).
 
-## P5 — CST (rowan)
+## P5 — CST-first (rowan)
 
-- `arandu_parser::syntax`: green tree `SOURCE_FILE` / `ITEM` / tokens.  
-- Dual: `parse_dual` / Salsa `syntax_tree` (ITEM spans do AST).  
-- `reparse_edit` + texto de ITEM estável quando só o irmão muda.  
-- `item_source_input` fingerprinta texto do ITEM CST (`item_body_v3_cst`).
+- **Canônico:** `syntax_tree(file)` a partir do texto (ITEM por heurística de keywords).  
+- **`parse(file)`** = `lower_syntax_to_program(syntax_tree)` — AST só como lower do CST.  
+- **`reparse_subtree`**: re-lex só o ITEM tocado + `replace_child` (green dos irmãos reutilizado); fallback full `parse_syntax`.  
+- **LSP semantic tokens** a partir de `highlight_spans` no CST (`textDocument/semanticTokens/full`).  
+- Fingerprint de item (`item_source_input`) usa texto do ITEM CST.  
+- Typeck/resolve consomem AST **somente** via lower do CST (`parse` ← `syntax_tree`).
 
 ## Guardrails / testes
 

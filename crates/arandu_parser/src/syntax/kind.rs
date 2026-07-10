@@ -1,29 +1,32 @@
-//! Syntax kinds for the Arandu CST (rowan).
+//! Syntax kinds for the Arandu CST (rowan) — CST-first pipeline.
 
 /// Token and composite node kinds for the green/red tree.
-///
-/// Token kinds are a compact projection of [`arandu_lexer::TokenKind`] plus
-/// composite structure for top-level items (P5 dual + item-level reuse).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u16)]
 #[allow(non_camel_case_types)]
 pub enum SyntaxKind {
-    // --- trivia / tokens (generic) ---
+    // --- trivia ---
     WHITESPACE = 0,
     COMMENT,
-    /// Any non-trivia lexer token (identity preserved in text, not kind detail).
-    TOKEN,
+
+    // --- tokens (for highlighting) ---
+    KEYWORD,
+    IDENT,
+    TYPE_IDENT,
+    NUMBER,
+    STRING,
+    CHAR,
+    PUNCT,
     ERROR_TOKEN,
 
     // --- composite ---
     /// Root covering the entire file.
     SOURCE_FILE,
-    /// One top-level declaration (func/struct/const/…), token range of its span.
+    /// Top-level unit: module / import / declaration (func, struct, …).
     ITEM,
     /// Unparsed / error region.
     ERROR,
 
-    /// Sentinel — must stay last for Language bounds.
     #[doc(hidden)]
     __LAST,
 }
@@ -39,9 +42,25 @@ impl SyntaxKind {
     pub const fn is_trivia(self) -> bool {
         matches!(self, Self::WHITESPACE | Self::COMMENT)
     }
+
+    /// LSP semantic-token friendly name (stable strings).
+    #[must_use]
+    pub const fn highlight_class(self) -> Option<&'static str> {
+        match self {
+            Self::KEYWORD => Some("keyword"),
+            Self::IDENT => Some("variable"),
+            Self::TYPE_IDENT => Some("type"),
+            Self::NUMBER => Some("number"),
+            Self::STRING => Some("string"),
+            Self::CHAR => Some("string"),
+            Self::COMMENT => Some("comment"),
+            Self::PUNCT => Some("operator"),
+            Self::ERROR_TOKEN | Self::ERROR => Some("error"),
+            _ => None,
+        }
+    }
 }
 
-/// Rowan language marker for Arandu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum AranduLanguage {}
 
@@ -50,7 +69,7 @@ impl rowan::Language for AranduLanguage {
 
     fn kind_from_raw(raw: rowan::SyntaxKind) -> Self::Kind {
         assert!(raw.0 < SyntaxKind::__LAST as u16);
-        // SAFETY: raw is produced by kind_to_raw from a valid SyntaxKind.
+        // SAFETY: raw produced by kind_to_raw from a valid SyntaxKind.
         unsafe { std::mem::transmute::<u16, SyntaxKind>(raw.0) }
     }
 

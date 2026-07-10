@@ -1,96 +1,56 @@
 # Plano — typeck incremental fino, IDE completa, delta de diag, CST
 
-**Status:** plano em execução — **P0 + P1 (MVP typeck por função) no tree**.  
-**Pré-requisito já no tree:** gold Salsa/LSP (F0–F5) — ver [`arandu-salsa-lsp-architecture-v0.1.md`](./arandu-salsa-lsp-architecture-v0.1.md).
+**Status:** **P0–P6 implementados** (CST-first, sem dual AST independente).  
+**Pré-requisito:** gold Salsa/LSP — [`arandu-salsa-lsp-architecture-v0.1.md`](./arandu-salsa-lsp-architecture-v0.1.md).
 
-### Progresso
+## Progresso
 
 | Fase | Status |
 |------|--------|
-| P0 baseline/doc | Feito (este doc + contadores) |
-| P1 typeck por função | Feito: fingerprint por span + `item_body_typeck` |
-| P2 typeck por item | **Feito:** `body_item_symbols` + `check_item_body_only` + `item_source_input` |
-| P3 delta diags | **Feito:** `item_ide_diagnostics` + compose; teste `ide_diag_delta` |
-| P4 IDE completa | **Feito:** hover, complete, signatureHelp, refs, rename, doc/workspace symbols; worker pool |
-| Honestidade bloco AMIR | **Feito:** `check_*_by_block` tagueia diags com `BlockId` real |
-| P5 CST Rowan | **Feito:** dual `parse_dual` / `syntax_tree` Salsa + `reparse_edit`; ITEM green reuse |
-| P6 | Pendente (métricas extras) |
+| P0 baseline/doc | Feito |
+| P1 typeck por função | Feito |
+| P2 typeck por item | Feito |
+| P3 delta diags | Feito |
+| P4 IDE completa | Feito (+ semantic tokens CST) |
+| Honestidade bloco AMIR | Feito (`*_by_block`) |
+| **P5 CST Rowan** | **CST-first:** `syntax_tree` → `parse` lower; `reparse_subtree` |
+| **P6 hardening** | Docs + métricas de pipeline; explain-rebuild cobre `syntax_tree` |
 
-## Por que agora
-
-O typeck ainda é **por arquivo** (`type_check(file)` monólito). Isso limita:
-
-- latência on-type em arquivos grandes  
-- delta real de diagnostics de typeck  
-- hover/complete baratos  
-- o ganho de um CST/reparse parcial (parse barato, análise ainda cara)
-
-## Ordem (DAG)
-
-```
-P0 baseline/contratos
- → P1 typeck por função + file_typeck_view
- → P2 typeck por item (structs/methods/…)
- → P3 delta diags (item + bloco AMIR com spans)
- → P4 IDE completa (hover, complete, refs, rename, …)
- → P5 CST Rowan (dual → reparse parcial)
- → P6 hardening / métricas / roadmap
-```
-
-**Não** fazer CST (P5) antes de typeck fino (P1): reparse parcial sem fatiar typeck é cosmético.
-
-## Unidades de invalidação
-
-| Unidade | Chave | Notas |
-|---------|-------|--------|
-| File text | `SourceFile` | hoje |
-| **Item** | `SymbolId` da decl | P1+ — unidade mínima de typeck fino |
-| Block AMIR | `(SymbolId, BlockId)` | dataflow + diags com span |
-| Syntax node | green id (P5) | reparse parcial |
-
-Stale IDE handles: `AnalysisRevision` (já existe). Não `generation` em `SymbolId`.
-
-## P1 em uma frase
+## Pipeline canônico (hoje)
 
 ```text
-module_signatures(file)           // parede de tipos exportados
-item_body_typeck(file, func_sym)  // só aquele corpo
-file_typeck_view(file)            // compose → CLI/LSP/lower
+SourceFile.text
+    → syntax_tree(file)          // CST rowan, ITEM por heurística de keywords
+    → parse(file)                // lower_syntax_to_program (RD no texto do CST)
+    → resolve / item_body_typeck / file_ide_diagnostics
 ```
 
-**DoD:** edit em `beta` não WillExecute `item_body_typeck(alpha)`.
+- **Não** há dual: CST não depende de AST; AST é só lower do texto autoritativo do CST.
+- Typeck continua em `Program` (estrutura tipada); a **origem** do programa é o CST.
+- Highlighting LSP: `textDocument/semanticTokens/full` via `highlight_spans` no CST.
 
-## IDE (P4) — ordem
+## Reparse de subtree
 
-1. Hover  
-2. Completion  
-3. Signature help  
-4. References  
-5. Rename  
-6. Document / workspace symbols  
-7. Code actions / format (depois)
+`reparse_subtree(old_tree, start, end, replacement)`:
 
-Infra: pool de threads, cancel Salsa, harness JSON-RPC mínimo.
+1. Aplica o edit no texto.  
+2. Se o edit cabe em um único `ITEM`: re-lex **só o texto daquele ITEM**, reconstrói o green do ITEM, e faz `replace_child` na raiz — **irmãos reusam o mesmo green** (`Arc` identity).  
+3. Caso contrário, full `parse_syntax`.  
 
-## CST (P5)
+No path Salsa, `syntax_tree` reconstroi a partir do texto completo (correto sob edits arbitrários); a API de subtree serve buffers/IDE e testes de estabilidade/reuso.
 
-- Lib recomendada: **rowan**  
-- Dual running (CST + AST atual) → reparse parcial → dropar dual  
-- CST **não** substitui P1
+## P6 — Hardening (feito)
 
-## Estimativa
+| Entrega | Onde |
+|---------|------|
+| Docs CST-first | este plano, `arandu-salsa-lsp-architecture-v0.1.md`, README |
+| Explain-rebuild | `RebuildLog` + `#[tracing::instrument]` em `syntax_tree` / `item_body_typeck` / `parse` |
+| Métricas de pipeline | contadores de teste (`item_body_cutoff`, `ide_diag_delta`, green identity em `reparse_subtree`) |
+| Critério de sucesso | edit em um item não muda texto/green de irmãos; typeck + semantic tokens verdes |
 
-| Caminho | Esforço |
-|---------|---------|
-| Critico até IDE boa (P0–P1–P3–P4.1) | ~5–8 semanas foco |
-| + CST reparse parcial | ~8–14 semanas foco |
+## Fora de escopo residual
 
-## DoD global
-
-1. Typeck fino medido (cutoff entre funções/itens).  
-2. Delta diag por item (+ bloco quando span existir).  
-3. IDE usável: hover, complete, goto, refs, rename, symbols, diags.  
-4. CST + reparse parcial medido.  
-5. Docs honestas (sem “5 ms” sem medição).
-
-Detalhe completo de fases, riscos e testes: plano de sessão / implementação aprovado na conversa de design.
+- Lower AST **sem** re-lex RD (parser 100% driven por walk de green nodes).  
+- `syntax_tree` Salsa incremental via `reparse_subtree` (hoje full text → green).  
+- Highlight semântico por tipos (só léxico via CST por ora).  
+- Code actions / format.
