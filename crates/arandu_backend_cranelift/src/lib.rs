@@ -8,6 +8,7 @@
 #![allow(clippy::collapsible_if)]
 pub mod abi;
 pub mod jit;
+pub mod to_str_runtime;
 pub mod translator;
 pub mod types;
 

@@ -1,5 +1,6 @@
 use arandu_parser::Program;
 use arandu_parser::ast_pool::{AstPool, ExprId};
+use std::sync::Arc;
 
 use crate::{Diagnostic, ResolutionResult, ResolvedNames, ScopeId, SymbolId, SymbolTable};
 
@@ -19,12 +20,48 @@ use types::{ArType, TypeId, TypeInterner};
 
 // ── Results ─────────────────────────────────────────────────────────
 
+/// Type-check output shared across Salsa queries and lowerings.
+///
+/// PERF.5: heavy tables live behind [`Arc`] so cloning a result (keystroke /
+/// query fan-out in the future LSP) is O(1) atomic refcount ops. Diagnostics
+/// stay owned — small and frequently extended.
+///
+/// Mutating `type_info` (e.g. HIR lower interning) uses [`Self::type_info_mut`]
+/// (`Arc::make_mut`) so shared snapshots stay intact until uniquely owned.
 #[derive(Debug, Clone)]
 pub struct TypeCheckResult {
-    pub symbols: SymbolTable,
-    pub resolved: ResolvedNames,
-    pub type_info: TypeInfo,
+    pub symbols: Arc<SymbolTable>,
+    pub resolved: Arc<ResolvedNames>,
+    pub type_info: Arc<TypeInfo>,
     pub diagnostics: Vec<Diagnostic>,
+}
+
+impl TypeCheckResult {
+    /// Empty shell used by cycle recovery and parse-error fallbacks.
+    #[must_use]
+    pub fn empty() -> Self {
+        Self {
+            symbols: Arc::new(SymbolTable::default()),
+            resolved: Arc::new(ResolvedNames::default()),
+            type_info: Arc::new(TypeInfo::default()),
+            diagnostics: Vec::new(),
+        }
+    }
+
+    /// Unique mutable access to [`TypeInfo`] (clone-on-write via [`Arc::make_mut`]).
+    pub fn type_info_mut(&mut self) -> &mut TypeInfo {
+        Arc::make_mut(&mut self.type_info)
+    }
+
+    /// Unique mutable access to the symbol table.
+    pub fn symbols_mut(&mut self) -> &mut SymbolTable {
+        Arc::make_mut(&mut self.symbols)
+    }
+
+    /// Unique mutable access to resolved names.
+    pub fn resolved_mut(&mut self) -> &mut ResolvedNames {
+        Arc::make_mut(&mut self.resolved)
+    }
 }
 
 // ── Entry point ─────────────────────────────────────────────────────
@@ -66,13 +103,15 @@ pub fn check_signatures_only(resolution: ResolutionResult, program: &Program) ->
 #[must_use]
 #[tracing::instrument(level = "trace", target = "arandu_typeck", skip(signatures, program))]
 pub fn check_bodies_only(signatures: &TypeCheckResult, program: &Program) -> TypeCheckResult {
+    // PERF.5: Arc clone is O(1); unwrap_or_clone only deep-copies when this
+    // result is still shared with other Salsa consumers.
     let mut checker = TypeChecker::new(
-        signatures.symbols.clone(),
-        signatures.resolved.clone(),
+        Arc::unwrap_or_clone(Arc::clone(&signatures.symbols)),
+        Arc::unwrap_or_clone(Arc::clone(&signatures.resolved)),
         signatures.diagnostics.clone(),
         &program.pool,
     );
-    checker.type_info = signatures.type_info.clone();
+    checker.type_info = Arc::unwrap_or_clone(Arc::clone(&signatures.type_info));
 
     tracing::debug!(
         target: "arandu_typeck",
@@ -87,6 +126,11 @@ pub fn check_bodies_only(signatures: &TypeCheckResult, program: &Program) -> Typ
     );
     checker.finish()
 }
+
+pub use check::program_items::{
+    body_item_symbols, check_func_body_only, check_item_body_only, check_non_func_bodies_only,
+    free_func_symbols, item_source_span, primary_def_key,
+};
 
 // ── TypeChecker state ───────────────────────────────────────────────
 
@@ -325,9 +369,9 @@ impl TypeChecker<'_> {
     #[must_use]
     pub fn finish(self) -> TypeCheckResult {
         TypeCheckResult {
-            symbols: self.symbols,
-            resolved: self.resolved,
-            type_info: self.type_info,
+            symbols: Arc::new(self.symbols),
+            resolved: Arc::new(self.resolved),
+            type_info: Arc::new(self.type_info),
             diagnostics: self.diagnostics,
         }
     }
@@ -348,6 +392,22 @@ mod tests {
 
     fn new_interner() -> TypeInterner {
         TypeInterner::new()
+    }
+
+    // ── PERF.5 Arc sharing ──
+
+    #[test]
+    fn type_check_result_clone_shares_arcs() {
+        let a = TypeCheckResult::empty();
+        let b = a.clone();
+        assert!(Arc::ptr_eq(&a.symbols, &b.symbols));
+        assert!(Arc::ptr_eq(&a.resolved, &b.resolved));
+        assert!(Arc::ptr_eq(&a.type_info, &b.type_info));
+        // make_mut detaches only the mutated field
+        let mut c = a.clone();
+        c.type_info_mut();
+        assert!(!Arc::ptr_eq(&a.type_info, &c.type_info));
+        assert!(Arc::ptr_eq(&a.symbols, &c.symbols));
     }
 
     fn empty_symbols() -> SymbolTable {

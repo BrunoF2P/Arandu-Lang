@@ -350,6 +350,45 @@ impl<'a> CEmitter<'a> {
                 )
                 .unwrap();
             }
+            AmirRvalue::ToStr { value, src_ty } => {
+                use arandu_middle::types::{ArType, Primitive};
+                let src = self.interner.resolve(*src_ty);
+                let val = self.format_operand(value, func);
+                match &src {
+                    ArType::Primitive(Primitive::Str) => {
+                        write!(&mut self.output, "{val}").unwrap();
+                    }
+                    ArType::Primitive(Primitive::Bool) => {
+                        write!(&mut self.output, "ar_bool_to_str({val})").unwrap();
+                    }
+                    ArType::Primitive(Primitive::Char) => {
+                        write!(&mut self.output, "ar_char_to_str((uint32_t)({val}))").unwrap();
+                    }
+                    ArType::FloatLiteral => {
+                        write!(&mut self.output, "ar_f64_to_str((double)({val}))").unwrap();
+                    }
+                    ArType::Primitive(p) if p.is_float() => {
+                        write!(&mut self.output, "ar_f64_to_str((double)({val}))").unwrap();
+                    }
+                    ArType::IntLiteral => {
+                        write!(&mut self.output, "ar_i64_to_str((int64_t)({val}))").unwrap();
+                    }
+                    ArType::Primitive(p) if p.is_integer() && p.is_signed() => {
+                        write!(&mut self.output, "ar_i64_to_str((int64_t)({val}))").unwrap();
+                    }
+                    ArType::Primitive(p) if p.is_integer() => {
+                        write!(&mut self.output, "ar_u64_to_str((uint64_t)({val}))").unwrap();
+                    }
+                    other => {
+                        write!(
+                            &mut self.output,
+                            "/* unsupported ToStr {:?} */ ar_str_pack((const uint8_t*)\"\", 0)",
+                            other
+                        )
+                        .unwrap();
+                    }
+                }
+            }
         }
     }
 }

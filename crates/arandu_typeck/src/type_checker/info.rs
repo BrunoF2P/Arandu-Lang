@@ -223,6 +223,23 @@ impl TypeInfo {
                 },
             );
         }
+        // Expr types (body typeck shards): re-intern TypeIds into `self`.
+        if other.expr_types.len() > self.expr_types.len() {
+            self.expr_types.resize(other.expr_types.len(), None);
+        }
+        for (idx, slot) in other.expr_types.iter().enumerate() {
+            let Some(other_id) = slot else {
+                continue;
+            };
+            if self.expr_types[idx].is_some() {
+                continue; // keep first writer (signatures / earlier merge)
+            }
+            let other_ty = other.type_interner.resolve(*other_id);
+            let translated =
+                translate_type(&other_ty, &other.type_interner, &mut self.type_interner);
+            let id = self.type_interner.intern(translated);
+            self.expr_types[idx] = Some(id);
+        }
     }
 
     pub fn record_expr_type(&mut self, expr: ExprId, id: TypeId) {

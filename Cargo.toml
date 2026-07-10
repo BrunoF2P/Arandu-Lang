@@ -15,6 +15,7 @@ members = [
     "crates/arandu_test_support",
     "crates/arandu_backend_c",
     "crates/arandu_query",
+    "crates/arandu_lsp",
 ]
 resolver = "3"
 
@@ -25,13 +26,21 @@ authors = ["Arandu Language Contributors"]
 [workspace.dependencies]
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
-salsa = "0.27.2"                                                               # Salsa's new version (salsa-2022 tracked-based macro API)
+salsa = "0.27.2" # Salsa's new version (salsa-2022 tracked-based macro API)
 blake3 = "1.8.5"
-smol_str = "0.3.1"
-smallvec = "1.13.2"
-miette = { version = "7.2.0", features = ["fancy"] }
-thiserror = "1.0.56"
-petgraph = "0.6.4"
+smol_str = "0.3.6"
+smallvec = "1.15.2"
+rustc-hash = "2.1.3"
+miette = { version = "7.6.0", features = ["fancy"] }
+thiserror = "2.0.18"
+petgraph = "0.8.3"
+slotmap = "1.0.7"
+lsp-server = "0.7.8"
+lsp-types = "0.94.1"
+crossbeam-channel = "0.5.15"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+rowan = "0.16.1"
 
 [workspace.lints]
 # Intentionally empty: use default toolchain lint levels.

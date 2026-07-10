@@ -6,6 +6,6 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
-rustc-hash = "2.1.2"
+rustc-hash = { workspace = true }
 tracing.workspace = true
 tracing-subscriber.workspace = true

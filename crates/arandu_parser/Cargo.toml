@@ -15,6 +15,7 @@ arandu_base = { path = "../arandu_base" }
 tracing.workspace = true
 smol_str.workspace = true
 smallvec.workspace = true
+rowan = { workspace = true }
 
 [lib]
 path = "src/lib.rs"

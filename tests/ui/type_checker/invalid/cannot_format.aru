@@ -1,0 +1,12 @@
+import io
+
+struct Point {
+    x: int
+}
+
+func main() {
+    let p = Point { x: 1 }
+    io.println(p)
+    let s = "p=${p}"
+    let t = p.to_str()
+}

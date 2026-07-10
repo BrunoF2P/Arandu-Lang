@@ -2,6 +2,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::explain::RebuildLog;
+use salsa::Storage;
+
 pub type FileId = u32;
 
 pub use crate::stable_hash::StableHash;
@@ -40,6 +43,8 @@ impl<T> std::ops::Deref for HashEq<T> {
 pub trait ArandCompilerDb: salsa::Database {
     fn source_text(&self, file: FileId) -> Arc<str>;
     fn file_path(&self, file: FileId) -> Arc<PathBuf>;
+    /// Registered Salsa input for this numeric file id, if any.
+    fn source_file_by_id(&self, file: FileId) -> Option<SourceFile>;
     fn as_source_db(&self) -> &dyn arandu_middle::db::SourceDatabase;
 }
 
@@ -72,17 +77,67 @@ impl FileRegistry {
     }
 }
 
-#[derive(Default, Clone)]
+/// Salsa database with optional DX.5 rebuild logging.
+///
+/// Prefer [`Self::default`] / [`Self::new`] for production (no event callback).
+/// Use [`Self::with_rebuild_log`] when `-Zexplain-rebuild` is active.
 #[salsa::db]
 pub struct DatabaseImpl {
-    storage: salsa::Storage<Self>,
+    storage: Storage<Self>,
     files: Arc<std::sync::Mutex<FileRegistry>>,
+    /// Shared with the Salsa event callback when explain mode is on.
+    rebuild_log: Option<Arc<RebuildLog>>,
+}
+
+// Manual Clone: Storage is cloneable; share Arc file registry + log.
+impl Clone for DatabaseImpl {
+    fn clone(&self) -> Self {
+        Self {
+            storage: self.storage.clone(),
+            files: Arc::clone(&self.files),
+            rebuild_log: self.rebuild_log.clone(),
+        }
+    }
+}
+
+impl Default for DatabaseImpl {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[salsa::db]
 impl salsa::Database for DatabaseImpl {}
 
 impl DatabaseImpl {
+    /// Database without rebuild event overhead.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            storage: Storage::new(None),
+            files: Arc::new(std::sync::Mutex::new(FileRegistry::default())),
+            rebuild_log: None,
+        }
+    }
+
+    /// Database with DX.5 causal-chain recording (Salsa `WillExecute` / validate).
+    #[must_use]
+    pub fn with_rebuild_log() -> (Self, Arc<RebuildLog>) {
+        let log = RebuildLog::new();
+        let callback = RebuildLog::salsa_callback(Arc::clone(&log));
+        let db = Self {
+            storage: Storage::new(Some(callback)),
+            files: Arc::new(std::sync::Mutex::new(FileRegistry::default())),
+            rebuild_log: Some(Arc::clone(&log)),
+        };
+        (db, log)
+    }
+
+    #[must_use]
+    pub fn rebuild_log(&self) -> Option<&Arc<RebuildLog>> {
+        self.rebuild_log.as_ref()
+    }
+
     pub fn new_file(&mut self, path: String, text: String) -> SourceFile {
         let mut reg = self.files.lock().unwrap();
         let file_id = reg.next_id();
@@ -100,6 +155,13 @@ impl DatabaseImpl {
         let mut reg = self.files.lock().unwrap();
         let file_id = file.file_id(self.as_source_db());
         reg.insert(path, file_id, file);
+    }
+
+    /// O(1) reverse lookup: compiler `FileId` → open/registered [`SourceFile`].
+    #[must_use]
+    pub fn source_file_by_id(&self, file_id: FileId) -> Option<SourceFile> {
+        let reg = self.files.lock().unwrap();
+        reg.by_id.get(&file_id).copied()
     }
 }
 
@@ -187,6 +249,10 @@ impl ArandCompilerDb for DatabaseImpl {
             .get(&file)
             .map(|f| f.path(self.as_source_db()))
             .unwrap_or_else(|| Arc::new(PathBuf::new()))
+    }
+
+    fn source_file_by_id(&self, file: FileId) -> Option<SourceFile> {
+        DatabaseImpl::source_file_by_id(self, file)
     }
 
     fn as_source_db(&self) -> &dyn arandu_middle::db::SourceDatabase {

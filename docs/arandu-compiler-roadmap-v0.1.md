@@ -53,10 +53,13 @@ Fase 2 — A Construção da Infraestrutura & Execução (v0.2) · [EM ANDAMENTO
 [x] A7     Portable SIMD Infrastructure (AVX2/NEON UTF-8 validation e keyword matching)
 [x] A8     Parallel Task Scheduler (work-stealing DAG, thread-local arenas, affinity)
 [x] A9     Dense Bitset Infrastructure (dataflow, liveness, OSSA/DCE bits)
-[~] A10    Stable ID Infrastructure
+[x] A10    Stable ID Infrastructure
    ├─ [x] A10.a  IDs inteiros estáveis (ExprId, TypeId, SymbolId — NonZeroU32 + IndexVec) — em uso em todo o compilador
    ├─ [x] A10.b  StableHandle por hash estrutural — removido (código morto, nunca integrado)
-   └─ [ ] A10.c  Generational IDs (index + generation) para detecção de referências stale no LSP — aguarda Fase 3/DX.6; adotar crate `slotmap` quando chegar
+   ├─ [x] A10.c  Generational IDs — `DocumentStore` + `slotmap::SlotMap` (`DocumentId`);
+   │              close/reopen invalida handles antigos (testes em `doc_store`)
+   └─ [x] A10.d  AnalysisRevision / LspSymbolId — stale-safety de análise por revisão de snapshot
+                  (não generation em SymbolId); ver `arandu_query::analysis`
 [x] A11    Token & String Storage Engine (packed tokens, SSO via smol_str, string interning)
 [x] BC     Backend Cranelift (Dev/Debug com compilador em memória)
    ├─ [x] BC.1   Fat Pointer String JIT (tratar String como ptr + len na convenção de chamadas do Cranelift)
@@ -70,33 +73,26 @@ Fase 2 — A Construção da Infraestrutura & Execução (v0.2) · [EM ANDAMENTO
     ├─ [x] PERF.1   Tracing subscriber + -Zdebug-* flags via EnvFilter (replaces time_pass!/debug_point!)
     ├─ [x] PERF.2   SelfProfile Layer — Trace Event JSON buffer em memória, finalize_self_profile()
     ├─ [x] PERF.3   #[instrument] em 22 funções críticas (parser, unify, typeck, resolve, etc.)
-    └─ [x] PERF.4   ParseCache em CompileSession — cache de ASTs keyed por PathBuf elimina parsing duplicado de stdlib
+    └─ [x] PERF.4   ParseCache (legado CompileSession) — absorvido pela query Salsa `parse`
 [x] SL_C   Stdlib Fundamental: arandu_core e arandu_alloc (primitivas heapless e arena/smallvec/bitset)
 [x] DOC1   docs/ossa-virtual-anchoring.md — RFC retroativo documentando a técnica de âncoras virtuais + poda
 
 Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
 [x] A1     Query System (Incremental Semantic Database, Salsa-like O(1) invalidation)
-   ├─ [x] A1.1   Salsa Integration / CompilerDatabase migration
+   ├─ [x] A1.1   Salsa Integration / CompilerDatabase migration (`CompileSession` removido)
    ├─ [x] A1.2   O(1) FileId lookup em DatabaseImpl (índice reverso FileId→SourceFile via FxHashMap)
-   ├─ [ ] DX.5   Causal-Chain explain-rebuild (mostrar por que uma query recompilou através do Salsa dependency graph)
-   └─ [ ] DX.6   LSP incremental nativo via Salsa (migrado da Fase 2 para após A1)
-[ ] PERF.5  Arc nos campos pesados de TypeCheckResult (pré-requisito para DX.6)
-   │  Motivação: cada clone de TypeCheckResult (em type_check e lower_amir) copia
-   │  60–430 KB de tabelas hash (SymbolTable + ResolvedNames + TypeInfo). Com Arc nos
-   │  campos, o clone vira 3 atomic adds (~15ns) independente do tamanho do projeto.
-   │  O ganho é marginal hoje (arquivos pequenos, Salsa cacheia), mas crítico no LSP
-   │  onde cada keystroke recompila dependentes e o custo se multiplica por arquivo.
-   │
-   │  Plano:
-   │  - TypeCheckResult.symbols:   SymbolTable   → Arc<SymbolTable>
-   │  - TypeCheckResult.resolved:  ResolvedNames → Arc<ResolvedNames>
-   │  - TypeCheckResult.type_info: TypeInfo      → Arc<TypeInfo>
-   │  - TypeCheckResult.diagnostics: Vec<Diagnostic> (manter por valor — pequeno)
-   │  - Atualizar TypeChecker::new e check_signatures_only para receber Arc
-   │  - Atualizar todos os call sites em passes.rs, lower_hir, lower_amir
-   │
-   │  Fazer ANTES de DX.6 para que o LSP não nasça com esse custo.
-   └─ Dependência: DX.6
+   ├─ [x] A1.3   Dataflow por bloco — `liveness_facts` / `block_dataflow_facts` (live+init+move)
+   ├─ [x] A1.4   F4 IDE diags — `file_ide_diagnostics` / `func_analysis_diags` + early cutoff
+   ├─ [x] DX.5   Causal-Chain explain-rebuild — `RebuildLog` + Salsa `Event` callback;
+   │              CLI `-Zexplain-rebuild`; testes `explain_rebuild`
+   └─ [x] DX.6   LSP gold — `arandu_lsp` com `lsp-server` + main síncrona + VFS debounce +
+                 snapshot workers (`AnalysisHost`/`AnalysisSnapshot`); diagnostics + goto-def +
+                 multi-file; `DocumentId` geracional; stale revision descarta jobs
+[x] PERF.5  Arc nos campos pesados de TypeCheckResult (pré-requisito para DX.6)
+   │  Feito: symbols / resolved / type_info atrás de `Arc`; diagnostics por valor.
+   │  Clone de `TypeCheckResult` é O(1) atomic refcount; `type_info_mut()` /
+   │  `Arc::make_mut` no lower HIR quando o interner precisa mutar.
+   │  `check_bodies_only` usa `Arc::unwrap_or_clone` ao reentrar no checker.
 [ ] A2     Effect System (pure, readonly, noalloc, nothrow, nosuspend)
 [ ] A3     Modelo Async Semântico Colorless (coroutine splitting, zero heap stack-first, OSSA checks)
 [ ] A4     Memory Layout Optimization Engine (field reordering, niche tags, SOO)

@@ -386,6 +386,10 @@ pub enum HirExprKind {
     StringInterp {
         parts: Vec<HirStringPart>,
     },
+    /// Compiler intrinsic: format a ToStr-v0.1 value as `str` (`x.to_str()`).
+    ToStr {
+        value: HirExprId,
+    },
     Nil,
     Error,
 }
@@ -840,6 +844,9 @@ impl HirExpr {
                         pool.expr(*e).validate_invariants(pool, symbols)?;
                     }
                 }
+            }
+            HirExprKind::ToStr { value } => {
+                pool.expr(*value).validate_invariants(pool, symbols)?;
             }
             HirExprKind::Int(_)
             | HirExprKind::Float(_)

@@ -1,0 +1,30 @@
+module examples.stable.syntax.to_str
+
+import io
+
+// ToStr v0.1: primitives format via println, interpolation, and `.to_str()`.
+// Supported: bool, char, integers (incl. fixed-width), floats, str.
+// Buffers are malloc'd (debug leak; free/ownership later).
+func main(): int {
+    let n: int = 42
+    let b: bool = true
+    let c: char = 'Z'
+    let u: uint = 7
+    let f: float = 1.5
+    let i8v: i8 = -3
+    let u16v: u16 = 9
+
+    io.println(n)
+    io.println(b)
+    io.println(c)
+    io.println(u)
+    io.println(f)
+    io.println(i8v)
+    io.println(u16v)
+    io.println("n=${n} b=${b}")
+
+    let s = n.to_str()
+    io.println(s)
+    io.println(f.to_str())
+    return 0
+}

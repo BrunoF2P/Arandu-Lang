@@ -216,7 +216,8 @@ impl InstantiationAnalyzer<'_> {
             | HirExprKind::Alloc { expr: base }
             | HirExprKind::Try { expr: base }
             | HirExprKind::Cast { expr: base, .. }
-            | HirExprKind::Unary { expr: base, .. } => self.visit_expr(*base, current),
+            | HirExprKind::Unary { expr: base, .. }
+            | HirExprKind::ToStr { value: base } => self.visit_expr(*base, current),
             HirExprKind::Index { base, index } | HirExprKind::SafeIndex { base, index } => {
                 self.visit_expr(*base, current);
                 self.visit_expr(*index, current);

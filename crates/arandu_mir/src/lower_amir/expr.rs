@@ -54,6 +54,32 @@ fn resolve_method_target(
 }
 
 impl LowerCtx<'_> {
+    /// If `src_ty` is formatable and not already `str`, emit `ToStr` into a
+    /// fresh `str` temp. Identity for `str`; other types left unchanged (typeck
+    /// should already have rejected non-formatables at str sites).
+    pub(crate) fn maybe_to_str(
+        &mut self,
+        op: AmirOperand,
+        src_ty: &ArType,
+    ) -> Result<AmirOperand, Diagnostic> {
+        if matches!(src_ty, ArType::Primitive(Primitive::Str)) || src_ty.is_error() {
+            return Ok(op);
+        }
+        if !src_ty.is_to_str_v01() {
+            return Ok(op);
+        }
+        let src_ty_id = self.intern_ty(src_ty.clone());
+        let dest = self.new_temp(ArType::Primitive(Primitive::Str));
+        self.emit_assign_temp(
+            dest,
+            AmirRvalue::ToStr {
+                value: op,
+                src_ty: src_ty_id,
+            },
+        );
+        Ok(AmirOperand::Copy(dest))
+    }
+
     pub(crate) fn expr_is_nil(expr: &HirExpr) -> bool {
         matches!(expr.kind, HirExprKind::Nil)
     }
@@ -273,7 +299,9 @@ impl LowerCtx<'_> {
                             self.intern_literal(AmirLiteralEntry::Str(t.clone())),
                         ),
                         arandu_middle::hir::HirStringPart::Expr(e) => {
-                            self.lower_expr(*e, None, symbols)?
+                            let part_expr = self.hir.pool.expr(*e);
+                            let part_op = self.lower_expr(*e, None, symbols)?;
+                            self.maybe_to_str(part_op, &part_expr.ty)?
                         }
                     };
                     part_ops.push(op);
@@ -281,6 +309,18 @@ impl LowerCtx<'_> {
                 let dest = target.unwrap_or_else(|| self.new_temp(expr.ty.clone()));
                 self.emit_assign_temp(dest, AmirRvalue::StringInterp { parts: part_ops });
                 Ok(AmirOperand::Copy(dest))
+            }
+            HirExprKind::ToStr { value } => {
+                let value_expr = self.hir.pool.expr(*value);
+                let op = self.lower_expr(*value, None, symbols)?;
+                // Always materialize ToStr (even for `str` identity is a no-op in maybe_to_str).
+                let str_op = self.maybe_to_str(op, &value_expr.ty)?;
+                if let Some(dest) = target {
+                    self.emit_assign_temp(dest, AmirRvalue::Use(str_op.clone()));
+                    Ok(AmirOperand::Copy(dest))
+                } else {
+                    Ok(str_op)
+                }
             }
             HirExprKind::Char(v) => {
                 let op =
@@ -646,6 +686,13 @@ impl LowerCtx<'_> {
                 };
                 let args_slice = self.hir.pool.expr_list(*args);
                 let mut arg_ops = Vec::with_capacity(args_slice.len() + 1);
+                let formal_params: Vec<ArType> = match &callee_expr.ty {
+                    ArType::Func(params, _) => {
+                        params.iter().map(|&id| self.resolve_ty(id)).collect()
+                    }
+                    _ => Vec::new(),
+                };
+                let arg_param_offset = if method_target.is_some() { 1 } else { 0 };
                 if method_target.is_some()
                     && let HirExprKind::Field { base, .. } | HirExprKind::SafeField { base, .. } =
                         &callee_expr.kind
@@ -653,9 +700,20 @@ impl LowerCtx<'_> {
                     let base_op = self.lower_expr(*base, None, symbols)?;
                     arg_ops.push(base_op);
                 }
-                for &arg in args_slice {
+                for (i, &arg) in args_slice.iter().enumerate() {
+                    let arg_expr = self.hir.pool.expr(arg);
                     let arg_op = self.lower_expr(arg, None, symbols)?;
-                    arg_ops.push(self.consume_operand(arg_op)?);
+                    let arg_op = self.consume_operand(arg_op)?;
+                    let arg_op = if let Some(param_ty) = formal_params.get(i + arg_param_offset) {
+                        if matches!(param_ty, ArType::Primitive(Primitive::Str)) {
+                            self.maybe_to_str(arg_op, &arg_expr.ty)?
+                        } else {
+                            arg_op
+                        }
+                    } else {
+                        arg_op
+                    };
+                    arg_ops.push(arg_op);
                 }
                 let dest = if matches!(expr.ty, ArType::Void) {
                     None

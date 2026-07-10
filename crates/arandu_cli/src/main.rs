@@ -100,7 +100,7 @@ fn usage_and_exit() -> ! {
     eprintln!(
         "                : -Zdebug-parser -Zdebug-typeck -Zdebug-ossa -Zdebug-layout -Zdebug-backend -Zdebug-all"
     );
-    eprintln!("                : -Zself-profile=<path>");
+    eprintln!("                : -Zself-profile=<path>  -Zexplain-rebuild");
 
     process::exit(2);
 }
@@ -209,7 +209,13 @@ fn main() {
         }
     }
 
-    let db = arandu_query::db::DatabaseImpl::default();
+    let explain = arandu_base::EXPLAIN_REBUILD.load(std::sync::atomic::Ordering::Relaxed);
+    let (db, rebuild_log) = if explain {
+        let (db, log) = arandu_query::db::DatabaseImpl::with_rebuild_log();
+        (db, Some(log))
+    } else {
+        (arandu_query::db::DatabaseImpl::new(), None)
+    };
     let mut registry = arandu_base::SourceRegistry::default();
 
     let mut source_files = Vec::new();
@@ -398,8 +404,8 @@ fn main() {
                     match CodegenBackend::compile(
                         backend,
                         &amir,
-                        &checked.type_check.symbols,
-                        &checked.type_check.type_info,
+                        checked.type_check.symbols.as_ref(),
+                        checked.type_check.type_info.as_ref(),
                     ) {
                         Ok(out) => out,
                         Err(diag) => print_diagnostics_and_exit(&[diag], &filepath),
@@ -447,8 +453,8 @@ fn main() {
                 arandu_base::time_pass!("emit-c");
                 let c_src = arandu_backend_c::emit_c(
                     &amir,
-                    &checked.type_check.symbols,
-                    &checked.type_check.type_info,
+                    checked.type_check.symbols.as_ref(),
+                    checked.type_check.type_info.as_ref(),
                     &checked.type_check.type_info.type_interner,
                     data_layout,
                 );
@@ -490,6 +496,10 @@ fn main() {
         for (source_file, filepath, source) in source_files {
             process_file(source_file, filepath, source, db.clone());
         }
+    }
+
+    if let Some(log) = rebuild_log {
+        eprint!("{}", log.format_chain(true));
     }
 
     arandu_base::print_perf_summary();

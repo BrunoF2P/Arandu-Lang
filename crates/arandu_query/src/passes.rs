@@ -15,6 +15,10 @@ pub static RESOLVE_EXEC_COUNT: AtomicUsize = AtomicUsize::new(0);
 #[cfg(any(test, debug_assertions))]
 pub static TYPE_CHECK_EXEC_COUNT: AtomicUsize = AtomicUsize::new(0);
 
+/// Counts `item_body_typeck` body executions (P1 fine-grained).
+#[cfg(any(test, debug_assertions))]
+pub static ITEM_BODY_TYPECK_EXEC_COUNT: AtomicUsize = AtomicUsize::new(0);
+
 pub fn cycle_recover(
     _db: &dyn ArandCompilerDb,
     _id: salsa::Id,
@@ -64,15 +68,23 @@ pub fn exported_symbols(
     Arc::new(arandu_middle::ExportedSymbolTable { symbols: map })
 }
 
+/// Real definition span for `symbol_id` (from the owning file's resolve result).
+///
+/// Never panics on unknown / cross-file ids: returns a zero-width span.
 pub fn symbol_span(
-    _db: &dyn ArandCompilerDb,
-    _symbol_id: arandu_middle::SymbolId,
+    db: &dyn ArandCompilerDb,
+    symbol_id: arandu_middle::SymbolId,
 ) -> arandu_base::Span {
-    // In a real implementation, we would just fetch the file by symbol_id.file_id
-    // But since we can't construct SourceFile just from FileId directly without a query in this DB
-    // we would use db to lookup the file.
-    // For now, this is a placeholder returning a dummy span if it's not implemented yet.
-    arandu_base::Span::new(0, 0, 0)
+    let empty = arandu_base::Span::new(symbol_id.file_id, 0, 0);
+    let Some(file) = db.source_file_by_id(symbol_id.file_id) else {
+        return empty;
+    };
+    let resolved = resolve(db, file);
+    let Some(symbol) = resolved.symbols.try_get(symbol_id) else {
+        return empty;
+    };
+    let span = symbol.span;
+    arandu_base::Span::new(span.file_id, span.start, span.end)
 }
 
 #[salsa::tracked]
@@ -89,6 +101,40 @@ pub fn parse(
         Ok(program) => HashEq::new(Ok(program)),
         Err(err) => HashEq::new(Err(err)),
     }
+}
+
+/// P5: Rowan CST dual of `parse` — ITEM nodes grouped by AST decl spans.
+///
+/// Green interning reuses identical item text across edits; HashEq fingerprints
+/// the full tree text + item texts for memo identity.
+#[salsa::tracked]
+#[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
+    query = "syntax_tree",
+    file = ?file.file_id(db),
+))]
+pub fn syntax_tree(
+    db: &dyn ArandCompilerDb,
+    file: SourceFile,
+) -> HashEq<arandu_parser::SyntaxTree> {
+    let text = file.text(db);
+    let program_res = parse(db, file);
+    let spans: Vec<(u32, u32)> = match &*program_res {
+        Ok(program) => program
+            .decls
+            .iter()
+            .map(|id| {
+                let sp = program.pool.decl(*id).span();
+                (sp.start, sp.end)
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    let tree = if spans.is_empty() {
+        arandu_parser::parse_syntax(&text)
+    } else {
+        arandu_parser::parse_syntax_with_item_spans(&text, &spans)
+    };
+    HashEq::new(tree)
 }
 
 #[salsa::tracked(cycle_result = cycle_recover)]
@@ -120,12 +166,7 @@ pub fn cycle_recover_module_signatures(
     _id: salsa::Id,
     _file: SourceFile,
 ) -> HashEq<TypeCheckResult> {
-    let mut res = TypeCheckResult {
-        symbols: arandu_semantics::SymbolTable::default(),
-        resolved: arandu_semantics::ResolvedNames::default(),
-        type_info: arandu_semantics::TypeInfo::default(),
-        diagnostics: vec![],
-    };
+    let mut res = TypeCheckResult::empty();
     res.diagnostics.push(arandu_middle::Diagnostic::error(
         arandu_middle::DiagCode::N006ImportConflict,
         "cyclic module signature dependency detected".to_string(),
@@ -167,7 +208,9 @@ pub fn module_signatures(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<T
                             diags = ?imported_sigs.diagnostics,
                             "merged imported module signatures"
                         );
-                        checker.type_info.merge_from(&imported_sigs.type_info);
+                        checker
+                            .type_info
+                            .merge_from(imported_sigs.type_info.as_ref());
                         for diag in &imported_sigs.diagnostics {
                             if diag.message.contains("cyclic") {
                                 checker.diagnostics.push(diag.clone());
@@ -181,13 +224,183 @@ pub fn module_signatures(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<T
             checker.finish()
         }
         Err(_) => TypeCheckResult {
-            symbols: arandu_semantics::SymbolTable::default(),
-            resolved: resolved_arc.resolved.clone(),
-            type_info: arandu_semantics::TypeInfo::default(),
+            symbols: std::sync::Arc::new(arandu_semantics::SymbolTable::default()),
+            resolved: std::sync::Arc::new(resolved_arc.resolved.clone()),
+            type_info: std::sync::Arc::new(arandu_semantics::TypeInfo::default()),
             diagnostics: vec![],
         },
     };
 
+    HashEq::new(res)
+}
+
+/// Per-item input for body typeck: holds current [`Program`] but **HashEq**
+/// only fingerprints that item's source span (sibling edits early-cutoff).
+#[derive(Clone)]
+pub struct ItemSourceInput {
+    pub program: Arc<Program>,
+    pub item_sym: arandu_middle::SymbolId,
+    /// blake3 of the item's source slice for StableHash / early cutoff.
+    pub(crate) body_fp: blake3::Hash,
+}
+
+/// Backward-compatible alias used by older call sites / StableHash.
+pub type FuncBodyInput = ItemSourceInput;
+
+/// Extract one item's AST dependency from `parse`+`resolve` with content-addressed HashEq.
+#[salsa::tracked]
+#[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
+    query = "item_source_input",
+    file = ?file.file_id(db),
+    item = ?item_sym,
+))]
+pub fn item_source_input(
+    db: &dyn ArandCompilerDb,
+    file: SourceFile,
+    item_sym: arandu_middle::SymbolId,
+) -> HashEq<ItemSourceInput> {
+    use arandu_parser::TopLevelDecl;
+
+    let program_res = parse(db, file);
+    let resolved = resolve(db, file);
+    let text = file.text(db);
+
+    let Ok(program) = &*program_res else {
+        return HashEq::new(ItemSourceInput {
+            program: Arc::new(empty_program()),
+            item_sym,
+            body_fp: blake3::hash(b"parse-error"),
+        });
+    };
+
+    // Prefer CST ITEM text (P5) when available — same content as source slice,
+    // but establishes a dependency on `syntax_tree` for green reuse metrics.
+    let tree = syntax_tree(db, file);
+
+    let mut body_fp = blake3::hash(b"item-missing");
+    for decl_id in &program.decls {
+        let decl = program.pool.decl(*decl_id);
+        let matches = match arandu_semantics::primary_def_key(decl) {
+            Some(key) => resolved.resolved.definitions.get(&key) == Some(&item_sym),
+            None => false,
+        } || matches!(
+            decl,
+            TopLevelDecl::Extern(ext)
+                if ext.members.iter().any(|m| {
+                    resolved.resolved.definitions.get(&arandu_middle::NodeKey::from(m.span))
+                        == Some(&item_sym)
+                })
+        );
+        if !matches {
+            continue;
+        }
+        let span = arandu_semantics::item_source_span(decl);
+        let start = (span.start as usize).min(text.len());
+        let end = (span.end as usize).min(text.len()).max(start);
+        let slice = &text[start..end];
+        // Match CST item by text equality (dual spans).
+        let item_text = tree
+            .item_texts()
+            .into_iter()
+            .find(|t| t == slice)
+            .unwrap_or_else(|| slice.to_string());
+        let mut h = blake3::Hasher::new();
+        h.update(b"item_body_v3_cst");
+        h.update(item_text.as_bytes());
+        body_fp = h.finalize();
+        break;
+    }
+
+    HashEq::new(ItemSourceInput {
+        program: Arc::new(program.clone()),
+        item_sym,
+        body_fp,
+    })
+}
+
+/// Alias for P1 name (thin wrapper; same memo as [`item_source_input`]).
+#[inline]
+pub fn func_body_input(
+    db: &dyn ArandCompilerDb,
+    file: SourceFile,
+    func_sym: arandu_middle::SymbolId,
+) -> HashEq<ItemSourceInput> {
+    item_source_input(db, file, func_sym)
+}
+
+fn empty_program() -> Program {
+    Program {
+        span: arandu_base::Span::new(0, 0, 0),
+        module: None,
+        imports: vec![],
+        decls: vec![],
+        docs: vec![],
+        pool: arandu_parser::ast_pool::AstPool::default(),
+    }
+}
+
+/// Per-item body typeck (P1 funcs + P2 all top-level body items).
+///
+/// Depends on [`item_source_input`] (HashEq by item source span) + [`module_signatures`].
+#[salsa::tracked]
+#[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
+    query = "item_body_typeck",
+    file = ?file.file_id(db),
+    item = ?item_sym,
+))]
+pub fn item_body_typeck(
+    db: &dyn ArandCompilerDb,
+    file: SourceFile,
+    item_sym: arandu_middle::SymbolId,
+) -> HashEq<TypeCheckResult> {
+    #[cfg(any(test, debug_assertions))]
+    ITEM_BODY_TYPECK_EXEC_COUNT.fetch_add(1, Ordering::SeqCst);
+
+    let body_in = item_source_input(db, file, item_sym);
+    let signatures = module_signatures(db, file);
+    let res =
+        arandu_semantics::check_item_body_only(&signatures, body_in.program.as_ref(), item_sym);
+    HashEq::new(res)
+}
+
+/// Composed file typeck: signatures + per-item body memos (P2).
+///
+/// This is the incremental-friendly view; [`type_check`] delegates here.
+#[salsa::tracked]
+#[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
+    query = "file_typeck_view",
+    file = ?file.file_id(db),
+))]
+pub fn file_typeck_view(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<TypeCheckResult> {
+    let program_res = parse(db, file);
+    let signatures = module_signatures(db, file);
+
+    let Ok(program) = &*program_res else {
+        return HashEq::new((*signatures).clone());
+    };
+
+    let item_syms = arandu_semantics::body_item_symbols(program, signatures.resolved.as_ref());
+
+    let mut merged_info = (*signatures.type_info).clone();
+    let mut diagnostics = signatures.diagnostics.clone();
+
+    for &item_sym in &item_syms {
+        let item = item_body_typeck(db, file, item_sym);
+        merged_info.merge_from(item.type_info.as_ref());
+        diagnostics.extend(item.diagnostics.iter().cloned());
+    }
+
+    // Residual for decls without primary keys (normally empty).
+    let residual = arandu_semantics::check_non_func_bodies_only(&signatures, program);
+    merged_info.merge_from(residual.type_info.as_ref());
+    diagnostics.extend(residual.diagnostics);
+
+    let res = TypeCheckResult {
+        symbols: Arc::clone(&signatures.symbols),
+        resolved: Arc::clone(&signatures.resolved),
+        type_info: Arc::new(merged_info),
+        diagnostics,
+    };
     HashEq::new(res)
 }
 
@@ -200,33 +413,22 @@ pub fn type_check(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<TypeChec
     #[cfg(any(test, debug_assertions))]
     TYPE_CHECK_EXEC_COUNT.fetch_add(1, Ordering::SeqCst);
 
-    let program_res = parse(db, file);
-    let signatures_arc = module_signatures(db, file);
-    tracing::debug!(
-        target: "arandu_query",
-        file = ?file.file_id(db),
-        diags = ?signatures_arc.diagnostics,
-        "module_signatures complete"
-    );
+    // P1: compose per-function body checks (early cutoff across funcs).
+    let res = file_typeck_view(db, file);
 
-    let res = match &*program_res {
-        // Pass by reference — check_bodies_only now takes &TypeCheckResult.
-        Ok(program) => arandu_semantics::check_bodies_only(&signatures_arc, program),
-        Err(_) => (*signatures_arc).clone(),
-    };
     tracing::debug!(
         target: "arandu_query",
         file = ?file.file_id(db),
         diags = ?res.diagnostics,
-        "type_check complete"
+        "type_check complete (file_typeck_view)"
     );
 
-    // Accumulate diagnostics without removing them from the return value!
     for diag in &res.diagnostics {
         arandu_middle::db::DiagnosticsAccumulator(diag.clone()).accumulate(db);
     }
 
-    HashEq::new(res)
+    // Return same HashEq identity as view (clone Arc contents via HashEq).
+    HashEq::new((*res).clone())
 }
 
 #[salsa::tracked]

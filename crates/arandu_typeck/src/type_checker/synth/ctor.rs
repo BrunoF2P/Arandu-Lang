@@ -126,6 +126,48 @@ pub(crate) fn synth_method_call(
         _ => base_ty_id,
     };
 
+    // ToStr v0.1 intrinsic: `receiver.to_str()` with zero args → `str`.
+    if method == "to_str" {
+        let arg_ids = checker.pool.expr_list(args).to_vec();
+        if !arg_ids.is_empty() {
+            checker.diagnostics.push(
+                crate::Diagnostic::error(
+                    crate::DiagCode::T012WrongArgCount,
+                    format!(
+                        "method 'to_str' expects 0 argument(s), found {}",
+                        arg_ids.len()
+                    ),
+                    call_span,
+                )
+                .with_label(field_span, "call target is here"),
+            );
+            return Some(checker.intern(ArType::Error));
+        }
+        let base_ty = checker.resolve(actual_base_ty_id);
+        let str_id = checker.intern(ArType::Primitive(
+            crate::type_checker::types::Primitive::Str,
+        ));
+        if base_ty.is_to_str_v01() {
+            let func_id = checker.intern(ArType::Func(vec![actual_base_ty_id], str_id));
+            checker.record_expr_type(callee, func_id);
+            return Some(str_id);
+        }
+        let interner = &checker.type_info.type_interner;
+        let found = base_ty.display(&checker.symbols, interner);
+        checker.diagnostics.push(
+            crate::Diagnostic::error(
+                crate::DiagCode::T034CannotFormat,
+                format!("cannot format value of type `{found}` as `str`"),
+                checker.pool.expr_span(base),
+            )
+            .with_note(
+                "only bool, integers, floats, char, and str are supported in v0.1".to_string(),
+            )
+            .with_label(field_span, "to_str is not available for this type"),
+        );
+        return Some(checker.intern(ArType::Error));
+    }
+
     let struct_id = match checker.resolve(actual_base_ty_id) {
         ArType::Named(id, _) => Some(id),
         ArType::Ptr(inner) => match checker.resolve(inner) {
@@ -214,18 +256,15 @@ pub(crate) fn synth_method_call(
 
     for (i, arg_id) in arg_ids.iter().copied().enumerate() {
         let arg_ty_id = synth_expr(checker, arg_id);
-        if let Some(&expected_id) = explicit_params.get(i)
-            && !checker.unify_ids(expected_id, arg_ty_id)
-        {
-            checker.add_constraint(
+        if let Some(&expected_id) = explicit_params.get(i) {
+            super::expr::check_call_arg(
+                checker,
                 expected_id,
                 arg_ty_id,
-                ConstraintOrigin::CallArg {
-                    call_span,
-                    param_span: field_span,
-                    arg_span: checker.pool.expr_span(arg_id),
-                    arg_index: i + 1,
-                },
+                call_span,
+                field_span,
+                checker.pool.expr_span(arg_id),
+                i + 1,
             );
         }
     }

@@ -172,6 +172,8 @@ pub enum DiagCode {
     T031Reserved,
     T032AwaitInvalid,
     T033IndirectCallNotSupported,
+    /// Cannot auto-format a value as `str` (ToStr v0.1: only primitives).
+    T034CannotFormat,
 
     // ── Lowering (L) ──
     L001LoweringUnresolvedSymbol,
@@ -273,6 +275,7 @@ impl DiagCode {
             DiagCode::T031Reserved => "T031",
             DiagCode::T032AwaitInvalid => "T032",
             DiagCode::T033IndirectCallNotSupported => "T033",
+            DiagCode::T034CannotFormat => "T034",
             DiagCode::L001LoweringUnresolvedSymbol => "L001",
             DiagCode::G001GenericInstantiationCycle => "G001",
             DiagCode::G002GenericInstantiationLimit => "G002",

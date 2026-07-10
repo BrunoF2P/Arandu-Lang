@@ -57,14 +57,17 @@ fn expr_type_for_kind(
 
     match kind {
         HirExprKind::Error => ArType::Error,
-        HirExprKind::Str(_) | HirExprKind::StringInterp { .. } => ArType::Primitive(Primitive::Str),
+        HirExprKind::Str(_) | HirExprKind::StringInterp { .. } | HirExprKind::ToStr { .. } => {
+            ArType::Primitive(Primitive::Str)
+        }
         HirExprKind::Int(_) => ArType::IntLiteral,
         HirExprKind::Float(_) => ArType::FloatLiteral,
         HirExprKind::Bool(_) => ArType::Primitive(Primitive::Bool),
         HirExprKind::Char(_) => ArType::Primitive(Primitive::Char),
         HirExprKind::Nil => {
             if fallback.is_error() {
-                let interner = &mut type_check.type_info.type_interner;
+                let interner =
+                    &mut std::sync::Arc::make_mut(&mut type_check.type_info).type_interner;
                 let err_id = interner.intern(ArType::Error);
                 ArType::Nullable(err_id)
             } else {
@@ -137,7 +140,7 @@ pub(crate) fn lower_expr_raw(
             let callee_id = lower_expr(type_check, pool, hir_pool, *callee)?;
             let mut hir_args = Vec::new();
             let arg_ids = pool.type_expr_list(*args).to_vec();
-            let interner = &mut type_check.type_info.type_interner;
+            let interner = &mut std::sync::Arc::make_mut(&mut type_check.type_info).type_interner;
             for arg_id in arg_ids {
                 hir_args.push(crate::passes::type_checker::types::lower_type_expr(
                     arg_id,
@@ -228,6 +231,18 @@ pub(crate) fn lower_expr_raw(
                     variant,
                     value: value_id,
                 };
+                let ty = expr_type_for_kind(type_check, hir_pool, &kind, fallback_ty);
+                return Ok(HirExpr { kind, ty, span });
+            }
+            // ToStr v0.1: `receiver.to_str()` → HirExprKind::ToStr (not a real method call).
+            if trailing_block.is_none()
+                && arg_ids.is_empty()
+                && let ExprKind::Field { base, field, .. } | ExprKind::SafeField { base, field, .. } =
+                    pool.expr(callee_id)
+                && field == "to_str"
+            {
+                let value_id = lower_expr(type_check, pool, hir_pool, *base)?;
+                let kind = HirExprKind::ToStr { value: value_id };
                 let ty = expr_type_for_kind(type_check, hir_pool, &kind, fallback_ty);
                 return Ok(HirExpr { kind, ty, span });
             }
@@ -415,7 +430,7 @@ pub(crate) fn lower_expr_raw(
             ty: cast_ty,
             ..
         } => {
-            let interner = &mut type_check.type_info.type_interner;
+            let interner = &mut std::sync::Arc::make_mut(&mut type_check.type_info).type_interner;
             let target_ty = crate::passes::type_checker::types::lower_type_expr(
                 *cast_ty,
                 pool,

@@ -461,12 +461,17 @@ impl SymbolTable {
 
     #[must_use]
     pub fn get(&self, id: SymbolId) -> &Symbol {
+        self.try_get(id)
+            .expect("symbol id not found in this SymbolTable")
+    }
+
+    /// Safe lookup: local ids out of range or missing imports return `None`.
+    #[must_use]
+    pub fn try_get(&self, id: SymbolId) -> Option<&Symbol> {
         if id.file_id == self.file_id {
-            &self.symbols[id.local_id.0 as usize]
+            self.symbols.get(id.local_id.0 as usize)
         } else {
-            self.imported_symbols
-                .get(&id)
-                .expect("imported symbol not found")
+            self.imported_symbols.get(&id)
         }
     }
 

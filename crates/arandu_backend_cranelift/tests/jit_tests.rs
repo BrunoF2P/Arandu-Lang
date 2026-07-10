@@ -3,6 +3,7 @@
 use arandu_backend_cranelift::CraneliftBackend;
 use arandu_semantics::literal_pool::AmirLiteralEntry;
 use arandu_semantics::{DiagCode, lower_to_amir, lower_to_hir, resolve_for_test, type_check};
+use std::sync::Arc;
 
 fn compile_src(
     src: &str,
@@ -16,7 +17,11 @@ fn compile_src(
     let mut tc = type_check(resolution, &program);
     let hir = lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
     let amir = lower_to_amir(&tc, &hir).expect("AMIR lowering failed");
-    (amir, tc.symbols, tc.type_info)
+    (
+        amir,
+        Arc::unwrap_or_clone(tc.symbols),
+        Arc::unwrap_or_clone(tc.type_info),
+    )
 }
 
 fn backend_for_test() -> CraneliftBackend {
@@ -329,6 +334,123 @@ fn jit_string_interpolation() {
         f()
     };
     assert_eq!(code, 0);
+}
+
+#[test]
+fn jit_to_str_int_interp() {
+    // ToStr v0.1: int in interpolation → host helper + StringInterp.
+    let src = r#"
+    func main(): int {
+        let n: int = 42
+        let s = "n=${n}"
+        return 0
+    }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    let backend = backend_for_test();
+    let module = backend
+        .compile(&amir, &symbols, &type_info)
+        .expect("ToStr int interp should compile in Cranelift JIT");
+
+    let code: i32 = unsafe {
+        let f: unsafe fn() -> i32 = module.get_fn("main").unwrap();
+        f()
+    };
+    assert_eq!(code, 0);
+}
+
+#[test]
+fn jit_to_str_bool_and_float() {
+    let src = r#"
+    func main(): int {
+        let a = "b=${true}"
+        let b = "f=${1.5}"
+        return 0
+    }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    let backend = backend_for_test();
+    let module = backend
+        .compile(&amir, &symbols, &type_info)
+        .expect("ToStr bool/float interp should compile");
+
+    let code: i32 = unsafe {
+        let f: unsafe fn() -> i32 = module.get_fn("main").unwrap();
+        f()
+    };
+    assert_eq!(code, 0);
+}
+
+#[test]
+fn jit_io_println_to_str() {
+    // Prelude io.println + ToStr of int (does not assert stdout; just exit 0).
+    let src = r#"
+    import io
+    func main(): int {
+        io.println(42)
+        io.println("x=${1}")
+        return 0
+    }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    let backend = backend_for_test();
+    let module = backend
+        .compile(&amir, &symbols, &type_info)
+        .expect("io.println + ToStr should compile");
+
+    let code: i32 = unsafe {
+        let f: unsafe fn() -> i32 = module.get_fn("main").unwrap();
+        f()
+    };
+    assert_eq!(code, 0);
+}
+
+#[test]
+fn jit_to_str_method_and_matrix() {
+    let src = r#"
+    import io
+    func main(): int {
+        let n: int = 42
+        let b: bool = false
+        let c: char = 'A'
+        let u: uint = 3
+        let f: float = 2.5
+        let i8v: i8 = -1
+        let u32v: u32 = 8
+        let s = n.to_str()
+        io.println(s)
+        io.println(b.to_str())
+        io.println(c)
+        io.println(u)
+        io.println(f)
+        io.println(i8v)
+        io.println(u32v)
+        io.println("m=${b}|${n}|${f}")
+        return 0
+    }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    let backend = backend_for_test();
+    let module = backend
+        .compile(&amir, &symbols, &type_info)
+        .expect("to_str method matrix should compile");
+
+    let code: i32 = unsafe {
+        let f: unsafe fn() -> i32 = module.get_fn("main").unwrap();
+        f()
+    };
+    assert_eq!(code, 0);
+}
+
+#[test]
+fn format_f64_v01_specials_and_integers() {
+    use arandu_backend_cranelift::to_str_runtime::format_f64_v01;
+    assert_eq!(format_f64_v01(2.0), "2");
+    assert_eq!(format_f64_v01(-3.0), "-3");
+    assert_eq!(format_f64_v01(f64::NAN), "nan");
+    assert_eq!(format_f64_v01(f64::INFINITY), "inf");
+    assert_eq!(format_f64_v01(f64::NEG_INFINITY), "-inf");
+    assert!(format_f64_v01(1.5).starts_with("1.5"));
 }
 
 #[test]

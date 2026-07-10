@@ -18,7 +18,7 @@ arandu_mir = { path = "../arandu_mir" }
 arandu_diagnostics = { path = "../arandu_diagnostics" }
 arandu_base = { path = "../arandu_base" }
 
-rustc-hash = "2.1.2"
+rustc-hash = { workspace = true }
 tracing.workspace = true
 
 [lib]

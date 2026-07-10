@@ -73,9 +73,15 @@ impl<'a> CEmitter<'a> {
     /// then returns the complete C source as a `String`.
     pub fn emit(mut self) -> String {
         let needs_str = self.program_uses_str();
+        let needs_println = self.program_uses_println();
+        // println requires ArStr runtime even if no string literals.
+        let needs_str = needs_str || needs_println;
         self.emit_headers(needs_str);
         if needs_str {
             self.emit_str_literals();
+        }
+        if needs_println {
+            self.emit_prelude_println();
         }
 
         for func in &self.program.funcs {
@@ -95,6 +101,37 @@ impl<'a> CEmitter<'a> {
             self.emit_func(func);
         }
         self.output
+    }
+
+    /// True if any call targets prelude `io.println` (symbol name or C sanitization).
+    fn program_uses_println(&self) -> bool {
+        for func in &self.program.funcs {
+            for stmt in func.stmts.payloads.iter() {
+                if let AmirStmt::Call { callee, .. } = stmt
+                    && let AmirOperand::FunctionRef(id) = callee
+                {
+                    let name = self.symbols.get(*id).name.as_str();
+                    if name == "io.println" || name.ends_with(".println") || name == "println" {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Emit `io_println` matching sanitize_c_ident("io.println").
+    fn emit_prelude_println(&mut self) {
+        writeln!(&mut self.output, "static void io_println(ArStr s) {{").unwrap();
+        writeln!(
+            &mut self.output,
+            "    if (s.len > 0 && s.ptr) {{ fwrite(s.ptr, 1, (size_t)s.len, stdout); }}"
+        )
+        .unwrap();
+        writeln!(&mut self.output, "    fputc('\\n', stdout);").unwrap();
+        writeln!(&mut self.output, "    fflush(stdout);").unwrap();
+        writeln!(&mut self.output, "}}").unwrap();
+        writeln!(&mut self.output).unwrap();
     }
 
     /// Whether any local/temp/return or pool entry needs the ArStr runtime.
@@ -141,6 +178,8 @@ impl<'a> CEmitter<'a> {
         if needs_str {
             writeln!(&mut self.output, "#include <string.h>").unwrap();
             writeln!(&mut self.output, "#include <stdarg.h>").unwrap();
+            writeln!(&mut self.output, "#include <stdio.h>").unwrap();
+            writeln!(&mut self.output, "#include <math.h>").unwrap();
         }
         writeln!(&mut self.output, "#ifndef AR_UNREACHABLE").unwrap();
         writeln!(&mut self.output, "#define AR_UNREACHABLE() abort()").unwrap();
@@ -235,6 +274,141 @@ impl<'a> CEmitter<'a> {
         writeln!(&mut self.output, "    free(parts);").unwrap();
         writeln!(&mut self.output, "    return ar_str_pack(buf, total);").unwrap();
         writeln!(&mut self.output, "}}").unwrap();
+        // ToStr v0.1 helpers (malloc + snprintf; process-lifetime leak OK for debug).
+        writeln!(&mut self.output, "static ArStr ar_i64_to_str(int64_t v) {{").unwrap();
+        writeln!(&mut self.output, "    char tmp[32];").unwrap();
+        writeln!(
+            &mut self.output,
+            "    int n = snprintf(tmp, sizeof(tmp), \"%lld\", (long long)v);"
+        )
+        .unwrap();
+        writeln!(&mut self.output, "    if (n < 0) abort();").unwrap();
+        writeln!(
+            &mut self.output,
+            "    uint8_t *buf = (uint8_t*)malloc((size_t)n + 1);"
+        )
+        .unwrap();
+        writeln!(&mut self.output, "    if (!buf) abort();").unwrap();
+        writeln!(&mut self.output, "    memcpy(buf, tmp, (size_t)n);").unwrap();
+        writeln!(&mut self.output, "    buf[n] = 0;").unwrap();
+        writeln!(
+            &mut self.output,
+            "    return ar_str_pack(buf, ({len_c_ty})n);"
+        )
+        .unwrap();
+        writeln!(&mut self.output, "}}").unwrap();
+        writeln!(
+            &mut self.output,
+            "static ArStr ar_u64_to_str(uint64_t v) {{"
+        )
+        .unwrap();
+        writeln!(&mut self.output, "    char tmp[32];").unwrap();
+        writeln!(
+            &mut self.output,
+            "    int n = snprintf(tmp, sizeof(tmp), \"%llu\", (unsigned long long)v);"
+        )
+        .unwrap();
+        writeln!(&mut self.output, "    if (n < 0) abort();").unwrap();
+        writeln!(
+            &mut self.output,
+            "    uint8_t *buf = (uint8_t*)malloc((size_t)n + 1);"
+        )
+        .unwrap();
+        writeln!(&mut self.output, "    if (!buf) abort();").unwrap();
+        writeln!(&mut self.output, "    memcpy(buf, tmp, (size_t)n);").unwrap();
+        writeln!(&mut self.output, "    buf[n] = 0;").unwrap();
+        writeln!(
+            &mut self.output,
+            "    return ar_str_pack(buf, ({len_c_ty})n);"
+        )
+        .unwrap();
+        writeln!(&mut self.output, "}}").unwrap();
+        // Keep in sync with arandu_backend_cranelift::to_str_runtime::format_f64_v01
+        // (specials + integer-looking values + %.15g for the rest).
+        writeln!(&mut self.output, "static ArStr ar_f64_to_str(double v) {{").unwrap();
+        writeln!(&mut self.output, "    char tmp[64];").unwrap();
+        writeln!(&mut self.output, "    int n;").unwrap();
+        writeln!(
+            &mut self.output,
+            "    if (isnan(v)) {{ n = snprintf(tmp, sizeof(tmp), \"nan\"); }}"
+        )
+        .unwrap();
+        writeln!(
+            &mut self.output,
+            "    else if (isinf(v)) {{ n = snprintf(tmp, sizeof(tmp), \"%s\", (v < 0) ? \"-inf\" : \"inf\"); }}"
+        )
+        .unwrap();
+        writeln!(
+            &mut self.output,
+            "    else if (v == (double)(long long)v && v < 1e15 && v > -1e15) {{ n = snprintf(tmp, sizeof(tmp), \"%lld\", (long long)v); }}"
+        )
+        .unwrap();
+        writeln!(
+            &mut self.output,
+            "    else {{ n = snprintf(tmp, sizeof(tmp), \"%.15g\", v); }}"
+        )
+        .unwrap();
+        writeln!(&mut self.output, "    if (n < 0) abort();").unwrap();
+        writeln!(
+            &mut self.output,
+            "    uint8_t *buf = (uint8_t*)malloc((size_t)n + 1);"
+        )
+        .unwrap();
+        writeln!(&mut self.output, "    if (!buf) abort();").unwrap();
+        writeln!(&mut self.output, "    memcpy(buf, tmp, (size_t)n);").unwrap();
+        writeln!(&mut self.output, "    buf[n] = 0;").unwrap();
+        writeln!(
+            &mut self.output,
+            "    return ar_str_pack(buf, ({len_c_ty})n);"
+        )
+        .unwrap();
+        writeln!(&mut self.output, "}}").unwrap();
+        writeln!(&mut self.output, "static ArStr ar_bool_to_str(bool v) {{").unwrap();
+        writeln!(
+            &mut self.output,
+            "    const char *s = v ? \"true\" : \"false\";"
+        )
+        .unwrap();
+        writeln!(&mut self.output, "    {len_c_ty} n = v ? 4 : 5;").unwrap();
+        writeln!(
+            &mut self.output,
+            "    uint8_t *buf = (uint8_t*)malloc((size_t)n + 1);"
+        )
+        .unwrap();
+        writeln!(&mut self.output, "    if (!buf) abort();").unwrap();
+        writeln!(&mut self.output, "    memcpy(buf, s, (size_t)n);").unwrap();
+        writeln!(&mut self.output, "    buf[n] = 0;").unwrap();
+        writeln!(&mut self.output, "    return ar_str_pack(buf, n);").unwrap();
+        writeln!(&mut self.output, "}}").unwrap();
+        writeln!(
+            &mut self.output,
+            "static ArStr ar_char_to_str(uint32_t cp) {{"
+        )
+        .unwrap();
+        writeln!(&mut self.output, "    uint8_t tmp[4];").unwrap();
+        writeln!(&mut self.output, "    int n = 0;").unwrap();
+        writeln!(
+            &mut self.output,
+            "    if (cp <= 0x7F) {{ tmp[0] = (uint8_t)cp; n = 1; }}"
+        )
+        .unwrap();
+        writeln!(&mut self.output, "    else if (cp <= 0x7FF) {{ tmp[0] = (uint8_t)(0xC0 | (cp >> 6)); tmp[1] = (uint8_t)(0x80 | (cp & 0x3F)); n = 2; }}").unwrap();
+        writeln!(&mut self.output, "    else if (cp <= 0xFFFF) {{ tmp[0] = (uint8_t)(0xE0 | (cp >> 12)); tmp[1] = (uint8_t)(0x80 | ((cp >> 6) & 0x3F)); tmp[2] = (uint8_t)(0x80 | (cp & 0x3F)); n = 3; }}").unwrap();
+        writeln!(&mut self.output, "    else {{ tmp[0] = (uint8_t)(0xF0 | (cp >> 18)); tmp[1] = (uint8_t)(0x80 | ((cp >> 12) & 0x3F)); tmp[2] = (uint8_t)(0x80 | ((cp >> 6) & 0x3F)); tmp[3] = (uint8_t)(0x80 | (cp & 0x3F)); n = 4; }}").unwrap();
+        writeln!(
+            &mut self.output,
+            "    uint8_t *buf = (uint8_t*)malloc((size_t)n + 1);"
+        )
+        .unwrap();
+        writeln!(&mut self.output, "    if (!buf) abort();").unwrap();
+        writeln!(&mut self.output, "    memcpy(buf, tmp, (size_t)n);").unwrap();
+        writeln!(&mut self.output, "    buf[n] = 0;").unwrap();
+        writeln!(
+            &mut self.output,
+            "    return ar_str_pack(buf, ({len_c_ty})n);"
+        )
+        .unwrap();
+        writeln!(&mut self.output, "}}").unwrap();
         writeln!(&mut self.output).unwrap();
     }
 
@@ -273,13 +447,25 @@ impl<'a> CEmitter<'a> {
 
     fn ensure_type_emitted(&mut self, ty: &ArType) {
         let name = self.format_type(ty);
+        // Never redefine C/stdlib primitive types as blob structs (e.g. `double`).
         if self.emitted_types.contains(&name)
-            || name == "void"
-            || name == "int32_t"
-            || name == "int64_t"
-            || name == "bool"
-            || name == "void*"
-            || name == "uint8_t"
+            || matches!(
+                name.as_str(),
+                "void"
+                    | "bool"
+                    | "float"
+                    | "double"
+                    | "void*"
+                    | "int8_t"
+                    | "int16_t"
+                    | "int32_t"
+                    | "int64_t"
+                    | "uint8_t"
+                    | "uint16_t"
+                    | "uint32_t"
+                    | "uint64_t"
+                    | "ArStr"
+            )
         {
             return;
         }
@@ -352,7 +538,8 @@ impl<'a> CEmitter<'a> {
                         | AmirRvalue::Discriminant { value: op }
                         | AmirRvalue::EnumPayload { value: op, .. }
                         | AmirRvalue::Len(op)
-                        | AmirRvalue::Alloc(op) => {
+                        | AmirRvalue::Alloc(op)
+                        | AmirRvalue::ToStr { value: op, .. } => {
                             if let AmirOperand::Copy(t) | AmirOperand::Move(t) = op {
                                 used_temps.insert(t.as_usize());
                             }

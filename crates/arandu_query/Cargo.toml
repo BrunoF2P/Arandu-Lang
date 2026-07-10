@@ -7,6 +7,8 @@ edition = "2021"
 salsa = { workspace = true }
 blake3 = { workspace = true }
 tracing = { workspace = true }
+slotmap = { workspace = true }
+rustc-hash = { workspace = true }
 
 arandu_base = { path = "../arandu_base" }
 arandu_diagnostics = { path = "../arandu_diagnostics" }

@@ -166,18 +166,125 @@ impl StableHash for arandu_middle::amir::AmirFunc {
         h.update(&u64_le(self.blocks.len() as u64));
         h.update(&u64_le(self.locals.len() as u64));
         h.update(&u64_le(self.temps.len() as u64));
+        h.update(&u64_le(self.stmts.payloads.len() as u64));
+        for b in &self.blocks {
+            h.update(&u32_le(b.id.as_usize() as u32));
+            h.update(&u32_le(b.statements.start));
+            h.update(&u32_le(b.statements.len));
+            // Terminator discriminant for structural early cutoff.
+            h.update(&[match &b.terminator {
+                arandu_middle::amir::AmirTerminator::Return => 0u8,
+                arandu_middle::amir::AmirTerminator::Unreachable => 1,
+                arandu_middle::amir::AmirTerminator::Goto { .. } => 2,
+                arandu_middle::amir::AmirTerminator::Branch { .. } => 3,
+                arandu_middle::amir::AmirTerminator::SwitchInt { .. } => 4,
+            }]);
+        }
+        // Hash stmt kinds in order (cheap structural body fingerprint).
+        for kind in self.stmts.kinds.raw.iter() {
+            h.update(&[(*kind) as u8]);
+        }
         finish(h)
     }
 }
 
 impl StableHash for crate::dataflow::DataflowFacts {
     fn stable_hash(&self) -> blake3::Hash {
-        blake3::hash(b"DataflowFacts/v0")
+        let mut h = Hasher::new();
+        h.update(b"DataflowFacts/v1");
+        h.update(&u32_le(self.block.as_usize() as u32));
+        h.update(&u32_le(self.live_in_count));
+        h.update(&u32_le(self.live_out_count));
+        h.update(&u32_le(self.init_in_count));
+        h.update(&u32_le(self.moved_in_count));
+        h.update(&u32_le(self.stmt_count));
+        finish(h)
     }
 }
 
 impl StableHash for crate::dataflow::LivenessMap {
     fn stable_hash(&self) -> blake3::Hash {
-        blake3::hash(b"LivenessMap/v0")
+        let mut h = Hasher::new();
+        h.update(b"LivenessMap/v1");
+        h.update(&u64_le(self.live_in_counts.len() as u64));
+        for &c in &self.live_in_counts {
+            h.update(&u32_le(c));
+        }
+        for &c in &self.live_out_counts {
+            h.update(&u32_le(c));
+        }
+        finish(h)
+    }
+}
+
+impl StableHash for crate::dataflow::IdeDiagnostic {
+    fn stable_hash(&self) -> blake3::Hash {
+        let mut h = Hasher::new();
+        h.update(self.code.as_bytes());
+        h.update(&[self.severity]);
+        h.update(self.message.as_bytes());
+        h.update(&u32_le(self.file_id));
+        h.update(&u32_le(self.start));
+        h.update(&u32_le(self.end));
+        if let Some(f) = self.func {
+            h.update(&[1]);
+            hash_symbol_id(&mut h, f);
+        } else {
+            h.update(&[0]);
+        }
+        if let Some(b) = self.block {
+            h.update(&[1]);
+            h.update(&u32_le(b.as_usize() as u32));
+        } else {
+            h.update(&[0]);
+        }
+        finish(h)
+    }
+}
+
+impl StableHash for Vec<crate::dataflow::IdeDiagnostic> {
+    fn stable_hash(&self) -> blake3::Hash {
+        let mut h = Hasher::new();
+        h.update(&u64_le(self.len() as u64));
+        for d in self {
+            h.update(d.stable_hash().as_bytes());
+        }
+        finish(h)
+    }
+}
+
+impl StableHash for Vec<arandu_middle::SymbolId> {
+    fn stable_hash(&self) -> blake3::Hash {
+        let mut h = Hasher::new();
+        h.update(&u64_le(self.len() as u64));
+        for id in self {
+            hash_symbol_id(&mut h, *id);
+        }
+        finish(h)
+    }
+}
+
+impl StableHash for crate::passes::ItemSourceInput {
+    fn stable_hash(&self) -> blake3::Hash {
+        // Content-address only this item's source fingerprint — not the whole Program.
+        let mut h = Hasher::new();
+        h.update(b"ItemSourceInput/v2");
+        hash_symbol_id(&mut h, self.item_sym);
+        h.update(self.body_fp.as_bytes());
+        finish(h)
+    }
+}
+
+impl StableHash for arandu_parser::SyntaxTree {
+    fn stable_hash(&self) -> blake3::Hash {
+        let mut h = Hasher::new();
+        h.update(b"SyntaxTree/v1");
+        h.update(self.text().as_bytes());
+        let items = self.item_texts();
+        h.update(&u64_le(items.len() as u64));
+        for t in items {
+            h.update(t.as_bytes());
+        }
+        finish(h)
     }
 }

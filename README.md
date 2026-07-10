@@ -32,11 +32,20 @@ Implemented:
 - Type interning, `DataLayout` (host / 32-bit / i686), and monomorphization graph infrastructure.
 - Cranelift JIT backend (experimental, **host** dev/debug) with `run` CLI support.
 - C emit path (`emit-c --layout=host|ptr4|i686`) — portable dump; not a polished embedded runtime yet.
+- **ToStr v0.1** — auto-format `bool`, integers (incl. fixed-width), floats, `char`, and `str` in:
+  - string interpolation (`"n=${n}"`)
+  - call args whose formal type is `str` (e.g. `io.println(42)`)
+  - method form `value.to_str()`
+  - Prelude stays `(str) -> void` for `io.println`; host/C provide a debug `println` stub.
+  - Formatted buffers use `malloc` (process-lifetime leak OK for debug; free/ownership later).
+  - User `Display` / custom formatting for structs is later.
+- **Salsa query DB** (`arandu_query`) — incremental `parse` → `resolve` → `type_check` → `lower_amir`; DX.5 `-Zexplain-rebuild`.
+- **LSP gold** (`arandu-lsp`) — `lsp-server`, main-thread + VFS debounce, worker pool, `DocumentId` + `AnalysisRevision`; diagnostics (delta por item), goto-def, hover, completion, signature help, references, rename, document/workspace symbols.
 
 Not implemented yet:
 
 - Memory checker / generational fallback
-- Display / `to_str` (non-`str` println and interp)
+- Full user `Display` trait / custom `to_str` for structs/enums
 - Full ownership surface syntax
 - Production C polish / freestanding RT; LLVM release backend
 
@@ -65,6 +74,15 @@ If your Rust toolchain is old, update it:
 ```bash
 rustup update stable
 ```
+
+## Language server
+
+```bash
+cargo run -p arandu_lsp --release
+# point the editor at the `arandu-lsp` binary (stdio)
+```
+
+Architecture: [docs/arandu-salsa-lsp-architecture-v0.1.md](docs/arandu-salsa-lsp-architecture-v0.1.md).
 
 ## Run
 

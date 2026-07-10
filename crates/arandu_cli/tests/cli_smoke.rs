@@ -303,6 +303,144 @@ fn run_with_ztime_passes_emits_perf_timings() {
     );
 }
 
+/// ToStr v0.1: CLI check accepts println/interp of primitives.
+#[test]
+fn check_to_str_primitives_succeeds() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_to_str_check.aru");
+    fs::write(
+        &file,
+        r#"module tests.cli.tostr
+
+import io
+
+func main(): int {
+    let n: int = 7
+    io.println(n)
+    io.println("n=${n}")
+    return 0
+}
+"#,
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+    let output = run_cli(&["check", &path]);
+    assert!(
+        output.status.success(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// ToStr v0.1: `run` executes println with int (prelude host stub).
+#[test]
+fn run_to_str_println_int_exits_0() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_to_str_run.aru");
+    fs::write(
+        &file,
+        r#"module tests.cli.tostr_run
+
+import io
+
+func main(): int {
+    let n: int = 42
+    io.println(n)
+    io.println("answer=${n}")
+    return 0
+}
+"#,
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+    let output = run_cli(&["run", &path]);
+    assert!(
+        output.status.success(),
+        "stderr:\n{}\nstdout:\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("42") && stdout.contains("answer=42"),
+        "expected formatted output, got:\n{stdout}"
+    );
+}
+
+/// ToStr v0.1: method `.to_str()` + fixed-width integers + float specials path.
+#[test]
+fn run_to_str_method_and_fixed_widths() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_to_str_method.aru");
+    fs::write(
+        &file,
+        r#"module tests.cli.tostr_method
+
+import io
+
+func main(): int {
+    let n: int = 42
+    let i8v: i8 = -5
+    let u64v: u64 = 99
+    let f: float = 2.0
+    io.println(n.to_str())
+    io.println(i8v)
+    io.println(u64v)
+    io.println(f.to_str())
+    io.println(true.to_str())
+    return 0
+}
+"#,
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+    let output = run_cli(&["run", &path]);
+    assert!(
+        output.status.success(),
+        "stderr:\n{}\nstdout:\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for expected in ["42", "-5", "99", "2", "true"] {
+        assert!(
+            stdout.contains(expected),
+            "missing {expected:?} in:\n{stdout}"
+        );
+    }
+}
+
+/// ToStr v0.1: emit-c includes ToStr helpers and io_println stub.
+#[test]
+fn emit_c_to_str_includes_helpers_and_println() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_to_str_emit.aru");
+    fs::write(
+        &file,
+        r#"module tests.cli.tostr_emit
+
+import io
+
+func main(): int {
+    io.println(1)
+    return 0
+}
+"#,
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+    let output = run_cli(&["emit-c", &path, "--layout=host"]);
+    assert!(
+        output.status.success(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let c = String::from_utf8_lossy(&output.stdout);
+    assert!(c.contains("ar_i64_to_str"), "missing ToStr helper:\n{c}");
+    assert!(c.contains("io_println"), "missing io_println stub:\n{c}");
+    assert!(c.contains("int main("), "missing main:\n{c}");
+}
+
 /// S5 gate: emit-c produces host C with int main and DataLayout-driven types.
 #[test]
 fn emit_c_host_fib_main_contains_int_main() {

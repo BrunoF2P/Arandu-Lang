@@ -30,14 +30,17 @@ Cranelift is **host-only** (typically 64-bit). 32-bit / embedded validation is *
 ### Explicitly **out** of this gate (honest backlog)
 
 - Full Salsa orchestration of AMIR/analyses/codegen  
-- Display / `to_str` / non-str `println`  
+- Full user `Display` trait / custom `to_str` for structs/enums (ToStr **v0.1** primitives is done — see below)  
 - C quality beyond “compiles + correct” (copy-prop, named struct fields, freestanding RT)  
 - LLVM, gen-fallback, ownership surface syntax  
 - TypeId on every IR node outside AMIR locals/temps  
 
 ## What was fixed (do not reopen as “workarounds”)
 
-- SET / GUARD / NEST / F64 / ERR-NIL / INTERP reject non-str  
+- SET / GUARD / NEST / F64 / ERR-NIL; INTERP/println/`.to_str()` ToStr v0.1 for primitives  
+- `AmirRvalue::ToStr` + host/C helpers + `io.println` runtime stub; prelude stays `(str) -> void` (no `Any`)  
+- ToStr buffers: malloc without free (debug leak; ownership epic later)  
+- Prelude `io.create` / `io.remove` / `err.new` accept formatable args at typeck but have **no** full runtime yet (only `io.println` is product-stubbed)  
 - Path canonicalize + ModuleLoader + structural stable_hash  
 - `println(str)`, CLI warn ≠ exit failure  
 - Shared AMIR rvalue visitor; Len/Alloc; real ArStr fat pointer  

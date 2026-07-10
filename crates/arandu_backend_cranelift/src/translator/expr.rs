@@ -149,6 +149,7 @@ impl FunctionTranslator<'_, '_> {
                 (loaded_ptr, loaded_len)
             }
             AmirRvalue::StringInterp { parts } => self.translate_string_interp(parts),
+            AmirRvalue::ToStr { value, src_ty } => self.translate_to_str(value, *src_ty),
             _ => {
                 self.record_ice(
                     "unsupported rvalue kind returning str in codegen",
@@ -157,6 +158,118 @@ impl FunctionTranslator<'_, '_> {
                 (self.poison_i32(), self.poison_i32())
             }
         }
+    }
+
+    /// Format a primitive via host ToStr helpers → `(ptr, len)`.
+    fn translate_to_str(
+        &mut self,
+        value: &AmirOperand,
+        src_ty: arandu_semantics::types::TypeId,
+    ) -> (Value, Value) {
+        let ar_ty = self.type_info.type_interner.resolve(src_ty);
+        if matches!(ar_ty, ArType::Primitive(Primitive::Str)) {
+            return self.translate_str_operand(value);
+        }
+
+        let i64_ty = cranelift_codegen::ir::types::I64;
+        let helper_name = match &ar_ty {
+            ArType::Primitive(Primitive::Bool) => "ar_jit_bool_to_str",
+            ArType::Primitive(Primitive::Char) => "ar_jit_char_to_str",
+            ArType::FloatLiteral => "ar_jit_f64_to_str",
+            ArType::Primitive(p) if p.is_float() => "ar_jit_f64_to_str",
+            ArType::IntLiteral => "ar_jit_i64_to_str",
+            ArType::Primitive(p) if p.is_integer() && p.is_signed() => "ar_jit_i64_to_str",
+            ArType::Primitive(p) if p.is_integer() => "ar_jit_u64_to_str",
+            _ => {
+                self.record_ice(
+                    format!("ToStr v0.1 unsupported type in Cranelift: {ar_ty:?}"),
+                    self.func_span(),
+                );
+                return (self.poison_i32(), self.poison_i32());
+            }
+        };
+
+        // Stack slot for out_len: i64
+        let len_slot = self
+            .builder
+            .create_sized_stack_slot(cranelift_codegen::ir::StackSlotData {
+                kind: cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+                size: 8,
+                align_shift: 3,
+                key: None,
+            });
+        let len_ptr = self.builder.ins().stack_addr(self.ptr_type, len_slot, 0);
+
+        let arg = match helper_name {
+            "ar_jit_bool_to_str" => {
+                let v = self.translate_operand(value, Some(cranelift_codegen::ir::types::I8));
+                // Ensure i8 width
+                if self.builder.func.dfg.value_type(v) != cranelift_codegen::ir::types::I8 {
+                    self.builder
+                        .ins()
+                        .ireduce(cranelift_codegen::ir::types::I8, v)
+                } else {
+                    v
+                }
+            }
+            "ar_jit_char_to_str" => {
+                let v = self.translate_operand(value, Some(cranelift_codegen::ir::types::I32));
+                let vt = self.builder.func.dfg.value_type(v);
+                if vt == cranelift_codegen::ir::types::I32 {
+                    v
+                } else if vt.bits() < 32 {
+                    self.builder
+                        .ins()
+                        .uextend(cranelift_codegen::ir::types::I32, v)
+                } else {
+                    self.builder
+                        .ins()
+                        .ireduce(cranelift_codegen::ir::types::I32, v)
+                }
+            }
+            "ar_jit_f64_to_str" => {
+                let v = self.translate_operand(value, Some(cranelift_codegen::ir::types::F64));
+                let vt = self.builder.func.dfg.value_type(v);
+                if vt == cranelift_codegen::ir::types::F64 {
+                    v
+                } else if vt == cranelift_codegen::ir::types::F32 {
+                    self.builder
+                        .ins()
+                        .fpromote(cranelift_codegen::ir::types::F64, v)
+                } else {
+                    v
+                }
+            }
+            "ar_jit_i64_to_str" | "ar_jit_u64_to_str" => {
+                let v = self.translate_operand(value, Some(i64_ty));
+                let vt = self.builder.func.dfg.value_type(v);
+                if vt == i64_ty {
+                    v
+                } else if vt.bits() < 64 {
+                    if helper_name == "ar_jit_u64_to_str" {
+                        self.builder.ins().uextend(i64_ty, v)
+                    } else {
+                        self.builder.ins().sextend(i64_ty, v)
+                    }
+                } else {
+                    self.builder.ins().ireduce(i64_ty, v)
+                }
+            }
+            _ => unreachable!(),
+        };
+
+        let Some(func_id) = self.func_ids.get(helper_name).copied() else {
+            self.record_ice(
+                format!("{helper_name} was not declared in the JIT module"),
+                self.func_span(),
+            );
+            return (self.poison_i32(), self.poison_i32());
+        };
+        let local_ref = self.module.declare_func_in_func(func_id, self.builder.func);
+        let call = self.builder.ins().call(local_ref, &[arg, len_ptr]);
+        let ptr = self.builder.inst_results(call)[0];
+        let len = self.builder.ins().stack_load(i64_ty, len_slot, 0);
+        (ptr, len)
     }
 
     /// Concatenate `str` fat-pointer parts via `malloc` + `memcpy`.
@@ -710,12 +823,10 @@ impl FunctionTranslator<'_, '_> {
             }
             AmirRvalue::Len(op) => self.translate_len(op, expected_ty),
             AmirRvalue::Alloc(op) => self.translate_alloc(op),
-            _ => {
+            AmirRvalue::ToStr { .. } | AmirRvalue::StringInterp { .. } => {
+                // Fat-pointer results must go through translate_str_rvalue.
                 self.record_ice(
-                    format!(
-                        "Rvalue kind {:?} not implemented in Cranelift JIT yet",
-                        rvalue
-                    ),
+                    "ToStr/StringInterp must be lowered via str rvalue path",
                     self.func_span(),
                 );
                 self.poison_i32()

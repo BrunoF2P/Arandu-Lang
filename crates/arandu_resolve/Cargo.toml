@@ -13,9 +13,9 @@ arandu_lexer = { path = "../arandu_lexer" }
 arandu_middle = { path = "../arandu_middle" }
 arandu_parser = { path = "../arandu_parser" }
 tracing.workspace = true
-rustc-hash = "2.1.2"
+rustc-hash = { workspace = true }
 strsim = "0.11.1"
-smallvec = "1.15.2"
+smallvec = { workspace = true }
 smol_str.workspace = true
 
 [lib]

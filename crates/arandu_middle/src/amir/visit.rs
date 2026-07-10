@@ -24,7 +24,8 @@ pub fn for_each_rvalue_operand(rvalue: &AmirRvalue, mut f: impl FnMut(&AmirOpera
         | AmirRvalue::Alloc(op)
         | AmirRvalue::Discriminant { value: op }
         | AmirRvalue::EnumPayload { value: op, .. }
-        | AmirRvalue::FieldAccess { base: op, .. } => f(op),
+        | AmirRvalue::FieldAccess { base: op, .. }
+        | AmirRvalue::ToStr { value: op, .. } => f(op),
 
         AmirRvalue::Binary { left, right, .. }
         | AmirRvalue::IndexAccess {

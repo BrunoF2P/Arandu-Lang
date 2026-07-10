@@ -14,7 +14,7 @@ fn lower(src: &str) -> (HirProgram, SymbolTable) {
     let hir = lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
     hir.validate_invariants(&hir.pool, &tc.symbols)
         .expect("HIR invariant validation failed");
-    (hir, tc.symbols)
+    (hir, std::sync::Arc::unwrap_or_clone(tc.symbols))
 }
 
 #[test]

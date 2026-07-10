@@ -7,7 +7,8 @@
 //! - **Layout engine** (`layout`): struct/enum memory layout computation.
 //! - **Symbol table** (`symbol_table`): scoped identifier registry.
 //! - **Diagnostics** (`diagnostics`): re-exported from `arandu_diagnostics`.
-//! - **Parse cache** and **stdlib path cache**: incremental compilation helpers.
+//!
+//! Incremental state lives in `arandu_query` (Salsa). This crate keeps pure IRs and types.
 //!
 //! Re-exports from `arandu_base` (bitset, index_vec, span, etc.)
 //! are provided so downstream crates need only depend on this crate.
@@ -23,11 +24,8 @@ pub mod layout;
 pub mod literal_pool;
 pub mod ops;
 pub mod resolved;
-pub mod session;
 pub mod symbol_table;
 pub mod types;
-
-pub use session::CompileSession;
 
 pub use arandu_base::bitset;
 pub use arandu_base::index_vec;

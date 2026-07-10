@@ -64,6 +64,8 @@ pub static DEBUG_ALL: AtomicBool = AtomicBool::new(false);
 
 /// `-Zself-profile=<path>` — path for Trace Event JSON output.
 pub static SELF_PROFILE_PATH: OnceLock<String> = OnceLock::new();
+/// `-Zexplain-rebuild` — DX.5: log Salsa WillExecute / validate chain.
+pub static EXPLAIN_REBUILD: AtomicBool = AtomicBool::new(false);
 
 // ── Global metric counters ────────────────────────────────────────────────────
 
@@ -166,6 +168,7 @@ pub fn init_z_flags(flags: &[String]) {
             "debug-layout" => DEBUG_LAYOUT.store(true, Ordering::Relaxed),
             "debug-backend" => DEBUG_BACKEND.store(true, Ordering::Relaxed),
             "debug-all" => DEBUG_ALL.store(true, Ordering::Relaxed),
+            "explain-rebuild" => EXPLAIN_REBUILD.store(true, Ordering::Relaxed),
             "self-profile" => {
                 if let Some(path) = value {
                     let _ = SELF_PROFILE_PATH.set(path.to_string());

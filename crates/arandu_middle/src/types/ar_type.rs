@@ -102,6 +102,24 @@ impl ArType {
         matches!(self, ArType::IntLiteral | ArType::FloatLiteral)
     }
 
+    /// Whether this type can be auto-formatted to `str` in ToStr v0.1
+    /// (string interpolation and call arguments whose formal type is `str`).
+    ///
+    /// Includes `str` (identity), `bool`, `char`, all integers/floats (including
+    /// unresolved literals). Does **not** include structs, enums, pointers, etc.
+    #[must_use]
+    pub fn is_to_str_v01(&self) -> bool {
+        match self {
+            ArType::Primitive(p) => {
+                matches!(p, Primitive::Str | Primitive::Bool | Primitive::Char)
+                    || p.is_integer()
+                    || p.is_float()
+            }
+            ArType::IntLiteral | ArType::FloatLiteral => true,
+            _ => false,
+        }
+    }
+
     /// Produce a human-readable name for this type.
     #[must_use]
     pub fn display(&self, symbols: &SymbolTable, interner: &TypeInterner) -> String {
@@ -326,6 +344,41 @@ mod tests {
         assert!(ArType::FloatLiteral.is_literal());
         assert!(!ArType::Primitive(Primitive::Int).is_literal());
         assert!(!ArType::Void.is_literal());
+    }
+
+    // ── is_to_str_v01 ──
+
+    #[test]
+    fn to_str_v01_primitives() {
+        assert!(ArType::Primitive(Primitive::Str).is_to_str_v01());
+        assert!(ArType::Primitive(Primitive::Bool).is_to_str_v01());
+        assert!(ArType::Primitive(Primitive::Char).is_to_str_v01());
+        assert!(ArType::Primitive(Primitive::Int).is_to_str_v01());
+        assert!(ArType::Primitive(Primitive::Uint).is_to_str_v01());
+        assert!(ArType::Primitive(Primitive::Float).is_to_str_v01());
+        assert!(ArType::Primitive(Primitive::I8).is_to_str_v01());
+        assert!(ArType::Primitive(Primitive::U64).is_to_str_v01());
+        assert!(ArType::Primitive(Primitive::F32).is_to_str_v01());
+        assert!(ArType::Primitive(Primitive::Byte).is_to_str_v01());
+        assert!(ArType::IntLiteral.is_to_str_v01());
+        assert!(ArType::FloatLiteral.is_to_str_v01());
+    }
+
+    #[test]
+    fn to_str_v01_rejects_non_primitives() {
+        assert!(!ArType::Primitive(Primitive::Any).is_to_str_v01());
+        assert!(!ArType::Void.is_to_str_v01());
+        assert!(!ArType::Error.is_to_str_v01());
+        assert!(!ArType::Err.is_to_str_v01());
+        let interner = new_interner();
+        let int_id = interner.intern(ArType::Primitive(Primitive::Int));
+        assert!(!ArType::Named(crate::SymbolId::new(0, 1), vec![]).is_to_str_v01());
+        assert!(!ArType::Slice(int_id).is_to_str_v01());
+        assert!(!ArType::Ptr(int_id).is_to_str_v01());
+        assert!(!ArType::Array(4, int_id).is_to_str_v01());
+        assert!(!ArType::Option(int_id).is_to_str_v01());
+        assert!(!ArType::Result(int_id, int_id).is_to_str_v01());
+        assert!(!ArType::Func(vec![int_id], int_id).is_to_str_v01());
     }
 
     // ── default_literal ──

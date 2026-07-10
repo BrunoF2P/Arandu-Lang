@@ -319,6 +319,13 @@ impl AmirRvalue {
                     .collect();
                 out.push_str(&format!("stringInterp({})", parts_str.join(", ")));
             }
+            AmirRvalue::ToStr { value, src_ty } => {
+                out.push_str(&format!(
+                    "to_str(ty#{}, {})",
+                    src_ty.as_usize(),
+                    value.to_pretty_string(symbols, pool)
+                ));
+            }
         }
     }
 }

@@ -36,22 +36,70 @@ use crate::{BitMatrix, BitSet, SymbolTable};
 
 use std::collections::VecDeque;
 
+/// Cardinality of definitely-initialized locals at each block's entry (IN set).
+///
+/// Used by Salsa `block_dataflow_facts` — pure, no diagnostics.
+#[must_use]
+pub fn init_in_counts(func: &AmirFunc) -> Vec<u32> {
+    let Some(block_in) = compute_init_in(func) else {
+        return vec![0; func.blocks.len()];
+    };
+    block_in.iter().map(|s| s.len() as u32).collect()
+}
+
 /// Run definite-initialization analysis over a single AMIR function.
 ///
 /// Returns a list of `O008` diagnostics for any load from a possibly
 /// uninitialized local.
 pub fn check_definite_init(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagnostic> {
+    check_definite_init_by_block(func, symbols)
+        .into_iter()
+        .map(|(_, d)| d)
+        .collect()
+}
+
+/// Same as [`check_definite_init`], but tags each diagnostic with the AMIR block
+/// where the bad load was found (P3/P4 honesty: real span→block attribution).
+#[must_use]
+pub fn check_definite_init_by_block(
+    func: &AmirFunc,
+    symbols: &SymbolTable,
+) -> Vec<(BlockId, Diagnostic)> {
+    let Some(block_in) = compute_init_in(func) else {
+        return Vec::new();
+    };
+
+    let mut diagnostics = Vec::new();
+
+    for block in &func.blocks {
+        let bi = block.id.as_usize();
+        let mut current = block_in[bi].clone();
+        let bid = block.id;
+
+        for stmt in func.block_stmts(block.id) {
+            check_stmt_loads(stmt, &current, func, symbols, bid, &mut diagnostics);
+
+            match stmt {
+                AmirStmt::Store { lhs, .. } if lhs.projections.is_empty() => {
+                    current.insert(lhs.local);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    diagnostics
+}
+
+/// Forward dataflow: IN set of definitely-initialized locals per block.
+fn compute_init_in(func: &AmirFunc) -> Option<Vec<BitSet<LocalId>>> {
     let num_locals = func.locals.len();
     let num_blocks = func.blocks.len();
 
     if num_locals == 0 || num_blocks == 0 {
-        return Vec::new();
+        return None;
     }
 
-    // ------------------------------------------------------------------
-    // 1. Compute per-block gen sets (locals that are definitely stored)
-    //    and collect load locations for later error reporting.
-    // ------------------------------------------------------------------
     let mut block_gens = BitMatrix::<BlockId, LocalId>::new(num_blocks, num_locals);
 
     for block in &func.blocks {
@@ -59,8 +107,6 @@ pub fn check_definite_init(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagno
         for stmt in func.block_stmts(bid) {
             match stmt {
                 AmirStmt::Store { lhs, .. } if lhs.projections.is_empty() => {
-                    // A store to a plain local (no projections) means that
-                    // local is definitely initialized after this statement.
                     block_gens.insert(bid, lhs.local);
                 }
                 _ => {}
@@ -68,15 +114,6 @@ pub fn check_definite_init(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagno
         }
     }
 
-    // ------------------------------------------------------------------
-    // 2. Forward dataflow: propagate init facts across the CFG.
-    //
-    //    block_in[b] = intersect(block_out[p] for p in predecessors(b))
-    //    block_out[b] = block_in[b] ∪ gen[b]
-    //
-    //    Entry block starts with no locals initialized (unless they
-    //    appear in gen).
-    // ------------------------------------------------------------------
     let mut block_in = vec![BitSet::<LocalId>::all_set(num_locals); num_blocks];
     let mut block_out = vec![BitSet::<LocalId>::all_set(num_locals); num_blocks];
 
@@ -86,8 +123,6 @@ pub fn check_definite_init(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagno
     }
 
     let mut iterations = 0;
-    // Theoretical max height of the dataflow lattice: each local can flip from 1 to 0 once per block.
-    // So the absolute max number of block state updates is `num_blocks * num_locals`.
     let sanity_limit = num_blocks * num_locals + 1000;
 
     while let Some(bid) = worklist.pop_front() {
@@ -100,7 +135,6 @@ pub fn check_definite_init(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagno
         let bi = bid.as_usize();
         let block = &func.blocks[bi];
 
-        // Compute IN as intersection of all predecessors' OUT
         let new_in = if bid == BlockId::from_usize(0) || func.predecessors(bid).is_empty() {
             BitSet::with_capacity(num_locals)
         } else {
@@ -111,12 +145,9 @@ pub fn check_definite_init(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagno
             acc
         };
 
-        // OUT = IN ∪ gen
         let mut new_out = new_in.clone();
         new_out.union_with(&block_gens.row_set(bid));
 
-        // Monotonicity check: intersection dataflow starts at Top (All) and shrinks.
-        // Therefore, new_out must be a subset of old_out.
         debug_assert!(
             block_out[bi].is_superset_of(&new_out),
             "Definite init dataflow is not monotonic at block {bi}"
@@ -126,7 +157,6 @@ pub fn check_definite_init(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagno
             block_in[bi] = new_in;
             block_out[bi] = new_out;
 
-            // Add successors to worklist
             match &block.terminator {
                 AmirTerminator::Return | AmirTerminator::Unreachable => {}
                 AmirTerminator::Goto { target, .. } => {
@@ -152,31 +182,7 @@ pub fn check_definite_init(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagno
         }
     }
 
-    // ------------------------------------------------------------------
-    // 3. Scan each block: at each statement, track the running init state
-    //    and report any loads from uninitialized locals.
-    // ------------------------------------------------------------------
-    let mut diagnostics = Vec::new();
-
-    for block in &func.blocks {
-        let bi = block.id.as_usize();
-        let mut current = block_in[bi].clone();
-
-        for stmt in func.block_stmts(block.id) {
-            // Check loads (reads) before recording stores (writes)
-            check_stmt_loads(stmt, &current, func, symbols, &mut diagnostics);
-
-            // Apply gen: stores update the running state
-            match stmt {
-                AmirStmt::Store { lhs, .. } if lhs.projections.is_empty() => {
-                    current.insert(lhs.local);
-                }
-                _ => {}
-            }
-        }
-    }
-
-    diagnostics
+    Some(block_in)
 }
 
 /// Check whether any `Load` in a statement reads from an uninitialized local.
@@ -185,16 +191,17 @@ fn check_stmt_loads(
     current: &BitSet<LocalId>,
     func: &AmirFunc,
     symbols: &SymbolTable,
-    diagnostics: &mut Vec<Diagnostic>,
+    block: BlockId,
+    diagnostics: &mut Vec<(BlockId, Diagnostic)>,
 ) {
     match stmt {
         AmirStmt::Assign { rhs, .. } => {
-            check_rvalue_loads(rhs, current, func, symbols, diagnostics);
+            check_rvalue_loads(rhs, current, func, symbols, block, diagnostics);
         }
         AmirStmt::Store { rhs, lhs, .. } => {
             // If storing to a projection (e.g. x.field), the base must be initialized
             if !lhs.projections.is_empty() && !current.contains(lhs.local) {
-                emit_uninit_diag(lhs.local, func, symbols, diagnostics);
+                emit_uninit_diag(lhs.local, func, symbols, block, diagnostics);
             }
             // Check if rhs references uninitialized locals via operand
             // (operands are TempId-based, so they are always SSA-valid)
@@ -203,7 +210,7 @@ fn check_stmt_loads(
         AmirStmt::Call { .. } | AmirStmt::Free(_) => {}
         AmirStmt::Destroy(place) => {
             if !current.contains(place.local) {
-                emit_uninit_diag(place.local, func, symbols, diagnostics);
+                emit_uninit_diag(place.local, func, symbols, block, diagnostics);
             }
         }
         AmirStmt::StorageLive(_) | AmirStmt::StorageDead(_) | AmirStmt::Nop => {}
@@ -215,12 +222,13 @@ fn check_rvalue_loads(
     current: &BitSet<LocalId>,
     func: &AmirFunc,
     symbols: &SymbolTable,
-    diagnostics: &mut Vec<Diagnostic>,
+    block: BlockId,
+    diagnostics: &mut Vec<(BlockId, Diagnostic)>,
 ) {
     // Shared place visitor (RC-ANALYSIS-LOAD): Load / Borrow / BorrowMut.
     for_each_rvalue_place(rvalue, |place| {
         if !current.contains(place.local) {
-            emit_uninit_diag(place.local, func, symbols, diagnostics);
+            emit_uninit_diag(place.local, func, symbols, block, diagnostics);
         }
     });
 }
@@ -229,7 +237,8 @@ fn emit_uninit_diag(
     local: LocalId,
     func: &AmirFunc,
     symbols: &SymbolTable,
-    diagnostics: &mut Vec<Diagnostic>,
+    block: BlockId,
+    diagnostics: &mut Vec<(BlockId, Diagnostic)>,
 ) {
     let local_info = &func.locals[local.as_usize()];
     let name = local_info
@@ -259,7 +268,8 @@ fn emit_uninit_diag(
                 .unwrap_or(local_info.span)
         }
     };
-    diagnostics.push(
+    diagnostics.push((
+        block,
         Diagnostic::error(
             DiagCode::O008UseBeforeInit,
             format!("use of possibly uninitialized variable `{name}`"),
@@ -268,7 +278,7 @@ fn emit_uninit_diag(
         .with_note(format!(
             "variable `{name}` may not be initialized on all paths"
         )),
-    );
+    ));
 }
 
 #[cfg(test)]

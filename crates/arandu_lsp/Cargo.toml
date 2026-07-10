@@ -1,0 +1,26 @@
+[package]
+name = "arandu_lsp"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "arandu-lsp"
+path = "src/main.rs"
+
+[dependencies]
+arandu_query = { path = "../arandu_query" }
+arandu_middle = { path = "../arandu_middle" }
+arandu_base = { path = "../arandu_base" }
+arandu_semantics = { path = "../arandu_semantics" }
+lsp-server = { workspace = true }
+lsp-types = { workspace = true }
+crossbeam-channel = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+salsa = { workspace = true }
+rustc-hash = { workspace = true }
+
+[dev-dependencies]
+# unit tests in conv.rs / vfs.rs run via `cargo test -p arandu_lsp`

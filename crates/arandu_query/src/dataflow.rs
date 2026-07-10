@@ -1,18 +1,80 @@
+//! Per-function / per-block analysis queries (A1 / F4 granularity).
+//!
+//! Bodies reuse pure functions from `arandu_mir` — Salsa only memoizes.
+//! Independent functions early-cutoff via [`HashEq`] even when the whole
+//! `lower_amir` program is recomputed (other funcs' AMIR hash-stable).
+
+use crate::db::HashEq;
 use crate::{ArandCompilerDb, SourceFile};
 use arandu_middle::amir::{AmirFunc, BlockId};
-use arandu_middle::SymbolId;
-// Note: We'll need types for DataflowFacts and LivenessMap when we port the full move_checker logic
-// For now, these are placeholder structs to establish the Salsa query shapes as defined in RFC A1.
-use crate::db::HashEq;
+use arandu_middle::{Diagnostic, SymbolId, SymbolKind};
 
+/// Compact, hash-stable summary of block-local dataflow.
+///
+/// Full lattices stay inside `arandu_mir`; we memoize counts so HashEq and LSP
+/// delta keys stay small.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DataflowFacts {
-    // Bitsets for definitely-initialized, moved, etc.
+    pub block: BlockId,
+    /// Locals live-in at block entry.
+    pub live_in_count: u32,
+    /// Locals live-out at block exit.
+    pub live_out_count: u32,
+    /// Definitely-initialized locals at block entry (definite-init IN).
+    pub init_in_count: u32,
+    /// Moved / maybe-moved locals at block entry (move-checker IN).
+    pub moved_in_count: u32,
+    /// Statement count in the block (structural fingerprint).
+    pub stmt_count: u32,
 }
 
+/// Function-wide liveness summary (per-block live-in / live-out cardinalities).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LivenessMap {
-    // Map of TempId/LocalId to their live ranges (intervals)
+    pub live_in_counts: Vec<u32>,
+    pub live_out_counts: Vec<u32>,
+}
+
+/// Stable IDE diagnostic (hashable for early cutoff / publish fingerprint).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IdeDiagnostic {
+    pub code: String,
+    pub severity: u8,
+    pub message: String,
+    pub file_id: u32,
+    pub start: u32,
+    pub end: u32,
+    /// Owning function, if partitioned.
+    pub func: Option<SymbolId>,
+    /// Owning block within that function, if partitioned.
+    pub block: Option<BlockId>,
+}
+
+impl IdeDiagnostic {
+    pub fn from_diag(d: &Diagnostic, func: Option<SymbolId>, block: Option<BlockId>) -> Self {
+        Self {
+            code: d.code.to_string(),
+            severity: d.severity as u8,
+            message: d.message.clone(),
+            file_id: d.span.file_id,
+            start: d.span.start,
+            end: d.span.end,
+            func,
+            block,
+        }
+    }
+}
+
+#[salsa::tracked]
+#[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
+    query = "file_func_symbols",
+    file = ?file.file_id(db),
+))]
+pub fn file_func_symbols(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<Vec<SymbolId>> {
+    let amir = crate::passes::lower_amir(db, file);
+    let mut ids: Vec<SymbolId> = amir.funcs.iter().map(|f| f.symbol).collect();
+    ids.sort_by_key(|s| (s.file_id, s.local_id.0));
+    HashEq::new(ids)
 }
 
 #[salsa::tracked]
@@ -27,13 +89,61 @@ pub fn func_amir(
     func_sym: SymbolId,
 ) -> HashEq<AmirFunc> {
     let amir_program = crate::passes::lower_amir(db, file);
-    // Find the requested function in the lowered AMIR.
     let func = amir_program
         .funcs
         .iter()
         .find(|f| f.symbol == func_sym)
-        .expect("Function not found in AMIR");
-    HashEq::new(func.clone())
+        .cloned()
+        .unwrap_or_else(|| empty_func(func_sym));
+    HashEq::new(func)
+}
+
+fn empty_func(symbol: SymbolId) -> AmirFunc {
+    use arandu_middle::types::TypeId;
+    AmirFunc {
+        symbol,
+        return_type: TypeId::from_usize(0),
+        receiver: None,
+        params: vec![],
+        locals: vec![],
+        temps: vec![],
+        blocks: vec![],
+        stmts: Default::default(),
+        cfg: Default::default(),
+    }
+}
+
+#[salsa::tracked]
+#[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
+    query = "liveness_facts",
+    file = ?file.file_id(db),
+    func = ?func_sym,
+))]
+pub fn liveness_facts(
+    db: &dyn ArandCompilerDb,
+    file: SourceFile,
+    func_sym: SymbolId,
+) -> HashEq<LivenessMap> {
+    let func = func_amir(db, file, func_sym);
+    if func.blocks.is_empty() {
+        return HashEq::new(LivenessMap {
+            live_in_counts: vec![],
+            live_out_counts: vec![],
+        });
+    }
+    let live = arandu_mir::liveness::analyze_local_liveness(&func);
+    let n = func.blocks.len();
+    let mut live_in_counts = Vec::with_capacity(n);
+    let mut live_out_counts = Vec::with_capacity(n);
+    for i in 0..n {
+        let bid = BlockId::from_usize(i);
+        live_in_counts.push(live.live_in(bid).len() as u32);
+        live_out_counts.push(live.live_out(bid).len() as u32);
+    }
+    HashEq::new(LivenessMap {
+        live_in_counts,
+        live_out_counts,
+    })
 }
 
 #[salsa::tracked]
@@ -49,23 +159,227 @@ pub fn block_dataflow_facts(
     func_sym: SymbolId,
     block: BlockId,
 ) -> HashEq<DataflowFacts> {
-    let _func = func_amir(db, file, func_sym);
-    // placeholder logic
-    HashEq::new(DataflowFacts {})
+    let func = func_amir(db, file, func_sym);
+    let live = liveness_facts(db, file, func_sym);
+    let i = block.as_usize();
+    let live_in_count = live.live_in_counts.get(i).copied().unwrap_or(0);
+    let live_out_count = live.live_out_counts.get(i).copied().unwrap_or(0);
+
+    let init_counts = arandu_mir::definite_init::init_in_counts(&func);
+    let moved_counts = arandu_mir::move_checker::moved_in_counts(&func);
+    let init_in_count = init_counts.get(i).copied().unwrap_or(0);
+    let moved_in_count = moved_counts.get(i).copied().unwrap_or(0);
+    let stmt_count = func.blocks.get(i).map(|b| b.statements.len).unwrap_or(0);
+
+    HashEq::new(DataflowFacts {
+        block,
+        live_in_count,
+        live_out_count,
+        init_in_count,
+        moved_in_count,
+        stmt_count,
+    })
 }
 
+/// Counts `item_ide_diagnostics` executions (P3 delta tests).
+#[cfg(any(test, debug_assertions))]
+pub static ITEM_IDE_DIAGS_EXEC_COUNT: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// P3: diagnostics for **one** top-level item (body typeck + AMIR analysis if func).
+///
+/// Depends on [`crate::passes::item_body_typeck`] (fine-grained) and, for functions,
+/// [`func_amir`] whose HashEq is content-stable across sibling edits.
 #[salsa::tracked]
 #[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
-    query = "liveness_facts",
+    query = "item_ide_diagnostics",
     file = ?file.file_id(db),
-    func = ?func_sym,
+    item = ?item_sym,
 ))]
-pub fn liveness_facts(
+pub fn item_ide_diagnostics(
+    db: &dyn ArandCompilerDb,
+    file: SourceFile,
+    item_sym: SymbolId,
+) -> HashEq<Vec<IdeDiagnostic>> {
+    #[cfg(any(test, debug_assertions))]
+    ITEM_IDE_DIAGS_EXEC_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+    let body_tc = crate::passes::item_body_typeck(db, file, item_sym);
+    let mut out: Vec<IdeDiagnostic> = body_tc
+        .diagnostics
+        .iter()
+        .map(|d| IdeDiagnostic::from_diag(d, Some(item_sym), None))
+        .collect();
+
+    // AMIR analysis for function items (empty AmirFunc if not a func / not lowered).
+    // Diags are tagged with the real AMIR block of the bad use (honesty: span→block).
+    let amir = func_amir(db, file, item_sym);
+    if !amir.blocks.is_empty() {
+        let sigs = crate::passes::module_signatures(db, file);
+        for (bid, d) in
+            arandu_mir::definite_init::check_definite_init_by_block(&amir, sigs.symbols.as_ref())
+        {
+            out.push(IdeDiagnostic::from_diag(&d, Some(item_sym), Some(bid)));
+        }
+        for (bid, d) in arandu_mir::move_checker::check_moves_by_block(&amir, sigs.symbols.as_ref())
+        {
+            out.push(IdeDiagnostic::from_diag(&d, Some(item_sym), Some(bid)));
+        }
+
+        // Populate block facts only (do NOT call block_diagnostics — cycle risk).
+        for bi in 0..amir.blocks.len() {
+            let bid = BlockId::from_usize(bi);
+            let _ = block_dataflow_facts(db, file, item_sym, bid);
+        }
+    }
+
+    out.sort_by(|a, b| {
+        (a.start, a.end, &a.code, &a.message).cmp(&(b.start, b.end, &b.code, &b.message))
+    });
+    out.dedup();
+    HashEq::new(out)
+}
+
+/// Alias: analysis diags for a function item (same memo as [`item_ide_diagnostics`]).
+#[inline]
+pub fn func_analysis_diags(
     db: &dyn ArandCompilerDb,
     file: SourceFile,
     func_sym: SymbolId,
-) -> HashEq<LivenessMap> {
-    let _func = func_amir(db, file, func_sym);
-    // compute_liveness_rpo(&func)
-    HashEq::new(LivenessMap {})
+) -> HashEq<Vec<IdeDiagnostic>> {
+    item_ide_diagnostics(db, file, func_sym)
+}
+
+/// Diagnostics attributed to one basic block (entry carries item diags until AMIR stmt spans exist).
+#[salsa::tracked]
+#[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
+    query = "block_diagnostics",
+    file = ?file.file_id(db),
+    func = ?func_sym,
+    block = ?block,
+))]
+pub fn block_diagnostics(
+    db: &dyn ArandCompilerDb,
+    file: SourceFile,
+    func_sym: SymbolId,
+    block: BlockId,
+) -> HashEq<Vec<IdeDiagnostic>> {
+    let _facts = block_dataflow_facts(db, file, func_sym, block);
+    // Body typeck diags live on entry (no AST block ids); AMIR diags filter by block.
+    let body_tc = crate::passes::item_body_typeck(db, file, func_sym);
+    let amir = func_amir(db, file, func_sym);
+    let sigs = crate::passes::module_signatures(db, file);
+
+    let mut out = Vec::new();
+    if block.as_usize() == 0 {
+        for d in &body_tc.diagnostics {
+            out.push(IdeDiagnostic::from_diag(d, Some(func_sym), Some(block)));
+        }
+    }
+    if !amir.blocks.is_empty() {
+        for (bid, d) in
+            arandu_mir::definite_init::check_definite_init_by_block(&amir, sigs.symbols.as_ref())
+        {
+            if bid == block {
+                out.push(IdeDiagnostic::from_diag(&d, Some(func_sym), Some(bid)));
+            }
+        }
+        for (bid, d) in arandu_mir::move_checker::check_moves_by_block(&amir, sigs.symbols.as_ref())
+        {
+            if bid == block {
+                out.push(IdeDiagnostic::from_diag(&d, Some(func_sym), Some(bid)));
+            }
+        }
+    }
+    HashEq::new(out)
+}
+
+/// File-level signature / resolve diagnostics not tied to a body item.
+#[salsa::tracked]
+#[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
+    query = "file_signature_ide_diagnostics",
+    file = ?file.file_id(db),
+))]
+pub fn file_signature_ide_diagnostics(
+    db: &dyn ArandCompilerDb,
+    file: SourceFile,
+) -> HashEq<Vec<IdeDiagnostic>> {
+    let sigs = crate::passes::module_signatures(db, file);
+    let mut out: Vec<IdeDiagnostic> = sigs
+        .diagnostics
+        .iter()
+        .map(|d| IdeDiagnostic::from_diag(d, None, None))
+        .collect();
+    out.sort_by(|a, b| {
+        (a.start, a.end, &a.code, &a.message).cmp(&(b.start, b.end, &b.code, &b.message))
+    });
+    out.dedup();
+    HashEq::new(out)
+}
+
+/// Full IDE diagnostic set: union of per-item memos + signature-level diags (P3).
+///
+/// Compose is O(items); each item early-cutoffs independently via
+/// [`item_ide_diagnostics`]. LSP still publishes a full list (protocol), but
+/// recomputation is incremental.
+#[salsa::tracked]
+#[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
+    query = "file_ide_diagnostics",
+    file = ?file.file_id(db),
+))]
+pub fn file_ide_diagnostics(
+    db: &dyn ArandCompilerDb,
+    file: SourceFile,
+) -> HashEq<Vec<IdeDiagnostic>> {
+    let program_res = crate::passes::parse(db, file);
+    let signatures = crate::passes::module_signatures(db, file);
+
+    let mut out: Vec<IdeDiagnostic> = Vec::new();
+    let mut covered = std::collections::HashSet::new();
+
+    if let Ok(program) = &*program_res {
+        let items = arandu_semantics::body_item_symbols(program, signatures.resolved.as_ref());
+        for &item_sym in &items {
+            let diags = item_ide_diagnostics(db, file, item_sym);
+            for d in diags.iter() {
+                let key = (d.start, d.end, d.code.clone(), d.message.clone());
+                if covered.insert(key) {
+                    out.push(d.clone());
+                }
+            }
+        }
+    }
+
+    // Signature / resolve diags (imports, duplicate types, …).
+    let sig_diags = file_signature_ide_diagnostics(db, file);
+    for d in sig_diags.iter() {
+        let key = (d.start, d.end, d.code.clone(), d.message.clone());
+        if covered.insert(key) {
+            out.push(d.clone());
+        }
+    }
+
+    out.sort_by(|a, b| {
+        (a.start, a.end, &a.code, &a.message).cmp(&(b.start, b.end, &b.code, &b.message))
+    });
+    HashEq::new(out)
+}
+
+/// Fingerprint of the full IDE diagnostic list (for LSP publish skip).
+#[must_use]
+pub fn ide_diags_fingerprint(diags: &[IdeDiagnostic]) -> blake3::Hash {
+    use crate::stable_hash::StableHash;
+    diags.to_vec().stable_hash()
+}
+
+/// Per-item diagnostic fingerprint (P3 LSP cache key).
+#[must_use]
+pub fn item_ide_diags_fingerprint(diags: &[IdeDiagnostic]) -> blake3::Hash {
+    ide_diags_fingerprint(diags)
+}
+
+// Silence unused import if SymbolKind unused in some builds
+#[allow(dead_code)]
+fn _kind_marker() -> SymbolKind {
+    SymbolKind::Func
 }

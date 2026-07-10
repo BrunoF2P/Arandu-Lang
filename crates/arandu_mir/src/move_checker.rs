@@ -8,13 +8,16 @@
 #![allow(clippy::collapsible_if)]
 
 use crate::amir::{
-    AmirFunc, AmirOperand, AmirPlace, AmirRvalue, AmirStmt, AmirTerminator, LocalId, TempId,
-    for_each_rvalue_operand, for_each_rvalue_place,
+    AmirFunc, AmirOperand, AmirPlace, AmirRvalue, AmirStmt, AmirTerminator, BlockId, LocalId,
+    TempId, for_each_rvalue_operand, for_each_rvalue_place,
 };
 use crate::diagnostics::{DiagCode, Diagnostic};
 use crate::{BitSet, SymbolTable};
 use arandu_lexer::Span;
 use std::collections::VecDeque;
+
+/// Sink for block-tagged move diagnostics during CFG walk.
+type MoveDiagSink<'a> = Option<(&'a SymbolTable, BlockId, &'a mut Vec<(BlockId, Diagnostic)>)>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LocalMoveState {
@@ -99,12 +102,57 @@ impl MoveState {
     }
 }
 
+/// Count of locals that are `Moved` or `MaybeMoved` at each block entry.
+#[must_use]
+pub fn moved_in_counts(func: &AmirFunc) -> Vec<u32> {
+    let Some(block_in) = compute_move_in(func) else {
+        return vec![0; func.blocks.len()];
+    };
+    block_in
+        .iter()
+        .map(|s| (s.moved.len() + s.maybe_moved.len()) as u32)
+        .collect()
+}
+
 pub fn check_moves(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagnostic> {
+    check_moves_by_block(func, symbols)
+        .into_iter()
+        .map(|(_, d)| d)
+        .collect()
+}
+
+/// Same as [`check_moves`], tagging each diagnostic with the AMIR block of the use.
+#[must_use]
+pub fn check_moves_by_block(
+    func: &AmirFunc,
+    symbols: &SymbolTable,
+) -> Vec<(crate::amir::BlockId, Diagnostic)> {
+    let Some(block_in) = compute_move_in(func) else {
+        return Vec::new();
+    };
+
+    let temp_origins = temp_origins(func);
+    let mut diagnostics = Vec::new();
+    for block in &func.blocks {
+        let mut state = block_in[block.id.as_usize()].clone();
+        apply_block(
+            block.id,
+            func,
+            &temp_origins,
+            &mut state,
+            Some((symbols, block.id, &mut diagnostics)),
+        );
+    }
+
+    diagnostics
+}
+
+fn compute_move_in(func: &AmirFunc) -> Option<Vec<MoveState>> {
     let num_locals = func.locals.len();
     let num_blocks = func.blocks.len();
 
     if num_locals == 0 || num_blocks == 0 {
-        return Vec::new();
+        return None;
     }
 
     let temp_origins = temp_origins(func);
@@ -117,8 +165,6 @@ pub fn check_moves(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagnostic> {
     }
 
     let mut iterations = 0;
-    // Theoretical max height of the dataflow lattice: each local can flip from Available -> MaybeMoved -> Moved.
-    // So the absolute max number of block state updates is `num_blocks * num_locals * 2`.
     let sanity_limit = num_blocks * num_locals * 2 + 1000;
 
     while let Some(bid) = worklist.pop_front() {
@@ -139,7 +185,6 @@ pub fn check_moves(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagnostic> {
         let mut new_out = new_in.clone();
         apply_block(block.id, func, &temp_origins, &mut new_out, None);
 
-        // Monotonicity check: the dataflow lattice grows (Available -> MaybeMoved -> Moved).
         debug_assert!(
             new_out.is_monotonic_from(&block_out[bi]),
             "Move checker dataflow is not monotonic at block {bi}"
@@ -154,19 +199,7 @@ pub fn check_moves(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagnostic> {
         }
     }
 
-    let mut diagnostics = Vec::new();
-    for block in &func.blocks {
-        let mut state = block_in[block.id.as_usize()].clone();
-        apply_block(
-            block.id,
-            func,
-            &temp_origins,
-            &mut state,
-            Some((symbols, &mut diagnostics)),
-        );
-    }
-
-    diagnostics
+    Some(block_in)
 }
 
 fn temp_origins(func: &AmirFunc) -> Vec<Option<LocalId>> {
@@ -213,7 +246,7 @@ fn apply_block(
     func: &AmirFunc,
     temp_origins: &[Option<LocalId>],
     state: &mut MoveState,
-    mut diagnostics: Option<(&SymbolTable, &mut Vec<Diagnostic>)>,
+    mut diagnostics: MoveDiagSink<'_>,
 ) {
     for stmt in func.block_stmts(block) {
         match stmt {
@@ -291,7 +324,7 @@ fn check_rvalue_reads(
     rvalue: &AmirRvalue,
     func: &AmirFunc,
     state: &MoveState,
-    diagnostics: &mut Option<(&SymbolTable, &mut Vec<Diagnostic>)>,
+    diagnostics: &mut MoveDiagSink<'_>,
 ) {
     for_each_rvalue_place(rvalue, |place| {
         check_place_read(place, func, state, diagnostics);
@@ -303,7 +336,7 @@ fn consume_rvalue(
     func: &AmirFunc,
     temp_origins: &[Option<LocalId>],
     state: &mut MoveState,
-    diagnostics: &mut Option<(&SymbolTable, &mut Vec<Diagnostic>)>,
+    diagnostics: &mut MoveDiagSink<'_>,
 ) {
     // Shared visitor covers all operand-bearing rvalues (RC-ANALYSIS-LOAD).
     // Load/Borrow/BorrowMut only contribute Index projection operands, not the base place.
@@ -317,7 +350,7 @@ fn check_operand_read(
     func: &AmirFunc,
     temp_origins: &[Option<LocalId>],
     state: &MoveState,
-    diagnostics: &mut Option<(&SymbolTable, &mut Vec<Diagnostic>)>,
+    diagnostics: &mut MoveDiagSink<'_>,
 ) {
     let (AmirOperand::Copy(temp) | AmirOperand::Move(temp)) = op else {
         return;
@@ -332,7 +365,7 @@ fn consume_operand(
     func: &AmirFunc,
     temp_origins: &[Option<LocalId>],
     state: &mut MoveState,
-    diagnostics: &mut Option<(&SymbolTable, &mut Vec<Diagnostic>)>,
+    diagnostics: &mut MoveDiagSink<'_>,
     double_free: bool,
 ) {
     let AmirOperand::Move(temp) = op else {
@@ -354,7 +387,7 @@ fn check_place_read(
     place: &AmirPlace,
     func: &AmirFunc,
     state: &MoveState,
-    diagnostics: &mut Option<(&SymbolTable, &mut Vec<Diagnostic>)>,
+    diagnostics: &mut MoveDiagSink<'_>,
 ) {
     check_local_read(place.local, func, state, diagnostics);
 }
@@ -363,7 +396,7 @@ fn check_consume_place(
     place: &AmirPlace,
     func: &AmirFunc,
     state: &MoveState,
-    diagnostics: &mut Option<(&SymbolTable, &mut Vec<Diagnostic>)>,
+    diagnostics: &mut MoveDiagSink<'_>,
     double_free: bool,
 ) {
     check_consume_local(place.local, func, state, diagnostics, double_free);
@@ -373,28 +406,35 @@ fn check_local_read(
     local: LocalId,
     func: &AmirFunc,
     state: &MoveState,
-    diagnostics: &mut Option<(&SymbolTable, &mut Vec<Diagnostic>)>,
+    diagnostics: &mut MoveDiagSink<'_>,
 ) {
-    let Some((symbols, diagnostics)) = diagnostics.as_mut() else {
+    let Some((symbols, block, diagnostics)) = diagnostics.as_mut() else {
         return;
     };
+    let block = *block;
     match state.get(local) {
         LocalMoveState::Available => {}
-        LocalMoveState::Moved => diagnostics.push(move_diag(
-            DiagCode::O001UseAfterMove,
-            local,
-            func,
-            symbols,
-            "use of moved value",
-            "value was moved before this use",
+        LocalMoveState::Moved => diagnostics.push((
+            block,
+            move_diag(
+                DiagCode::O001UseAfterMove,
+                local,
+                func,
+                symbols,
+                "use of moved value",
+                "value was moved before this use",
+            ),
         )),
-        LocalMoveState::MaybeMoved => diagnostics.push(move_diag(
-            DiagCode::O007InconsistentMoveBetweenBranches,
-            local,
-            func,
-            symbols,
-            "value may have been moved on some control-flow paths",
-            "ensure all branches leave the value in a consistent ownership state",
+        LocalMoveState::MaybeMoved => diagnostics.push((
+            block,
+            move_diag(
+                DiagCode::O007InconsistentMoveBetweenBranches,
+                local,
+                func,
+                symbols,
+                "value may have been moved on some control-flow paths",
+                "ensure all branches leave the value in a consistent ownership state",
+            ),
         )),
     }
 }
@@ -403,37 +443,47 @@ fn check_consume_local(
     local: LocalId,
     func: &AmirFunc,
     state: &MoveState,
-    diagnostics: &mut Option<(&SymbolTable, &mut Vec<Diagnostic>)>,
+    diagnostics: &mut MoveDiagSink<'_>,
     double_free: bool,
 ) {
-    let Some((symbols, diagnostics)) = diagnostics.as_mut() else {
+    let Some((symbols, block, diagnostics)) = diagnostics.as_mut() else {
         return;
     };
+    let block = *block;
     match state.get(local) {
         LocalMoveState::Available => {}
-        LocalMoveState::Moved if double_free => diagnostics.push(move_diag(
-            DiagCode::O005DoubleFree,
-            local,
-            func,
-            symbols,
-            "double free/drop of moved value",
-            "value was already consumed on this path",
+        LocalMoveState::Moved if double_free => diagnostics.push((
+            block,
+            move_diag(
+                DiagCode::O005DoubleFree,
+                local,
+                func,
+                symbols,
+                "double free/drop of moved value",
+                "value was already consumed on this path",
+            ),
         )),
-        LocalMoveState::Moved => diagnostics.push(move_diag(
-            DiagCode::O001UseAfterMove,
-            local,
-            func,
-            symbols,
-            "use of moved value",
-            "value was already consumed on this path",
+        LocalMoveState::Moved => diagnostics.push((
+            block,
+            move_diag(
+                DiagCode::O001UseAfterMove,
+                local,
+                func,
+                symbols,
+                "use of moved value",
+                "value was already consumed on this path",
+            ),
         )),
-        LocalMoveState::MaybeMoved => diagnostics.push(move_diag(
-            DiagCode::O007InconsistentMoveBetweenBranches,
-            local,
-            func,
-            symbols,
-            "value may have been moved on some control-flow paths",
-            "ensure all branches leave the value in a consistent ownership state",
+        LocalMoveState::MaybeMoved => diagnostics.push((
+            block,
+            move_diag(
+                DiagCode::O007InconsistentMoveBetweenBranches,
+                local,
+                func,
+                symbols,
+                "value may have been moved on some control-flow paths",
+                "ensure all branches leave the value in a consistent ownership state",
+            ),
         )),
     }
 }

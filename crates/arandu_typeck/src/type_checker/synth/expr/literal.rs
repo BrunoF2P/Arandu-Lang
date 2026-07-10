@@ -36,9 +36,8 @@ pub(super) fn synth_literal_expr(
         ExprKind::Bool { .. } => Some(checker.intern(ArType::Primitive(Primitive::Bool))),
         ExprKind::Char { .. } => Some(checker.intern(ArType::Primitive(Primitive::Char))),
         ExprKind::InterpolatedString { parts } => {
-            // Root cause fix (RC-INTERP): only `str` parts are allowed until
-            // Display/to_str exists. Accepting arbitrary types lied to backends
-            // (Cranelift treated scalars as fat-pointer with len=0).
+            // ToStr v0.1: formatable primitives are accepted; lower inserts
+            // AmirRvalue::ToStr. Non-formatable types get T034 (not silent Any).
             let part_ids = checker.pool.string_part_list(*parts).to_vec();
             let str_ty = checker.intern(ArType::Primitive(Primitive::Str));
             for part_id in part_ids {
@@ -48,23 +47,22 @@ pub(super) fn synth_literal_expr(
                 {
                     let part_ty_id = synth_expr(checker, *inner_expr);
                     let part_ty = checker.resolve(part_ty_id);
-                    let is_str =
-                        matches!(part_ty, ArType::Primitive(Primitive::Str)) || part_ty.is_error();
-                    if !is_str {
-                        let interner = &checker.type_info.type_interner;
-                        let found = part_ty.display(&checker.symbols, interner);
-                        checker.diagnostics.push(
-                            crate::Diagnostic::error(
-                                crate::DiagCode::T002IncompatibleAssignment,
-                                format!("string interpolation requires `str`, found `{found}`"),
-                                checker.pool.expr_span(*inner_expr),
-                            )
-                            .with_note(
-                                "automatic formatting of non-str values is not implemented yet"
-                                    .to_string(),
-                            ),
-                        );
+                    if part_ty.is_error() || part_ty.is_to_str_v01() {
+                        continue;
                     }
+                    let interner = &checker.type_info.type_interner;
+                    let found = part_ty.display(&checker.symbols, interner);
+                    checker.diagnostics.push(
+                        crate::Diagnostic::error(
+                            crate::DiagCode::T034CannotFormat,
+                            format!("cannot format value of type `{found}` as `str`"),
+                            checker.pool.expr_span(*inner_expr),
+                        )
+                        .with_note(
+                            "only bool, integers, floats, char, and str are supported in v0.1"
+                                .to_string(),
+                        ),
+                    );
                 }
             }
             Some(str_ty)

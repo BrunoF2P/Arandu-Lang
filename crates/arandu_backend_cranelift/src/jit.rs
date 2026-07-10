@@ -8,6 +8,7 @@ use crate::abi::build_signature;
 use crate::translator::FunctionTranslator;
 use arandu_base::span::Span;
 use arandu_semantics::amir::AmirProgram;
+use arandu_semantics::passes::type_checker::types::{ArType, Primitive};
 use arandu_semantics::{DiagCode, Diagnostic, SymbolTable};
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
@@ -47,7 +48,33 @@ impl AranduJit {
             .finish(settings::Flags::new(flag_builder))
             .map_err(|e| codegen_ice(format!("Failed to build Cranelift isa: {e}")))?;
 
-        let builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
+        let mut builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
+        // ToStr v0.1 host helpers (malloc-backed fat strings).
+        builder.symbol(
+            "ar_jit_i64_to_str",
+            crate::to_str_runtime::ar_jit_i64_to_str as *const u8,
+        );
+        builder.symbol(
+            "ar_jit_u64_to_str",
+            crate::to_str_runtime::ar_jit_u64_to_str as *const u8,
+        );
+        builder.symbol(
+            "ar_jit_f64_to_str",
+            crate::to_str_runtime::ar_jit_f64_to_str as *const u8,
+        );
+        builder.symbol(
+            "ar_jit_bool_to_str",
+            crate::to_str_runtime::ar_jit_bool_to_str as *const u8,
+        );
+        builder.symbol(
+            "ar_jit_char_to_str",
+            crate::to_str_runtime::ar_jit_char_to_str as *const u8,
+        );
+        // Prelude `io.println` (fat-pointer ABI: ptr + i64 len).
+        builder.symbol(
+            "io.println",
+            crate::to_str_runtime::ar_jit_println as *const u8,
+        );
         let module = JITModule::new(builder);
 
         Ok(Self { module })
@@ -136,6 +163,32 @@ impl AranduJit {
             .map_err(|err| codegen_ice(format!("failed to declare memcpy: {err:?}")))?;
         func_ids.insert("memcpy".to_string(), memcpy_id);
 
+        // ToStr v0.1: host helpers `(value, *mut i64 out_len) -> *mut u8`
+        let i64_ty = cranelift_codegen::ir::types::I64;
+        let f64_ty = cranelift_codegen::ir::types::F64;
+        let i8_ty = cranelift_codegen::ir::types::I8;
+        let i32_ty = cranelift_codegen::ir::types::I32;
+        for (name, val_ty) in [
+            ("ar_jit_i64_to_str", i64_ty),
+            ("ar_jit_u64_to_str", i64_ty),
+            ("ar_jit_f64_to_str", f64_ty),
+            ("ar_jit_bool_to_str", i8_ty),
+            ("ar_jit_char_to_str", i32_ty),
+        ] {
+            let mut sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+            sig.params
+                .push(cranelift_codegen::ir::AbiParam::new(val_ty));
+            sig.params
+                .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+            sig.returns
+                .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+            let id = self
+                .module
+                .declare_function(name, Linkage::Import, &sig)
+                .map_err(|err| codegen_ice(format!("failed to declare {name}: {err:?}")))?;
+            func_ids.insert(name.to_string(), id);
+        }
+
         // 1. Declare all functions first to support cross-calls
         for func in &program.funcs {
             let sym = symbols.get(func.symbol);
@@ -195,6 +248,23 @@ impl AranduJit {
             if c_name != sym.name {
                 func_ids.insert(c_name.to_string(), func_id);
             }
+        }
+
+        // Builtin prelude: `io.println(str)` → host `ar_jit_println` (ptr, len).
+        if !func_ids.contains_key("io.println") {
+            let str_ty = ArType::Primitive(Primitive::Str);
+            let void_ty = ArType::Void;
+            let sig = build_signature(
+                std::slice::from_ref(&str_ty),
+                &void_ty,
+                default_call_conv,
+                ptr_type,
+            );
+            let id = self
+                .module
+                .declare_function("io.println", Linkage::Import, &sig)
+                .map_err(|err| codegen_ice(format!("failed to declare io.println: {err:?}")))?;
+            func_ids.insert("io.println".to_string(), id);
         }
 
         // 2. Define/compile each function

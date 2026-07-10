@@ -743,6 +743,9 @@ impl LowerCtx<'_> {
                     *op = Self::resolve_operand(redirected_temps, op.clone());
                 }
             }
+            AmirRvalue::ToStr { value, .. } => {
+                *value = Self::resolve_operand(redirected_temps, value.clone());
+            }
         }
     }
 
