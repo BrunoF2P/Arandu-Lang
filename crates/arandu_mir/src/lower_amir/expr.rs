@@ -114,21 +114,15 @@ impl LowerCtx<'_> {
         self.emit_assign_temp(dest, AmirRvalue::FieldAccess { base, field: 1 });
     }
 
-    pub(crate) fn lower_result_err_field(
-        &mut self,
-        base: AmirOperand,
-        err_ty: ArType,
-        dest: TempId,
-    ) {
+    pub(crate) fn lower_result_err_field(&mut self, base: AmirOperand, dest: TempId) {
         self.emit_assign_temp(dest, AmirRvalue::FieldAccess { base, field: 1 });
-        let _ = err_ty;
     }
 
     pub(crate) fn lower_try_result(
         &mut self,
         inner_id: HirExprId,
         target: Option<TempId>,
-        expr_ty: ArType,
+        expr_ty: &ArType,
         symbols: &SymbolTable,
     ) -> Result<AmirOperand, Diagnostic> {
         let inner = self.hir.pool.expr(inner_id);
@@ -152,12 +146,12 @@ impl LowerCtx<'_> {
         };
         let base = self.lower_expr(inner_id, None, symbols)?;
         if self.current_block.is_none() {
-            let dest = target.unwrap_or_else(|| self.new_temp(expr_ty));
+            let dest = target.unwrap_or_else(|| self.new_temp_ref(expr_ty));
             return Ok(AmirOperand::Copy(dest));
         }
 
         let err_tmp = self.new_temp_ref(&err_ty);
-        self.lower_result_err_field(base, err_ty, err_tmp);
+        self.lower_result_err_field(base, err_tmp);
 
         let tag_tmp = self.new_temp(ArType::Primitive(Primitive::Int));
         self.emit_assign_temp(
@@ -187,8 +181,9 @@ impl LowerCtx<'_> {
 
         self.current_block = Some(bb_return_err);
         self.exit_all_defer_frames(true, symbols)?;
+        // Clone once: new_temp_ref needs &mut self + &ArType simultaneously.
         let ret_ty = self.func_return_type.clone();
-        let err_ctor_tmp = self.new_temp(ret_ty);
+        let err_ctor_tmp = self.new_temp_ref(&ret_ty);
         self.emit_assign_temp(
             err_ctor_tmp,
             AmirRvalue::EnumConstruct {
@@ -202,7 +197,7 @@ impl LowerCtx<'_> {
         self.current_block = None;
 
         self.current_block = Some(bb_continue);
-        let dest = target.unwrap_or_else(|| self.new_temp(expr_ty));
+        let dest = target.unwrap_or_else(|| self.new_temp_ref(expr_ty));
         self.lower_result_ok_field(base, dest);
         Ok(AmirOperand::Copy(dest))
     }
@@ -213,7 +208,7 @@ impl LowerCtx<'_> {
         inner_id: HirExprId,
         handler: &crate::hir::HirCatchHandler,
         target: Option<TempId>,
-        expr_ty: ArType,
+        expr_ty: &ArType,
         symbols: &SymbolTable,
     ) -> Result<AmirOperand, Diagnostic> {
         use crate::hir::HirCatchHandler;
@@ -238,11 +233,11 @@ impl LowerCtx<'_> {
 
         let base = self.lower_expr(inner_id, None, symbols)?;
         if self.current_block.is_none() {
-            let dest = target.unwrap_or_else(|| self.new_temp(expr_ty));
+            let dest = target.unwrap_or_else(|| self.new_temp_ref(expr_ty));
             return Ok(AmirOperand::Copy(dest));
         }
 
-        let dest = target.unwrap_or_else(|| self.new_temp_ref(&expr_ty));
+        let dest = target.unwrap_or_else(|| self.new_temp_ref(expr_ty));
 
         let tag_tmp = self.new_temp(ArType::Primitive(Primitive::Int));
         self.emit_assign_temp(
@@ -279,7 +274,7 @@ impl LowerCtx<'_> {
         } = handler
         {
             let err_tmp = self.new_temp_ref(&err_ty);
-            self.lower_result_err_field(base, err_ty.clone(), err_tmp);
+            self.lower_result_err_field(base, err_tmp);
             let err_local = self.new_local_ref(&err_ty, *err_sym, inner.span);
             let consumed = self.consume_operand(AmirOperand::Copy(err_tmp))?;
             self.write_variable_source(err_local, consumed)?;
@@ -310,12 +305,12 @@ impl LowerCtx<'_> {
         &mut self,
         inner_id: HirExprId,
         target: Option<TempId>,
-        expr_ty: ArType,
+        expr_ty: &ArType,
         symbols: &SymbolTable,
     ) -> Result<AmirOperand, Diagnostic> {
         let base = self.lower_expr(inner_id, None, symbols)?;
         if self.current_block.is_none() {
-            let dest = target.unwrap_or_else(|| self.new_temp(expr_ty));
+            let dest = target.unwrap_or_else(|| self.new_temp_ref(expr_ty));
             return Ok(AmirOperand::Copy(dest));
         }
 
@@ -346,7 +341,7 @@ impl LowerCtx<'_> {
         self.current_block = None;
 
         self.current_block = Some(bb_continue);
-        let dest = target.unwrap_or_else(|| self.new_temp(expr_ty));
+        let dest = target.unwrap_or_else(|| self.new_temp_ref(expr_ty));
         self.emit_assign_temp(dest, AmirRvalue::Use(base));
         Ok(AmirOperand::Copy(dest))
     }
@@ -618,16 +613,16 @@ impl LowerCtx<'_> {
                 Ok(AmirOperand::Copy(dest))
             }
             HirExprKind::Binary { op, left, right } => {
-                self.lower_binary(*op, *left, *right, expr.ty.clone(), target, symbols)
+                self.lower_binary(*op, *left, *right, &expr.ty, target, symbols)
             }
             HirExprKind::Unary { op, expr: sub_expr } => {
-                self.lower_unary(*op, *sub_expr, expr.ty.clone(), target, symbols)
+                self.lower_unary(*op, *sub_expr, &expr.ty, target, symbols)
             }
             HirExprKind::Field { base, field } => {
-                self.lower_field(*base, field, expr.ty.clone(), target, symbols)
+                self.lower_field(*base, field, &expr.ty, target, symbols)
             }
             HirExprKind::Index { base, index } => {
-                self.lower_index(*base, *index, expr.ty.clone(), target, symbols)
+                self.lower_index(*base, *index, &expr.ty, target, symbols)
             }
             HirExprKind::Array { items } => {
                 let items_slice = self.hir.pool.expr_list(*items);
@@ -899,7 +894,7 @@ impl LowerCtx<'_> {
             }
 
             HirExprKind::Match { value, arms } => {
-                self.lower_match(*value, arms, target, expr.ty.clone(), symbols)
+                self.lower_match(*value, arms, target, &expr.ty, symbols)
             }
             HirExprKind::ResultCtor { variant, value } => {
                 let val_op = self.lower_expr(*value, None, symbols)?;
@@ -939,13 +934,13 @@ impl LowerCtx<'_> {
             HirExprKind::Try { expr: inner } => {
                 let inner_expr = self.hir.pool.expr(*inner);
                 if result_ok_err(&inner_expr.ty, &self.tc.type_info.type_interner).is_some() {
-                    self.lower_try_result(*inner, target, expr.ty.clone(), symbols)
+                    self.lower_try_result(*inner, target, &expr.ty, symbols)
                 } else if is_option_type(&inner_expr.ty)
                     || matches!(inner_expr.ty, ArType::Nullable(_))
                 {
-                    self.lower_try_nullable(*inner, target, expr.ty.clone(), symbols)
+                    self.lower_try_nullable(*inner, target, &expr.ty, symbols)
                 } else {
-                    self.lower_try_result(*inner, target, expr.ty.clone(), symbols)
+                    self.lower_try_result(*inner, target, &expr.ty, symbols)
                 }
             }
             HirExprKind::SafeField { base, field } => {
@@ -1090,7 +1085,7 @@ impl LowerCtx<'_> {
                 Ok(AmirOperand::Copy(dest))
             }
             HirExprKind::Catch { expr: inner, handler } => {
-                self.lower_catch(*inner, handler, target, expr.ty.clone(), symbols)
+                self.lower_catch(*inner, handler, target, &expr.ty, symbols)
             }
             HirExprKind::Lambda { .. } => Err(amir_unsupported(
                 expr.span,

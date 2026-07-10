@@ -156,14 +156,14 @@ fn apply(func: &mut AmirFunc, pool: &mut AmirLiteralPool, lattice: &[LatticeVal]
         }
 
         // Simplify terminators whose condition is a known constant.
-        let old_term = func.block(bid).terminator.clone();
-        let was_branch_or_switch = matches!(
-            &old_term,
+        let term = &func.block(bid).terminator;
+        if !matches!(
+            term,
             AmirTerminator::Branch { .. } | AmirTerminator::SwitchInt { .. }
-        );
-        let new_term = simplify_terminator(&old_term, lattice, pool);
-        let is_goto = matches!(&new_term, AmirTerminator::Goto { .. });
-        if was_branch_or_switch && is_goto {
+        ) {
+            continue;
+        }
+        if let Some(new_term) = try_simplify_terminator(term, lattice, pool) {
             func.block_mut(bid).terminator = new_term;
             changed = true;
         }
@@ -329,12 +329,12 @@ fn set_reachable(block: BlockId, reachable: &mut [bool]) -> bool {
 // ---------------------------------------------------------------------------
 
 /// When a branch condition (or switch discriminant) is a known constant,
-/// replace the multi-way terminator with a single `Goto`.
-fn simplify_terminator(
+/// return a single `Goto`. Otherwise `None` (no clone of the original).
+fn try_simplify_terminator(
     terminator: &AmirTerminator,
     lattice: &[LatticeVal],
     pool: &AmirLiteralPool,
-) -> AmirTerminator {
+) -> Option<AmirTerminator> {
     match terminator {
         AmirTerminator::Branch {
             condition,
@@ -343,15 +343,15 @@ fn simplify_terminator(
             if_false,
             false_args,
         } => match operand_lattice(condition, lattice) {
-            LatticeVal::Constant(AmirConstant::Bool(true)) => AmirTerminator::Goto {
+            LatticeVal::Constant(AmirConstant::Bool(true)) => Some(AmirTerminator::Goto {
                 target: *if_true,
                 args: true_args.clone(),
-            },
-            LatticeVal::Constant(AmirConstant::Bool(false)) => AmirTerminator::Goto {
+            }),
+            LatticeVal::Constant(AmirConstant::Bool(false)) => Some(AmirTerminator::Goto {
                 target: *if_false,
                 args: false_args.clone(),
-            },
-            _ => terminator.clone(),
+            }),
+            _ => None,
         },
         AmirTerminator::SwitchInt {
             discriminant,
@@ -359,26 +359,23 @@ fn simplify_terminator(
             otherwise,
         } => match operand_lattice(discriminant, lattice) {
             LatticeVal::Constant(c) => {
-                if let Some(val) = const_as_i128(&c, pool) {
-                    for (tv, tb, args) in targets {
-                        if *tv == val {
-                            return AmirTerminator::Goto {
-                                target: *tb,
-                                args: args.clone(),
-                            };
-                        }
+                let val = const_as_i128(&c, pool)?;
+                for (tv, tb, args) in targets {
+                    if *tv == val {
+                        return Some(AmirTerminator::Goto {
+                            target: *tb,
+                            args: args.clone(),
+                        });
                     }
-                    AmirTerminator::Goto {
-                        target: otherwise.0,
-                        args: otherwise.1.clone(),
-                    }
-                } else {
-                    terminator.clone()
                 }
+                Some(AmirTerminator::Goto {
+                    target: otherwise.0,
+                    args: otherwise.1.clone(),
+                })
             }
-            _ => terminator.clone(),
+            _ => None,
         },
-        _ => terminator.clone(),
+        _ => None,
     }
 }
 

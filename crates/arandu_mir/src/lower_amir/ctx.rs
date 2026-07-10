@@ -345,11 +345,10 @@ impl LowerCtx<'_> {
     pub(crate) fn load_place(
         &mut self,
         place: &AmirPlace,
-        ty: ArType,
-        _projection_types: &[ArType],
+        ty: &ArType,
     ) -> Result<AmirOperand, Diagnostic> {
         self.note_local_use(place.local, self.current_span);
-        let temp = self.new_temp(ty);
+        let temp = self.new_temp_ref(ty);
         self.emit_assign_temp(temp, AmirRvalue::Load(place.clone()));
         if place.projections.is_empty() {
             self.temp_origins[temp.as_usize()] = Some(place.local);

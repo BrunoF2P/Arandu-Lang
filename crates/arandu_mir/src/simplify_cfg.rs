@@ -139,6 +139,16 @@ fn merge_block_candidate(func: &mut AmirFunc, bid: BlockId) -> bool {
 }
 
 fn merge_two_blocks(func: &mut AmirFunc, into: BlockId, from: BlockId) {
+    // Snapshot per-block stmt order before taking ownership of the table.
+    let block_stmt_ids: Vec<Vec<crate::amir::InstrId>> = (0..func.blocks.len())
+        .map(|bi| {
+            func.block_stmt_ids(BlockId::from_usize(bi)).collect()
+        })
+        .collect();
+
+    let old = std::mem::replace(&mut func.stmts, AmirStmtTable::new());
+    let mut slots: Vec<Option<crate::amir::AmirStmt>> =
+        old.payloads.raw.into_iter().map(Some).collect();
     let mut new_stmts = AmirStmtTable::new();
     let mut new_ranges: Vec<DenseRange> = Vec::with_capacity(func.blocks.len());
 
@@ -148,19 +158,28 @@ fn merge_two_blocks(func: &mut AmirFunc, into: BlockId, from: BlockId) {
         let mut count = 0usize;
 
         if bid == into {
-            for stmt_id in func.block_stmt_ids(bid) {
-                new_stmts.push(func.stmt(stmt_id).clone());
+            for &stmt_id in &block_stmt_ids[bi] {
+                let stmt = slots[stmt_id.as_usize()]
+                    .take()
+                    .expect("stmt moved once during block merge");
+                new_stmts.push(stmt);
                 count += 1;
             }
-            for stmt_id in func.block_stmt_ids(from) {
-                new_stmts.push(func.stmt(stmt_id).clone());
+            for &stmt_id in &block_stmt_ids[from.as_usize()] {
+                let stmt = slots[stmt_id.as_usize()]
+                    .take()
+                    .expect("stmt moved once during block merge");
+                new_stmts.push(stmt);
                 count += 1;
             }
         } else if bid == from {
             // stmts already merged into `into`
         } else {
-            for stmt_id in func.block_stmt_ids(bid) {
-                new_stmts.push(func.stmt(stmt_id).clone());
+            for &stmt_id in &block_stmt_ids[bi] {
+                let stmt = slots[stmt_id.as_usize()]
+                    .take()
+                    .expect("stmt moved once during block merge");
+                new_stmts.push(stmt);
                 count += 1;
             }
         }
@@ -168,7 +187,10 @@ fn merge_two_blocks(func: &mut AmirFunc, into: BlockId, from: BlockId) {
         new_ranges.push(DenseRange::new(start, count));
     }
 
-    let from_term = func.block(from).terminator.clone();
+    let from_term = std::mem::replace(
+        &mut func.block_mut(from).terminator,
+        AmirTerminator::Unreachable,
+    );
     func.block_mut(into).terminator = from_term;
     func.stmts = new_stmts;
     for (i, range) in new_ranges.into_iter().enumerate() {
@@ -224,24 +246,35 @@ fn remove_unreachable_blocks(func: &mut AmirFunc) -> bool {
         }
     }
 
+    // Snapshot stmt ids before taking ownership of the table / remapping blocks.
+    let block_stmt_ids: Vec<Vec<crate::amir::InstrId>> = (0..n)
+        .map(|old| func.block_stmt_ids(BlockId::from_usize(old)).collect())
+        .collect();
+
     let mut new_blocks: Vec<AmirBasicBlock> = Vec::with_capacity(reachable_count);
     for old in 0..n {
         if !reachable[old] {
             continue;
         }
-        let new_term = remap_terminator(&func.blocks[old].terminator, &old_to_new);
         let Some(new_id) = old_to_new[old] else {
             // Invariant: every reachable block got a new id in the loop above.
             continue;
         };
+        let old_term = std::mem::replace(
+            &mut func.blocks[old].terminator,
+            AmirTerminator::Unreachable,
+        );
         new_blocks.push(AmirBasicBlock {
             id: new_id,
             statements: func.blocks[old].statements,
-            params: func.blocks[old].params.clone(),
-            terminator: new_term,
+            params: std::mem::take(&mut func.blocks[old].params),
+            terminator: remap_terminator(old_term, &old_to_new),
         });
     }
 
+    let old_stmts = std::mem::replace(&mut func.stmts, AmirStmtTable::new());
+    let mut slots: Vec<Option<crate::amir::AmirStmt>> =
+        old_stmts.payloads.raw.into_iter().map(Some).collect();
     let mut new_stmts = AmirStmtTable::new();
     let mut new_ranges: Vec<DenseRange> = Vec::with_capacity(reachable_count);
 
@@ -251,8 +284,11 @@ fn remove_unreachable_blocks(func: &mut AmirFunc) -> bool {
         }
         let start = new_stmts.len();
         let mut count = 0usize;
-        for stmt_id in func.block_stmt_ids(BlockId::from_usize(old)) {
-            new_stmts.push(func.stmt(stmt_id).clone());
+        for &stmt_id in &block_stmt_ids[old] {
+            let stmt = slots[stmt_id.as_usize()]
+                .take()
+                .expect("stmt moved once during unreachable sweep");
+            new_stmts.push(stmt);
             count += 1;
         }
         new_ranges.push(DenseRange::new(start, count));
@@ -273,13 +309,14 @@ fn remove_unreachable_blocks(func: &mut AmirFunc) -> bool {
 // Terminator helpers
 // ---------------------------------------------------------------------------
 
-fn remap_terminator(term: &AmirTerminator, map: &[Option<BlockId>]) -> AmirTerminator {
+/// Remap block ids in a terminator by value (moves arg vectors — no clone).
+fn remap_terminator(term: AmirTerminator, map: &[Option<BlockId>]) -> AmirTerminator {
     match term {
         AmirTerminator::Goto { target, args } => {
-            let new_target = map[target.as_usize()].unwrap_or(*target);
+            let new_target = map[target.as_usize()].unwrap_or(target);
             AmirTerminator::Goto {
                 target: new_target,
-                args: args.clone(),
+                args,
             }
         }
         AmirTerminator::Branch {
@@ -289,14 +326,14 @@ fn remap_terminator(term: &AmirTerminator, map: &[Option<BlockId>]) -> AmirTermi
             if_false,
             false_args,
         } => {
-            let new_t = map[if_true.as_usize()].unwrap_or(*if_true);
-            let new_f = map[if_false.as_usize()].unwrap_or(*if_false);
+            let new_t = map[if_true.as_usize()].unwrap_or(if_true);
+            let new_f = map[if_false.as_usize()].unwrap_or(if_false);
             AmirTerminator::Branch {
-                condition: condition.clone(),
+                condition,
                 if_true: new_t,
-                true_args: true_args.clone(),
+                true_args,
                 if_false: new_f,
-                false_args: false_args.clone(),
+                false_args,
             }
         }
         AmirTerminator::SwitchInt {
@@ -306,19 +343,19 @@ fn remap_terminator(term: &AmirTerminator, map: &[Option<BlockId>]) -> AmirTermi
         } => {
             let new_otherwise = (
                 map[otherwise.0.as_usize()].unwrap_or(otherwise.0),
-                otherwise.1.clone(),
+                otherwise.1,
             );
             let new_targets: Vec<_> = targets
-                .iter()
-                .map(|(val, b, args)| (*val, map[b.as_usize()].unwrap_or(*b), args.clone()))
+                .into_iter()
+                .map(|(val, b, args)| (val, map[b.as_usize()].unwrap_or(b), args))
                 .collect();
             AmirTerminator::SwitchInt {
-                discriminant: discriminant.clone(),
+                discriminant,
                 targets: new_targets,
                 otherwise: new_otherwise,
             }
         }
-        _ => term.clone(),
+        other => other,
     }
 }
 

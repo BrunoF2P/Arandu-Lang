@@ -12,13 +12,13 @@ impl LowerCtx<'_> {
         op: BinaryOp,
         left: HirExprId,
         right: HirExprId,
-        expr_ty: ArType,
+        expr_ty: &ArType,
         target: Option<TempId>,
         symbols: &SymbolTable,
     ) -> Result<AmirOperand, Diagnostic> {
         let l_op = self.lower_expr(left, None, symbols)?;
         let r_op = self.lower_expr(right, None, symbols)?;
-        let dest = target.unwrap_or_else(|| self.new_temp(expr_ty));
+        let dest = target.unwrap_or_else(|| self.new_temp_ref(expr_ty));
         self.emit_assign_temp(
             dest,
             AmirRvalue::Binary {
@@ -34,12 +34,12 @@ impl LowerCtx<'_> {
         &mut self,
         op: UnaryOp,
         sub_expr: HirExprId,
-        expr_ty: ArType,
+        expr_ty: &ArType,
         target: Option<TempId>,
         symbols: &SymbolTable,
     ) -> Result<AmirOperand, Diagnostic> {
         let sub_op = self.lower_expr(sub_expr, None, symbols)?;
-        let dest = target.unwrap_or_else(|| self.new_temp(expr_ty));
+        let dest = target.unwrap_or_else(|| self.new_temp_ref(expr_ty));
         self.emit_assign_temp(
             dest,
             AmirRvalue::Unary {

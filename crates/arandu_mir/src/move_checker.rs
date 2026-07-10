@@ -26,7 +26,7 @@ enum LocalMoveState {
     MaybeMoved,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 struct MoveState {
     moved: BitSet<LocalId>,
     maybe_moved: BitSet<LocalId>,
@@ -41,24 +41,23 @@ impl MoveState {
     }
 
     #[tracing::instrument(level = "trace", target = "arandu_mir::move_checker", skip_all)]
-    fn join_predecessors(preds: impl Iterator<Item = Self>, num_locals: usize) -> Self {
+    fn join_predecessors<'a>(preds: impl Iterator<Item = &'a Self>, num_locals: usize) -> Self {
         let mut preds = preds.peekable();
-        let Some(mut acc) = preds.next() else {
+        let Some(first) = preds.next() else {
             return Self::new(num_locals);
         };
+        let mut acc = first.clone();
 
         for pred in preds {
-            let mut new_m = acc.moved.clone();
-            new_m.intersect_with(&pred.moved);
-
-            let mut union_m = acc.moved.clone();
-            union_m.union_with(&pred.moved);
-            union_m.difference_with(&new_m);
+            // symmetric difference of moved sets → maybe_moved
+            // one BitSet clone instead of two
+            let mut sym = acc.moved.clone();
+            sym.union_with(&pred.moved);
+            acc.moved.intersect_with(&pred.moved);
+            sym.difference_with(&acc.moved);
 
             acc.maybe_moved.union_with(&pred.maybe_moved);
-            acc.maybe_moved.union_with(&union_m);
-
-            acc.moved = new_m;
+            acc.maybe_moved.union_with(&sym);
         }
         acc
     }
@@ -133,8 +132,10 @@ pub fn check_moves_by_block(
 
     let temp_origins = temp_origins(func);
     let mut diagnostics = Vec::new();
+    let mut block_in = block_in;
     for block in &func.blocks {
-        let mut state = block_in[block.id.as_usize()].clone();
+        // Take ownership of each IN set — only used once during the check walk.
+        let mut state = std::mem::take(&mut block_in[block.id.as_usize()]);
         apply_block(
             block.id,
             func,
@@ -179,7 +180,7 @@ fn compute_move_in(func: &AmirFunc) -> Option<Vec<MoveState>> {
         let new_in = MoveState::join_predecessors(
             func.predecessors(bid)
                 .iter()
-                .map(|pred| block_out[pred.as_usize()].clone()),
+                .map(|pred| &block_out[pred.as_usize()]),
             num_locals,
         );
         let mut new_out = new_in.clone();

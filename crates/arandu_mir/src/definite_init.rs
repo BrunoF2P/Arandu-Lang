@@ -65,7 +65,7 @@ pub fn check_definite_init_by_block(
     func: &AmirFunc,
     symbols: &SymbolTable,
 ) -> Vec<(BlockId, Diagnostic)> {
-    let Some(block_in) = compute_init_in(func) else {
+    let Some(mut block_in) = compute_init_in(func) else {
         return Vec::new();
     };
 
@@ -73,7 +73,8 @@ pub fn check_definite_init_by_block(
 
     for block in &func.blocks {
         let bi = block.id.as_usize();
-        let mut current = block_in[bi].clone();
+        // Take ownership of each IN set — only used once during the check walk.
+        let mut current = std::mem::take(&mut block_in[bi]);
         let bid = block.id;
 
         for stmt in func.block_stmts(block.id) {

@@ -14,7 +14,8 @@ pub(crate) struct EnumPatternInput<'a> {
     type_symbol: SymbolId,
     variant: &'a str,
     variant_symbol: Option<SymbolId>,
-    payload: &'a [HirPattern],
+    /// Payload pattern ids (looked up by ref — no HirPattern clone).
+    payload: &'a [crate::hir::HirPatternId],
     symbols: &'a SymbolTable,
 }
 impl LowerCtx<'_> {
@@ -138,7 +139,7 @@ impl LowerCtx<'_> {
 
             let mut current_matches = AmirOperand::Copy(tag_matches);
 
-            for (i, pat) in payload.iter().enumerate() {
+            for (i, &pat_id) in payload.iter().enumerate() {
                 let tmp_payload = self.new_temp_ref(&tys[i]);
                 self.emit_assign_temp(
                     tmp_payload,
@@ -149,6 +150,7 @@ impl LowerCtx<'_> {
                     },
                 );
 
+                let pat = self.hir.pool.pattern(pat_id);
                 let item_matches =
                     self.lower_pattern_match(AmirOperand::Copy(tmp_payload), pat, symbols)?;
 
@@ -177,8 +179,8 @@ impl LowerCtx<'_> {
             HirCondition::Expr(expr_id) => self.lower_expr(*expr_id, None, symbols),
             HirCondition::Is { expr, pattern } => {
                 let scrutinee = self.lower_expr(*expr, None, symbols)?;
-                let pat = self.hir.pool.pattern(*pattern).clone();
-                self.lower_pattern_match(scrutinee, &pat, symbols)
+                let pat = self.hir.pool.pattern(*pattern);
+                self.lower_pattern_match(scrutinee, pat, symbols)
             }
         }
     }
@@ -229,20 +231,14 @@ impl LowerCtx<'_> {
                 variant_symbol,
                 payload,
             } => {
-                let payload_patterns: Vec<HirPattern> = self
-                    .hir
-                    .pool
-                    .pattern_list(*payload)
-                    .iter()
-                    .map(|&pid| self.hir.pool.pattern(pid).clone())
-                    .collect();
+                let payload_ids = self.hir.pool.pattern_list(*payload);
                 self.lower_enum_pattern(EnumPatternInput {
                     scrutinee,
                     span: *span,
                     type_symbol: *type_symbol,
                     variant: variant.as_str(),
                     variant_symbol: *variant_symbol,
-                    payload: &payload_patterns,
+                    payload: payload_ids,
                     symbols,
                 })
             }
@@ -254,14 +250,14 @@ impl LowerCtx<'_> {
                 let fields_map = self.tc.type_info.struct_fields.get(struct_symbol);
                 let mut current_matches = AmirOperand::Constant(AmirConstant::Bool(true));
 
-                let field_ids: Vec<_> = self.hir.pool.field_pattern_list(*fields).to_vec();
-                for &fid in &field_ids {
-                    let field = self.hir.pool.field_pattern(fid).clone();
-                    let field_ty = fields_map
-                        .and_then(|m| m.get(&field.name).cloned())
-                        .unwrap_or(ArType::Error);
-
-                    let tmp_field = self.new_temp_ref(&field_ty);
+                let field_ids = self.hir.pool.field_pattern_list(*fields);
+                for &fid in field_ids {
+                    let field = self.hir.pool.field_pattern(fid);
+                    let field_ty_ref = fields_map.and_then(|m| m.get(&field.name));
+                    let tmp_field = match field_ty_ref {
+                        Some(t) => self.new_temp_ref(t),
+                        None => self.new_temp(ArType::Error),
+                    };
                     let field_idx = self
                         .tc
                         .type_info
@@ -278,8 +274,8 @@ impl LowerCtx<'_> {
                     );
 
                     let item_matches = if let Some(pat_id) = field.pattern {
-                        let pat = self.hir.pool.pattern(pat_id).clone();
-                        self.lower_pattern_match(AmirOperand::Copy(tmp_field), &pat, symbols)?
+                        let pat = self.hir.pool.pattern(pat_id);
+                        self.lower_pattern_match(AmirOperand::Copy(tmp_field), pat, symbols)?
                     } else {
                         let key = crate::NodeKey::from(field.span);
                         let Some(symbol_id) = self.tc.resolved.definitions.get(&key).copied()
@@ -293,7 +289,10 @@ impl LowerCtx<'_> {
                                 field.span,
                             ));
                         };
-                        let local_id = self.new_local(field_ty, symbol_id, field.span);
+                        let local_id = match field_ty_ref {
+                            Some(t) => self.new_local_ref(t, symbol_id, field.span),
+                            None => self.new_local(ArType::Error, symbol_id, field.span),
+                        };
                         self.emit_store_place(
                             AmirPlace {
                                 local: local_id,
@@ -320,21 +319,19 @@ impl LowerCtx<'_> {
             }
             HirPattern::Tuple { items, .. } => {
                 let scrutinee_ty = self.operand_type(&scrutinee);
-                let pat_ids: Vec<_> = self.hir.pool.pattern_list(*items).to_vec();
-                let item_tys = if let ArType::Tuple(tys) = scrutinee_ty {
+                let pat_ids = self.hir.pool.pattern_list(*items);
+                let item_tys: Vec<ArType> = if let ArType::Tuple(tys) = scrutinee_ty {
                     let interner = &self.tc.type_info.type_interner;
-                    tys.iter()
-                        .map(|&tid| interner.resolve(tid))
-                        .collect()
+                    tys.iter().map(|&tid| interner.resolve(tid)).collect()
                 } else {
                     vec![ArType::Error; pat_ids.len()]
                 };
 
                 let mut current_matches = AmirOperand::Constant(AmirConstant::Bool(true));
                 for (i, &pid) in pat_ids.iter().enumerate() {
-                    let pat = self.hir.pool.pattern(pid).clone();
-                    let item_ty = item_tys.get(i).cloned().unwrap_or(ArType::Error);
-                    let tmp_item = self.new_temp_ref(&item_ty);
+                    let pat = self.hir.pool.pattern(pid);
+                    let item_ty = item_tys.get(i).unwrap_or(&ArType::Error);
+                    let tmp_item = self.new_temp_ref(item_ty);
                     self.emit_assign_temp(
                         tmp_item,
                         AmirRvalue::FieldAccess {
@@ -344,7 +341,7 @@ impl LowerCtx<'_> {
                     );
 
                     let item_matches =
-                        self.lower_pattern_match(AmirOperand::Copy(tmp_item), &pat, symbols)?;
+                        self.lower_pattern_match(AmirOperand::Copy(tmp_item), pat, symbols)?;
 
                     let and_dest = self.new_temp(ArType::Primitive(Primitive::Bool));
                     self.emit_assign_temp(
@@ -373,20 +370,14 @@ impl LowerCtx<'_> {
                     ));
                 };
 
-                let payload_patterns: Vec<HirPattern> = self
-                    .hir
-                    .pool
-                    .pattern_list(*payload)
-                    .iter()
-                    .map(|&pid| self.hir.pool.pattern(pid).clone())
-                    .collect();
+                let payload_ids = self.hir.pool.pattern_list(*payload);
                 self.lower_enum_pattern(EnumPatternInput {
                     scrutinee,
                     span: *span,
                     type_symbol,
                     variant: name.as_str(),
                     variant_symbol: None,
-                    payload: &payload_patterns,
+                    payload: payload_ids,
                     symbols,
                 })
             }

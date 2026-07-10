@@ -46,7 +46,7 @@ impl LowerCtx<'_> {
         value_id: HirExprId,
         arms_range: &IndexRange,
         target: Option<TempId>,
-        expr_ty: ArType,
+        expr_ty: &ArType,
         symbols: &SymbolTable,
     ) -> Result<AmirOperand, Diagnostic> {
         let value_expr = self.hir.pool.expr(value_id);
@@ -54,7 +54,7 @@ impl LowerCtx<'_> {
         let value_span = value_expr.span;
 
         let scrutinee = self.lower_expr(value_id, None, symbols)?;
-        let dest = target.unwrap_or_else(|| self.new_temp(expr_ty));
+        let dest = target.unwrap_or_else(|| self.new_temp_ref(expr_ty));
         let bb_end = self.new_block();
 
         let arms = self.hir.pool.match_arms_list(*arms_range).to_vec();
@@ -62,7 +62,7 @@ impl LowerCtx<'_> {
         if let Some(plan) =
             self.build_match_switch_plan_from_ty(&value_ty, &arms, scrutinee, symbols)?
         {
-            let disc = plan.discriminant.clone();
+            let disc = plan.discriminant;
             self.emit_match_switch(
                 plan,
                 MatchSwitchContext {
@@ -101,7 +101,7 @@ impl LowerCtx<'_> {
         if let Some(plan) =
             self.build_match_switch_plan_from_ty(&value_ty, &arms, scrutinee, symbols)?
         {
-            let disc = plan.discriminant.clone();
+            let disc = plan.discriminant;
             self.emit_match_switch_stmt(
                 plan,
                 MatchSwitchContext {
@@ -258,7 +258,7 @@ impl LowerCtx<'_> {
         let otherwise_bb = self.new_block();
 
         self.current_block = Some(entry_bb);
-        self.emit_switch_int(plan.discriminant, targets.clone(), otherwise_bb);
+        self.emit_switch_int(plan.discriminant, targets, otherwise_bb);
         self.seal_block(otherwise_bb);
         for sw in &plan.arms {
             self.seal_block(sw.block);
@@ -302,7 +302,7 @@ impl LowerCtx<'_> {
         let otherwise_bb = self.new_block();
 
         self.current_block = Some(entry_bb);
-        self.emit_switch_int(plan.discriminant, targets.clone(), otherwise_bb);
+        self.emit_switch_int(plan.discriminant, targets, otherwise_bb);
         self.seal_block(otherwise_bb);
         for sw in &plan.arms {
             self.seal_block(sw.block);

@@ -55,7 +55,7 @@ impl LowerCtx<'_> {
         // Err branch: err = payload; ok = zero/nil so both locals are defined on all paths.
         self.current_block = Some(bb_err);
         let err_tmp = self.new_temp_ref(&err_b.ty);
-        self.lower_result_err_field(result_op, err_b.ty.clone(), err_tmp);
+        self.lower_result_err_field(result_op, err_tmp);
         let err_consumed = self.consume_operand(AmirOperand::Copy(err_tmp))?;
         self.write_variable_source(err_local, err_consumed)?;
         let ok_zero = self.new_temp_ref(&ok_b.ty);
@@ -342,21 +342,20 @@ impl LowerCtx<'_> {
                     self.emit_goto(bb_cond);
 
                     self.current_block = Some(bb_cond);
+                    let int_ty = ArType::Primitive(Primitive::Int);
                     let idx_op = self.load_place(
                         &AmirPlace {
                             local: idx_local,
                             projections: smallvec::SmallVec::new(),
                         },
-                        ArType::Primitive(Primitive::Int),
-                        &[],
+                        &int_ty,
                     )?;
                     let len_op = self.load_place(
                         &AmirPlace {
                             local: len_local,
                             projections: smallvec::SmallVec::new(),
                         },
-                        ArType::Primitive(Primitive::Int),
-                        &[],
+                        &int_ty,
                     )?;
                     let cond_tmp = self.new_temp(ArType::Primitive(Primitive::Bool));
                     self.emit_assign_temp(
@@ -389,8 +388,7 @@ impl LowerCtx<'_> {
                                 local: idx_local,
                                 projections: smallvec::SmallVec::new(),
                             },
-                            ArType::Primitive(Primitive::Int),
-                            &[],
+                            &ArType::Primitive(Primitive::Int),
                         )?;
                         let elem_temp = self.new_temp_ref(&binding.ty);
                         self.emit_assign_temp(
@@ -417,8 +415,7 @@ impl LowerCtx<'_> {
                             local: idx_local,
                             projections: smallvec::SmallVec::new(),
                         },
-                        ArType::Primitive(Primitive::Int),
-                        &[],
+                        &ArType::Primitive(Primitive::Int),
                     )?;
                     let one_lit = self.intern_literal(AmirLiteralEntry::Int("1".to_string()));
                     let next_idx = self.new_temp(ArType::Primitive(Primitive::Int));
@@ -660,13 +657,6 @@ impl LowerCtx<'_> {
         let Some(&local_id) = self.symbol_map.get(&place.root_symbol) else {
             return Ok(());
         };
-        let projection_types: Vec<ArType> = place
-            .suffixes
-            .iter()
-            .map(|s| match s {
-                HirPlaceSuffix::Field { ty, .. } | HirPlaceSuffix::Index { ty, .. } => ty.clone(),
-            })
-            .collect();
         let projections: Result<Vec<_>, Diagnostic> = place
             .suffixes
             .iter()
@@ -737,7 +727,7 @@ impl LowerCtx<'_> {
                 SetOp::ShiftRightAssign => BinaryOp::ShiftRight,
                 _ => BinaryOp::Add,
             };
-            let old_val = self.load_place(&amir_place, place.ty.clone(), &projection_types)?;
+            let old_val = self.load_place(&amir_place, &place.ty)?;
             let temp = self.new_temp_ref(&place.ty);
             self.emit_assign_temp(
                 temp,

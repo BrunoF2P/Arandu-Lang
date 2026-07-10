@@ -95,33 +95,45 @@ pub fn mark_sweep_dce(func: &mut AmirFunc) -> bool {
         }
     }
 
-    // --- Sweep phase: rebuild stmt table with only live stmts --------------
+    // --- Sweep phase: rebuild stmt table, moving live stmts (no clone) -----
+    let block_stmt_ids: Vec<Vec<crate::amir::InstrId>> = func
+        .blocks
+        .iter()
+        .map(|b| func.block_stmt_ids(b.id).collect())
+        .collect();
+
+    let any_removed = live.iter().any(|&l| !l);
+    if !any_removed {
+        return false;
+    }
+
+    let old = std::mem::replace(&mut func.stmts, crate::amir::AmirStmtTable::new());
+    let mut slots: Vec<Option<AmirStmt>> = old.payloads.raw.into_iter().map(Some).collect();
     let mut new_stmts = crate::amir::AmirStmtTable::new();
     let mut new_ranges: Vec<DenseRange> = Vec::with_capacity(func.blocks.len());
-    let mut any_removed = false;
 
-    for block in &func.blocks {
+    for ids in &block_stmt_ids {
         let start = new_stmts.len();
         let mut kept = 0usize;
-        for stmt_id in func.block_stmt_ids(block.id) {
-            if live[stmt_id.as_usize()] {
-                new_stmts.push(func.stmt(stmt_id).clone());
+        for &stmt_id in ids {
+            let idx = stmt_id.as_usize();
+            if live[idx] {
+                let stmt = slots[idx]
+                    .take()
+                    .expect("each live stmt is moved at most once");
+                new_stmts.push(stmt);
                 kept += 1;
-            } else {
-                any_removed = true;
             }
         }
         new_ranges.push(DenseRange::new(start, kept));
     }
 
-    if any_removed {
-        func.stmts = new_stmts;
-        for (block, range) in func.blocks.iter_mut().zip(new_ranges) {
-            block.statements = range;
-        }
+    func.stmts = new_stmts;
+    for (block, range) in func.blocks.iter_mut().zip(new_ranges) {
+        block.statements = range;
     }
 
-    any_removed
+    true
 }
 
 // ---------------------------------------------------------------------------
