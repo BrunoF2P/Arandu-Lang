@@ -58,6 +58,25 @@ impl<'a> CEmitter<'a> {
         }
     }
 
+    /// Resolve an AMIR temp's dense `TypeId` (DoD — no `ArType` on the IR).
+    #[inline]
+    pub(super) fn temp_ty(
+        &self,
+        func: &AmirFunc,
+        t: arandu_middle::amir::TempId,
+    ) -> ArType {
+        self.interner.resolve(func.temps[t.as_usize()].ty)
+    }
+
+    #[inline]
+    pub(super) fn local_ty(
+        &self,
+        func: &AmirFunc,
+        local: arandu_middle::amir::LocalId,
+    ) -> ArType {
+        self.interner.resolve(func.locals[local.as_usize()].ty)
+    }
+
     /// Emits all type definitions, string literal globals, and function bodies,
     /// then returns the complete C source as a `String`.
     pub fn emit(mut self) -> String {
@@ -65,12 +84,15 @@ impl<'a> CEmitter<'a> {
         self.emit_str_literals();
 
         for func in &self.program.funcs {
-            self.ensure_type_emitted(&func.return_type);
+            let ret = self.interner.resolve(func.return_type);
+            self.ensure_type_emitted(&ret);
             for local in &func.locals {
-                self.ensure_type_emitted(&local.ty);
+                let ty = self.interner.resolve(local.ty);
+                self.ensure_type_emitted(&ty);
             }
             for temp in &func.temps {
-                self.ensure_type_emitted(&temp.ty);
+                let ty = self.interner.resolve(temp.ty);
+                self.ensure_type_emitted(&ty);
             }
             self.emit_func_decl(func);
         }
@@ -90,19 +112,24 @@ impl<'a> CEmitter<'a> {
         writeln!(&mut self.output, "#define AR_UNREACHABLE() abort()").unwrap();
         writeln!(&mut self.output, "#endif").unwrap();
         writeln!(&mut self.output).unwrap();
-        // ArStr = LayoutEngine Str fat pointer: { ptr, len } (16 bytes on 64-bit).
+        // ArStr = LayoutEngine fat pointer: { ptr, len:usize } (target-dependent width).
+        let len_c_ty = if self.layout.pointer_width == 4 {
+            "int32_t"
+        } else {
+            "int64_t"
+        };
         writeln!(
             &mut self.output,
-            "typedef struct {{ const uint8_t *ptr; int64_t len; }} ArStr;"
+            "typedef struct {{ const uint8_t *ptr; {len_c_ty} len; }} ArStr;"
         )
         .unwrap();
         self.emitted_types.insert("ArStr".to_string());
         // Runtime helpers for fat-pointer strings (string interpolation).
-        writeln!(&mut self.output, "static inline void ar_str_unpack(ArStr s, const uint8_t **ptr, int64_t *len) {{").unwrap();
+        writeln!(&mut self.output, "static inline void ar_str_unpack(ArStr s, const uint8_t **ptr, {len_c_ty} *len) {{").unwrap();
         writeln!(&mut self.output, "    *ptr = s.ptr;").unwrap();
         writeln!(&mut self.output, "    *len = s.len;").unwrap();
         writeln!(&mut self.output, "}}").unwrap();
-        writeln!(&mut self.output, "static inline ArStr ar_str_pack(const uint8_t *ptr, int64_t len) {{").unwrap();
+        writeln!(&mut self.output, "static inline ArStr ar_str_pack(const uint8_t *ptr, {len_c_ty} len) {{").unwrap();
         writeln!(&mut self.output, "    return (ArStr){{ .ptr = ptr, .len = len }};").unwrap();
         writeln!(&mut self.output, "}}").unwrap();
         writeln!(&mut self.output, "static ArStr ar_str_concat_n(int n, ...) {{").unwrap();
@@ -111,19 +138,19 @@ impl<'a> CEmitter<'a> {
         writeln!(&mut self.output, "    va_start(ap, n);").unwrap();
         writeln!(&mut self.output, "    ArStr *parts = (ArStr*)malloc((size_t)n * sizeof(ArStr));").unwrap();
         writeln!(&mut self.output, "    if (!parts) {{ va_end(ap); abort(); }}").unwrap();
-        writeln!(&mut self.output, "    int64_t total = 0;").unwrap();
+        writeln!(&mut self.output, "    {len_c_ty} total = 0;").unwrap();
         writeln!(&mut self.output, "    for (int i = 0; i < n; i++) {{").unwrap();
         writeln!(&mut self.output, "        parts[i] = va_arg(ap, ArStr);").unwrap();
-        writeln!(&mut self.output, "        const uint8_t *p; int64_t l;").unwrap();
+        writeln!(&mut self.output, "        const uint8_t *p; {len_c_ty} l;").unwrap();
         writeln!(&mut self.output, "        ar_str_unpack(parts[i], &p, &l);").unwrap();
         writeln!(&mut self.output, "        if (l > 0) total += l;").unwrap();
         writeln!(&mut self.output, "    }}").unwrap();
         writeln!(&mut self.output, "    va_end(ap);").unwrap();
         writeln!(&mut self.output, "    uint8_t *buf = (uint8_t*)malloc((size_t)total + 1);").unwrap();
         writeln!(&mut self.output, "    if (!buf) {{ free(parts); abort(); }}").unwrap();
-        writeln!(&mut self.output, "    int64_t off = 0;").unwrap();
+        writeln!(&mut self.output, "    {len_c_ty} off = 0;").unwrap();
         writeln!(&mut self.output, "    for (int i = 0; i < n; i++) {{").unwrap();
-        writeln!(&mut self.output, "        const uint8_t *p; int64_t l;").unwrap();
+        writeln!(&mut self.output, "        const uint8_t *p; {len_c_ty} l;").unwrap();
         writeln!(&mut self.output, "        ar_str_unpack(parts[i], &p, &l);").unwrap();
         writeln!(&mut self.output, "        if (l > 0 && p) {{ memcpy(buf + off, p, (size_t)l); off += l; }}").unwrap();
         writeln!(&mut self.output, "    }}").unwrap();
@@ -191,13 +218,15 @@ impl<'a> CEmitter<'a> {
 
     fn emit_func_decl(&mut self, func: &AmirFunc) {
         let name = sanitize_c_ident(&self.symbols.get(func.symbol).name);
-        let ret_ty = self.format_type(&func.return_type);
+        let ret = self.interner.resolve(func.return_type);
+        let ret_ty = self.format_type(&ret);
         write!(&mut self.output, "{} {}(", ret_ty, name).unwrap();
         for (i, param) in func.params.iter().enumerate() {
             if i > 0 {
                 write!(&mut self.output, ", ").unwrap();
             }
-            let ty_str = self.format_type(&func.temps[param.as_usize()].ty);
+            let ty = self.temp_ty(func, *param);
+            let ty_str = self.format_type(&ty);
             write!(&mut self.output, "{} p{}", ty_str, param.as_usize()).unwrap();
         }
         if func.params.is_empty() {
@@ -208,13 +237,15 @@ impl<'a> CEmitter<'a> {
 
     fn emit_func(&mut self, func: &AmirFunc) {
         let name = sanitize_c_ident(&self.symbols.get(func.symbol).name);
-        let ret_ty = self.format_type(&func.return_type);
+        let ret = self.interner.resolve(func.return_type);
+        let ret_ty = self.format_type(&ret);
         write!(&mut self.output, "{} {}(", ret_ty, name).unwrap();
         for (i, param) in func.params.iter().enumerate() {
             if i > 0 {
                 write!(&mut self.output, ", ").unwrap();
             }
-            let ty_str = self.format_type(&func.temps[param.as_usize()].ty);
+            let ty = self.temp_ty(func, *param);
+            let ty_str = self.format_type(&ty);
             write!(&mut self.output, "{} p{}", ty_str, param.as_usize()).unwrap();
         }
         if func.params.is_empty() {
@@ -414,13 +445,15 @@ impl<'a> CEmitter<'a> {
 
         for (i, local) in func.locals.iter().enumerate() {
             if used_locals.contains(&i) {
-                let ty_str = self.format_type(&local.ty);
+                let ty = self.interner.resolve(local.ty);
+                let ty_str = self.format_type(&ty);
                 writeln!(&mut self.output, "    {} l{};", ty_str, i).unwrap();
             }
         }
         for (i, temp) in func.temps.iter().enumerate() {
             if used_temps.contains(&i) {
-                let ty_str = self.format_type(&temp.ty);
+                let ty = self.interner.resolve(temp.ty);
+                let ty_str = self.format_type(&ty);
                 writeln!(&mut self.output, "    {} t{};", ty_str, i).unwrap();
             }
         }

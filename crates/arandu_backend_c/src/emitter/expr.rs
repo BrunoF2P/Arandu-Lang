@@ -45,14 +45,14 @@ impl<'a> CEmitter<'a> {
             }
             AmirRvalue::FieldAccess { base, field } => {
                 let base_ty = match base {
-                    AmirOperand::Copy(t) | AmirOperand::Move(t) => &func.temps[t.as_usize()].ty,
+                    AmirOperand::Copy(t) | AmirOperand::Move(t) => self.temp_ty(func, *t),
                     _ => {
                         return write!(&mut self.output, "/* unsupported base operand */").unwrap();
                     }
                 };
                 let struct_ty = match base_ty {
-                    ArType::Ptr(inner) => self.interner.resolve(*inner),
-                    other => other.clone(),
+                    ArType::Ptr(inner) => self.interner.resolve(inner),
+                    other => other,
                 };
                 let layout = self
                     .layout
@@ -92,10 +92,10 @@ impl<'a> CEmitter<'a> {
                     _ => return write!(&mut self.output, "/* unsupported base */").unwrap(),
                 };
 
-                let base_ty = &func.temps[base_temp].ty;
+                let base_ty = self.interner.resolve(func.temps[base_temp].ty);
                 let enum_ty = match base_ty {
-                    ArType::Ptr(inner) => self.interner.resolve(*inner),
-                    other => other.clone(),
+                    ArType::Ptr(inner) => self.interner.resolve(inner),
+                    other => other,
                 };
                 let enum_id = match enum_ty {
                     ArType::Named(id, _) => id,
@@ -268,15 +268,25 @@ impl<'a> CEmitter<'a> {
             AmirRvalue::Len(op) => {
                 let op_str = self.format_operand(op, func);
                 let op_ty = match op {
-                    AmirOperand::Copy(t) | AmirOperand::Move(t) => &func.temps[t.as_usize()].ty,
-                    _ => &ArType::Error,
+                    AmirOperand::Copy(t) | AmirOperand::Move(t) => self.temp_ty(func, *t),
+                    _ => ArType::Error,
                 };
                 if matches!(op_ty, ArType::Primitive(Primitive::Str)) {
                     // LayoutEngine Str fat pointer: second field is len.
                     write!(&mut self.output, "({}).len", op_str).unwrap();
                 } else if matches!(op_ty, ArType::Slice(_)) {
-                    // Slice fat pointer: {ptr, len} — len at offset 8 on 64-bit.
-                    write!(&mut self.output, "*(int64_t*)((uint8_t*)&{} + 8)", op_str).unwrap();
+                    // Slice fat pointer: len offset from LayoutEngine (not magic +8).
+                    let off = self.layout.fat_ptr_len_offset();
+                    let len_ty = if self.layout.fat_ptr_len_size() == 4 {
+                        "int32_t"
+                    } else {
+                        "int64_t"
+                    };
+                    write!(
+                        &mut self.output,
+                        "*({len_ty}*)((uint8_t*)&{op_str} + {off})"
+                    )
+                    .unwrap();
                 } else if let ArType::Array(len, _) = op_ty {
                     write!(&mut self.output, "{}", len).unwrap();
                 } else {
@@ -285,10 +295,10 @@ impl<'a> CEmitter<'a> {
             }
             AmirRvalue::IndexAccess { base, index } => {
                 let base_ty = match base {
-                    AmirOperand::Copy(t) | AmirOperand::Move(t) => &func.temps[t.as_usize()].ty,
-                    _ => &ArType::Error,
+                    AmirOperand::Copy(t) | AmirOperand::Move(t) => self.temp_ty(func, *t),
+                    _ => ArType::Error,
                 };
-                let elem_ty = match base_ty {
+                let elem_ty = match &base_ty {
                     ArType::Array(_, inner) | ArType::Slice(inner) | ArType::Ptr(inner) => {
                         self.interner.resolve(*inner)
                     }

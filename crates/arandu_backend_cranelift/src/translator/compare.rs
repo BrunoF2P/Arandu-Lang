@@ -15,7 +15,7 @@ impl FunctionTranslator<'_, '_> {
         self.current_func
             .temps
             .get(temp_id.as_usize())
-            .map(|temp| ar_type_is_unsigned_integer(&temp.ty))
+            .map(|temp| ar_type_is_unsigned_integer(&self.resolve_ty(temp.ty)))
     }
 
     pub(super) fn operands_are_unsigned(

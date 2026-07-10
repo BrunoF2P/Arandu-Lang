@@ -95,8 +95,8 @@ impl FunctionTranslator<'_, '_> {
             }
         };
         if let Some(lhs_temp) = lhs {
-            let lhs_ty = &self.current_func.temps[lhs_temp.as_usize()].ty;
-            if matches!(lhs_ty, ArType::Primitive(Primitive::Str)) {
+            let lhs_ty = self.temp_ar_ty(*lhs_temp);
+            if matches!(&lhs_ty, ArType::Primitive(Primitive::Str)) {
                 let results = self.builder.inst_results(call_inst);
                 if results.len() >= 2 {
                     let res0 = results[0];

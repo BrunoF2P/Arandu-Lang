@@ -18,7 +18,7 @@ impl FunctionTranslator<'_, '_> {
             return (self.poison_i32(), 0);
         };
 
-        let mut current_ty = self.current_func.locals[place.local.as_usize()].ty.clone();
+        let mut current_ty = self.local_ar_ty(place.local);
 
         for i in 0..place.projections.len().saturating_sub(1) {
             let proj = &place.projections[i];
@@ -131,7 +131,7 @@ impl FunctionTranslator<'_, '_> {
                 return;
             };
 
-            let mut current_ty = self.current_func.locals[lhs.local.as_usize()].ty.clone();
+            let mut current_ty = self.local_ar_ty(lhs.local);
 
             for i in 0..lhs.projections.len() - 1 {
                 let proj = &lhs.projections[i];

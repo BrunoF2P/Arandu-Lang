@@ -11,7 +11,7 @@ impl FunctionTranslator<'_, '_> {
         match terminator {
             AmirTerminator::Return => {
                 if matches!(
-                    self.current_func.return_type,
+                    self.resolve_ty(self.current_func.return_type),
                     ArType::Primitive(Primitive::Str)
                 ) {
                     let ret_temp = arandu_semantics::amir::TempId::from_usize(0);
@@ -24,7 +24,8 @@ impl FunctionTranslator<'_, '_> {
                         self.builder.ins().return_(&[p, p]);
                     }
                 } else {
-                    let clif_ret = clif_type(&self.current_func.return_type, self.ptr_type);
+                    let ret_ty = self.resolve_ty(self.current_func.return_type);
+                    let clif_ret = clif_type(&ret_ty, self.ptr_type);
                     match clif_ret {
                         ClifType::Concrete(_) => {
                             let ret_temp = arandu_semantics::amir::TempId::from_usize(0);
@@ -46,12 +47,12 @@ impl FunctionTranslator<'_, '_> {
                 let target_block = &self.current_func.blocks[target.as_usize()];
                 let mut clif_args = Vec::new();
                 for (j, arg) in args.iter().enumerate() {
-                    let param_ty = &target_block.params[j].ty;
-                    if matches!(param_ty, ArType::Primitive(Primitive::Str)) {
+                    let param_ty = self.resolve_ty(target_block.params[j].ty);
+                    if matches!(&param_ty, ArType::Primitive(Primitive::Str)) {
                         let (ptr_val, len_val) = self.translate_str_operand(arg);
                         clif_args.push(BlockArg::Value(ptr_val));
                         clif_args.push(BlockArg::Value(len_val));
-                    } else if let ClifType::Concrete(ty) = clif_type(param_ty, self.ptr_type) {
+                    } else if let ClifType::Concrete(ty) = clif_type(&param_ty, self.ptr_type) {
                         let val = self.translate_operand(arg, Some(ty));
                         clif_args.push(BlockArg::Value(val));
                     }
@@ -71,12 +72,12 @@ impl FunctionTranslator<'_, '_> {
                 let true_block_def = &self.current_func.blocks[if_true.as_usize()];
                 let mut true_clif_args = Vec::new();
                 for (j, arg) in true_args.iter().enumerate() {
-                    let param_ty = &true_block_def.params[j].ty;
-                    if matches!(param_ty, ArType::Primitive(Primitive::Str)) {
+                    let param_ty = self.resolve_ty(true_block_def.params[j].ty);
+                    if matches!(&param_ty, ArType::Primitive(Primitive::Str)) {
                         let (ptr_val, len_val) = self.translate_str_operand(arg);
                         true_clif_args.push(BlockArg::Value(ptr_val));
                         true_clif_args.push(BlockArg::Value(len_val));
-                    } else if let ClifType::Concrete(ty) = clif_type(param_ty, self.ptr_type) {
+                    } else if let ClifType::Concrete(ty) = clif_type(&param_ty, self.ptr_type) {
                         let val = self.translate_operand(arg, Some(ty));
                         true_clif_args.push(BlockArg::Value(val));
                     }
@@ -85,12 +86,12 @@ impl FunctionTranslator<'_, '_> {
                 let false_block_def = &self.current_func.blocks[if_false.as_usize()];
                 let mut false_clif_args = Vec::new();
                 for (j, arg) in false_args.iter().enumerate() {
-                    let param_ty = &false_block_def.params[j].ty;
-                    if matches!(param_ty, ArType::Primitive(Primitive::Str)) {
+                    let param_ty = self.resolve_ty(false_block_def.params[j].ty);
+                    if matches!(&param_ty, ArType::Primitive(Primitive::Str)) {
                         let (ptr_val, len_val) = self.translate_str_operand(arg);
                         false_clif_args.push(BlockArg::Value(ptr_val));
                         false_clif_args.push(BlockArg::Value(len_val));
-                    } else if let ClifType::Concrete(ty) = clif_type(param_ty, self.ptr_type) {
+                    } else if let ClifType::Concrete(ty) = clif_type(&param_ty, self.ptr_type) {
                         let val = self.translate_operand(arg, Some(ty));
                         false_clif_args.push(BlockArg::Value(val));
                     }

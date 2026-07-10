@@ -142,9 +142,10 @@ impl AranduJit {
             let param_types: Vec<_> = func
                 .params
                 .iter()
-                .map(|&p| func.temps[p.as_usize()].ty.clone())
+                .map(|&p| type_info.type_interner.resolve(func.temps[p.as_usize()].ty))
                 .collect();
-            let sig = build_signature(&param_types, &func.return_type, default_call_conv, ptr_type);
+            let ret_ty = type_info.type_interner.resolve(func.return_type);
+            let sig = build_signature(&param_types, &ret_ty, default_call_conv, ptr_type);
 
             let func_id = self
                 .module
@@ -207,9 +208,10 @@ impl AranduJit {
             let param_types: Vec<_> = func
                 .params
                 .iter()
-                .map(|&p| func.temps[p.as_usize()].ty.clone())
+                .map(|&p| type_info.type_interner.resolve(func.temps[p.as_usize()].ty))
                 .collect();
-            let sig = build_signature(&param_types, &func.return_type, default_call_conv, ptr_type);
+            let ret_ty = type_info.type_interner.resolve(func.return_type);
+            let sig = build_signature(&param_types, &ret_ty, default_call_conv, ptr_type);
             context.func.signature = sig;
 
             {

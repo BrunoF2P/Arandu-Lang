@@ -46,15 +46,15 @@ impl FunctionTranslator<'_, '_> {
                 let ptr_val = self.translate_operand(base, Some(self.ptr_type));
                 let base_ty = match base {
                     AmirOperand::Copy(temp_id) | AmirOperand::Move(temp_id) => {
-                        &self.current_func.temps[temp_id.as_usize()].ty
+                        self.temp_ar_ty(*temp_id)
                     }
-                    _ => &arandu_semantics::types::ArType::Error,
+                    _ => arandu_semantics::types::ArType::Error,
                 };
                 let struct_ty = match base_ty {
                     arandu_semantics::types::ArType::Ptr(inner) => {
-                        self.type_info.resolve_type_id(*inner)
+                        self.type_info.resolve_type_id(inner)
                     }
-                    other => other.clone(),
+                    other => other,
                 };
                 let pointer_width = self.ptr_type.bytes() as u64;
                 let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
@@ -89,15 +89,15 @@ impl FunctionTranslator<'_, '_> {
 
                 let base_ty = match value {
                     AmirOperand::Copy(temp_id) | AmirOperand::Move(temp_id) => {
-                        &self.current_func.temps[temp_id.as_usize()].ty
+                        self.temp_ar_ty(*temp_id)
                     }
-                    _ => &arandu_semantics::types::ArType::Error,
+                    _ => arandu_semantics::types::ArType::Error,
                 };
                 let enum_ty = match base_ty {
                     arandu_semantics::types::ArType::Ptr(inner) => {
-                        self.type_info.resolve_type_id(*inner)
+                        self.type_info.resolve_type_id(inner)
                     }
-                    other => other.clone(),
+                    other => other,
                 };
                 let enum_id = match enum_ty {
                     ArType::Named(enum_id, _) => enum_id,
@@ -435,7 +435,7 @@ impl FunctionTranslator<'_, '_> {
                 let ptr_val = self.builder.inst_results(call_inst)[0];
 
                 let item_ar_ty = match &array_ty {
-                    ArType::Array(_, inner) => self.type_info.resolve_type_id(*inner).clone(),
+                    ArType::Array(_, inner) => self.type_info.resolve_type_id(*inner),
                     _ => ArType::Error,
                 };
                 let item_layout = engine.layout_of_type(
@@ -479,15 +479,15 @@ impl FunctionTranslator<'_, '_> {
                 let ptr_val = self.translate_operand(base, Some(self.ptr_type));
                 let base_ty = match base {
                     AmirOperand::Copy(temp_id) | AmirOperand::Move(temp_id) => {
-                        &self.current_func.temps[temp_id.as_usize()].ty
+                        self.temp_ar_ty(*temp_id)
                     }
-                    _ => &arandu_semantics::types::ArType::Error,
+                    _ => arandu_semantics::types::ArType::Error,
                 };
                 let struct_ty = match base_ty {
                     arandu_semantics::types::ArType::Ptr(inner) => {
-                        self.type_info.resolve_type_id(*inner)
+                        self.type_info.resolve_type_id(inner)
                     }
-                    other => other.clone(),
+                    other => other,
                 };
                 let pointer_width = self.ptr_type.bytes() as u64;
                 let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
@@ -586,15 +586,15 @@ impl FunctionTranslator<'_, '_> {
 
                 let base_ty = match value {
                     AmirOperand::Copy(temp_id) | AmirOperand::Move(temp_id) => {
-                        &self.current_func.temps[temp_id.as_usize()].ty
+                        self.temp_ar_ty(*temp_id)
                     }
-                    _ => &arandu_semantics::types::ArType::Error,
+                    _ => arandu_semantics::types::ArType::Error,
                 };
                 let enum_ty = match base_ty {
                     arandu_semantics::types::ArType::Ptr(inner) => {
-                        self.type_info.resolve_type_id(*inner)
+                        self.type_info.resolve_type_id(inner)
                     }
-                    other => other.clone(),
+                    other => other,
                 };
                 let enum_id = match enum_ty {
                     ArType::Named(enum_id, _) => enum_id,
@@ -676,7 +676,7 @@ impl FunctionTranslator<'_, '_> {
                 )
             }
             AmirRvalue::Borrow(place) | AmirRvalue::BorrowMut(place) => {
-                let ty = &self.current_func.locals[place.local.as_usize()].ty;
+                let ty = self.local_ar_ty(place.local);
                 let is_memory_backed = !place.projections.is_empty()
                     || matches!(
                         ty,
@@ -688,7 +688,7 @@ impl FunctionTranslator<'_, '_> {
                     || matches!(
                         ty,
                         ArType::Named(sym_id, _) if matches!(
-                            self.symbol_table.get(*sym_id).kind,
+                            self.symbol_table.get(sym_id).kind,
                             arandu_semantics::SymbolKind::Struct | arandu_semantics::SymbolKind::Enum
                         )
                     );

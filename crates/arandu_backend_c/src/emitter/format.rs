@@ -131,7 +131,7 @@ impl<'a> CEmitter<'a> {
 
     pub(super) fn format_place(&self, place: &AmirPlace, func: &AmirFunc) -> String {
         let local_idx = place.local.as_usize();
-        let mut current_ty = func.locals[local_idx].ty.clone();
+        let mut current_ty = self.local_ty(func, place.local);
         let mut path = format!("l{}", local_idx);
 
         for proj in &place.projections {

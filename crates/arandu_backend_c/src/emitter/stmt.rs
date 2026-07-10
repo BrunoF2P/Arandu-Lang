@@ -7,10 +7,10 @@ impl<'a> CEmitter<'a> {
     pub(super) fn emit_stmt(&mut self, stmt: &AmirStmt, func: &AmirFunc) {
         match stmt {
             AmirStmt::Assign { lhs, rhs } => {
-                let lhs_ty = &func.temps[lhs.as_usize()].ty;
-                let lhs_c_ty = self.format_type(lhs_ty);
+                let lhs_ty = self.temp_ty(func, *lhs);
+                let lhs_c_ty = self.format_type(&lhs_ty);
                 write!(&mut self.output, "    t{} = ", lhs.as_usize()).unwrap();
-                self.emit_rvalue(rhs, func, lhs_ty, &lhs_c_ty);
+                self.emit_rvalue(rhs, func, &lhs_ty, &lhs_c_ty);
                 writeln!(&mut self.output, ";").unwrap();
             }
             AmirStmt::Store { lhs, rhs } => {
@@ -47,7 +47,8 @@ impl<'a> CEmitter<'a> {
     pub(super) fn emit_terminator(&mut self, term: &AmirTerminator, func: &AmirFunc) {
         match term {
             AmirTerminator::Return => {
-                if matches!(func.return_type, ArType::Void) {
+                let ret = self.interner.resolve(func.return_type);
+                if matches!(ret, ArType::Void) {
                     writeln!(&mut self.output, "    return;").unwrap();
                 } else {
                     writeln!(&mut self.output, "    return t0;").unwrap();

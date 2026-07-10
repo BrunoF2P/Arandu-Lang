@@ -39,40 +39,24 @@ fn execute_cranelift(amir: &AmirProgram, tc: &TypeCheckResult) -> i32 {
     }
 }
 
-fn test_execution_parity(name: &str, src: &str) {
-    let (amir, tc) = compile_src(src);
-
-    // Debug: dump AMIR for diagnosis
-    println!("--- AMIR DUMP FOR {} ---", name);
-    for func in &amir.funcs {
-        println!("func {:?} -> {:?}", func.symbol, func.return_type);
-        for (b, block) in func.blocks.iter().enumerate() {
-            println!("  bb{}:", b);
-            for id in block
-                .statements
-                .iter_ids::<arandu_middle::amir::stmt::InstrId>()
-            {
-                println!("    {:?}", func.stmts.get(id).unwrap());
-            }
-            println!("    term: {:?}", block.terminator);
-        }
-    }
-    println!("----------------------------");
-
-    // 1. Generate C
+fn emit_c(amir: &AmirProgram, tc: &TypeCheckResult) -> String {
+    // Host parity only (64-bit); Cranelift is host-only — see solidification matrix.
     let layout_engine = LayoutEngine::new(8);
-    let emitter = CEmitter::new(
-        &amir,
+    CEmitter::new(
+        amir,
         &tc.symbols,
         &layout_engine,
         &tc.type_info,
         &tc.type_info.type_interner,
-    );
-    let mut c_code = emitter.emit();
+    )
+    .emit()
+}
 
-    println!("--- GENERATED C CODE FOR {} ---", name);
-    println!("{}", c_code);
-    println!("---------------------------------");
+fn test_execution_parity(name: &str, src: &str) {
+    let (amir, tc) = compile_src(src);
+
+    // 1. Generate C (no debug dumps — keep tests pure / CI-friendly).
+    let mut c_code = emit_c(&amir, &tc);
 
     // CEmitter emits `int32_t main(void)`. We rename it to `arandu_main` via a preprocessor
     // macro so we can wrap it in a standard C `main` that captures and prints the return
@@ -316,4 +300,40 @@ fn parity_array_reassignment() {
     }
     "#;
     test_execution_parity("array_reassignment", src);
+}
+
+#[test]
+fn parity_control_flow_diamond() {
+    let src = r#"
+    func main(): int {
+        let x = 10
+        let mut out = 0
+        if x > 5 {
+            out = 1
+        } else {
+            out = 2
+        }
+        return out
+    }
+    "#;
+    test_execution_parity("control_flow_diamond", src);
+}
+
+#[test]
+fn c_emit_arstr_is_fat_pointer() {
+    // S-C-AUDIT: ArStr matches LayoutEngine fat pointer (host 64 → int64_t len).
+    let src = r#"
+    func main(): int {
+        let s = "hi"
+        return 0
+    }
+    "#;
+    let (amir, tc) = compile_src(src);
+    let c = emit_c(&amir, &tc);
+    assert!(
+        c.contains("typedef struct { const uint8_t *ptr; int64_t len; } ArStr;"),
+        "expected ArStr fat-pointer typedef, got headers:\n{}",
+        c.lines().take(40).collect::<Vec<_>>().join("\n")
+    );
+    assert!(c.contains("AR_STR_"), "expected named string constants");
 }
