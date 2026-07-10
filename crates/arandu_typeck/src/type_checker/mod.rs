@@ -319,11 +319,11 @@ impl TypeChecker<'_> {
     ) {
         let expected = match expected.into() {
             ArTypeOrId::Type(t) => t,
-            ArTypeOrId::Id(id) => self.resolve(id).clone(),
+            ArTypeOrId::Id(id) => self.resolve(id),
         };
         let found = match found.into() {
             ArTypeOrId::Type(t) => t,
-            ArTypeOrId::Id(id) => self.resolve(id).clone(),
+            ArTypeOrId::Id(id) => self.resolve(id),
         };
         let constraint = Constraint {
             expected,

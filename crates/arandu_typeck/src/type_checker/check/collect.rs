@@ -205,7 +205,7 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &P
                         && first_param.name.as_str() == "self"
                         && let Some(first_ty_id) = param_types.first_mut()
                     {
-                        let lowered_first_ty = checker.resolve(*first_ty_id).clone();
+                        let lowered_first_ty = checker.resolve(*first_ty_id);
                         if let ArType::Named(struct_id, ref args) = lowered_first_ty
                             && args.is_empty()
                             && !params.is_empty()

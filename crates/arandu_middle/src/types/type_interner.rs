@@ -85,7 +85,13 @@ impl TypeInterner {
     /// Intern a type, returning its canonical `TypeId`.
     /// If the type has been interned before, returns the same id.
     pub fn intern(&self, ty: ArType) -> TypeId {
-        if let Some(&id) = self.map.read().unwrap_or_else(|e| e.into_inner()).get(&ty) {
+        self.intern_ref(&ty)
+    }
+
+    /// Intern without requiring ownership of `ty` up front.
+    /// Clones `ty` only on the cold path (first insert).
+    pub fn intern_ref(&self, ty: &ArType) -> TypeId {
+        if let Some(&id) = self.map.read().unwrap_or_else(|e| e.into_inner()).get(ty) {
             return id;
         }
 
@@ -93,13 +99,13 @@ impl TypeInterner {
         let mut types = self.types.write().unwrap_or_else(|e| e.into_inner());
 
         // Double checked locking
-        if let Some(&id) = map.get(&ty) {
+        if let Some(&id) = map.get(ty) {
             return id;
         }
 
         let id = TypeId::from_usize(types.len());
         map.insert(ty.clone(), id);
-        types.push(ty);
+        types.push(ty.clone());
         id
     }
 

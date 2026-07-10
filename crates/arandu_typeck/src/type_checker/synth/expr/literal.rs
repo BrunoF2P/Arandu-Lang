@@ -70,7 +70,7 @@ pub(super) fn synth_literal_expr(
         ExprKind::Nil => {
             if let Some(ret_id) = checker.ctx.current_return() {
                 // If it is nil, it can fallback to return type or nullable/option
-                let ret = checker.resolve(ret_id).clone();
+                let ret = checker.resolve(ret_id);
                 if types::is_err_type(&ret, &checker.type_info.type_interner) {
                     let err_id = checker.intern(ArType::Error);
                     Some(checker.intern(ArType::Nullable(err_id)))
@@ -96,7 +96,7 @@ pub(super) fn synth_literal_expr(
             if let Some((symbol_id, generic_args)) = struct_info {
                 let resolved_args: Vec<ArType> = generic_args
                     .iter()
-                    .map(|&arg_id| checker.resolve(arg_id).clone())
+                    .map(|&arg_id| checker.resolve(arg_id))
                     .collect();
                 let field_map =
                     types::struct_fields_instantiated(checker, symbol_id, &resolved_args)

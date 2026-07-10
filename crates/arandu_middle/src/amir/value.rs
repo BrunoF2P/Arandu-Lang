@@ -11,7 +11,7 @@ pub struct AmirPlace {
     pub projections: SmallVec<[AmirProjection; 2]>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AmirProjection {
     Field(SymbolId),
     Index(AmirOperand),
@@ -82,7 +82,8 @@ pub enum AmirRvalue {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// SSA/register operands are pure ids + constants — always cheap to copy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AmirOperand {
     Copy(TempId),
     Move(TempId),

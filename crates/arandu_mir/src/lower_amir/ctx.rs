@@ -27,7 +27,11 @@ impl LowerCtx<'_> {
     }
 
     pub(crate) fn intern_ty(&self, ty: ArType) -> crate::types::TypeId {
-        self.tc.type_info.type_interner.intern(ty)
+        self.intern_ty_ref(&ty)
+    }
+
+    pub(crate) fn intern_ty_ref(&self, ty: &crate::types::ArType) -> crate::types::TypeId {
+        self.tc.type_info.type_interner.intern_ref(ty)
     }
 
     /// Non-empty source span (start != end). Empty spans are treated as unknown.
@@ -429,7 +433,7 @@ impl LowerCtx<'_> {
     ) -> Result<(), Diagnostic> {
         let block = self.require_block()?;
         let value = self.materialize_nullable_const(local, value);
-        self.write_variable(block, local, value.clone());
+        self.write_variable(block, local, value);
         // Emit a dummy Store statement
         self.push_stmt(AmirStmt::Store {
             lhs: AmirPlace {
@@ -562,7 +566,7 @@ impl LowerCtx<'_> {
                 };
                 self.blocks[block.as_usize()].params.push(param);
                 let op = AmirOperand::Copy(temp_id);
-                self.write_variable(block, local, op.clone());
+                self.write_variable(block, local, op);
                 self.add_block_parameter_operands(block, local, temp_id);
                 op
             }
@@ -733,15 +737,15 @@ impl LowerCtx<'_> {
     ) -> AmirOperand {
         match op {
             AmirOperand::Copy(t) => {
-                if let Some(repl) = redirected_temps.get(&t) {
-                    Self::resolve_operand(redirected_temps, repl.clone())
+                if let Some(&repl) = redirected_temps.get(&t) {
+                    Self::resolve_operand(redirected_temps, repl)
                 } else {
                     op
                 }
             }
             AmirOperand::Move(t) => {
-                if let Some(repl) = redirected_temps.get(&t) {
-                    let resolved = Self::resolve_operand(redirected_temps, repl.clone());
+                if let Some(&repl) = redirected_temps.get(&t) {
+                    let resolved = Self::resolve_operand(redirected_temps, repl);
                     match resolved {
                         AmirOperand::Copy(rt) => AmirOperand::Move(rt),
                         other => other,
@@ -757,54 +761,54 @@ impl LowerCtx<'_> {
     fn resolve_rvalue(redirected_temps: &FxHashMap<TempId, AmirOperand>, rval: &mut AmirRvalue) {
         match rval {
             AmirRvalue::Use(op) => {
-                *op = Self::resolve_operand(redirected_temps, op.clone());
+                *op = Self::resolve_operand(redirected_temps, *op);
             }
             AmirRvalue::Binary { left, right, .. } => {
-                *left = Self::resolve_operand(redirected_temps, left.clone());
-                *right = Self::resolve_operand(redirected_temps, right.clone());
+                *left = Self::resolve_operand(redirected_temps, *left);
+                *right = Self::resolve_operand(redirected_temps, *right);
             }
             AmirRvalue::Unary { operand, .. } => {
-                *operand = Self::resolve_operand(redirected_temps, operand.clone());
+                *operand = Self::resolve_operand(redirected_temps, *operand);
             }
             AmirRvalue::FieldAccess { base, .. } => {
-                *base = Self::resolve_operand(redirected_temps, base.clone());
+                *base = Self::resolve_operand(redirected_temps, *base);
             }
             AmirRvalue::StructLiteral { fields, .. } => {
                 for (_, op) in fields {
-                    *op = Self::resolve_operand(redirected_temps, op.clone());
+                    *op = Self::resolve_operand(redirected_temps, *op);
                 }
             }
             AmirRvalue::IndexAccess { base, index } => {
-                *base = Self::resolve_operand(redirected_temps, base.clone());
-                *index = Self::resolve_operand(redirected_temps, index.clone());
+                *base = Self::resolve_operand(redirected_temps, *base);
+                *index = Self::resolve_operand(redirected_temps, *index);
             }
             AmirRvalue::Array { items } => {
                 for op in items {
-                    *op = Self::resolve_operand(redirected_temps, op.clone());
+                    *op = Self::resolve_operand(redirected_temps, *op);
                 }
             }
             AmirRvalue::Tuple { items } => {
                 for op in items {
-                    *op = Self::resolve_operand(redirected_temps, op.clone());
+                    *op = Self::resolve_operand(redirected_temps, *op);
                 }
             }
             AmirRvalue::Discriminant { value } => {
-                *value = Self::resolve_operand(redirected_temps, value.clone());
+                *value = Self::resolve_operand(redirected_temps, *value);
             }
             AmirRvalue::EnumPayload { value, .. } => {
-                *value = Self::resolve_operand(redirected_temps, value.clone());
+                *value = Self::resolve_operand(redirected_temps, *value);
             }
             AmirRvalue::EnumConstruct { payload, .. } => {
                 if let Some(op) = payload {
-                    *op = Self::resolve_operand(redirected_temps, op.clone());
+                    *op = Self::resolve_operand(redirected_temps, *op);
                 }
             }
 
             AmirRvalue::Len(value) => {
-                *value = Self::resolve_operand(redirected_temps, value.clone());
+                *value = Self::resolve_operand(redirected_temps, *value);
             }
             AmirRvalue::Alloc(value) => {
-                *value = Self::resolve_operand(redirected_temps, value.clone());
+                *value = Self::resolve_operand(redirected_temps, *value);
             }
             AmirRvalue::Load(place) => {
                 Self::resolve_place(redirected_temps, place);
@@ -817,11 +821,11 @@ impl LowerCtx<'_> {
             }
             AmirRvalue::StringInterp { parts } => {
                 for op in parts {
-                    *op = Self::resolve_operand(redirected_temps, op.clone());
+                    *op = Self::resolve_operand(redirected_temps, *op);
                 }
             }
             AmirRvalue::ToStr { value, .. } => {
-                *value = Self::resolve_operand(redirected_temps, value.clone());
+                *value = Self::resolve_operand(redirected_temps, *value);
             }
         }
     }
@@ -829,7 +833,7 @@ impl LowerCtx<'_> {
     fn resolve_place(redirected_temps: &FxHashMap<TempId, AmirOperand>, place: &mut AmirPlace) {
         for proj in &mut place.projections {
             if let AmirProjection::Index(op) = proj {
-                *op = Self::resolve_operand(redirected_temps, op.clone());
+                *op = Self::resolve_operand(redirected_temps, *op);
             }
         }
     }
@@ -850,11 +854,11 @@ impl LowerCtx<'_> {
             } => {
                 *callee = Self::resolve_operand(redirected_temps, callee.clone());
                 for arg in args {
-                    *arg = Self::resolve_operand(redirected_temps, arg.clone());
+                    *arg = Self::resolve_operand(redirected_temps, *arg);
                 }
             }
             AmirStmt::Free(op) => {
-                *op = Self::resolve_operand(redirected_temps, op.clone());
+                *op = Self::resolve_operand(redirected_temps, *op);
             }
             AmirStmt::Destroy(place) => {
                 Self::resolve_place(redirected_temps, place);
@@ -870,7 +874,7 @@ impl LowerCtx<'_> {
         match term {
             AmirTerminator::Goto { target: _, args } => {
                 for arg in args {
-                    *arg = Self::resolve_operand(redirected_temps, arg.clone());
+                    *arg = Self::resolve_operand(redirected_temps, *arg);
                 }
             }
             AmirTerminator::Branch {
@@ -882,10 +886,10 @@ impl LowerCtx<'_> {
             } => {
                 *condition = Self::resolve_operand(redirected_temps, condition.clone());
                 for arg in true_args {
-                    *arg = Self::resolve_operand(redirected_temps, arg.clone());
+                    *arg = Self::resolve_operand(redirected_temps, *arg);
                 }
                 for arg in false_args {
-                    *arg = Self::resolve_operand(redirected_temps, arg.clone());
+                    *arg = Self::resolve_operand(redirected_temps, *arg);
                 }
             }
             AmirTerminator::SwitchInt {
@@ -896,11 +900,11 @@ impl LowerCtx<'_> {
                 *discriminant = Self::resolve_operand(redirected_temps, discriminant.clone());
                 for (_, _, target_args) in targets {
                     for arg in target_args {
-                        *arg = Self::resolve_operand(redirected_temps, arg.clone());
+                        *arg = Self::resolve_operand(redirected_temps, *arg);
                     }
                 }
                 for arg in &mut otherwise.1 {
-                    *arg = Self::resolve_operand(redirected_temps, arg.clone());
+                    *arg = Self::resolve_operand(redirected_temps, *arg);
                 }
             }
             _ => {}

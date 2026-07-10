@@ -411,7 +411,7 @@ fn interface_subst_for_concrete(
     {
         let resolved_args: Vec<ArType> = args
             .iter()
-            .map(|&a| checker.type_info.type_interner.resolve(a).clone())
+            .map(|&a| checker.type_info.type_interner.resolve(a))
             .collect();
         return build_subst(iface_params, &resolved_args);
     }

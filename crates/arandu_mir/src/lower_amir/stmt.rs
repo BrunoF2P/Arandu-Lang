@@ -29,7 +29,7 @@ impl LowerCtx<'_> {
         self.emit_assign_temp(
             tag_tmp,
             AmirRvalue::Discriminant {
-                value: result_op.clone(),
+                value: result_op,
             },
         );
 
@@ -55,7 +55,7 @@ impl LowerCtx<'_> {
         // Err branch: err = payload; ok = zero/nil so both locals are defined on all paths.
         self.current_block = Some(bb_err);
         let err_tmp = self.new_temp(err_b.ty.clone());
-        self.lower_result_err_field(result_op.clone(), err_b.ty.clone(), err_tmp);
+        self.lower_result_err_field(result_op, err_b.ty.clone(), err_tmp);
         let err_consumed = self.consume_operand(AmirOperand::Copy(err_tmp))?;
         self.write_variable_source(err_local, err_consumed)?;
         let ok_zero = self.new_temp(ok_b.ty.clone());
@@ -132,7 +132,7 @@ impl LowerCtx<'_> {
                             self.emit_assign_temp(
                                 temp,
                                 AmirRvalue::FieldAccess {
-                                    base: val_op.clone(),
+                                    base: val_op,
                                     field: i,
                                 },
                             );
@@ -148,7 +148,7 @@ impl LowerCtx<'_> {
                         self.emit_assign_temp(
                             temp,
                             AmirRvalue::FieldAccess {
-                                base: val_op.clone(),
+                                base: val_op,
                                 field: i,
                             },
                         );
@@ -325,7 +325,7 @@ impl LowerCtx<'_> {
 
                     let len_local = self.new_compiler_local(ArType::Primitive(Primitive::Int));
                     let len_temp = self.new_temp(ArType::Primitive(Primitive::Int));
-                    self.emit_assign_temp(len_temp, AmirRvalue::Len(iter_op.clone()));
+                    self.emit_assign_temp(len_temp, AmirRvalue::Len(iter_op));
                     self.emit_store_place(
                         AmirPlace {
                             local: len_local,
@@ -396,7 +396,7 @@ impl LowerCtx<'_> {
                         self.emit_assign_temp(
                             elem_temp,
                             AmirRvalue::IndexAccess {
-                                base: iter_op.clone(),
+                                base: iter_op,
                                 index: idx_op2,
                             },
                         );
@@ -550,7 +550,7 @@ impl LowerCtx<'_> {
                             self.emit_assign_temp(
                                 temp,
                                 AmirRvalue::FieldAccess {
-                                    base: val_op.clone(),
+                                    base: val_op,
                                     field: i,
                                 },
                             );
@@ -566,7 +566,7 @@ impl LowerCtx<'_> {
                         self.emit_assign_temp(
                             temp,
                             AmirRvalue::FieldAccess {
-                                base: val_op.clone(),
+                                base: val_op,
                                 field: i,
                             },
                         );
@@ -628,7 +628,7 @@ impl LowerCtx<'_> {
                 this.emit_assign_temp(
                     temp,
                     AmirRvalue::FieldAccess {
-                        base: val_op.clone(),
+                        base: *val_op,
                         field: i,
                     },
                 );
@@ -692,7 +692,7 @@ impl LowerCtx<'_> {
 
         if amir_place.projections.is_empty() {
             let final_val = if *op == SetOp::Assign {
-                val_op.clone()
+                *val_op
             } else {
                 let bin_op = match op {
                     SetOp::AddAssign => BinaryOp::Add,
@@ -714,7 +714,7 @@ impl LowerCtx<'_> {
                     AmirRvalue::Binary {
                         op: bin_op,
                         left: old_val,
-                        right: val_op.clone(),
+                        right: *val_op,
                     },
                 );
                 AmirOperand::Copy(temp)
@@ -722,7 +722,7 @@ impl LowerCtx<'_> {
             let consumed = self.consume_operand(final_val)?;
             self.write_variable_source(local_id, consumed)?;
         } else if *op == SetOp::Assign {
-            self.emit_store_place(amir_place, val_op.clone())?;
+            self.emit_store_place(amir_place, *val_op)?;
         } else {
             let bin_op = match op {
                 SetOp::AddAssign => BinaryOp::Add,
@@ -744,7 +744,7 @@ impl LowerCtx<'_> {
                 AmirRvalue::Binary {
                     op: bin_op,
                     left: old_val,
-                    right: val_op.clone(),
+                    right: *val_op,
                 },
             );
             self.emit_store_place(amir_place, AmirOperand::Copy(temp))?;

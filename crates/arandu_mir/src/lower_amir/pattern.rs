@@ -88,7 +88,7 @@ impl LowerCtx<'_> {
         self.emit_assign_temp(
             tmp_tag,
             AmirRvalue::Discriminant {
-                value: scrutinee.clone(),
+                value: scrutinee,
             },
         );
 
@@ -143,7 +143,7 @@ impl LowerCtx<'_> {
                 self.emit_assign_temp(
                     tmp_payload,
                     AmirRvalue::EnumPayload {
-                        value: scrutinee.clone(),
+                        value: scrutinee,
                         variant: variant_symbol_actual,
                         index: i,
                     },
@@ -272,7 +272,7 @@ impl LowerCtx<'_> {
                     self.emit_assign_temp(
                         tmp_field,
                         AmirRvalue::FieldAccess {
-                            base: scrutinee.clone(),
+                            base: scrutinee,
                             field: field_idx,
                         },
                     );
@@ -338,7 +338,7 @@ impl LowerCtx<'_> {
                     self.emit_assign_temp(
                         tmp_item,
                         AmirRvalue::FieldAccess {
-                            base: scrutinee.clone(),
+                            base: scrutinee,
                             field: i,
                         },
                     );
@@ -404,7 +404,7 @@ impl LowerCtx<'_> {
                     ge_dest,
                     AmirRvalue::Binary {
                         op: BinaryOp::GtEqual,
-                        left: scrutinee.clone(),
+                        left: scrutinee,
                         right: start_op,
                     },
                 );
@@ -419,7 +419,7 @@ impl LowerCtx<'_> {
                     limit_dest,
                     AmirRvalue::Binary {
                         op: limit_op,
-                        left: scrutinee.clone(),
+                        left: scrutinee,
                         right: end_op,
                     },
                 );

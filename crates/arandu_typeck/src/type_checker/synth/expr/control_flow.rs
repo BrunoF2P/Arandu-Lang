@@ -184,8 +184,8 @@ pub(super) fn synth_control_flow_expr(
                     expected_arm_ty_id = arm_ty_id;
                     first_arm_span = arm.span;
                 } else if !checker.unify_ids(expected_arm_ty_id, arm_ty_id) {
-                    let expected_arm_ty = checker.resolve(expected_arm_ty_id).clone();
-                    let arm_ty = checker.resolve(arm_ty_id).clone();
+                    let expected_arm_ty = checker.resolve(expected_arm_ty_id);
+                    let arm_ty = checker.resolve(arm_ty_id);
                     checker.add_constraint(
                         expected_arm_ty,
                         arm_ty,

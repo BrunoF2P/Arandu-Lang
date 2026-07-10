@@ -123,7 +123,7 @@ fn check_multi_var_decl(
 
             if let Some(ty_expr) = &binding.ty {
                 let expected = checker.lower_type_expr(*ty_expr, checker.type_scope());
-                let elem_ty = checker.resolve(elem_ty_id).clone();
+                let elem_ty = checker.resolve(elem_ty_id);
 
                 apply_assignment_constraints(
                     checker,
@@ -180,7 +180,7 @@ fn check_single_var_decl(
 
         if let Some(ty_expr) = &binding.ty {
             let expected = checker.lower_type_expr(*ty_expr, checker.type_scope());
-            let bind_ty = checker.resolve(bind_ty_id).clone();
+            let bind_ty = checker.resolve(bind_ty_id);
 
             apply_assignment_constraints(
                 checker,
@@ -278,7 +278,7 @@ fn check_return_stmt(
         .ctx
         .current_return()
         .unwrap_or_else(|| checker.intern(ArType::Void));
-    let current_ret = checker.resolve(current_ret_id).clone();
+    let current_ret = checker.resolve(current_ret_id);
 
     let val_ty_id = if values.is_empty() {
         checker.intern(ArType::Void)
@@ -291,7 +291,7 @@ fn check_return_stmt(
             .collect();
         checker.intern(ArType::Tuple(tys))
     };
-    let val_ty = checker.resolve(val_ty_id).clone();
+    let val_ty = checker.resolve(val_ty_id);
 
     if !checker.unify_return_type(&current_ret, &val_ty) {
         checker.add_constraint(
@@ -357,7 +357,7 @@ fn check_for_stmt(
             iterable,
         } => {
             let iterable_ty_id = super::super::synth::synth_expr(checker, *iterable);
-            let iterable_ty = checker.resolve(iterable_ty_id).clone();
+            let iterable_ty = checker.resolve(iterable_ty_id);
             let elem_ty = match &iterable_ty {
                 ArType::Array(_, inner) | ArType::Slice(inner) | ArType::Range(inner) => {
                     checker.type_info.type_interner.resolve(*inner)
@@ -395,7 +395,7 @@ fn check_for_stmt(
             }
             if let Some(cond_expr) = condition {
                 let cond_ty_id = super::super::synth::synth_expr(checker, *cond_expr);
-                let cond_ty = checker.resolve(cond_ty_id).clone();
+                let cond_ty = checker.resolve(cond_ty_id);
                 if !cond_ty.is_error()
                     && !super::super::types::unify(
                         &cond_ty,
@@ -485,7 +485,7 @@ fn check_free_stmt(
         );
     }
     let ty_id = super::super::synth::synth_expr(checker, expr);
-    let ty = checker.resolve(ty_id).clone();
+    let ty = checker.resolve(ty_id);
     if !ty.is_error() && !matches!(ty, ArType::Ptr(_)) {
         let interner = &checker.type_info.type_interner;
         checker.diagnostics.push(

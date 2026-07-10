@@ -142,13 +142,15 @@ pub fn resolve(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<ResolutionR
     let program_res = parse(db, file);
     let locals_arc = local_symbols(db, file);
 
+    // Prefer Arc unshare over deep-cloning ResolutionResult when we are the sole owner.
+    let locals_owned = std::sync::Arc::unwrap_or_clone(std::sync::Arc::clone(&locals_arc.value));
     let resolved = match &*program_res {
         Ok(program) => arandu_resolve::resolve_imports_and_bodies(
             &arandu_resolve::SourceDbLoader(db.as_source_db()),
             program,
-            (*locals_arc).clone(),
+            locals_owned,
         ),
-        Err(_) => (*locals_arc).clone(),
+        Err(_) => locals_owned,
     };
 
     HashEq::new(resolved)

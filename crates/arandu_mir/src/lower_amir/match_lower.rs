@@ -60,7 +60,7 @@ impl LowerCtx<'_> {
         let arms = self.hir.pool.match_arms_list(*arms_range).to_vec();
 
         if let Some(plan) =
-            self.build_match_switch_plan_from_ty(&value_ty, &arms, scrutinee.clone(), symbols)?
+            self.build_match_switch_plan_from_ty(&value_ty, &arms, scrutinee, symbols)?
         {
             let disc = plan.discriminant.clone();
             self.emit_match_switch(
@@ -99,7 +99,7 @@ impl LowerCtx<'_> {
         let arms = self.hir.pool.match_arms_list(*arms_range).to_vec();
 
         if let Some(plan) =
-            self.build_match_switch_plan_from_ty(&value_ty, &arms, scrutinee.clone(), symbols)?
+            self.build_match_switch_plan_from_ty(&value_ty, &arms, scrutinee, symbols)?
         {
             let disc = plan.discriminant.clone();
             self.emit_match_switch_stmt(
@@ -176,7 +176,7 @@ impl LowerCtx<'_> {
         self.emit_assign_temp(
             tmp_tag,
             AmirRvalue::Discriminant {
-                value: scrutinee.clone(),
+                value: scrutinee,
             },
         );
         let disc = AmirOperand::Copy(tmp_tag);
@@ -368,7 +368,7 @@ impl LowerCtx<'_> {
             let bb_match = self.new_block();
             let bb_next = self.new_block();
             let pattern = self.hir.pool.pattern(arm.pattern).clone();
-            let is_match = self.lower_pattern_match(scrutinee.clone(), &pattern, symbols)?;
+            let is_match = self.lower_pattern_match(scrutinee, &pattern, symbols)?;
             if let Some(guard) = arm.guard {
                 let bb_guard = self.new_block();
                 self.set_bool_branch(is_match, bb_guard, bb_next);
@@ -427,7 +427,7 @@ impl LowerCtx<'_> {
             let bb_next = self.new_block();
 
             let pattern = self.hir.pool.pattern(arm.pattern).clone();
-            let is_match = self.lower_pattern_match(scrutinee.clone(), &pattern, symbols)?;
+            let is_match = self.lower_pattern_match(scrutinee, &pattern, symbols)?;
 
             if let Some(guard) = arm.guard {
                 let bb_guard = self.new_block();

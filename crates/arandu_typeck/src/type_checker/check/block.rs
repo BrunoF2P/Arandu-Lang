@@ -14,7 +14,7 @@ pub fn check_block(checker: &mut TypeChecker<'_>, pool: &AstPool, block: &Block)
         if i == len - 1 {
             if let Stmt::Expr { expr, .. } = stmt {
                 let last_ty_id = super::super::synth::synth_expr(checker, *expr);
-                last_ty = checker.resolve(last_ty_id).clone();
+                last_ty = checker.resolve(last_ty_id);
             } else {
                 check_stmt(checker, pool, stmt);
                 last_ty = ArType::Void;

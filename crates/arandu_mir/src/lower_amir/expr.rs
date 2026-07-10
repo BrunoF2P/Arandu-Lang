@@ -157,13 +157,13 @@ impl LowerCtx<'_> {
         }
 
         let err_tmp = self.new_temp(err_ty.clone());
-        self.lower_result_err_field(base.clone(), err_ty, err_tmp);
+        self.lower_result_err_field(base, err_ty, err_tmp);
 
         let tag_tmp = self.new_temp(ArType::Primitive(Primitive::Int));
         self.emit_assign_temp(
             tag_tmp,
             AmirRvalue::Discriminant {
-                value: base.clone(),
+                value: base,
             },
         );
 
@@ -247,7 +247,7 @@ impl LowerCtx<'_> {
         self.emit_assign_temp(
             tag_tmp,
             AmirRvalue::Discriminant {
-                value: base.clone(),
+                value: base,
             },
         );
 
@@ -278,7 +278,7 @@ impl LowerCtx<'_> {
         } = handler
         {
             let err_tmp = self.new_temp(err_ty.clone());
-            self.lower_result_err_field(base.clone(), err_ty.clone(), err_tmp);
+            self.lower_result_err_field(base, err_ty.clone(), err_tmp);
             let err_local = self.new_local(err_ty.clone(), *err_sym, inner.span);
             let consumed = self.consume_operand(AmirOperand::Copy(err_tmp))?;
             self.write_variable_source(err_local, consumed)?;
@@ -323,7 +323,7 @@ impl LowerCtx<'_> {
             cond_tmp,
             AmirRvalue::Binary {
                 op: BinaryOp::Equal,
-                left: base.clone(),
+                left: base,
                 right: AmirOperand::Constant(AmirConstant::Nil),
             },
         );
@@ -363,7 +363,7 @@ impl LowerCtx<'_> {
                 let op =
                     AmirOperand::Constant(self.intern_literal(AmirLiteralEntry::Int(v.clone())));
                 if let Some(dest) = target {
-                    self.emit_assign_temp(dest, AmirRvalue::Use(op.clone()));
+                    self.emit_assign_temp(dest, AmirRvalue::Use(op));
                 }
                 Ok(op)
             }
@@ -371,14 +371,14 @@ impl LowerCtx<'_> {
                 let op =
                     AmirOperand::Constant(self.intern_literal(AmirLiteralEntry::Float(v.clone())));
                 if let Some(dest) = target {
-                    self.emit_assign_temp(dest, AmirRvalue::Use(op.clone()));
+                    self.emit_assign_temp(dest, AmirRvalue::Use(op));
                 }
                 Ok(op)
             }
             HirExprKind::Bool(v) => {
                 let op = AmirOperand::Constant(AmirConstant::Bool(*v));
                 if let Some(dest) = target {
-                    self.emit_assign_temp(dest, AmirRvalue::Use(op.clone()));
+                    self.emit_assign_temp(dest, AmirRvalue::Use(op));
                 }
                 Ok(op)
             }
@@ -386,7 +386,7 @@ impl LowerCtx<'_> {
                 let op =
                     AmirOperand::Constant(self.intern_literal(AmirLiteralEntry::Str(v.clone())));
                 if let Some(dest) = target {
-                    self.emit_assign_temp(dest, AmirRvalue::Use(op.clone()));
+                    self.emit_assign_temp(dest, AmirRvalue::Use(op));
                 }
                 Ok(op)
             }
@@ -425,7 +425,7 @@ impl LowerCtx<'_> {
                 let op =
                     AmirOperand::Constant(self.intern_literal(AmirLiteralEntry::Char(v.clone())));
                 if let Some(dest) = target {
-                    self.emit_assign_temp(dest, AmirRvalue::Use(op.clone()));
+                    self.emit_assign_temp(dest, AmirRvalue::Use(op));
                 }
                 Ok(op)
             }
@@ -444,7 +444,7 @@ impl LowerCtx<'_> {
                     AmirOperand::Constant(AmirConstant::Nil)
                 };
                 if let (Some(dest), false) = (target, is_option_type(&expr.ty)) {
-                    self.emit_assign_temp(dest, AmirRvalue::Use(op.clone()));
+                    self.emit_assign_temp(dest, AmirRvalue::Use(op));
                 }
                 Ok(op)
             }
@@ -530,7 +530,7 @@ impl LowerCtx<'_> {
                                 })
                         });
                     if !already_assigned {
-                        let rhs = self.consume_operand(op.clone())?;
+                        let rhs = self.consume_operand(op)?;
                         self.emit_assign_temp(dest, AmirRvalue::Use(rhs));
                     }
                 }
@@ -602,7 +602,7 @@ impl LowerCtx<'_> {
                                 },
                             );
                     if !already_assigned {
-                        let rhs = self.consume_operand(op.clone())?;
+                        let rhs = self.consume_operand(op)?;
                         self.emit_assign_temp(dest, AmirRvalue::Use(rhs));
                     }
                 }
@@ -959,7 +959,7 @@ impl LowerCtx<'_> {
                     cond_tmp,
                     AmirRvalue::Binary {
                         op: BinaryOp::Equal,
-                        left: base_op.clone(),
+                        left: base_op,
                         right: AmirOperand::Constant(AmirConstant::Nil),
                     },
                 );
@@ -1012,7 +1012,7 @@ impl LowerCtx<'_> {
                     cond_tmp,
                     AmirRvalue::Binary {
                         op: BinaryOp::Equal,
-                        left: base_op.clone(),
+                        left: base_op,
                         right: AmirOperand::Constant(AmirConstant::Nil),
                     },
                 );
@@ -1061,7 +1061,7 @@ impl LowerCtx<'_> {
                     cond_tmp,
                     AmirRvalue::Binary {
                         op: BinaryOp::NotEqual,
-                        left: left_op.clone(),
+                        left: left_op,
                         right: AmirOperand::Constant(AmirConstant::Nil),
                     },
                 );

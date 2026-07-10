@@ -220,9 +220,9 @@ fn resolve_generic_callee_symbol(
             let base_ty_id = checker
                 .expr_type_id(*base)
                 .unwrap_or_else(|| crate::passes::type_checker::synth::synth_expr(checker, *base));
-            let base_ty = checker.resolve(base_ty_id).clone();
+            let base_ty = checker.resolve(base_ty_id);
             let actual_base_ty = match &base_ty {
-                ArType::Nullable(inner) => checker.resolve(*inner).clone(),
+                ArType::Nullable(inner) => checker.resolve(*inner),
                 other => other.clone(),
             };
             let struct_id = match &actual_base_ty {

@@ -94,17 +94,17 @@ pub(crate) fn lower_func(
     }
 
     // OSSA Optimization passes
-    // 1. Construct raw AmirFunc for validation and checks
+    // 1. Snapshot func for validation without cloning Vecs (take → check → put back).
     let raw_cfg = crate::cfg::compute_cfg_edges(&ctx.blocks);
-    let raw_func = AmirFunc {
+    let mut raw_func = AmirFunc {
         symbol: f.symbol,
         return_type: ret_ty,
         receiver,
         params: params.clone(),
-        locals: ctx.locals.clone(),
-        temps: ctx.temps.clone(),
-        blocks: ctx.blocks.clone(),
-        stmts: ctx.stmts.clone(),
+        locals: std::mem::take(&mut ctx.locals),
+        temps: std::mem::take(&mut ctx.temps),
+        blocks: std::mem::take(&mut ctx.blocks),
+        stmts: std::mem::take(&mut ctx.stmts),
         cfg: raw_cfg,
     };
 
@@ -119,6 +119,13 @@ pub(crate) fn lower_func(
         &tc.symbols,
     ));
     func_diagnostics.extend(crate::move_checker::check_moves(&raw_func, &tc.symbols));
+
+    // Restore into ctx for phi elimination / rewrite.
+    ctx.locals = std::mem::take(&mut raw_func.locals);
+    ctx.temps = std::mem::take(&mut raw_func.temps);
+    ctx.blocks = std::mem::take(&mut raw_func.blocks);
+    ctx.stmts = std::mem::take(&mut raw_func.stmts);
+    drop(raw_func);
 
     // 3. OSSA Optimization passes
     ctx.eliminate_trivial_phis();

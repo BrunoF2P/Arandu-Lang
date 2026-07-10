@@ -276,7 +276,7 @@ pub(super) fn synth_call_expr(
                     let arg_ids = checker.pool.expr_list(args_range).to_vec();
                     if let Some(first) = arg_ids.first() {
                         let arg_ty_id = super::synth_expr(checker, *first);
-                        let arg_ty = checker.resolve(arg_ty_id).clone();
+                        let arg_ty = checker.resolve(arg_ty_id);
                         if !arg_ty.is_error() && !matches!(arg_ty, ArType::Ptr(_)) {
                             let interner = &checker.type_info.type_interner;
                             checker.diagnostics.push(

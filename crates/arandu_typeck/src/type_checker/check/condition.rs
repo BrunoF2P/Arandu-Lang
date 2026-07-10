@@ -8,7 +8,7 @@ pub fn check_condition(checker: &mut TypeChecker<'_>, condition: &Condition) {
     match condition {
         arandu_parser::Condition::Expr { expr, span } => {
             let cond_ty_id = super::super::synth::synth_expr(checker, *expr);
-            let cond_ty = checker.resolve(cond_ty_id).clone();
+            let cond_ty = checker.resolve(cond_ty_id);
             if !cond_ty.is_error()
                 && !super::super::types::unify(
                     &cond_ty,
