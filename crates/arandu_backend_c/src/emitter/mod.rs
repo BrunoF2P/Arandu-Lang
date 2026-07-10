@@ -122,16 +122,15 @@ impl<'a> CEmitter<'a> {
 
     /// Emit `io_println` matching sanitize_c_ident("io.println").
     fn emit_prelude_println(&mut self) {
-        writeln!(&mut self.output, "static void io_println(ArStr s) {{").unwrap();
-        writeln!(
+        let _ = writeln!(&mut self.output, "static void io_println(ArStr s) {{");
+        let _ = writeln!(
             &mut self.output,
             "    if (s.len > 0 && s.ptr) {{ fwrite(s.ptr, 1, (size_t)s.len, stdout); }}"
-        )
-        .unwrap();
-        writeln!(&mut self.output, "    fputc('\\n', stdout);").unwrap();
-        writeln!(&mut self.output, "    fflush(stdout);").unwrap();
-        writeln!(&mut self.output, "}}").unwrap();
-        writeln!(&mut self.output).unwrap();
+        );
+        let _ = writeln!(&mut self.output, "    fputc('\\n', stdout);");
+        let _ = writeln!(&mut self.output, "    fflush(stdout);");
+        let _ = writeln!(&mut self.output, "}}");
+        let _ = writeln!(&mut self.output);
     }
 
     /// Whether any local/temp/return or pool entry needs the ArStr runtime.
@@ -172,19 +171,19 @@ impl<'a> CEmitter<'a> {
     }
 
     fn emit_headers(&mut self, needs_str: bool) {
-        writeln!(&mut self.output, "#include <stdint.h>").unwrap();
-        writeln!(&mut self.output, "#include <stdbool.h>").unwrap();
-        writeln!(&mut self.output, "#include <stdlib.h>").unwrap();
+        let _ = writeln!(&mut self.output, "#include <stdint.h>");
+        let _ = writeln!(&mut self.output, "#include <stdbool.h>");
+        let _ = writeln!(&mut self.output, "#include <stdlib.h>");
         if needs_str {
-            writeln!(&mut self.output, "#include <string.h>").unwrap();
-            writeln!(&mut self.output, "#include <stdarg.h>").unwrap();
-            writeln!(&mut self.output, "#include <stdio.h>").unwrap();
-            writeln!(&mut self.output, "#include <math.h>").unwrap();
+            let _ = writeln!(&mut self.output, "#include <string.h>");
+            let _ = writeln!(&mut self.output, "#include <stdarg.h>");
+            let _ = writeln!(&mut self.output, "#include <stdio.h>");
+            let _ = writeln!(&mut self.output, "#include <math.h>");
         }
-        writeln!(&mut self.output, "#ifndef AR_UNREACHABLE").unwrap();
-        writeln!(&mut self.output, "#define AR_UNREACHABLE() abort()").unwrap();
-        writeln!(&mut self.output, "#endif").unwrap();
-        writeln!(&mut self.output).unwrap();
+        let _ = writeln!(&mut self.output, "#ifndef AR_UNREACHABLE");
+        let _ = writeln!(&mut self.output, "#define AR_UNREACHABLE() abort()");
+        let _ = writeln!(&mut self.output, "#endif");
+        let _ = writeln!(&mut self.output);
         if !needs_str {
             return;
         }
@@ -194,222 +193,192 @@ impl<'a> CEmitter<'a> {
         } else {
             "int64_t"
         };
-        writeln!(
+        let _ = writeln!(
             &mut self.output,
             "typedef struct {{ const uint8_t *ptr; {len_c_ty} len; }} ArStr;"
-        )
-        .unwrap();
+        );
         self.emitted_types.insert("ArStr".to_string());
         // Runtime helpers for fat-pointer strings (string interpolation).
-        writeln!(
+        let _ = writeln!(
             &mut self.output,
             "static inline void ar_str_unpack(ArStr s, const uint8_t **ptr, {len_c_ty} *len) {{"
-        )
-        .unwrap();
-        writeln!(&mut self.output, "    *ptr = s.ptr;").unwrap();
-        writeln!(&mut self.output, "    *len = s.len;").unwrap();
-        writeln!(&mut self.output, "}}").unwrap();
-        writeln!(
+        );
+        let _ = writeln!(&mut self.output, "    *ptr = s.ptr;");
+        let _ = writeln!(&mut self.output, "    *len = s.len;");
+        let _ = writeln!(&mut self.output, "}}");
+        let _ = writeln!(
             &mut self.output,
             "static inline ArStr ar_str_pack(const uint8_t *ptr, {len_c_ty} len) {{"
-        )
-        .unwrap();
-        writeln!(
+        );
+        let _ = writeln!(
             &mut self.output,
             "    return (ArStr){{ .ptr = ptr, .len = len }};"
-        )
-        .unwrap();
-        writeln!(&mut self.output, "}}").unwrap();
-        writeln!(
+        );
+        let _ = writeln!(&mut self.output, "}}");
+        let _ = writeln!(
             &mut self.output,
             "static ArStr ar_str_concat_n(int n, ...) {{"
-        )
-        .unwrap();
-        writeln!(
+        );
+        let _ = writeln!(
             &mut self.output,
             "    if (n <= 0) return ar_str_pack((const uint8_t*)\"\", 0);"
-        )
-        .unwrap();
-        writeln!(&mut self.output, "    va_list ap;").unwrap();
-        writeln!(&mut self.output, "    va_start(ap, n);").unwrap();
-        writeln!(
+        );
+        let _ = writeln!(&mut self.output, "    va_list ap;");
+        let _ = writeln!(&mut self.output, "    va_start(ap, n);");
+        let _ = writeln!(
             &mut self.output,
             "    ArStr *parts = (ArStr*)malloc((size_t)n * sizeof(ArStr));"
-        )
-        .unwrap();
-        writeln!(
+        );
+        let _ = writeln!(
             &mut self.output,
             "    if (!parts) {{ va_end(ap); abort(); }}"
-        )
-        .unwrap();
-        writeln!(&mut self.output, "    {len_c_ty} total = 0;").unwrap();
-        writeln!(&mut self.output, "    for (int i = 0; i < n; i++) {{").unwrap();
-        writeln!(&mut self.output, "        parts[i] = va_arg(ap, ArStr);").unwrap();
-        writeln!(&mut self.output, "        const uint8_t *p; {len_c_ty} l;").unwrap();
-        writeln!(&mut self.output, "        ar_str_unpack(parts[i], &p, &l);").unwrap();
-        writeln!(&mut self.output, "        if (l > 0) total += l;").unwrap();
-        writeln!(&mut self.output, "    }}").unwrap();
-        writeln!(&mut self.output, "    va_end(ap);").unwrap();
-        writeln!(
+        );
+        let _ = writeln!(&mut self.output, "    {len_c_ty} total = 0;");
+        let _ = writeln!(&mut self.output, "    for (int i = 0; i < n; i++) {{");
+        let _ = writeln!(&mut self.output, "        parts[i] = va_arg(ap, ArStr);");
+        let _ = writeln!(&mut self.output, "        const uint8_t *p; {len_c_ty} l;");
+        let _ = writeln!(&mut self.output, "        ar_str_unpack(parts[i], &p, &l);");
+        let _ = writeln!(&mut self.output, "        if (l > 0) total += l;");
+        let _ = writeln!(&mut self.output, "    }}");
+        let _ = writeln!(&mut self.output, "    va_end(ap);");
+        let _ = writeln!(
             &mut self.output,
             "    uint8_t *buf = (uint8_t*)malloc((size_t)total + 1);"
-        )
-        .unwrap();
-        writeln!(
+        );
+        let _ = writeln!(
             &mut self.output,
             "    if (!buf) {{ free(parts); abort(); }}"
-        )
-        .unwrap();
-        writeln!(&mut self.output, "    {len_c_ty} off = 0;").unwrap();
-        writeln!(&mut self.output, "    for (int i = 0; i < n; i++) {{").unwrap();
-        writeln!(&mut self.output, "        const uint8_t *p; {len_c_ty} l;").unwrap();
-        writeln!(&mut self.output, "        ar_str_unpack(parts[i], &p, &l);").unwrap();
-        writeln!(
+        );
+        let _ = writeln!(&mut self.output, "    {len_c_ty} off = 0;");
+        let _ = writeln!(&mut self.output, "    for (int i = 0; i < n; i++) {{");
+        let _ = writeln!(&mut self.output, "        const uint8_t *p; {len_c_ty} l;");
+        let _ = writeln!(&mut self.output, "        ar_str_unpack(parts[i], &p, &l);");
+        let _ = writeln!(
             &mut self.output,
             "        if (l > 0 && p) {{ memcpy(buf + off, p, (size_t)l); off += l; }}"
-        )
-        .unwrap();
-        writeln!(&mut self.output, "    }}").unwrap();
-        writeln!(&mut self.output, "    buf[total] = 0;").unwrap();
-        writeln!(&mut self.output, "    free(parts);").unwrap();
-        writeln!(&mut self.output, "    return ar_str_pack(buf, total);").unwrap();
-        writeln!(&mut self.output, "}}").unwrap();
+        );
+        let _ = writeln!(&mut self.output, "    }}");
+        let _ = writeln!(&mut self.output, "    buf[total] = 0;");
+        let _ = writeln!(&mut self.output, "    free(parts);");
+        let _ = writeln!(&mut self.output, "    return ar_str_pack(buf, total);");
+        let _ = writeln!(&mut self.output, "}}");
         // ToStr v0.1 helpers (malloc + snprintf; process-lifetime leak OK for debug).
-        writeln!(&mut self.output, "static ArStr ar_i64_to_str(int64_t v) {{").unwrap();
-        writeln!(&mut self.output, "    char tmp[32];").unwrap();
-        writeln!(
+        let _ = writeln!(&mut self.output, "static ArStr ar_i64_to_str(int64_t v) {{");
+        let _ = writeln!(&mut self.output, "    char tmp[32];");
+        let _ = writeln!(
             &mut self.output,
             "    int n = snprintf(tmp, sizeof(tmp), \"%lld\", (long long)v);"
-        )
-        .unwrap();
-        writeln!(&mut self.output, "    if (n < 0) abort();").unwrap();
-        writeln!(
+        );
+        let _ = writeln!(&mut self.output, "    if (n < 0) abort();");
+        let _ = writeln!(
             &mut self.output,
             "    uint8_t *buf = (uint8_t*)malloc((size_t)n + 1);"
-        )
-        .unwrap();
-        writeln!(&mut self.output, "    if (!buf) abort();").unwrap();
-        writeln!(&mut self.output, "    memcpy(buf, tmp, (size_t)n);").unwrap();
-        writeln!(&mut self.output, "    buf[n] = 0;").unwrap();
-        writeln!(
+        );
+        let _ = writeln!(&mut self.output, "    if (!buf) abort();");
+        let _ = writeln!(&mut self.output, "    memcpy(buf, tmp, (size_t)n);");
+        let _ = writeln!(&mut self.output, "    buf[n] = 0;");
+        let _ = writeln!(
             &mut self.output,
             "    return ar_str_pack(buf, ({len_c_ty})n);"
-        )
-        .unwrap();
-        writeln!(&mut self.output, "}}").unwrap();
-        writeln!(
+        );
+        let _ = writeln!(&mut self.output, "}}");
+        let _ = writeln!(
             &mut self.output,
             "static ArStr ar_u64_to_str(uint64_t v) {{"
-        )
-        .unwrap();
-        writeln!(&mut self.output, "    char tmp[32];").unwrap();
-        writeln!(
+        );
+        let _ = writeln!(&mut self.output, "    char tmp[32];");
+        let _ = writeln!(
             &mut self.output,
             "    int n = snprintf(tmp, sizeof(tmp), \"%llu\", (unsigned long long)v);"
-        )
-        .unwrap();
-        writeln!(&mut self.output, "    if (n < 0) abort();").unwrap();
-        writeln!(
+        );
+        let _ = writeln!(&mut self.output, "    if (n < 0) abort();");
+        let _ = writeln!(
             &mut self.output,
             "    uint8_t *buf = (uint8_t*)malloc((size_t)n + 1);"
-        )
-        .unwrap();
-        writeln!(&mut self.output, "    if (!buf) abort();").unwrap();
-        writeln!(&mut self.output, "    memcpy(buf, tmp, (size_t)n);").unwrap();
-        writeln!(&mut self.output, "    buf[n] = 0;").unwrap();
-        writeln!(
+        );
+        let _ = writeln!(&mut self.output, "    if (!buf) abort();");
+        let _ = writeln!(&mut self.output, "    memcpy(buf, tmp, (size_t)n);");
+        let _ = writeln!(&mut self.output, "    buf[n] = 0;");
+        let _ = writeln!(
             &mut self.output,
             "    return ar_str_pack(buf, ({len_c_ty})n);"
-        )
-        .unwrap();
-        writeln!(&mut self.output, "}}").unwrap();
+        );
+        let _ = writeln!(&mut self.output, "}}");
         // Keep in sync with arandu_backend_cranelift::to_str_runtime::format_f64_v01
         // (specials + integer-looking values + %.15g for the rest).
-        writeln!(&mut self.output, "static ArStr ar_f64_to_str(double v) {{").unwrap();
-        writeln!(&mut self.output, "    char tmp[64];").unwrap();
-        writeln!(&mut self.output, "    int n;").unwrap();
-        writeln!(
+        let _ = writeln!(&mut self.output, "static ArStr ar_f64_to_str(double v) {{");
+        let _ = writeln!(&mut self.output, "    char tmp[64];");
+        let _ = writeln!(&mut self.output, "    int n;");
+        let _ = writeln!(
             &mut self.output,
             "    if (isnan(v)) {{ n = snprintf(tmp, sizeof(tmp), \"nan\"); }}"
-        )
-        .unwrap();
-        writeln!(
+        );
+        let _ = writeln!(
             &mut self.output,
             "    else if (isinf(v)) {{ n = snprintf(tmp, sizeof(tmp), \"%s\", (v < 0) ? \"-inf\" : \"inf\"); }}"
-        )
-        .unwrap();
-        writeln!(
+        );
+        let _ = writeln!(
             &mut self.output,
             "    else if (v == (double)(long long)v && v < 1e15 && v > -1e15) {{ n = snprintf(tmp, sizeof(tmp), \"%lld\", (long long)v); }}"
-        )
-        .unwrap();
-        writeln!(
+        );
+        let _ = writeln!(
             &mut self.output,
             "    else {{ n = snprintf(tmp, sizeof(tmp), \"%.15g\", v); }}"
-        )
-        .unwrap();
-        writeln!(&mut self.output, "    if (n < 0) abort();").unwrap();
-        writeln!(
+        );
+        let _ = writeln!(&mut self.output, "    if (n < 0) abort();");
+        let _ = writeln!(
             &mut self.output,
             "    uint8_t *buf = (uint8_t*)malloc((size_t)n + 1);"
-        )
-        .unwrap();
-        writeln!(&mut self.output, "    if (!buf) abort();").unwrap();
-        writeln!(&mut self.output, "    memcpy(buf, tmp, (size_t)n);").unwrap();
-        writeln!(&mut self.output, "    buf[n] = 0;").unwrap();
-        writeln!(
+        );
+        let _ = writeln!(&mut self.output, "    if (!buf) abort();");
+        let _ = writeln!(&mut self.output, "    memcpy(buf, tmp, (size_t)n);");
+        let _ = writeln!(&mut self.output, "    buf[n] = 0;");
+        let _ = writeln!(
             &mut self.output,
             "    return ar_str_pack(buf, ({len_c_ty})n);"
-        )
-        .unwrap();
-        writeln!(&mut self.output, "}}").unwrap();
-        writeln!(&mut self.output, "static ArStr ar_bool_to_str(bool v) {{").unwrap();
-        writeln!(
+        );
+        let _ = writeln!(&mut self.output, "}}");
+        let _ = writeln!(&mut self.output, "static ArStr ar_bool_to_str(bool v) {{");
+        let _ = writeln!(
             &mut self.output,
             "    const char *s = v ? \"true\" : \"false\";"
-        )
-        .unwrap();
-        writeln!(&mut self.output, "    {len_c_ty} n = v ? 4 : 5;").unwrap();
-        writeln!(
+        );
+        let _ = writeln!(&mut self.output, "    {len_c_ty} n = v ? 4 : 5;");
+        let _ = writeln!(
             &mut self.output,
             "    uint8_t *buf = (uint8_t*)malloc((size_t)n + 1);"
-        )
-        .unwrap();
-        writeln!(&mut self.output, "    if (!buf) abort();").unwrap();
-        writeln!(&mut self.output, "    memcpy(buf, s, (size_t)n);").unwrap();
-        writeln!(&mut self.output, "    buf[n] = 0;").unwrap();
-        writeln!(&mut self.output, "    return ar_str_pack(buf, n);").unwrap();
-        writeln!(&mut self.output, "}}").unwrap();
-        writeln!(
+        );
+        let _ = writeln!(&mut self.output, "    if (!buf) abort();");
+        let _ = writeln!(&mut self.output, "    memcpy(buf, s, (size_t)n);");
+        let _ = writeln!(&mut self.output, "    buf[n] = 0;");
+        let _ = writeln!(&mut self.output, "    return ar_str_pack(buf, n);");
+        let _ = writeln!(&mut self.output, "}}");
+        let _ = writeln!(
             &mut self.output,
             "static ArStr ar_char_to_str(uint32_t cp) {{"
-        )
-        .unwrap();
-        writeln!(&mut self.output, "    uint8_t tmp[4];").unwrap();
-        writeln!(&mut self.output, "    int n = 0;").unwrap();
-        writeln!(
+        );
+        let _ = writeln!(&mut self.output, "    uint8_t tmp[4];");
+        let _ = writeln!(&mut self.output, "    int n = 0;");
+        let _ = writeln!(
             &mut self.output,
             "    if (cp <= 0x7F) {{ tmp[0] = (uint8_t)cp; n = 1; }}"
-        )
-        .unwrap();
-        writeln!(&mut self.output, "    else if (cp <= 0x7FF) {{ tmp[0] = (uint8_t)(0xC0 | (cp >> 6)); tmp[1] = (uint8_t)(0x80 | (cp & 0x3F)); n = 2; }}").unwrap();
-        writeln!(&mut self.output, "    else if (cp <= 0xFFFF) {{ tmp[0] = (uint8_t)(0xE0 | (cp >> 12)); tmp[1] = (uint8_t)(0x80 | ((cp >> 6) & 0x3F)); tmp[2] = (uint8_t)(0x80 | (cp & 0x3F)); n = 3; }}").unwrap();
-        writeln!(&mut self.output, "    else {{ tmp[0] = (uint8_t)(0xF0 | (cp >> 18)); tmp[1] = (uint8_t)(0x80 | ((cp >> 12) & 0x3F)); tmp[2] = (uint8_t)(0x80 | ((cp >> 6) & 0x3F)); tmp[3] = (uint8_t)(0x80 | (cp & 0x3F)); n = 4; }}").unwrap();
-        writeln!(
+        );
+        let _ = writeln!(&mut self.output, "    else if (cp <= 0x7FF) {{ tmp[0] = (uint8_t)(0xC0 | (cp >> 6)); tmp[1] = (uint8_t)(0x80 | (cp & 0x3F)); n = 2; }}");
+        let _ = writeln!(&mut self.output, "    else if (cp <= 0xFFFF) {{ tmp[0] = (uint8_t)(0xE0 | (cp >> 12)); tmp[1] = (uint8_t)(0x80 | ((cp >> 6) & 0x3F)); tmp[2] = (uint8_t)(0x80 | (cp & 0x3F)); n = 3; }}");
+        let _ = writeln!(&mut self.output, "    else {{ tmp[0] = (uint8_t)(0xF0 | (cp >> 18)); tmp[1] = (uint8_t)(0x80 | ((cp >> 12) & 0x3F)); tmp[2] = (uint8_t)(0x80 | ((cp >> 6) & 0x3F)); tmp[3] = (uint8_t)(0x80 | (cp & 0x3F)); n = 4; }}");
+        let _ = writeln!(
             &mut self.output,
             "    uint8_t *buf = (uint8_t*)malloc((size_t)n + 1);"
-        )
-        .unwrap();
-        writeln!(&mut self.output, "    if (!buf) abort();").unwrap();
-        writeln!(&mut self.output, "    memcpy(buf, tmp, (size_t)n);").unwrap();
-        writeln!(&mut self.output, "    buf[n] = 0;").unwrap();
-        writeln!(
+        );
+        let _ = writeln!(&mut self.output, "    if (!buf) abort();");
+        let _ = writeln!(&mut self.output, "    memcpy(buf, tmp, (size_t)n);");
+        let _ = writeln!(&mut self.output, "    buf[n] = 0;");
+        let _ = writeln!(
             &mut self.output,
             "    return ar_str_pack(buf, ({len_c_ty})n);"
-        )
-        .unwrap();
-        writeln!(&mut self.output, "}}").unwrap();
-        writeln!(&mut self.output).unwrap();
+        );
+        let _ = writeln!(&mut self.output, "}}");
+        let _ = writeln!(&mut self.output);
     }
 
     /// C linkage name for a function's return type (`main` is always `int`).
@@ -426,21 +395,20 @@ impl<'a> CEmitter<'a> {
         for (i, entry) in self.program.literal_pool.entries.iter().enumerate() {
             if let AmirLiteralEntry::Str(s) = entry {
                 // emit global array
-                write!(&mut self.output, "static const uint8_t STR_{}[] = {{", i).unwrap();
+                let _ = write!(&mut self.output, "static const uint8_t STR_{}[] = {{", i);
                 for b in s.bytes() {
-                    write!(&mut self.output, "{},", b).unwrap();
+                    let _ = write!(&mut self.output, "{},", b);
                 }
-                writeln!(&mut self.output, "0}};").unwrap(); // null terminator for safety
+                let _ = writeln!(&mut self.output, "0}};"); // null terminator for safety
 
                 // ArStr fat-pointer constant matching LayoutEngine (ptr + len)
-                writeln!(
+                let _ = writeln!(
                     &mut self.output,
                     "static const ArStr AR_STR_{} = {{ .ptr = STR_{}, .len = {} }};",
                     i,
                     i,
                     s.len()
-                )
-                .unwrap();
+                );
             }
         }
     }
@@ -472,19 +440,17 @@ impl<'a> CEmitter<'a> {
 
         let layout = self.layout.layout_of_type(ty, self.interner, self.provider);
         if layout.size > 0 {
-            writeln!(
+            let _ = writeln!(
                 &mut self.output,
                 "typedef struct {{ _Alignas({}) uint8_t memory[{}]; }} {};",
                 layout.align, layout.size, name
-            )
-            .unwrap();
+            );
         } else {
-            writeln!(
+            let _ = writeln!(
                 &mut self.output,
                 "typedef struct {{ uint8_t empty; }} {};",
                 name
-            )
-            .unwrap(); // C doesn't like zero sized structs sometimes
+            ); // C doesn't like zero sized structs sometimes
         }
         self.emitted_types.insert(name);
     }
@@ -492,37 +458,37 @@ impl<'a> CEmitter<'a> {
     fn emit_func_decl(&mut self, func: &AmirFunc) {
         let name = sanitize_c_ident(&self.symbols.get(func.symbol).name);
         let ret_ty = self.c_func_return_type(func);
-        write!(&mut self.output, "{} {}(", ret_ty, name).unwrap();
+        let _ = write!(&mut self.output, "{} {}(", ret_ty, name);
         for (i, param) in func.params.iter().enumerate() {
             if i > 0 {
-                write!(&mut self.output, ", ").unwrap();
+                let _ = write!(&mut self.output, ", ");
             }
             let ty = self.temp_ty(func, *param);
             let ty_str = self.format_type(&ty);
-            write!(&mut self.output, "{} p{}", ty_str, param.as_usize()).unwrap();
+            let _ = write!(&mut self.output, "{} p{}", ty_str, param.as_usize());
         }
         if func.params.is_empty() {
-            write!(&mut self.output, "void").unwrap();
+            let _ = write!(&mut self.output, "void");
         }
-        writeln!(&mut self.output, ");").unwrap();
+        let _ = writeln!(&mut self.output, ");");
     }
 
     fn emit_func(&mut self, func: &AmirFunc) {
         let name = sanitize_c_ident(&self.symbols.get(func.symbol).name);
         let ret_ty = self.c_func_return_type(func);
-        write!(&mut self.output, "{} {}(", ret_ty, name).unwrap();
+        let _ = write!(&mut self.output, "{} {}(", ret_ty, name);
         for (i, param) in func.params.iter().enumerate() {
             if i > 0 {
-                write!(&mut self.output, ", ").unwrap();
+                let _ = write!(&mut self.output, ", ");
             }
             let ty = self.temp_ty(func, *param);
             let ty_str = self.format_type(&ty);
-            write!(&mut self.output, "{} p{}", ty_str, param.as_usize()).unwrap();
+            let _ = write!(&mut self.output, "{} p{}", ty_str, param.as_usize());
         }
         if func.params.is_empty() {
-            write!(&mut self.output, "void").unwrap();
+            let _ = write!(&mut self.output, "void");
         }
-        writeln!(&mut self.output, ") {{").unwrap();
+        let _ = writeln!(&mut self.output, ") {{");
 
         // Declare locals and temps strictly at the top
         let mut used_locals = rustc_hash::FxHashSet::default();
@@ -719,23 +685,23 @@ impl<'a> CEmitter<'a> {
             if used_locals.contains(&i) {
                 let ty = self.interner.resolve(local.ty);
                 let ty_str = self.format_type(&ty);
-                writeln!(&mut self.output, "    {} l{};", ty_str, i).unwrap();
+                let _ = writeln!(&mut self.output, "    {} l{};", ty_str, i);
             }
         }
         for (i, temp) in func.temps.iter().enumerate() {
             if used_temps.contains(&i) {
                 let ty = self.interner.resolve(temp.ty);
                 let ty_str = self.format_type(&ty);
-                writeln!(&mut self.output, "    {} t{};", ty_str, i).unwrap();
+                let _ = writeln!(&mut self.output, "    {} t{};", ty_str, i);
             }
         }
 
-        writeln!(&mut self.output).unwrap();
+        let _ = writeln!(&mut self.output);
 
         // Initialize temps from params
         for (i, _) in func.temps.iter().enumerate() {
             if func.params.iter().any(|&p| p.as_usize() == i) {
-                writeln!(&mut self.output, "    t{} = p{};", i, i).unwrap();
+                let _ = writeln!(&mut self.output, "    t{} = p{};", i, i);
             }
         }
 
@@ -768,7 +734,7 @@ impl<'a> CEmitter<'a> {
         for block in &func.blocks {
             let bid = block.id.as_usize();
             if jump_targets.contains(&bid) {
-                writeln!(&mut self.output, "bb{bid}:").unwrap();
+                let _ = writeln!(&mut self.output, "bb{bid}:");
             }
             for stmt in func.block_stmts(block.id) {
                 self.emit_stmt(stmt, func);
@@ -776,7 +742,7 @@ impl<'a> CEmitter<'a> {
             self.emit_terminator(&block.terminator, func);
         }
 
-        writeln!(&mut self.output, "}}").unwrap();
-        writeln!(&mut self.output).unwrap();
+        let _ = writeln!(&mut self.output, "}}");
+        let _ = writeln!(&mut self.output);
     }
 }

@@ -47,4 +47,7 @@ rowan = "0.16.1"
 # Intentionally empty: use default toolchain lint levels.
 
 [workspace.lints.clippy]
-# No clippy overrides.
+# U0 hygiene gate (plan: unwrap/clone root fix). Start as warn workspace-wide;
+# crates that finished U1 set deny locally (backend_c, cli, …).
+unwrap_used = "warn"
+expect_used = "warn"

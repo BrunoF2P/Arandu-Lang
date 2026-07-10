@@ -41,10 +41,26 @@ To build and test Arandu, you will need the standard Rust toolchain installed:
    ```bash
    cargo clippy --workspace --all-targets
    ```
+- **No `unwrap` / `expect` in library production code** (`crates/*/src`, excluding `#[cfg(test)]`):
+  - Prefer `Result<T, Diagnostic>` (or `thiserror` mapped to `Diagnostic` at the CLI/LSP edge).
+  - Compiler invariant breaks → `Diagnostic::ice(DiagCode::…)` (reportable ICE), **not** `panic!`/`expect`.
+  - Writing into a `String` buffer: `let _ = write!(…)` or propagate `fmt::Result` — never `.unwrap()` on format.
+  - `Cursor::expect` in the hand-parser is a **`Result`**, not `Option::expect` — that pattern is fine.
+  - Allowed only in tests and, as a last resort, binary entrypoints with a clear user-facing message.
+- **No deep-clone of heavy IR on hot paths**:
+  - Salsa memos already wrap payloads in `HashEq` → `Arc<T>`. Prefer `Arc::clone` / `HashEq::share`.
+  - Do **not** write `(*hash_eq).clone()` or `program.as_ref().clone()` for `Program` / `AmirProgram`.
+  - Mutate shared data with `Arc::make_mut` or `Arc::unwrap_or_clone` only when ownership is required (e.g. `--opt`).
 - **Casing Rules**: Arandu uses strict casing rules to distinguish values and types:
   - **Values & Functions**: `camelCase` (e.g. `userName`, `totalPrice`, `parseJson`).
   - **Types & Structs**: `PascalCase` (e.g. `User`, `HttpClient`).
   - **Enum Variants**: `PascalCase` (e.g. `Ok`, `Err`, `Loading`).
+
+Inventory helper (optional):
+
+```bash
+./scripts/count_unwrap_clone.sh
+```
 
 ---
 

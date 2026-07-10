@@ -38,9 +38,15 @@ impl AranduJit {
     /// fastest JIT compilation during development/testing).
     pub fn try_new() -> Result<Self, Diagnostic> {
         let mut flag_builder = settings::builder();
-        flag_builder.set("use_colocated_libcalls", "false").unwrap();
-        flag_builder.set("is_pic", "false").unwrap();
-        flag_builder.set("opt_level", "none").unwrap();
+        for (key, val) in [
+            ("use_colocated_libcalls", "false"),
+            ("is_pic", "false"),
+            ("opt_level", "none"),
+        ] {
+            flag_builder.set(key, val).map_err(|e| {
+                codegen_ice(format!("failed to set Cranelift flag {key}={val}: {e}"))
+            })?;
+        }
 
         let isa_builder = cranelift_native::builder()
             .map_err(|e| codegen_ice(format!("Failed to create Cranelift isa builder: {e}")))?;

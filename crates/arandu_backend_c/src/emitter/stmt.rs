@@ -9,35 +9,35 @@ impl<'a> CEmitter<'a> {
             AmirStmt::Assign { lhs, rhs } => {
                 let lhs_ty = self.temp_ty(func, *lhs);
                 let lhs_c_ty = self.format_type(&lhs_ty);
-                write!(&mut self.output, "    t{} = ", lhs.as_usize()).unwrap();
+                let _ = write!(&mut self.output, "    t{} = ", lhs.as_usize());
                 self.emit_rvalue(rhs, func, &lhs_ty, &lhs_c_ty);
-                writeln!(&mut self.output, ";").unwrap();
+                let _ = writeln!(&mut self.output, ";");
             }
             AmirStmt::Store { lhs, rhs } => {
                 let lhs_str = self.format_place(lhs, func);
                 let rhs_str = self.format_operand(rhs, func);
-                writeln!(&mut self.output, "    {} = {};", lhs_str, rhs_str).unwrap();
+                let _ = writeln!(&mut self.output, "    {} = {};", lhs_str, rhs_str);
             }
             AmirStmt::Call { lhs, callee, args } => {
                 let callee_str = self.format_operand(callee, func);
                 let args_str: Vec<_> = args.iter().map(|a| self.format_operand(a, func)).collect();
                 if let Some(dest) = lhs {
-                    write!(&mut self.output, "    t{} = ", dest.as_usize()).unwrap();
+                    let _ = write!(&mut self.output, "    t{} = ", dest.as_usize());
                 } else {
-                    write!(&mut self.output, "    ").unwrap();
+                    let _ = write!(&mut self.output, "    ");
                 }
-                write!(&mut self.output, "{callee_str}(").unwrap();
+                let _ = write!(&mut self.output, "{callee_str}(");
                 for (i, arg_str) in args_str.iter().enumerate() {
                     if i > 0 {
-                        write!(&mut self.output, ", ").unwrap();
+                        let _ = write!(&mut self.output, ", ");
                     }
-                    write!(&mut self.output, "{}", arg_str).unwrap();
+                    let _ = write!(&mut self.output, "{}", arg_str);
                 }
-                writeln!(&mut self.output, ");").unwrap();
+                let _ = writeln!(&mut self.output, ");");
             }
             AmirStmt::Free(op) => {
                 let op_str = self.format_operand(op, func);
-                writeln!(&mut self.output, "    free({});", op_str).unwrap();
+                let _ = writeln!(&mut self.output, "    free({});", op_str);
             }
             AmirStmt::StorageLive(_) | AmirStmt::StorageDead(_) => {}
             AmirStmt::Destroy(_) | AmirStmt::Nop => {}
@@ -52,19 +52,19 @@ impl<'a> CEmitter<'a> {
                 if name == "main" {
                     // ISO C requires `int main`; void Arandu main becomes `return 0`.
                     if matches!(ret, ArType::Void) {
-                        writeln!(&mut self.output, "    return 0;").unwrap();
+                        let _ = writeln!(&mut self.output, "    return 0;");
                     } else {
-                        writeln!(&mut self.output, "    return (int)t0;").unwrap();
+                        let _ = writeln!(&mut self.output, "    return (int)t0;");
                     }
                 } else if matches!(ret, ArType::Void) {
-                    writeln!(&mut self.output, "    return;").unwrap();
+                    let _ = writeln!(&mut self.output, "    return;");
                 } else {
-                    writeln!(&mut self.output, "    return t0;").unwrap();
+                    let _ = writeln!(&mut self.output, "    return t0;");
                 }
             }
             AmirTerminator::Goto { target, args } => {
                 self.emit_block_arguments(*target, args, func, "    ");
-                writeln!(&mut self.output, "    goto bb{};", target.as_usize()).unwrap();
+                let _ = writeln!(&mut self.output, "    goto bb{};", target.as_usize());
             }
             AmirTerminator::Branch {
                 condition,
@@ -74,13 +74,13 @@ impl<'a> CEmitter<'a> {
                 false_args,
             } => {
                 let cond_str = self.format_operand(condition, func);
-                writeln!(&mut self.output, "    if ({}) {{", cond_str).unwrap();
+                let _ = writeln!(&mut self.output, "    if ({}) {{", cond_str);
                 self.emit_block_arguments(*if_true, true_args, func, "        ");
-                writeln!(&mut self.output, "        goto bb{};", if_true.as_usize()).unwrap();
-                writeln!(&mut self.output, "    }} else {{").unwrap();
+                let _ = writeln!(&mut self.output, "        goto bb{};", if_true.as_usize());
+                let _ = writeln!(&mut self.output, "    }} else {{");
                 self.emit_block_arguments(*if_false, false_args, func, "        ");
-                writeln!(&mut self.output, "        goto bb{};", if_false.as_usize()).unwrap();
-                writeln!(&mut self.output, "    }}").unwrap();
+                let _ = writeln!(&mut self.output, "        goto bb{};", if_false.as_usize());
+                let _ = writeln!(&mut self.output, "    }}");
             }
             AmirTerminator::SwitchInt {
                 discriminant,
@@ -88,29 +88,27 @@ impl<'a> CEmitter<'a> {
                 otherwise,
             } => {
                 let discr_str = self.format_operand(discriminant, func);
-                writeln!(&mut self.output, "    switch ({}) {{", discr_str).unwrap();
+                let _ = writeln!(&mut self.output, "    switch ({}) {{", discr_str);
                 for (val, target, args) in targets.iter() {
-                    writeln!(&mut self.output, "        case {}:", val).unwrap();
+                    let _ = writeln!(&mut self.output, "        case {}:", val);
                     self.emit_block_arguments(*target, args, func, "            ");
-                    writeln!(
+                    let _ = writeln!(
                         &mut self.output,
                         "            goto bb{};",
                         target.as_usize()
-                    )
-                    .unwrap();
+                    );
                 }
-                writeln!(&mut self.output, "        default:").unwrap();
+                let _ = writeln!(&mut self.output, "        default:");
                 self.emit_block_arguments(otherwise.0, &otherwise.1, func, "            ");
-                writeln!(
+                let _ = writeln!(
                     &mut self.output,
                     "            goto bb{};",
                     otherwise.0.as_usize()
-                )
-                .unwrap();
-                writeln!(&mut self.output, "    }}").unwrap();
+                );
+                let _ = writeln!(&mut self.output, "    }}");
             }
             AmirTerminator::Unreachable => {
-                writeln!(&mut self.output, "    AR_UNREACHABLE();").unwrap();
+                let _ = writeln!(&mut self.output, "    AR_UNREACHABLE();");
             }
         }
     }
@@ -125,14 +123,13 @@ impl<'a> CEmitter<'a> {
         let target_block = &func.blocks[target.as_usize()];
         for (param, arg) in target_block.params.iter().zip(args.iter()) {
             let arg_str = self.format_operand(arg, func);
-            writeln!(
+            let _ = writeln!(
                 &mut self.output,
                 "{}t{} = {};",
                 indent,
                 param.id.as_usize(),
                 arg_str
-            )
-            .unwrap();
+            );
         }
     }
 }

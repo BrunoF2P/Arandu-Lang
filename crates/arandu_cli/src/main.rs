@@ -45,7 +45,8 @@ fn validate_hir_and_analyze(
 }
 
 struct CheckedProgram {
-    program: arandu_parser::Program,
+    /// Shared with Salsa memo — never deep-clone the AST.
+    program: std::sync::Arc<arandu_parser::Program>,
     type_check: arandu_semantics::TypeCheckResult,
 }
 
@@ -56,7 +57,7 @@ fn parse_and_check(
 ) -> CheckedProgram {
     let program_res = arandu_query::passes::parse(db, file);
     let program = match &*program_res {
-        Ok(program) => program.as_ref().clone(),
+        Ok(program) => std::sync::Arc::clone(program),
         Err(err) => print_parse_error_and_exit(err, filepath),
     };
 
@@ -73,7 +74,7 @@ fn parse_and_check(
         .iter()
         .any(|d| matches!(d.severity, arandu_middle::Severity::Error));
     if !diags.is_empty() {
-        let source = std::fs::read_to_string(filepath).unwrap_or_default();
+        let source = std::fs::read_to_string(filepath).unwrap_or_else(|_| String::new());
         let named_source = miette::NamedSource::new(filepath, source);
         for diagnostic in &diags {
             let report =
@@ -85,6 +86,7 @@ fn parse_and_check(
         }
     }
 
+    // TypeCheckResult is Arc-heavy (symbols/resolved/type_info) — clone is O(1) for IR.
     CheckedProgram {
         program,
         type_check: (*type_check).clone(),
@@ -364,16 +366,26 @@ fn main() {
                 };
                 validate_hir_and_analyze(&hir, &checked.type_check, &filepath);
 
-                let mut amir = {
+                let amir_he = {
                     arandu_base::time_pass!("lower-amir");
-                    let amir_program = arandu_query::passes::lower_amir(&db, source_file);
-                    (*amir_program).clone()
+                    arandu_query::passes::lower_amir(&db, source_file)
                 };
-
-                if opt {
+                // HashEq already holds Arc<AmirProgram>; only unshare if --opt mutates.
+                let mut amir_owned = if opt {
+                    Some(std::sync::Arc::unwrap_or_clone(std::sync::Arc::clone(
+                        &amir_he.value,
+                    )))
+                } else {
+                    None
+                };
+                if let Some(ref mut amir) = amir_owned {
                     arandu_base::time_pass!("optimize-amir");
-                    arandu_semantics::optimize_amir(&mut amir);
+                    arandu_semantics::optimize_amir(amir);
                 }
+                let amir = match &amir_owned {
+                    Some(a) => a,
+                    None => &*amir_he,
+                };
 
                 if debug {
                     println!("{amir:#?}");
@@ -407,18 +419,28 @@ fn main() {
                 tracing::info!("HIR lowering completed");
                 validate_hir_and_analyze(&hir, &checked.type_check, &filepath);
 
-                let mut amir = {
+                let amir_he = {
                     arandu_base::time_pass!("lower-amir");
-                    let amir_program = arandu_query::passes::lower_amir(&db, source_file);
-                    (*amir_program).clone()
+                    arandu_query::passes::lower_amir(&db, source_file)
                 };
                 tracing::info!("AMIR lowering completed");
 
-                if opt {
+                let mut amir_owned = if opt {
+                    Some(std::sync::Arc::unwrap_or_clone(std::sync::Arc::clone(
+                        &amir_he.value,
+                    )))
+                } else {
+                    None
+                };
+                if let Some(ref mut amir) = amir_owned {
                     arandu_base::time_pass!("optimize-amir");
-                    arandu_semantics::optimize_amir(&mut amir);
+                    arandu_semantics::optimize_amir(amir);
                     tracing::info!("Optimisation passes applied");
                 }
+                let amir = match &amir_owned {
+                    Some(a) => a,
+                    None => &*amir_he,
+                };
 
                 use arandu_semantics::{CodegenBackend, CompiledCode};
                 let output = {
@@ -429,7 +451,7 @@ fn main() {
                     };
                     match CodegenBackend::compile(
                         backend,
-                        &amir,
+                        amir,
                         checked.type_check.symbols.as_ref(),
                         checked.type_check.type_info.as_ref(),
                     ) {
@@ -493,19 +515,29 @@ fn main() {
                 };
                 validate_hir_and_analyze(&hir, &checked.type_check, &filepath);
 
-                let mut amir = {
+                let amir_he = {
                     arandu_base::time_pass!("lower-amir");
-                    let amir_program = arandu_query::passes::lower_amir(&db, source_file);
-                    (*amir_program).clone()
+                    arandu_query::passes::lower_amir(&db, source_file)
                 };
-                if opt {
+                let mut amir_owned = if opt {
+                    Some(std::sync::Arc::unwrap_or_clone(std::sync::Arc::clone(
+                        &amir_he.value,
+                    )))
+                } else {
+                    None
+                };
+                if let Some(ref mut amir) = amir_owned {
                     arandu_base::time_pass!("optimize-amir");
-                    arandu_semantics::optimize_amir(&mut amir);
+                    arandu_semantics::optimize_amir(amir);
                 }
+                let amir = match &amir_owned {
+                    Some(a) => a,
+                    None => &*amir_he,
+                };
 
                 arandu_base::time_pass!("emit-c");
                 let c_src = arandu_backend_c::emit_c(
-                    &amir,
+                    amir,
                     checked.type_check.symbols.as_ref(),
                     checked.type_check.type_info.as_ref(),
                     &checked.type_check.type_info.type_interner,
@@ -527,13 +559,20 @@ fn main() {
                     node_map.insert(node, new_node);
                 }
                 for edge in dep_graph.edge_indices() {
-                    let (source, target) = dep_graph.edge_endpoints(edge).unwrap();
-                    dot_graph.add_edge(node_map[&source], node_map[&target], ());
+                    let Some((source, target)) = dep_graph.edge_endpoints(edge) else {
+                        continue;
+                    };
+                    if let (Some(&s), Some(&t)) = (node_map.get(&source), node_map.get(&target)) {
+                        dot_graph.add_edge(s, t, ());
+                    }
                 }
                 println!("{:?}", petgraph::dot::Dot::with_config(&dot_graph, &[]));
             }
 
-            _ => unreachable!(),
+            _ => {
+                eprintln!("Error: unknown command");
+                process::exit(2);
+            }
         }
     };
 
@@ -542,7 +581,10 @@ fn main() {
         source_files
             .into_par_iter()
             .for_each(|(source_file, filepath, source)| {
-                let thread_db = db_mutex.lock().unwrap().clone();
+                let thread_db = match db_mutex.lock() {
+                    Ok(guard) => guard.clone(),
+                    Err(poisoned) => poisoned.into_inner().clone(),
+                };
                 process_file(source_file, filepath, source, thread_db);
             });
     } else {
