@@ -3,6 +3,7 @@ pub mod dataflow;
 pub mod db;
 pub mod doc_store;
 pub mod explain;
+pub mod highlight;
 pub mod passes;
 pub mod stable_hash;
 
@@ -16,5 +17,6 @@ pub use dataflow::{
 pub use db::{ArandCompilerDb, DatabaseImpl, SourceFile};
 pub use doc_store::{DocumentId, DocumentStore, OpenDocument};
 pub use explain::{any_execute, RebuildEvent, RebuildLog};
+pub use highlight::{compute_highlights, file_highlights, HlKind, HlToken};
 pub use passes::{file_typeck_view, item_body_typeck, syntax_tree};
 pub use stable_hash::StableHash;

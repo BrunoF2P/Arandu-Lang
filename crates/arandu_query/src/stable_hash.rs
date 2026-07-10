@@ -8,6 +8,7 @@ use arandu_parser::{ParseError, Program};
 use arandu_semantics::amir::AmirProgram;
 use arandu_semantics::TypeCheckResult;
 use blake3::Hasher;
+use std::sync::Arc;
 
 /// Types that can be content-addressed for [`super::HashEq`].
 pub trait StableHash {
@@ -286,6 +287,21 @@ impl StableHash for crate::passes::ItemSourceInput {
         h.update(b"ItemSourceInput/v2");
         hash_symbol_id(&mut h, self.item_sym);
         h.update(self.body_fp.as_bytes());
+        finish(h)
+    }
+}
+
+impl StableHash for Arc<[crate::highlight::HlToken]> {
+    fn stable_hash(&self) -> blake3::Hash {
+        let mut h = Hasher::new();
+        h.update(b"HlTokenSlice/v1");
+        h.update(&u64_le(self.len() as u64));
+        for t in self.iter() {
+            h.update(&u32_le(t.start));
+            h.update(&u32_le(t.end));
+            h.update(&[t.kind as u8]);
+            h.update(&u32_le(u32::from(t.mods)));
+        }
         finish(h)
     }
 }

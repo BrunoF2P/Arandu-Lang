@@ -57,9 +57,10 @@ SourceFile.text
 | Lower re-lex full | Tokens cacheados no `SyntaxTree`; `parse_token_stream` |
 | `syntax_tree` sempre full | Cache + `reparse_subtree` em edit contíguo |
 | One-line `return 1 }` | `;` opcional antes de `RBRACE`/`EOF` no parser |
+| Heap H0 | Arc tokens/text, token splice, `Arc<Program>`, `HashEq::share` |
+| Highlight tipado (F2a) | `file_highlights` + legend LSP (`function`/`parameter`/…) |
 
-## Fora de escopo residual
+## Em progresso / próximo
 
-- Lower AST por walk estrutural de green nodes (sem RD; requer CST com nós FUNC/STMT).  
-- Highlight semântico por tipos (só léxico via CST por ora).  
-- Code actions / format.
+- Code actions / format (`arandu_fmt`, quickfixes).  
+- Lower AST por walk estrutural de green nodes (F1; CST com `FUNC`/`STMT`).

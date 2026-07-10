@@ -387,53 +387,48 @@ pub fn signature_help(
     })
 }
 
-/// Legend order for semantic tokens (must match encoding below).
+/// Legend order for semantic tokens (must match [`arandu_query::HlKind`] discriminant).
 #[must_use]
 pub fn semantic_tokens_legend() -> SemanticTokensLegend {
     SemanticTokensLegend {
         token_types: vec![
-            SemanticTokenType::KEYWORD,
-            SemanticTokenType::VARIABLE,
-            SemanticTokenType::TYPE,
-            SemanticTokenType::NUMBER,
-            SemanticTokenType::STRING,
-            SemanticTokenType::COMMENT,
-            SemanticTokenType::OPERATOR,
+            SemanticTokenType::KEYWORD,   // 0 HlKind::Keyword
+            SemanticTokenType::FUNCTION,  // 1 Function
+            SemanticTokenType::VARIABLE,  // 2 Variable
+            SemanticTokenType::PARAMETER, // 3 Parameter
+            SemanticTokenType::TYPE,      // 4 Type
+            SemanticTokenType::STRUCT,    // 5 Struct
+            SemanticTokenType::ENUM,      // 6 Enum
+            SemanticTokenType::INTERFACE, // 7 Interface
+            SemanticTokenType::NAMESPACE, // 8 Namespace
+            SemanticTokenType::NUMBER,    // 9 Number
+            SemanticTokenType::STRING,    // 10 String
+            SemanticTokenType::COMMENT,   // 11 Comment
+            SemanticTokenType::OPERATOR,  // 12 Operator
+            SemanticTokenType::PROPERTY,  // 13 Property
+            // Constant → use VARIABLE with no extra type in base legend; map as VARIABLE-like
+            // LSP has no CONSTANT in older specs; use `SemanticTokenType::VARIABLE` duplicate
+            // slot via custom — use ENUM_MEMBER as closest for constants.
+            SemanticTokenType::ENUM_MEMBER, // 14 Constant
         ],
         token_modifiers: vec![],
     }
 }
 
-fn highlight_class_to_type_index(class: &str) -> Option<u32> {
-    Some(match class {
-        "keyword" => 0,
-        "variable" => 1,
-        "type" => 2,
-        "number" => 3,
-        "string" => 4,
-        "comment" => 5,
-        "operator" => 6,
-        _ => return None,
-    })
-}
-
-/// Build LSP semantic tokens from the file's CST (`syntax_tree` query).
+/// Build LSP semantic tokens from type-aware [`arandu_query::file_highlights`].
 #[must_use]
 pub fn semantic_tokens(snap: &AnalysisSnapshot, source: SourceFile) -> SemanticTokens {
-    let tree = arandu_query::syntax_tree(&snap.db, source);
-    let text = tree.text();
-    let index = LineIndex::new(text);
-    let spans = arandu_parser::highlight_spans(&tree);
+    let highlights = arandu_query::file_highlights(&snap.db, source);
+    let text = source.text(&snap.db);
+    let index = LineIndex::new(&text);
 
-    let mut data = Vec::new();
+    let mut data = Vec::with_capacity(highlights.len());
     let mut prev_line = 0u32;
     let mut prev_start = 0u32;
-    for (start, end, class) in spans {
-        let Some(token_type) = highlight_class_to_type_index(class) else {
-            continue;
-        };
-        let start_pos = offset_to_position_local(&index, start);
-        let length = end.saturating_sub(start);
+    for hl in highlights.iter() {
+        let token_type = hl.kind.legend_index();
+        let start_pos = offset_to_position_local(&index, hl.start);
+        let length = hl.end.saturating_sub(hl.start);
         let delta_line = start_pos.line.saturating_sub(prev_line);
         let delta_start = if delta_line == 0 {
             start_pos.character.saturating_sub(prev_start)
@@ -445,7 +440,7 @@ pub fn semantic_tokens(snap: &AnalysisSnapshot, source: SourceFile) -> SemanticT
             delta_start,
             length,
             token_type,
-            token_modifiers_bitset: 0,
+            token_modifiers_bitset: u32::from(hl.mods),
         });
         prev_line = start_pos.line;
         prev_start = start_pos.character;

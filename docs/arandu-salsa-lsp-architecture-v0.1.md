@@ -74,7 +74,7 @@
 - **`reparse_subtree`**: re-lex só o ITEM tocado + `replace_child` (green dos irmãos reutilizado); fallback full `parse_syntax`.  
 - **`syntax_tree` Salsa**: cache por file + `single_contiguous_edit` → `reparse_subtree`.  
 - **Lower sem re-lex**: tokens no `SyntaxTree`; `parse_token_stream`.  
-- **LSP semantic tokens** a partir de `highlight_spans` no CST (`textDocument/semanticTokens/full`).  
+- **LSP semantic tokens** via query `file_highlights` (CST + resolve → `HlKind`; `textDocument/semanticTokens/full`).  
 - Fingerprint de item (`item_source_input`) usa texto do ITEM CST.  
 - Typeck/resolve consomem AST **somente** via lower do CST (`parse` ← `syntax_tree`).
 
