@@ -8,6 +8,7 @@ use crate::types::TypeId;
 use crate::{SymbolId, SymbolTable};
 use arandu_lexer::Span;
 use smallvec::SmallVec;
+use smol_str::SmolStr;
 
 pub use pool::{
     HirBlockId, HirDeclId, HirEnumVariantId, HirExprId, HirFieldPatternId, HirFuncSignatureId,
@@ -376,11 +377,11 @@ pub enum HirExprKind {
         left: HirExprId,
         right: HirExprId,
     },
-    Int(String),
-    Float(String),
+    Int(SmolStr),
+    Float(SmolStr),
     Bool(bool),
-    Char(String),
-    Str(String),
+    Char(SmolStr),
+    Str(SmolStr),
     /// String interpolation: a sequence of literal text segments and sub-expressions
     /// that are concatenated at runtime to produce a `str` value.
     StringInterp {
@@ -398,7 +399,7 @@ pub enum HirExprKind {
 #[derive(Debug, Clone)]
 pub enum HirStringPart {
     /// A literal text segment (already known at compile time).
-    Text(String),
+    Text(SmolStr),
     /// A sub-expression whose runtime value is converted to string and concatenated.
     Expr(HirExprId),
 }

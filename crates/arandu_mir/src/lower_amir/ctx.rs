@@ -27,22 +27,22 @@ impl LowerCtx<'_> {
     }
 
     #[inline]
-    pub(crate) fn intern_literal_int(&mut self, s: &str) -> AmirConstant {
+    pub(crate) fn intern_literal_int(&mut self, s: impl Into<smol_str::SmolStr>) -> AmirConstant {
         AmirConstant::Pool(self.literal_pool.intern_int(s))
     }
 
     #[inline]
-    pub(crate) fn intern_literal_float(&mut self, s: &str) -> AmirConstant {
+    pub(crate) fn intern_literal_float(&mut self, s: impl Into<smol_str::SmolStr>) -> AmirConstant {
         AmirConstant::Pool(self.literal_pool.intern_float(s))
     }
 
     #[inline]
-    pub(crate) fn intern_literal_str(&mut self, s: &str) -> AmirConstant {
+    pub(crate) fn intern_literal_str(&mut self, s: impl Into<smol_str::SmolStr>) -> AmirConstant {
         AmirConstant::Pool(self.literal_pool.intern_str(s))
     }
 
     #[inline]
-    pub(crate) fn intern_literal_char(&mut self, s: &str) -> AmirConstant {
+    pub(crate) fn intern_literal_char(&mut self, s: impl Into<smol_str::SmolStr>) -> AmirConstant {
         AmirConstant::Pool(self.literal_pool.intern_char(s))
     }
 

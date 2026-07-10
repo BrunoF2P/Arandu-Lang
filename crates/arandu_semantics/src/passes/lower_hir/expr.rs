@@ -476,10 +476,10 @@ pub(crate) fn lower_expr_raw(
                 right: right_id,
             }
         }
-        ExprKind::Int { value } => HirExprKind::Int(value.to_string()),
-        ExprKind::Float { value } => HirExprKind::Float(value.to_string()),
+        ExprKind::Int { value } => HirExprKind::Int(value.clone()),
+        ExprKind::Float { value } => HirExprKind::Float(value.clone()),
         ExprKind::Bool { value } => HirExprKind::Bool(*value),
-        ExprKind::Char { value } => HirExprKind::Char(value.to_string()),
+        ExprKind::Char { value } => HirExprKind::Char(value.clone()),
         ExprKind::InterpolatedString { parts } => {
             let part_ids = pool.string_part_list(*parts).to_vec();
             let mut hir_parts = Vec::with_capacity(part_ids.len());
@@ -487,7 +487,8 @@ pub(crate) fn lower_expr_raw(
             for part_id in part_ids {
                 match pool.string_part(part_id) {
                     arandu_parser::StringPart::Text { text, .. } => {
-                        hir_parts.push(HirStringPart::Text(text.to_string()));
+                        // AST already holds SmolStr — clone is cheap (inline/refcount).
+                        hir_parts.push(HirStringPart::Text(text.clone()));
                     }
                     arandu_parser::StringPart::Expr {
                         expr: inner_expr, ..
@@ -501,14 +502,22 @@ pub(crate) fn lower_expr_raw(
             if has_expr {
                 HirExprKind::StringInterp { parts: hir_parts }
             } else {
-                // Pure text — collapse all text parts into a single Str literal.
-                let combined: String = hir_parts
-                    .into_iter()
-                    .map(|p| match p {
+                // Pure text — collapse segments into a single Str literal.
+                let combined = if hir_parts.len() == 1 {
+                    match hir_parts.pop().unwrap() {
                         HirStringPart::Text(t) => t,
                         HirStringPart::Expr(_) => unreachable!(),
-                    })
-                    .collect();
+                    }
+                } else {
+                    let mut buf = String::new();
+                    for p in hir_parts {
+                        match p {
+                            HirStringPart::Text(t) => buf.push_str(&t),
+                            HirStringPart::Expr(_) => unreachable!(),
+                        }
+                    }
+                    crate::SmolStr::new(buf)
+                };
                 HirExprKind::Str(combined)
             }
         }

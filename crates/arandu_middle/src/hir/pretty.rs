@@ -647,8 +647,8 @@ impl HirPlace {
 impl HirExpr {
     fn pretty_print_inline(&self, ctx: &HirPrettyCtx<'_>) -> String {
         match &self.kind {
-            HirExprKind::Int(v) => v.clone(),
-            HirExprKind::Float(v) => v.clone(),
+            HirExprKind::Int(v) => v.to_string(),
+            HirExprKind::Float(v) => v.to_string(),
             HirExprKind::Bool(v) => v.to_string(),
             HirExprKind::Char(v) => format!("'{v}'"),
             HirExprKind::Str(v) => format!("\"{v}\""),

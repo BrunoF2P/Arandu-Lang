@@ -31,6 +31,7 @@ pub mod types;
 pub use arandu_base::bitset;
 pub use arandu_base::index_vec;
 pub use arandu_base::span::Span;
+pub use smol_str::SmolStr;
 
 pub use arandu_base::bitset::{BitMatrix, BitSet};
 pub use arandu_base::newtype_index;

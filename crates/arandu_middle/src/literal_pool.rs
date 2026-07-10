@@ -38,28 +38,28 @@ impl AmirLiteralPool {
         id
     }
 
-    /// Intern an integer lexeme without allocating a `String` at the call site.
+    /// Intern an integer lexeme. Accepts `&str` or owned [`SmolStr`] (HIR path).
     #[inline]
-    pub fn intern_int(&mut self, s: &str) -> LiteralId {
-        self.intern(AmirLiteralEntry::Int(SmolStr::new(s)))
+    pub fn intern_int(&mut self, s: impl Into<SmolStr>) -> LiteralId {
+        self.intern(AmirLiteralEntry::Int(s.into()))
     }
 
     /// Intern a float lexeme.
     #[inline]
-    pub fn intern_float(&mut self, s: &str) -> LiteralId {
-        self.intern(AmirLiteralEntry::Float(SmolStr::new(s)))
+    pub fn intern_float(&mut self, s: impl Into<SmolStr>) -> LiteralId {
+        self.intern(AmirLiteralEntry::Float(s.into()))
     }
 
     /// Intern a string literal body.
     #[inline]
-    pub fn intern_str(&mut self, s: &str) -> LiteralId {
-        self.intern(AmirLiteralEntry::Str(SmolStr::new(s)))
+    pub fn intern_str(&mut self, s: impl Into<SmolStr>) -> LiteralId {
+        self.intern(AmirLiteralEntry::Str(s.into()))
     }
 
     /// Intern a char lexeme (source spelling, possibly multi-byte escape form).
     #[inline]
-    pub fn intern_char(&mut self, s: &str) -> LiteralId {
-        self.intern(AmirLiteralEntry::Char(SmolStr::new(s)))
+    pub fn intern_char(&mut self, s: impl Into<SmolStr>) -> LiteralId {
+        self.intern(AmirLiteralEntry::Char(s.into()))
     }
 
     #[must_use]

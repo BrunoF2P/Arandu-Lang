@@ -359,16 +359,15 @@ impl LowerCtx<'_> {
         self.current_span = expr.span;
         match &expr.kind {
             HirExprKind::Int(v) => {
-                let op =
-                    AmirOperand::Constant(self.intern_literal_int(v));
+                // Move SmolStr into the pool when the expr is consumed by ref via clone of short str.
+                let op = AmirOperand::Constant(self.intern_literal_int(v.clone()));
                 if let Some(dest) = target {
                     self.emit_assign_temp(dest, AmirRvalue::Use(op));
                 }
                 Ok(op)
             }
             HirExprKind::Float(v) => {
-                let op =
-                    AmirOperand::Constant(self.intern_literal_float(v));
+                let op = AmirOperand::Constant(self.intern_literal_float(v.clone()));
                 if let Some(dest) = target {
                     self.emit_assign_temp(dest, AmirRvalue::Use(op));
                 }
@@ -382,8 +381,7 @@ impl LowerCtx<'_> {
                 Ok(op)
             }
             HirExprKind::Str(v) => {
-                let op =
-                    AmirOperand::Constant(self.intern_literal_str(v));
+                let op = AmirOperand::Constant(self.intern_literal_str(v.clone()));
                 if let Some(dest) = target {
                     self.emit_assign_temp(dest, AmirRvalue::Use(op));
                 }
@@ -393,9 +391,9 @@ impl LowerCtx<'_> {
                 let mut part_ops = Vec::with_capacity(parts.len());
                 for part in parts {
                     let op = match part {
-                        arandu_middle::hir::HirStringPart::Text(t) => AmirOperand::Constant(
-                            self.intern_literal_str(t),
-                        ),
+                        arandu_middle::hir::HirStringPart::Text(t) => {
+                            AmirOperand::Constant(self.intern_literal_str(t.clone()))
+                        }
                         arandu_middle::hir::HirStringPart::Expr(e) => {
                             let part_expr = self.hir.pool.expr(*e);
                             let part_op = self.lower_expr(*e, None, symbols)?;
@@ -421,8 +419,7 @@ impl LowerCtx<'_> {
                 }
             }
             HirExprKind::Char(v) => {
-                let op =
-                    AmirOperand::Constant(self.intern_literal_char(v));
+                let op = AmirOperand::Constant(self.intern_literal_char(v.clone()));
                 if let Some(dest) = target {
                     self.emit_assign_temp(dest, AmirRvalue::Use(op));
                 }
