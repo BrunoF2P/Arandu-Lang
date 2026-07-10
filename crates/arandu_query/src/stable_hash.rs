@@ -218,6 +218,41 @@ impl StableHash for crate::dataflow::DataflowFacts {
     }
 }
 
+impl StableHash for crate::dataflow::BorrowFacts {
+    fn stable_hash(&self) -> blake3::Hash {
+        let mut h = Hasher::new();
+        h.update(b"BorrowFacts/v1");
+        h.update(&u32_le(self.block.as_usize() as u32));
+        h.update(&u32_le(self.shared_in_count));
+        h.update(&u32_le(self.exclusive_in_count));
+        h.update(&u32_le(self.borrow_sites));
+        finish(h)
+    }
+}
+
+impl StableHash for arandu_mir::borrow_facts::BlockBorrowSummary {
+    fn stable_hash(&self) -> blake3::Hash {
+        let mut h = Hasher::new();
+        h.update(b"BlockBorrowSummary/v1");
+        h.update(&u32_le(self.shared_in));
+        h.update(&u32_le(self.exclusive_in));
+        h.update(&u32_le(self.borrow_sites));
+        finish(h)
+    }
+}
+
+impl StableHash for Vec<arandu_mir::borrow_facts::BlockBorrowSummary> {
+    fn stable_hash(&self) -> blake3::Hash {
+        let mut h = Hasher::new();
+        h.update(b"Vec<BlockBorrowSummary>/v1");
+        h.update(&u64_le(self.len() as u64));
+        for s in self {
+            h.update(s.stable_hash().as_bytes());
+        }
+        finish(h)
+    }
+}
+
 impl StableHash for crate::dataflow::LivenessMap {
     fn stable_hash(&self) -> blake3::Hash {
         let mut h = Hasher::new();

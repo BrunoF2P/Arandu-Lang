@@ -100,8 +100,8 @@ Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
 [ ] A3     Modelo Async Semântico Colorless (coroutine splitting, zero heap stack-first, OSSA checks)
 [ ] A4     Memory Layout Optimization Engine (field reordering, niche tags, SOO)
 [ ] F2     OSSA borrow completo (borrow_shared, borrow_mut, end_borrow)
-   ├─ [ ] F2.0   Sintaxe de referências à pilha (& / &mut) no parser + type-checker
-   ├─ [ ] F2.1   Local Borrow Checking Incremental (Salsa query-level borrow check por bloco de controle de fluxo)
+   ├─ [x] F2.0   Sintaxe de referências à pilha (& / &mut) no parser + type-checker
+   ├─ [x] F2.1   Local Borrow Checking Incremental (Salsa `block_borrow_facts` / may-borrow dataflow A9)
    ├─ [ ] F2.2   Janelas de Liveness de Empréstimos (reutilizar liveness SSA de referências como regiões NLL do CFG)
    └─ [ ] F2.3   Análise de Escape e Fallback Geracional (Vale-style generational refs para stack-locals que escapam)
 [ ] M2     Move checker avançado (O002, O003, O006)

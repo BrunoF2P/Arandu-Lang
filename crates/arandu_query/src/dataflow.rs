@@ -35,6 +35,21 @@ pub struct LivenessMap {
     pub live_out_counts: Vec<u32>,
 }
 
+/// F2.1 compact per-block may-borrow summary (Salsa memo / HashEq).
+///
+/// Full bitsets live in `arandu_mir::borrow_facts`; the query keeps only
+/// cardinalities so early-cutoff stays cheap (same pattern as [`DataflowFacts`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BorrowFacts {
+    pub block: BlockId,
+    /// Locals that may be under a shared (`&`) loan at block entry.
+    pub shared_in_count: u32,
+    /// Locals that may be under an exclusive (`&mut`) loan at block entry.
+    pub exclusive_in_count: u32,
+    /// Number of `Borrow`/`BorrowMut` sites inside this block.
+    pub borrow_sites: u32,
+}
+
 /// Stable IDE diagnostic (hashable for early cutoff / publish fingerprint).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IdeDiagnostic {
@@ -181,6 +196,60 @@ pub fn block_dataflow_facts(
     })
 }
 
+/// Function-wide may-borrow summaries (one pure dataflow run; HashEq early-cutoff).
+#[salsa::tracked]
+#[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
+    query = "func_borrow_summaries",
+    file = ?file.file_id(db),
+    func = ?func_sym,
+))]
+pub fn func_borrow_summaries(
+    db: &dyn ArandCompilerDb,
+    file: SourceFile,
+    func_sym: SymbolId,
+) -> HashEq<Vec<arandu_mir::borrow_facts::BlockBorrowSummary>> {
+    let func = func_amir(db, file, func_sym);
+    if func.blocks.is_empty() {
+        return HashEq::new(vec![]);
+    }
+    HashEq::new(arandu_mir::borrow_facts::block_borrow_summaries(&func))
+}
+
+/// F2.1: may-borrow facts for one basic block (memoized independently).
+///
+/// Indexes into [`func_borrow_summaries`] so the heavy dataflow runs once per
+/// function; the per-block query is the stable key for DX.5 / dependents (M2).
+#[salsa::tracked]
+#[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
+    query = "block_borrow_facts",
+    file = ?file.file_id(db),
+    func = ?func_sym,
+    block = ?block,
+))]
+pub fn block_borrow_facts(
+    db: &dyn ArandCompilerDb,
+    file: SourceFile,
+    func_sym: SymbolId,
+    block: BlockId,
+) -> HashEq<BorrowFacts> {
+    let summaries = func_borrow_summaries(db, file, func_sym);
+    let i = block.as_usize();
+    let s = summaries
+        .get(i)
+        .copied()
+        .unwrap_or(arandu_mir::borrow_facts::BlockBorrowSummary {
+            shared_in: 0,
+            exclusive_in: 0,
+            borrow_sites: 0,
+        });
+    HashEq::new(BorrowFacts {
+        block,
+        shared_in_count: s.shared_in,
+        exclusive_in_count: s.exclusive_in,
+        borrow_sites: s.borrow_sites,
+    })
+}
+
 /// Counts `item_ide_diagnostics` executions (P3 delta tests).
 #[cfg(any(test, debug_assertions))]
 pub static ITEM_IDE_DIAGS_EXEC_COUNT: std::sync::atomic::AtomicUsize =
@@ -230,6 +299,7 @@ pub fn item_ide_diagnostics(
         for bi in 0..amir.blocks.len() {
             let bid = BlockId::from_usize(bi);
             let _ = block_dataflow_facts(db, file, item_sym, bid);
+            let _ = block_borrow_facts(db, file, item_sym, bid);
         }
     }
 
@@ -265,6 +335,7 @@ pub fn block_diagnostics(
     block: BlockId,
 ) -> HashEq<Vec<IdeDiagnostic>> {
     let _facts = block_dataflow_facts(db, file, func_sym, block);
+    let _borrow = block_borrow_facts(db, file, func_sym, block);
     // Body typeck diags live on entry (no AST block ids); AMIR diags filter by block.
     let body_tc = crate::passes::item_body_typeck(db, file, func_sym);
     let amir = func_amir(db, file, func_sym);

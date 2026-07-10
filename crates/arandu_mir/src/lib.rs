@@ -1,3 +1,4 @@
+pub mod borrow_facts;
 pub(crate) mod dce;
 pub mod definite_init;
 pub mod liveness;

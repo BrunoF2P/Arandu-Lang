@@ -7,7 +7,8 @@
 use arandu_middle::amir::BlockId;
 use arandu_query::db::DatabaseImpl;
 use arandu_query::{
-    block_dataflow_facts, file_func_symbols, file_ide_diagnostics, func_amir, liveness_facts,
+    block_borrow_facts, block_dataflow_facts, file_func_symbols, file_ide_diagnostics, func_amir,
+    liveness_facts,
 };
 use salsa::Setter;
 use std::sync::Arc;
@@ -138,6 +139,37 @@ fn block_dataflow_facts_include_init_and_move_counts() {
         facts.live_in_count,
         facts.init_in_count,
         facts.stmt_count
+    );
+}
+
+/// F2.1: `block_borrow_facts` sees `Borrow` sites from `&n`.
+#[test]
+fn block_borrow_facts_counts_ref_sites() {
+    let mut db = DatabaseImpl::new();
+    let file = db.new_file(
+        "f21.aru".into(),
+        r#"func main(): int {
+    let n = 42
+    let p = &n
+    return *p
+}
+"#
+        .into(),
+    );
+    let funcs = file_func_symbols(&db, file);
+    assert!(!funcs.is_empty(), "AMIR should contain main");
+    let f = funcs[0];
+    let func = func_amir(&db, file, f);
+    assert!(!func.blocks.is_empty());
+
+    let mut total_sites = 0u32;
+    for i in 0..func.blocks.len() {
+        let bf = block_borrow_facts(&db, file, f, BlockId::from_usize(i));
+        total_sites += bf.borrow_sites;
+    }
+    assert!(
+        total_sites >= 1,
+        "expected at least one Borrow site for `&n`, got {total_sites}"
     );
 }
 
