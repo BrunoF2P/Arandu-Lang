@@ -103,6 +103,19 @@ pub(crate) fn synth_method_call(
     args: IndexRange,
     call_span: arandu_lexer::Span,
 ) -> Option<TypeId> {
+    // If `base` is a namespace module path (`io.foo`), this is not a method
+    // call — let the Call path handle namespace members. Returning `Some(Error)`
+    // here previously poisoned `io.println(...)` and skipped argument typing.
+    if let ExprKind::Path { path } = checker.pool.expr(base)
+        && path.len() == 1
+        && checker
+            .symbols
+            .lookup_module(checker.symbols.global_scope(), path[0].as_str())
+            .is_some()
+    {
+        return None;
+    }
+
     let base_ty_id = synth_expr(checker, base);
     if checker.resolve(base_ty_id).is_error() {
         return Some(checker.intern(ArType::Error));

@@ -68,7 +68,15 @@ pub fn check_stmt(checker: &mut TypeChecker<'_>, pool: &AstPool, stmt: &Stmt) {
         Stmt::Break { span } | Stmt::Continue { span } => {
             check_loop_control_stmt(checker, stmt, *span);
         }
-        _ => {}
+        Stmt::Unsafe { span: _, block } => {
+            // Root cause fix (RC-F64 / O013): statement-form `unsafe { ... }`
+            // was previously swallowed by `_ => {}`, so the body was never
+            // type-checked and expressions inside kept `ArType::Error`.
+            checker.ctx.enter_unsafe();
+            check_block(checker, pool, block);
+            checker.ctx.exit_unsafe();
+        }
+        Stmt::Error(_) => {}
     }
 }
 fn check_var_decl_stmt(
@@ -91,8 +99,11 @@ fn check_multi_var_decl(
     value: arandu_parser::ast_pool::ExprId,
     val_ty_id: TypeId,
 ) {
+    // Root cause fix (RC-ERR-NIL): Go-style `let ok, err = f()` where `f` returns
+    // `Result<T, E>` binds `err` as `E?` (nullable error), so `err != nil` typechecks.
     let val_tys: Vec<TypeId> = if let Some((ok_id, err_id)) = checker.result_ok_err_ids(val_ty_id) {
-        vec![ok_id, err_id]
+        let err_nullable = checker.intern(ArType::Nullable(err_id));
+        vec![ok_id, err_nullable]
     } else {
         match checker.resolve(val_ty_id) {
             ArType::Tuple(tys) => tys.clone(),
@@ -157,6 +168,8 @@ fn check_single_var_decl(
         });
 
         let val_ty = checker.resolve(val_ty_id);
+        // Result must be handled via `?`, match, or multi-binding `let ok, err = …`.
+        // A single binding of Result is a warning (not a hard error).
         if checker.result_ok_err(&val_ty).is_some() && !annotated_as_result {
             checker.diagnostics.push(crate::Diagnostic::warning(
                 crate::DiagCode::W006UnhandledResult,

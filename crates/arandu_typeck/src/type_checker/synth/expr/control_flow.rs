@@ -5,7 +5,7 @@ use super::synth_expr;
 use crate::type_checker::TypeChecker;
 use crate::type_checker::constraints::ConstraintOrigin;
 use crate::type_checker::synth::check_pattern;
-use crate::type_checker::types::{self, ArType};
+use crate::type_checker::types::{self, ArType, Primitive};
 
 #[cold]
 #[inline(never)]
@@ -136,7 +136,43 @@ pub(super) fn synth_control_flow_expr(
 
             for (i, arm_id) in arm_ids.iter().copied().enumerate() {
                 let arm = checker.pool.match_arm(arm_id);
+                // Bind pattern names first so guards can reference them.
                 check_pattern(checker, arm.pattern, value_ty_id);
+
+                // Root cause fix (RC-GUARD): guards were never type-checked,
+                // so HIR lower left them as `ArType::Error`.
+                if let Some(guard_expr) = arm.guard {
+                    let guard_ty_id = synth_expr(checker, guard_expr);
+                    let guard_ty = checker.resolve(guard_ty_id);
+                    let bool_ty = ArType::Primitive(Primitive::Bool);
+                    if !guard_ty.is_error()
+                        && !types::unify(
+                            &guard_ty,
+                            &bool_ty,
+                            &checker.type_info.type_interner,
+                        )
+                    {
+                        let interner = &checker.type_info.type_interner;
+                        checker.diagnostics.push(
+                            crate::Diagnostic::error(
+                                crate::DiagCode::T009ConditionNotBool,
+                                format!(
+                                    "match guard must be `bool`, found `{}`",
+                                    guard_ty.display(&checker.symbols, interner)
+                                ),
+                                checker.pool.expr_span(guard_expr),
+                            )
+                            .with_label(
+                                checker.pool.expr_span(guard_expr),
+                                format!(
+                                    "this has type `{}`",
+                                    guard_ty.display(&checker.symbols, interner)
+                                ),
+                            ),
+                        );
+                    }
+                }
+
                 let arm_ty_id = match &arm.body {
                     arandu_parser::MatchArmBody::Expr {
                         expr: inner_expr, ..

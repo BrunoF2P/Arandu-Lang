@@ -36,16 +36,40 @@ pub(super) fn synth_literal_expr(
         ExprKind::Bool { .. } => Some(checker.intern(ArType::Primitive(Primitive::Bool))),
         ExprKind::Char { .. } => Some(checker.intern(ArType::Primitive(Primitive::Char))),
         ExprKind::InterpolatedString { parts } => {
+            // Root cause fix (RC-INTERP): only `str` parts are allowed until
+            // Display/to_str exists. Accepting arbitrary types lied to backends
+            // (Cranelift treated scalars as fat-pointer with len=0).
             let part_ids = checker.pool.string_part_list(*parts).to_vec();
+            let str_ty = checker.intern(ArType::Primitive(Primitive::Str));
             for part_id in part_ids {
                 if let arandu_parser::StringPart::Expr {
                     expr: inner_expr, ..
                 } = checker.pool.string_part(part_id)
                 {
-                    let _ = synth_expr(checker, *inner_expr);
+                    let part_ty_id = synth_expr(checker, *inner_expr);
+                    let part_ty = checker.resolve(part_ty_id);
+                    let is_str = matches!(part_ty, ArType::Primitive(Primitive::Str))
+                        || part_ty.is_error();
+                    if !is_str {
+                        let interner = &checker.type_info.type_interner;
+                        let found = part_ty.display(&checker.symbols, interner);
+                        checker.diagnostics.push(
+                            crate::Diagnostic::error(
+                                crate::DiagCode::T002IncompatibleAssignment,
+                                format!(
+                                    "string interpolation requires `str`, found `{found}`"
+                                ),
+                                checker.pool.expr_span(*inner_expr),
+                            )
+                            .with_note(
+                                "automatic formatting of non-str values is not implemented yet"
+                                    .to_string(),
+                            ),
+                        );
+                    }
                 }
             }
-            Some(checker.intern(ArType::Primitive(Primitive::Str)))
+            Some(str_ty)
         }
         ExprKind::Nil => {
             if let Some(ret_id) = checker.ctx.current_return() {

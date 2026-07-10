@@ -74,14 +74,16 @@ pub fn check_bodies_only(signatures: &TypeCheckResult, program: &Program) -> Typ
     );
     checker.type_info = signatures.type_info.clone();
 
-    println!(
-        "check_bodies_only diagnostics BEFORE check_bodies: {:?}",
-        checker.diagnostics
+    tracing::debug!(
+        target: "arandu_typeck",
+        before = ?checker.diagnostics,
+        "check_bodies_only: entering body check"
     );
     check::check_bodies(&mut checker, program);
-    println!(
-        "check_bodies_only diagnostics AFTER check_bodies: {:?}",
-        checker.diagnostics
+    tracing::debug!(
+        target: "arandu_typeck",
+        after = ?checker.diagnostics,
+        "check_bodies_only: finished body check"
     );
     checker.finish()
 }

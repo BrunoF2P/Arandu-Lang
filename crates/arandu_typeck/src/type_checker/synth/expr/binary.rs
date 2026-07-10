@@ -213,6 +213,31 @@ pub(super) fn synth_binary_unary_expr(
                 | BinaryOp::Gt
                 | BinaryOp::LtEqual
                 | BinaryOp::GtEqual => {
+                    // Root cause fix (RC-ERR-NIL): `x != nil` / `x == nil` where `x` is
+                    // `T?` / `Option<T>` / Result-destructure err channel. Bare `nil`
+                    // otherwise defaults to `void?` and fails unify with `Err`.
+                    let left_is_nil = matches!(checker.pool.expr(left_id), ExprKind::Nil);
+                    let right_is_nil = matches!(checker.pool.expr(right_id), ExprKind::Nil);
+                    if matches!(op, BinaryOp::Equal | BinaryOp::NotEqual)
+                        && (left_is_nil || right_is_nil)
+                    {
+                        let (value_ty_id, nil_expr) = if right_is_nil {
+                            (left_ty_id, right_id)
+                        } else {
+                            (right_ty_id, left_id)
+                        };
+                        let value_ty = checker.resolve(value_ty_id);
+                        let ok = matches!(
+                            value_ty,
+                            ArType::Nullable(_) | ArType::Option(_)
+                        ) || value_ty.is_error();
+                        if ok {
+                            // Re-record nil with the value's type so HIR is consistent.
+                            checker.record_expr_type(nil_expr, value_ty_id);
+                            return Some(checker.intern(ArType::Primitive(Primitive::Bool)));
+                        }
+                    }
+
                     if !checker.unify_ids(left_ty_id, right_ty_id) {
                         checker.add_constraint(
                             left_ty_id,

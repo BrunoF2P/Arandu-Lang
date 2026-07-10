@@ -3,16 +3,17 @@ use super::super::types::{ArType, Primitive};
 use arandu_parser::Program;
 
 pub(crate) fn register_prelude(checker: &mut TypeChecker<'_>, _program: &Program) {
-    let any_id = checker.intern(ArType::Primitive(Primitive::Any));
+    // RC-ANY-PRELUDE: `io.println` takes `str` only until Display/to_str exists.
+    // `Any` remains available for true FFI varargs, not as a silent universal sink.
     let void_id = checker.intern(ArType::Void);
     let str_id = checker.intern(ArType::Primitive(Primitive::Str));
     let err_literal_id = checker.intern(ArType::Err);
 
-    let result_any_err = checker.intern(ArType::Result(any_id, err_literal_id));
+    let result_str_err = checker.intern(ArType::Result(str_id, err_literal_id));
     let result_void_err = checker.intern(ArType::Result(void_id, err_literal_id));
 
-    let println_ty = ArType::Func(vec![any_id], void_id);
-    let create_ty = ArType::Func(vec![str_id], result_any_err);
+    let println_ty = ArType::Func(vec![str_id], void_id);
+    let create_ty = ArType::Func(vec![str_id], result_str_err);
     let remove_ty = ArType::Func(vec![str_id], result_void_err);
     let err_new_ty = ArType::Func(vec![str_id], err_literal_id);
 

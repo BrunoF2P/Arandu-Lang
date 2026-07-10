@@ -243,6 +243,61 @@ pub(super) fn synth_call_expr(
                 let base_id = *base;
                 let field_str = field.clone();
                 let field_span = checker.pool.expr_span(callee_id);
+
+                // Root cause fix (RC-NEST / namespace calls):
+                // `io.println(x)` is a Field callee. Trying method dispatch first
+                // synthesizes `io` as a value Path → Error, then returns
+                // `Some(Error)` and never types the arguments (including nested
+                // method calls). Resolve namespace members before methods.
+                if let Some(ns_ty_id) =
+                    resolve_namespace_field(checker, base_id, callee_id, &field_str, field_span)
+                {
+                    let arg_ids = checker.pool.expr_list(args_range).to_vec();
+                    let ns_ty = checker.resolve(ns_ty_id);
+                    if let ArType::Func(params, ret) = ns_ty {
+                        let params = params.clone();
+                        if params.len() != arg_ids.len() {
+                            checker.diagnostics.push(
+                                crate::Diagnostic::error(
+                                    crate::DiagCode::T012WrongArgCount,
+                                    format!(
+                                        "expected {} arguments, found {}",
+                                        params.len(),
+                                        arg_ids.len()
+                                    ),
+                                    span,
+                                )
+                                .with_label(field_span, "call target is here")
+                                .with_label(
+                                    span,
+                                    format!("{} arguments provided", arg_ids.len()),
+                                ),
+                            );
+                        }
+                        for (i, arg_id) in arg_ids.iter().copied().enumerate() {
+                            let arg_ty_id = synth_expr(checker, arg_id);
+                            if let Some(&param_id) = params.get(i)
+                                && !checker.unify_ids(param_id, arg_ty_id)
+                            {
+                                checker.add_constraint(
+                                    param_id,
+                                    arg_ty_id,
+                                    ConstraintOrigin::CallArg {
+                                        call_span: span,
+                                        param_span: field_span,
+                                        arg_span: checker.pool.expr_span(arg_id),
+                                        arg_index: i,
+                                    },
+                                );
+                            }
+                        }
+                        // Mark as a direct call target for HIR/codegen.
+                        let func_ty_id = checker.intern(ArType::Func(params, ret));
+                        checker.record_expr_type(callee_id, func_ty_id);
+                        return Some(ret);
+                    }
+                }
+
                 if let Some(ret_id) = synth_method_call(
                     checker, base_id, callee_id, &field_str, field_span, args_range, span,
                 ) {
