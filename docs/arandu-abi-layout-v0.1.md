@@ -63,12 +63,15 @@ The layout of `str` is exactly equivalent to the following C structure:
 ```rust
 struct StrLayout {
     ptr: ptr[u8],  // Pointer to the start of utf-8 buffer
-    len: u64,      // Number of bytes in buffer (usize)
+    len: usize,    // Number of bytes in buffer (target pointer width)
 }
 ```
 
 - **64-bit Target**: `size = 16`, `align = 8`, field offsets: `ptr` at offset `0`, `len` at offset `8`.
 - **32-bit Target**: `size = 8`, `align = 4`, field offsets: `ptr` at offset `0`, `len` at offset `4`.
+
+`len` is always target **`usize`** (same width as a pointer), never a fixed `u64` on 32-bit.
+Cranelift uses host `usize` (typically I64 on 64-bit hosts) and is **not** a 32-bit backend.
 
 ### Slice Layout (`[]T`)
 
@@ -77,11 +80,12 @@ Slices (`[]T`) use the same layout structure:
 ```rust
 struct SliceLayout {
     ptr: ptr[T],   // Pointer to first element of the slice
-    len: u64,      // Number of elements in the slice
+    len: usize,    // Number of elements (target pointer width)
 }
 ```
 
 - **64-bit Target**: `size = 16`, `align = 8`, field offsets: `ptr` at offset `0`, `len` at offset `8`.
+- **32-bit Target**: `size = 8`, `align = 4`, field offsets: `ptr` at offset `0`, `len` at offset `4`.
 
 ---
 
