@@ -1,7 +1,7 @@
 use super::CEmitter;
 use arandu_middle::amir::{AmirFunc, AmirOperand, AmirRvalue};
 use arandu_middle::ops::{BinaryOp, UnaryOp};
-use arandu_middle::types::ArType;
+use arandu_middle::types::{ArType, Primitive};
 use std::fmt::Write;
 
 impl<'a> CEmitter<'a> {
@@ -271,7 +271,11 @@ impl<'a> CEmitter<'a> {
                     AmirOperand::Copy(t) | AmirOperand::Move(t) => &func.temps[t.as_usize()].ty,
                     _ => &ArType::Error,
                 };
-                if matches!(op_ty, ArType::Slice(_)) {
+                if matches!(op_ty, ArType::Primitive(Primitive::Str)) {
+                    // LayoutEngine Str fat pointer: second field is len.
+                    write!(&mut self.output, "({}).len", op_str).unwrap();
+                } else if matches!(op_ty, ArType::Slice(_)) {
+                    // Slice fat pointer: {ptr, len} — len at offset 8 on 64-bit.
                     write!(&mut self.output, "*(int64_t*)((uint8_t*)&{} + 8)", op_str).unwrap();
                 } else if let ArType::Array(len, _) = op_ty {
                     write!(&mut self.output, "{}", len).unwrap();
@@ -317,9 +321,26 @@ impl<'a> CEmitter<'a> {
                     .unwrap();
                 }
             }
-            AmirRvalue::Alloc(_) => {
-                // alloc is handled as Call to standard allocator API
-                write!(&mut self.output, "/* unsupported Alloc rvalue */").unwrap();
+            AmirRvalue::Alloc(op) => {
+                // Byte-count allocation via libc malloc (RC-RVALUE-GAPS).
+                let size_str = self.format_operand(op, func);
+                write!(&mut self.output, "malloc((size_t)({}))", size_str).unwrap();
+            }
+            AmirRvalue::StringInterp { parts } => {
+                // Emit a call to the runtime helper: ar_str_concat_n(n, part0, part1, ..., partN-1)
+                // Each part must already be of type ArStr.
+                let n = parts.len();
+                let part_strs: Vec<String> = parts
+                    .iter()
+                    .map(|p| self.format_operand(p, func))
+                    .collect();
+                write!(
+                    &mut self.output,
+                    "ar_str_concat_n({}, {})",
+                    n,
+                    part_strs.join(", ")
+                )
+                .unwrap();
             }
         }
     }

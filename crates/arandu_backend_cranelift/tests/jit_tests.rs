@@ -306,6 +306,32 @@ fn jit_string_literal() {
 }
 
 #[test]
+fn jit_string_interpolation() {
+    // Verifies StringInterp lowering + Cranelift concat (malloc/memcpy).
+    // Exercises both `${name}` and `$name` forms without relying on fat-pointer
+    // return ABI details beyond "program runs and returns 0".
+    let src = r#"
+    func main(): int {
+        let name = "Bruno"
+        let a = "Oi, ${name}"
+        let b = "Oi, $name"
+        return 0
+    }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    let backend = backend_for_test();
+    let module = backend
+        .compile(&amir, &symbols, &type_info)
+        .expect("string interpolation should compile in Cranelift JIT");
+
+    let code: i32 = unsafe {
+        let f: unsafe fn() -> i32 = module.get_fn("main").unwrap();
+        f()
+    };
+    assert_eq!(code, 0);
+}
+
+#[test]
 fn jit_struct_field_access() {
     let src = r#"
     struct Point {

@@ -37,6 +37,19 @@ impl FunctionTranslator<'_, '_> {
         }
     }
 
+    pub(super) fn memcpy_func_id(&mut self) -> Option<FuncId> {
+        match self.func_ids.get("memcpy") {
+            Some(func_id) => Some(*func_id),
+            None => {
+                self.record_ice(
+                    "memcpy was not declared in the JIT module",
+                    self.func_span(),
+                );
+                None
+            }
+        }
+    }
+
     pub(super) fn emit_free_ptr(&mut self, ptr_val: Value) {
         let Some(free_func_id) = self.free_func_id() else {
             return;

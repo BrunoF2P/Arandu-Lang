@@ -148,6 +148,7 @@ impl FunctionTranslator<'_, '_> {
                 );
                 (loaded_ptr, loaded_len)
             }
+            AmirRvalue::StringInterp { parts } => self.translate_string_interp(parts),
             _ => {
                 self.record_ice(
                     "unsupported rvalue kind returning str in codegen",
@@ -156,6 +157,102 @@ impl FunctionTranslator<'_, '_> {
                 (self.poison_i32(), self.poison_i32())
             }
         }
+    }
+
+    /// Concatenate `str` fat-pointer parts via `malloc` + `memcpy`.
+    /// Returns `(ptr, len)` for the newly allocated buffer (not freed; debug/JIT lifetime).
+    fn translate_string_interp(&mut self, parts: &[AmirOperand]) -> (Value, Value) {
+        let i64_ty = cranelift_codegen::ir::types::I64;
+        if parts.is_empty() {
+            let empty_ptr = self.builder.ins().iconst(self.ptr_type, 0);
+            let empty_len = self.builder.ins().iconst(i64_ty, 0);
+            return (empty_ptr, empty_len);
+        }
+
+        // Materialize each part as (ptr, len).
+        let mut part_vals: Vec<(Value, Value)> = Vec::with_capacity(parts.len());
+        for part in parts {
+            part_vals.push(self.translate_str_operand(part));
+        }
+
+        // total = sum of lengths (i64)
+        let mut total = self.builder.ins().iconst(i64_ty, 0);
+        for &(_, len) in &part_vals {
+            total = self.builder.ins().iadd(total, len);
+        }
+
+        // malloc(total + 1) for trailing NUL safety
+        let one = self.builder.ins().iconst(i64_ty, 1);
+        let alloc_size_i64 = self.builder.ins().iadd(total, one);
+        let alloc_size = if self.ptr_type == i64_ty {
+            alloc_size_i64
+        } else if self.ptr_type.bits() < 64 {
+            self.builder.ins().ireduce(self.ptr_type, alloc_size_i64)
+        } else {
+            self.builder.ins().uextend(self.ptr_type, alloc_size_i64)
+        };
+
+        let Some(malloc_id) = self.malloc_func_id() else {
+            return (self.poison_i32(), self.poison_i32());
+        };
+        let malloc_ref = self
+            .module
+            .declare_func_in_func(malloc_id, self.builder.func);
+        let call = self.builder.ins().call(malloc_ref, &[alloc_size]);
+        let buf = self.builder.inst_results(call)[0];
+
+        let Some(memcpy_id) = self.memcpy_func_id() else {
+            return (self.poison_i32(), self.poison_i32());
+        };
+        let memcpy_ref = self
+            .module
+            .declare_func_in_func(memcpy_id, self.builder.func);
+
+        // Copy each part into the buffer.
+        let mut offset_i64 = self.builder.ins().iconst(i64_ty, 0);
+        for &(src_ptr, src_len) in &part_vals {
+            let offset_ptr = if self.ptr_type == i64_ty {
+                offset_i64
+            } else if self.ptr_type.bits() < 64 {
+                self.builder.ins().ireduce(self.ptr_type, offset_i64)
+            } else {
+                self.builder.ins().uextend(self.ptr_type, offset_i64)
+            };
+            let dest = self.builder.ins().iadd(buf, offset_ptr);
+            let size = if self.ptr_type == i64_ty {
+                src_len
+            } else if self.ptr_type.bits() < 64 {
+                self.builder.ins().ireduce(self.ptr_type, src_len)
+            } else {
+                self.builder.ins().uextend(self.ptr_type, src_len)
+            };
+            self.builder
+                .ins()
+                .call(memcpy_ref, &[dest, src_ptr, size]);
+            offset_i64 = self.builder.ins().iadd(offset_i64, src_len);
+        }
+
+        // Write trailing NUL at buf + total
+        let zero_byte = self
+            .builder
+            .ins()
+            .iconst(cranelift_codegen::ir::types::I8, 0);
+        let total_ptr = if self.ptr_type == i64_ty {
+            total
+        } else if self.ptr_type.bits() < 64 {
+            self.builder.ins().ireduce(self.ptr_type, total)
+        } else {
+            self.builder.ins().uextend(self.ptr_type, total)
+        };
+        let end_ptr = self.builder.ins().iadd(buf, total_ptr);
+        self.builder.ins().store(
+            cranelift_codegen::ir::MemFlagsData::new(),
+            zero_byte,
+            end_ptr,
+            0,
+        );
+
+        (buf, total)
     }
 
     pub(super) fn translate_rvalue(
@@ -613,6 +710,8 @@ impl FunctionTranslator<'_, '_> {
                     self.poison_i32()
                 }
             }
+            AmirRvalue::Len(op) => self.translate_len(op, expected_ty),
+            AmirRvalue::Alloc(op) => self.translate_alloc(op),
             _ => {
                 self.record_ice(
                     format!(
@@ -623,6 +722,71 @@ impl FunctionTranslator<'_, '_> {
                 );
                 self.poison_i32()
             }
+        }
+    }
+
+    /// `Len` for array (constant), `str` fat-pointer (SSA pair), slice (memory fat ptr).
+    fn translate_len(&mut self, op: &AmirOperand, expected_ty: Option<Type>) -> Value {
+        let op_ty = self.get_operand_ar_type(op);
+        let i64_ty = cranelift_codegen::ir::types::I64;
+        let result_ty = expected_ty.unwrap_or(self.ptr_type);
+
+        match op_ty {
+            ArType::Array(len, _) => {
+                let v = self.builder.ins().iconst(i64_ty, len as i64);
+                self.cast_int_width(v, result_ty)
+            }
+            ArType::Primitive(Primitive::Str) => {
+                // Dual-value Str ABI: reuse the str operand path for temps + literals.
+                let (_, len_val) = self.translate_str_operand(op);
+                self.cast_int_width(len_val, result_ty)
+            }
+            ArType::Slice(_) => {
+                // Slice fat pointer in memory: {ptr @0, len @pointer_width}.
+                let base = self.translate_operand(op, Some(self.ptr_type));
+                let len_off = self.ptr_type.bytes() as i32;
+                let len_val = self.builder.ins().load(
+                    i64_ty,
+                    cranelift_codegen::ir::MemFlagsData::new(),
+                    base,
+                    len_off,
+                );
+                self.cast_int_width(len_val, result_ty)
+            }
+            _ => {
+                self.record_ice(
+                    format!("Len not supported for type {op_ty:?}"),
+                    self.func_span(),
+                );
+                self.poison_i32()
+            }
+        }
+    }
+
+    /// Byte-count heap allocation via `malloc` (RC-RVALUE-GAPS).
+    fn translate_alloc(&mut self, op: &AmirOperand) -> Value {
+        let size_val = self.translate_operand(op, Some(self.ptr_type));
+        let Some(malloc_id) = self.malloc_func_id() else {
+            return self.poison_i32();
+        };
+        let malloc_ref = self
+            .module
+            .declare_func_in_func(malloc_id, self.builder.func);
+        let call = self.builder.ins().call(malloc_ref, &[size_val]);
+        self.builder.inst_results(call)[0]
+    }
+
+    fn cast_int_width(&mut self, val: Value, target: Type) -> Value {
+        let src = self.builder.func.dfg.value_type(val);
+        if src == target {
+            return val;
+        }
+        if src.bits() < target.bits() {
+            self.builder.ins().uextend(target, val)
+        } else if src.bits() > target.bits() {
+            self.builder.ins().ireduce(target, val)
+        } else {
+            val
         }
     }
 

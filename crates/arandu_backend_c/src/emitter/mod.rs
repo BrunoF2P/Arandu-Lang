@@ -85,17 +85,53 @@ impl<'a> CEmitter<'a> {
         writeln!(&mut self.output, "#include <stdbool.h>").unwrap();
         writeln!(&mut self.output, "#include <stdlib.h>").unwrap();
         writeln!(&mut self.output, "#include <string.h>").unwrap();
+        writeln!(&mut self.output, "#include <stdarg.h>").unwrap();
         writeln!(&mut self.output, "#ifndef AR_UNREACHABLE").unwrap();
         writeln!(&mut self.output, "#define AR_UNREACHABLE() abort()").unwrap();
         writeln!(&mut self.output, "#endif").unwrap();
         writeln!(&mut self.output).unwrap();
-        // ArStr definition matching LayoutEngine Str
+        // ArStr = LayoutEngine Str fat pointer: { ptr, len } (16 bytes on 64-bit).
         writeln!(
             &mut self.output,
-            "typedef struct {{ _Alignas(8) uint8_t memory[16]; }} ArStr;"
+            "typedef struct {{ const uint8_t *ptr; int64_t len; }} ArStr;"
         )
         .unwrap();
         self.emitted_types.insert("ArStr".to_string());
+        // Runtime helpers for fat-pointer strings (string interpolation).
+        writeln!(&mut self.output, "static inline void ar_str_unpack(ArStr s, const uint8_t **ptr, int64_t *len) {{").unwrap();
+        writeln!(&mut self.output, "    *ptr = s.ptr;").unwrap();
+        writeln!(&mut self.output, "    *len = s.len;").unwrap();
+        writeln!(&mut self.output, "}}").unwrap();
+        writeln!(&mut self.output, "static inline ArStr ar_str_pack(const uint8_t *ptr, int64_t len) {{").unwrap();
+        writeln!(&mut self.output, "    return (ArStr){{ .ptr = ptr, .len = len }};").unwrap();
+        writeln!(&mut self.output, "}}").unwrap();
+        writeln!(&mut self.output, "static ArStr ar_str_concat_n(int n, ...) {{").unwrap();
+        writeln!(&mut self.output, "    if (n <= 0) return ar_str_pack((const uint8_t*)\"\", 0);").unwrap();
+        writeln!(&mut self.output, "    va_list ap;").unwrap();
+        writeln!(&mut self.output, "    va_start(ap, n);").unwrap();
+        writeln!(&mut self.output, "    ArStr *parts = (ArStr*)malloc((size_t)n * sizeof(ArStr));").unwrap();
+        writeln!(&mut self.output, "    if (!parts) {{ va_end(ap); abort(); }}").unwrap();
+        writeln!(&mut self.output, "    int64_t total = 0;").unwrap();
+        writeln!(&mut self.output, "    for (int i = 0; i < n; i++) {{").unwrap();
+        writeln!(&mut self.output, "        parts[i] = va_arg(ap, ArStr);").unwrap();
+        writeln!(&mut self.output, "        const uint8_t *p; int64_t l;").unwrap();
+        writeln!(&mut self.output, "        ar_str_unpack(parts[i], &p, &l);").unwrap();
+        writeln!(&mut self.output, "        if (l > 0) total += l;").unwrap();
+        writeln!(&mut self.output, "    }}").unwrap();
+        writeln!(&mut self.output, "    va_end(ap);").unwrap();
+        writeln!(&mut self.output, "    uint8_t *buf = (uint8_t*)malloc((size_t)total + 1);").unwrap();
+        writeln!(&mut self.output, "    if (!buf) {{ free(parts); abort(); }}").unwrap();
+        writeln!(&mut self.output, "    int64_t off = 0;").unwrap();
+        writeln!(&mut self.output, "    for (int i = 0; i < n; i++) {{").unwrap();
+        writeln!(&mut self.output, "        const uint8_t *p; int64_t l;").unwrap();
+        writeln!(&mut self.output, "        ar_str_unpack(parts[i], &p, &l);").unwrap();
+        writeln!(&mut self.output, "        if (l > 0 && p) {{ memcpy(buf + off, p, (size_t)l); off += l; }}").unwrap();
+        writeln!(&mut self.output, "    }}").unwrap();
+        writeln!(&mut self.output, "    buf[total] = 0;").unwrap();
+        writeln!(&mut self.output, "    free(parts);").unwrap();
+        writeln!(&mut self.output, "    return ar_str_pack(buf, total);").unwrap();
+        writeln!(&mut self.output, "}}").unwrap();
+        writeln!(&mut self.output).unwrap();
     }
 
     fn emit_str_literals(&mut self) {
@@ -108,10 +144,15 @@ impl<'a> CEmitter<'a> {
                 }
                 writeln!(&mut self.output, "0}};").unwrap(); // null terminator for safety
 
-                // emit ArStr fat-pointer constant (ptr + len)
-                writeln!(&mut self.output, "static const ArStr AR_STR_{} = {{", i).unwrap();
-                writeln!(&mut self.output, "    .memory = {{0}}").unwrap();
-                writeln!(&mut self.output, "}};").unwrap();
+                // ArStr fat-pointer constant matching LayoutEngine (ptr + len)
+                writeln!(
+                    &mut self.output,
+                    "static const ArStr AR_STR_{} = {{ .ptr = STR_{}, .len = {} }};",
+                    i,
+                    i,
+                    s.len()
+                )
+                .unwrap();
             }
         }
     }
@@ -249,6 +290,13 @@ impl<'a> CEmitter<'a> {
                                     AmirOperand::Copy(t) | AmirOperand::Move(t),
                                 ) = proj
                                 {
+                                    used_temps.insert(t.as_usize());
+                                }
+                            }
+                        }
+                        AmirRvalue::StringInterp { parts } => {
+                            for op in parts {
+                                if let AmirOperand::Copy(t) | AmirOperand::Move(t) = op {
                                     used_temps.insert(t.as_usize());
                                 }
                             }

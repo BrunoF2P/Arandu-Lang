@@ -13,7 +13,9 @@ impl<'a> CEmitter<'a> {
                     AmirLiteralEntry::Int(v) => v.clone(),
                     AmirLiteralEntry::Float(v) => v.clone(),
                     AmirLiteralEntry::Str(_) => {
-                        "((ArStr){ .memory = {0} }) /* init elsewhere */".to_string()
+                        // Prefer named constant when available; compound literal fallback
+                        // is handled in format_operand for pool constants.
+                        "((ArStr){ .ptr = (const uint8_t*)\"\", .len = 0 })".to_string()
                     }
                     AmirLiteralEntry::Char(v) => format!("'{}'", v),
                 },
@@ -38,12 +40,9 @@ impl<'a> CEmitter<'a> {
             AmirOperand::Constant(AmirConstant::Pool(id)) => {
                 match self.program.literal_pool.get(*id) {
                     AmirLiteralEntry::Str(s) => {
-                        // Build an ArStr fat-pointer inline: { .ptr = STR_N, .len = N }.
-                        let len = s.len();
-                        format!(
-                            "*(ArStr*)((uint8_t*[]){{ (uint8_t*)STR_{}, (uint8_t*){} }})",
-                            id.0, len
-                        )
+                        // LayoutEngine Str: named constant or compound literal {ptr, len}.
+                        let _ = s;
+                        format!("AR_STR_{}", id.0)
                     }
                     _ => self.format_operand_str(op),
                 }

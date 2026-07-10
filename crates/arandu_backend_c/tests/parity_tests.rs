@@ -187,6 +187,20 @@ fn parity_str_literal() {
 }
 
 #[test]
+fn parity_string_interpolation() {
+    // Builds an interpolated string and only checks that the program runs
+    // end-to-end on both backends (C + Cranelift) without crash.
+    let src = r#"
+    func main(): int {
+        let name = "Bruno"
+        let msg = "Oi, ${name}"
+        return 0
+    }
+    "#;
+    test_execution_parity("string_interpolation", src);
+}
+
+#[test]
 fn parity_enum_layout() {
     let src = r#"
     enum Status {

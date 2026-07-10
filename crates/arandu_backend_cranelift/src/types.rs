@@ -70,9 +70,8 @@ pub fn clif_type(ty: &ArType, ptr_type: Type) -> ClifType {
             Primitive::Bool => ClifType::Concrete(I8),
             Primitive::Char => ClifType::Concrete(I32),
             Primitive::Str => {
-                // TODO(SL_C): `Str` is a fat pointer (ptr + len). Currently mapped to a single
-                // I64 (ptr only). This will break when functions that return/receive `str` are
-                // fully implemented via ABI. See `clif_types` for the two-value representation.
+                // Single-slot fallback (ptr only). ABI/multi-value uses `clif_types` →
+                // `[ptr, I64]` matching LayoutEngine fat pointer (RC-STR-ABI).
                 ClifType::Concrete(ptr_type)
             }
             Primitive::Any => ClifType::Concrete(ptr_type),

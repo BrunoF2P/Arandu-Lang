@@ -116,6 +116,26 @@ impl AranduJit {
             .map_err(|err| codegen_ice(format!("failed to declare fmod: {err:?}")))?;
         func_ids.insert("fmod".to_string(), fmod_id);
 
+        // Declare memcpy as import (used by string interpolation concat)
+        let mut memcpy_sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+        memcpy_sig
+            .params
+            .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+        memcpy_sig
+            .params
+            .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+        memcpy_sig
+            .params
+            .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+        memcpy_sig
+            .returns
+            .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+        let memcpy_id = self
+            .module
+            .declare_function("memcpy", Linkage::Import, &memcpy_sig)
+            .map_err(|err| codegen_ice(format!("failed to declare memcpy: {err:?}")))?;
+        func_ids.insert("memcpy".to_string(), memcpy_id);
+
         // 1. Declare all functions first to support cross-calls
         for func in &program.funcs {
             let sym = symbols.get(func.symbol);
