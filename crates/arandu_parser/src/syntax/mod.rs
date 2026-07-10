@@ -7,6 +7,7 @@
 
 mod build;
 pub mod events;
+pub mod hand;
 mod kind;
 pub mod lower;
 

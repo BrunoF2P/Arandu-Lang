@@ -334,11 +334,11 @@ impl<'a> Parser<'a> {
         self.pending_docs.clear();
     }
 
-    pub(super) fn take_pending_docs(&mut self) -> Vec<PendingDoc> {
+    pub(crate) fn take_pending_docs(&mut self) -> Vec<PendingDoc> {
         std::mem::take(&mut self.pending_docs)
     }
 
-    pub(super) fn attach_docs(&mut self, docs: Vec<PendingDoc>, target_span: Span) {
+    pub(crate) fn attach_docs(&mut self, docs: Vec<PendingDoc>, target_span: Span) {
         self.docs
             .extend(docs.into_iter().map(|doc| DocCommentAttachment {
                 span: doc.span,
