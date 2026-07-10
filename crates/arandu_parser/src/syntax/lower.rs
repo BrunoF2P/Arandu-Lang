@@ -1,17 +1,17 @@
 //! Green-guided lower: walk typed top-level items; RD at each item seek.
 //!
-//! **Body without full-file RD:** simple `STMT` nodes can be hand-lowered from
-//! tokens ([`try_hand_lower_stmt`]); simple free `FUNC_ITEM`s with hand-lowerable
-//! bodies skip RD entirely ([`try_hand_lower_func_item`]). Complex forms fall
-//! back to seek + RD.
+//! **Body without full-file RD:** [`try_hand_lower_stmt`] covers common stmts
+//! (let/assign/call/if/return/…); [`try_hand_lower_func_item`] skips RD for
+//! simple free funcs when the whole body is hand-lowerable. Remaining forms
+//! fall back to seek + RD.
 
 use super::SyntaxTree;
 use super::kind::{SyntaxKind, SyntaxNode};
 use crate::ast::ast_pool::{AstPool, ExprId, ExprKind, StmtId};
 use crate::parser::{ParseError, ParseOutput, Parser};
 use crate::{
-    BinaryOp, BindingItem, Block, FuncDecl, FuncName, Program, ResultType, Stmt, TopLevelDecl,
-    TypeExpr, TypeName, Visibility,
+    BinaryOp, BindingItem, Block, Condition, FuncDecl, FuncName, ImportDecl, ModuleDecl, Place,
+    Program, ResultType, SetOp, Stmt, TopLevelDecl, TypeExpr, TypeName, UnaryOp, Visibility,
 };
 use arandu_lexer::{Span, Token, TokenKind};
 use smallvec::smallvec;
@@ -132,22 +132,42 @@ pub fn lower_from_green_recovering(tree: &SyntaxTree, file_id: u32) -> ParseOutp
         parser.collect_doc_comments();
 
         match item.kind() {
-            SyntaxKind::MODULE_ITEM => match parser.parse_module() {
-                Ok(m) => module = Some(m),
-                Err(err) => {
-                    parser.report_error(err);
-                    parser.synchronize_top_level();
-                    walk_ok = false;
+            SyntaxKind::MODULE_ITEM => {
+                if let Some(m) =
+                    try_hand_lower_module(tree.text(), tree.tokens(), item, file_id)
+                {
+                    let end = u32::from(item.text_range().end());
+                    parser.seek_to_byte(end);
+                    module = Some(m);
+                } else {
+                    match parser.parse_module() {
+                        Ok(m) => module = Some(m),
+                        Err(err) => {
+                            parser.report_error(err);
+                            parser.synchronize_top_level();
+                            walk_ok = false;
+                        }
+                    }
                 }
-            },
-            SyntaxKind::IMPORT_ITEM => match parser.parse_import() {
-                Ok(import) => imports.push(import),
-                Err(err) => {
-                    parser.report_error(err);
-                    parser.synchronize_top_level();
-                    walk_ok = false;
+            }
+            SyntaxKind::IMPORT_ITEM => {
+                if let Some(import) =
+                    try_hand_lower_import(tree.text(), tree.tokens(), item, file_id)
+                {
+                    let end = u32::from(item.text_range().end());
+                    parser.seek_to_byte(end);
+                    imports.push(import);
+                } else {
+                    match parser.parse_import() {
+                        Ok(import) => imports.push(import),
+                        Err(err) => {
+                            parser.report_error(err);
+                            parser.synchronize_top_level();
+                            walk_ok = false;
+                        }
+                    }
                 }
-            },
+            }
             SyntaxKind::FUNC_ITEM => {
                 // Prefer green body + simple signature without RD when possible.
                 if let Some(func) = try_hand_lower_func_item(
@@ -273,18 +293,44 @@ fn token_span(file_id: u32, t: &Token) -> Span {
     Span::new(file_id, t.start, t.start + t.len)
 }
 
-/// Binary op binding power (left, right) for simple arithmetic.
+/// Binary op binding power (left, right) — subset of RD `BINARY_OP_TABLE`.
 fn bin_bp(kind: TokenKind) -> Option<(u8, u8, BinaryOp)> {
     match kind {
-        TokenKind::Plus => Some((1, 2, BinaryOp::Add)),
-        TokenKind::Minus => Some((1, 2, BinaryOp::Sub)),
-        TokenKind::Star => Some((3, 4, BinaryOp::Mul)),
-        TokenKind::Slash => Some((3, 4, BinaryOp::Div)),
+        TokenKind::LogicalOr => Some((1, 2, BinaryOp::Or)),
+        TokenKind::LogicalAnd => Some((3, 4, BinaryOp::And)),
+        TokenKind::EqualEqual => Some((5, 6, BinaryOp::Equal)),
+        TokenKind::BangEqual => Some((5, 6, BinaryOp::NotEqual)),
+        TokenKind::Lt => Some((7, 8, BinaryOp::Lt)),
+        TokenKind::Gt => Some((7, 8, BinaryOp::Gt)),
+        TokenKind::LtEqual => Some((7, 8, BinaryOp::LtEqual)),
+        TokenKind::GtEqual => Some((7, 8, BinaryOp::GtEqual)),
+        TokenKind::Plus => Some((9, 10, BinaryOp::Add)),
+        TokenKind::Minus => Some((9, 10, BinaryOp::Sub)),
+        TokenKind::Star => Some((11, 12, BinaryOp::Mul)),
+        TokenKind::Slash => Some((11, 12, BinaryOp::Div)),
+        TokenKind::Percent => Some((11, 12, BinaryOp::Mod)),
         _ => None,
     }
 }
 
-/// Hand-lower a simple expression (int, path, binary `+ - * /`).
+fn set_op_from_token(kind: TokenKind) -> Option<SetOp> {
+    match kind {
+        TokenKind::Equal => Some(SetOp::Assign),
+        TokenKind::PlusEqual => Some(SetOp::AddAssign),
+        TokenKind::MinusEqual => Some(SetOp::SubAssign),
+        TokenKind::StarEqual => Some(SetOp::MulAssign),
+        TokenKind::SlashEqual => Some(SetOp::DivAssign),
+        TokenKind::PercentEqual => Some(SetOp::ModAssign),
+        TokenKind::AmpEqual => Some(SetOp::BitAndAssign),
+        TokenKind::PipeEqual => Some(SetOp::BitOrAssign),
+        TokenKind::CaretEqual => Some(SetOp::BitXorAssign),
+        TokenKind::ShiftLeftEqual => Some(SetOp::ShiftLeftAssign),
+        TokenKind::ShiftRightEqual => Some(SetOp::ShiftRightAssign),
+        _ => None,
+    }
+}
+
+/// Unary / primary+postfix, then binary ops.
 ///
 /// Returns `(expr, next_index)` over `toks`.
 fn try_hand_lower_expr(
@@ -295,46 +341,10 @@ fn try_hand_lower_expr(
     min_bp: u8,
     file_id: u32,
 ) -> Option<(ExprId, usize)> {
-    if pos >= toks.len() {
-        return None;
-    }
-    let t = toks[pos];
-    let mut left = match t.kind {
-        TokenKind::IntDec | TokenKind::IntHex | TokenKind::IntBin | TokenKind::IntOct => {
-            let text = token_text(source, t)?;
-            pos += 1;
-            pool.alloc_expr(
-                ExprKind::Int {
-                    value: SmolStr::new(text),
-                },
-                token_span(file_id, t),
-            )
-        }
-        TokenKind::IdentValue => {
-            let text = token_text(source, t)?;
-            pos += 1;
-            pool.alloc_expr(
-                ExprKind::Path {
-                    path: smallvec![SmolStr::new(text)],
-                },
-                token_span(file_id, t),
-            )
-        }
-        TokenKind::LParen => {
-            pos += 1;
-            let (inner, next) = try_hand_lower_expr(pool, source, toks, pos, 0, file_id)?;
-            pos = next;
-            if pos >= toks.len() || !matches!(toks[pos].kind, TokenKind::RParen) {
-                return None;
-            }
-            let close = toks[pos];
-            pos += 1;
-            let span = Span::new(file_id, t.start, close.start + close.len);
-            pool.alloc_expr(ExprKind::Group { expr: inner }, span)
-        }
-        _ => return None,
-    };
+    let (mut left, next) = try_hand_lower_unary_primary_post(pool, source, toks, pos, file_id)?;
+    pos = next;
 
+    // Infix binary.
     loop {
         if pos >= toks.len() {
             break;
@@ -355,6 +365,176 @@ fn try_hand_lower_expr(
     }
 
     Some((left, pos))
+}
+
+/// Unary binds over primary+postfix (`-f()`, `!flag`).
+fn try_hand_lower_unary_primary_post(
+    pool: &mut AstPool,
+    source: &str,
+    toks: &[&Token],
+    mut pos: usize,
+    file_id: u32,
+) -> Option<(ExprId, usize)> {
+    if pos >= toks.len() {
+        return None;
+    }
+    let t = toks[pos];
+    if matches!(t.kind, TokenKind::Minus | TokenKind::Bang) {
+        let op = if matches!(t.kind, TokenKind::Minus) {
+            UnaryOp::Neg
+        } else {
+            UnaryOp::Not
+        };
+        pos += 1;
+        let (expr, next) = try_hand_lower_primary_post(pool, source, toks, pos, file_id)?;
+        let span = Span::new(file_id, t.start, pool.expr_span(expr).end);
+        let id = pool.alloc_expr(ExprKind::Unary { op, expr }, span);
+        return Some((id, next));
+    }
+    try_hand_lower_primary_post(pool, source, toks, pos, file_id)
+}
+
+fn try_hand_lower_primary_post(
+    pool: &mut AstPool,
+    source: &str,
+    toks: &[&Token],
+    mut pos: usize,
+    file_id: u32,
+) -> Option<(ExprId, usize)> {
+    let (mut left, next) = try_hand_lower_primary(pool, source, toks, pos, file_id)?;
+    pos = next;
+
+    // Postfix: call / field access.
+    loop {
+        if pos >= toks.len() {
+            break;
+        }
+        match toks[pos].kind {
+            TokenKind::LParen => {
+                pos += 1;
+                let mut args = Vec::new();
+                if pos < toks.len() && !matches!(toks[pos].kind, TokenKind::RParen) {
+                    loop {
+                        let (arg, next) = try_hand_lower_expr(pool, source, toks, pos, 0, file_id)?;
+                        args.push(arg);
+                        pos = next;
+                        if pos < toks.len() && matches!(toks[pos].kind, TokenKind::Comma) {
+                            pos += 1;
+                            continue;
+                        }
+                        break;
+                    }
+                }
+                if pos >= toks.len() || !matches!(toks[pos].kind, TokenKind::RParen) {
+                    return None;
+                }
+                let close = toks[pos];
+                pos += 1;
+                let args_range = pool.alloc_expr_list(&args);
+                let left_span = pool.expr_span(left);
+                let span = Span::new(file_id, left_span.start, close.start + close.len);
+                left = pool.alloc_expr(
+                    ExprKind::Call {
+                        callee: left,
+                        args: args_range,
+                        trailing_block: None,
+                    },
+                    span,
+                );
+            }
+            TokenKind::Dot => {
+                pos += 1;
+                if pos >= toks.len() || !matches!(toks[pos].kind, TokenKind::IdentValue) {
+                    return None;
+                }
+                let field_tok = toks[pos];
+                let field = SmolStr::new(token_text(source, field_tok)?);
+                pos += 1;
+                let left_span = pool.expr_span(left);
+                let span = Span::new(file_id, left_span.start, field_tok.start + field_tok.len);
+                left = pool.alloc_expr(ExprKind::Field { base: left, field }, span);
+            }
+            _ => break,
+        }
+    }
+
+    Some((left, pos))
+}
+
+fn try_hand_lower_primary(
+    pool: &mut AstPool,
+    source: &str,
+    toks: &[&Token],
+    mut pos: usize,
+    file_id: u32,
+) -> Option<(ExprId, usize)> {
+    if pos >= toks.len() {
+        return None;
+    }
+    let t = toks[pos];
+    match t.kind {
+        TokenKind::IntDec | TokenKind::IntHex | TokenKind::IntBin | TokenKind::IntOct => {
+            let text = token_text(source, t)?;
+            pos += 1;
+            let id = pool.alloc_expr(
+                ExprKind::Int {
+                    value: SmolStr::new(text),
+                },
+                token_span(file_id, t),
+            );
+            Some((id, pos))
+        }
+        TokenKind::Float => {
+            let text = token_text(source, t)?;
+            pos += 1;
+            let id = pool.alloc_expr(
+                ExprKind::Float {
+                    value: SmolStr::new(text),
+                },
+                token_span(file_id, t),
+            );
+            Some((id, pos))
+        }
+        TokenKind::BoolTrue | TokenKind::BoolFalse => {
+            pos += 1;
+            let id = pool.alloc_expr(
+                ExprKind::Bool {
+                    value: matches!(t.kind, TokenKind::BoolTrue),
+                },
+                token_span(file_id, t),
+            );
+            Some((id, pos))
+        }
+        TokenKind::IdentValue | TokenKind::KwSelf => {
+            let text = if matches!(t.kind, TokenKind::KwSelf) {
+                "self"
+            } else {
+                token_text(source, t)?
+            };
+            pos += 1;
+            let id = pool.alloc_expr(
+                ExprKind::Path {
+                    path: smallvec![SmolStr::new(text)],
+                },
+                token_span(file_id, t),
+            );
+            Some((id, pos))
+        }
+        TokenKind::LParen => {
+            pos += 1;
+            let (inner, next) = try_hand_lower_expr(pool, source, toks, pos, 0, file_id)?;
+            pos = next;
+            if pos >= toks.len() || !matches!(toks[pos].kind, TokenKind::RParen) {
+                return None;
+            }
+            let close = toks[pos];
+            pos += 1;
+            let span = Span::new(file_id, t.start, close.start + close.len);
+            let id = pool.alloc_expr(ExprKind::Group { expr: inner }, span);
+            Some((id, pos))
+        }
+        _ => None,
+    }
 }
 
 /// Hand-lower the full token slice as one expression (must consume all).
@@ -430,8 +610,9 @@ fn try_hand_lower_type(
 
 /// Hand-lower a green `STMT` without calling RD (simple patterns only).
 ///
-/// Supports `break`/`continue`, `return`/`return <expr>` (int, path, binary
-/// `+ - * /`), and `let [mut] name = <expr>` (optional trailing `;`).
+/// Supports: `break`/`continue`, `return`, `let [mut] name [: T] = expr`,
+/// `set? place op= expr`, bare expr stmts (calls/paths), `if cond { } else { }`,
+/// `while cond { }` (optional trailing `;`).
 #[must_use]
 pub fn try_hand_lower_stmt(
     pool: &mut AstPool,
@@ -467,48 +648,221 @@ pub fn try_hand_lower_stmt(
             };
             Some(pool.alloc_stmt(Stmt::Return { span, values }))
         }
-        TokenKind::KwLet => {
-            // let [mut] name = expr
-            let mut i = 1usize;
-            if i >= toks.len() {
-                return None;
+        TokenKind::KwLet => try_hand_lower_let(pool, source, &toks, span, file_id),
+        TokenKind::KwIf => try_hand_lower_if(pool, source, tokens, stmt, &toks, span, file_id),
+        TokenKind::KwWhile => try_hand_lower_while(pool, source, tokens, stmt, &toks, span, file_id),
+        TokenKind::KwSet => try_hand_lower_set(pool, source, &toks, span, file_id, true),
+        TokenKind::IdentValue | TokenKind::KwSelf => {
+            // Assignment `x = …` / `x += …` or bare expression statement.
+            if let Some(id) = try_hand_lower_set(pool, source, &toks, span, file_id, false) {
+                return Some(id);
             }
-            let mutable = if matches!(toks[i].kind, TokenKind::KwMut) {
-                i += 1;
-                true
-            } else {
-                false
-            };
-            if i >= toks.len() || !matches!(toks[i].kind, TokenKind::IdentValue) {
-                return None;
-            }
-            let name_tok = toks[i];
-            let name = SmolStr::new(token_text(source, name_tok)?);
-            let name_span = token_span(file_id, name_tok);
-            i += 1;
-            // Optional `: type` — skip for hand path when present (type-annotated let).
-            if i < toks.len() && matches!(toks[i].kind, TokenKind::Colon) {
-                return None;
-            }
-            if i >= toks.len() || !matches!(toks[i].kind, TokenKind::Equal) {
-                return None;
-            }
-            i += 1;
-            let value = try_hand_lower_expr_all(pool, source, &toks[i..], file_id)?;
-            let binding = BindingItem {
-                span: name_span,
-                mutable,
-                name,
-                ty: None,
-            };
-            Some(pool.alloc_stmt(Stmt::VarDecl {
-                span,
-                bindings: vec![binding],
-                value,
-            }))
+            let expr = try_hand_lower_expr_all(pool, source, &toks, file_id)?;
+            Some(pool.alloc_stmt(Stmt::Expr { span, expr }))
+        }
+        // Expr stmts that start with unary / literal / group / call-like.
+        TokenKind::Minus
+        | TokenKind::Bang
+        | TokenKind::IntDec
+        | TokenKind::IntHex
+        | TokenKind::IntBin
+        | TokenKind::IntOct
+        | TokenKind::Float
+        | TokenKind::BoolTrue
+        | TokenKind::BoolFalse
+        | TokenKind::LParen => {
+            let expr = try_hand_lower_expr_all(pool, source, &toks, file_id)?;
+            Some(pool.alloc_stmt(Stmt::Expr { span, expr }))
         }
         _ => None,
     }
+}
+
+fn try_hand_lower_let(
+    pool: &mut AstPool,
+    source: &str,
+    toks: &[&Token],
+    span: Span,
+    file_id: u32,
+) -> Option<StmtId> {
+    // let [mut] name [: type] = expr
+    let mut i = 1usize;
+    if i >= toks.len() {
+        return None;
+    }
+    let mutable = if matches!(toks[i].kind, TokenKind::KwMut) {
+        i += 1;
+        true
+    } else {
+        false
+    };
+    if i >= toks.len() || !matches!(toks[i].kind, TokenKind::IdentValue) {
+        return None;
+    }
+    let name_tok = toks[i];
+    let name = SmolStr::new(token_text(source, name_tok)?);
+    let name_span = token_span(file_id, name_tok);
+    i += 1;
+    let ty = if i < toks.len() && matches!(toks[i].kind, TokenKind::Colon) {
+        i += 1;
+        if i >= toks.len() {
+            return None;
+        }
+        let ty_tok = toks[i];
+        let ty = try_hand_lower_type(pool, source, ty_tok, file_id)?;
+        i += 1;
+        Some(ty)
+    } else {
+        None
+    };
+    if i >= toks.len() || !matches!(toks[i].kind, TokenKind::Equal) {
+        return None;
+    }
+    i += 1;
+    let value = try_hand_lower_expr_all(pool, source, &toks[i..], file_id)?;
+    let binding = BindingItem {
+        span: name_span,
+        mutable,
+        name,
+        ty,
+    };
+    Some(pool.alloc_stmt(Stmt::VarDecl {
+        span,
+        bindings: vec![binding],
+        value,
+    }))
+}
+
+fn try_hand_lower_set(
+    pool: &mut AstPool,
+    source: &str,
+    toks: &[&Token],
+    span: Span,
+    file_id: u32,
+    explicit_set: bool,
+) -> Option<StmtId> {
+    let mut i = 0usize;
+    if explicit_set {
+        if !matches!(toks[i].kind, TokenKind::KwSet) {
+            return None;
+        }
+        i += 1;
+    }
+    if i >= toks.len() || !matches!(toks[i].kind, TokenKind::IdentValue | TokenKind::KwSelf) {
+        return None;
+    }
+    let root_tok = toks[i];
+    let root = if matches!(root_tok.kind, TokenKind::KwSelf) {
+        SmolStr::new_static("self")
+    } else {
+        SmolStr::new(token_text(source, root_tok)?)
+    };
+    let place_start = root_tok.start;
+    i += 1;
+    // Simple place only (no `.field` / `[index]` on LHS for now).
+    if i >= toks.len() {
+        return None;
+    }
+    let op = set_op_from_token(toks[i].kind)?;
+    let place_end = root_tok.start + root_tok.len;
+    i += 1;
+    let value = try_hand_lower_expr_all(pool, source, &toks[i..], file_id)?;
+    let place = Place {
+        span: Span::new(file_id, place_start, place_end),
+        root,
+        suffixes: Vec::new(),
+    };
+    Some(pool.alloc_stmt(Stmt::Set {
+        span,
+        places: vec![place],
+        op,
+        value,
+    }))
+}
+
+fn try_hand_lower_if(
+    pool: &mut AstPool,
+    source: &str,
+    tokens: &[Token],
+    stmt: &SyntaxNode,
+    toks: &[&Token],
+    span: Span,
+    file_id: u32,
+) -> Option<StmtId> {
+    // Prefer green BLOCK children (event sink nests then/else blocks).
+    let blocks: Vec<SyntaxNode> = stmt
+        .children()
+        .filter(|n| n.kind() == SyntaxKind::BLOCK)
+        .collect();
+    if blocks.is_empty() {
+        return None;
+    }
+    // `else if` not supported yet (would need nested if STMT).
+    if blocks.len() > 2 {
+        return None;
+    }
+    // Condition: tokens after `if` until first `{`.
+    let then_start = u32::from(blocks[0].text_range().start());
+    let cond_end = toks
+        .iter()
+        .position(|t| matches!(t.kind, TokenKind::LBrace))
+        .filter(|&p| p > 0)?;
+    let cond_expr = try_hand_lower_expr_all(pool, source, &toks[1..cond_end], file_id)?;
+    let cond_span = pool.expr_span(cond_expr);
+    let condition = Condition::Expr {
+        span: cond_span,
+        expr: cond_expr,
+    };
+    let then_block = try_hand_lower_block(pool, source, tokens, &blocks[0], file_id)?;
+    let else_block = if blocks.len() == 2 {
+        // Require `else` keyword before second block.
+        let else_start = u32::from(blocks[1].text_range().start());
+        let has_else = toks.iter().any(|t| {
+            matches!(t.kind, TokenKind::KwElse) && t.start >= then_start && t.start < else_start
+        });
+        if !has_else {
+            return None;
+        }
+        Some(try_hand_lower_block(pool, source, tokens, &blocks[1], file_id)?)
+    } else {
+        None
+    };
+    Some(pool.alloc_stmt(Stmt::If {
+        span,
+        condition,
+        then_block,
+        else_block,
+    }))
+}
+
+fn try_hand_lower_while(
+    pool: &mut AstPool,
+    source: &str,
+    tokens: &[Token],
+    stmt: &SyntaxNode,
+    toks: &[&Token],
+    span: Span,
+    file_id: u32,
+) -> Option<StmtId> {
+    let block = stmt
+        .children()
+        .find(|n| n.kind() == SyntaxKind::BLOCK)?;
+    let cond_end = toks
+        .iter()
+        .position(|t| matches!(t.kind, TokenKind::LBrace))
+        .filter(|&p| p > 0)?;
+    let cond_expr = try_hand_lower_expr_all(pool, source, &toks[1..cond_end], file_id)?;
+    let cond_span = pool.expr_span(cond_expr);
+    let condition = Condition::Expr {
+        span: cond_span,
+        expr: cond_expr,
+    };
+    let body = try_hand_lower_block(pool, source, tokens, &block, file_id)?;
+    Some(pool.alloc_stmt(Stmt::While {
+        span,
+        condition,
+        body,
+    }))
 }
 
 /// Hand-lower every direct `STMT` child of a green `BLOCK`.
@@ -714,6 +1068,101 @@ pub fn count_hand_lowerable_funcs(tree: &SyntaxTree) -> (usize, usize) {
     (total, hand)
 }
 
+fn try_hand_lower_dotted_path(source: &str, toks: &[&Token], mut i: usize) -> Option<(smallvec::SmallVec<[SmolStr; 3]>, usize)> {
+    let mut path = smallvec::SmallVec::new();
+    loop {
+        if i >= toks.len() {
+            return None;
+        }
+        // Module segments are typically IdentValue / IdentType / keywords-as-segments.
+        let t = toks[i];
+        let text = match t.kind {
+            TokenKind::IdentValue | TokenKind::IdentType => token_text(source, t)?,
+            _ => return None,
+        };
+        path.push(SmolStr::new(text));
+        i += 1;
+        if i < toks.len() && matches!(toks[i].kind, TokenKind::Dot) {
+            i += 1;
+            continue;
+        }
+        break;
+    }
+    Some((path, i))
+}
+
+/// `module a.b.c` (+ optional `;`).
+#[must_use]
+pub fn try_hand_lower_module(
+    source: &str,
+    tokens: &[Token],
+    item: &SyntaxNode,
+    file_id: u32,
+) -> Option<ModuleDecl> {
+    let r = item.text_range();
+    let s = u32::from(r.start());
+    let e = u32::from(r.end());
+    let mut toks = tokens_in_range(tokens, s, e);
+    if toks
+        .last()
+        .is_some_and(|t| matches!(t.kind, TokenKind::Semicolon))
+    {
+        toks.pop();
+    }
+    if toks.is_empty() || !matches!(toks[0].kind, TokenKind::KwModule) {
+        return None;
+    }
+    let (path, end) = try_hand_lower_dotted_path(source, &toks, 1)?;
+    if end != toks.len() || path.is_empty() {
+        return None;
+    }
+    Some(ModuleDecl {
+        span: Span::new(file_id, s, e),
+        path,
+    })
+}
+
+/// `import path.to.mod as alias` (+ optional `;`). Other import forms → `None`.
+#[must_use]
+pub fn try_hand_lower_import(
+    source: &str,
+    tokens: &[Token],
+    item: &SyntaxNode,
+    file_id: u32,
+) -> Option<ImportDecl> {
+    let r = item.text_range();
+    let s = u32::from(r.start());
+    let e = u32::from(r.end());
+    let mut toks = tokens_in_range(tokens, s, e);
+    if toks
+        .last()
+        .is_some_and(|t| matches!(t.kind, TokenKind::Semicolon))
+    {
+        toks.pop();
+    }
+    if toks.is_empty() || !matches!(toks[0].kind, TokenKind::KwImport) {
+        return None;
+    }
+    let (path, mut i) = try_hand_lower_dotted_path(source, &toks, 1)?;
+    if i >= toks.len() || !matches!(toks[i].kind, TokenKind::KwAs) {
+        return None;
+    }
+    i += 1;
+    if i >= toks.len() || !matches!(toks[i].kind, TokenKind::IdentValue | TokenKind::IdentType) {
+        return None;
+    }
+    let alias = SmolStr::new(token_text(source, toks[i])?);
+    i += 1;
+    if i != toks.len() {
+        return None;
+    }
+    Some(ImportDecl::ModuleAlias {
+        span: Span::new(file_id, s, e),
+        path,
+        alias,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -793,6 +1242,71 @@ mod tests {
         let (ftotal, fhand) = count_hand_lowerable_funcs(&tree);
         assert_eq!(ftotal, 1);
         assert_eq!(fhand, 1, "func should fully hand-lower");
+    }
+
+    #[test]
+    fn hand_lower_typed_let_assign_call_if() {
+        // Note: do not use `\` line continuations — they strip leading indent.
+        let src = r#"func main(): int {
+    let x: int = 1
+    x = x + 1
+    foo(1, 2)
+    if x > 0 {
+        return x
+    } else {
+        return 0
+    }
+}
+"#;
+        let tree = parse_syntax(src);
+        let (total, hand) = count_hand_lowerable_stmts(&tree);
+        assert!(total >= 4, "stmts={total}");
+        assert_eq!(
+            hand, total,
+            "all stmts hand-lowerable, hand={hand} total={total}"
+        );
+        let (ftotal, fhand) = count_hand_lowerable_funcs(&tree);
+        assert_eq!((ftotal, fhand), (1, 1));
+
+        let prog = lower_from_green(&tree, 0).expect("green lower");
+        let TopLevelDecl::Func(f) = prog.pool.decl(prog.decls[0]) else {
+            panic!("expected Func");
+        };
+        assert_eq!(f.body.statements.len(), 4);
+        assert!(matches!(
+            prog.pool.stmt(f.body.statements[0]),
+            Stmt::VarDecl { .. }
+        ));
+        assert!(matches!(prog.pool.stmt(f.body.statements[1]), Stmt::Set { .. }));
+        assert!(matches!(
+            prog.pool.stmt(f.body.statements[2]),
+            Stmt::Expr { .. }
+        ));
+        assert!(matches!(prog.pool.stmt(f.body.statements[3]), Stmt::If { .. }));
+    }
+
+    #[test]
+    fn hand_lower_while_and_comparisons() {
+        let src = r#"func main(): int {
+    let n = 3
+    while n > 0 {
+        n = n - 1
+    }
+    return n
+}
+"#;
+        let tree = parse_syntax(src);
+        let (ftotal, fhand) = count_hand_lowerable_funcs(&tree);
+        assert_eq!((ftotal, fhand), (1, 1));
+        let prog = lower_from_green(&tree, 0).expect("lower");
+        let TopLevelDecl::Func(f) = prog.pool.decl(prog.decls[0]) else {
+            panic!("func");
+        };
+        assert!(f
+            .body
+            .statements
+            .iter()
+            .any(|id| matches!(prog.pool.stmt(*id), Stmt::While { .. })));
     }
 
     #[test]
