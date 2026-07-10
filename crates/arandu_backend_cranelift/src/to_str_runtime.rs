@@ -148,3 +148,34 @@ pub unsafe extern "C" fn ar_jit_err_new(ptr: *const u8, len: i64) -> *mut u8 {
     let s = std::str::from_utf8(slice).unwrap_or("");
     unsafe { pack_string(s, std::ptr::null_mut()) }
 }
+
+/// ToStr for `Err`: the handle *is* a NUL-terminated message buffer.
+///
+/// Returns `(ptr, len)` via the usual out-len slot. Does not allocate.
+///
+/// # Safety
+/// `err` must be null or a valid NUL-terminated buffer from `err.new`.
+/// `out_len` must be null or a valid writable `*mut i64`.
+pub unsafe extern "C" fn ar_jit_err_to_str(err: *const u8, out_len: *mut i64) -> *mut u8 {
+    if err.is_null() {
+        if !out_len.is_null() {
+            unsafe {
+                *out_len = 0;
+            }
+        }
+        return std::ptr::null_mut();
+    }
+    let mut len = 0usize;
+    // Safety: err is NUL-terminated (pack_string / err.new contract).
+    unsafe {
+        while *err.add(len) != 0 {
+            len += 1;
+        }
+    }
+    if !out_len.is_null() {
+        unsafe {
+            *out_len = len as i64;
+        }
+    }
+    err as *mut u8
+}

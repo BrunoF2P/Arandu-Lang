@@ -55,16 +55,23 @@ impl FunctionTranslator<'_, '_> {
                         );
                     }
                 } else {
-                    let expected_ty = self
+                    let lhs_ar = self
                         .current_func
                         .locals
                         .get(lhs.local.as_usize())
                         .map(|l| self.resolve_ty(l.ty))
-                        .and_then(|lty| match clif_type(&lty, self.ptr_type) {
-                            ClifType::Concrete(ty) => Some(ty),
-                            ClifType::Void => None,
-                        });
-                    let val = self.translate_operand(rhs, expected_ty);
+                        .unwrap_or(ArType::Error);
+                    let expected_ty = match clif_type(&lhs_ar, self.ptr_type) {
+                        ClifType::Concrete(ty) => Some(ty),
+                        ClifType::Void => None,
+                    };
+                    // Route through translate_rvalue so `T?` stores box scalars
+                    // (`int? = 0` must not store a null pointer handle).
+                    let val = self.translate_rvalue(
+                        &arandu_semantics::amir::AmirRvalue::Use(rhs.clone()),
+                        expected_ty,
+                        Some(&lhs_ar),
+                    );
                     self.translate_store_place(lhs, val);
                 }
             }

@@ -1,0 +1,23 @@
+// `catch` recovers Result.Err without early-return (`?`).
+import err
+import io
+
+func fail(): Result<int, Err> {
+    return Result.Err(err.new("missingPath"))
+}
+
+func ok(): Result<int, Err> {
+    return Result.Ok(7)
+}
+
+func main(): int {
+    let a = fail() catch 3
+    let b = ok() catch 0
+    // Print real err message from err.new (ToStr on Err handle).
+    let _ = fail() catch |e| {
+        io.println(e)
+        0
+    }
+    // a=3, b=7 → exit 37
+    return a * 10 + b
+}

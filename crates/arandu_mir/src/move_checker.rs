@@ -592,10 +592,12 @@ mod tests {
 
     fn temp(id: usize, ty: ArType) -> AmirTemp {
         let is_copy = ty.is_copy_v01();
+        let is_nullable = matches!(ty, crate::types::ArType::Nullable(_));
         AmirTemp {
             id: TempId::from_usize(id),
             ty: intern_ty(ty),
             is_copy,
+            is_nullable,
             span: Span::new(0, 0, 0),
         }
     }

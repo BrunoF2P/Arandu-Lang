@@ -98,7 +98,20 @@ fn analyse(func: &AmirFunc, pool: &mut AmirLiteralPool) -> (Vec<LatticeVal>, Vec
                 let stmt = func.stmt(stmt_id);
                 if let AmirStmt::Assign { lhs, rhs } = stmt {
                     let old = lattice[lhs.as_usize()];
-                    let new = eval_rvalue(rhs, &lattice, pool);
+                    // `T?` is a null-or-pointer handle. Scalar constants like `0`
+                    // are *not* the same as `nil` at runtime (they get boxed).
+                    // Never fold a non-Nil constant into a Nullable temp.
+                    let new = if temp_is_nullable(func, *lhs) {
+                        match eval_rvalue(rhs, &lattice, pool) {
+                            LatticeVal::Constant(AmirConstant::Nil) => {
+                                LatticeVal::Constant(AmirConstant::Nil)
+                            }
+                            LatticeVal::Undefined => LatticeVal::Undefined,
+                            _ => LatticeVal::Overdefined,
+                        }
+                    } else {
+                        eval_rvalue(rhs, &lattice, pool)
+                    };
                     let merged = meet(old, new);
                     if merged != old {
                         lattice[lhs.as_usize()] = merged;
@@ -182,6 +195,10 @@ fn meet(a: LatticeVal, b: LatticeVal) -> LatticeVal {
 // ---------------------------------------------------------------------------
 // Rvalue evaluation
 // ---------------------------------------------------------------------------
+
+fn temp_is_nullable(func: &AmirFunc, temp: crate::amir::TempId) -> bool {
+    func.temps[temp.as_usize()].is_nullable
+}
 
 fn eval_rvalue(
     rvalue: &AmirRvalue,

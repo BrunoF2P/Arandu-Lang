@@ -325,6 +325,7 @@ mod tests {
                 crate::passes::type_checker::types::Primitive::Int,
             )),
             is_copy: true,
+            is_nullable: false,
             span: Span::new(0, 0, 0),
         }
     }

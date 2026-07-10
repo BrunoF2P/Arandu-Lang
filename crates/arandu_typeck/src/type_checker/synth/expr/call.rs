@@ -581,8 +581,19 @@ pub(super) fn synth_call_expr(
                 CatchHandler::Block {
                     block,
                     span: h_span,
+                    error: _,
                     ..
                 } => {
+                    // Bind `|e|` to the Result error type before type-checking the body.
+                    if let Some((_, err_ty_id)) = checker.result_ok_err_ids(inner_ty_id) {
+                        let err_key = crate::NodeKey::from(*h_span);
+                        if let Some(symbol_id) =
+                            checker.resolved.definitions.get(&err_key).copied()
+                        {
+                            checker.ctx.bind(symbol_id, err_ty_id);
+                            checker.record_decl_type(symbol_id, err_ty_id);
+                        }
+                    }
                     let ty = crate::type_checker::check::check_block(checker, checker.pool, block);
                     (*h_span, checker.intern(ty))
                 }

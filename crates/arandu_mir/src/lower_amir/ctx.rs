@@ -61,6 +61,7 @@ impl LowerCtx<'_> {
 
     pub(crate) fn new_temp(&mut self, ty: ArType) -> TempId {
         let is_copy = ty.is_copy_v01();
+        let is_nullable = matches!(ty, ArType::Nullable(_));
         let ty = self.intern_ty(ty);
         let id = self.next_temp_id();
         let span = if Self::span_is_usable(self.current_span) {
@@ -72,6 +73,7 @@ impl LowerCtx<'_> {
             id,
             ty,
             is_copy,
+            is_nullable,
             span,
         });
         self.temp_states.push(MoveState::Available);
@@ -382,7 +384,30 @@ impl LowerCtx<'_> {
         }
     }
 
+    /// If `local` is `T?` and `value` is a non-Nil constant, assign through a
+    /// temp so codegen can box the scalar (prevents bare `0` becoming `nil`).
+    fn materialize_nullable_const(
+        &mut self,
+        local: LocalId,
+        value: AmirOperand,
+    ) -> AmirOperand {
+        let ty = self.resolve_ty(self.locals[local.as_usize()].ty);
+        if !matches!(ty, ArType::Nullable(_)) {
+            return value;
+        }
+        match &value {
+            AmirOperand::Constant(AmirConstant::Nil) => value,
+            AmirOperand::Constant(_) => {
+                let t = self.new_temp(ty);
+                self.emit_assign_temp(t, AmirRvalue::Use(value));
+                AmirOperand::Copy(t)
+            }
+            _ => value,
+        }
+    }
+
     pub(crate) fn write_variable(&mut self, block: BlockId, local: LocalId, value: AmirOperand) {
+        let value = self.materialize_nullable_const(local, value);
         self.current_def.insert((block, local), value);
     }
 
@@ -390,6 +415,7 @@ impl LowerCtx<'_> {
         let block = self
             .current_block
             .expect("must be in a block to write variable");
+        let value = self.materialize_nullable_const(local, value);
         self.write_variable(block, local, value.clone());
         // Emit a dummy Store statement
         self.push_stmt(AmirStmt::Store {
@@ -421,6 +447,7 @@ impl LowerCtx<'_> {
         let ty_id = self.locals[local.as_usize()].ty;
         let ty = self.resolve_ty(ty_id);
         let is_copy = ty.is_copy_v01();
+        let is_nullable = matches!(ty, ArType::Nullable(_));
         let is_mem = super::is_memory_type(&ty);
         let temp = self.next_temp_id();
         let span = if Self::span_is_usable(self.current_span) {
@@ -432,22 +459,38 @@ impl LowerCtx<'_> {
             id: temp,
             ty: ty_id,
             is_copy,
+            is_nullable,
             span,
         });
         self.temp_states.push(MoveState::Available);
         self.temp_origins.push(Some(local));
-        self.push_stmt(AmirStmt::Assign {
-            lhs: temp,
-            rhs: AmirRvalue::Load(AmirPlace {
-                local,
-                projections: smallvec::smallvec![],
-            }),
-        });
+        // For `T?`, never redirect a non-Nil constant into the use site: bare
+        // `0` would collapse with `nil` under `ne 0, nil`. Materialize via
+        // Assign so codegen can box the scalar into a handle.
+        let keep_materialized = is_nullable
+            && matches!(
+                &val,
+                AmirOperand::Constant(c) if !matches!(c, AmirConstant::Nil)
+            );
 
-        // Register redirection so that rewrite_all_operands replaces temp with the actual SSA value (val)
-        // Only do this for register types; memory types must always load from their actual memory place.
-        if !is_mem {
-            self.redirected_temps.insert(temp, val);
+        if keep_materialized {
+            self.push_stmt(AmirStmt::Assign {
+                lhs: temp,
+                rhs: AmirRvalue::Use(val),
+            });
+        } else {
+            self.push_stmt(AmirStmt::Assign {
+                lhs: temp,
+                rhs: AmirRvalue::Load(AmirPlace {
+                    local,
+                    projections: smallvec::smallvec![],
+                }),
+            });
+            // Register redirection so that rewrite_all_operands replaces temp with the actual SSA value (val)
+            // Only do this for register types; memory types must always load from their actual memory place.
+            if !is_mem {
+                self.redirected_temps.insert(temp, val);
+            }
         }
 
         AmirOperand::Copy(temp)
@@ -543,6 +586,16 @@ impl LowerCtx<'_> {
         }
 
         let val = unique_val.unwrap_or(AmirOperand::Constant(AmirConstant::Nil));
+        // Keep `T?` temps that hold a non-Nil constant materialized — bare
+        // integer constants must not replace a nullable handle (0 ≠ nil).
+        if self.temps[temp_id.as_usize()].is_nullable
+            && matches!(
+                &val,
+                AmirOperand::Constant(c) if !matches!(c, AmirConstant::Nil)
+            )
+        {
+            return AmirOperand::Copy(temp_id);
+        }
         self.redirected_temps.insert(temp_id, val.clone());
         val
     }
@@ -594,6 +647,15 @@ impl LowerCtx<'_> {
 
                     if is_trivial {
                         let val = unique_val.unwrap_or(AmirOperand::Constant(AmirConstant::Nil));
+                        if self.temps[p.id.as_usize()].is_nullable
+                            && matches!(
+                                &val,
+                                AmirOperand::Constant(c) if !matches!(c, AmirConstant::Nil)
+                            )
+                        {
+                            // leave block param in place; codegen boxes the constant
+                            continue;
+                        }
                         self.redirected_temps.insert(p.id, val);
                         changed = true;
                     }

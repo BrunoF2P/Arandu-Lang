@@ -206,6 +206,105 @@ impl LowerCtx<'_> {
         Ok(AmirOperand::Copy(dest))
     }
 
+    /// Lower `expr catch handler` — like `?` but recover with handler instead of return.
+    pub(crate) fn lower_catch(
+        &mut self,
+        inner_id: HirExprId,
+        handler: &crate::hir::HirCatchHandler,
+        target: Option<TempId>,
+        expr_ty: ArType,
+        symbols: &SymbolTable,
+    ) -> Result<AmirOperand, Diagnostic> {
+        use crate::hir::HirCatchHandler;
+
+        let inner = self.hir.pool.expr(inner_id);
+        let ok_err = result_ok_err(&inner.ty, &self.tc.type_info.type_interner);
+        let (ok_ty, err_ty) = match ok_err {
+            Some(tup) => tup,
+            None => {
+                if matches!(inner.ty, ArType::Error) {
+                    let dest = target.unwrap_or_else(|| self.new_temp(ArType::Error));
+                    return Ok(AmirOperand::Copy(dest));
+                }
+                return Err(Diagnostic::ice(
+                    DiagCode::ICEGEN001,
+                    "catch: expected Result type",
+                    inner.span,
+                ));
+            }
+        };
+        let _ = ok_ty;
+
+        let base = self.lower_expr(inner_id, None, symbols)?;
+        if self.current_block.is_none() {
+            let dest = target.unwrap_or_else(|| self.new_temp(expr_ty));
+            return Ok(AmirOperand::Copy(dest));
+        }
+
+        let dest = target.unwrap_or_else(|| self.new_temp(expr_ty.clone()));
+
+        let tag_tmp = self.new_temp(ArType::Primitive(Primitive::Int));
+        self.emit_assign_temp(
+            tag_tmp,
+            AmirRvalue::Discriminant {
+                value: base.clone(),
+            },
+        );
+
+        let one_lit = self.intern_literal(AmirLiteralEntry::Int("1".to_string()));
+        let is_err = self.new_temp(ArType::Primitive(Primitive::Bool));
+        self.emit_assign_temp(
+            is_err,
+            AmirRvalue::Binary {
+                op: BinaryOp::Equal,
+                left: AmirOperand::Copy(tag_tmp),
+                right: AmirOperand::Constant(one_lit),
+            },
+        );
+
+        let bb_err = self.new_block();
+        let bb_ok = self.new_block();
+        let bb_join = self.new_block();
+
+        self.set_bool_branch(AmirOperand::Copy(is_err), bb_err, bb_ok);
+        self.seal_block(bb_err);
+        self.seal_block(bb_ok);
+
+        // Err arm: evaluate handler (optionally bind error payload).
+        self.current_block = Some(bb_err);
+        if let HirCatchHandler::Block {
+            error_symbol: Some(err_sym),
+            ..
+        } = handler
+        {
+            let err_tmp = self.new_temp(err_ty.clone());
+            self.lower_result_err_field(base.clone(), err_ty.clone(), err_tmp);
+            let err_local = self.new_local(err_ty.clone(), *err_sym, inner.span);
+            let consumed = self.consume_operand(AmirOperand::Copy(err_tmp))?;
+            self.write_variable_source(err_local, consumed);
+        }
+        match handler {
+            HirCatchHandler::Expr(h_expr) => {
+                self.lower_expr(*h_expr, Some(dest), symbols)?;
+            }
+            HirCatchHandler::Block { block, .. } => {
+                self.lower_block_as_expr(*block, Some(dest), symbols)?;
+            }
+        }
+        if self.current_block.is_some() {
+            self.emit_goto(bb_join);
+        }
+
+        // Ok arm: unwrap payload.
+        self.current_block = Some(bb_ok);
+        self.lower_result_ok_field(base, dest);
+        self.emit_goto(bb_join);
+
+        self.seal_block(bb_join);
+        self.current_block = Some(bb_join);
+        Ok(AmirOperand::Copy(dest))
+    }
+
     pub(crate) fn lower_try_nullable(
         &mut self,
         inner_id: HirExprId,
@@ -989,11 +1088,9 @@ impl LowerCtx<'_> {
                 self.current_block = Some(bb_join);
                 Ok(AmirOperand::Copy(dest))
             }
-            HirExprKind::Catch { .. } => Err(amir_unsupported(
-                expr.span,
-                "`catch` handler",
-                "v0.2 CATCH: AMIR catch lowering",
-            )),
+            HirExprKind::Catch { expr: inner, handler } => {
+                self.lower_catch(*inner, handler, target, expr.ty.clone(), symbols)
+            }
             HirExprKind::Lambda { .. } => Err(amir_unsupported(
                 expr.span,
                 "lambda/closure",

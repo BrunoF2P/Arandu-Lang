@@ -42,11 +42,13 @@ pub(crate) fn lower_func(
 
     // Return register is TempId(0) — span is the function header.
     let ret_is_copy = f.return_type.is_copy_v01();
+    let ret_is_nullable = matches!(f.return_type, crate::types::ArType::Nullable(_));
     let ret_ty = ctx.intern_ty(f.return_type.clone());
     ctx.temps.push(AmirTemp {
         id: TempId(0),
         ty: ret_ty,
         is_copy: ret_is_copy,
+        is_nullable: ret_is_nullable,
         span: f.span,
     });
     ctx.temp_states.push(MoveState::Available);

@@ -321,6 +321,7 @@ fn test_temp(id: usize) -> AmirTemp {
         id: temp(id),
         ty: intern_ty(ArType::Void),
         is_copy: true,
+            is_nullable: false,
         span: dummy_span(),
     }
 }

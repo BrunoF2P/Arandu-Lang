@@ -439,16 +439,43 @@ fn main() {
                 };
                 tracing::info!("Machine code generated (Cranelift JIT backend)");
 
+                // Resolve `main` return kind from AMIR (void → exit 0; int → process exit code).
+                let main_is_void = amir.funcs.iter().any(|f| {
+                    let name = checked.type_check.symbols.get(f.symbol).name.as_str();
+                    if name != "main" {
+                        return false;
+                    }
+                    matches!(
+                        checked
+                            .type_check
+                            .type_info
+                            .type_interner
+                            .resolve(f.return_type),
+                        arandu_semantics::types::ArType::Void
+                    )
+                });
+                let has_main = amir.funcs.iter().any(|f| {
+                    checked.type_check.symbols.get(f.symbol).name.as_str() == "main"
+                });
+                if !has_main {
+                    eprintln!("Error: 'main' function not found in compiled program");
+                    process::exit(1);
+                }
+
                 unsafe {
-                    if let Some(main_fn) =
+                    if main_is_void {
+                        if let Some(main_fn) = CompiledCode::get_fn::<unsafe fn()>(&output, "main") {
+                            main_fn();
+                            process::exit(0);
+                        }
+                    } else if let Some(main_fn) =
                         CompiledCode::get_fn::<unsafe fn() -> i32>(&output, "main")
                     {
                         let code = main_fn();
                         process::exit(code);
-                    } else {
-                        eprintln!("Error: 'main' function not found in compiled program");
-                        process::exit(1);
                     }
+                    eprintln!("Error: 'main' function not found in compiled program");
+                    process::exit(1);
                 }
             }
             "emit-c" => {

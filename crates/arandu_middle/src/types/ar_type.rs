@@ -116,8 +116,41 @@ impl ArType {
                     || p.is_float()
             }
             ArType::IntLiteral | ArType::FloatLiteral => true,
+            // `Err` is a message handle (NUL-terminated UTF-8 from `err.new`).
+            ArType::Err => true,
             _ => false,
         }
+    }
+
+    /// Value types that live *behind* a pointer when wrapped in `T?`.
+    ///
+    /// Named/heap types (`Point?`) already are a null-or-object pointer, so they
+    /// are **not** boxed again. Scalars (`int?`, `bool?`, …) are boxed so that
+    /// payload `0` is distinct from `nil`.
+    #[must_use]
+    pub fn needs_nullable_box(&self) -> bool {
+        matches!(
+            self,
+            ArType::Primitive(
+                Primitive::Bool
+                    | Primitive::Char
+                    | Primitive::Byte
+                    | Primitive::I8
+                    | Primitive::U8
+                    | Primitive::I16
+                    | Primitive::U16
+                    | Primitive::I32
+                    | Primitive::U32
+                    | Primitive::I64
+                    | Primitive::U64
+                    | Primitive::Int
+                    | Primitive::Uint
+                    | Primitive::F32
+                    | Primitive::F64
+                    | Primitive::Float
+            ) | ArType::IntLiteral
+                | ArType::FloatLiteral
+        )
     }
 
     /// Produce a human-readable name for this type.
@@ -362,6 +395,7 @@ mod tests {
         assert!(ArType::Primitive(Primitive::Byte).is_to_str_v01());
         assert!(ArType::IntLiteral.is_to_str_v01());
         assert!(ArType::FloatLiteral.is_to_str_v01());
+        assert!(ArType::Err.is_to_str_v01());
     }
 
     #[test]
@@ -369,7 +403,6 @@ mod tests {
         assert!(!ArType::Primitive(Primitive::Any).is_to_str_v01());
         assert!(!ArType::Void.is_to_str_v01());
         assert!(!ArType::Error.is_to_str_v01());
-        assert!(!ArType::Err.is_to_str_v01());
         let interner = new_interner();
         let int_id = interner.intern(ArType::Primitive(Primitive::Int));
         assert!(!ArType::Named(crate::SymbolId::new(0, 1), vec![]).is_to_str_v01());

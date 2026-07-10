@@ -292,9 +292,16 @@ impl LayoutEngine {
                     field_offsets: Vec::new(),
                 }
             }
-            ArType::Nullable(inner) => {
-                // If it is inner nullable, layout matches inner size/alignment (since ptr can be null)
-                self.layout_of(*inner, interner, provider)
+            ArType::Nullable(_) => {
+                // Nullable is always a null-or-pointer handle (box for scalars;
+                // heap object pointer for Named/etc.). Never stores the payload
+                // inline — avoids `int? = 0` colliding with `nil`.
+                let p = self.data_layout.pointer;
+                TypeLayout {
+                    size: p.size,
+                    align: p.abi_align,
+                    field_offsets: Vec::new(),
+                }
             }
             ArType::Slice(_) => self.fat_pointer_layout(),
             ArType::Array(len, inner) => {
@@ -820,7 +827,7 @@ mod tests {
     }
 
     #[test]
-    fn test_nullable_layout_delegates_to_inner() {
+    fn test_nullable_layout_is_pointer_handle() {
         let engine = LayoutEngine::new(8);
         let interner = TypeInterner::new();
         let provider = MockProvider;
@@ -828,8 +835,9 @@ mod tests {
         let nullable = ArType::Nullable(inner);
         let tid = interner.intern(nullable);
         let layout = engine.layout_of(tid, &interner, &provider);
-        assert_eq!(layout.size, 4);
-        assert_eq!(layout.align, 4);
+        // Handle ABI: always pointer-sized (null vs box/object ptr).
+        assert_eq!(layout.size, 8);
+        assert_eq!(layout.align, 8);
     }
 
     #[test]

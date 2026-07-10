@@ -39,6 +39,7 @@ mod tests {
             id: TempId::from_usize(3),
             ty,
             is_copy: true,
+            is_nullable: false,
             span: Span::new(0, 0, 0),
         };
         assert_eq!(temp.id.as_usize(), 3);
@@ -85,12 +86,15 @@ pub struct AmirLocal {
     pub use_span: Option<Span>,
 }
 
-/// SSA temporary. `ty` is interned; `is_copy` is denormalized so move analysis
-/// needs no `TypeInterner` on the hot path.
+/// SSA temporary. `ty` is interned; `is_copy` / `is_nullable` are denormalized
+/// so move analysis and SCCP need no `TypeInterner` on the hot path.
 #[derive(Debug, Clone)]
 pub struct AmirTemp {
     pub id: TempId,
     pub ty: TypeId,
     pub is_copy: bool,
+    /// True when `ty` is `T?` (null-or-pointer handle). SCCP must not fold
+    /// non-Nil scalar constants into these temps (`int? = 0` ≠ `nil`).
+    pub is_nullable: bool,
     pub span: Span,
 }

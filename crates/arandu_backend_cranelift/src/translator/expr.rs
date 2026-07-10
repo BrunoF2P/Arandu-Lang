@@ -1,4 +1,4 @@
-use arandu_semantics::amir::{AmirOperand, AmirRvalue};
+use arandu_semantics::amir::{AmirConstant, AmirOperand, AmirRvalue};
 use arandu_semantics::ops::UnaryOp;
 use arandu_semantics::passes::type_checker::types::{ArType, Primitive};
 use cranelift_codegen::ir::{InstBuilder, Type, Value};
@@ -180,6 +180,7 @@ impl FunctionTranslator<'_, '_> {
             ArType::IntLiteral => "ar_jit_i64_to_str",
             ArType::Primitive(p) if p.is_integer() && p.is_signed() => "ar_jit_i64_to_str",
             ArType::Primitive(p) if p.is_integer() => "ar_jit_u64_to_str",
+            ArType::Err => "ar_jit_err_to_str",
             _ => {
                 self.record_ice(
                     format!("ToStr v0.1 unsupported type in Cranelift: {ar_ty:?}"),
@@ -255,6 +256,7 @@ impl FunctionTranslator<'_, '_> {
                     self.builder.ins().ireduce(i64_ty, v)
                 }
             }
+            "ar_jit_err_to_str" => self.translate_operand(value, Some(self.ptr_type)),
             _ => unreachable!(),
         };
 
@@ -434,7 +436,105 @@ impl FunctionTranslator<'_, '_> {
         (buf, total)
     }
 
+    /// Box a scalar into a heap cell for `T?` (null-or-pointer ABI).
+    fn box_nullable_scalar(&mut self, val: Value, inner: &ArType) -> Value {
+        let Some(malloc_id) = self.malloc_func_id() else {
+            return self.poison_i32();
+        };
+        let malloc_ref = self
+            .module
+            .declare_func_in_func(malloc_id, self.builder.func);
+        let pointer_width = self.ptr_type.bytes() as u64;
+        let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
+        let layout =
+            engine.layout_of_type(inner, &self.type_info.type_interner, self.type_info);
+        let size = self
+            .builder
+            .ins()
+            .iconst(self.ptr_type, layout.size.max(1) as i64);
+        let call = self.builder.ins().call(malloc_ref, &[size]);
+        let ptr = self.builder.inst_results(call)[0];
+        self.builder.ins().store(
+            cranelift_codegen::ir::MemFlagsData::new(),
+            val,
+            ptr,
+            0,
+        );
+        ptr
+    }
+
+    /// Load a boxed scalar from a non-null `T?` handle.
+    fn unbox_nullable_scalar(&mut self, handle: Value, inner: &ArType) -> Value {
+        let clif = match crate::types::clif_type(inner, self.ptr_type) {
+            crate::types::ClifType::Concrete(t) => t,
+            crate::types::ClifType::Void => return self.poison_i32(),
+        };
+        self.builder.ins().load(
+            clif,
+            cranelift_codegen::ir::MemFlagsData::new(),
+            handle,
+            0,
+        )
+    }
+
     pub(super) fn translate_rvalue(
+        &mut self,
+        rvalue: &AmirRvalue,
+        expected_ty: Option<Type>,
+        expected_ar_type: Option<&ArType>,
+    ) -> Value {
+        if self.error.is_some() {
+            return self.poison_i32();
+        }
+
+        // ── Nullable handle ABI ──────────────────────────────────────────
+        // `T?` is always a pointer: null = nil; non-null = object ptr or
+        // boxed scalar. Box/unbox keeps `int? = 0` distinct from `nil`.
+        if let Some(ArType::Nullable(inner_id)) = expected_ar_type {
+            let inner = self.type_info.type_interner.resolve(*inner_id);
+            if matches!(
+                rvalue,
+                AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Nil))
+            ) {
+                return self.builder.ins().iconst(self.ptr_type, 0);
+            }
+            // Already a nullable handle (copy/move or nested) → pass through.
+            if let AmirRvalue::Use(op) = rvalue {
+                let op_ty = self.get_operand_ar_type(op);
+                if matches!(op_ty, ArType::Nullable(_)) {
+                    return self.translate_operand(op, Some(self.ptr_type));
+                }
+            }
+            // Produce the inner value, then box scalars.
+            let inner_clif = match crate::types::clif_type(&inner, self.ptr_type) {
+                crate::types::ClifType::Concrete(t) => Some(t),
+                crate::types::ClifType::Void => None,
+            };
+            let raw = self.translate_rvalue_inner(rvalue, inner_clif, Some(&inner));
+            if inner.needs_nullable_box() {
+                return self.box_nullable_scalar(raw, &inner);
+            }
+            return raw;
+        }
+
+        // Unbox when assigning a `T?` handle into a non-nullable `T` (e.g. `??`).
+        if let AmirRvalue::Use(op) = rvalue {
+            let op_ty = self.get_operand_ar_type(op);
+            if let ArType::Nullable(inner_id) = &op_ty {
+                let inner = self.type_info.type_interner.resolve(*inner_id);
+                if expected_ar_type.is_none_or(|e| !matches!(e, ArType::Nullable(_)))
+                    && inner.needs_nullable_box()
+                {
+                    let handle = self.translate_operand(op, Some(self.ptr_type));
+                    return self.unbox_nullable_scalar(handle, &inner);
+                }
+            }
+        }
+
+        self.translate_rvalue_inner(rvalue, expected_ty, expected_ar_type)
+    }
+
+    fn translate_rvalue_inner(
         &mut self,
         rvalue: &AmirRvalue,
         expected_ty: Option<Type>,

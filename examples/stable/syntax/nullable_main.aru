@@ -1,0 +1,11 @@
+// int? must distinguish 0 from nil (boxed handle ABI).
+func main(): int {
+    let a: int? = nil
+    let b: int? = 0
+    let c: int? = 5
+    let x = a ?? 99
+    let y = b ?? 99
+    let z = c ?? 99
+    // 99 + 0*100 + 5*10000 = 50099 → process exit low 8 bits = 179
+    return x + y * 100 + z * 10000
+}

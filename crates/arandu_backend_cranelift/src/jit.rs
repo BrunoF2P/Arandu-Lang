@@ -80,6 +80,10 @@ impl AranduJit {
             "err.new",
             crate::to_str_runtime::ar_jit_err_new as *const u8,
         );
+        builder.symbol(
+            "ar_jit_err_to_str",
+            crate::to_str_runtime::ar_jit_err_to_str as *const u8,
+        );
         let module = JITModule::new(builder);
 
         Ok(Self { module })
@@ -201,6 +205,8 @@ impl AranduJit {
             ("ar_jit_f64_to_str", f64_ty),
             ("ar_jit_bool_to_str", i8_ty),
             ("ar_jit_char_to_str", i32_ty),
+            // Err handle → fat str (ptr is the message buffer itself).
+            ("ar_jit_err_to_str", ptr_type),
         ] {
             let mut sig = cranelift_codegen::ir::Signature::new(default_call_conv);
             sig.params

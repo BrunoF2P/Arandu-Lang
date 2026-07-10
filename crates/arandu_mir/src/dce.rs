@@ -223,6 +223,7 @@ mod tests {
             id: TempId::from_usize(id),
             ty: intern_ty(ArType::Primitive(Primitive::Int)),
             is_copy: true,
+            is_nullable: false,
             span: arandu_lexer::Span::new(0, 0, 0),
         }
     }
@@ -232,6 +233,7 @@ mod tests {
             id: TempId::from_usize(id),
             ty: intern_ty(ArType::Primitive(Primitive::Bool)),
             is_copy: true,
+            is_nullable: false,
             span: arandu_lexer::Span::new(0, 0, 0),
         }
     }

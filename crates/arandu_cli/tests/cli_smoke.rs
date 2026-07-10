@@ -101,6 +101,10 @@ fn run_stable_main_demos() {
         ("examples/stable/syntax/safe_main.aru", 3),
         ("examples/stable/syntax/try_main.aru", 42),
         ("examples/stable/syntax/fib_main.aru", 55),
+        // 50099 & 0xff == 179 (int? 0 ≠ nil)
+        ("examples/stable/syntax/nullable_main.aru", 179),
+        // catch 3*10+7 + prints missingPath
+        ("examples/stable/syntax/catch_main.aru", 37),
     ];
     for (rel, expected) in demos {
         let path = workspace_root.join(rel);

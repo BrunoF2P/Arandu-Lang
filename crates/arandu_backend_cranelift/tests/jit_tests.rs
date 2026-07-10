@@ -1038,6 +1038,67 @@ fn jit_safe_field_and_null_coalesce() {
 }
 
 #[test]
+fn jit_nullable_int_zero_not_nil() {
+    let src = r#"
+        func main(): int {
+            let a: int? = nil
+            let b: int? = 0
+            let c: int? = 5
+            let x = a ?? 99
+            let y = b ?? 99
+            let z = c ?? 99
+            return x + y * 100 + z * 10000
+        }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    let backend = backend_for_test();
+    let module = backend
+        .compile(&amir, &symbols, &type_info)
+        .expect("int? should compile");
+    let result: i32 = unsafe {
+        let f: unsafe fn() -> i32 = module.get_fn("main").unwrap();
+        f()
+    };
+    assert_eq!(result, 50099, "int? = 0 must not collapse to nil");
+}
+
+#[test]
+fn jit_catch_and_err_message() {
+    let src = r#"
+        import err
+        import io
+
+        func fail(): Result<int, Err> {
+            return Result.Err(err.new("missingPath"))
+        }
+
+        func ok(): Result<int, Err> {
+            return Result.Ok(7)
+        }
+
+        func main(): int {
+            let a = fail() catch 3
+            let b = ok() catch 0
+            let _ = fail() catch |e| {
+                io.println(e)
+                0
+            }
+            return a * 10 + b
+        }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    let backend = backend_for_test();
+    let module = backend
+        .compile(&amir, &symbols, &type_info)
+        .expect("catch + err message should compile");
+    let result: i32 = unsafe {
+        let f: unsafe fn() -> i32 = module.get_fn("main").unwrap();
+        f()
+    };
+    assert_eq!(result, 37);
+}
+
+#[test]
 fn jit_enum_match_main() {
     let src = r#"
         enum Color {
