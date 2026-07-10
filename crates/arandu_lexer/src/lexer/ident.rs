@@ -100,6 +100,7 @@ pub(super) fn keyword_kind(text: &str) -> Option<TokenKind> {
         "catch" => TokenKind::KwCatch,
         "is" => TokenKind::KwIs,
         "let" => TokenKind::KwLet,
+        "set" => TokenKind::KwSet,
         "own" => TokenKind::KwOwn,
         "mut" => TokenKind::KwMut,
         "shared" => TokenKind::KwShared,

@@ -2,6 +2,7 @@ func main() {
     let simple = "Oi"
     let escaped = "linha\n"
     let interp = "Ola, ${name}"
+    let dollarName = "Ola, $name"
     let raw = r"C:\tmp\file.txt"
     let multi = """
 linha 1

@@ -120,6 +120,9 @@ impl<'a> Parser<'a> {
         &mut self,
     ) -> Option<Result<crate::ast_pool::StmtId, ParseError>> {
         let start = self.mark();
+        // Optional `set` keyword (EBNF mutation form). Both
+        // `set x = 1` and `x = 1` lower to the same `Stmt::Set`.
+        let _explicit_set = self.eat_name("KW_SET");
         let mut places = Vec::new();
         match self.parse_place() {
             Ok(place) => {
@@ -391,6 +394,7 @@ impl<'a> Parser<'a> {
 
     pub(super) fn try_parse_simple_assignment(&mut self) -> Option<Result<SimpleStmt, ParseError>> {
         let start = self.mark();
+        let _explicit_set = self.eat_name("KW_SET");
         let mut places = Vec::new();
         match self.parse_place() {
             Ok(place) => {

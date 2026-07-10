@@ -233,7 +233,8 @@ fn parses_required_v02_examples() {
         "examples/stable/interop/ffi.aru",
         "examples/stable/interop/extern_c.aru",
         "examples/stable/semantics/errors.aru",
-        "examples/stable/semantics/defer_errdefer.aru",
+        "examples/stable/semantics/mut_set.aru",
+        "examples/draft/semantics/defer_errdefer.aru",
         "examples/invalid/semantics/double_free.aru",
         "examples/invalid/semantics/unsafe_outside_block.aru",
     ] {

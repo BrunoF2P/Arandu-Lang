@@ -104,6 +104,28 @@ impl<'a> Lexer<'a> {
                 text_start = self.mark();
                 continue;
             }
+            if self.peek() == Some('$')
+                && self
+                    .source
+                    .as_bytes()
+                    .get(self.pos + 1)
+                    .copied()
+                    .is_some_and(|b| is_ident_start(b as char))
+            {
+                self.flush_text(text_start, self.pos);
+                // Emit a synthetic InterpStart at the `$` position.
+                let dollar_start = self.mark();
+                self.bump_ascii(1); // consume `$`
+                let interp_start_span = self.span_from(dollar_start);
+                self.push_token(TokenKind::InterpStart, interp_start_span, false);
+                // Lex the identifier that follows.
+                self.lex_ident_or_keyword();
+                // Emit a synthetic InterpEnd immediately after.
+                let end_span = self.span_from(self.mark());
+                self.push_token(TokenKind::InterpEnd, end_span, false);
+                text_start = self.mark();
+                continue;
+            }
             if self.peek() == Some('\\') {
                 self.flush_text(text_start, self.pos);
                 self.lex_escape()?;
