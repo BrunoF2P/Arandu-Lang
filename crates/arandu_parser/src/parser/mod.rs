@@ -35,38 +35,44 @@ pub fn parse(source: &str) -> Result<Program, ParseError> {
     parse_with_file_id(source, 0)
 }
 
-/// Parse source: **CST-first**, then lower green-tree text → AST for typeck/resolve.
+/// Parse source: **CST-first**, then lower with the CST's cached token stream (no re-lex).
 #[tracing::instrument(level = "trace", target = "arandu_parser", skip(source))]
 pub fn parse_with_file_id(source: &str, file_id: u32) -> Result<Program, ParseError> {
     let tree = crate::syntax::parse_syntax(source);
-    let output = parse_tokens_to_program(tree.text(), file_id);
-    if let Some(err) = output.diagnostics.into_iter().next() {
-        Err(err)
-    } else {
-        Ok(output.program)
-    }
+    crate::syntax::lower_syntax_to_program(&tree, file_id)
 }
 
 pub fn parse_recovering(source: &str) -> ParseOutput {
     parse_recovering_with_file_id(source, 0)
 }
 
-/// Recovering parse: CST-first, then RD lower on CST text.
+/// Recovering parse: CST-first, then RD lower on the CST token stream.
 pub fn parse_recovering_with_file_id(source: &str, file_id: u32) -> ParseOutput {
     let tree = crate::syntax::parse_syntax(source);
-    parse_tokens_to_program(tree.text(), file_id)
+    crate::syntax::lower_syntax_to_program_recovering(&tree, file_id)
 }
 
-/// Recursive-descent lower from source text (used by CST lower; no second CST build).
+/// Recursive-descent parse from source: **lex once**, then [`parse_token_stream`].
+/// Prefer CST lower ([`crate::lower_syntax_to_program`]) which reuses the CST tokens.
 #[doc(hidden)]
 pub fn parse_tokens_to_program(source: &str, file_id: u32) -> ParseOutput {
     let lexed = arandu_lexer::lex_recovering(source);
-    let mut parser = Parser::new(lexed.source, lexed.tokens).with_file_id(file_id);
-    let mut diagnostics: Vec<ParseError> = lexed
+    let lex_diags: Vec<ParseError> = lexed
         .diagnostics
         .into_iter()
         .map(|err| ParseError::from_lex(err, file_id))
         .collect();
+    parse_token_stream(lexed.source, lexed.tokens, file_id, lex_diags)
+}
+
+/// RD lower from an **already-lexed** token stream (no lex). Used by CST-first lower.
+pub fn parse_token_stream(
+    source: &str,
+    tokens: Vec<arandu_lexer::Token>,
+    file_id: u32,
+    mut diagnostics: Vec<ParseError>,
+) -> ParseOutput {
+    let mut parser = Parser::new(source, tokens).with_file_id(file_id);
 
     let program = match parser.parse_program() {
         Ok(prog) => prog,
@@ -254,7 +260,18 @@ impl<'a> Parser<'a> {
             }));
     }
 
+    /// Statement terminator: explicit `;`, newline ASI (already a `SEMICOLON` token),
+    /// or omitted before `}` / EOF (one-line bodies like `return 1 }`).
     pub(super) fn expect_semicolon(&mut self) -> Result<(), ParseError> {
+        if self.at_kind_name("SEMICOLON") {
+            self.advance();
+            return Ok(());
+        }
+        // Optional terminator before block/file end (does not affect if-expr blocks:
+        // those use expression parsing, not `expect_semicolon`).
+        if self.at_kind_name("RBRACE") || self.at_kind_name("EOF") {
+            return Ok(());
+        }
         self.expect_name("SEMICOLON")
     }
 

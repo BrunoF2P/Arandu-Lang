@@ -20,14 +20,15 @@
 
 ```text
 SourceFile.text
-    → syntax_tree(file)          // CST rowan, ITEM por heurística de keywords
-    → parse(file)                // lower_syntax_to_program (RD no texto do CST)
+    → syntax_tree(file)          // CST rowan; cache + reparse_subtree em edit contíguo
+    → parse(file)                // lower_syntax_to_program (RD nos tokens do CST, sem re-lex)
     → resolve / item_body_typeck / file_ide_diagnostics
 ```
 
-- **Não** há dual: CST não depende de AST; AST é só lower do texto autoritativo do CST.
+- **Não** há dual: CST não depende de AST; AST é lower do token stream cacheado no CST.
 - Typeck continua em `Program` (estrutura tipada); a **origem** do programa é o CST.
 - Highlighting LSP: `textDocument/semanticTokens/full` via `highlight_spans` no CST.
+- `;` opcional antes de `}` no parser (corpos one-line).
 
 ## Reparse de subtree
 
@@ -35,9 +36,10 @@ SourceFile.text
 
 1. Aplica o edit no texto.  
 2. Se o edit cabe em um único `ITEM`: re-lex **só o texto daquele ITEM**, reconstrói o green do ITEM, e faz `replace_child` na raiz — **irmãos reusam o mesmo green** (`Arc` identity).  
-3. Caso contrário, full `parse_syntax`.  
+3. Atualiza o token stream do arquivo (um lex do source novo) para o lower.  
+4. Caso contrário, full `parse_syntax`.  
 
-No path Salsa, `syntax_tree` reconstroi a partir do texto completo (correto sob edits arbitrários); a API de subtree serve buffers/IDE e testes de estabilidade/reuso.
+**Salsa:** `DatabaseImpl` mantém cache CST por `FileId`; em `syntax_tree`, se o texto mudou por um edit contíguo (`single_contiguous_edit`), usa `reparse_subtree`.
 
 ## P6 — Hardening (feito)
 
@@ -48,9 +50,16 @@ No path Salsa, `syntax_tree` reconstroi a partir do texto completo (correto sob 
 | Métricas de pipeline | contadores de teste (`item_body_cutoff`, `ide_diag_delta`, green identity em `reparse_subtree`) |
 | Critério de sucesso | edit em um item não muda texto/green de irmãos; typeck + semantic tokens verdes |
 
+## Residuais corrigidos
+
+| Residual | Correção |
+|----------|----------|
+| Lower re-lex full | Tokens cacheados no `SyntaxTree`; `parse_token_stream` |
+| `syntax_tree` sempre full | Cache + `reparse_subtree` em edit contíguo |
+| One-line `return 1 }` | `;` opcional antes de `RBRACE`/`EOF` no parser |
+
 ## Fora de escopo residual
 
-- Lower AST **sem** re-lex RD (parser 100% driven por walk de green nodes).  
-- `syntax_tree` Salsa incremental via `reparse_subtree` (hoje full text → green).  
+- Lower AST por walk estrutural de green nodes (sem RD; requer CST com nós FUNC/STMT).  
 - Highlight semântico por tipos (só léxico via CST por ora).  
 - Code actions / format.

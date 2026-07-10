@@ -1,11 +1,18 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::explain::RebuildLog;
 use salsa::Storage;
 
 pub type FileId = u32;
+
+/// Per-file CST cache for incremental [`crate::passes::syntax_tree`] rebuilds.
+#[derive(Default)]
+struct CstCache {
+    /// Last successful tree per file (text must match before reuse).
+    by_file: HashMap<FileId, arandu_parser::SyntaxTree>,
+}
 
 pub use crate::stable_hash::StableHash;
 
@@ -46,6 +53,10 @@ pub trait ArandCompilerDb: salsa::Database {
     /// Registered Salsa input for this numeric file id, if any.
     fn source_file_by_id(&self, file: FileId) -> Option<SourceFile>;
     fn as_source_db(&self) -> &dyn arandu_middle::db::SourceDatabase;
+    /// Downcast to [`DatabaseImpl`] for CST cache / incremental reparse (default: none).
+    fn as_db_impl(&self) -> Option<&DatabaseImpl> {
+        None
+    }
 }
 
 pub use arandu_middle::db::SourceFile;
@@ -84,17 +95,20 @@ impl FileRegistry {
 #[salsa::db]
 pub struct DatabaseImpl {
     storage: Storage<Self>,
-    files: Arc<std::sync::Mutex<FileRegistry>>,
+    files: Arc<Mutex<FileRegistry>>,
+    /// Incremental CST reuse across `syntax_tree` queries (side cache; result still pure in text).
+    cst_cache: Arc<Mutex<CstCache>>,
     /// Shared with the Salsa event callback when explain mode is on.
     rebuild_log: Option<Arc<RebuildLog>>,
 }
 
-// Manual Clone: Storage is cloneable; share Arc file registry + log.
+// Manual Clone: Storage is cloneable; share Arc file registry + log + CST cache.
 impl Clone for DatabaseImpl {
     fn clone(&self) -> Self {
         Self {
             storage: self.storage.clone(),
             files: Arc::clone(&self.files),
+            cst_cache: Arc::clone(&self.cst_cache),
             rebuild_log: self.rebuild_log.clone(),
         }
     }
@@ -115,7 +129,8 @@ impl DatabaseImpl {
     pub fn new() -> Self {
         Self {
             storage: Storage::new(None),
-            files: Arc::new(std::sync::Mutex::new(FileRegistry::default())),
+            files: Arc::new(Mutex::new(FileRegistry::default())),
+            cst_cache: Arc::new(Mutex::new(CstCache::default())),
             rebuild_log: None,
         }
     }
@@ -127,7 +142,8 @@ impl DatabaseImpl {
         let callback = RebuildLog::salsa_callback(Arc::clone(&log));
         let db = Self {
             storage: Storage::new(Some(callback)),
-            files: Arc::new(std::sync::Mutex::new(FileRegistry::default())),
+            files: Arc::new(Mutex::new(FileRegistry::default())),
+            cst_cache: Arc::new(Mutex::new(CstCache::default())),
             rebuild_log: Some(Arc::clone(&log)),
         };
         (db, log)
@@ -162,6 +178,32 @@ impl DatabaseImpl {
     pub fn source_file_by_id(&self, file_id: FileId) -> Option<SourceFile> {
         let reg = self.files.lock().unwrap();
         reg.by_id.get(&file_id).copied()
+    }
+
+    /// Build or reuse CST for `file_id`/`text` via [`arandu_parser::reparse_subtree`] when possible.
+    pub(crate) fn syntax_tree_for_text(
+        &self,
+        file_id: FileId,
+        text: &str,
+    ) -> arandu_parser::SyntaxTree {
+        let mut cache = self.cst_cache.lock().unwrap();
+        if let Some(prev) = cache.by_file.get(&file_id) {
+            if prev.text() == text {
+                return prev.clone();
+            }
+            if let Some((start, end, repl)) =
+                arandu_parser::single_contiguous_edit(prev.text(), text)
+            {
+                let (_src, tree) = arandu_parser::reparse_subtree(prev, start, end, &repl);
+                if tree.text() == text {
+                    cache.by_file.insert(file_id, tree.clone());
+                    return tree;
+                }
+            }
+        }
+        let tree = arandu_parser::parse_syntax(text);
+        cache.by_file.insert(file_id, tree.clone());
+        tree
     }
 }
 
@@ -257,5 +299,9 @@ impl ArandCompilerDb for DatabaseImpl {
 
     fn as_source_db(&self) -> &dyn arandu_middle::db::SourceDatabase {
         self
+    }
+
+    fn as_db_impl(&self) -> Option<&DatabaseImpl> {
+        Some(self)
     }
 }

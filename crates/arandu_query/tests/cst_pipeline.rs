@@ -8,11 +8,8 @@ use std::sync::Arc;
 #[test]
 fn parse_depends_on_cst_not_independent_dual() {
     let mut db = DatabaseImpl::new();
-    // Multiline body: lexer ASI inserts `;` on newline before `}`.
-    let file = db.new_file(
-        "c.aru".into(),
-        "func main(): int {\n    return 1\n}\n".into(),
-    );
+    // One-line body: parser allows omitted `;` before `}`.
+    let file = db.new_file("c.aru".into(), "func main(): int { return 1 }\n".into());
     let tree = syntax_tree(&db, file);
     assert!(!tree.text().is_empty());
     let prog = parse(&db, file);

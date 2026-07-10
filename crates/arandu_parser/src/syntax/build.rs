@@ -1,14 +1,21 @@
-//! CST-first green tree: lex → ITEM split → green; lower AST from CST text.
+//! CST-first green tree: lex once → ITEM green + token cache; lower AST without re-lex.
 
 use super::kind::{AranduLanguage, SyntaxKind, SyntaxNode, SyntaxToken};
 use arandu_lexer::{Token, TokenKind, lex_recovering};
 use rowan::{GreenNode, GreenNodeBuilder, NodeOrToken, TextRange, TextSize};
+use std::sync::Arc;
 
-/// Result of building a CST (authoritative source text + green tree).
+/// Result of building a CST (authoritative text + green tree + token stream).
+///
+/// Tokens are produced by the **same** lex that builds the green tree. Lower
+/// reuses them so typeck never pays a second full-file lex.
 #[derive(Debug, Clone)]
 pub struct SyntaxTree {
     green: GreenNode,
     text: String,
+    tokens: Arc<Vec<Token>>,
+    /// Lex diagnostics from the same pass that produced [`Self::tokens`].
+    lex_diagnostics: Arc<Vec<arandu_lexer::LexError>>,
 }
 
 impl SyntaxTree {
@@ -20,6 +27,18 @@ impl SyntaxTree {
     #[must_use]
     pub fn text(&self) -> &str {
         &self.text
+    }
+
+    /// Cached token stream from CST construction (includes ASI-inserted `;`).
+    #[must_use]
+    pub fn tokens(&self) -> &[Token] {
+        &self.tokens
+    }
+
+    /// Lex errors captured while building this tree (propagated by lower).
+    #[must_use]
+    pub fn lex_diagnostics(&self) -> &[arandu_lexer::LexError] {
+        &self.lex_diagnostics
     }
 
     #[must_use]
@@ -66,39 +85,56 @@ impl SyntaxTree {
     }
 }
 
-/// CST-first parse: top-level ITEM boundaries from lexer heuristics (no AST).
+fn tree_from_lexed(
+    source: &str,
+    lexed: arandu_lexer::Lexed<'_>,
+    spans: &[(u32, u32)],
+) -> SyntaxTree {
+    let green = build_green(source, &lexed.tokens, spans);
+    SyntaxTree {
+        green,
+        text: source.to_string(),
+        tokens: Arc::new(lexed.tokens),
+        lex_diagnostics: Arc::new(lexed.diagnostics),
+    }
+}
+
+/// CST-first parse: one lex → green ITEM tree + token cache (no AST).
 #[must_use]
 pub fn parse_syntax(source: &str) -> SyntaxTree {
     let lexed = lex_recovering(source);
     let spans = find_top_level_item_spans(&lexed.tokens, source.len() as u32);
-    let green = build_green(source, &lexed.tokens, &spans);
-    SyntaxTree {
-        green,
-        text: source.to_string(),
-    }
+    tree_from_lexed(source, lexed, &spans)
 }
 
 /// Build CST with explicit item spans (advanced / tests).
 #[must_use]
 pub fn parse_syntax_with_item_spans(source: &str, item_spans: &[(u32, u32)]) -> SyntaxTree {
     let lexed = lex_recovering(source);
-    let green = build_green(source, &lexed.tokens, item_spans);
-    SyntaxTree {
-        green,
-        text: source.to_string(),
-    }
+    tree_from_lexed(source, lexed, item_spans)
 }
 
-/// Lower CST → AST via the recursive-descent parser on the CST's authoritative text.
+fn lex_diags_as_parse(tree: &SyntaxTree, file_id: u32) -> Vec<crate::ParseError> {
+    tree.lex_diagnostics()
+        .iter()
+        .copied()
+        .map(|err| crate::ParseError::from_lex(err, file_id))
+        .collect()
+}
+
+/// Lower CST → AST using the **cached token stream** (no re-lex).
 ///
-/// Typeck/resolve continue to consume [`crate::Program`]; the **source of truth**
-/// is the CST (text + structure). There is no independent dual parse of spans from AST.
+/// Typeck/resolve consume [`crate::Program`]; the source of truth is the CST.
 pub fn lower_syntax_to_program(
     tree: &SyntaxTree,
     file_id: u32,
 ) -> Result<crate::Program, crate::ParseError> {
-    // RD lower on CST authoritative text (does not re-enter parse_syntax).
-    let output = crate::parser::parse_tokens_to_program(tree.text(), file_id);
+    let output = crate::parser::parse_token_stream(
+        tree.text(),
+        tree.tokens().to_vec(),
+        file_id,
+        lex_diags_as_parse(tree, file_id),
+    );
     if let Some(err) = output.diagnostics.into_iter().next() {
         Err(err)
     } else {
@@ -106,10 +142,62 @@ pub fn lower_syntax_to_program(
     }
 }
 
-/// Recovering lower (keeps parse diagnostics).
+/// Recovering lower (keeps parse diagnostics); no re-lex.
 #[must_use]
 pub fn lower_syntax_to_program_recovering(tree: &SyntaxTree, file_id: u32) -> crate::ParseOutput {
-    crate::parser::parse_tokens_to_program(tree.text(), file_id)
+    crate::parser::parse_token_stream(
+        tree.text(),
+        tree.tokens().to_vec(),
+        file_id,
+        lex_diags_as_parse(tree, file_id),
+    )
+}
+
+/// Single contiguous edit from `old` → `new` (LCP + LCS suffix), if any.
+///
+/// Returns `(edit_start, edit_end_in_old, replacement)`. Used by Salsa
+/// `syntax_tree` to drive [`reparse_subtree`] after full-text commits.
+#[must_use]
+pub fn single_contiguous_edit(old: &str, new: &str) -> Option<(u32, u32, String)> {
+    if old == new {
+        return None;
+    }
+    let old_b = old.as_bytes();
+    let new_b = new.as_bytes();
+    let mut prefix = 0usize;
+    let max_pre = old_b.len().min(new_b.len());
+    while prefix < max_pre && old_b[prefix] == new_b[prefix] {
+        prefix += 1;
+    }
+    while prefix > 0 && (!old.is_char_boundary(prefix) || !new.is_char_boundary(prefix)) {
+        prefix -= 1;
+    }
+
+    let mut old_end = old_b.len();
+    let mut new_end = new_b.len();
+    while old_end > prefix && new_end > prefix && old_b[old_end - 1] == new_b[new_end - 1] {
+        old_end -= 1;
+        new_end -= 1;
+    }
+    while old_end < old.len() && !old.is_char_boundary(old_end) {
+        old_end += 1;
+    }
+    while new_end < new.len() && !new.is_char_boundary(new_end) {
+        new_end += 1;
+    }
+    // If suffix walked past prefix due to boundary fixups, clamp.
+    if old_end < prefix {
+        old_end = prefix;
+    }
+    if new_end < prefix {
+        new_end = prefix;
+    }
+
+    Some((
+        prefix as u32,
+        old_end as u32,
+        new[prefix..new_end].to_string(),
+    ))
 }
 
 fn build_green(source: &str, tokens: &[Token], item_spans: &[(u32, u32)]) -> GreenNode {
@@ -360,10 +448,8 @@ pub fn reparse_edit(
 /// 2. If the edit range is contained in a single [`SyntaxKind::ITEM`], re-lex **only that
 ///    ITEM's new text**, rebuild its green node, and [`GreenNodeData::replace_child`] on the
 ///    root so **sibling ITEM green nodes are reused** (cheap `Arc` clone).
-/// 3. Otherwise fall back to full [`parse_syntax`].
-///
-/// Salsa's `syntax_tree` query still rebuilds from full text (correctness under arbitrary
-/// edits); this API is for IDE buffers and tests that need local green reuse.
+/// 3. Refresh the file token stream with one lex of the new source (for lower; green is incremental).
+/// 4. Otherwise fall back to full [`parse_syntax`].
 #[must_use]
 pub fn reparse_subtree(
     old: &SyntaxTree,
@@ -417,13 +503,13 @@ pub fn reparse_subtree(
 
     // Re-lex + rebuild green for ONLY the edited ITEM slice.
     let item_text = &new_source[new_s as usize..new_e as usize];
-    let lexed = lex_recovering(item_text);
+    let item_lexed = lex_recovering(item_text);
     let mut builder = GreenNodeBuilder::new();
     builder.start_node(SyntaxKind::ITEM.into());
     emit_tokens(
         &mut builder,
         item_text,
-        &lexed.tokens,
+        &item_lexed.tokens,
         0,
         item_text.len() as u32,
     );
@@ -436,9 +522,13 @@ pub fn reparse_subtree(
         return (new_source.clone(), parse_syntax(&new_source));
     }
 
+    // Token stream for lower: one full lex of the new source (green was local).
+    let file_lexed = lex_recovering(&new_source);
     let tree = SyntaxTree {
         green: new_green,
         text: new_source.clone(),
+        tokens: Arc::new(file_lexed.tokens),
+        lex_diagnostics: Arc::new(file_lexed.diagnostics),
     };
     // If a local edit introduced/removed top-level items (rare), prefer full structure.
     if tree.items().len() != old_items.len() {

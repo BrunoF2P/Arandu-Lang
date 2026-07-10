@@ -11,7 +11,8 @@ mod kind;
 pub use build::{
     SyntaxTree, apply_text_edit, find_top_level_item_spans, for_each_highlight_token,
     highlight_spans, lower_syntax_to_program, lower_syntax_to_program_recovering, parse_syntax,
-    parse_syntax_with_item_spans, reparse_edit, reparse_subtree, text_range,
+    parse_syntax_with_item_spans, reparse_edit, reparse_subtree, single_contiguous_edit,
+    text_range,
 };
 pub use kind::{AranduLanguage, SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};
 
@@ -56,7 +57,6 @@ pub fn parse_dual_with_file_id(
 mod tests {
     use super::*;
 
-    /// Multiline bodies so lexer ASI inserts `;` before `}` (newline-driven).
     fn two_funcs(beta: i32) -> String {
         format!(
             "func alpha(): int {{\n    return 1\n}}\n\nfunc beta(): int {{\n    return {beta}\n}}\n"
@@ -65,6 +65,10 @@ mod tests {
 
     fn main_func() -> &'static str {
         "func main(): int {\n    return 1\n}\n"
+    }
+
+    fn main_func_oneline() -> &'static str {
+        "func main(): int { return 1 }\n"
     }
 
     #[test]
@@ -97,6 +101,31 @@ mod tests {
         let prog = lower_syntax_to_program(&tree, 100).expect("lower");
         assert!(!prog.decls.is_empty());
         assert!(crate::parse(src).is_ok());
+    }
+
+    #[test]
+    fn lower_oneline_main_ok_optional_semi_before_rbrace() {
+        let src = main_func_oneline();
+        let tree = parse_syntax(src);
+        let prog = lower_syntax_to_program(&tree, 0).expect("lower oneline");
+        assert!(!prog.decls.is_empty());
+        assert!(crate::parse(src).is_ok(), "one-line body must parse");
+    }
+
+    #[test]
+    fn lower_reuses_cst_tokens_without_independent_relex_path() {
+        // Documented contract: lower goes through parse_token_stream(tree.tokens).
+        let src = main_func_oneline();
+        let tree = parse_syntax(src);
+        let via_lower = lower_syntax_to_program(&tree, 0).expect("lower");
+        let via_stream =
+            crate::parse_token_stream(tree.text(), tree.tokens().to_vec(), 0, Vec::new());
+        assert!(
+            via_stream.diagnostics.is_empty(),
+            "{:?}",
+            via_stream.diagnostics
+        );
+        assert_eq!(via_lower.decls.len(), via_stream.program.decls.len());
     }
 
     #[test]

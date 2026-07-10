@@ -88,6 +88,9 @@ pub fn symbol_span(
 }
 
 /// P5: authoritative CST (rowan). Built from source alone — no AST dependency.
+///
+/// Uses the DB CST cache + [`arandu_parser::reparse_subtree`] when a single
+/// contiguous edit is detected against the previous tree for this file.
 #[salsa::tracked]
 #[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
     query = "syntax_tree",
@@ -98,10 +101,17 @@ pub fn syntax_tree(
     file: SourceFile,
 ) -> HashEq<arandu_parser::SyntaxTree> {
     let text = file.text(db);
-    HashEq::new(arandu_parser::parse_syntax(&text))
+    let file_id = file.file_id(db);
+    // Prefer DatabaseImpl incremental path; other Db impls full-parse.
+    let tree = if let Some(impl_db) = db.as_db_impl() {
+        impl_db.syntax_tree_for_text(file_id, &text)
+    } else {
+        arandu_parser::parse_syntax(&text)
+    };
+    HashEq::new(tree)
 }
 
-/// AST for typeck/resolve: **lowered from CST** (not an independent dual parse).
+/// AST for typeck/resolve: **lowered from CST tokens** (no re-lex, no dual parse).
 #[salsa::tracked]
 #[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
     query = "parse",
@@ -279,7 +289,7 @@ pub fn item_source_input(
         let start = (span.start as usize).min(text.len());
         let end = (span.end as usize).min(text.len()).max(start);
         let slice = &text[start..end];
-        // Match CST item by text equality (dual spans).
+        // Prefer CST ITEM text when it matches the AST span slice.
         let item_text = tree
             .item_texts()
             .into_iter()

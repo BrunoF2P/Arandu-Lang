@@ -1,4 +1,4 @@
-//! P5 — Salsa `syntax_tree` (CST-first) + item stability across sibling edits.
+//! P5 — Salsa `syntax_tree` (CST-first) + incremental reparse_subtree via cache.
 
 use arandu_query::db::DatabaseImpl;
 use arandu_query::passes::syntax_tree;
@@ -40,4 +40,23 @@ fn syntax_item_text_stable_when_sibling_edited() {
         "alpha CST item text must be unchanged after beta edit"
     );
     assert_ne!(items1[1], items2[1]);
+}
+
+#[test]
+fn syntax_tree_reuses_sibling_green_after_set_text() {
+    let mut db = DatabaseImpl::new();
+    let file = db.new_file("cst3.aru".into(), two_funcs(2));
+    let t1 = syntax_tree(&db, file);
+    let alpha1 = t1.items()[0].green().into_owned();
+    let p1 = std::ptr::from_ref(&*alpha1).cast::<()>();
+
+    file.set_text(&mut db).to(Arc::from(two_funcs(99)));
+    let t2 = syntax_tree(&db, file);
+    let alpha2 = t2.items()[0].green().into_owned();
+    let p2 = std::ptr::from_ref(&*alpha2).cast::<()>();
+
+    assert_eq!(
+        p1, p2,
+        "Salsa syntax_tree must reparse_subtree and reuse unedited ITEM green"
+    );
 }

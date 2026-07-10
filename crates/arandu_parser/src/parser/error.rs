@@ -56,7 +56,7 @@ impl ParseError {
         }
     }
 
-    pub(super) fn from_lex(err: arandu_lexer::LexError, file_id: u32) -> Self {
+    pub(crate) fn from_lex(err: arandu_lexer::LexError, file_id: u32) -> Self {
         let mut span = err.span;
         span.file_id = file_id;
         Self {
