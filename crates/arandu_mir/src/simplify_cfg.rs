@@ -141,9 +141,7 @@ fn merge_block_candidate(func: &mut AmirFunc, bid: BlockId) -> bool {
 fn merge_two_blocks(func: &mut AmirFunc, into: BlockId, from: BlockId) {
     // Snapshot per-block stmt order before taking ownership of the table.
     let block_stmt_ids: Vec<Vec<crate::amir::InstrId>> = (0..func.blocks.len())
-        .map(|bi| {
-            func.block_stmt_ids(BlockId::from_usize(bi)).collect()
-        })
+        .map(|bi| func.block_stmt_ids(BlockId::from_usize(bi)).collect())
         .collect();
 
     let old = std::mem::replace(&mut func.stmts, AmirStmtTable::new());

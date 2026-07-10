@@ -170,20 +170,30 @@ impl TypeInterner {
     pub fn preinterned_primitive(p: Primitive) -> TypeId {
         use std::sync::OnceLock;
         static CACHE: OnceLock<TypeInterner> = OnceLock::new();
-        CACHE.get_or_init(TypeInterner::new).intern(ArType::Primitive(p))
+        CACHE
+            .get_or_init(TypeInterner::new)
+            .intern(ArType::Primitive(p))
     }
 
     /// Try to resolve a `TypeId`, returning `None` if out of range.
     #[must_use]
     pub fn try_resolve(&self, id: TypeId) -> Option<ArType> {
-        self.types.read().unwrap_or_else(|e| e.into_inner()).get(id.as_usize()).cloned()
+        self.types
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(id.as_usize())
+            .cloned()
     }
 
     /// Look up a type without interning it. Returns `None` if the type
     /// has never been interned.
     #[must_use]
     pub fn lookup(&self, ty: &ArType) -> Option<TypeId> {
-        self.map.read().unwrap_or_else(|e| e.into_inner()).get(ty).copied()
+        self.map
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(ty)
+            .copied()
     }
 
     /// Number of unique types interned so far.
@@ -195,7 +205,10 @@ impl TypeInterner {
     /// Returns `true` if no types have been interned.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.types.read().unwrap_or_else(|e| e.into_inner()).is_empty()
+        self.types
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_empty()
     }
 
     /// Display a `TypeId` using the symbol table for named types.
@@ -223,7 +236,9 @@ impl Clone for TypeInterner {
     fn clone(&self) -> Self {
         Self {
             map: std::sync::RwLock::new(self.map.read().unwrap_or_else(|e| e.into_inner()).clone()),
-            types: std::sync::RwLock::new(self.types.read().unwrap_or_else(|e| e.into_inner()).clone()),
+            types: std::sync::RwLock::new(
+                self.types.read().unwrap_or_else(|e| e.into_inner()).clone(),
+            ),
             generation: self.generation,
         }
     }

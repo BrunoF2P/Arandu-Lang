@@ -173,12 +173,7 @@ impl LowerCtx<'_> {
         }
 
         let tmp_tag = self.new_temp(ArType::Primitive(Primitive::Int));
-        self.emit_assign_temp(
-            tmp_tag,
-            AmirRvalue::Discriminant {
-                value: scrutinee,
-            },
-        );
+        self.emit_assign_temp(tmp_tag, AmirRvalue::Discriminant { value: scrutinee });
         let disc = AmirOperand::Copy(tmp_tag);
 
         let switch_arms: Vec<SwitchArm> = unit_arms

@@ -328,8 +328,11 @@ pub(crate) fn type_satisfies_interface(
     let method_specs: Vec<_> = iface.methods.clone();
     for (method, required_id) in method_specs {
         let required = checker.resolve(required_id);
-        let required_inst =
-            substitute_type(&required, &iface_subst, &mut checker.type_info.type_interner);
+        let required_inst = substitute_type(
+            &required,
+            &iface_subst,
+            &mut checker.type_info.type_interner,
+        );
         let Some(provided) = lookup_method_type(checker, &type_name, &method) else {
             return false;
         };
@@ -360,8 +363,11 @@ fn missing_interface_methods(
     let method_specs: Vec<_> = iface.methods.clone();
     for (method, required_id) in method_specs {
         let required = checker.resolve(required_id);
-        let required_inst =
-            substitute_type(&required, &iface_subst, &mut checker.type_info.type_interner);
+        let required_inst = substitute_type(
+            &required,
+            &iface_subst,
+            &mut checker.type_info.type_interner,
+        );
         let Some(provided) = lookup_method_type(checker, &type_name, &method) else {
             let mut similar = Vec::new();
             if let Some(methods) = checker.symbols.associated_members.get(type_name.as_str()) {

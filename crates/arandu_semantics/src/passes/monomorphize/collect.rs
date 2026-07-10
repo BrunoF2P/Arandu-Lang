@@ -2,7 +2,7 @@ use arandu_diagnostics::{DiagCode, Diagnostic};
 use arandu_lexer::Span;
 use arandu_middle::hir::{
     HirCatchHandler, HirCondition, HirDecl, HirExprId, HirExprKind, HirLambdaBody, HirMatchArmBody,
-    HirPool, HirProgram, HirSimpleStmt, HirStmt, HirStmtKind,
+    HirProgram, HirSimpleStmt, HirStmt, HirStmtKind,
 };
 use arandu_middle::symbol_table::SymbolId;
 use arandu_middle::types::{ArType, TypeInterner};
@@ -197,7 +197,7 @@ impl InstantiationAnalyzer<'_> {
         match &expr.kind {
             HirExprKind::Generic { callee, args } => {
                 self.visit_expr(*callee, current);
-                if let Some(symbol) = generic_callee_symbol(*callee, &self.hir.pool) {
+                if let Some(symbol) = generic_callee_symbol(*callee, self.hir, self.tc) {
                     // HIR generic args are already interned TypeIds.
                     let type_args = args.clone();
                     let key = InstantiationKey { symbol, type_args };
@@ -302,10 +302,35 @@ impl InstantiationAnalyzer<'_> {
     }
 }
 
-fn generic_callee_symbol(callee_id: HirExprId, pool: &HirPool) -> Option<SymbolId> {
+fn generic_callee_symbol(
+    callee_id: HirExprId,
+    hir: &HirProgram,
+    tc: &TypeCheckResult,
+) -> Option<SymbolId> {
+    let pool = &hir.pool;
     let callee = pool.expr(callee_id);
     match &callee.kind {
         HirExprKind::Path { symbol } => Some(*symbol),
+        HirExprKind::TypePath { member_symbol, .. } => Some(*member_symbol),
+        HirExprKind::Field { base, field } | HirExprKind::SafeField { base, field } => {
+            // `obj.m<T>` — resolve method via receiver type + associated members.
+            let base_ty = tc.type_info.type_interner.resolve(pool.expr(*base).ty);
+            let actual = match base_ty {
+                ArType::Nullable(inner) => tc.type_info.type_interner.resolve(inner),
+                other => other,
+            };
+            let struct_id = match actual {
+                ArType::Named(id, _) => Some(id),
+                ArType::Ptr(inner) => match tc.type_info.type_interner.resolve(inner) {
+                    ArType::Named(id, _) => Some(id),
+                    _ => None,
+                },
+                _ => None,
+            }?;
+            let struct_name = tc.symbols.get(struct_id).name.as_str();
+            tc.symbols
+                .lookup_associated_member(struct_name, field.as_str())
+        }
         _ => None,
     }
 }

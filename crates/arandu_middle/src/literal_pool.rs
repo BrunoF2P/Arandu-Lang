@@ -80,24 +80,16 @@ pub fn parse_int_literal(s: &str) -> Option<i128> {
     } else {
         (false, s)
     };
-    let (radix, digits) = if let Some(rest) = body
-        .strip_prefix("0x")
-        .or_else(|| body.strip_prefix("0X"))
-    {
-        (16u32, rest)
-    } else if let Some(rest) = body
-        .strip_prefix("0b")
-        .or_else(|| body.strip_prefix("0B"))
-    {
-        (2, rest)
-    } else if let Some(rest) = body
-        .strip_prefix("0o")
-        .or_else(|| body.strip_prefix("0O"))
-    {
-        (8, rest)
-    } else {
-        (10, body)
-    };
+    let (radix, digits) =
+        if let Some(rest) = body.strip_prefix("0x").or_else(|| body.strip_prefix("0X")) {
+            (16u32, rest)
+        } else if let Some(rest) = body.strip_prefix("0b").or_else(|| body.strip_prefix("0B")) {
+            (2, rest)
+        } else if let Some(rest) = body.strip_prefix("0o").or_else(|| body.strip_prefix("0O")) {
+            (8, rest)
+        } else {
+            (10, body)
+        };
     let cleaned: String = digits.chars().filter(|&c| c != '_').collect();
     if cleaned.is_empty() {
         return None;

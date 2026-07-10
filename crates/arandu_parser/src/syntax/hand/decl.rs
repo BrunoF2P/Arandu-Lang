@@ -38,11 +38,11 @@ pub fn try_hand_lower_top_level(
             try_hand_lower_const(pool, source, tokens, item, file_id).map(TopLevelDecl::Const)
         }
         SyntaxKind::TYPE_ALIAS_ITEM => {
-            try_hand_lower_type_alias(pool, source, tokens, item, file_id).map(TopLevelDecl::TypeAlias)
+            try_hand_lower_type_alias(pool, source, tokens, item, file_id)
+                .map(TopLevelDecl::TypeAlias)
         }
-        SyntaxKind::INTERFACE_ITEM => {
-            try_hand_lower_interface(pool, source, tokens, item, file_id).map(TopLevelDecl::Interface)
-        }
+        SyntaxKind::INTERFACE_ITEM => try_hand_lower_interface(pool, source, tokens, item, file_id)
+            .map(TopLevelDecl::Interface),
         SyntaxKind::EXTERN_ITEM => {
             try_hand_lower_extern(pool, source, tokens, item, file_id).map(TopLevelDecl::Extern)
         }
@@ -51,7 +51,8 @@ pub fn try_hand_lower_top_level(
             try_hand_lower_func_item(pool, source, tokens, item, file_id)
                 .map(TopLevelDecl::Func)
                 .or_else(|| {
-                    try_hand_lower_const(pool, source, tokens, item, file_id).map(TopLevelDecl::Const)
+                    try_hand_lower_const(pool, source, tokens, item, file_id)
+                        .map(TopLevelDecl::Const)
                 })
                 .or_else(|| {
                     try_hand_lower_struct(pool, source, tokens, item, file_id)
@@ -122,7 +123,10 @@ fn parse_attributes(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<Vec<A
     Some(attrs)
 }
 
-fn parse_generic_params(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<SmallVec<[GenericParam; 2]>> {
+fn parse_generic_params(
+    ctx: &mut HandCtx<'_>,
+    cur: &mut Cursor<'_>,
+) -> Option<SmallVec<[GenericParam; 2]>> {
     if !cur.eat(TokenKind::Lt) {
         return Some(smallvec![]);
     }
@@ -404,13 +408,15 @@ fn parse_func_name(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<FuncNa
     // without consuming multi-seg as free name.
     if matches!(first.kind, TokenKind::IdentType | TokenKind::IdentValue) {
         // Look ahead for `.` + method name and then `(`/`<`
-        if cur.peek_at(1).is_some_and(|t| matches!(t.kind, TokenKind::Dot))
+        if cur
+            .peek_at(1)
+            .is_some_and(|t| matches!(t.kind, TokenKind::Dot))
             && cur
                 .peek_at(2)
                 .is_some_and(|t| matches!(t.kind, TokenKind::IdentValue))
-            && cur.peek_at(3).is_some_and(|t| {
-                matches!(t.kind, TokenKind::LParen | TokenKind::Lt)
-            })
+            && cur
+                .peek_at(3)
+                .is_some_and(|t| matches!(t.kind, TokenKind::LParen | TokenKind::Lt))
         {
             let recv_tok = cur.bump()?;
             let recv_name = SmolStr::new(ctx.text(recv_tok)?);
@@ -467,9 +473,7 @@ pub fn try_hand_lower_module(
             .iter()
             .find(|t| !matches!(t.kind, TokenKind::Eof) && t.start >= end)
         {
-            let between = source
-                .get(end as usize..next.start as usize)
-                .unwrap_or("");
+            let between = source.get(end as usize..next.start as usize).unwrap_or("");
             let has_nl = between.contains('\n');
             let has_semi = toks.iter().any(|t| matches!(t.kind, TokenKind::Semicolon));
             if !has_nl && !has_semi && starts_top_level_decl(next.kind) {
@@ -763,7 +767,11 @@ fn try_hand_lower_struct(
     })
 }
 
-fn parse_field(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>, require_semi: bool) -> Option<FieldDecl> {
+fn parse_field(
+    ctx: &mut HandCtx<'_>,
+    cur: &mut Cursor<'_>,
+    require_semi: bool,
+) -> Option<FieldDecl> {
     let field_start = cur.peek()?.start;
     let attrs = parse_attributes(ctx, cur)?;
     let visibility = parse_visibility(cur);

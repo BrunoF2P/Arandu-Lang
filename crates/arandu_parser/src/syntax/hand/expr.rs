@@ -88,10 +88,9 @@ pub fn try_hand_lower_expr(
                 cur.bump();
                 let ty = parse_type(ctx, cur)?;
                 let end = ctx.pool.type_expr_span(ty).end;
-                left = ctx.pool.alloc_expr(
-                    ExprKind::Cast { expr: left, ty },
-                    ctx.span(span_start, end),
-                );
+                left = ctx
+                    .pool
+                    .alloc_expr(ExprKind::Cast { expr: left, ty }, ctx.span(span_start, end));
                 continue;
             }
             _ => {}
@@ -240,10 +239,7 @@ fn parse_primary_post(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<Exp
                 let args = ctx.pool.alloc_type_expr_list(&type_args);
                 let left_span = ctx.pool.expr_span(left);
                 left = ctx.pool.alloc_expr(
-                    ExprKind::Generic {
-                        callee: left,
-                        args,
-                    },
+                    ExprKind::Generic { callee: left, args },
                     ctx.span(left_span.start, gt.start + gt.len),
                 );
                 // generic must be followed by call or trailing block
@@ -332,9 +328,9 @@ fn looks_like_generic_args(cur: &Cursor<'_>) -> bool {
             TokenKind::Gt => {
                 depth -= 1;
                 if depth == 0 {
-                    return cur.peek_at(i + 1).is_some_and(|n| {
-                        matches!(n.kind, TokenKind::LParen | TokenKind::LBrace)
-                    });
+                    return cur
+                        .peek_at(i + 1)
+                        .is_some_and(|n| matches!(n.kind, TokenKind::LParen | TokenKind::LBrace));
                 }
             }
             TokenKind::Eof => return false,
@@ -465,20 +461,20 @@ fn parse_primary(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<ExprId> 
             let block = parse_block_tokens(ctx, cur)?;
             let end = block.span.end;
             let block_id = ctx.pool.alloc_block(block);
-            Some(
-                ctx.pool
-                    .alloc_expr(ExprKind::AsyncBlock { block: block_id }, ctx.span(start, end)),
-            )
+            Some(ctx.pool.alloc_expr(
+                ExprKind::AsyncBlock { block: block_id },
+                ctx.span(start, end),
+            ))
         }
         TokenKind::KwUnsafe => {
             cur.bump();
             let block = parse_block_tokens(ctx, cur)?;
             let end = block.span.end;
             let block_id = ctx.pool.alloc_block(block);
-            Some(
-                ctx.pool
-                    .alloc_expr(ExprKind::UnsafeBlock { block: block_id }, ctx.span(start, end)),
-            )
+            Some(ctx.pool.alloc_expr(
+                ExprKind::UnsafeBlock { block: block_id },
+                ctx.span(start, end),
+            ))
         }
         _ => None,
     }
@@ -524,10 +520,7 @@ fn parse_type_led(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>, start: u32) -> Op
     {
         let type_name = name.clone();
         let mem = cur.peek()?;
-        if !matches!(
-            mem.kind,
-            TokenKind::IdentValue | TokenKind::IdentType
-        ) {
+        if !matches!(mem.kind, TokenKind::IdentValue | TokenKind::IdentType) {
             return None;
         }
         let member = SmolStr::new(ctx.text(mem)?);

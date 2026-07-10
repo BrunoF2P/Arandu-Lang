@@ -179,14 +179,9 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                                     for (i, &pat_id) in
                                         checker.pool.pattern_list(*payload).iter().enumerate()
                                     {
-                                        let expected_pat_ty_id = tids
-                                            .get(i)
-                                            .copied()
-                                            .unwrap_or_else(|| {
-                                                checker
-                                                    .type_info
-                                                    .type_interner
-                                                    .error_type_id()
+                                        let expected_pat_ty_id =
+                                            tids.get(i).copied().unwrap_or_else(|| {
+                                                checker.type_info.type_interner.error_type_id()
                                             });
                                         check_pattern(checker, pat_id, expected_pat_ty_id);
                                     }
@@ -273,14 +268,9 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                                         for (i, &pat_id) in
                                             checker.pool.pattern_list(*payload).iter().enumerate()
                                         {
-                                            let expected_pat_ty_id = tids
-                                                .get(i)
-                                                .copied()
-                                                .unwrap_or_else(|| {
-                                                    checker
-                                                        .type_info
-                                                        .type_interner
-                                                        .error_type_id()
+                                            let expected_pat_ty_id =
+                                                tids.get(i).copied().unwrap_or_else(|| {
+                                                    checker.type_info.type_interner.error_type_id()
                                                 });
                                             check_pattern(checker, pat_id, expected_pat_ty_id);
                                         }

@@ -208,6 +208,8 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &P
                             .generic_params
                             .insert(symbol_id, std::sync::Arc::new(params.clone()));
                     }
+                    // Generic struct receivers: `self: List` → `List<T>` using the
+                    // *struct*'s type parameters — never the method's own params.
                     if let arandu_parser::FuncName::Method { .. } = &func_decl.name
                         && let Some(first_param) = func_decl.params.first()
                         && first_param.name.as_str() == "self"
@@ -216,10 +218,12 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &P
                         let lowered_first_ty = checker.resolve(*first_ty_id);
                         if let ArType::Named(struct_id, ref args) = lowered_first_ty
                             && args.is_empty()
-                            && !params.is_empty()
+                            && let Some(struct_params) =
+                                checker.type_info.generic_params.get(&struct_id).cloned()
+                            && !struct_params.is_empty()
                         {
                             let mut new_args = Vec::new();
-                            for &param_sym in &params {
+                            for &param_sym in struct_params.iter() {
                                 let arg_ty = ArType::Named(param_sym, vec![]);
                                 new_args.push(checker.intern(arg_ty));
                             }

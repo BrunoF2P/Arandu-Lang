@@ -12,11 +12,12 @@ const CODES: &[&str] = &[
     "U001",
 ];
 
-#[allow(clippy::collapsible_if)]
+#[allow(clippy::collapsible_if, clippy::unwrap_used, clippy::expect_used)]
 fn main() {
-    let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+    // CARGO_* env vars are always set when Cargo runs build scripts.
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
     let docs_dir = Path::new(&manifest_dir).join("../../docs/errors");
-    let out_dir = env::var("OUT_DIR").unwrap();
+    let out_dir = env::var("OUT_DIR").expect("OUT_DIR");
     let dest_path = Path::new(&out_dir).join("registry_gen.rs");
 
     // Tell Cargo to re-run the build script if docs/errors changes
@@ -83,5 +84,5 @@ fn main() {
         arms
     );
 
-    fs::write(&dest_path, code).unwrap();
+    fs::write(&dest_path, code).expect("write registry_gen.rs");
 }

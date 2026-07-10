@@ -249,15 +249,29 @@ pub(crate) fn lower_expr_raw(
                 let ty = expr_type_for_kind(type_check, hir_pool, &kind, fallback_ty);
                 return Ok(HirExpr { kind, ty, span });
             }
-            let method_base = match pool.expr(callee_id) {
-                ExprKind::Field { base, field, .. } | ExprKind::SafeField { base, field, .. } => {
-                    if lookup_namespace_field(pool, *base, field, type_check).is_some() {
-                        None
-                    } else {
-                        Some(*base)
+            // Method receiver is not in the AST arg list. Prepend it for
+            // `obj.m(...)` and generic `obj.m<T>(...)` so AMIR/mono see
+            // (self, …) matching the method Func type.
+            let method_base = {
+                let field_callee = match pool.expr(callee_id) {
+                    ExprKind::Field { .. } | ExprKind::SafeField { .. } => Some(callee_id),
+                    ExprKind::Generic { callee: inner, .. } => match pool.expr(*inner) {
+                        ExprKind::Field { .. } | ExprKind::SafeField { .. } => Some(*inner),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                field_callee.and_then(|fc| match pool.expr(fc) {
+                    ExprKind::Field { base, field, .. }
+                    | ExprKind::SafeField { base, field, .. } => {
+                        if lookup_namespace_field(pool, *base, field, type_check).is_some() {
+                            None
+                        } else {
+                            Some(*base)
+                        }
                     }
-                }
-                _ => None,
+                    _ => None,
+                })
             };
             let callee_vid = lower_expr(type_check, pool, hir_pool, callee_id)?;
             let mut hir_args = Vec::new();

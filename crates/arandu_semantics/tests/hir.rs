@@ -178,7 +178,8 @@ fn lowers_var_decl_with_type_annotation() {
                     assert_eq!(bindings_slice.len(), 1);
                     assert_eq!(symbol_name(&symbols, bindings_slice[0].symbol), "x");
                     assert!(
-                        bindings_slice[0].ty != arandu_middle::types::TypeInterner::preinterned_error_id(),
+                        bindings_slice[0].ty
+                            != arandu_middle::types::TypeInterner::preinterned_error_id(),
                         "expected resolved type, got Error"
                     );
                     match &hir.pool.expr(*value).kind {
@@ -210,7 +211,8 @@ fn expr_nodes_carry_resolved_types() {
             match &hir.pool.stmt(statements[1]).kind {
                 HirStmtKind::VarDecl { value, .. } => {
                     assert!(
-                        hir.pool.expr(*value).ty != arandu_middle::types::TypeInterner::preinterned_error_id(),
+                        hir.pool.expr(*value).ty
+                            != arandu_middle::types::TypeInterner::preinterned_error_id(),
                         "binary expr should have a resolved type"
                     );
                 }

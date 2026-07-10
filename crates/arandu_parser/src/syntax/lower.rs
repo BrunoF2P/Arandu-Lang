@@ -337,7 +337,10 @@ mod tests {
         let tree = parse_syntax(src);
         let (total, hand) = count_hand_lowerable_stmts(&tree);
         assert!(total >= 3, "stmts={total}");
-        assert_eq!(hand, total, "all stmts hand-lowerable, hand={hand} total={total}");
+        assert_eq!(
+            hand, total,
+            "all stmts hand-lowerable, hand={hand} total={total}"
+        );
 
         let (ftotal, fhand) = count_hand_lowerable_funcs(&tree);
         assert_eq!(ftotal, 1);
@@ -376,12 +379,18 @@ mod tests {
             prog.pool.stmt(f.body.statements[0]),
             Stmt::VarDecl { .. }
         ));
-        assert!(matches!(prog.pool.stmt(f.body.statements[1]), Stmt::Set { .. }));
+        assert!(matches!(
+            prog.pool.stmt(f.body.statements[1]),
+            Stmt::Set { .. }
+        ));
         assert!(matches!(
             prog.pool.stmt(f.body.statements[2]),
             Stmt::Expr { .. }
         ));
-        assert!(matches!(prog.pool.stmt(f.body.statements[3]), Stmt::If { .. }));
+        assert!(matches!(
+            prog.pool.stmt(f.body.statements[3]),
+            Stmt::If { .. }
+        ));
     }
 
     #[test]
@@ -401,11 +410,12 @@ mod tests {
         let TopLevelDecl::Func(f) = prog.pool.decl(prog.decls[0]) else {
             panic!("func");
         };
-        assert!(f
-            .body
-            .statements
-            .iter()
-            .any(|id| matches!(prog.pool.stmt(*id), Stmt::While { .. })));
+        assert!(
+            f.body
+                .statements
+                .iter()
+                .any(|id| matches!(prog.pool.stmt(*id), Stmt::While { .. }))
+        );
     }
 
     #[test]
@@ -478,11 +488,12 @@ enum Color {
         };
         assert!(f.is_async);
         assert!(matches!(f.visibility, crate::Visibility::Public));
-        assert!(f
-            .body
-            .statements
-            .iter()
-            .any(|id| matches!(prog.pool.stmt(*id), Stmt::For { .. })));
+        assert!(
+            f.body
+                .statements
+                .iter()
+                .any(|id| matches!(prog.pool.stmt(*id), Stmt::For { .. }))
+        );
     }
 
     #[test]

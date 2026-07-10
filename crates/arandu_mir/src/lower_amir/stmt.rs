@@ -25,12 +25,7 @@ impl LowerCtx<'_> {
         let err_local = self.new_local_id(err_b.ty, err_b.symbol, err_b.span);
 
         let tag_tmp = self.new_temp(ArType::Primitive(Primitive::Int));
-        self.emit_assign_temp(
-            tag_tmp,
-            AmirRvalue::Discriminant {
-                value: result_op,
-            },
-        );
+        self.emit_assign_temp(tag_tmp, AmirRvalue::Discriminant { value: result_op });
 
         let one_lit = self.intern_literal_int("1");
         let is_err = self.new_temp(ArType::Primitive(Primitive::Bool));
@@ -341,7 +336,8 @@ impl LowerCtx<'_> {
                     self.emit_goto(bb_cond);
 
                     self.current_block = Some(bb_cond);
-                    let int_ty = arandu_middle::types::TypeInterner::preinterned_primitive(Primitive::Int);
+                    let int_ty =
+                        arandu_middle::types::TypeInterner::preinterned_primitive(Primitive::Int);
                     let idx_op = self.load_place(
                         &AmirPlace {
                             local: idx_local,
@@ -382,10 +378,15 @@ impl LowerCtx<'_> {
                             .unwrap_or_else(|| {
                                 self.new_local_id(binding.ty, binding.symbol, binding.span)
                             });
-                        let idx_op2 = self.load_place(&AmirPlace {
+                        let idx_op2 = self.load_place(
+                            &AmirPlace {
                                 local: idx_local,
                                 projections: smallvec::SmallVec::new(),
-                            }, arandu_middle::types::TypeInterner::preinterned_primitive(Primitive::Int))?;
+                            },
+                            arandu_middle::types::TypeInterner::preinterned_primitive(
+                                Primitive::Int,
+                            ),
+                        )?;
                         let elem_temp = self.new_temp_id(binding.ty);
                         self.emit_assign_temp(
                             elem_temp,
@@ -406,10 +407,13 @@ impl LowerCtx<'_> {
 
                     self.current_block = Some(bb_step);
                     self.seal_block(bb_step);
-                    let idx_op3 = self.load_place(&AmirPlace {
+                    let idx_op3 = self.load_place(
+                        &AmirPlace {
                             local: idx_local,
                             projections: smallvec::SmallVec::new(),
-                        }, arandu_middle::types::TypeInterner::preinterned_primitive(Primitive::Int))?;
+                        },
+                        arandu_middle::types::TypeInterner::preinterned_primitive(Primitive::Int),
+                    )?;
                     let one_lit = self.intern_literal_int("1");
                     let next_idx = self.new_temp(ArType::Primitive(Primitive::Int));
                     self.emit_assign_temp(

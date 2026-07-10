@@ -2,12 +2,12 @@ use super::{LowerCtx, amir_unsupported};
 use crate::amir::{AmirConstant, AmirOperand, AmirRvalue, AmirStmt, AmirTerminator, TempId};
 use crate::diagnostics::{DiagCode, Diagnostic};
 use crate::ops::BinaryOp;
-use crate::passes::type_checker::types::{
-    ArType, Primitive, is_option_type, result_ok_err_id,
-};
+use crate::passes::type_checker::types::{ArType, Primitive, is_option_type, result_ok_err_id};
 use crate::{SymbolKind, SymbolTable};
 
-use crate::hir::{HirExpr, HirExprId, HirExprKind, ResultCtorVariant};
+use crate::hir::{
+    HirDecl, HirExpr, HirExprId, HirExprKind, HirProgram, ReceiverKind, ResultCtorVariant,
+};
 
 fn resolve_method_target(
     callee: &HirExpr,
@@ -52,6 +52,28 @@ fn resolve_method_target(
 
     let struct_name = symbols.get(struct_id).name.clone();
     symbols.lookup_associated_member(&struct_name, field)
+}
+
+/// `shared`/`mut` receivers borrow; only `own` (or non-receiver) args move.
+fn receiver_is_borrow(hir: &HirProgram, callee_symbol: crate::SymbolId) -> bool {
+    for &decl_id in &hir.decls {
+        if let HirDecl::Func(f) = hir.pool.decl(decl_id)
+            && f.symbol == callee_symbol
+        {
+            let params = hir.pool.params_list(f.params);
+            let Some(first) = params.first() else {
+                return false;
+            };
+            if !first.is_receiver {
+                return false;
+            }
+            return matches!(
+                first.receiver_kind,
+                Some(ReceiverKind::Shared) | Some(ReceiverKind::Mut) | None
+            );
+        }
+    }
+    false
 }
 
 impl LowerCtx<'_> {
@@ -158,12 +180,7 @@ impl LowerCtx<'_> {
         self.lower_result_err_field(base, err_tmp);
 
         let tag_tmp = self.new_temp(ArType::Primitive(Primitive::Int));
-        self.emit_assign_temp(
-            tag_tmp,
-            AmirRvalue::Discriminant {
-                value: base,
-            },
-        );
+        self.emit_assign_temp(tag_tmp, AmirRvalue::Discriminant { value: base });
 
         let one_lit = self.intern_literal_int("1");
         let cond_tmp = self.new_temp(ArType::Primitive(Primitive::Bool));
@@ -243,12 +260,7 @@ impl LowerCtx<'_> {
         let dest = target.unwrap_or_else(|| self.new_temp_id(expr_ty));
 
         let tag_tmp = self.new_temp(ArType::Primitive(Primitive::Int));
-        self.emit_assign_temp(
-            tag_tmp,
-            AmirRvalue::Discriminant {
-                value: base,
-            },
-        );
+        self.emit_assign_temp(tag_tmp, AmirRvalue::Discriminant { value: base });
 
         let one_lit = self.intern_literal_int("1");
         let is_err = self.new_temp(ArType::Primitive(Primitive::Bool));
@@ -774,6 +786,11 @@ impl LowerCtx<'_> {
                     symbols,
                     &self.tc.type_info.type_interner,
                 );
+                let callee_symbol = method_target.or(match &callee_expr.kind {
+                    HirExprKind::Path { symbol } => Some(*symbol),
+                    HirExprKind::TypePath { member_symbol, .. } => Some(*member_symbol),
+                    _ => None,
+                });
                 let callee_op = if let Some(method_symbol) = method_target {
                     AmirOperand::FunctionRef(method_symbol)
                 } else {
@@ -793,19 +810,33 @@ impl LowerCtx<'_> {
                 let inject_receiver = method_target.is_some()
                     && !formal_params.is_empty()
                     && args_slice.len() < formal_params.len();
+                // `shared`/`mut self` borrow the receiver; do not move it at the call site.
+                let borrow_receiver =
+                    callee_symbol.is_some_and(|sym| receiver_is_borrow(self.hir, sym));
                 if inject_receiver
                     && let HirExprKind::Field { base, .. } | HirExprKind::SafeField { base, .. } =
                         &callee_expr.kind
                 {
                     let base_op = self.lower_expr(*base, None, symbols)?;
+                    let base_op = if borrow_receiver {
+                        base_op
+                    } else {
+                        self.consume_operand(base_op)?
+                    };
                     arg_ops.push(base_op);
                 }
                 let arg_param_offset = if inject_receiver { 1 } else { 0 };
                 for (i, &arg) in args_slice.iter().enumerate() {
                     let arg_expr = self.hir.pool.expr(arg);
                     let arg_op = self.lower_expr(arg, None, symbols)?;
-                    let arg_op = self.consume_operand(arg_op)?;
-                    let arg_op = if let Some(param_ty) = formal_params.get(i + arg_param_offset) {
+                    let formal_i = i + arg_param_offset;
+                    let is_borrowed_recv = borrow_receiver && formal_i == 0;
+                    let arg_op = if is_borrowed_recv {
+                        arg_op
+                    } else {
+                        self.consume_operand(arg_op)?
+                    };
+                    let arg_op = if let Some(param_ty) = formal_params.get(formal_i) {
                         if matches!(param_ty, ArType::Primitive(Primitive::Str)) {
                             self.maybe_to_str(arg_op, arg_expr.ty)?
                         } else {
@@ -1085,9 +1116,10 @@ impl LowerCtx<'_> {
                 self.current_block = Some(bb_join);
                 Ok(AmirOperand::Copy(dest))
             }
-            HirExprKind::Catch { expr: inner, handler } => {
-                self.lower_catch(*inner, handler, target, expr.ty, symbols)
-            }
+            HirExprKind::Catch {
+                expr: inner,
+                handler,
+            } => self.lower_catch(*inner, handler, target, expr.ty, symbols),
             HirExprKind::Lambda { .. } => Err(amir_unsupported(
                 expr.span,
                 "lambda/closure",

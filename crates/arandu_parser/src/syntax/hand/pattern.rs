@@ -54,10 +54,7 @@ pub fn parse_pattern(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<Patt
             let (payload, end) = if cur.eat(TokenKind::LParen) {
                 let list = parse_pattern_list(ctx, cur, TokenKind::RParen)?;
                 let close = cur.expect(TokenKind::RParen)?;
-                (
-                    ctx.pool.alloc_pattern_list(&list),
-                    close.start + close.len,
-                )
+                (ctx.pool.alloc_pattern_list(&list), close.start + close.len)
             } else {
                 (IndexRange::empty(), variant_tok.start + variant_tok.len)
             };
@@ -234,4 +231,3 @@ pub fn parse_match_arm(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<Ma
         body,
     })
 }
-

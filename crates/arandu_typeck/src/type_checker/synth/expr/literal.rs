@@ -99,15 +99,20 @@ pub(super) fn synth_literal_expr(
                     .map(|&arg_id| checker.resolve(arg_id))
                     .collect();
                 let field_map =
-                    types::struct_fields_instantiated(checker, symbol_id, &resolved_args)
-                        .or_else(|| {
-                            checker.type_info.struct_fields.get(&symbol_id).map(|fields| {
-                                fields
-                                    .iter()
-                                    .map(|(n, &tid)| (n.clone(), checker.resolve(tid)))
-                                    .collect()
-                            })
-                        });
+                    types::struct_fields_instantiated(checker, symbol_id, &resolved_args).or_else(
+                        || {
+                            checker
+                                .type_info
+                                .struct_fields
+                                .get(&symbol_id)
+                                .map(|fields| {
+                                    fields
+                                        .iter()
+                                        .map(|(n, &tid)| (n.clone(), checker.resolve(tid)))
+                                        .collect()
+                                })
+                        },
+                    );
                 let field_ids = checker.pool.field_init_list(fields_range).to_vec();
 
                 let mut seen_fields = SmallVec::<[(&str, Span); 8]>::new();

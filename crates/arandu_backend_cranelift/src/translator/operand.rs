@@ -154,8 +154,7 @@ impl FunctionTranslator<'_, '_> {
                             self.builder.ins().iconst(ty, val)
                         }
                         arandu_semantics::literal_pool::AmirLiteralEntry::Float(s) => {
-                            let val = match arandu_semantics::literal_pool::parse_float_literal(s)
-                            {
+                            let val = match arandu_semantics::literal_pool::parse_float_literal(s) {
                                 Some(v) => v,
                                 None => {
                                     self.record_ice(

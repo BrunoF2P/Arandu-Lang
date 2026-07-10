@@ -288,11 +288,10 @@ impl FunctionTranslator<'_, '_> {
         let i32_ty = cranelift_codegen::ir::types::I32;
         let i64_ty = cranelift_codegen::ir::types::I64;
 
-        let len_eq = self.builder.ins().icmp(
-            cranelift_codegen::ir::condcodes::IntCC::Equal,
-            l_len,
-            r_len,
-        );
+        let len_eq =
+            self.builder
+                .ins()
+                .icmp(cranelift_codegen::ir::condcodes::IntCC::Equal, l_len, r_len);
 
         // If lengths differ → not equal. If both zero-length → equal.
         // Else memcmp(l_ptr, r_ptr, len) == 0.
@@ -317,10 +316,7 @@ impl FunctionTranslator<'_, '_> {
         } else {
             self.builder.ins().uextend(self.ptr_type, l_len)
         };
-        let call = self
-            .builder
-            .ins()
-            .call(memcmp_ref, &[l_ptr, r_ptr, size]);
+        let call = self.builder.ins().call(memcmp_ref, &[l_ptr, r_ptr, size]);
         let cmp = self.builder.inst_results(call)[0];
         let zero_i32 = self.builder.ins().iconst(i32_ty, 0);
         let bytes_eq = self.builder.ins().icmp(
@@ -446,20 +442,16 @@ impl FunctionTranslator<'_, '_> {
             .declare_func_in_func(malloc_id, self.builder.func);
         let pointer_width = self.ptr_type.bytes() as u64;
         let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
-        let layout =
-            engine.layout_of_type(inner, &self.type_info.type_interner, self.type_info);
+        let layout = engine.layout_of_type(inner, &self.type_info.type_interner, self.type_info);
         let size = self
             .builder
             .ins()
             .iconst(self.ptr_type, layout.size.max(1) as i64);
         let call = self.builder.ins().call(malloc_ref, &[size]);
         let ptr = self.builder.inst_results(call)[0];
-        self.builder.ins().store(
-            cranelift_codegen::ir::MemFlagsData::new(),
-            val,
-            ptr,
-            0,
-        );
+        self.builder
+            .ins()
+            .store(cranelift_codegen::ir::MemFlagsData::new(), val, ptr, 0);
         ptr
     }
 
@@ -469,12 +461,9 @@ impl FunctionTranslator<'_, '_> {
             crate::types::ClifType::Concrete(t) => t,
             crate::types::ClifType::Void => return self.poison_i32(),
         };
-        self.builder.ins().load(
-            clif,
-            cranelift_codegen::ir::MemFlagsData::new(),
-            handle,
-            0,
-        )
+        self.builder
+            .ins()
+            .load(clif, cranelift_codegen::ir::MemFlagsData::new(), handle, 0)
     }
 
     pub(super) fn translate_rvalue(
@@ -548,10 +537,14 @@ impl FunctionTranslator<'_, '_> {
             AmirRvalue::Use(op) => self.translate_operand(op, expected_ty),
             AmirRvalue::Binary { op, left, right } => {
                 // `str` equality uses fat pointers + memcmp (not scalar icmp).
-                let left_is_str =
-                    matches!(self.get_operand_ar_type(left), ArType::Primitive(Primitive::Str));
-                let right_is_str =
-                    matches!(self.get_operand_ar_type(right), ArType::Primitive(Primitive::Str));
+                let left_is_str = matches!(
+                    self.get_operand_ar_type(left),
+                    ArType::Primitive(Primitive::Str)
+                );
+                let right_is_str = matches!(
+                    self.get_operand_ar_type(right),
+                    ArType::Primitive(Primitive::Str)
+                );
                 if left_is_str || right_is_str {
                     match op {
                         arandu_semantics::ops::BinaryOp::Equal

@@ -476,9 +476,10 @@ fn main() {
                         arandu_semantics::types::ArType::Void
                     )
                 });
-                let has_main = amir.funcs.iter().any(|f| {
-                    checked.type_check.symbols.get(f.symbol).name.as_str() == "main"
-                });
+                let has_main = amir
+                    .funcs
+                    .iter()
+                    .any(|f| checked.type_check.symbols.get(f.symbol).name.as_str() == "main");
                 if !has_main {
                     eprintln!("Error: 'main' function not found in compiled program");
                     process::exit(1);
@@ -486,7 +487,8 @@ fn main() {
 
                 unsafe {
                     if main_is_void {
-                        if let Some(main_fn) = CompiledCode::get_fn::<unsafe fn()>(&output, "main") {
+                        if let Some(main_fn) = CompiledCode::get_fn::<unsafe fn()>(&output, "main")
+                        {
                             main_fn();
                             process::exit(0);
                         }

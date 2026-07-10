@@ -17,9 +17,7 @@ pub use decl::{
     try_hand_lower_top_level,
 };
 pub use expr::{try_hand_lower_expr, try_hand_lower_expr_all};
-pub use stmt::{
-    try_hand_lower_block, try_hand_lower_stmt,
-};
+pub use stmt::{try_hand_lower_block, try_hand_lower_stmt};
 pub use ty::try_hand_lower_type;
 
 use super::SyntaxTree;

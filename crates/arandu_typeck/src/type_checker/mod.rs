@@ -679,9 +679,11 @@ mod tests {
             SymbolId::new(0, 2),
             (
                 SymbolId::new(0, 0),
-                EnumPayloadShape::Tuple(vec![from_info
-                    .type_interner
-                    .intern(ArType::Primitive(Primitive::Int))]),
+                EnumPayloadShape::Tuple(vec![
+                    from_info
+                        .type_interner
+                        .intern(ArType::Primitive(Primitive::Int)),
+                ]),
             ),
         );
         let mut to_info = TypeInfo::new();

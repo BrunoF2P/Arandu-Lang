@@ -392,15 +392,11 @@ fn fold_unary(
         (UnaryOp::Not, AmirConstant::Bool(b)) => Some(AmirConstant::Bool(!b)),
         (UnaryOp::Neg, v) => {
             let val = const_as_i128(&v, pool)?;
-            Some(AmirConstant::Pool(
-                pool.intern_int(&(-val).to_string()),
-            ))
+            Some(AmirConstant::Pool(pool.intern_int(&(-val).to_string())))
         }
         (UnaryOp::BitNot, v) => {
             let val = const_as_i128(&v, pool)?;
-            Some(AmirConstant::Pool(
-                pool.intern_int(&(!val).to_string()),
-            ))
+            Some(AmirConstant::Pool(pool.intern_int(&(!val).to_string())))
         }
         (UnaryOp::Await, _) => None,
         _ => None,
@@ -454,9 +450,7 @@ fn fold_binary(
 fn const_as_i128(c: &AmirConstant, pool: &AmirLiteralPool) -> Option<i128> {
     match c {
         AmirConstant::Pool(id) => match pool.get(*id) {
-            AmirLiteralEntry::Int(val) => {
-                arandu_middle::literal_pool::parse_int_literal(val)
-            }
+            AmirLiteralEntry::Int(val) => arandu_middle::literal_pool::parse_int_literal(val),
             AmirLiteralEntry::Float(_) | AmirLiteralEntry::Str(_) | AmirLiteralEntry::Char(_) => {
                 None
             }

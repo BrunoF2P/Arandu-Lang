@@ -305,7 +305,9 @@ impl arandu_middle::layout::StructLayoutProvider for TypeInfo {
         &self,
         struct_id: SymbolId,
     ) -> Option<&rustc_hash::FxHashMap<String, usize>> {
-        self.struct_field_indices.get(&struct_id).map(|a| a.as_ref())
+        self.struct_field_indices
+            .get(&struct_id)
+            .map(|a| a.as_ref())
     }
 
     fn get_generic_params(&self, struct_id: SymbolId) -> Option<&[SymbolId]> {

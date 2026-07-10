@@ -42,7 +42,12 @@ pub fn compute_cfg_edges(blocks: &[AmirBasicBlock]) -> ControlFlowGraph {
 ///
 /// Returns `false` if `old` is not currently a successor of `from` (no mutation).
 #[must_use]
-pub fn retarget_successor(cfg: &mut ControlFlowGraph, from: BlockId, old: BlockId, new: BlockId) -> bool {
+pub fn retarget_successor(
+    cfg: &mut ControlFlowGraph,
+    from: BlockId,
+    old: BlockId,
+    new: BlockId,
+) -> bool {
     let succs = &mut cfg.successors[from.as_usize()];
     let Some(pos) = succs.iter().position(|&s| s == old) else {
         return false;

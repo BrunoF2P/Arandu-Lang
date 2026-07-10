@@ -180,12 +180,7 @@ impl LowerCtx<'_> {
         self.new_local_ref(&ty, symbol, span)
     }
 
-    pub(crate) fn new_local_ref(
-        &mut self,
-        ty: &ArType,
-        symbol: SymbolId,
-        span: Span,
-    ) -> LocalId {
+    pub(crate) fn new_local_ref(&mut self, ty: &ArType, symbol: SymbolId, span: Span) -> LocalId {
         let is_memory = super::is_memory_type(ty);
         let ty = self.intern_ty_ref(ty);
         let id = self.next_local_id();
@@ -485,11 +480,7 @@ impl LowerCtx<'_> {
 
     /// If `local` is `T?` and `value` is a non-Nil constant, assign through a
     /// temp so codegen can box the scalar (prevents bare `0` becoming `nil`).
-    fn materialize_nullable_const(
-        &mut self,
-        local: LocalId,
-        value: AmirOperand,
-    ) -> AmirOperand {
+    fn materialize_nullable_const(&mut self, local: LocalId, value: AmirOperand) -> AmirOperand {
         let ty = self.resolve_ty(self.locals[local.as_usize()].ty);
         if !matches!(ty, ArType::Nullable(_)) {
             return value;

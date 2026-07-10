@@ -1,11 +1,13 @@
-//! HIR monomorphization expand — free-function specialization.
+//! HIR monomorphization expand — free-function and method specialization.
 //!
 //! Pipeline step after [`super::analyze_instantiations`]:
-//! 1. For each **concrete** instantiation key `(F, [T1, …])` of a free generic
-//!    function, clone the template body with type-parameter substitution and a
-//!    fresh mangled symbol.
-//! 2. Rewrite call sites `Call(Generic(Path(F), [T1,…]), args)` →
-//!    `Call(Path(F_specialized), args)` across the whole program.
+//! 1. For each **concrete** instantiation key `(F, [T1, …])` of a generic
+//!    free function or method, clone the template body with type-parameter
+//!    substitution and a fresh mangled symbol.
+//! 2. Rewrite call sites:
+//!    - `Call(Generic(Path(F), [T1,…]), args)` → `Call(Path(F_spec), args)`
+//!    - `Call(Generic(Field(recv, m), [T1,…]), args)` → same Path rewrite
+//!      (receiver is already the first arg from HIR method lowering)
 //! 3. Generic **templates** remain in the HIR for diagnostics/pretty-print but
 //!    are skipped by AMIR lowering (see `lower_to_amir`).
 
@@ -18,15 +20,13 @@ use arandu_middle::hir::{
     HirSimpleStmt, HirStmt, HirStmtKind, HirStringPart,
 };
 use arandu_middle::symbol_table::{SymbolId, SymbolKind};
-use arandu_middle::types::{
-    ArType, GenericSubst, TypeId, build_subst_ids, substitute_type_id,
-};
+use arandu_middle::types::{ArType, GenericSubst, TypeId, build_subst_ids, substitute_type_id};
 use arandu_typeck::TypeCheckResult;
 use rustc_hash::FxHashMap;
 
 use super::graph::{InstantiationGraph, InstantiationKey};
 
-/// Expand free-function specializations and rewrite call sites in-place.
+/// Expand free-function and method specializations; rewrite call sites in-place.
 ///
 /// Returns the number of specialized functions appended to `hir`.
 #[tracing::instrument(level = "debug", target = "arandu_semantics::mono", skip_all)]
@@ -173,11 +173,7 @@ fn specialize_free_func(
         ));
     }
 
-    let mangled = super::demangle::mangle_symbol(
-        key,
-        &tc.type_info.type_interner,
-        &tc.symbols,
-    );
+    let mangled = super::demangle::mangle_symbol(key, &tc.type_info.type_interner, &tc.symbols);
 
     let global = tc.symbols.global_scope();
     let new_func_sym = tc
@@ -226,7 +222,8 @@ fn specialize_free_func(
     }
     let func_ty = ArType::Func(param_tids, ret_ty);
     let func_ty_id = tc.type_info.type_interner.intern(func_ty);
-    tc.type_info_mut().record_decl_type(new_func_sym, func_ty_id);
+    tc.type_info_mut()
+        .record_decl_type(new_func_sym, func_ty_id);
 
     let new_params_range = hir.pool.alloc_param_list(&new_params);
     let new_body = clone_block(hir, body_id, &subst, &mut symbol_map, tc, &mangled)?;
@@ -322,11 +319,7 @@ fn clone_stmt_kind(
                 value,
             }
         }
-        HirStmtKind::Set {
-            places,
-            op,
-            value,
-        } => {
+        HirStmtKind::Set { places, op, value } => {
             let old_p: Vec<_> = hir.pool.places_list(*places).to_vec();
             let mut new_p = Vec::with_capacity(old_p.len());
             for p in &old_p {
@@ -382,7 +375,14 @@ fn clone_stmt_kind(
             let old_arms: Vec<_> = hir.pool.match_arms_list(*arms).to_vec();
             let mut new_arms = Vec::with_capacity(old_arms.len());
             for arm in &old_arms {
-                new_arms.push(clone_match_arm(hir, arm, subst, symbol_map, tc, name_prefix)?);
+                new_arms.push(clone_match_arm(
+                    hir,
+                    arm,
+                    subst,
+                    symbol_map,
+                    tc,
+                    name_prefix,
+                )?);
             }
             HirStmtKind::Match {
                 value,
@@ -491,9 +491,7 @@ fn clone_simple_stmt(
                 _ => unreachable!(),
             }
         }
-        HirSimpleStmt::Set {
-            places, op, value,
-        } => {
+        HirSimpleStmt::Set { places, op, value } => {
             let kind = clone_stmt_kind(
                 hir,
                 &HirStmtKind::Set {
@@ -507,15 +505,7 @@ fn clone_simple_stmt(
                 name_prefix,
             )?;
             match kind {
-                HirStmtKind::Set {
-                    places,
-                    op,
-                    value,
-                } => HirSimpleStmt::Set {
-                    places,
-                    op,
-                    value,
-                },
+                HirStmtKind::Set { places, op, value } => HirSimpleStmt::Set { places, op, value },
                 _ => unreachable!(),
             }
         }
@@ -610,7 +600,14 @@ fn clone_pattern(
             let old_p: Vec<_> = hir.pool.pattern_list(*payload).to_vec();
             let mut new_p = Vec::with_capacity(old_p.len());
             for &p in &old_p {
-                new_p.push(clone_pattern_id(hir, p, subst, symbol_map, tc, name_prefix)?);
+                new_p.push(clone_pattern_id(
+                    hir,
+                    p,
+                    subst,
+                    symbol_map,
+                    tc,
+                    name_prefix,
+                )?);
             }
             HirPattern::Enum {
                 span: *span,
@@ -628,7 +625,14 @@ fn clone_pattern(
             let old_p: Vec<_> = hir.pool.pattern_list(*payload).to_vec();
             let mut new_p = Vec::with_capacity(old_p.len());
             for &p in &old_p {
-                new_p.push(clone_pattern_id(hir, p, subst, symbol_map, tc, name_prefix)?);
+                new_p.push(clone_pattern_id(
+                    hir,
+                    p,
+                    subst,
+                    symbol_map,
+                    tc,
+                    name_prefix,
+                )?);
             }
             HirPattern::TypeTuple {
                 span: *span,
@@ -649,11 +653,14 @@ fn clone_pattern(
                     .pattern
                     .map(|p| clone_pattern_id(hir, p, subst, symbol_map, tc, name_prefix))
                     .transpose()?;
-                new_f.push(hir.pool.alloc_field_pattern(arandu_middle::hir::HirFieldPattern {
-                    span: fp.span,
-                    name: fp.name.clone(),
-                    pattern,
-                }));
+                new_f.push(
+                    hir.pool
+                        .alloc_field_pattern(arandu_middle::hir::HirFieldPattern {
+                            span: fp.span,
+                            name: fp.name.clone(),
+                            pattern,
+                        }),
+                );
             }
             HirPattern::Struct {
                 span: *span,
@@ -665,7 +672,14 @@ fn clone_pattern(
             let old_p: Vec<_> = hir.pool.pattern_list(*items).to_vec();
             let mut new_p = Vec::with_capacity(old_p.len());
             for &p in &old_p {
-                new_p.push(clone_pattern_id(hir, p, subst, symbol_map, tc, name_prefix)?);
+                new_p.push(clone_pattern_id(
+                    hir,
+                    p,
+                    subst,
+                    symbol_map,
+                    tc,
+                    name_prefix,
+                )?);
             }
             HirPattern::Tuple {
                 span: *span,
@@ -908,7 +922,14 @@ fn clone_expr_kind(
             let old_arms: Vec<_> = hir.pool.match_arms_list(*arms).to_vec();
             let mut new_arms = Vec::with_capacity(old_arms.len());
             for arm in &old_arms {
-                new_arms.push(clone_match_arm(hir, arm, subst, symbol_map, tc, name_prefix)?);
+                new_arms.push(clone_match_arm(
+                    hir,
+                    arm,
+                    subst,
+                    symbol_map,
+                    tc,
+                    name_prefix,
+                )?);
             }
             Match {
                 value,
@@ -946,9 +967,14 @@ fn clone_expr_kind(
             for p in parts {
                 new_parts.push(match p {
                     HirStringPart::Text(t) => HirStringPart::Text(t.clone()),
-                    HirStringPart::Expr(e) => {
-                        HirStringPart::Expr(clone_expr(hir, *e, subst, symbol_map, tc, name_prefix)?)
-                    }
+                    HirStringPart::Expr(e) => HirStringPart::Expr(clone_expr(
+                        hir,
+                        *e,
+                        subst,
+                        symbol_map,
+                        tc,
+                        name_prefix,
+                    )?),
                 });
             }
             StringInterp { parts: new_parts }
@@ -1010,12 +1036,7 @@ fn clone_catch_handler(
     })
 }
 
-fn fresh_symbol(
-    tc: &mut TypeCheckResult,
-    name: &str,
-    kind: SymbolKind,
-    span: Span,
-) -> SymbolId {
+fn fresh_symbol(tc: &mut TypeCheckResult, name: &str, kind: SymbolKind, span: Span) -> SymbolId {
     let mut candidate = name.to_string();
     let mut n = 0u32;
     let scope = tc.symbols.global_scope();
@@ -1038,7 +1059,10 @@ fn rewrite_block_calls(
     specialized: &FxHashMap<InstantiationKey, SymbolId>,
     tc: &TypeCheckResult,
 ) {
-    let stmt_ids: Vec<_> = hir.pool.stmt_list(hir.pool.block(block_id).statements).to_vec();
+    let stmt_ids: Vec<_> = hir
+        .pool
+        .stmt_list(hir.pool.block(block_id).statements)
+        .to_vec();
     for sid in stmt_ids {
         rewrite_stmt_calls(hir, sid, specialized, tc);
     }
@@ -1052,7 +1076,9 @@ fn rewrite_stmt_calls(
 ) {
     let kind = hir.pool.stmt(stmt_id).kind.clone();
     match kind {
-        HirStmtKind::VarDecl { value, .. } | HirStmtKind::Expr(value) | HirStmtKind::Free(value) => {
+        HirStmtKind::VarDecl { value, .. }
+        | HirStmtKind::Expr(value)
+        | HirStmtKind::Free(value) => {
             rewrite_expr_calls(hir, value, specialized, tc);
         }
         HirStmtKind::Set { places, value, .. } => {
@@ -1268,28 +1294,48 @@ fn try_rewrite_generic_call(
     let HirExprKind::Generic {
         callee: inner_callee,
         args: type_args,
-    } = &hir.pool.expr(callee_id).kind
+    } = hir.pool.expr(callee_id).kind.clone()
     else {
         return;
     };
-    let HirExprKind::Path { symbol } = hir.pool.expr(*inner_callee).kind else {
-        return;
+    let symbol = match &hir.pool.expr(inner_callee).kind {
+        HirExprKind::Path { symbol } => *symbol,
+        HirExprKind::TypePath { member_symbol, .. } => *member_symbol,
+        HirExprKind::Field { base, field } | HirExprKind::SafeField { base, field } => {
+            let base_ty = tc.type_info.type_interner.resolve(hir.pool.expr(*base).ty);
+            let actual = match base_ty {
+                ArType::Nullable(inner) => tc.type_info.type_interner.resolve(inner),
+                other => other,
+            };
+            let struct_id = match actual {
+                ArType::Named(id, _) => Some(id),
+                ArType::Ptr(inner) => match tc.type_info.type_interner.resolve(inner) {
+                    ArType::Named(id, _) => Some(id),
+                    _ => None,
+                },
+                _ => None,
+            };
+            let Some(struct_id) = struct_id else {
+                return;
+            };
+            let struct_name = tc.symbols.get(struct_id).name.as_str();
+            let Some(sym) = tc
+                .symbols
+                .lookup_associated_member(struct_name, field.as_str())
+            else {
+                return;
+            };
+            sym
+        }
+        _ => return,
     };
-    let key = InstantiationKey {
-        symbol,
-        type_args: type_args.clone(),
-    };
+    let key = InstantiationKey { symbol, type_args };
     let Some(&spec_sym) = specialized.get(&key) else {
         return;
     };
-    // Replace Call's callee with Path(spec_sym). We mutate via re-alloc is hard;
-    // overwrite the Generic node itself to Path so Call still points at callee_id.
+    // Overwrite Generic → Path(specialized). Method calls already include receiver in args.
     let call_ty = hir.pool.expr(call_expr_id).ty;
-    let path_ty = tc
-        .type_info
-        .decl_type_id(spec_sym)
-        .unwrap_or(call_ty);
-    // Mutate callee_id expr in the pool if mutable API exists.
+    let path_ty = tc.type_info.decl_type_id(spec_sym).unwrap_or(call_ty);
     let span = hir.pool.expr(callee_id).span;
     *hir.pool.expr_mut(callee_id) = HirExpr {
         kind: HirExprKind::Path { symbol: spec_sym },

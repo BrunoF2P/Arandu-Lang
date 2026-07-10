@@ -85,16 +85,9 @@ impl LowerCtx<'_> {
         };
 
         let tmp_tag = self.new_temp(ArType::Primitive(Primitive::Int));
-        self.emit_assign_temp(
-            tmp_tag,
-            AmirRvalue::Discriminant {
-                value: scrutinee,
-            },
-        );
+        self.emit_assign_temp(tmp_tag, AmirRvalue::Discriminant { value: scrutinee });
 
-        let tag_op = AmirOperand::Constant(
-            self.intern_literal_int(&tag_value.to_string()),
-        );
+        let tag_op = AmirOperand::Constant(self.intern_literal_int(&tag_value.to_string()));
         let tag_matches = self.new_temp(ArType::Primitive(Primitive::Bool));
         self.emit_assign_temp(
             tag_matches,

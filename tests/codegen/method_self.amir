@@ -24,6 +24,6 @@ Func main() -> void
     _1 = User { name: "Ada" }
     s0 = move _1
     _2 = s0
-    _3 = call fn@User.greet(move _2)
+    _3 = call fn@User.greet(_2)
     s1 = move _3
     return

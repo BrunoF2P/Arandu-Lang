@@ -376,6 +376,7 @@ pub(super) fn synth_call_expr(
                 let gen_args_range = *gen_args;
                 if let ExprKind::Field { base, field } = checker.pool.expr(gen_callee_id) {
                     let base_id = *base;
+                    let field_name = field.clone();
                     let field_span = checker.pool.expr_span(gen_callee_id);
 
                     let base_ty_id = synth_expr(checker, base_id);
@@ -419,7 +420,7 @@ pub(super) fn synth_call_expr(
                                 let diag = crate::Diagnostic::error(
                                     crate::DiagCode::T012WrongArgCount,
                                     format!(
-                                        "method '{struct_name}.{field}' expects {} argument(s), found {}",
+                                        "method '{struct_name}.{field_name}' expects {} argument(s), found {}",
                                         explicit_params.len(),
                                         arg_ids.len()
                                     ),
@@ -443,8 +444,31 @@ pub(super) fn synth_call_expr(
                                     );
                                 }
                             }
+                            // Instantiated method Func type on both the Generic node
+                            // and the Field selector (`obj.m`). Without typing the
+                            // Field, HIR lower falls back to Error and fails
+                            // validate_invariants (mono method path).
                             let params_id = checker.intern(ArType::Func(params, ret));
+                            checker.record_expr_type(gen_callee_id, params_id);
                             checker.record_expr_type(callee_id, params_id);
+                            // Bind method symbol for HIR (namespace Path rewrite / mono).
+                            let struct_id = match checker.resolve(actual_base_ty_id) {
+                                ArType::Named(id, _) => Some(id),
+                                ArType::Ptr(inner) => match checker.resolve(inner) {
+                                    ArType::Named(id, _) => Some(id),
+                                    _ => None,
+                                },
+                                _ => None,
+                            };
+                            if let Some(struct_id) = struct_id {
+                                let struct_name = checker.symbols.get(struct_id).name.clone();
+                                if let Some(sym) = checker
+                                    .symbols
+                                    .lookup_associated_member(&struct_name, &field_name)
+                                {
+                                    checker.resolved.value_ref(field_span, sym);
+                                }
+                            }
                             return Some(ret);
                         }
                     }
@@ -586,8 +610,7 @@ pub(super) fn synth_call_expr(
                     // Bind `|e|` to the Result error type before type-checking the body.
                     if let Some((_, err_ty_id)) = checker.result_ok_err_ids(inner_ty_id) {
                         let err_key = crate::NodeKey::from(*h_span);
-                        if let Some(symbol_id) =
-                            checker.resolved.definitions.get(&err_key).copied()
+                        if let Some(symbol_id) = checker.resolved.definitions.get(&err_key).copied()
                         {
                             checker.ctx.bind(symbol_id, err_ty_id);
                             checker.record_decl_type(symbol_id, err_ty_id);

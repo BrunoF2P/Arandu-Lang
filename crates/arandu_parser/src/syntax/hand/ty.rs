@@ -223,10 +223,7 @@ fn parse_generic_type_args(
         }
     }
     let gt = cur.expect(TokenKind::Gt)?;
-    Some((
-        ctx.pool.alloc_type_expr_list(&args),
-        gt.start + gt.len,
-    ))
+    Some((ctx.pool.alloc_type_expr_list(&args), gt.start + gt.len))
 }
 
 /// `: T` result type (single).
@@ -258,9 +255,5 @@ pub fn parse_dotted_ident_path(
         }
         break;
     }
-    if path.is_empty() {
-        None
-    } else {
-        Some(path)
-    }
+    if path.is_empty() { None } else { Some(path) }
 }

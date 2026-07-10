@@ -15,7 +15,7 @@ use arandu_middle::hir::HirProgram;
 use arandu_typeck::TypeCheckResult;
 
 /// Full monomorphization: analyze instantiation graph, expand free-function
-/// specializations into the HIR, and rewrite call sites.
+/// and method specializations into the HIR, and rewrite call sites.
 ///
 /// Call after HIR lower and before AMIR lower. Generic **templates** stay in
 /// the HIR but are skipped by AMIR lowering.

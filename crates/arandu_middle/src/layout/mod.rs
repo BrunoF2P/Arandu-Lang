@@ -934,10 +934,22 @@ mod tests {
         // Create Vec struct with ZST field
         let vec_id = SymbolId::new(0, 101);
         let mut vec_fields = FxHashMap::<String, TypeId>::default();
-        vec_fields.insert("data".to_string(), interner.intern(ArType::Primitive(Primitive::I64))); // simplified pointer
-        vec_fields.insert("len".to_string(), interner.intern(ArType::Primitive(Primitive::U64)));
-        vec_fields.insert("capacity".to_string(), interner.intern(ArType::Primitive(Primitive::U64)));
-        vec_fields.insert("allocator".to_string(), interner.intern(ArType::Named(zst_id, vec![])));
+        vec_fields.insert(
+            "data".to_string(),
+            interner.intern(ArType::Primitive(Primitive::I64)),
+        ); // simplified pointer
+        vec_fields.insert(
+            "len".to_string(),
+            interner.intern(ArType::Primitive(Primitive::U64)),
+        );
+        vec_fields.insert(
+            "capacity".to_string(),
+            interner.intern(ArType::Primitive(Primitive::U64)),
+        );
+        vec_fields.insert(
+            "allocator".to_string(),
+            interner.intern(ArType::Named(zst_id, vec![])),
+        );
 
         let mut vec_indices = FxHashMap::<String, usize>::default();
         vec_indices.insert("data".to_string(), 0);
@@ -987,9 +999,18 @@ mod tests {
         let struct_sym = SymbolId::new(0, 1234);
 
         let mut fields = FxHashMap::<String, TypeId>::default();
-        fields.insert("a".to_string(), interner.intern(ArType::Primitive(Primitive::U8)));
-        fields.insert("b".to_string(), interner.intern(ArType::Primitive(Primitive::I32)));
-        fields.insert("c".to_string(), interner.intern(ArType::Primitive(Primitive::U8)));
+        fields.insert(
+            "a".to_string(),
+            interner.intern(ArType::Primitive(Primitive::U8)),
+        );
+        fields.insert(
+            "b".to_string(),
+            interner.intern(ArType::Primitive(Primitive::I32)),
+        );
+        fields.insert(
+            "c".to_string(),
+            interner.intern(ArType::Primitive(Primitive::U8)),
+        );
 
         let mut field_indices = FxHashMap::<String, usize>::default();
         field_indices.insert("a".to_string(), 0);

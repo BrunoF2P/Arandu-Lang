@@ -7,8 +7,8 @@ use super::ty::parse_type;
 use crate::ast::ast_pool::{AstPool, StmtId};
 use crate::syntax::kind::SyntaxNode;
 use crate::{
-    BindingItem, Block, Condition, DeferBody, ForBinding, ForClause, Place, PlaceSuffix, SimpleStmt,
-    Stmt,
+    BindingItem, Block, Condition, DeferBody, ForBinding, ForClause, Place, PlaceSuffix,
+    SimpleStmt, Stmt,
 };
 use arandu_lexer::{Token, TokenKind};
 use smol_str::SmolStr;
@@ -368,7 +368,10 @@ fn parse_condition(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<Condit
     }
     let span = ctx.span(
         cond_toks[0].start,
-        cond_toks.last().map(|t| t.start + t.len).unwrap_or(cond_toks[0].start),
+        cond_toks
+            .last()
+            .map(|t| t.start + t.len)
+            .unwrap_or(cond_toks[0].start),
     );
     if let Some(is_idx) = cond_toks
         .iter()
@@ -638,4 +641,3 @@ fn lower_defer(
         }
     }))
 }
-

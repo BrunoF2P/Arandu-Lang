@@ -647,3 +647,88 @@ func main(): int {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+/// Generic method monomorphization: `obj.m<int>(…)` expands and reuses `shared self`.
+#[test]
+fn run_generic_method_exits_42() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_generic_method.aru");
+    fs::write(
+        &file,
+        r#"struct Holder {
+    v: int
+}
+
+func Holder.id_val<T>(shared self, x: T): T {
+    return x
+}
+
+func main(): int {
+    let b = Holder { v: 10 }
+    let n = b.id_val<int>(32)
+    return n + b.v
+}
+"#,
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+    let output = run_cli(&["run", &path]);
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// Dual method specialization: distinct mangled funcs for `id_val<int>` and `id_val<str>`.
+#[test]
+fn run_generic_method_str_and_int_coexist() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_generic_method_dual.aru");
+    fs::write(
+        &file,
+        r#"struct Holder {
+    v: int
+}
+
+func Holder.id_val<T>(shared self, x: T): T {
+    return x
+}
+
+func main(): int {
+    let b = Holder { v: 1 }
+    let n = b.id_val<int>(41)
+    let s = b.id_val<str>("hi")
+    return n + 1
+}
+"#,
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+    let amir = run_cli(&["amir", &path]);
+    assert!(
+        amir.status.success(),
+        "amir dump failed: {}",
+        String::from_utf8_lossy(&amir.stderr)
+    );
+    let dump = String::from_utf8_lossy(&amir.stdout);
+    assert!(
+        dump.contains("id_val")
+            && dump.contains("_A$")
+            && dump.contains("int")
+            && dump.contains("str"),
+        "expected specialized method monomorphs, got:\n{dump}"
+    );
+    assert!(
+        !dump.contains("Func Holder.id_val("),
+        "generic method template should not be lowered to AMIR:\n{dump}"
+    );
+    let output = run_cli(&["run", &path]);
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

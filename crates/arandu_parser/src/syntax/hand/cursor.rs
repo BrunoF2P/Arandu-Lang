@@ -235,4 +235,3 @@ pub fn bin_bp(kind: TokenKind) -> Option<(u8, u8, crate::BinaryOp)> {
     };
     Some((bp, bp + 1, op))
 }
-
