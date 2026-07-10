@@ -302,3 +302,63 @@ fn run_with_ztime_passes_emits_perf_timings() {
         "expected perf output in stderr, got:\n{stderr}"
     );
 }
+
+/// S5 gate: emit-c produces host C with int main and DataLayout-driven types.
+#[test]
+fn emit_c_host_fib_main_contains_int_main() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let fib = std::path::Path::new(manifest_dir)
+        .join("../../examples/stable/syntax/fib_main.aru")
+        .canonicalize()
+        .expect("fib_main.aru");
+    let path = fib.to_string_lossy();
+    let output = run_cli(&["emit-c", &path, "--layout=host"]);
+    assert!(
+        output.status.success(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("int main("),
+        "expected int main in C, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("fib("),
+        "expected fib in C output"
+    );
+    // No str runtime for pure-int program
+    assert!(
+        !stdout.contains("ar_str_concat_n"),
+        "unexpected str runtime for fib_main"
+    );
+}
+
+#[test]
+fn emit_c_i686_uses_int32_for_platform_int() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_emit_c_i686.aru");
+    fs::write(
+        &file,
+        r"func main(): int {
+    return 7
+}
+",
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+    let output = run_cli(&["emit-c", &path, "--layout=i686"]);
+    assert!(
+        output.status.success(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // main body still int; platform int locals/params use 32-bit when present
+    assert!(stdout.contains("int main("));
+    // return value temp is platform int width
+    assert!(
+        stdout.contains("int32_t") || stdout.contains("return (int)"),
+        "expected 32-bit layout types:\n{stdout}"
+    );
+}

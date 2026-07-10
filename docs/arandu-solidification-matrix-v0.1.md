@@ -1,74 +1,58 @@
 # Solidification matrix (pré–Fase 3 de linguagem)
 
-Status snapshot after root-cause commits (2026-07). Cranelift is **host-only** (typically 64-bit); 32-bit/embedded validation is **layout + C**, not Cranelift.
+**Status: S5 GATE CLOSED** (2026-07) — compiler foundation solid enough to resume language-level Fase 3 work.
+
+Cranelift is **host-only** (typically 64-bit). 32-bit / embedded validation is **layout + C emit**, not Cranelift.
 
 ## Backend roles
 
 | Backend | Targets | Notes |
 |---------|---------|--------|
 | Cranelift | Host (64-bit today) | `run` / JIT; **no 32-bit Cranelift** |
-| C | 32 + 64 + exotic | Portability / embedded path |
+| C | 32 + 64 (+ i686 layout) | `emit-c --layout=host\|ptr4\|i686`; portable path |
 | LLVM | later | Out of solidification scope |
 
-## Inventory (S0)
+## S5 gate checklist (closed)
 
-### Dual resolve (`resolve_for_test` callers)
+| Criterion | Status |
+|-----------|--------|
+| Critical resolve/typeck on unified import path (`resolve_for_test` = thin wrapper) | done |
+| O008/move diags: use → decl → symbol span; lower records `use_span` | done |
+| Layout tests W=4 and W=8; fat ptr `len` = usize; no magic `+8` for fat len | done |
+| `DataLayout` + `SizeAlign`; `host` / `ptr_width` / `i686_sysv` | done |
+| Host C↔Cranelift parity suite (incl. control flow, str audit) | done |
+| C emit smoke for layout 32 / i686 ArStr | done |
+| AMIR `TypeId` on locals/temps/params/return; `is_copy` / `is_memory` | done |
+| CLI `emit-c` with `--layout=` | done |
+| Clippy on solidification crates (`-D warnings`) | gate verify |
+| Doc ABI aligned with code | done |
 
-Still used widely as a thin wrapper over `resolve_imports_and_bodies` + `EmptyModuleLoader` (good). Remaining debt: ensure **all** new tests use this or Salsa; avoid hand-rolled import collection.
+### Explicitly **out** of this gate (honest backlog)
 
-| Crate / file | Usage |
-|--------------|--------|
-| `arandu_semantics/tests/*` | type_checker, name_resolution, recovery, root_cause_frontend, hir, amir |
-| `arandu_backend_c/tests/parity_tests.rs` | host parity |
-| `arandu_backend_cranelift/tests/jit_tests.rs` | host JIT |
+- Full Salsa orchestration of AMIR/analyses/codegen  
+- Display / `to_str` / non-str `println`  
+- C quality beyond “compiles + correct” (copy-prop, named struct fields, freestanding RT)  
+- LLVM, gen-fallback, ownership surface syntax  
+- TypeId on every IR node outside AMIR locals/temps  
 
-### Magic offsets / fixed ABI (multi-target risk)
+## What was fixed (do not reopen as “workarounds”)
 
-| Location | Issue |
-|----------|--------|
-| `backend_c` `ArStr` | `int64_t len` always (host 64 assumption) |
-| `backend_c` `Len` on slice | hardcoded `+ 8` |
-| Cranelift | fat-ptr len often `I64` / `ptr_type.bytes()` — OK for host; not a 32 JIT |
+- SET / GUARD / NEST / F64 / ERR-NIL / INTERP reject non-str  
+- Path canonicalize + ModuleLoader + structural stable_hash  
+- `println(str)`, CLI warn ≠ exit failure  
+- Shared AMIR rvalue visitor; Len/Alloc; real ArStr fat pointer  
+- Spans threaded through lower; TYP-1 Error via interner  
 
-### Spans
-
-| Area | Issue |
-|------|--------|
-| `AmirLocal.use_span` | Was always `None` at lower (diags fell back to decl span) |
-| Unit-test AMIR fixtures | Often `Span::new(0,0,0)` (OK for synthetic) |
-| ICE / some lower diags | Still zero span |
-
-### Done earlier (do not reopen)
-
-- SET / GUARD / NEST / F64 / ERR-NIL / INTERP reject non-str
-- Path canonicalize + ModuleLoader + structural stable_hash
-- `println(str)`, CLI warn≠error
-- Shared AMIR rvalue visitor; C ArStr `{ptr,len}` fields; Len/Alloc stubs filled
-
-## Solidification order
-
-1. **S1** — populate `use_span`; dual-resolve policy docs/tests — **done**  
-   - Extended: `with_span` on stmts/places, note origin on consume/free, temp spans from current_span, O* fallback use→decl→symbol  
-
-2. **S2** — fat-pointer `usize` len, no magic `+8`, layout W=4/8 — **done**  
-   - Extended: `DataLayout`/`SizeAlign`, `host()`/`i686_sysv()`, float always f64, i64 abi_align on i686  
-
-3. **S3** — host C↔Cranelift parity expand + C ArStr audit — **done** (parity quiet + control_flow + audit)  
-4. **S4** — AMIR `TypeId` on locals/temps/return + denormalized `is_copy`/`is_memory` — **done**  
-5. **S5** — gate before language Fase 3 features (remaining: clippy, optional TypeId on more IR)  
-
-### AMIR DoD (S4)
-
-| Field | Representation |
-|-------|----------------|
-| `AmirLocal.ty` / `AmirTemp.ty` / `BlockParam.ty` / `AmirFunc.return_type` | dense `TypeId` |
-| `AmirTemp.is_copy` | denormalized bool (move checker needs no interner) |
-| `AmirLocal.is_memory` | denormalized bool (prune/dummy load without interner) |
-| Resolve at codegen | `TypeInterner::resolve` / `with_type` / `is_copy_v01` |
-
-## Test policy
+## Test policy (standing)
 
 - Prefer `resolve_for_test` (unified imports) or full Salsa CLI path.  
-- Layout tests must cover `pointer_width` 4 and 8 in **middle**.  
-- Parity C↔Cranelift only on **host**.  
-- New tests must not hardcode `+8` for fat pointers.
+- Layout tests cover `pointer_width` 4 and 8 in **middle**.  
+- Parity C↔Cranelift **host only**.  
+- No hardcoding `+8` for fat-pointer len.  
+- New features: fail on product path first (CLI/Salsa), then fix root cause.  
+
+## After the gate
+
+Language roadmap Fase 3 (ownership surface, Display, OS runtime, …) may proceed **without** reopening solidification items above unless a regression appears.
+
+C “portability quality” (named structs, less SSA noise, embedded RT) is a **separate** backend track.

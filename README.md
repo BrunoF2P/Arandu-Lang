@@ -7,6 +7,8 @@ Arandu is an experimental Brazilian systems programming language focused on memo
 
 ## Current Status
 
+**Solidification gate (S5) closed** — foundation (DoD AMIR `TypeId`, spans, `DataLayout`, host C↔Cranelift parity, unified imports) is stable enough to resume language-level Fase 3 work. Details: [docs/arandu-solidification-matrix-v0.1.md](docs/arandu-solidification-matrix-v0.1.md).
+
 Implemented:
 
 - Rust workspace.
@@ -21,18 +23,22 @@ Implemented:
 - Type checker v0.1 core with primitive types, assignments, returns, fields, indexing, generics constraints, interface satisfaction, `Result<T,E>`, `Option<T>`, nullable/safe operations, and diagnostics.
 - AHIR lowering and pretty-printing with golden tests (`tests/hir/`).
 - AMIR lowering v0.1 (experimental) with CFG, locals, match, defer/errdefer, `?`/safe ops, for-in, alloc/free, and golden tests (`tests/codegen/`).
+- Dense AMIR types (`TypeId` on locals/temps), use-site spans on ownership diags, shared rvalue visitor.
 - Method receivers with `shared self`, `mut self`, and `own self`.
 - Definite initialization analysis with O008 diagnostics.
 - OSSA foundation in AMIR: move/copy operands, storage lifetime markers, and destroy statements.
 - Intraprocedural move checker with O001/O005/O007 diagnostics.
 - Opt-in AMIR optimizer (`amir --opt`) with constant folding and DCE.
-- Type interning and monomorphization graph infrastructure.
-- Cranelift JIT backend (experimental, dev/debug) with `run` CLI support.
+- Type interning, `DataLayout` (host / 32-bit / i686), and monomorphization graph infrastructure.
+- Cranelift JIT backend (experimental, **host** dev/debug) with `run` CLI support.
+- C emit path (`emit-c --layout=host|ptr4|i686`) — portable dump; not a polished embedded runtime yet.
 
 Not implemented yet:
 
 - Memory checker / generational fallback
-- Production backends (C portability, LLVM release optimizer)
+- Display / `to_str` (non-`str` println and interp)
+- Full ownership surface syntax
+- Production C polish / freestanding RT; LLVM release backend
 
 **Compiler roadmap (single source of truth):** [docs/arandu-compiler-roadmap-v0.1.md](docs/arandu-compiler-roadmap-v0.1.md)
 
@@ -111,6 +117,13 @@ Run a program via the Cranelift JIT backend (exit code = `main` return value):
 
 ```bash
 cargo run -p arandu_cli -- run tests/codegen/add.aru
+```
+
+Emit portable C (layout follows [`DataLayout`](docs/arandu-abi-layout-v0.1.md)):
+
+```bash
+cargo run -p arandu_cli -- emit-c examples/stable/syntax/fib_main.aru --layout=host
+cargo run -p arandu_cli -- emit-c examples/stable/syntax/fib_main.aru --layout=i686
 ```
 
 ### Compiler instrumentation (`-Z` flags)
