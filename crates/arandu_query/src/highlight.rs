@@ -61,8 +61,15 @@ impl HlKind {
     }
 }
 
-/// Bitflags for future modifiers (`declaration`, `mutable`, …). MVP: 0.
+/// Bitflags for semantic token modifiers (F2b).
 pub type HlMods = u16;
+
+/// Token is a definition / binding site.
+pub const MOD_DECLARATION: HlMods = 1 << 0;
+/// Token is a mutable binding (`mut` / assigned).
+pub const MOD_MUTABLE: HlMods = 1 << 1;
+/// Token is the defining occurrence of a symbol.
+pub const MOD_DEFINITION: HlMods = 1 << 2;
 
 /// One highlighted range in file byte offsets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -151,9 +158,28 @@ pub fn compute_highlights(
         if end <= start {
             return;
         }
+        let mut mods = 0u16;
         let kind = if matches!(tok.kind(), SyntaxKind::IDENT | SyntaxKind::TYPE_IDENT) {
             if let Some(sid) = symbol_for_span(start, end, &maps) {
+                // Definition site?
+                let key = NodeKey { start, end };
+                if resolved.resolved.definitions.contains_key(&key)
+                    || resolved
+                        .resolved
+                        .definitions
+                        .iter()
+                        .any(|(k, s)| *s == sid && k.start == start && k.end == end)
+                {
+                    mods |= MOD_DECLARATION | MOD_DEFINITION;
+                }
+                if resolved.resolved.mutable_symbols.contains(&sid) {
+                    mods |= MOD_MUTABLE;
+                }
                 if let Some(sym) = resolved.symbols.try_get(sid) {
+                    // Defining occurrence often equals symbol.span
+                    if sym.span.start == start && sym.span.end == end {
+                        mods |= MOD_DECLARATION | MOD_DEFINITION;
+                    }
                     symbol_kind_to_hl(sym.kind)
                 } else {
                     lex
@@ -168,10 +194,20 @@ pub fn compute_highlights(
             start,
             end,
             kind,
-            mods: 0,
+            mods,
         });
     });
     Arc::from(out)
+}
+
+/// Highlights restricted to `[range_start, range_end)` (F2b range request).
+#[must_use]
+pub fn highlights_in_range(tokens: &[HlToken], range_start: u32, range_end: u32) -> Vec<HlToken> {
+    tokens
+        .iter()
+        .copied()
+        .filter(|t| t.end > range_start && t.start < range_end)
+        .collect()
 }
 
 /// Salsa memo: type-aware file highlights for IDE semantic tokens.

@@ -7,8 +7,13 @@ use smol_str::SmolStr;
 
 impl<'a> Parser<'a> {
     pub(super) fn parse_expr(&mut self, min_bp: u8) -> Result<ExprId, ParseError> {
+        // Outermost expression only → one EXPR green node (event sink).
+        let wrap = min_bp == 0;
+        if wrap {
+            self.start_node(crate::syntax::SyntaxKind::EXPR);
+        }
         let start = self.mark();
-        match self.try_parse_expr(min_bp) {
+        let result = match self.try_parse_expr(min_bp) {
             Ok(expr) => Ok(expr),
             Err(err) => {
                 self.report_error(err);
@@ -17,7 +22,11 @@ impl<'a> Parser<'a> {
                 let span = self.span_from_mark(start);
                 Ok(self.pool.alloc_expr(ExprKind::Error, span))
             }
+        };
+        if wrap {
+            self.finish_node();
         }
+        result
     }
 
     pub(super) fn try_parse_expr(&mut self, min_bp: u8) -> Result<ExprId, ParseError> {

@@ -41,6 +41,8 @@ pub enum SyntaxKind {
     BLOCK,
     /// Statement fragment inside a [`Self::BLOCK`] (tokens until `;` / next stmt; F1b).
     STMT,
+    /// Expression node (event sink wraps RD `parse_expr`).
+    EXPR,
     /// Unparsed / error region.
     ERROR,
 

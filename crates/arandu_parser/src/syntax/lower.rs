@@ -1,12 +1,16 @@
-//! F1b — green-guided lower: walk typed top-level items, RD at each seek position.
+//! Green-guided lower: walk typed top-level items; RD at each item seek.
 //!
-//! One shared [`Parser`] / [`AstPool`] for the whole file; the green tree only
-//! drives **where** to resume parsing (no dual independent AST).
+//! **Body without full-file RD:** simple `STMT` nodes can be hand-lowered from
+//! tokens ([`try_hand_lower_stmt`]); complex stmts still use seek + RD.
 
 use super::SyntaxTree;
-use super::kind::SyntaxKind;
+use super::kind::{SyntaxKind, SyntaxNode};
+use crate::ast::ast_pool::{AstPool, ExprKind};
 use crate::parser::{ParseError, ParseOutput, Parser};
-use crate::{Program, TopLevelDecl};
+use crate::{Program, Stmt, TopLevelDecl};
+use arandu_lexer::{Token, TokenKind};
+use smallvec::smallvec;
+use smol_str::SmolStr;
 use std::sync::Arc;
 
 /// Summary of structured green content (no heap AST).
@@ -215,6 +219,99 @@ pub fn decl_count(program: &Program) -> usize {
         .count()
 }
 
+/// Hand-lower a green `STMT` without calling RD (simple patterns only).
+///
+/// Supports: `return`, `return <int|ident>`, `break`, `continue` (+ optional `;`).
+#[must_use]
+pub fn try_hand_lower_stmt(
+    pool: &mut AstPool,
+    source: &str,
+    tokens: &[Token],
+    stmt: &SyntaxNode,
+    file_id: u32,
+) -> Option<crate::ast_pool::StmtId> {
+    let r = stmt.text_range();
+    let s = u32::from(r.start());
+    let e = u32::from(r.end());
+    let mut toks: Vec<&Token> = tokens
+        .iter()
+        .filter(|t| {
+            !matches!(t.kind, TokenKind::Eof)
+                && t.start >= s
+                && t.start < e
+                && !(t.kind == TokenKind::Semicolon && t.inserted)
+        })
+        .collect();
+    // Drop trailing explicit semicolon for matching.
+    if toks
+        .last()
+        .is_some_and(|t| matches!(t.kind, TokenKind::Semicolon))
+    {
+        toks.pop();
+    }
+    if toks.is_empty() {
+        return None;
+    }
+    let span = arandu_lexer::Span::new(file_id, s, e);
+    match toks[0].kind {
+        TokenKind::KwBreak if toks.len() == 1 => Some(pool.alloc_stmt(Stmt::Break { span })),
+        TokenKind::KwContinue if toks.len() == 1 => Some(pool.alloc_stmt(Stmt::Continue { span })),
+        TokenKind::KwReturn => {
+            let values = if toks.len() == 1 {
+                Vec::new()
+            } else if toks.len() == 2 {
+                let t = toks[1];
+                let te = t.start.saturating_add(t.len) as usize;
+                let ts = t.start as usize;
+                let text = source.get(ts..te.min(source.len()))?;
+                let expr = match t.kind {
+                    TokenKind::IntDec
+                    | TokenKind::IntHex
+                    | TokenKind::IntBin
+                    | TokenKind::IntOct => pool.alloc_expr(
+                        ExprKind::Int {
+                            value: SmolStr::new(text),
+                        },
+                        arandu_lexer::Span::new(file_id, t.start, t.start + t.len),
+                    ),
+                    TokenKind::IdentValue => pool.alloc_expr(
+                        ExprKind::Path {
+                            path: smallvec![SmolStr::new(text)],
+                        },
+                        arandu_lexer::Span::new(file_id, t.start, t.start + t.len),
+                    ),
+                    _ => return None,
+                };
+                vec![expr]
+            } else {
+                return None;
+            };
+            Some(pool.alloc_stmt(Stmt::Return { span, values }))
+        }
+        _ => None,
+    }
+}
+
+/// Count how many green STMTs under `tree` hand-lower without RD.
+#[must_use]
+pub fn count_hand_lowerable_stmts(tree: &SyntaxTree) -> (usize, usize) {
+    let mut total = 0usize;
+    let mut hand = 0usize;
+    let mut pool = AstPool::new();
+    for item in tree.items() {
+        for n in item.descendants() {
+            if n.kind() != SyntaxKind::STMT {
+                continue;
+            }
+            total += 1;
+            if try_hand_lower_stmt(&mut pool, tree.text(), tree.tokens(), &n, 0).is_some() {
+                hand += 1;
+            }
+        }
+    }
+    (total, hand)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -272,5 +369,25 @@ mod tests {
         assert!(prog.module.is_some());
         assert_eq!(prog.imports.len(), 1);
         assert_eq!(prog.decls.len(), 1);
+    }
+
+    #[test]
+    fn hand_lower_return_stmt() {
+        let src = "func main(): int {\n    return 1\n}\n";
+        let tree = parse_syntax(src);
+        let (total, hand) = count_hand_lowerable_stmts(&tree);
+        assert!(total >= 1, "stmts={total}");
+        assert!(hand >= 1, "hand-lowerable={hand} total={total}");
+    }
+
+    #[test]
+    fn event_green_has_expr_nodes() {
+        let tree = parse_syntax("func main(): int { return 1 }\n");
+        let exprs = tree
+            .root()
+            .descendants()
+            .filter(|n| n.kind() == SyntaxKind::EXPR)
+            .count();
+        assert!(exprs >= 1, "expected EXPR nodes from event sink");
     }
 }

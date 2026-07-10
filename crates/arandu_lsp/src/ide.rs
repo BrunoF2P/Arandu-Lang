@@ -9,8 +9,8 @@ use arandu_semantics::TypeCheckResult;
 use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionResponse, CompletionItem,
     CompletionItemKind, Documentation, Hover, HoverContents, Location, MarkedString, Position,
-    SemanticToken, SemanticTokenType, SemanticTokens, SemanticTokensLegend, SymbolInformation,
-    SymbolKind as LspSymbolKind, TextEdit as LspTextEdit, Url, WorkspaceEdit,
+    SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens, SemanticTokensLegend,
+    SymbolInformation, SymbolKind as LspSymbolKind, TextEdit as LspTextEdit, Url, WorkspaceEdit,
 };
 use rustc_hash::FxHashMap;
 use std::collections::HashMap;
@@ -389,30 +389,33 @@ pub fn signature_help(
 }
 
 /// Legend order for semantic tokens (must match [`arandu_query::HlKind`] discriminant).
+///
+/// Modifiers bit order: declaration=0, modification/mutable=1, definition=2 (F2b).
 #[must_use]
 pub fn semantic_tokens_legend() -> SemanticTokensLegend {
     SemanticTokensLegend {
         token_types: vec![
-            SemanticTokenType::KEYWORD,   // 0 HlKind::Keyword
-            SemanticTokenType::FUNCTION,  // 1 Function
-            SemanticTokenType::VARIABLE,  // 2 Variable
-            SemanticTokenType::PARAMETER, // 3 Parameter
-            SemanticTokenType::TYPE,      // 4 Type
-            SemanticTokenType::STRUCT,    // 5 Struct
-            SemanticTokenType::ENUM,      // 6 Enum
-            SemanticTokenType::INTERFACE, // 7 Interface
-            SemanticTokenType::NAMESPACE, // 8 Namespace
-            SemanticTokenType::NUMBER,    // 9 Number
-            SemanticTokenType::STRING,    // 10 String
-            SemanticTokenType::COMMENT,   // 11 Comment
-            SemanticTokenType::OPERATOR,  // 12 Operator
-            SemanticTokenType::PROPERTY,  // 13 Property
-            // Constant → use VARIABLE with no extra type in base legend; map as VARIABLE-like
-            // LSP has no CONSTANT in older specs; use `SemanticTokenType::VARIABLE` duplicate
-            // slot via custom — use ENUM_MEMBER as closest for constants.
+            SemanticTokenType::KEYWORD,     // 0
+            SemanticTokenType::FUNCTION,    // 1
+            SemanticTokenType::VARIABLE,    // 2
+            SemanticTokenType::PARAMETER,   // 3
+            SemanticTokenType::TYPE,        // 4
+            SemanticTokenType::STRUCT,      // 5
+            SemanticTokenType::ENUM,        // 6
+            SemanticTokenType::INTERFACE,   // 7
+            SemanticTokenType::NAMESPACE,   // 8
+            SemanticTokenType::NUMBER,      // 9
+            SemanticTokenType::STRING,      // 10
+            SemanticTokenType::COMMENT,     // 11
+            SemanticTokenType::OPERATOR,    // 12
+            SemanticTokenType::PROPERTY,    // 13
             SemanticTokenType::ENUM_MEMBER, // 14 Constant
         ],
-        token_modifiers: vec![],
+        token_modifiers: vec![
+            SemanticTokenModifier::DECLARATION,  // bit 0 MOD_DECLARATION
+            SemanticTokenModifier::MODIFICATION, // bit 1 MOD_MUTABLE (closest to mut)
+            SemanticTokenModifier::DEFINITION,   // bit 2 MOD_DEFINITION
+        ],
     }
 }
 
@@ -437,34 +440,38 @@ pub fn format_document(text: &str) -> Vec<LspTextEdit> {
         .collect()
 }
 
-/// Code actions (F3b MVP): quickfix insert `;` from diagnostic messages.
+/// Code actions from diagnostic messages (`;`, braces, parens).
 #[must_use]
 pub fn code_actions(uri: &Url, context: &lsp_types::CodeActionContext) -> CodeActionResponse {
     let mut out = Vec::new();
     for d in &context.diagnostics {
-        if arandu_fmt::actions_for_expected_semicolon(0, 0, d.message.as_str()).is_none() {
-            continue;
+        let actions = arandu_fmt::actions_for_diagnostic(0, 0, d.message.as_str());
+        for a in actions {
+            let start = d.range.start;
+            let new_text = a
+                .edits
+                .first()
+                .map(|e| e.new_text.clone())
+                .unwrap_or_default();
+            let mut changes = HashMap::new();
+            changes.insert(
+                uri.clone(),
+                vec![LspTextEdit {
+                    range: lsp_types::Range { start, end: start },
+                    new_text,
+                }],
+            );
+            out.push(CodeActionOrCommand::CodeAction(CodeAction {
+                title: a.title.into(),
+                kind: Some(CodeActionKind::QUICKFIX),
+                diagnostics: Some(vec![d.clone()]),
+                edit: Some(WorkspaceEdit {
+                    changes: Some(changes),
+                    ..WorkspaceEdit::default()
+                }),
+                ..CodeAction::default()
+            }));
         }
-        // Insert `;` at the start of the diagnostic range (zero-width insert).
-        let start = d.range.start;
-        let mut changes = HashMap::new();
-        changes.insert(
-            uri.clone(),
-            vec![LspTextEdit {
-                range: lsp_types::Range { start, end: start },
-                new_text: ";".into(),
-            }],
-        );
-        out.push(CodeActionOrCommand::CodeAction(CodeAction {
-            title: "Insert `;`".into(),
-            kind: Some(CodeActionKind::QUICKFIX),
-            diagnostics: Some(vec![d.clone()]),
-            edit: Some(WorkspaceEdit {
-                changes: Some(changes),
-                ..WorkspaceEdit::default()
-            }),
-            ..CodeAction::default()
-        }));
     }
     out
 }
@@ -472,14 +479,31 @@ pub fn code_actions(uri: &Url, context: &lsp_types::CodeActionContext) -> CodeAc
 /// Build LSP semantic tokens from type-aware [`arandu_query::file_highlights`].
 #[must_use]
 pub fn semantic_tokens(snap: &AnalysisSnapshot, source: SourceFile) -> SemanticTokens {
-    let highlights = arandu_query::file_highlights(&snap.db, source);
-    let text = source.text(&snap.db);
-    let index = LineIndex::new(&text);
+    encode_highlights(
+        &arandu_query::file_highlights(&snap.db, source),
+        &source.text(&snap.db),
+    )
+}
 
+/// Range semantic tokens (F2b).
+#[must_use]
+pub fn semantic_tokens_range(
+    snap: &AnalysisSnapshot,
+    source: SourceFile,
+    range_start: u32,
+    range_end: u32,
+) -> SemanticTokens {
+    let all = arandu_query::file_highlights(&snap.db, source);
+    let slice = arandu_query::highlights_in_range(&all, range_start, range_end);
+    encode_highlights(&slice, &source.text(&snap.db))
+}
+
+fn encode_highlights(highlights: &[arandu_query::HlToken], text: &str) -> SemanticTokens {
+    let index = LineIndex::new(text);
     let mut data = Vec::with_capacity(highlights.len());
     let mut prev_line = 0u32;
     let mut prev_start = 0u32;
-    for hl in highlights.iter() {
+    for hl in highlights {
         let token_type = hl.kind.legend_index();
         let start_pos = offset_to_position_local(&index, hl.start);
         let length = hl.end.saturating_sub(hl.start);

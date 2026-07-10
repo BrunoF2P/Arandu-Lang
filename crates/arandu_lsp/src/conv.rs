@@ -53,6 +53,21 @@ pub fn span_to_range(index: &LineIndex, span: Span) -> Range {
     Range { start, end }
 }
 
+/// Apply an incremental LSP text edit (`range` + `new_text`) to a document buffer.
+#[must_use]
+pub fn apply_lsp_range_edit(text: &str, range: Range, new_text: &str) -> String {
+    let index = LineIndex::new(text);
+    let start = position_to_offset(&index, range.start, text) as usize;
+    let end = position_to_offset(&index, range.end, text) as usize;
+    let start = start.min(text.len());
+    let end = end.min(text.len()).max(start);
+    let mut out = String::with_capacity(text.len() - (end - start) + new_text.len());
+    out.push_str(&text[..start]);
+    out.push_str(new_text);
+    out.push_str(&text[end..]);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

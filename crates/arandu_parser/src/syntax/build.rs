@@ -811,8 +811,8 @@ pub fn reparse_edit(
 
 /// Splice tokens for an edited ITEM: re-lex only the item slice; shift siblings.
 ///
-/// Tokens with `start` in `[old_s, old_e)` are replaced by `item_tokens` (already
-/// absolute-offset). Tokens with `start >= old_e` have `start += delta`.
+/// Uses the first **non-zero-width** token at/after `old_s` as the splice start so
+/// leading whitespace gaps / zero-width ASI `;` of the *previous* item are kept.
 #[must_use]
 pub fn splice_tokens_for_item_edit(
     old_tokens: &[Token],
@@ -821,23 +821,32 @@ pub fn splice_tokens_for_item_edit(
     delta: i64,
     item_tokens: &[Token],
 ) -> Vec<Token> {
+    // Content start: first real (len>0) token inside the item range, else old_s.
+    let content_s = old_tokens
+        .iter()
+        .find(|t| {
+            !matches!(t.kind, TokenKind::Eof) && t.len > 0 && t.start >= old_s && t.start < old_e
+        })
+        .map(|t| t.start)
+        .unwrap_or(old_s);
+
     let mut out = Vec::with_capacity(old_tokens.len() + item_tokens.len());
     let mut i = 0;
-    // Prefix: tokens that start before the edited item.
+    // Prefix: tokens before content (includes zero-width ASI `;` of previous item).
     while i < old_tokens.len() {
         let t = old_tokens[i];
         if matches!(t.kind, TokenKind::Eof) {
             i += 1;
             continue;
         }
-        if t.start < old_s {
+        if t.start < content_s {
             out.push(t);
             i += 1;
         } else {
             break;
         }
     }
-    // Skip old tokens that start inside [old_s, old_e).
+    // Skip old tokens in [content_s, old_e).
     while i < old_tokens.len() {
         let t = old_tokens[i];
         if matches!(t.kind, TokenKind::Eof) {
@@ -850,11 +859,16 @@ pub fn splice_tokens_for_item_edit(
             break;
         }
     }
-    // Insert new item tokens (absolute starts).
+    // New item tokens (absolute). Drop leading tokens that start before content_s
+    // when re-lexed item text included leading whitespace of the green range.
     for t in item_tokens {
-        if !matches!(t.kind, TokenKind::Eof) {
-            out.push(*t);
+        if matches!(t.kind, TokenKind::Eof) {
+            continue;
         }
+        if t.start < content_s {
+            continue;
+        }
+        out.push(*t);
     }
     // Suffix: shift by delta.
     while i < old_tokens.len() {
@@ -952,17 +966,24 @@ pub fn reparse_subtree(
         return (new_source.clone(), parse_syntax(&new_source));
     }
 
-    // Tokens: full-file re-lex for correctness (ASI at item boundaries). Green stays
-    // incremental via replace_child. (Splice alone drops zero-width ASI glued to the
-    // next item's leading whitespace gap under event-built trees.)
-    let file_lexed = lex_recovering(&new_source);
-    let _ = item_lexed; // used for green only
+    // Splice tokens: re-lex only the edited item; keep prefix ASI with content_s.
+    let item_diags = item_lexed.diagnostics;
+    let item_tokens: Vec<Token> = item_lexed
+        .tokens
+        .into_iter()
+        .filter(|t| !matches!(t.kind, TokenKind::Eof))
+        .map(|mut t| {
+            t.start = t.start.saturating_add(new_s);
+            t
+        })
+        .collect();
+    let spliced = splice_tokens_for_item_edit(old.tokens(), old_s, old_e, delta, &item_tokens);
 
     let tree = SyntaxTree {
         green: new_green,
         text: Arc::from(new_source.as_str()),
-        tokens: Arc::new(file_lexed.tokens),
-        lex_diagnostics: Arc::new(file_lexed.diagnostics),
+        tokens: Arc::new(spliced),
+        lex_diagnostics: Arc::new(item_diags),
     };
     // If a local edit introduced/removed top-level items (rare), prefer full structure.
     if tree.items().len() != old_items.len() {

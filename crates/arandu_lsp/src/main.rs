@@ -10,7 +10,7 @@ mod vfs;
 
 use arandu_base::LineIndex;
 use arandu_query::{AnalysisRevision, AnalysisSnapshot, ArandCompilerDb, DocumentId, SourceFile};
-use conv::{position_to_offset, span_to_range};
+use conv::{apply_lsp_range_edit, position_to_offset, span_to_range};
 use crossbeam_channel::{select, Receiver, Sender};
 use lsp_server::{Connection, Message, Notification, Request, RequestId, Response};
 use lsp_types::notification::{
@@ -19,8 +19,8 @@ use lsp_types::notification::{
 };
 use lsp_types::request::{
     CodeActionRequest, Completion, DocumentSymbolRequest, Formatting, GotoDefinition, HoverRequest,
-    References, Rename, Request as _, SemanticTokensFullRequest, SignatureHelpRequest,
-    WorkspaceSymbolRequest,
+    References, Rename, Request as _, SemanticTokensFullRequest, SemanticTokensRangeRequest,
+    SignatureHelpRequest, WorkspaceSymbolRequest,
 };
 use lsp_types::{
     CodeActionOptions, CodeActionProviderCapability, CompletionOptions, CompletionResponse,
@@ -77,7 +77,9 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     }
 
     let server_caps = ServerCapabilities {
-        text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
+        text_document_sync: Some(TextDocumentSyncCapability::Kind(
+            TextDocumentSyncKind::INCREMENTAL,
+        )),
         definition_provider: Some(OneOf::Left(true)),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         completion_provider: Some(CompletionOptions {
@@ -100,7 +102,7 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
         semantic_tokens_provider: Some(SemanticTokensServerCapabilities::SemanticTokensOptions(
             SemanticTokensOptions {
                 legend: ide::semantic_tokens_legend(),
-                range: Some(false),
+                range: Some(true),
                 full: Some(SemanticTokensFullOptions::Bool(true)),
                 work_done_progress_options: WorkDoneProgressOptions::default(),
             },
@@ -193,12 +195,21 @@ fn on_notification(
             let params: lsp_types::DidChangeTextDocumentParams =
                 not.extract(DidChangeTextDocument::METHOD)?;
             let uri = params.text_document.uri;
-            let text = params
-                .content_changes
-                .into_iter()
-                .next()
-                .map(|c| c.text)
+            // Incremental: apply each range change onto the current buffer text.
+            let mut text = state
+                .by_uri
+                .get(uri.as_str())
+                .and_then(|&id| state.docs.get(id))
+                .map(|doc| doc.source.text(state.host.db()).to_string())
                 .unwrap_or_default();
+            for change in params.content_changes {
+                if let Some(range) = change.range {
+                    text = apply_lsp_range_edit(&text, range, &change.text);
+                } else {
+                    // Full replace (clients may still send this).
+                    text = change.text;
+                }
+            }
             if !state.by_uri.contains_key(uri.as_str()) {
                 let _ = state.open_or_commit(&uri, text.clone());
             }
@@ -258,6 +269,7 @@ fn on_request(
         | DocumentSymbolRequest::METHOD
         | WorkspaceSymbolRequest::METHOD
         | SemanticTokensFullRequest::METHOD
+        | SemanticTokensRangeRequest::METHOD
         | Formatting::METHOD
         | CodeActionRequest::METHOD => {
             flush_for_request(state, pool, job_tx);
@@ -387,6 +399,24 @@ fn on_request(
                     return serde_json::Value::Null;
                 };
                 let tokens = ide::semantic_tokens(snap, info.source);
+                serde_json::to_value(tokens).unwrap_or(serde_json::Value::Null)
+            });
+        }
+        SemanticTokensRangeRequest::METHOD => {
+            let (id, params) = req.extract::<lsp_types::SemanticTokensRangeParams>(
+                SemanticTokensRangeRequest::METHOD,
+            )?;
+            let uri = params.text_document.uri;
+            let range = params.range;
+            spawn_json(state, pool, job_tx, id, move |snap, docs| {
+                let Some(info) = docs.get(uri.as_str()) else {
+                    return serde_json::Value::Null;
+                };
+                let text = info.source.text(&snap.db);
+                let index = LineIndex::new(&text);
+                let start = position_to_offset(&index, range.start, &text);
+                let end = position_to_offset(&index, range.end, &text);
+                let tokens = ide::semantic_tokens_range(snap, info.source, start, end);
                 serde_json::to_value(tokens).unwrap_or(serde_json::Value::Null)
             });
         }
