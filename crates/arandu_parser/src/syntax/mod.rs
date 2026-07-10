@@ -1,20 +1,27 @@
-//! CST-first pipeline via [`rowan`] (P5 complete).
+//! CST-first pipeline via [`rowan`] (P5 + F1 structured green).
 //!
-//! 1. Lex → green tree with top-level [`SyntaxKind::ITEM`] nodes (heuristic).
-//! 2. Lower CST text → AST [`Program`] for resolve/typeck.
-//! 3. Subtree reparse via [`reparse_subtree`] when an edit stays inside one ITEM
-//!    (re-lex only that ITEM; sibling green nodes reused via `replace_child`).
+//! 1. Lex → green tree with typed top-level items (`FUNC_ITEM`, …) and `BLOCK` bodies.
+//! 2. Lower CST tokens → AST [`Program`] for resolve/typeck (RD on shared tokens).
+//! 3. Subtree reparse via [`reparse_subtree`] when an edit stays inside one item
+//!    (re-lex only that item; sibling green nodes reused via `replace_child`).
+//! 4. [`lower`] inspects structure for F1 metrics / future walk-based lower.
 
 mod build;
 mod kind;
+pub mod lower;
 
 pub use build::{
-    SyntaxTree, apply_text_edit, find_top_level_item_spans, for_each_highlight_token,
-    highlight_spans, lower_syntax_to_program, lower_syntax_to_program_recovering, parse_syntax,
-    parse_syntax_arc, parse_syntax_with_item_spans, reparse_edit, reparse_subtree,
-    single_contiguous_edit, splice_tokens_for_item_edit, text_range,
+    SyntaxTree, apply_text_edit, build_item_green, classify_item_kind, find_top_level_item_spans,
+    for_each_highlight_token, highlight_spans, lower_syntax_to_program,
+    lower_syntax_to_program_recovering, parse_syntax, parse_syntax_arc,
+    parse_syntax_with_item_spans, reparse_edit, reparse_subtree, single_contiguous_edit,
+    splice_tokens_for_item_edit, text_range,
 };
 pub use kind::{AranduLanguage, SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};
+pub use lower::{
+    GreenStructure, first_func_item, func_body_block, inspect_green_structure,
+    is_fully_typed_toplevel,
+};
 
 use crate::{ParseError, ParseOutput, Program};
 
@@ -78,12 +85,20 @@ mod tests {
         let items = tree.items();
         assert!(
             items.len() >= 2,
-            "expected ≥2 ITEM nodes from heuristic, got {}",
+            "expected ≥2 top-level items from heuristic, got {}",
             items.len()
+        );
+        assert!(
+            items.iter().all(|n| n.kind() == SyntaxKind::FUNC_ITEM),
+            "expected FUNC_ITEM nodes, got {:?}",
+            items.iter().map(|n| n.kind()).collect::<Vec<_>>()
         );
         let texts = tree.item_texts();
         assert!(texts[0].contains("alpha"), "first: {}", texts[0]);
         assert!(texts.iter().any(|t| t.contains("beta")), "beta missing");
+        let blocks = tree.item_blocks();
+        assert_eq!(blocks.len(), 2);
+        assert!(blocks.iter().all(|b| b.is_some()), "each func needs BLOCK");
     }
 
     #[test]

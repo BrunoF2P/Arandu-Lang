@@ -43,6 +43,20 @@ fn syntax_item_text_stable_when_sibling_edited() {
 }
 
 #[test]
+fn syntax_tree_has_structured_func_items() {
+    let mut db = DatabaseImpl::new();
+    let file = db.new_file(
+        "f1.aru".into(),
+        "func alpha(): int {\n    return 1\n}\nfunc beta(): int {\n    return 2\n}\n".into(),
+    );
+    let tree = syntax_tree(&db, file);
+    let s = arandu_parser::inspect_green_structure(&tree);
+    assert_eq!(s.func_items, 2, "{s:?}");
+    assert_eq!(s.blocks, 2, "{s:?}");
+    assert!(s.typed_items >= 2);
+}
+
+#[test]
 fn syntax_tree_reuses_sibling_green_after_set_text() {
     let mut db = DatabaseImpl::new();
     let file = db.new_file("cst3.aru".into(), two_funcs(2));

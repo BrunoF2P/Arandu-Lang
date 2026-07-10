@@ -60,11 +60,21 @@ impl SyntaxTree {
         SyntaxNode::new_root(self.green.clone())
     }
 
+    /// Top-level item nodes (`FUNC_ITEM`, `STRUCT_ITEM`, … or generic `ITEM`).
     #[must_use]
     pub fn items(&self) -> Vec<SyntaxNode> {
         self.root()
             .children()
-            .filter(|n| n.kind() == SyntaxKind::ITEM)
+            .filter(|n| n.kind().is_top_level_item())
+            .collect()
+    }
+
+    /// First `BLOCK` descendant of each top-level item (if any).
+    #[must_use]
+    pub fn item_blocks(&self) -> Vec<Option<SyntaxNode>> {
+        self.items()
+            .into_iter()
+            .map(|item| item.descendants().find(|n| n.kind() == SyntaxKind::BLOCK))
             .collect()
     }
 
@@ -169,6 +179,8 @@ fn lex_diags_as_parse(tree: &SyntaxTree, file_id: u32) -> Vec<crate::ParseError>
 /// Lower CST → AST using the **cached token stream** (no re-lex, no token `Vec` clone).
 ///
 /// Typeck/resolve consume [`crate::Program`]; the source of truth is the CST.
+/// Green structure (`FUNC_ITEM`/`BLOCK`) is available via [`super::lower`]; full AST
+/// still uses recursive-descent on tokens until a complete green walk exists (F1b+).
 pub fn lower_syntax_to_program(
     tree: &SyntaxTree,
     file_id: u32,
@@ -266,9 +278,7 @@ fn build_green(source: &str, tokens: &[Token], item_spans: &[(u32, u32)]) -> Gre
                 emit_tokens(&mut builder, source, tokens, cursor, start);
             }
             if end > start {
-                builder.start_node(SyntaxKind::ITEM.into());
-                emit_tokens(&mut builder, source, tokens, start, end);
-                builder.finish_node();
+                emit_structured_item(&mut builder, source, tokens, start, end);
             }
             cursor = end;
         }
@@ -278,6 +288,111 @@ fn build_green(source: &str, tokens: &[Token], item_spans: &[(u32, u32)]) -> Gre
     }
 
     builder.finish_node();
+    builder.finish()
+}
+
+/// Classify top-level item from the first item-start keyword in range.
+#[must_use]
+pub fn classify_item_kind(tokens: &[Token], range_start: u32, range_end: u32) -> SyntaxKind {
+    for tok in tokens {
+        if matches!(tok.kind, TokenKind::Eof | TokenKind::Error(_)) {
+            continue;
+        }
+        let te = tok.start.saturating_add(tok.len);
+        if te <= range_start || tok.start >= range_end {
+            continue;
+        }
+        if is_item_start_keyword(tok.kind) {
+            return match tok.kind {
+                TokenKind::KwModule => SyntaxKind::MODULE_ITEM,
+                TokenKind::KwImport | TokenKind::KwFrom => SyntaxKind::IMPORT_ITEM,
+                TokenKind::KwFunc | TokenKind::KwAsync => SyntaxKind::FUNC_ITEM,
+                TokenKind::KwStruct => SyntaxKind::STRUCT_ITEM,
+                TokenKind::KwEnum => SyntaxKind::ENUM_ITEM,
+                TokenKind::KwInterface => SyntaxKind::INTERFACE_ITEM,
+                TokenKind::KwConst => SyntaxKind::CONST_ITEM,
+                TokenKind::KwType => SyntaxKind::TYPE_ALIAS_ITEM,
+                TokenKind::KwExtern => SyntaxKind::EXTERN_ITEM,
+                _ => SyntaxKind::ITEM,
+            };
+        }
+    }
+    SyntaxKind::ITEM
+}
+
+/// Emit one top-level item with optional nested [`SyntaxKind::BLOCK`] for `{…}`.
+fn emit_structured_item(
+    builder: &mut GreenNodeBuilder<'_>,
+    source: &str,
+    tokens: &[Token],
+    range_start: u32,
+    range_end: u32,
+) {
+    let item_kind = classify_item_kind(tokens, range_start, range_end);
+    builder.start_node(item_kind.into());
+
+    // First `{` in this item range opens the body BLOCK (func/struct/enum/…).
+    let brace_start = tokens.iter().find_map(|tok| {
+        if matches!(tok.kind, TokenKind::LBrace)
+            && tok.start >= range_start
+            && tok.start < range_end
+        {
+            Some(tok.start)
+        } else {
+            None
+        }
+    });
+
+    let Some(open_brace) = brace_start else {
+        emit_tokens(builder, source, tokens, range_start, range_end);
+        builder.finish_node();
+        return;
+    };
+
+    // Header (before body `{`).
+    if open_brace > range_start {
+        emit_tokens(builder, source, tokens, range_start, open_brace);
+    }
+
+    // Match closing `}` at depth 0 relative to this brace.
+    let mut depth = 0i32;
+    let mut close_end = range_end;
+    for tok in tokens {
+        if tok.start < open_brace || tok.start >= range_end {
+            continue;
+        }
+        match tok.kind {
+            TokenKind::LBrace => depth += 1,
+            TokenKind::RBrace => {
+                depth -= 1;
+                if depth == 0 {
+                    close_end = tok.start.saturating_add(tok.len).min(range_end);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    builder.start_node(SyntaxKind::BLOCK.into());
+    emit_tokens(builder, source, tokens, open_brace, close_end);
+    builder.finish_node();
+
+    if close_end < range_end {
+        emit_tokens(builder, source, tokens, close_end, range_end);
+    }
+    builder.finish_node();
+}
+
+/// Build a single item green node (for [`reparse_subtree`]).
+#[must_use]
+pub fn build_item_green(item_text: &str, tokens: &[Token]) -> GreenNode {
+    let mut builder = GreenNodeBuilder::new();
+    let end = item_text.len() as u32;
+    emit_structured_item(&mut builder, item_text, tokens, 0, end);
+    // emit_structured_item already finished the item node; wrap is not needed.
+    // GreenNodeBuilder::finish requires exactly one root — the item node is the only child of empty parents.
+    // Actually start_node ITEM was finished — stack should have one element. finish() returns it.
     builder.finish()
 }
 
@@ -596,41 +711,31 @@ pub fn reparse_subtree(
     }
     let new_e = new_e as u32;
 
-    // Locate the ITEM among root green children (trivia siblings stay put).
+    // Locate the top-level item among root green children (trivia siblings stay put).
     let old_root = old.root();
     let root_green = old_root.green();
-    let item_kind: rowan::SyntaxKind = SyntaxKind::ITEM.into();
     let mut seen = 0usize;
     let mut child_index = None;
     for (i, child) in root_green.children().enumerate() {
-        if let NodeOrToken::Node(n) = child
-            && n.kind() == item_kind
-        {
-            if seen == idx {
-                child_index = Some(i);
-                break;
+        if let NodeOrToken::Node(n) = child {
+            let k = SyntaxKind::from_raw(n.kind());
+            if k.is_top_level_item() {
+                if seen == idx {
+                    child_index = Some(i);
+                    break;
+                }
+                seen += 1;
             }
-            seen += 1;
         }
     }
     let Some(child_index) = child_index else {
         return (new_source.clone(), parse_syntax(&new_source));
     };
 
-    // Re-lex + rebuild green for ONLY the edited ITEM slice.
+    // Re-lex + rebuild structured green for ONLY the edited item slice.
     let item_text = &new_source[new_s as usize..new_e as usize];
     let item_lexed = lex_recovering(item_text);
-    let mut builder = GreenNodeBuilder::new();
-    builder.start_node(SyntaxKind::ITEM.into());
-    emit_tokens(
-        &mut builder,
-        item_text,
-        &item_lexed.tokens,
-        0,
-        item_text.len() as u32,
-    );
-    builder.finish_node();
-    let new_item = builder.finish();
+    let new_item = build_item_green(item_text, &item_lexed.tokens);
 
     let new_green = root_green.replace_child(child_index, NodeOrToken::Node(new_item));
     let patched_root = SyntaxNode::new_root(new_green.clone());
