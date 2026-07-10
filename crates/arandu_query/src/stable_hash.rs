@@ -221,11 +221,13 @@ impl StableHash for crate::dataflow::DataflowFacts {
 impl StableHash for crate::dataflow::BorrowFacts {
     fn stable_hash(&self) -> blake3::Hash {
         let mut h = Hasher::new();
-        h.update(b"BorrowFacts/v1");
+        h.update(b"BorrowFacts/v2");
         h.update(&u32_le(self.block.as_usize() as u32));
         h.update(&u32_le(self.shared_in_count));
         h.update(&u32_le(self.exclusive_in_count));
         h.update(&u32_le(self.borrow_sites));
+        h.update(&u32_le(self.shared_out_count));
+        h.update(&u32_le(self.exclusive_out_count));
         finish(h)
     }
 }
@@ -233,10 +235,12 @@ impl StableHash for crate::dataflow::BorrowFacts {
 impl StableHash for arandu_mir::borrow_facts::BlockBorrowSummary {
     fn stable_hash(&self) -> blake3::Hash {
         let mut h = Hasher::new();
-        h.update(b"BlockBorrowSummary/v1");
+        h.update(b"BlockBorrowSummary/v2");
         h.update(&u32_le(self.shared_in));
         h.update(&u32_le(self.exclusive_in));
         h.update(&u32_le(self.borrow_sites));
+        h.update(&u32_le(self.shared_out));
+        h.update(&u32_le(self.exclusive_out));
         finish(h)
     }
 }

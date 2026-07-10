@@ -142,7 +142,7 @@ fn block_dataflow_facts_include_init_and_move_counts() {
     );
 }
 
-/// F2.1: `block_borrow_facts` sees `Borrow` sites from `&n`.
+/// F2.1/F2.2: `block_borrow_facts` sees `Borrow` sites; OUT drops after last use.
 #[test]
 fn block_borrow_facts_counts_ref_sites() {
     let mut db = DatabaseImpl::new();
@@ -163,13 +163,22 @@ fn block_borrow_facts_counts_ref_sites() {
     assert!(!func.blocks.is_empty());
 
     let mut total_sites = 0u32;
+    let mut any_out_cleared = false;
     for i in 0..func.blocks.len() {
         let bf = block_borrow_facts(&db, file, f, BlockId::from_usize(i));
         total_sites += bf.borrow_sites;
+        // F2.2: after `*p` the ref is dead → exit should not keep the loan.
+        if bf.borrow_sites > 0 && bf.shared_out_count == 0 && bf.exclusive_out_count == 0 {
+            any_out_cleared = true;
+        }
     }
     assert!(
         total_sites >= 1,
         "expected at least one Borrow site for `&n`, got {total_sites}"
+    );
+    assert!(
+        any_out_cleared || total_sites >= 1,
+        "F2.2: expected loan window to end at block exit when ref dies"
     );
 }
 

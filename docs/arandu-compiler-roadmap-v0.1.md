@@ -102,7 +102,7 @@ Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
 [ ] F2     OSSA borrow completo (borrow_shared, borrow_mut, end_borrow)
    ├─ [x] F2.0   Sintaxe de referências à pilha (& / &mut) no parser + type-checker
    ├─ [x] F2.1   Local Borrow Checking Incremental (Salsa `block_borrow_facts` / may-borrow dataflow A9)
-   ├─ [ ] F2.2   Janelas de Liveness de Empréstimos (reutilizar liveness SSA de referências como regiões NLL do CFG)
+   ├─ [x] F2.2   Janelas de Liveness de Empréstimos (loan window = live range da ref; `is_borrowed_at`)
    └─ [ ] F2.3   Análise de Escape e Fallback Geracional (Vale-style generational refs para stack-locals que escapam)
 [ ] M2     Move checker avançado (O002, O003, O006)
            └─ Dependência: fecha a garantia estática de double-free que hoje é mitigada apenas por poison-check (0xDE) em debug (ver BC.2/BC.3)

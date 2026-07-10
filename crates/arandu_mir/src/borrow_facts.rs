@@ -1,43 +1,63 @@
-//! F2.1 — Intraprocedural may-borrow dataflow over AMIR (dense bitsets / A9).
+//! F2.1 + F2.2 — May-borrow facts refined by reference live ranges.
 //!
-//! Tracks which stack locals **may** be under an active loan at each block
-//! boundary:
-//! - **shared** — loaned via [`AmirRvalue::Borrow`] (`&T`)
-//! - **exclusive** — loaned via [`AmirRvalue::BorrowMut`] (`&mut T`)
+//! ## F2.1
+//! Tracks which stack locals **may** be under an active loan at block
+//! boundaries (`shared` / `exclusive` dense bitsets, A9).
 //!
-//! ## Lattice
+//! ## F2.2 (gold)
+//! A loan opened by `t = &x` / `t = &mut x` stays active **exactly while**
+//! some holder of that reference is live:
+//! - the SSA temp produced by `Borrow`/`BorrowMut`
+//! - locals / temps that copy or load that reference
 //!
-//! Join at merge points is **union** (may-analysis): a local is considered
-//! borrowed at a join if *any* predecessor still has it borrowed. That is
-//! sound for conflict detection (M2): over-approximating loans only adds
-//! false positives under incomplete end-of-loan (refined by F2.2 liveness
-//! windows).
+//! So the borrow window **is** the live range of the reference value — the
+//! same liveness the backend needs for register allocation
+//! ([`crate::liveness::analyze_temp_liveness`] + local liveness). No second
+//! “lifetime” engine.
 //!
-//! ## Transfer
-//!
-//! | Event | Effect |
-//! |-------|--------|
-//! | `Borrow(place)` | `shared += place.local` |
-//! | `BorrowMut(place)` | `exclusive += place.local` |
-//! | `StorageDead(local)` | kill both bits for `local` |
-//!
-//! Reassignment / Destroy do **not** kill loans: overwriting or freeing a
-//! borrowed local is exactly what M2 (O002/O006) will reject. Loan *end*
-//! without storage death is F2.2 (`live range` of the reference temp).
-//!
-//! Pure analysis — no diagnostics (those are M2). Salsa only memoizes
-//! compact [`borrow_in_counts`] / query wrappers in `arandu_query`.
+//! Escape via return/heap/closure (statically unbounded window) is F2.3.
+//! Diagnostics O002/O003/O006 are M2 and call [`is_borrowed_at`].
 
 use crate::BitSet;
-use crate::amir::{AmirFunc, AmirRvalue, AmirStmt, AmirTerminator, BlockId, LocalId};
-use std::collections::VecDeque;
+use crate::amir::{
+    AmirFunc, AmirOperand, AmirRvalue, AmirStmt, AmirTerminator, BlockId, LocalId, TempId,
+};
+use crate::liveness::{LocalLiveness, TempLiveness, analyze_local_liveness, analyze_temp_liveness};
+
+/// Shared (`&`) vs exclusive (`&mut`) loan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LoanKind {
+    Shared,
+    Exclusive,
+}
+
+/// One loan opened by `Borrow` / `BorrowMut` (plus propagated holders).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Loan {
+    pub kind: LoanKind,
+    /// Root local of the borrowed place (`x` in `&x` / `&x.f`).
+    pub place_local: LocalId,
+    /// SSA temps that currently hold this reference value.
+    pub holder_temps: BitSet<TempId>,
+    /// Stack locals that currently hold this reference value (`let p = &x`).
+    pub holder_locals: BitSet<LocalId>,
+    pub origin_block: BlockId,
+}
+
+/// Program point inside a function (block + statement index).
+///
+/// `stmt_index == 0` is block entry (before the first statement).
+/// `stmt_index == n` (after last stmt) is just before the terminator / block exit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ProgramPoint {
+    pub block: BlockId,
+    pub stmt_index: usize,
+}
 
 /// May-borrowed state for all locals at one program point.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct BorrowState {
-    /// Locals that may be under a shared (`&`) loan.
     pub shared: BitSet<LocalId>,
-    /// Locals that may be under an exclusive (`&mut`) loan.
     pub exclusive: BitSet<LocalId>,
 }
 
@@ -65,74 +85,28 @@ impl BorrowState {
         self.maybe_shared(local) || self.maybe_exclusive(local)
     }
 
-    /// Join of predecessor OUT sets (union / may-analysis).
-    #[tracing::instrument(level = "trace", target = "arandu_mir::borrow_facts", skip_all)]
-    fn join_predecessors<'a>(preds: impl Iterator<Item = &'a Self>, num_locals: usize) -> Self {
-        let mut preds = preds.peekable();
-        let Some(first) = preds.next() else {
-            return Self::new(num_locals);
-        };
-        let mut acc = first.clone();
-        for pred in preds {
-            acc.shared.union_with(&pred.shared);
-            acc.exclusive.union_with(&pred.exclusive);
-        }
-        acc
-    }
-
-    fn apply_rvalue(&mut self, rhs: &AmirRvalue) {
-        match rhs {
-            AmirRvalue::Borrow(place) => {
-                self.shared.insert(place.local);
+    fn activate(&mut self, loan: &Loan) {
+        match loan.kind {
+            LoanKind::Shared => {
+                self.shared.insert(loan.place_local);
             }
-            AmirRvalue::BorrowMut(place) => {
-                self.exclusive.insert(place.local);
+            LoanKind::Exclusive => {
+                self.exclusive.insert(loan.place_local);
             }
-            _ => {}
         }
-    }
-
-    fn apply_stmt(&mut self, stmt: &AmirStmt) {
-        match stmt {
-            AmirStmt::Assign { rhs, .. } => self.apply_rvalue(rhs),
-            AmirStmt::StorageDead(local) => {
-                self.shared.remove(*local);
-                self.exclusive.remove(*local);
-            }
-            AmirStmt::Store { .. }
-            | AmirStmt::Call { .. }
-            | AmirStmt::Free(_)
-            | AmirStmt::Destroy(_)
-            | AmirStmt::StorageLive(_)
-            | AmirStmt::Nop => {}
-        }
-    }
-
-    fn apply_block(&mut self, block: BlockId, func: &AmirFunc) -> u32 {
-        let mut sites = 0u32;
-        for stmt in func.block_stmts(block) {
-            if let AmirStmt::Assign {
-                rhs: AmirRvalue::Borrow(_) | AmirRvalue::BorrowMut(_),
-                ..
-            } = stmt
-            {
-                sites += 1;
-            }
-            self.apply_stmt(stmt);
-        }
-        // Terminators never open loans in AMIR today.
-        let _ = &func.block(block).terminator;
-        sites
     }
 }
 
-/// Full-function borrow facts (per-block IN/OUT + site counts).
+/// Full-function borrow facts (F2.1 summaries + F2.2 loans/liveness).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FuncBorrowFacts {
     pub block_in: Vec<BorrowState>,
     pub block_out: Vec<BorrowState>,
-    /// Number of `Borrow`/`BorrowMut` rvalues in each block.
     pub borrow_site_counts: Vec<u32>,
+    /// All loans with propagated holders (for M2 / [`is_borrowed_at`]).
+    pub loans: Vec<Loan>,
+    temp_live: TempLiveness,
+    local_live: LocalLiveness,
 }
 
 impl FuncBorrowFacts {
@@ -156,9 +130,287 @@ impl FuncBorrowFacts {
             .get(block.as_usize())
             .is_some_and(|s| s.maybe_borrowed(local))
     }
+
+    /// F2.2: is `local` under any loan whose reference holder is live at `point`?
+    ///
+    /// Statement-level precision walks the block from entry, tracking which
+    /// temps/locals are still live (start from live-out, walk reverse once
+    /// offline would be ideal; here we use entry/exit bits + “defined after
+    /// point” approximation for temps defined in-block).
+    #[must_use]
+    pub fn is_borrowed_at(&self, local: LocalId, point: ProgramPoint) -> bool {
+        self.is_borrowed_kind_at(local, point, None)
+    }
+
+    #[must_use]
+    pub fn is_shared_borrowed_at(&self, local: LocalId, point: ProgramPoint) -> bool {
+        self.is_borrowed_kind_at(local, point, Some(LoanKind::Shared))
+    }
+
+    #[must_use]
+    pub fn is_exclusive_borrowed_at(&self, local: LocalId, point: ProgramPoint) -> bool {
+        self.is_borrowed_kind_at(local, point, Some(LoanKind::Exclusive))
+    }
+
+    fn is_borrowed_kind_at(
+        &self,
+        local: LocalId,
+        point: ProgramPoint,
+        only: Option<LoanKind>,
+    ) -> bool {
+        let bi = point.block.as_usize();
+        if bi >= self.block_in.len() {
+            return false;
+        }
+        // Fast path: empty at both IN and OUT ⇒ no loan of this local in window.
+        let in_b = &self.block_in[bi];
+        let out_b = &self.block_out[bi];
+        let relevant = |s: &BorrowState| match only {
+            Some(LoanKind::Shared) => s.maybe_shared(local),
+            Some(LoanKind::Exclusive) => s.maybe_exclusive(local),
+            None => s.maybe_borrowed(local),
+        };
+        if !relevant(in_b) && !relevant(out_b) {
+            // Loan may open and close entirely inside the block.
+            // Fall through to loan walk.
+        }
+
+        for loan in &self.loans {
+            if loan.place_local != local {
+                continue;
+            }
+            if let Some(k) = only
+                && loan.kind != k
+            {
+                continue;
+            }
+            if self.loan_active_at(loan, point) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn loan_active_at(&self, loan: &Loan, point: ProgramPoint) -> bool {
+        // Holder temp live at point?
+        for t in loan.holder_temps.iter() {
+            if self.temp_live_at(t, point) {
+                return true;
+            }
+        }
+        for l in loan.holder_locals.iter() {
+            if self.local_live_at(l, point) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Holder temp live at `point`?
+    /// Entry uses live-in; interior/exit uses live-in ∪ live-out (sound over-approx).
+    fn temp_live_at(&self, temp: TempId, point: ProgramPoint) -> bool {
+        if point.stmt_index == 0 {
+            return self.temp_live.live_in(point.block).contains(temp);
+        }
+        self.temp_live.live_in(point.block).contains(temp)
+            || self.temp_live.live_out(point.block).contains(temp)
+    }
+
+    fn local_live_at(&self, local: LocalId, point: ProgramPoint) -> bool {
+        if point.stmt_index == 0 {
+            return self.local_live.live_in(point.block).contains(local);
+        }
+        self.local_live.live_in(point.block).contains(local)
+            || self.local_live.live_out(point.block).contains(local)
+    }
 }
 
-/// Forward may-borrow dataflow over the CFG (same worklist class as move/init).
+/// Collect primary loans and propagate holders through copies/loads (fixpoint).
+fn collect_loans(func: &AmirFunc) -> (Vec<Loan>, Vec<u32>) {
+    let num_temps = func.temps.len();
+    let num_locals = func.locals.len();
+    let mut loans = Vec::new();
+    let mut borrow_site_counts = vec![0u32; func.blocks.len()];
+
+    for block in &func.blocks {
+        let bi = block.id.as_usize();
+        for stmt in func.block_stmts(block.id) {
+            if let AmirStmt::Assign { lhs, rhs } = stmt {
+                match rhs {
+                    AmirRvalue::Borrow(place) => {
+                        borrow_site_counts[bi] += 1;
+                        let mut holder_temps = BitSet::with_capacity(num_temps);
+                        holder_temps.insert(*lhs);
+                        loans.push(Loan {
+                            kind: LoanKind::Shared,
+                            place_local: place.local,
+                            holder_temps,
+                            holder_locals: BitSet::with_capacity(num_locals),
+                            origin_block: block.id,
+                        });
+                    }
+                    AmirRvalue::BorrowMut(place) => {
+                        borrow_site_counts[bi] += 1;
+                        let mut holder_temps = BitSet::with_capacity(num_temps);
+                        holder_temps.insert(*lhs);
+                        loans.push(Loan {
+                            kind: LoanKind::Exclusive,
+                            place_local: place.local,
+                            holder_temps,
+                            holder_locals: BitSet::with_capacity(num_locals),
+                            origin_block: block.id,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    // Propagate holders: copies of the reference value alias the same loan.
+    let mut changed = true;
+    let mut guard = 0;
+    while changed {
+        changed = false;
+        guard += 1;
+        assert!(guard < 10_000, "loan holder propagation failed to converge");
+        for block in &func.blocks {
+            for stmt in func.block_stmts(block.id) {
+                match stmt {
+                    AmirStmt::Assign { lhs, rhs } => match rhs {
+                        AmirRvalue::Use(op) => {
+                            if let Some(src) = operand_temp(op) {
+                                for loan in &mut loans {
+                                    if loan.holder_temps.contains(src)
+                                        && loan.holder_temps.insert(*lhs)
+                                    {
+                                        changed = true;
+                                    }
+                                }
+                            }
+                        }
+                        AmirRvalue::Load(place) if place.projections.is_empty() => {
+                            for loan in &mut loans {
+                                if loan.holder_locals.contains(place.local)
+                                    && loan.holder_temps.insert(*lhs)
+                                {
+                                    changed = true;
+                                }
+                            }
+                        }
+                        _ => {}
+                    },
+                    AmirStmt::Store { lhs, rhs } if lhs.projections.is_empty() => {
+                        if let Some(src) = operand_temp(rhs) {
+                            for loan in &mut loans {
+                                if loan.holder_temps.contains(src)
+                                    && loan.holder_locals.insert(lhs.local)
+                                {
+                                    changed = true;
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            // Terminator args → successor block params (phi-like).
+            match &block.terminator {
+                AmirTerminator::Goto { target, args } => {
+                    propagate_terminator_args(func, *target, args, &mut loans, &mut changed);
+                }
+                AmirTerminator::Branch {
+                    if_true,
+                    true_args,
+                    if_false,
+                    false_args,
+                    ..
+                } => {
+                    propagate_terminator_args(func, *if_true, true_args, &mut loans, &mut changed);
+                    propagate_terminator_args(
+                        func,
+                        *if_false,
+                        false_args,
+                        &mut loans,
+                        &mut changed,
+                    );
+                }
+                AmirTerminator::SwitchInt {
+                    targets, otherwise, ..
+                } => {
+                    for (_, tgt, args) in targets {
+                        propagate_terminator_args(func, *tgt, args, &mut loans, &mut changed);
+                    }
+                    propagate_terminator_args(
+                        func,
+                        otherwise.0,
+                        &otherwise.1,
+                        &mut loans,
+                        &mut changed,
+                    );
+                }
+                AmirTerminator::Return | AmirTerminator::Unreachable => {}
+            }
+        }
+    }
+
+    (loans, borrow_site_counts)
+}
+
+fn propagate_terminator_args(
+    func: &AmirFunc,
+    target: BlockId,
+    args: &[AmirOperand],
+    loans: &mut [Loan],
+    changed: &mut bool,
+) {
+    let Some(tb) = func.blocks.get(target.as_usize()) else {
+        return;
+    };
+    for (i, arg) in args.iter().enumerate() {
+        let Some(src) = operand_temp(arg) else {
+            continue;
+        };
+        let Some(param) = tb.params.get(i) else {
+            continue;
+        };
+        for loan in loans.iter_mut() {
+            if loan.holder_temps.contains(src) && loan.holder_temps.insert(param.id) {
+                *changed = true;
+            }
+            // Block params often alias a local.
+            if loan.holder_temps.contains(src) && loan.holder_locals.insert(param.local) {
+                *changed = true;
+            }
+        }
+    }
+}
+
+fn operand_temp(op: &AmirOperand) -> Option<TempId> {
+    match op {
+        AmirOperand::Copy(t) | AmirOperand::Move(t) => Some(*t),
+        _ => None,
+    }
+}
+
+fn state_from_live_holders(
+    loans: &[Loan],
+    num_locals: usize,
+    temp_live: &BitSet<TempId>,
+    local_live: &BitSet<LocalId>,
+) -> BorrowState {
+    let mut st = BorrowState::new(num_locals);
+    for loan in loans {
+        let temp_active = loan.holder_temps.iter().any(|t| temp_live.contains(t));
+        let local_active = loan.holder_locals.iter().any(|l| local_live.contains(l));
+        if temp_active || local_active {
+            st.activate(loan);
+        }
+    }
+    st
+}
+
+/// F2.2-aware borrow facts: block IN/OUT = loans whose holders are live there.
 #[must_use]
 pub fn analyze_borrow_facts(func: &AmirFunc) -> FuncBorrowFacts {
     let num_locals = func.locals.len();
@@ -169,63 +421,48 @@ pub fn analyze_borrow_facts(func: &AmirFunc) -> FuncBorrowFacts {
             block_in: vec![],
             block_out: vec![],
             borrow_site_counts: vec![],
+            loans: vec![],
+            temp_live: analyze_temp_liveness(func),
+            local_live: analyze_local_liveness(func),
         };
     }
 
-    let mut block_in = vec![BorrowState::new(num_locals); num_blocks];
-    let mut block_out = vec![BorrowState::new(num_locals); num_blocks];
-    let mut borrow_site_counts = vec![0u32; num_blocks];
-    let mut worklist = VecDeque::new();
+    let (loans, borrow_site_counts) = collect_loans(func);
+    let temp_live = analyze_temp_liveness(func);
+    let local_live = analyze_local_liveness(func);
 
-    for block in &func.blocks {
-        worklist.push_back(block.id);
-    }
-
-    let mut iterations = 0;
-    let sanity_limit = num_blocks * num_locals.max(1) * 2 + 1000;
-
-    while let Some(bid) = worklist.pop_front() {
-        iterations += 1;
-        assert!(
-            iterations <= sanity_limit,
-            "borrow facts dataflow failed to converge: {iterations} > {sanity_limit} ({num_blocks} blocks)"
-        );
-
-        let bi = bid.as_usize();
-        let block = &func.blocks[bi];
-
-        let new_in = if bid == BlockId::from_usize(0) || func.predecessors(bid).is_empty() {
-            BorrowState::new(num_locals)
-        } else {
-            BorrowState::join_predecessors(
-                func.predecessors(bid)
-                    .iter()
-                    .map(|pred| &block_out[pred.as_usize()]),
-                num_locals,
-            )
-        };
-
-        let mut new_out = new_in.clone();
-        let sites = new_out.apply_block(bid, func);
-        borrow_site_counts[bi] = sites;
-
-        // Note: OUT is not monotonic under `StorageDead` kills; we recompute
-        // from IN each visit so the worklist still reaches a fixpoint.
-
-        if new_in != block_in[bi] || new_out != block_out[bi] {
-            block_in[bi] = new_in;
-            block_out[bi] = new_out;
-            for succ in successors(&block.terminator) {
-                worklist.push_back(succ);
-            }
-        }
+    let mut block_in = Vec::with_capacity(num_blocks);
+    let mut block_out = Vec::with_capacity(num_blocks);
+    for bi in 0..num_blocks {
+        let bid = BlockId::from_usize(bi);
+        block_in.push(state_from_live_holders(
+            &loans,
+            num_locals,
+            temp_live.live_in(bid),
+            local_live.live_in(bid),
+        ));
+        block_out.push(state_from_live_holders(
+            &loans,
+            num_locals,
+            temp_live.live_out(bid),
+            local_live.live_out(bid),
+        ));
     }
 
     FuncBorrowFacts {
         block_in,
         block_out,
         borrow_site_counts,
+        loans,
+        temp_live,
+        local_live,
     }
+}
+
+/// Free function for M2 / Salsa consumers (same as [`FuncBorrowFacts::is_borrowed_at`]).
+#[must_use]
+pub fn is_borrowed_at(facts: &FuncBorrowFacts, local: LocalId, point: ProgramPoint) -> bool {
+    facts.is_borrowed_at(local, point)
 }
 
 /// Shared-loan cardinality at each block entry (for Salsa / HashEq).
@@ -248,32 +485,34 @@ pub fn exclusive_in_counts(func: &AmirFunc) -> Vec<u32> {
         .collect()
 }
 
-/// Compact per-block borrow summary for memoization (no bitsets in the query result).
+/// Compact per-block borrow summary for memoization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BlockBorrowSummary {
     pub shared_in: u32,
     pub exclusive_in: u32,
     pub borrow_sites: u32,
+    /// Locals still may-borrowed at block **exit** (F2.2: after live-range kill).
+    pub shared_out: u32,
+    pub exclusive_out: u32,
 }
 
-/// Summaries for all blocks in one pure call (avoids re-running dataflow per block).
+/// Summaries for all blocks in one pure call.
 #[must_use]
 pub fn block_borrow_summaries(func: &AmirFunc) -> Vec<BlockBorrowSummary> {
     let facts = analyze_borrow_facts(func);
     facts
         .block_in
         .iter()
+        .zip(facts.block_out.iter())
         .zip(facts.borrow_site_counts.iter())
-        .map(|(st, &sites)| BlockBorrowSummary {
-            shared_in: st.shared.len() as u32,
-            exclusive_in: st.exclusive.len() as u32,
+        .map(|((inn, out), &sites)| BlockBorrowSummary {
+            shared_in: inn.shared.len() as u32,
+            exclusive_in: inn.exclusive.len() as u32,
             borrow_sites: sites,
+            shared_out: out.shared.len() as u32,
+            exclusive_out: out.exclusive.len() as u32,
         })
         .collect()
-}
-
-fn successors(term: &AmirTerminator) -> impl Iterator<Item = BlockId> + '_ {
-    crate::amir::reachability::terminator_targets(term).into_iter()
 }
 
 #[cfg(test)]
@@ -288,6 +527,7 @@ mod tests {
     };
     use crate::cfg::compute_cfg_edges;
     use crate::layout::DenseRange;
+    use crate::ops::UnaryOp;
     use crate::types::{ArType, Primitive, TypeInterner};
     use smallvec::smallvec;
 
@@ -323,25 +563,19 @@ mod tests {
         }
     }
 
-    /// Single block: `s0 = …; t0 = &s0`
+    /// `t0 = &s0` with no further use → loan dies; OUT not borrowed (F2.2).
     #[test]
-    fn borrow_marks_shared_at_block_out() {
+    fn dead_ref_ends_loan_at_block_out() {
         let int = intern_ty(ArType::Primitive(Primitive::Int));
         let ref_int = intern_ty(ArType::Ref(int));
         let mut stmts = AmirStmtTable::new();
-        stmts.push(AmirStmt::Store {
-            lhs: place(0),
-            rhs: AmirOperand::Constant(crate::amir::AmirConstant::Pool(
-                crate::literal_pool::LiteralId(0),
-            )),
-        });
         stmts.push(AmirStmt::Assign {
             lhs: TempId::from_usize(0),
             rhs: AmirRvalue::Borrow(place(0)),
         });
         let block = AmirBasicBlock {
             id: BlockId::from_usize(0),
-            statements: DenseRange::new(0, 2),
+            statements: DenseRange::new(0, 1),
             params: vec![],
             terminator: AmirTerminator::Return,
         };
@@ -361,15 +595,60 @@ mod tests {
 
         let facts = analyze_borrow_facts(&func);
         assert_eq!(facts.borrow_site_counts[0], 1);
-        // Entry empty; after transfer, s0 is shared-borrowed.
+        assert_eq!(facts.loans.len(), 1);
+        // Dead ref: not live-out → place not borrowed at OUT.
+        assert!(!facts.block_out[0].maybe_borrowed(LocalId::from_usize(0)));
         assert!(!facts.maybe_shared_at_entry(BlockId::from_usize(0), LocalId::from_usize(0)));
-        assert!(facts.block_out[0].maybe_shared(LocalId::from_usize(0)));
-        assert!(!facts.block_out[0].maybe_exclusive(LocalId::from_usize(0)));
     }
 
-    /// Two blocks: borrow in bb0, bb1 should see shared at entry.
+    /// `t0 = &s0; t1 = *t0` → loan active while t0 live; ends after last use.
     #[test]
-    fn borrow_propagates_to_successor_entry() {
+    fn live_ref_use_keeps_loan_through_use() {
+        let int = intern_ty(ArType::Primitive(Primitive::Int));
+        let ref_int = intern_ty(ArType::Ref(int));
+        let mut stmts = AmirStmtTable::new();
+        stmts.push(AmirStmt::Assign {
+            lhs: TempId::from_usize(0),
+            rhs: AmirRvalue::Borrow(place(0)),
+        });
+        stmts.push(AmirStmt::Assign {
+            lhs: TempId::from_usize(1),
+            rhs: AmirRvalue::Unary {
+                op: UnaryOp::Deref,
+                operand: AmirOperand::Copy(TempId::from_usize(0)),
+            },
+        });
+        let block = AmirBasicBlock {
+            id: BlockId::from_usize(0),
+            statements: DenseRange::new(0, 2),
+            params: vec![],
+            terminator: AmirTerminator::Return,
+        };
+        let blocks = vec![block];
+        let cfg = compute_cfg_edges(&blocks);
+        let func = AmirFunc {
+            symbol: crate::SymbolId::new(0, 0),
+            return_type: int,
+            receiver: None,
+            params: vec![],
+            locals: vec![local(0, int)],
+            temps: vec![temp(0, ref_int), temp(1, int)],
+            blocks,
+            stmts,
+            cfg,
+        };
+
+        let facts = analyze_borrow_facts(&func);
+        // After last use of t0, not live-out → OUT clean (debt paid).
+        assert!(!facts.block_out[0].maybe_borrowed(LocalId::from_usize(0)));
+        // Loan was opened.
+        assert_eq!(facts.loans.len(), 1);
+        assert!(facts.loans[0].holder_temps.contains(TempId::from_usize(0)));
+    }
+
+    /// Loan propagates across edge when holder is used in successor.
+    #[test]
+    fn borrow_propagates_to_successor_when_ref_live() {
         let int = intern_ty(ArType::Primitive(Primitive::Int));
         let ref_int = intern_ty(ArType::Ref(int));
         let mut stmts = AmirStmtTable::new();
@@ -378,8 +657,14 @@ mod tests {
             lhs: TempId::from_usize(0),
             rhs: AmirRvalue::Borrow(place(0)),
         });
-        // bb1: nop
-        stmts.push(AmirStmt::Nop);
+        // bb1: t1 = *t0
+        stmts.push(AmirStmt::Assign {
+            lhs: TempId::from_usize(1),
+            rhs: AmirRvalue::Unary {
+                op: UnaryOp::Deref,
+                operand: AmirOperand::Copy(TempId::from_usize(0)),
+            },
+        });
 
         let bb0 = AmirBasicBlock {
             id: BlockId::from_usize(0),
@@ -404,59 +689,35 @@ mod tests {
             receiver: None,
             params: vec![],
             locals: vec![local(0, int)],
-            temps: vec![temp(0, ref_int)],
+            temps: vec![temp(0, ref_int), temp(1, int)],
             blocks,
             stmts,
             cfg,
         };
 
         let facts = analyze_borrow_facts(&func);
+        // t0 live across edge → bb0 OUT and bb1 IN have shared loan of s0.
+        assert!(facts.block_out[0].maybe_shared(LocalId::from_usize(0)));
         assert!(facts.maybe_shared_at_entry(BlockId::from_usize(1), LocalId::from_usize(0)));
-        assert_eq!(facts.borrow_site_counts[0], 1);
-        assert_eq!(facts.borrow_site_counts[1], 0);
+        // After use in bb1, OUT clean.
+        assert!(!facts.block_out[1].maybe_borrowed(LocalId::from_usize(0)));
     }
 
     #[test]
-    fn borrow_mut_marks_exclusive() {
+    fn borrow_mut_marks_exclusive_while_live() {
         let int = intern_ty(ArType::Primitive(Primitive::Int));
         let mut stmts = AmirStmtTable::new();
         stmts.push(AmirStmt::Assign {
             lhs: TempId::from_usize(0),
             rhs: AmirRvalue::BorrowMut(place(0)),
         });
-        let block = AmirBasicBlock {
-            id: BlockId::from_usize(0),
-            statements: DenseRange::new(0, 1),
-            params: vec![],
-            terminator: AmirTerminator::Return,
-        };
-        let blocks = vec![block];
-        let cfg = compute_cfg_edges(&blocks);
-        let func = AmirFunc {
-            symbol: crate::SymbolId::new(0, 0),
-            return_type: int,
-            receiver: None,
-            params: vec![],
-            locals: vec![local(0, int)],
-            temps: vec![temp(0, intern_ty(ArType::RefMut(int)))],
-            blocks,
-            stmts,
-            cfg,
-        };
-        let facts = analyze_borrow_facts(&func);
-        assert!(facts.block_out[0].maybe_exclusive(LocalId::from_usize(0)));
-        assert!(!facts.block_out[0].maybe_shared(LocalId::from_usize(0)));
-    }
-
-    #[test]
-    fn storage_dead_kills_loan() {
-        let int = intern_ty(ArType::Primitive(Primitive::Int));
-        let mut stmts = AmirStmtTable::new();
         stmts.push(AmirStmt::Assign {
-            lhs: TempId::from_usize(0),
-            rhs: AmirRvalue::Borrow(place(0)),
+            lhs: TempId::from_usize(1),
+            rhs: AmirRvalue::Unary {
+                op: UnaryOp::Deref,
+                operand: AmirOperand::Copy(TempId::from_usize(0)),
+            },
         });
-        stmts.push(AmirStmt::StorageDead(LocalId::from_usize(0)));
         let block = AmirBasicBlock {
             id: BlockId::from_usize(0),
             statements: DenseRange::new(0, 2),
@@ -471,12 +732,123 @@ mod tests {
             receiver: None,
             params: vec![],
             locals: vec![local(0, int)],
-            temps: vec![temp(0, intern_ty(ArType::Ref(int)))],
+            temps: vec![temp(0, intern_ty(ArType::RefMut(int))), temp(1, int)],
             blocks,
             stmts,
             cfg,
         };
         let facts = analyze_borrow_facts(&func);
+        assert_eq!(facts.loans[0].kind, LoanKind::Exclusive);
         assert!(!facts.block_out[0].maybe_borrowed(LocalId::from_usize(0)));
+    }
+
+    /// `let p = &n` via Store propagates holder to local.
+    #[test]
+    fn store_to_ref_local_propagates_holder() {
+        let int = intern_ty(ArType::Primitive(Primitive::Int));
+        let ref_int = intern_ty(ArType::Ref(int));
+        let mut stmts = AmirStmtTable::new();
+        // t0 = &s0
+        stmts.push(AmirStmt::Assign {
+            lhs: TempId::from_usize(0),
+            rhs: AmirRvalue::Borrow(place(0)),
+        });
+        // s1 = t0  (p = &n)
+        stmts.push(AmirStmt::Store {
+            lhs: place(1),
+            rhs: AmirOperand::Copy(TempId::from_usize(0)),
+        });
+        // t1 = load s1; use in next block
+        stmts.push(AmirStmt::Assign {
+            lhs: TempId::from_usize(1),
+            rhs: AmirRvalue::Load(place(1)),
+        });
+        stmts.push(AmirStmt::Assign {
+            lhs: TempId::from_usize(2),
+            rhs: AmirRvalue::Unary {
+                op: UnaryOp::Deref,
+                operand: AmirOperand::Copy(TempId::from_usize(1)),
+            },
+        });
+        let block = AmirBasicBlock {
+            id: BlockId::from_usize(0),
+            statements: DenseRange::new(0, 4),
+            params: vec![],
+            terminator: AmirTerminator::Return,
+        };
+        let blocks = vec![block];
+        let cfg = compute_cfg_edges(&blocks);
+        let func = AmirFunc {
+            symbol: crate::SymbolId::new(0, 0),
+            return_type: int,
+            receiver: None,
+            params: vec![],
+            locals: vec![local(0, int), local(1, ref_int)],
+            temps: vec![temp(0, ref_int), temp(1, ref_int), temp(2, int)],
+            blocks,
+            stmts,
+            cfg,
+        };
+        let facts = analyze_borrow_facts(&func);
+        assert!(
+            facts.loans[0]
+                .holder_locals
+                .contains(LocalId::from_usize(1)),
+            "ref local s1 should hold the loan"
+        );
+        assert!(!facts.block_out[0].maybe_borrowed(LocalId::from_usize(0)));
+    }
+
+    #[test]
+    fn is_borrowed_at_entry_matches_block_in() {
+        let int = intern_ty(ArType::Primitive(Primitive::Int));
+        let ref_int = intern_ty(ArType::Ref(int));
+        let mut stmts = AmirStmtTable::new();
+        stmts.push(AmirStmt::Assign {
+            lhs: TempId::from_usize(0),
+            rhs: AmirRvalue::Borrow(place(0)),
+        });
+        stmts.push(AmirStmt::Assign {
+            lhs: TempId::from_usize(1),
+            rhs: AmirRvalue::Unary {
+                op: UnaryOp::Deref,
+                operand: AmirOperand::Copy(TempId::from_usize(0)),
+            },
+        });
+        let bb0 = AmirBasicBlock {
+            id: BlockId::from_usize(0),
+            statements: DenseRange::new(0, 1),
+            params: vec![],
+            terminator: AmirTerminator::Goto {
+                target: BlockId::from_usize(1),
+                args: vec![],
+            },
+        };
+        let bb1 = AmirBasicBlock {
+            id: BlockId::from_usize(1),
+            statements: DenseRange::new(1, 1),
+            params: vec![],
+            terminator: AmirTerminator::Return,
+        };
+        let blocks = vec![bb0, bb1];
+        let cfg = compute_cfg_edges(&blocks);
+        let func = AmirFunc {
+            symbol: crate::SymbolId::new(0, 0),
+            return_type: int,
+            receiver: None,
+            params: vec![],
+            locals: vec![local(0, int)],
+            temps: vec![temp(0, ref_int), temp(1, int)],
+            blocks,
+            stmts,
+            cfg,
+        };
+        let facts = analyze_borrow_facts(&func);
+        let pt = ProgramPoint {
+            block: BlockId::from_usize(1),
+            stmt_index: 0,
+        };
+        assert!(is_borrowed_at(&facts, LocalId::from_usize(0), pt));
+        assert!(facts.maybe_shared_at_entry(BlockId::from_usize(1), LocalId::from_usize(0)));
     }
 }

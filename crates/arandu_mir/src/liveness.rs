@@ -1,12 +1,13 @@
-//! Intraprocedural local variable liveness analysis.
+//! Intraprocedural liveness analysis (locals + SSA temps).
 //!
-//! Computes which local variables are live-in and live-out for each basic
-//! block in an [`AmirFunc`]. Used by optimization and code generation passes.
+//! - [`analyze_local_liveness`]: stack locals (register allocation / OSSA).
+//! - [`analyze_temp_liveness`]: SSA temps — **F2.2** reuses this so a loan's
+//!   window equals the live range of the reference value that holds it.
 
 use crate::amir::reachability::terminator_targets;
 use crate::amir::{
     AmirFunc, AmirOperand, AmirPlace, AmirProjection, AmirRvalue, AmirStmt, AmirTerminator,
-    BlockId, LocalId, for_each_rvalue_operand, for_each_rvalue_place,
+    BlockId, LocalId, TempId, for_each_rvalue_operand, for_each_rvalue_place,
 };
 use crate::{BitMatrix, BitSet};
 
@@ -27,6 +28,25 @@ impl LocalLiveness {
     /// Returns the set of local variables that are live at the exit of the given block.
     #[must_use]
     pub fn live_out(&self, block: BlockId) -> &BitSet<LocalId> {
+        &self.live_out[block.as_usize()]
+    }
+}
+
+/// Liveness of SSA temps (per-block live-in / live-out).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TempLiveness {
+    live_in: Vec<BitSet<TempId>>,
+    live_out: Vec<BitSet<TempId>>,
+}
+
+impl TempLiveness {
+    #[must_use]
+    pub fn live_in(&self, block: BlockId) -> &BitSet<TempId> {
+        &self.live_in[block.as_usize()]
+    }
+
+    #[must_use]
+    pub fn live_out(&self, block: BlockId) -> &BitSet<TempId> {
         &self.live_out[block.as_usize()]
     }
 }
@@ -83,6 +103,179 @@ pub fn analyze_local_liveness(func: &AmirFunc) -> LocalLiveness {
     }
 
     LocalLiveness { live_in, live_out }
+}
+
+/// Backward dataflow: which SSA temps are live-in / live-out per block (F2.2).
+#[must_use]
+pub fn analyze_temp_liveness(func: &AmirFunc) -> TempLiveness {
+    let num_blocks = func.blocks.len();
+    let num_temps = func.temps.len();
+    let mut block_uses = BitMatrix::<BlockId, TempId>::new(num_blocks, num_temps);
+    let mut block_defs = BitMatrix::<BlockId, TempId>::new(num_blocks, num_temps);
+
+    for block in &func.blocks {
+        let mut defined = BitSet::<TempId>::with_capacity(num_temps);
+        // Block params are defs at entry (before body uses).
+        for param in &block.params {
+            defined.insert(param.id);
+            block_defs.insert(block.id, param.id);
+        }
+        for stmt in func.block_stmts(block.id) {
+            collect_stmt_temp_uses(stmt, &defined, &mut block_uses, block.id);
+            collect_stmt_temp_defs(stmt, &mut defined, &mut block_defs, block.id);
+        }
+        collect_terminator_temp_uses(&block.terminator, &defined, &mut block_uses, block.id);
+    }
+
+    let mut live_in = vec![BitSet::<TempId>::with_capacity(num_temps); num_blocks];
+    let mut live_out = vec![BitSet::<TempId>::with_capacity(num_temps); num_blocks];
+    let mut changed = true;
+    let rpo = crate::amir::reverse_post_order(func);
+    let mut new_out = BitSet::<TempId>::with_capacity(num_temps);
+    let mut new_in = BitSet::<TempId>::with_capacity(num_temps);
+
+    while changed {
+        changed = false;
+        for &block_id in rpo.iter().rev() {
+            let block = &func.blocks[block_id.as_usize()];
+            new_out.clear();
+            for successor in terminator_targets(&block.terminator) {
+                new_out.union_with(&live_in[successor.as_usize()]);
+            }
+            new_in.clone_from(&new_out);
+            new_in.difference_with(&block_defs.row_set(block_id));
+            new_in.union_with(&block_uses.row_set(block_id));
+            let index = block_id.as_usize();
+            if new_in != live_in[index] || new_out != live_out[index] {
+                live_in[index].clone_from(&new_in);
+                live_out[index].clone_from(&new_out);
+                changed = true;
+            }
+        }
+    }
+
+    TempLiveness { live_in, live_out }
+}
+
+fn collect_stmt_temp_uses(
+    stmt: &AmirStmt,
+    defined: &BitSet<TempId>,
+    uses: &mut BitMatrix<BlockId, TempId>,
+    block: BlockId,
+) {
+    match stmt {
+        AmirStmt::Assign { rhs, .. } => {
+            for_each_rvalue_operand(rhs, |op| mark_temp_use(op, defined, uses, block));
+            for_each_rvalue_place(rhs, |place| {
+                for proj in &place.projections {
+                    if let AmirProjection::Index(op) = proj {
+                        mark_temp_use(op, defined, uses, block);
+                    }
+                }
+            });
+        }
+        AmirStmt::Store { lhs, rhs } => {
+            mark_temp_use(rhs, defined, uses, block);
+            for proj in &lhs.projections {
+                if let AmirProjection::Index(op) = proj {
+                    mark_temp_use(op, defined, uses, block);
+                }
+            }
+        }
+        AmirStmt::Call { callee, args, .. } => {
+            mark_temp_use(callee, defined, uses, block);
+            for arg in args {
+                mark_temp_use(arg, defined, uses, block);
+            }
+        }
+        AmirStmt::Free(op) => mark_temp_use(op, defined, uses, block),
+        AmirStmt::Destroy(place) => {
+            for proj in &place.projections {
+                if let AmirProjection::Index(op) = proj {
+                    mark_temp_use(op, defined, uses, block);
+                }
+            }
+        }
+        AmirStmt::StorageLive(_) | AmirStmt::StorageDead(_) | AmirStmt::Nop => {}
+    }
+}
+
+fn collect_stmt_temp_defs(
+    stmt: &AmirStmt,
+    defined: &mut BitSet<TempId>,
+    defs: &mut BitMatrix<BlockId, TempId>,
+    block: BlockId,
+) {
+    match stmt {
+        AmirStmt::Assign { lhs, .. } => {
+            defined.insert(*lhs);
+            defs.insert(block, *lhs);
+        }
+        AmirStmt::Call { lhs: Some(t), .. } => {
+            defined.insert(*t);
+            defs.insert(block, *t);
+        }
+        _ => {}
+    }
+}
+
+fn collect_terminator_temp_uses(
+    term: &AmirTerminator,
+    defined: &BitSet<TempId>,
+    uses: &mut BitMatrix<BlockId, TempId>,
+    block: BlockId,
+) {
+    match term {
+        AmirTerminator::Branch {
+            condition,
+            true_args,
+            false_args,
+            ..
+        } => {
+            mark_temp_use(condition, defined, uses, block);
+            for a in true_args {
+                mark_temp_use(a, defined, uses, block);
+            }
+            for a in false_args {
+                mark_temp_use(a, defined, uses, block);
+            }
+        }
+        AmirTerminator::SwitchInt {
+            discriminant,
+            targets,
+            otherwise,
+            ..
+        } => {
+            mark_temp_use(discriminant, defined, uses, block);
+            for (_, _, args) in targets {
+                for a in args {
+                    mark_temp_use(a, defined, uses, block);
+                }
+            }
+            for a in &otherwise.1 {
+                mark_temp_use(a, defined, uses, block);
+            }
+        }
+        AmirTerminator::Goto { args, .. } => {
+            for a in args {
+                mark_temp_use(a, defined, uses, block);
+            }
+        }
+        AmirTerminator::Return | AmirTerminator::Unreachable => {}
+    }
+}
+
+fn mark_temp_use(
+    op: &AmirOperand,
+    defined: &BitSet<TempId>,
+    uses: &mut BitMatrix<BlockId, TempId>,
+    block: BlockId,
+) {
+    if let AmirOperand::Copy(t) | AmirOperand::Move(t) = op
+        && !defined.contains(*t)
+    {
+        uses.insert(block, *t);
+    }
 }
 
 fn collect_stmt_uses(

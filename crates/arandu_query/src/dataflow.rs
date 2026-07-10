@@ -35,10 +35,11 @@ pub struct LivenessMap {
     pub live_out_counts: Vec<u32>,
 }
 
-/// F2.1 compact per-block may-borrow summary (Salsa memo / HashEq).
+/// F2.1/F2.2 compact per-block may-borrow summary (Salsa memo / HashEq).
 ///
-/// Full bitsets live in `arandu_mir::borrow_facts`; the query keeps only
-/// cardinalities so early-cutoff stays cheap (same pattern as [`DataflowFacts`]).
+/// Full bitsets + loans live in `arandu_mir::borrow_facts`; the query keeps
+/// cardinalities so early-cutoff stays cheap. `*_out` reflects F2.2 live-range
+/// kill (loan ends when no reference holder is live).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BorrowFacts {
     pub block: BlockId,
@@ -48,6 +49,9 @@ pub struct BorrowFacts {
     pub exclusive_in_count: u32,
     /// Number of `Borrow`/`BorrowMut` sites inside this block.
     pub borrow_sites: u32,
+    /// May-borrowed at block exit (F2.2: after holder live-range ends).
+    pub shared_out_count: u32,
+    pub exclusive_out_count: u32,
 }
 
 /// Stable IDE diagnostic (hashable for early cutoff / publish fingerprint).
@@ -241,12 +245,16 @@ pub fn block_borrow_facts(
             shared_in: 0,
             exclusive_in: 0,
             borrow_sites: 0,
+            shared_out: 0,
+            exclusive_out: 0,
         });
     HashEq::new(BorrowFacts {
         block,
         shared_in_count: s.shared_in,
         exclusive_in_count: s.exclusive_in,
         borrow_sites: s.borrow_sites,
+        shared_out_count: s.shared_out,
+        exclusive_out_count: s.exclusive_out,
     })
 }
 
