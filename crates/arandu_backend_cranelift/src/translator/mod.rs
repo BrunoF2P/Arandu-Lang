@@ -268,7 +268,9 @@ impl<'a, 'b> AmirVisitor for FunctionTranslator<'a, 'b> {
                     self.builder.def_var(var_ptr, zero_ptr);
                     self.builder.def_var(var_len, zero_len);
                 } else if let Some(&var) = self.local_map.get(&local.id) {
-                    let clif_ty = clif_type(&lty, self.ptr_type).concrete().unwrap();
+                    let Some(clif_ty) = clif_type(&lty, self.ptr_type).concrete() else {
+                        continue;
+                    };
                     let zero = if clif_ty == cranelift_codegen::ir::types::F32 {
                         self.builder.ins().f32const(0.0)
                     } else if clif_ty == cranelift_codegen::ir::types::F64 {

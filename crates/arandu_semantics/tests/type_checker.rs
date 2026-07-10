@@ -587,22 +587,24 @@ fn test_nullability_and_safe_access() {
         []
     );
 
-    // 3. Indexing nullable without safe indexing '?[]'
+    // 3. Indexing a *nullable slice* without `?[]`.
+    // Grammar: `[]int?` is `[](int?)` (slice of optional ints), not a nullable slice.
+    // Parenthesize: `([]int)?` for "optional slice of int".
     assert_type_errors!(
         "
         func main() {
-            let arr: []int? = nil
+            let arr: ([]int)? = nil
             let x: int = arr[0]
         }
         ",
         [T006NotNullable]
     );
 
-    // 4. Safe indexing returning nullable type
+    // 4. Safe indexing on nullable slice → element type (int?), assignable to int?
     assert_type_errors!(
         "
         func main() {
-            let arr: []int? = nil
+            let arr: ([]int)? = nil
             let x: int? = arr?[0]
         }
         ",

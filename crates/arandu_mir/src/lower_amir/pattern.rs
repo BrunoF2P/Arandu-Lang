@@ -139,7 +139,7 @@ impl LowerCtx<'_> {
             let mut current_matches = AmirOperand::Copy(tag_matches);
 
             for (i, pat) in payload.iter().enumerate() {
-                let tmp_payload = self.new_temp(tys[i].clone());
+                let tmp_payload = self.new_temp_ref(&tys[i]);
                 self.emit_assign_temp(
                     tmp_payload,
                     AmirRvalue::EnumPayload {
@@ -261,7 +261,7 @@ impl LowerCtx<'_> {
                         .and_then(|m| m.get(&field.name).cloned())
                         .unwrap_or(ArType::Error);
 
-                    let tmp_field = self.new_temp(field_ty.clone());
+                    let tmp_field = self.new_temp_ref(&field_ty);
                     let field_idx = self
                         .tc
                         .type_info
@@ -324,7 +324,7 @@ impl LowerCtx<'_> {
                 let item_tys = if let ArType::Tuple(tys) = scrutinee_ty {
                     let interner = &self.tc.type_info.type_interner;
                     tys.iter()
-                        .map(|&tid| interner.resolve(tid).clone())
+                        .map(|&tid| interner.resolve(tid))
                         .collect()
                 } else {
                     vec![ArType::Error; pat_ids.len()]
@@ -334,7 +334,7 @@ impl LowerCtx<'_> {
                 for (i, &pid) in pat_ids.iter().enumerate() {
                     let pat = self.hir.pool.pattern(pid).clone();
                     let item_ty = item_tys.get(i).cloned().unwrap_or(ArType::Error);
-                    let tmp_item = self.new_temp(item_ty.clone());
+                    let tmp_item = self.new_temp_ref(&item_ty);
                     self.emit_assign_temp(
                         tmp_item,
                         AmirRvalue::FieldAccess {

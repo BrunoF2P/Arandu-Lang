@@ -708,27 +708,34 @@ mod tests {
         let mut from_info = TypeInfo::new();
         from_info.generic_params.insert(
             SymbolId::new(0, 0),
-            vec![SymbolId::new(0, 1), SymbolId::new(0, 2)],
+            std::sync::Arc::new(vec![SymbolId::new(0, 1), SymbolId::new(0, 2)]),
         );
         let mut to_info = TypeInfo::new();
         to_info.merge_from(&from_info);
         assert_eq!(
-            to_info.generic_params.get(&SymbolId::new(0, 0)),
-            Some(&vec![SymbolId::new(0, 1), SymbolId::new(0, 2)])
+            to_info
+                .generic_params
+                .get(&SymbolId::new(0, 0))
+                .map(|a| a.as_slice()),
+            Some([SymbolId::new(0, 1), SymbolId::new(0, 2)].as_slice())
         );
     }
 
     #[test]
     fn merge_from_param_constraints() {
         let mut from_info = TypeInfo::new();
-        from_info
-            .param_constraints
-            .insert(SymbolId::new(0, 1), vec![SymbolId::new(0, 2)]);
+        from_info.param_constraints.insert(
+            SymbolId::new(0, 1),
+            std::sync::Arc::new(vec![SymbolId::new(0, 2)]),
+        );
         let mut to_info = TypeInfo::new();
         to_info.merge_from(&from_info);
         assert_eq!(
-            to_info.param_constraints.get(&SymbolId::new(0, 1)),
-            Some(&vec![SymbolId::new(0, 2)])
+            to_info
+                .param_constraints
+                .get(&SymbolId::new(0, 1))
+                .map(|a| a.as_slice()),
+            Some([SymbolId::new(0, 2)].as_slice())
         );
     }
 

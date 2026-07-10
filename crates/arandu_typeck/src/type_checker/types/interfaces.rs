@@ -114,7 +114,7 @@ fn collect_interface(checker: &mut TypeChecker, decl: &arandu_parser::InterfaceD
         checker
             .type_info
             .generic_params
-            .insert(iface_sym, type_param_symbols.clone());
+            .insert(iface_sym, std::sync::Arc::new(type_param_symbols.clone()));
     }
 
     let mut methods = Vec::new();
@@ -180,7 +180,7 @@ fn collect_decl_constraints(
             .type_info
             .generic_params
             .entry(decl_sym)
-            .or_insert_with(|| param_symbols.clone());
+            .or_insert_with(|| std::sync::Arc::new(param_symbols.clone()));
     }
 
     let name_to_sym: FxHashMap<smol_str::SmolStr, SymbolId> = generic_params
@@ -195,12 +195,12 @@ fn collect_decl_constraints(
         };
         for constraint in &gp.constraints {
             if let Some(iface_sym) = resolve_interface_constraint(checker, constraint, scope) {
-                checker
+                let entry = checker
                     .type_info
                     .param_constraints
                     .entry(param_sym)
-                    .or_default()
-                    .push(iface_sym);
+                    .or_insert_with(|| std::sync::Arc::new(Vec::new()));
+                std::sync::Arc::make_mut(entry).push(iface_sym);
             }
         }
     }
@@ -219,12 +219,12 @@ fn collect_decl_constraints(
         };
         for constraint in &item.constraints {
             if let Some(iface_sym) = resolve_interface_constraint(checker, constraint, scope) {
-                checker
+                let entry = checker
                     .type_info
                     .param_constraints
                     .entry(param_sym)
-                    .or_default()
-                    .push(iface_sym);
+                    .or_insert_with(|| std::sync::Arc::new(Vec::new()));
+                std::sync::Arc::make_mut(entry).push(iface_sym);
             }
         }
     }
@@ -275,7 +275,7 @@ pub(crate) fn check_instantiation_constraints(
         let Some(constraints) = constraints else {
             continue;
         };
-        for &iface_sym in &constraints {
+        for &iface_sym in constraints.iter() {
             if !type_satisfies_interface(checker, arg_ty, iface_sym, span) {
                 let iface_name = checker.symbols.get(iface_sym).name.clone();
                 let ty_display = arg_ty.display(&checker.symbols, &checker.type_info.type_interner);

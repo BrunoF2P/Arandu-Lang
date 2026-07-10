@@ -22,8 +22,8 @@ impl LowerCtx<'_> {
         err_b: &crate::hir::HirBindingItem,
         _symbols: &SymbolTable,
     ) -> Result<(), Diagnostic> {
-        let ok_local = self.new_local(ok_b.ty.clone(), ok_b.symbol, ok_b.span);
-        let err_local = self.new_local(err_b.ty.clone(), err_b.symbol, err_b.span);
+        let ok_local = self.new_local_ref(&ok_b.ty, ok_b.symbol, ok_b.span);
+        let err_local = self.new_local_ref(&err_b.ty, err_b.symbol, err_b.span);
 
         let tag_tmp = self.new_temp(ArType::Primitive(Primitive::Int));
         self.emit_assign_temp(
@@ -54,11 +54,11 @@ impl LowerCtx<'_> {
 
         // Err branch: err = payload; ok = zero/nil so both locals are defined on all paths.
         self.current_block = Some(bb_err);
-        let err_tmp = self.new_temp(err_b.ty.clone());
+        let err_tmp = self.new_temp_ref(&err_b.ty);
         self.lower_result_err_field(result_op, err_b.ty.clone(), err_tmp);
         let err_consumed = self.consume_operand(AmirOperand::Copy(err_tmp))?;
         self.write_variable_source(err_local, err_consumed)?;
-        let ok_zero = self.new_temp(ok_b.ty.clone());
+        let ok_zero = self.new_temp_ref(&ok_b.ty);
         self.emit_assign_temp(
             ok_zero,
             AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Nil)),
@@ -69,11 +69,11 @@ impl LowerCtx<'_> {
 
         // Ok branch: ok = payload, err = nil.
         self.current_block = Some(bb_ok);
-        let ok_tmp = self.new_temp(ok_b.ty.clone());
+        let ok_tmp = self.new_temp_ref(&ok_b.ty);
         self.lower_result_ok_field(result_op, ok_tmp);
         let ok_consumed = self.consume_operand(AmirOperand::Copy(ok_tmp))?;
         self.write_variable_source(ok_local, ok_consumed)?;
-        let nil_tmp = self.new_temp(err_b.ty.clone());
+        let nil_tmp = self.new_temp_ref(&err_b.ty);
         self.emit_assign_temp(
             nil_tmp,
             AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Nil)),
@@ -109,7 +109,7 @@ impl LowerCtx<'_> {
                 let bindings_slice = self.hir.pool.bindings_list(*bindings);
                 if bindings_slice.len() == 1 {
                     let b = &bindings_slice[0];
-                    let local_id = self.new_local(b.ty.clone(), b.symbol, b.span);
+                    let local_id = self.new_local_ref(&b.ty, b.symbol, b.span);
                     let val_op = self.lower_expr(*value, None, symbols)?;
                     let consumed = self.consume_operand(val_op)?;
                     self.write_variable_source(local_id, consumed)?;
@@ -127,8 +127,8 @@ impl LowerCtx<'_> {
                         )?;
                     } else {
                         for (i, b) in bindings_slice.iter().enumerate() {
-                            let local_id = self.new_local(b.ty.clone(), b.symbol, b.span);
-                            let temp = self.new_temp(b.ty.clone());
+                            let local_id = self.new_local_ref(&b.ty, b.symbol, b.span);
+                            let temp = self.new_temp_ref(&b.ty);
                             self.emit_assign_temp(
                                 temp,
                                 AmirRvalue::FieldAccess {
@@ -143,8 +143,8 @@ impl LowerCtx<'_> {
                 } else {
                     let val_op = self.lower_expr(*value, None, symbols)?;
                     for (i, b) in bindings_slice.iter().enumerate() {
-                        let local_id = self.new_local(b.ty.clone(), b.symbol, b.span);
-                        let temp = self.new_temp(b.ty.clone());
+                        let local_id = self.new_local_ref(&b.ty, b.symbol, b.span);
+                        let temp = self.new_temp_ref(&b.ty);
                         self.emit_assign_temp(
                             temp,
                             AmirRvalue::FieldAccess {
@@ -382,7 +382,7 @@ impl LowerCtx<'_> {
                             .get(&binding.symbol)
                             .copied()
                             .unwrap_or_else(|| {
-                                self.new_local(binding.ty.clone(), binding.symbol, binding.span)
+                                self.new_local_ref(&binding.ty, binding.symbol, binding.span)
                             });
                         let idx_op2 = self.load_place(
                             &AmirPlace {
@@ -392,7 +392,7 @@ impl LowerCtx<'_> {
                             ArType::Primitive(Primitive::Int),
                             &[],
                         )?;
-                        let elem_temp = self.new_temp(binding.ty.clone());
+                        let elem_temp = self.new_temp_ref(&binding.ty);
                         self.emit_assign_temp(
                             elem_temp,
                             AmirRvalue::IndexAccess {
@@ -529,7 +529,7 @@ impl LowerCtx<'_> {
                 let bindings_slice = self.hir.pool.bindings_list(*bindings);
                 if bindings_slice.len() == 1 {
                     let b = &bindings_slice[0];
-                    let local_id = self.new_local(b.ty.clone(), b.symbol, b.span);
+                    let local_id = self.new_local_ref(&b.ty, b.symbol, b.span);
                     let val_op = self.lower_expr(*value, None, symbols)?;
                     let consumed = self.consume_operand(val_op)?;
                     self.write_variable_source(local_id, consumed)?;
@@ -545,8 +545,8 @@ impl LowerCtx<'_> {
                         )?;
                     } else {
                         for (i, b) in bindings_slice.iter().enumerate() {
-                            let local_id = self.new_local(b.ty.clone(), b.symbol, b.span);
-                            let temp = self.new_temp(b.ty.clone());
+                            let local_id = self.new_local_ref(&b.ty, b.symbol, b.span);
+                            let temp = self.new_temp_ref(&b.ty);
                             self.emit_assign_temp(
                                 temp,
                                 AmirRvalue::FieldAccess {
@@ -561,8 +561,8 @@ impl LowerCtx<'_> {
                 } else {
                     let val_op = self.lower_expr(*value, None, symbols)?;
                     for (i, b) in bindings_slice.iter().enumerate() {
-                        let local_id = self.new_local(b.ty.clone(), b.symbol, b.span);
-                        let temp = self.new_temp(b.ty.clone());
+                        let local_id = self.new_local_ref(&b.ty, b.symbol, b.span);
+                        let temp = self.new_temp_ref(&b.ty);
                         self.emit_assign_temp(
                             temp,
                             AmirRvalue::FieldAccess {
@@ -624,7 +624,7 @@ impl LowerCtx<'_> {
                     })
                     .collect();
                 let projections = projections?;
-                let temp = this.new_temp(place.ty.clone());
+                let temp = this.new_temp_ref(&place.ty);
                 this.emit_assign_temp(
                     temp,
                     AmirRvalue::FieldAccess {
@@ -708,7 +708,7 @@ impl LowerCtx<'_> {
                     _ => BinaryOp::Add,
                 };
                 let old_val = self.read_variable_source(local_id)?;
-                let temp = self.new_temp(place.ty.clone());
+                let temp = self.new_temp_ref(&place.ty);
                 self.emit_assign_temp(
                     temp,
                     AmirRvalue::Binary {
@@ -738,7 +738,7 @@ impl LowerCtx<'_> {
                 _ => BinaryOp::Add,
             };
             let old_val = self.load_place(&amir_place, place.ty.clone(), &projection_types)?;
-            let temp = self.new_temp(place.ty.clone());
+            let temp = self.new_temp_ref(&place.ty);
             self.emit_assign_temp(
                 temp,
                 AmirRvalue::Binary {

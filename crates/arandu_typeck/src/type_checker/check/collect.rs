@@ -28,17 +28,20 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
                     checker
                         .type_info
                         .struct_field_symbols
-                        .insert(symbol_id, field_symbols);
+                        .insert(symbol_id, std::sync::Arc::new(field_symbols));
                     checker
                         .type_info
                         .struct_field_indices
-                        .insert(symbol_id, field_indices);
+                        .insert(symbol_id, std::sync::Arc::new(field_indices));
                     let params = super::super::types::extract_generic_param_symbols(
                         checker,
                         &struct_decl.generic_params,
                     );
                     if !params.is_empty() {
-                        checker.type_info.generic_params.insert(symbol_id, params);
+                        checker
+                            .type_info
+                            .generic_params
+                            .insert(symbol_id, std::sync::Arc::new(params));
                     }
                 }
             }
@@ -56,7 +59,7 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
                     checker
                         .type_info
                         .generic_params
-                        .insert(enum_symbol_id, params);
+                        .insert(enum_symbol_id, std::sync::Arc::new(params));
                 }
 
                 for (tag, variant) in enum_decl.variants.iter().enumerate() {
@@ -140,7 +143,10 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
                         &alias_decl.generic_params,
                     );
                     if !params.is_empty() {
-                        checker.type_info.generic_params.insert(symbol_id, params);
+                        checker
+                            .type_info
+                            .generic_params
+                            .insert(symbol_id, std::sync::Arc::new(params));
                     }
                 }
             }
@@ -156,7 +162,10 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
                         &func_decl.generic_params,
                     );
                     if !params.is_empty() {
-                        checker.type_info.generic_params.insert(symbol_id, params);
+                        checker
+                            .type_info
+                            .generic_params
+                            .insert(symbol_id, std::sync::Arc::new(params));
                     }
                 }
             }
@@ -198,7 +207,7 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &P
                         checker
                             .type_info
                             .generic_params
-                            .insert(symbol_id, params.clone());
+                            .insert(symbol_id, std::sync::Arc::new(params.clone()));
                     }
                     if let arandu_parser::FuncName::Method { .. } = &func_decl.name
                         && let Some(first_param) = func_decl.params.first()
@@ -251,7 +260,10 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &P
                             &member.generic_params,
                         );
                         if !params.is_empty() {
-                            checker.type_info.generic_params.insert(symbol_id, params);
+                            checker
+                                .type_info
+                                .generic_params
+                                .insert(symbol_id, std::sync::Arc::new(params));
                         }
                     }
                 }

@@ -171,7 +171,7 @@ impl DatabaseImpl {
     }
 
     pub fn new_file(&mut self, path: String, text: String) -> SourceFile {
-        let mut reg = self.files.lock().unwrap();
+        let mut reg = self.files.lock().unwrap_or_else(|e| e.into_inner());
         let file_id = reg.next_id();
         let file = SourceFile::new(
             self,
@@ -184,7 +184,7 @@ impl DatabaseImpl {
     }
 
     pub fn register_source_file(&self, path: String, file: SourceFile) {
-        let mut reg = self.files.lock().unwrap();
+        let mut reg = self.files.lock().unwrap_or_else(|e| e.into_inner());
         let file_id = file.file_id(self.as_source_db());
         reg.insert(path, file_id, file);
     }
@@ -192,7 +192,7 @@ impl DatabaseImpl {
     /// O(1) reverse lookup: compiler `FileId` → open/registered [`SourceFile`].
     #[must_use]
     pub fn source_file_by_id(&self, file_id: FileId) -> Option<SourceFile> {
-        let reg = self.files.lock().unwrap();
+        let reg = self.files.lock().unwrap_or_else(|e| e.into_inner());
         reg.by_id.get(&file_id).copied()
     }
 
@@ -203,7 +203,7 @@ impl DatabaseImpl {
         file_id: FileId,
         text: Arc<str>,
     ) -> arandu_parser::SyntaxTree {
-        let mut cache = self.cst_cache.lock().unwrap();
+        let mut cache = self.cst_cache.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(prev) = cache.by_file.get(&file_id) {
             if prev.text() == text.as_ref() {
                 return prev.clone();
@@ -251,7 +251,7 @@ impl arandu_middle::db::SourceDatabase for DatabaseImpl {
     fn resolve_module_path(&self, path: &str) -> Option<SourceFile> {
         // Fast path: O(1) lookup by import path string.
         {
-            let reg = self.files.lock().unwrap();
+            let reg = self.files.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(file) = reg.by_path.get(path) {
                 return Some(*file);
             }
@@ -276,7 +276,7 @@ impl arandu_middle::db::SourceDatabase for DatabaseImpl {
         let found_path = found_path?;
         let text = std::fs::read_to_string(&found_path).ok()?;
 
-        let mut reg = self.files.lock().unwrap();
+        let mut reg = self.files.lock().unwrap_or_else(|e| e.into_inner());
         // Double-check: another thread may have inserted it while we were reading.
         if let Some(file) = reg.by_path.get(path) {
             return Some(*file);
@@ -294,7 +294,7 @@ impl arandu_middle::db::SourceDatabase for DatabaseImpl {
 impl ArandCompilerDb for DatabaseImpl {
     /// O(1) lookup by FileId via the reverse index.
     fn source_text(&self, file: FileId) -> Arc<str> {
-        let reg = self.files.lock().unwrap();
+        let reg = self.files.lock().unwrap_or_else(|e| e.into_inner());
         reg.by_id
             .get(&file)
             .map(|f| f.text(self.as_source_db()))
@@ -303,7 +303,7 @@ impl ArandCompilerDb for DatabaseImpl {
 
     /// O(1) lookup by FileId via the reverse index.
     fn file_path(&self, file: FileId) -> Arc<PathBuf> {
-        let reg = self.files.lock().unwrap();
+        let reg = self.files.lock().unwrap_or_else(|e| e.into_inner());
         reg.by_id
             .get(&file)
             .map(|f| f.path(self.as_source_db()))

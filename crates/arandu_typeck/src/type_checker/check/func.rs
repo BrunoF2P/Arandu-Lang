@@ -27,7 +27,7 @@ fn validate_method_receiver(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
             && let Some(method_params) = checker.type_info.generic_params.get(&method_sym).cloned()
         {
             let mut new_args = Vec::new();
-            for &param_sym in &method_params {
+            for &param_sym in method_params.iter() {
                 let arg_ty = ArType::Named(param_sym, vec![]);
                 new_args.push(checker.intern(arg_ty));
             }
@@ -66,7 +66,7 @@ fn validate_method_receiver(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
             && let Some(method_params) = checker.type_info.generic_params.get(&method_sym).cloned()
         {
             let mut new_args = Vec::new();
-            for &param_sym in &method_params {
+            for &param_sym in method_params.iter() {
                 let arg_ty = ArType::Named(param_sym, vec![]);
                 new_args.push(checker.intern(arg_ty));
             }
@@ -130,7 +130,7 @@ pub fn check_func_body(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
                     checker.type_info.generic_params.get(&method_sym).cloned()
             {
                 let mut new_args = Vec::new();
-                for &param_sym in &method_params {
+                for &param_sym in method_params.iter() {
                     let arg_ty = ArType::Named(param_sym, vec![]);
                     new_args.push(checker.intern(arg_ty));
                 }

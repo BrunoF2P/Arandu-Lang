@@ -64,9 +64,15 @@ impl LowerCtx<'_> {
     }
 
     pub(crate) fn new_temp(&mut self, ty: ArType) -> TempId {
+        self.new_temp_ref(&ty)
+    }
+
+    /// Intern from borrow — avoids cloning `ArType` when the caller only has a ref
+    /// (e.g. `expr.ty`).
+    pub(crate) fn new_temp_ref(&mut self, ty: &ArType) -> TempId {
         let is_copy = ty.is_copy_v01();
         let is_nullable = matches!(ty, ArType::Nullable(_));
-        let ty = self.intern_ty(ty);
+        let ty = self.intern_ty_ref(ty);
         let id = self.next_temp_id();
         let span = if Self::span_is_usable(self.current_span) {
             self.current_span
@@ -86,8 +92,17 @@ impl LowerCtx<'_> {
     }
 
     pub(crate) fn new_local(&mut self, ty: ArType, symbol: SymbolId, span: Span) -> LocalId {
-        let is_memory = super::is_memory_type(&ty);
-        let ty = self.intern_ty(ty);
+        self.new_local_ref(&ty, symbol, span)
+    }
+
+    pub(crate) fn new_local_ref(
+        &mut self,
+        ty: &ArType,
+        symbol: SymbolId,
+        span: Span,
+    ) -> LocalId {
+        let is_memory = super::is_memory_type(ty);
+        let ty = self.intern_ty_ref(ty);
         let id = self.next_local_id();
         self.locals.push(AmirLocal {
             id,

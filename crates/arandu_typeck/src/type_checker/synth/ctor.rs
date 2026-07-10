@@ -186,7 +186,7 @@ pub(crate) fn synth_method_call(
     if method_sym.is_none()
         && let Some(constraints) = checker.type_info.param_constraints.get(&struct_id)
     {
-        for &iface_sym in constraints {
+        for &iface_sym in constraints.iter() {
             if let Some(iface_info) = checker.type_info.interfaces.get(&iface_sym)
                 && let Some((_, method_sig)) = iface_info.methods.iter().find(|(m, _)| m == method)
             {

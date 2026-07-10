@@ -156,7 +156,7 @@ impl LowerCtx<'_> {
             return Ok(AmirOperand::Copy(dest));
         }
 
-        let err_tmp = self.new_temp(err_ty.clone());
+        let err_tmp = self.new_temp_ref(&err_ty);
         self.lower_result_err_field(base, err_ty, err_tmp);
 
         let tag_tmp = self.new_temp(ArType::Primitive(Primitive::Int));
@@ -187,7 +187,8 @@ impl LowerCtx<'_> {
 
         self.current_block = Some(bb_return_err);
         self.exit_all_defer_frames(true, symbols)?;
-        let err_ctor_tmp = self.new_temp(self.func_return_type.clone());
+        let ret_ty = self.func_return_type.clone();
+        let err_ctor_tmp = self.new_temp(ret_ty);
         self.emit_assign_temp(
             err_ctor_tmp,
             AmirRvalue::EnumConstruct {
@@ -241,7 +242,7 @@ impl LowerCtx<'_> {
             return Ok(AmirOperand::Copy(dest));
         }
 
-        let dest = target.unwrap_or_else(|| self.new_temp(expr_ty.clone()));
+        let dest = target.unwrap_or_else(|| self.new_temp_ref(&expr_ty));
 
         let tag_tmp = self.new_temp(ArType::Primitive(Primitive::Int));
         self.emit_assign_temp(
@@ -277,9 +278,9 @@ impl LowerCtx<'_> {
             ..
         } = handler
         {
-            let err_tmp = self.new_temp(err_ty.clone());
+            let err_tmp = self.new_temp_ref(&err_ty);
             self.lower_result_err_field(base, err_ty.clone(), err_tmp);
-            let err_local = self.new_local(err_ty.clone(), *err_sym, inner.span);
+            let err_local = self.new_local_ref(&err_ty, *err_sym, inner.span);
             let consumed = self.consume_operand(AmirOperand::Copy(err_tmp))?;
             self.write_variable_source(err_local, consumed)?;
         }
@@ -405,7 +406,7 @@ impl LowerCtx<'_> {
                     };
                     part_ops.push(op);
                 }
-                let dest = target.unwrap_or_else(|| self.new_temp(expr.ty.clone()));
+                let dest = target.unwrap_or_else(|| self.new_temp_ref(&expr.ty));
                 self.emit_assign_temp(dest, AmirRvalue::StringInterp { parts: part_ops });
                 Ok(AmirOperand::Copy(dest))
             }
@@ -431,7 +432,7 @@ impl LowerCtx<'_> {
             }
             HirExprKind::Nil => {
                 let op = if is_option_type(&expr.ty) {
-                    let dest = target.unwrap_or_else(|| self.new_temp(expr.ty.clone()));
+                    let dest = target.unwrap_or_else(|| self.new_temp_ref(&expr.ty));
                     self.emit_assign_temp(
                         dest,
                         AmirRvalue::EnumConstruct {
@@ -494,7 +495,7 @@ impl LowerCtx<'_> {
                             .and_then(|(v_sym, _)| self.tc.type_info.enum_variant_tags.get(v_sym))
                     })
                 {
-                    let dest = target.unwrap_or_else(|| self.new_temp(expr.ty.clone()));
+                    let dest = target.unwrap_or_else(|| self.new_temp_ref(&expr.ty));
                     self.emit_assign_temp(
                         dest,
                         AmirRvalue::EnumConstruct {
@@ -569,7 +570,7 @@ impl LowerCtx<'_> {
                             .and_then(|(v_sym, _)| self.tc.type_info.enum_variant_tags.get(v_sym))
                     })
                 {
-                    let dest = target.unwrap_or_else(|| self.new_temp(expr.ty.clone()));
+                    let dest = target.unwrap_or_else(|| self.new_temp_ref(&expr.ty));
                     self.emit_assign_temp(
                         dest,
                         AmirRvalue::EnumConstruct {
@@ -612,7 +613,7 @@ impl LowerCtx<'_> {
             HirExprKind::Generic { callee, .. } => self.lower_expr(*callee, target, symbols),
             HirExprKind::Alloc { expr: inner } => {
                 let inner_op = self.lower_expr(*inner, None, symbols)?;
-                let dest = target.unwrap_or_else(|| self.new_temp(expr.ty.clone()));
+                let dest = target.unwrap_or_else(|| self.new_temp_ref(&expr.ty));
                 self.emit_assign_temp(dest, AmirRvalue::Alloc(inner_op));
                 Ok(AmirOperand::Copy(dest))
             }
@@ -634,7 +635,7 @@ impl LowerCtx<'_> {
                 for &item in items_slice {
                     item_ops.push(self.lower_expr(item, None, symbols)?);
                 }
-                let dest = target.unwrap_or_else(|| self.new_temp(expr.ty.clone()));
+                let dest = target.unwrap_or_else(|| self.new_temp_ref(&expr.ty));
                 self.emit_assign_temp(dest, AmirRvalue::Array { items: item_ops });
                 Ok(AmirOperand::Copy(dest))
             }
@@ -761,7 +762,7 @@ impl LowerCtx<'_> {
                             Some(AmirOperand::Copy(dest_tuple))
                         }
                     };
-                    let dest = target.unwrap_or_else(|| self.new_temp(expr.ty.clone()));
+                    let dest = target.unwrap_or_else(|| self.new_temp_ref(&expr.ty));
                     self.emit_assign_temp(
                         dest,
                         AmirRvalue::EnumConstruct {
@@ -823,7 +824,7 @@ impl LowerCtx<'_> {
                 let dest = if matches!(expr.ty, ArType::Void) {
                     None
                 } else {
-                    Some(target.unwrap_or_else(|| self.new_temp(expr.ty.clone())))
+                    Some(target.unwrap_or_else(|| self.new_temp_ref(&expr.ty)))
                 };
                 self.push_stmt(AmirStmt::Call {
                     lhs: dest,
@@ -841,7 +842,7 @@ impl LowerCtx<'_> {
                 for f in fields_slice {
                     field_ops.push((f.name.clone(), self.lower_expr(f.value, None, symbols)?));
                 }
-                let dest = target.unwrap_or_else(|| self.new_temp(expr.ty.clone()));
+                let dest = target.unwrap_or_else(|| self.new_temp_ref(&expr.ty));
                 self.emit_assign_temp(
                     dest,
                     AmirRvalue::StructLiteral {
@@ -858,14 +859,14 @@ impl LowerCtx<'_> {
             } => {
                 let cond_op = self.lower_condition(condition, symbols)?;
                 if self.current_block.is_none() {
-                    let dest = target.unwrap_or_else(|| self.new_temp(expr.ty.clone()));
+                    let dest = target.unwrap_or_else(|| self.new_temp_ref(&expr.ty));
                     return Ok(AmirOperand::Copy(dest));
                 }
                 let bb_then = self.new_block();
                 let bb_else = self.new_block();
                 let bb_join = self.new_block();
 
-                let dest = target.unwrap_or_else(|| self.new_temp(expr.ty.clone()));
+                let dest = target.unwrap_or_else(|| self.new_temp_ref(&expr.ty));
 
                 self.set_bool_branch(cond_op, bb_then, bb_else);
                 self.seal_block(bb_then);
@@ -892,7 +893,7 @@ impl LowerCtx<'_> {
             }
             HirExprKind::Cast { expr: sub_expr, .. } => {
                 let sub_op = self.lower_expr(*sub_expr, None, symbols)?;
-                let dest = target.unwrap_or_else(|| self.new_temp(expr.ty.clone()));
+                let dest = target.unwrap_or_else(|| self.new_temp_ref(&expr.ty));
                 self.emit_assign_temp(dest, AmirRvalue::Use(sub_op));
                 Ok(AmirOperand::Copy(dest))
             }
@@ -902,7 +903,7 @@ impl LowerCtx<'_> {
             }
             HirExprKind::ResultCtor { variant, value } => {
                 let val_op = self.lower_expr(*value, None, symbols)?;
-                let dest = target.unwrap_or_else(|| self.new_temp(expr.ty.clone()));
+                let dest = target.unwrap_or_else(|| self.new_temp_ref(&expr.ty));
                 match variant {
                     ResultCtorVariant::Ok => {
                         self.emit_assign_temp(
@@ -948,7 +949,7 @@ impl LowerCtx<'_> {
                 }
             }
             HirExprKind::SafeField { base, field } => {
-                let dest = target.unwrap_or_else(|| self.new_temp(expr.ty.clone()));
+                let dest = target.unwrap_or_else(|| self.new_temp_ref(&expr.ty));
                 let base_op = self.lower_expr(*base, None, symbols)?;
                 if self.current_block.is_none() {
                     return Ok(AmirOperand::Copy(dest));
@@ -984,7 +985,7 @@ impl LowerCtx<'_> {
                 // Materialize base into a typed temp so FieldAccess never takes a
                 // bare Constant(Nil) operand (pretty-print `nil.0` / ZST layout).
                 // Nullable bases are pointer handles; field load goes through that ptr.
-                let base_tmp = self.new_temp(base_expr.ty.clone());
+                let base_tmp = self.new_temp_ref(&base_expr.ty);
                 self.emit_assign_temp(base_tmp, AmirRvalue::Use(base_op));
                 let field_idx = self.resolve_field_index(&base_expr.ty, field);
                 self.emit_assign_temp(
@@ -1001,7 +1002,7 @@ impl LowerCtx<'_> {
                 Ok(AmirOperand::Copy(dest))
             }
             HirExprKind::SafeIndex { base, index } => {
-                let dest = target.unwrap_or_else(|| self.new_temp(expr.ty.clone()));
+                let dest = target.unwrap_or_else(|| self.new_temp_ref(&expr.ty));
                 let base_op = self.lower_expr(*base, None, symbols)?;
                 if self.current_block.is_none() {
                     return Ok(AmirOperand::Copy(dest));
@@ -1050,7 +1051,7 @@ impl LowerCtx<'_> {
                 Ok(AmirOperand::Copy(dest))
             }
             HirExprKind::NullCoalesce { left, right } => {
-                let dest = target.unwrap_or_else(|| self.new_temp(expr.ty.clone()));
+                let dest = target.unwrap_or_else(|| self.new_temp_ref(&expr.ty));
                 let left_op = self.lower_expr(*left, None, symbols)?;
                 if self.current_block.is_none() {
                     return Ok(AmirOperand::Copy(dest));

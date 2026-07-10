@@ -63,7 +63,7 @@ pub(crate) fn lower_func(
     ctx.current_block = Some(bb0);
 
     for param in hir.pool.params_list(f.params) {
-        let p_temp = ctx.with_span(param.span, |this| this.new_temp(param.ty.clone()));
+        let p_temp = ctx.with_span(param.span, |this| this.new_temp_ref(&param.ty));
         if param.is_receiver {
             receiver = Some(crate::amir::AmirReceiver {
                 temp: p_temp,

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use rustc_hash::FxHashMap;
 
 use crate::SymbolId;
@@ -11,21 +13,23 @@ pub enum EnumPayloadShape {
     Tuple(Vec<ArType>),
 }
 
+/// Shared metadata maps use `Arc` so `merge_from` (item body typeck fold) is O(1)
+/// per entry instead of deep-cloning every field map / generic param list.
 #[derive(Debug, Default, Clone)]
 pub struct TypeInfo {
     pub type_interner: TypeInterner,
     pub expr_types: Vec<Option<TypeId>>,
     pub decl_types: FxHashMap<SymbolId, TypeId>,
     pub struct_fields: FxHashMap<SymbolId, FxHashMap<String, ArType>>,
-    pub struct_field_symbols: FxHashMap<SymbolId, FxHashMap<String, SymbolId>>,
-    pub struct_field_indices: FxHashMap<SymbolId, FxHashMap<String, usize>>,
+    pub struct_field_symbols: FxHashMap<SymbolId, Arc<FxHashMap<String, SymbolId>>>,
+    pub struct_field_indices: FxHashMap<SymbolId, Arc<FxHashMap<String, usize>>>,
     pub enum_variants: FxHashMap<SymbolId, (SymbolId, EnumPayloadShape)>,
     /// Pre-computed discriminant tag for each enum variant symbol.
     pub enum_variant_tags: FxHashMap<SymbolId, usize>,
     /// Ordered type-parameter symbols for generic decls (func, struct, …).
-    pub generic_params: FxHashMap<SymbolId, Vec<SymbolId>>,
+    pub generic_params: FxHashMap<SymbolId, Arc<Vec<SymbolId>>>,
     /// Type-parameter symbol → interface symbols required (`T: Display`).
-    pub param_constraints: FxHashMap<SymbolId, Vec<SymbolId>>,
+    pub param_constraints: FxHashMap<SymbolId, Arc<Vec<SymbolId>>>,
     /// Interface symbol → method signatures (nominal, Go-style structural check).
     pub(crate) interfaces: FxHashMap<SymbolId, types::InterfaceInfo>,
 }
@@ -177,11 +181,11 @@ impl TypeInfo {
         }
         for (symbol, field_symbols) in &other.struct_field_symbols {
             self.struct_field_symbols
-                .insert(*symbol, field_symbols.clone());
+                .insert(*symbol, Arc::clone(field_symbols));
         }
         for (symbol, field_indices) in &other.struct_field_indices {
             self.struct_field_indices
-                .insert(*symbol, field_indices.clone());
+                .insert(*symbol, Arc::clone(field_indices));
         }
         for (symbol, (enum_id, shape)) in &other.enum_variants {
             let translated_shape = match shape {
@@ -205,10 +209,11 @@ impl TypeInfo {
             self.enum_variant_tags.insert(symbol, tag);
         }
         for (symbol, params) in &other.generic_params {
-            self.generic_params.insert(*symbol, params.clone());
+            self.generic_params.insert(*symbol, Arc::clone(params));
         }
         for (symbol, constraints) in &other.param_constraints {
-            self.param_constraints.insert(*symbol, constraints.clone());
+            self.param_constraints
+                .insert(*symbol, Arc::clone(constraints));
         }
         for (symbol, interface_info) in &other.interfaces {
             let mut translated_methods = Vec::new();
@@ -296,7 +301,7 @@ impl arandu_middle::layout::StructLayoutProvider for TypeInfo {
         &self,
         struct_id: SymbolId,
     ) -> Option<&rustc_hash::FxHashMap<String, usize>> {
-        self.struct_field_indices.get(&struct_id)
+        self.struct_field_indices.get(&struct_id).map(|a| a.as_ref())
     }
 
     fn get_generic_params(&self, struct_id: SymbolId) -> Option<&[SymbolId]> {
