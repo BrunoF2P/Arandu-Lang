@@ -8,7 +8,8 @@
 #![allow(clippy::collapsible_if)]
 
 use crate::amir::{
-    AmirFunc, AmirOperand, AmirPlace, AmirRvalue, AmirStmt, AmirTerminator, LocalId, TempId,
+    for_each_rvalue_operand, for_each_rvalue_place, AmirFunc, AmirOperand, AmirPlace, AmirRvalue,
+    AmirStmt, AmirTerminator, LocalId, TempId,
 };
 use crate::diagnostics::{DiagCode, Diagnostic};
 use crate::{BitSet, SymbolTable};
@@ -292,12 +293,9 @@ fn check_rvalue_reads(
     state: &MoveState,
     diagnostics: &mut Option<(&SymbolTable, &mut Vec<Diagnostic>)>,
 ) {
-    match rvalue {
-        AmirRvalue::Load(place) | AmirRvalue::Borrow(place) | AmirRvalue::BorrowMut(place) => {
-            check_place_read(place, func, state, diagnostics);
-        }
-        _ => {}
-    }
+    for_each_rvalue_place(rvalue, |place| {
+        check_place_read(place, func, state, diagnostics);
+    });
 }
 
 fn consume_rvalue(
@@ -307,44 +305,11 @@ fn consume_rvalue(
     state: &mut MoveState,
     diagnostics: &mut Option<(&SymbolTable, &mut Vec<Diagnostic>)>,
 ) {
-    match rvalue {
-        AmirRvalue::Use(op)
-        | AmirRvalue::Len(op)
-        | AmirRvalue::Alloc(op)
-        | AmirRvalue::Discriminant { value: op }
-        | AmirRvalue::EnumPayload { value: op, .. }
-        | AmirRvalue::Unary { operand: op, .. } => {
-            consume_operand(op, func, temp_origins, state, diagnostics, false);
-        }
-        AmirRvalue::EnumConstruct { payload, .. } => {
-            if let Some(op) = payload {
-                consume_operand(op, func, temp_origins, state, diagnostics, false);
-            }
-        }
-
-        AmirRvalue::Binary { left, right, .. }
-        | AmirRvalue::IndexAccess {
-            base: left,
-            index: right,
-        } => {
-            consume_operand(left, func, temp_origins, state, diagnostics, false);
-            consume_operand(right, func, temp_origins, state, diagnostics, false);
-        }
-        AmirRvalue::FieldAccess { base, .. } => {
-            consume_operand(base, func, temp_origins, state, diagnostics, false);
-        }
-        AmirRvalue::StructLiteral { fields, .. } => {
-            for (_, op) in fields {
-                consume_operand(op, func, temp_origins, state, diagnostics, false);
-            }
-        }
-        AmirRvalue::Array { items } | AmirRvalue::Tuple { items } => {
-            for op in items {
-                consume_operand(op, func, temp_origins, state, diagnostics, false);
-            }
-        }
-        AmirRvalue::Load(_) | AmirRvalue::Borrow(_) | AmirRvalue::BorrowMut(_) => {}
-    }
+    // Shared visitor covers all operand-bearing rvalues (RC-ANALYSIS-LOAD).
+    // Load/Borrow/BorrowMut only contribute Index projection operands, not the base place.
+    for_each_rvalue_operand(rvalue, |op| {
+        consume_operand(op, func, temp_origins, state, diagnostics, false);
+    });
 }
 
 fn check_operand_read(
@@ -488,10 +453,11 @@ fn move_diag(
     note: &str,
 ) -> Diagnostic {
     let name = local_name(local, func, symbols);
+    // Prefer use site when recorded; otherwise declaration span (RC-SPAN-ZERO).
     let span = func
         .locals
         .get(local.as_usize())
-        .map(|l| l.span)
+        .map(|l| l.use_span.unwrap_or(l.span))
         .unwrap_or_else(|| Span::new(0, 0, 0));
     Diagnostic::error(code, format!("{prefix} `{name}`"), span).with_note(note)
 }

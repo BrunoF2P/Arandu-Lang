@@ -641,6 +641,11 @@ impl LowerCtx<'_> {
             AmirRvalue::BorrowMut(place) => {
                 Self::resolve_place(redirected_temps, place);
             }
+            AmirRvalue::StringInterp { parts } => {
+                for op in parts {
+                    *op = Self::resolve_operand(redirected_temps, op.clone());
+                }
+            }
         }
     }
 

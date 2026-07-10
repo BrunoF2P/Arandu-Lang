@@ -30,10 +30,9 @@ use crate::amir::local::LocalId;
 use crate::amir::program::AmirFunc;
 use crate::amir::stmt::{AmirStmt, AmirTerminator};
 use crate::amir::value::AmirRvalue;
+use crate::amir::for_each_rvalue_place;
 use crate::diagnostics::{DiagCode, Diagnostic};
 use crate::{BitMatrix, BitSet, SymbolTable};
-
-use arandu_lexer::Span;
 
 use std::collections::VecDeque;
 
@@ -218,14 +217,12 @@ fn check_rvalue_loads(
     symbols: &SymbolTable,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    match rvalue {
-        AmirRvalue::Load(place) | AmirRvalue::Borrow(place) | AmirRvalue::BorrowMut(place)
-            if !current.contains(place.local) =>
-        {
+    // Shared place visitor (RC-ANALYSIS-LOAD): Load / Borrow / BorrowMut.
+    for_each_rvalue_place(rvalue, |place| {
+        if !current.contains(place.local) {
             emit_uninit_diag(place.local, func, symbols, diagnostics);
         }
-        _ => {}
-    }
+    });
 }
 
 fn emit_uninit_diag(
@@ -240,11 +237,13 @@ fn emit_uninit_diag(
         .map_or("<compiler local>".to_string(), |s| {
             symbols.get(s).name.to_string()
         });
+    // Prefer use site when recorded; otherwise declaration span (RC-SPAN-ZERO).
+    let span = local_info.use_span.unwrap_or(local_info.span);
     diagnostics.push(
         Diagnostic::error(
             DiagCode::O008UseBeforeInit,
             format!("use of possibly uninitialized variable `{name}`"),
-            Span::new(0, 0, 0),
+            span,
         )
         .with_note(format!(
             "variable `{name}` may not be initialized on all paths"
@@ -264,6 +263,7 @@ mod tests {
     use crate::amir::value::{AmirConstant, AmirOperand, AmirPlace, AmirRvalue};
     use crate::layout::DenseRange;
     use crate::passes::type_checker::types::ArType;
+    use arandu_lexer::Span;
     use smallvec::smallvec;
 
     fn make_symbol_table() -> SymbolTable {

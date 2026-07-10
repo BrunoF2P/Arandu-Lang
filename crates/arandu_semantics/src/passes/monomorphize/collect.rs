@@ -293,6 +293,13 @@ impl InstantiationAnalyzer<'_> {
             | HirExprKind::Str(_)
             | HirExprKind::Nil
             | HirExprKind::Error => {}
+            HirExprKind::StringInterp { parts } => {
+                for part in parts {
+                    if let crate::hir::HirStringPart::Expr(e) = part {
+                        self.visit_expr(*e, current);
+                    }
+                }
+            }
         }
     }
 }

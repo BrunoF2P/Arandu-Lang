@@ -1,6 +1,7 @@
 use crate::diagnostics::Diagnostic;
 use crate::hir::{
     HirCatchHandler, HirExpr, HirExprKind, HirFieldInit, HirLambdaBody, HirLambdaParam,
+    HirStringPart,
 };
 use crate::passes::lowering::{require_def_symbol, require_type_symbol, require_value_symbol};
 use crate::passes::type_checker::types::ArType;
@@ -56,7 +57,9 @@ fn expr_type_for_kind(
 
     match kind {
         HirExprKind::Error => ArType::Error,
-        HirExprKind::Str(_) => ArType::Primitive(Primitive::Str),
+        HirExprKind::Str(_) | HirExprKind::StringInterp { .. } => {
+            ArType::Primitive(Primitive::Str)
+        }
         HirExprKind::Int(_) => ArType::IntLiteral,
         HirExprKind::Float(_) => ArType::FloatLiteral,
         HirExprKind::Bool(_) => ArType::Primitive(Primitive::Bool),
@@ -460,7 +463,36 @@ pub(crate) fn lower_expr_raw(
         ExprKind::Float { value } => HirExprKind::Float(value.to_string()),
         ExprKind::Bool { value } => HirExprKind::Bool(*value),
         ExprKind::Char { value } => HirExprKind::Char(value.to_string()),
-        ExprKind::InterpolatedString { .. } => HirExprKind::Str("interpolated".to_string()),
+        ExprKind::InterpolatedString { parts } => {
+            let part_ids = pool.string_part_list(*parts).to_vec();
+            let mut hir_parts = Vec::with_capacity(part_ids.len());
+            let mut has_expr = false;
+            for part_id in part_ids {
+                match pool.string_part(part_id) {
+                    arandu_parser::StringPart::Text { text, .. } => {
+                        hir_parts.push(HirStringPart::Text(text.to_string()));
+                    }
+                    arandu_parser::StringPart::Expr { expr: inner_expr, .. } => {
+                        has_expr = true;
+                        let lowered = lower_expr(type_check, pool, hir_pool, *inner_expr)?;
+                        hir_parts.push(HirStringPart::Expr(lowered));
+                    }
+                }
+            }
+            if has_expr {
+                HirExprKind::StringInterp { parts: hir_parts }
+            } else {
+                // Pure text — collapse all text parts into a single Str literal.
+                let combined: String = hir_parts
+                    .into_iter()
+                    .map(|p| match p {
+                        HirStringPart::Text(t) => t,
+                        HirStringPart::Expr(_) => unreachable!(),
+                    })
+                    .collect();
+                HirExprKind::Str(combined)
+            }
+        }
         ExprKind::Nil => HirExprKind::Nil,
         ExprKind::Error => HirExprKind::Error,
     };

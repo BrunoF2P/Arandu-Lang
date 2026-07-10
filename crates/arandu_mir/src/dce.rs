@@ -1,5 +1,6 @@
 use crate::amir::{
-    AmirFunc, AmirOperand, AmirProjection, AmirRvalue, AmirStmt, AmirTerminator, BlockId, TempId,
+    for_each_rvalue_operand, AmirFunc, AmirOperand, AmirProjection, AmirRvalue, AmirStmt,
+    AmirTerminator, BlockId, TempId,
 };
 use crate::layout::DenseRange;
 use smallvec::SmallVec;
@@ -182,56 +183,12 @@ fn collect_stmt_temps(stmt: &AmirStmt) -> SmallVec<[TempId; 4]> {
 }
 
 fn collect_rvalue_temps(rvalue: &AmirRvalue) -> SmallVec<[TempId; 4]> {
-    match rvalue {
-        AmirRvalue::Use(op)
-        | AmirRvalue::Unary { operand: op, .. }
-        | AmirRvalue::Len(op)
-        | AmirRvalue::Alloc(op) => collect_operand_temps(op),
-        AmirRvalue::Binary { left, right, .. } => {
-            let mut t = collect_operand_temps(left);
-            t.extend(collect_operand_temps(right));
-            t
-        }
-        AmirRvalue::FieldAccess { base, .. }
-        | AmirRvalue::Discriminant { value: base }
-        | AmirRvalue::EnumPayload { value: base, .. } => collect_operand_temps(base),
-        AmirRvalue::EnumConstruct { payload, .. } => {
-            let mut t = SmallVec::new();
-            if let Some(op) = payload {
-                t.extend(collect_operand_temps(op));
-            }
-            t
-        }
-
-        AmirRvalue::IndexAccess { base, index } => {
-            let mut t = collect_operand_temps(base);
-            t.extend(collect_operand_temps(index));
-            t
-        }
-        AmirRvalue::StructLiteral { fields, .. } => {
-            let mut t = SmallVec::new();
-            for (_, op) in fields {
-                t.extend(collect_operand_temps(op));
-            }
-            t
-        }
-        AmirRvalue::Array { items } | AmirRvalue::Tuple { items } => {
-            let mut t = SmallVec::new();
-            for op in items {
-                t.extend(collect_operand_temps(op));
-            }
-            t
-        }
-        AmirRvalue::Load(place) | AmirRvalue::Borrow(place) | AmirRvalue::BorrowMut(place) => {
-            let mut t = SmallVec::new();
-            for proj in &place.projections {
-                if let AmirProjection::Index(op) = proj {
-                    t.extend(collect_operand_temps(op));
-                }
-            }
-            t
-        }
-    }
+    // Shared visitor keeps DCE in sync with new AmirRvalue variants (RC-ANALYSIS-LOAD).
+    let mut t = SmallVec::new();
+    for_each_rvalue_operand(rvalue, |op| {
+        t.extend(collect_operand_temps(op));
+    });
+    t
 }
 
 fn collect_operand_temps(op: &AmirOperand) -> SmallVec<[TempId; 4]> {

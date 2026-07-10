@@ -5,8 +5,8 @@
 
 use crate::amir::reachability::terminator_targets;
 use crate::amir::{
-    AmirFunc, AmirOperand, AmirPlace, AmirProjection, AmirRvalue, AmirStmt, AmirTerminator,
-    BlockId, LocalId,
+    for_each_rvalue_operand, for_each_rvalue_place, AmirFunc, AmirOperand, AmirPlace,
+    AmirProjection, AmirRvalue, AmirStmt, AmirTerminator, BlockId, LocalId,
 };
 use crate::{BitMatrix, BitSet};
 
@@ -150,41 +150,13 @@ fn collect_rvalue_uses(
     uses: &mut BitMatrix<BlockId, LocalId>,
     block: BlockId,
 ) {
-    match rvalue {
-        AmirRvalue::Load(place) | AmirRvalue::Borrow(place) | AmirRvalue::BorrowMut(place) => {
-            collect_place_use(place, defined, uses, block);
-        }
-        AmirRvalue::Use(op)
-        | AmirRvalue::Unary { operand: op, .. }
-        | AmirRvalue::FieldAccess { base: op, .. }
-        | AmirRvalue::Discriminant { value: op }
-        | AmirRvalue::EnumPayload { value: op, .. }
-        | AmirRvalue::Len(op)
-        | AmirRvalue::Alloc(op) => collect_operand_uses(op, defined, uses, block),
-        AmirRvalue::Binary { left, right, .. }
-        | AmirRvalue::IndexAccess {
-            base: left,
-            index: right,
-        } => {
-            collect_operand_uses(left, defined, uses, block);
-            collect_operand_uses(right, defined, uses, block);
-        }
-        AmirRvalue::StructLiteral { fields, .. } => {
-            for (_, op) in fields {
-                collect_operand_uses(op, defined, uses, block);
-            }
-        }
-        AmirRvalue::EnumConstruct { payload, .. } => {
-            if let Some(op) = payload {
-                collect_operand_uses(op, defined, uses, block);
-            }
-        }
-        AmirRvalue::Array { items } | AmirRvalue::Tuple { items } => {
-            for op in items {
-                collect_operand_uses(op, defined, uses, block);
-            }
-        }
-    }
+    // Shared visitor: places (Load/Borrow) and any nested operands (RC-ANALYSIS-LOAD).
+    for_each_rvalue_place(rvalue, |place| {
+        collect_place_use(place, defined, uses, block);
+    });
+    for_each_rvalue_operand(rvalue, |op| {
+        collect_operand_uses(op, defined, uses, block);
+    });
 }
 
 fn collect_place_use(

@@ -264,6 +264,23 @@ impl LowerCtx<'_> {
                 }
                 Ok(op)
             }
+            HirExprKind::StringInterp { parts } => {
+                let mut part_ops = Vec::with_capacity(parts.len());
+                for part in parts {
+                    let op = match part {
+                        arandu_middle::hir::HirStringPart::Text(t) => AmirOperand::Constant(
+                            self.intern_literal(AmirLiteralEntry::Str(t.clone())),
+                        ),
+                        arandu_middle::hir::HirStringPart::Expr(e) => {
+                            self.lower_expr(*e, None, symbols)?
+                        }
+                    };
+                    part_ops.push(op);
+                }
+                let dest = target.unwrap_or_else(|| self.new_temp(expr.ty.clone()));
+                self.emit_assign_temp(dest, AmirRvalue::StringInterp { parts: part_ops });
+                Ok(AmirOperand::Copy(dest))
+            }
             HirExprKind::Char(v) => {
                 let op =
                     AmirOperand::Constant(self.intern_literal(AmirLiteralEntry::Char(v.clone())));
