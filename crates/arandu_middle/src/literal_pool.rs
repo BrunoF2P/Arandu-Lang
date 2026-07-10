@@ -1,4 +1,7 @@
 //! Interned literal storage for AMIR constants (C2).
+//!
+//! Lexemes keep source spelling (underscores, base prefixes). Use
+//! [`parse_int_literal`] / [`parse_float_literal`] at consume sites (codegen, SCCP).
 
 use rustc_hash::FxHashMap;
 
@@ -36,6 +39,70 @@ impl AmirLiteralPool {
     }
 }
 
+/// Parse an Arandu integer lexeme (`1_000`, `0xFF`, `0b1010_0001`, `0o77`).
+#[must_use]
+pub fn parse_int_literal(s: &str) -> Option<i128> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let (negative, body) = if let Some(rest) = s.strip_prefix('-') {
+        (true, rest)
+    } else {
+        (false, s)
+    };
+    let (radix, digits) = if let Some(rest) = body
+        .strip_prefix("0x")
+        .or_else(|| body.strip_prefix("0X"))
+    {
+        (16u32, rest)
+    } else if let Some(rest) = body
+        .strip_prefix("0b")
+        .or_else(|| body.strip_prefix("0B"))
+    {
+        (2, rest)
+    } else if let Some(rest) = body
+        .strip_prefix("0o")
+        .or_else(|| body.strip_prefix("0O"))
+    {
+        (8, rest)
+    } else {
+        (10, body)
+    };
+    let cleaned: String = digits.chars().filter(|&c| c != '_').collect();
+    if cleaned.is_empty() {
+        return None;
+    }
+    let value = i128::from_str_radix(&cleaned, radix).ok()?;
+    Some(if negative { -value } else { value })
+}
+
+/// Parse an Arandu float lexeme (underscores allowed: `3.14_15`).
+#[must_use]
+pub fn parse_float_literal(s: &str) -> Option<f64> {
+    let cleaned: String = s.trim().chars().filter(|&c| c != '_').collect();
+    cleaned.parse().ok()
+}
+
+/// C-compatible spelling of an int lexeme (decimal, no underscores).
+#[must_use]
+pub fn int_literal_c_source(s: &str) -> Option<String> {
+    parse_int_literal(s).map(|v| v.to_string())
+}
+
+/// C-compatible spelling of a float lexeme (no underscores).
+#[must_use]
+pub fn float_literal_c_source(s: &str) -> Option<String> {
+    parse_float_literal(s).map(|v| {
+        // Keep a decimal form valid in C.
+        let mut out = v.to_string();
+        if !out.contains('.') && !out.contains('e') && !out.contains('E') {
+            out.push_str(".0");
+        }
+        out
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -50,5 +117,22 @@ mod tests {
         assert_eq!(lit1, lit2);
         assert_ne!(lit1, lit3);
         assert_eq!(pool.entries.len(), 2);
+    }
+
+    #[test]
+    fn parse_int_accepts_underscores_and_bases() {
+        assert_eq!(parse_int_literal("1_000"), Some(1000));
+        assert_eq!(parse_int_literal("0xFF"), Some(255));
+        assert_eq!(parse_int_literal("0b1010_0001"), Some(0b1010_0001));
+        assert_eq!(parse_int_literal("0o77"), Some(63));
+        assert_eq!(parse_int_literal("-1_024"), Some(-1024));
+        assert!(parse_int_literal("not_an_int").is_none());
+        assert!(parse_int_literal("0x").is_none());
+    }
+
+    #[test]
+    fn parse_float_accepts_underscores() {
+        assert_eq!(parse_float_literal("3.14"), Some(3.14));
+        assert!((parse_float_literal("1_000.5").unwrap() - 1000.5).abs() < f64::EPSILON);
     }
 }

@@ -10,8 +10,12 @@ impl<'a> CEmitter<'a> {
             AmirOperand::FunctionRef(id) => sanitize_c_ident(&self.symbols.get(*id).name),
             AmirOperand::Constant(c) => match c {
                 AmirConstant::Pool(id) => match self.program.literal_pool.get(*id) {
-                    AmirLiteralEntry::Int(v) => v.clone(),
-                    AmirLiteralEntry::Float(v) => v.clone(),
+                    AmirLiteralEntry::Int(v) => arandu_middle::literal_pool::int_literal_c_source(v)
+                        .unwrap_or_else(|| v.clone()),
+                    AmirLiteralEntry::Float(v) => {
+                        arandu_middle::literal_pool::float_literal_c_source(v)
+                            .unwrap_or_else(|| v.clone())
+                    }
                     AmirLiteralEntry::Str(_) => {
                         // Prefer named constant when available; compound literal fallback
                         // is handled in format_operand for pool constants.

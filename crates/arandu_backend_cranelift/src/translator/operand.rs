@@ -116,10 +116,9 @@ impl FunctionTranslator<'_, '_> {
                     let entry = self.literal_pool.get(*lit_id);
                     match entry {
                         arandu_semantics::literal_pool::AmirLiteralEntry::Int(s) => {
-                            let parsed = s.parse::<i64>();
-                            let val = match parsed {
-                                Ok(val) => val,
-                                Err(_) => {
+                            let val = match arandu_semantics::literal_pool::parse_int_literal(s) {
+                                Some(v) => v as i64,
+                                None => {
                                     self.record_ice(
                                         format!(
                                             "invalid integer literal in AMIR literal pool: '{s}'"
@@ -133,10 +132,10 @@ impl FunctionTranslator<'_, '_> {
                             self.builder.ins().iconst(ty, val)
                         }
                         arandu_semantics::literal_pool::AmirLiteralEntry::Float(s) => {
-                            let parsed = s.parse::<f64>();
-                            let val = match parsed {
-                                Ok(val) => val,
-                                Err(_) => {
+                            let val = match arandu_semantics::literal_pool::parse_float_literal(s)
+                            {
+                                Some(v) => v,
+                                None => {
                                     self.record_ice(
                                         format!(
                                             "invalid float literal in AMIR literal pool: '{s}'"
