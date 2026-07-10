@@ -894,6 +894,72 @@ func main(): int {
     );
 }
 
+/// M2: `&mut` then overlapping `&` while first loan is live → O003.
+#[test]
+fn check_o003_conflicting_borrows_fails() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_m2_o003.aru");
+    fs::write(
+        &file,
+        r#"module tests.cli.m2_o003
+
+func use_both(a: &mut int, b: &int): int {
+    return *a
+}
+
+func main(): int {
+    let n = 1
+    let a = &mut n
+    let b = &n
+    return use_both(a, b)
+}
+"#,
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+    let output = run_cli(&["check", &path]);
+    assert!(
+        !output.status.success(),
+        "expected O003 failure, stdout:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let err = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        err.contains("O003") || err.contains("borrow conflict") || err.contains("mutable borrow"),
+        "expected O003 diagnostic, got:\n{err}"
+    );
+}
+
+/// Sequential borrows after the previous ref dies are allowed.
+#[test]
+fn run_sequential_borrows_exits_5() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_m2_seq.aru");
+    fs::write(
+        &file,
+        r#"module tests.cli.m2_seq
+
+func main(): int {
+    let n = 5
+    let a = &n
+    let x = *a
+    let b = &mut n
+    let y = *b
+    return x
+}
+"#,
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+    let output = run_cli(&["run", &path]);
+    assert_eq!(
+        output.status.code(),
+        Some(5),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 /// F2.0: `&T` / `*p` safe borrow + deref via stack home in Cranelift JIT.
 #[test]
 fn run_ref_borrow_deref_exits_42() {

@@ -153,6 +153,10 @@ pub(crate) fn lower_func(
     // 4. Prune dummy loads and stores
     super::prune_dummy_loads_stores(&mut amir_f);
 
+    // M2: O002/O003/O006 on the *final* AMIR (after prune/rewrite).
+    // Dummy Store of `&T` locals would otherwise hide holder liveness on raw AMIR.
+    func_diagnostics.extend(crate::borrow_check::check_borrows(&amir_f, &tc.symbols));
+
     Ok(amir_f)
 }
 

@@ -104,7 +104,7 @@ Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
    ├─ [x] F2.1   Local Borrow Checking Incremental (Salsa `block_borrow_facts` / may-borrow dataflow A9)
    ├─ [x] F2.2   Janelas de Liveness de Empréstimos (loan window = live range da ref; `is_borrowed_at`)
    └─ [ ] F2.3   Análise de Escape e Fallback Geracional (Vale-style generational refs para stack-locals que escapam)
-[ ] M2     Move checker avançado (O002, O003, O006)
+[x] M2     Move checker avançado (O002, O003, O006) — `borrow_check` sobre F2.1/F2.2
            └─ Dependência: fecha a garantia estática de double-free que hoje é mitigada apenas por poison-check (0xDE) em debug (ver BC.2/BC.3)
 [ ] G2     Generational fallback opcional + O004 (escape analysis)
 [ ] T2     DX Enhancements: Default Generic Parameters & Scoped Enum Variant Sugar

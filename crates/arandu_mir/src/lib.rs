@@ -1,3 +1,4 @@
+pub mod borrow_check;
 pub mod borrow_facts;
 pub(crate) mod dce;
 pub mod definite_init;
@@ -8,6 +9,7 @@ pub mod optimize;
 pub(crate) mod sccp;
 pub(crate) mod simplify_cfg;
 
+pub use borrow_check::check_borrows;
 pub use lower_amir::lower_to_amir;
 pub use move_checker::check_moves;
 pub use optimize::optimize_amir;

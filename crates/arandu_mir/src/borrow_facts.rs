@@ -105,8 +105,8 @@ pub struct FuncBorrowFacts {
     pub borrow_site_counts: Vec<u32>,
     /// All loans with propagated holders (for M2 / [`is_borrowed_at`]).
     pub loans: Vec<Loan>,
-    temp_live: TempLiveness,
-    local_live: LocalLiveness,
+    pub temp_live: TempLiveness,
+    pub local_live: LocalLiveness,
 }
 
 impl FuncBorrowFacts {

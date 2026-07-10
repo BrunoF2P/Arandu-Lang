@@ -24,7 +24,7 @@ pub use arandu_middle::ops::{BinaryOp, SetOp, UnaryOp};
 
 pub mod passes;
 
-pub use arandu_mir::{check_moves, lower_to_amir, optimize_amir};
+pub use arandu_mir::{check_borrows, check_moves, lower_to_amir, optimize_amir};
 pub use arandu_resolve::{resolve_for_test, resolve_imports_and_bodies, resolve_local};
 pub use arandu_typeck::{
     TypeCheckResult, TypeChecker, TypeInfo, body_item_symbols, check_bodies, check_bodies_only,

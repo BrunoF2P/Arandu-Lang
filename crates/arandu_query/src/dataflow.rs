@@ -302,6 +302,11 @@ pub fn item_ide_diagnostics(
         {
             out.push(IdeDiagnostic::from_diag(&d, Some(item_sym), Some(bid)));
         }
+        for (bid, d) in
+            arandu_mir::borrow_check::check_borrows_by_block(&amir, sigs.symbols.as_ref())
+        {
+            out.push(IdeDiagnostic::from_diag(&d, Some(item_sym), Some(bid)));
+        }
 
         // Populate block facts only (do NOT call block_diagnostics — cycle risk).
         for bi in 0..amir.blocks.len() {
@@ -364,6 +369,13 @@ pub fn block_diagnostics(
             }
         }
         for (bid, d) in arandu_mir::move_checker::check_moves_by_block(&amir, sigs.symbols.as_ref())
+        {
+            if bid == block {
+                out.push(IdeDiagnostic::from_diag(&d, Some(func_sym), Some(bid)));
+            }
+        }
+        for (bid, d) in
+            arandu_mir::borrow_check::check_borrows_by_block(&amir, sigs.symbols.as_ref())
         {
             if bid == block {
                 out.push(IdeDiagnostic::from_diag(&d, Some(func_sym), Some(bid)));
