@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::Primitive;
+    use crate::types::{ArType, Primitive, TypeInterner};
 
     #[test]
     fn local_id_roundtrip() {
@@ -17,9 +17,12 @@ mod tests {
 
     #[test]
     fn amir_local_construction() {
+        let interner = TypeInterner::new();
+        let ty = interner.intern(ArType::Primitive(Primitive::Int));
         let local = AmirLocal {
             id: LocalId::from_usize(0),
-            ty: ArType::Primitive(Primitive::Int),
+            ty,
+            is_memory: false,
             symbol: Some(SymbolId::new(0, 1)),
             span: Span::new(0, 0, 0),
             use_span: None,
@@ -30,12 +33,16 @@ mod tests {
 
     #[test]
     fn amir_temp_construction() {
+        let interner = TypeInterner::new();
+        let ty = interner.intern(ArType::Primitive(Primitive::Bool));
         let temp = AmirTemp {
             id: TempId::from_usize(3),
-            ty: ArType::Primitive(Primitive::Bool),
+            ty,
+            is_copy: true,
             span: Span::new(0, 0, 0),
         };
         assert_eq!(temp.id.as_usize(), 3);
+        assert!(temp.is_copy);
     }
 
     #[test]
@@ -52,7 +59,7 @@ mod tests {
 use crate::SymbolId;
 use crate::hir::ReceiverKind;
 use crate::newtype_index;
-use crate::types::ArType;
+use crate::types::TypeId;
 use arandu_lexer::Span;
 
 newtype_index!(LocalId);
@@ -64,18 +71,26 @@ pub struct AmirReceiver {
     pub kind: ReceiverKind,
 }
 
+/// Stack local. `ty` is a dense [`TypeId`] (DoD — no owned `ArType` tree).
 #[derive(Debug, Clone)]
 pub struct AmirLocal {
     pub id: LocalId,
-    pub ty: ArType,
+    pub ty: TypeId,
+    /// Denormalized: true if this local is memory-backed (struct/str/array/…).
+    /// Lets prune/analyses avoid resolving `TypeId` without an interner.
+    pub is_memory: bool,
     pub symbol: Option<SymbolId>,
     pub span: Span,
+    /// Latest source use site recorded during AMIR lower (S-USE-SPAN).
     pub use_span: Option<Span>,
 }
 
+/// SSA temporary. `ty` is interned; `is_copy` is denormalized so move analysis
+/// needs no `TypeInterner` on the hot path.
 #[derive(Debug, Clone)]
 pub struct AmirTemp {
     pub id: TempId,
-    pub ty: ArType,
+    pub ty: TypeId,
+    pub is_copy: bool,
     pub span: Span,
 }

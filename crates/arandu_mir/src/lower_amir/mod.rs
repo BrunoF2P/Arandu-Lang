@@ -106,15 +106,13 @@ pub fn prune_dummy_loads_stores(func: &mut AmirFunc) {
                 .expect("stmt_id from block_stmt_ids is always present in func.stmts");
             let keep = match stmt {
                 AmirStmt::Store { lhs, .. } if lhs.projections.is_empty() => {
-                    let local_ty = &func.locals[lhs.local.as_usize()].ty;
-                    is_memory_type(local_ty)
+                    func.locals[lhs.local.as_usize()].is_memory
                 }
                 AmirStmt::Assign {
                     rhs: AmirRvalue::Load(place),
                     ..
                 } if place.projections.is_empty() => {
-                    let local_ty = &func.locals[place.local.as_usize()].ty;
-                    is_memory_type(local_ty)
+                    func.locals[place.local.as_usize()].is_memory
                 }
                 _ => true,
             };
@@ -182,6 +180,8 @@ pub(crate) struct LowerCtx<'a> {
     current_def: FxHashMap<(BlockId, LocalId), AmirOperand>,
     incomplete_phis: FxHashMap<BlockId, Vec<(LocalId, TempId)>>,
     redirected_temps: FxHashMap<TempId, AmirOperand>,
+    /// Span of the HIR construct currently being lowered (for `use_span` / diags).
+    current_span: Span,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

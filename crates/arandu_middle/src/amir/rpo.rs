@@ -72,7 +72,7 @@ mod tests {
         let cfg = compute_cfg_edges(&blocks);
         AmirFunc {
             symbol: SymbolId::new(0, 0),
-            return_type: ArType::Void,
+            return_type: crate::types::TypeInterner::new().intern(ArType::Void),
             receiver: None,
             params: Vec::new(),
             locals: Vec::new(),

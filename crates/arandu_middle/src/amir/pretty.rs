@@ -46,10 +46,10 @@ impl AmirFunc {
             .iter()
             .enumerate()
             .map(|(i, p)| {
-                let ty = self
-                    .temps
-                    .get(p.as_usize())
-                    .map_or(crate::types::ArType::Void, |t| t.ty.clone());
+                let ty = self.temps.get(p.as_usize()).map_or_else(
+                    || crate::types::ArType::Void,
+                    |t| interner.resolve(t.ty),
+                );
                 let prefix = self
                     .receiver
                     .as_ref()
@@ -68,7 +68,9 @@ impl AmirFunc {
             "Func {}({}) -> {}\n",
             symbols.get(self.symbol).name,
             param_strs.join(", "),
-            self.return_type.display(symbols, interner)
+            interner
+                .resolve(self.return_type)
+                .display(symbols, interner)
         ));
 
         out.push_str("  locals:\n");
@@ -82,7 +84,7 @@ impl AmirFunc {
             out.push_str(&format!(
                 "    _{}: {}{}\n",
                 temp.id.0,
-                temp.ty.display(symbols, interner),
+                interner.resolve(temp.ty).display(symbols, interner),
                 comment
             ));
         }
@@ -96,7 +98,7 @@ impl AmirFunc {
             out.push_str(&format!(
                 "    s{}: {}{}\n",
                 local.id.0,
-                local.ty.display(symbols, interner),
+                interner.resolve(local.ty).display(symbols, interner),
                 comment
             ));
         }
@@ -111,7 +113,11 @@ impl AmirFunc {
                     .params
                     .iter()
                     .map(|p| {
-                        let mut s = format!("_{}: {}", p.id.0, p.ty.display(symbols, interner));
+                        let mut s = format!(
+                            "_{}: {}",
+                            p.id.0,
+                            interner.resolve(p.ty).display(symbols, interner)
+                        );
                         if let Some(ref from) = p.from {
                             s.push_str(&format!(" /* from: \"{from}\" */"));
                         }

@@ -1,6 +1,6 @@
 use super::local::{LocalId, TempId};
 use super::stmt::AmirTerminator;
-use crate::types::ArType;
+use crate::types::TypeId;
 
 use crate::DenseRange;
 use crate::newtype_index;
@@ -11,7 +11,7 @@ newtype_index!(BlockId);
 pub struct BlockParam {
     pub id: TempId,
     pub local: LocalId,
-    pub ty: ArType,
+    pub ty: TypeId,
     pub from: Option<smol_str::SmolStr>,
     pub moved: bool,
 }

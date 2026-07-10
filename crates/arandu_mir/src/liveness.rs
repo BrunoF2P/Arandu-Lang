@@ -194,6 +194,11 @@ fn collect_operand_uses(
 
 #[cfg(test)]
 mod tests {
+
+    fn intern_ty(ty: crate::types::ArType) -> crate::types::TypeId {
+        // Fresh interner per call is OK in unit tests (pre-interns primitives).
+        crate::types::TypeInterner::new().intern(ty)
+    }
     use crate::amir::{
         AmirBasicBlock, AmirConstant, AmirFunc, AmirOperand, AmirRvalue, AmirStmt, AmirStmtTable,
         AmirTerminator, BlockId, LocalId, TempId,
@@ -219,12 +224,13 @@ mod tests {
         let cfg = compute_cfg_edges(&blocks);
         AmirFunc {
             symbol: crate::SymbolId::new(0, 0),
-            return_type: ArType::Void,
+            return_type: intern_ty(ArType::Void),
             receiver: None,
             params: Vec::new(),
             locals: vec![crate::amir::AmirLocal {
                 id: local_id(0),
-                ty: ArType::Void,
+                ty: intern_ty(ArType::Void),
+            is_memory: false,
                 symbol: None,
                 span: crate::Span::new(0, 0, 0),
                 use_span: None,

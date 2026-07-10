@@ -37,12 +37,16 @@ pub(crate) fn lower_func(
         current_def: FxHashMap::default(),
         incomplete_phis: FxHashMap::default(),
         redirected_temps: FxHashMap::default(),
+        current_span: arandu_lexer::Span::new(0, 0, 0),
     };
 
     // Return register is TempId(0)
+    let ret_is_copy = f.return_type.is_copy_v01();
+    let ret_ty = ctx.intern_ty(f.return_type.clone());
     ctx.temps.push(AmirTemp {
         id: TempId(0),
-        ty: f.return_type.clone(),
+        ty: ret_ty,
+        is_copy: ret_is_copy,
         span: arandu_lexer::Span::new(0, 0, 0),
     });
     ctx.temp_states.push(MoveState::Available);
@@ -91,7 +95,7 @@ pub(crate) fn lower_func(
     let raw_cfg = crate::cfg::compute_cfg_edges(&ctx.blocks);
     let raw_func = AmirFunc {
         symbol: f.symbol,
-        return_type: f.return_type.clone(),
+        return_type: ret_ty,
         receiver,
         params: params.clone(),
         locals: ctx.locals.clone(),
@@ -120,7 +124,7 @@ pub(crate) fn lower_func(
     let cfg = crate::cfg::compute_cfg_edges(&ctx.blocks);
     let mut amir_f = AmirFunc {
         symbol: f.symbol,
-        return_type: f.return_type.clone(),
+        return_type: ret_ty,
         receiver,
         params,
         locals: ctx.locals,

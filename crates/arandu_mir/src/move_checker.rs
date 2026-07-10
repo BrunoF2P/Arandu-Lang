@@ -340,7 +340,7 @@ fn consume_operand(
         return;
     };
 
-    if func.temps[temp.as_usize()].ty.is_copy_v01() {
+    if func.temps[temp.as_usize()].is_copy {
         return;
     }
     let Some(local) = origin_for(*temp, temp_origins) else {
@@ -491,6 +491,11 @@ fn successors(term: &AmirTerminator) -> Vec<crate::amir::BlockId> {
 
 #[cfg(test)]
 mod tests {
+
+    fn intern_ty(ty: crate::types::ArType) -> crate::types::TypeId {
+        // Fresh interner per call is OK in unit tests (pre-interns primitives).
+        crate::types::TypeInterner::new().intern(ty)
+    }
     use super::*;
     use crate::amir::program::extend_block_range;
     use crate::amir::{AmirBasicBlock, AmirLocal, AmirStmtTable, AmirTemp, BlockId};
@@ -507,9 +512,11 @@ mod tests {
     }
 
     fn local(id: usize, ty: ArType) -> AmirLocal {
+        let is_memory = !ty.is_copy_v01() && !matches!(ty, ArType::Primitive(_));
         AmirLocal {
             id: LocalId::from_usize(id),
-            ty,
+            ty: intern_ty(ty),
+            is_memory,
             symbol: None,
             span: Span::new(0, 0, 0),
             use_span: None,
@@ -517,9 +524,11 @@ mod tests {
     }
 
     fn temp(id: usize, ty: ArType) -> AmirTemp {
+        let is_copy = ty.is_copy_v01();
         AmirTemp {
             id: TempId::from_usize(id),
-            ty,
+            ty: intern_ty(ty),
+            is_copy,
             span: Span::new(0, 0, 0),
         }
     }
@@ -554,7 +563,7 @@ mod tests {
         let cfg = crate::cfg::compute_cfg_edges(&blocks);
         AmirFunc {
             symbol: crate::SymbolId::new(0, 0),
-            return_type: ArType::Void,
+            return_type: intern_ty(ArType::Void),
             receiver: None,
             params: Vec::new(),
             locals,

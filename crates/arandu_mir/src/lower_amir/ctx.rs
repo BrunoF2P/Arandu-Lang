@@ -26,11 +26,18 @@ impl LowerCtx<'_> {
         AmirConstant::Pool(self.literal_pool.intern(entry))
     }
 
+    pub(crate) fn intern_ty(&self, ty: ArType) -> crate::types::TypeId {
+        self.tc.type_info.type_interner.intern(ty)
+    }
+
     pub(crate) fn new_temp(&mut self, ty: ArType) -> TempId {
+        let is_copy = ty.is_copy_v01();
+        let ty = self.intern_ty(ty);
         let id = self.next_temp_id();
         self.temps.push(AmirTemp {
             id,
             ty,
+            is_copy,
             span: Span::new(0, 0, 0),
         });
         self.temp_states.push(MoveState::Available);
@@ -39,10 +46,13 @@ impl LowerCtx<'_> {
     }
 
     pub(crate) fn new_local(&mut self, ty: ArType, symbol: SymbolId, span: Span) -> LocalId {
+        let is_memory = super::is_memory_type(&ty);
+        let ty = self.intern_ty(ty);
         let id = self.next_local_id();
         self.locals.push(AmirLocal {
             id,
             ty,
+            is_memory,
             symbol: Some(symbol),
             span,
             use_span: None,
@@ -53,10 +63,13 @@ impl LowerCtx<'_> {
     }
 
     pub(crate) fn new_compiler_local(&mut self, ty: ArType) -> LocalId {
+        let is_memory = super::is_memory_type(&ty);
+        let ty = self.intern_ty(ty);
         let id = self.next_local_id();
         self.locals.push(AmirLocal {
             id,
             ty,
+            is_memory,
             symbol: None,
             span: Span::new(0, 0, 0),
             use_span: None,
@@ -65,10 +78,14 @@ impl LowerCtx<'_> {
         id
     }
 
+    pub(crate) fn resolve_ty(&self, id: crate::types::TypeId) -> ArType {
+        self.tc.type_info.type_interner.resolve(id)
+    }
+
     pub(crate) fn operand_type(&self, op: &AmirOperand) -> ArType {
         match op {
             AmirOperand::Copy(temp_id) | AmirOperand::Move(temp_id) => {
-                self.temps[temp_id.as_usize()].ty.clone()
+                self.resolve_ty(self.temps[temp_id.as_usize()].ty)
             }
             AmirOperand::Constant(c) => match c {
                 AmirConstant::Bool(_) => ArType::Primitive(Primitive::Bool),
@@ -247,12 +264,25 @@ impl LowerCtx<'_> {
         Ok(())
     }
 
+    /// Record the latest source use of a local (S-USE-SPAN). Analyses prefer
+    /// `use_span` over declaration span so O008/move point at the use site.
+    pub(crate) fn note_local_use(&mut self, local: LocalId, span: Span) {
+        // Skip empty spans so synthetic lowers don't wipe a real use site.
+        if span.start == span.end {
+            return;
+        }
+        if let Some(loc) = self.locals.get_mut(local.as_usize()) {
+            loc.use_span = Some(span);
+        }
+    }
+
     pub(crate) fn load_place(
         &mut self,
         place: &AmirPlace,
         ty: ArType,
         _projection_types: &[ArType],
     ) -> Result<AmirOperand, Diagnostic> {
+        self.note_local_use(place.local, self.current_span);
         let temp = self.new_temp(ty);
         self.emit_assign_temp(temp, AmirRvalue::Load(place.clone()));
         if place.projections.is_empty() {
@@ -269,8 +299,7 @@ impl LowerCtx<'_> {
         if self.temp_states[idx] == MoveState::Moved {
             return Err(self.move_diag(format!("use of moved temporary _{idx}")));
         }
-        let ty = self.temps[idx].ty.clone();
-        if ty.is_copy_v01() {
+        if self.temps[idx].is_copy {
             return Ok(AmirOperand::Copy(temp));
         }
         self.temp_states[idx] = MoveState::Moved;
@@ -339,9 +368,22 @@ impl LowerCtx<'_> {
             .expect("must be in a block to read variable");
         let val = self.read_variable(block, local);
 
+        self.note_local_use(local, self.current_span);
+
         // Emit a dummy Load statement
-        let ty = self.locals[local.as_usize()].ty.clone();
-        let temp = self.new_temp(ty.clone());
+        let ty_id = self.locals[local.as_usize()].ty;
+        let ty = self.resolve_ty(ty_id);
+        let is_copy = ty.is_copy_v01();
+        let is_mem = super::is_memory_type(&ty);
+        let temp = self.next_temp_id();
+        self.temps.push(AmirTemp {
+            id: temp,
+            ty: ty_id,
+            is_copy,
+            span: Span::new(0, 0, 0),
+        });
+        self.temp_states.push(MoveState::Available);
+        self.temp_origins.push(Some(local));
         self.push_stmt(AmirStmt::Assign {
             lhs: temp,
             rhs: AmirRvalue::Load(AmirPlace {
@@ -349,11 +391,10 @@ impl LowerCtx<'_> {
                 projections: smallvec::smallvec![],
             }),
         });
-        self.temp_origins[temp.as_usize()] = Some(local);
 
         // Register redirection so that rewrite_all_operands replaces temp with the actual SSA value (val)
         // Only do this for register types; memory types must always load from their actual memory place.
-        if !super::is_memory_type(&ty) {
+        if !is_mem {
             self.redirected_temps.insert(temp, val);
         }
 
@@ -367,8 +408,10 @@ impl LowerCtx<'_> {
     ) -> AmirOperand {
         let val = if !self.sealed_blocks.contains(&block) {
             // Block is not sealed: generate a placeholder block parameter
-            let ty = self.locals[local.as_usize()].ty.clone();
-            let temp_id = self.new_temp(ty.clone());
+            let ty_id = self.locals[local.as_usize()].ty;
+            let ty = self.resolve_ty(ty_id);
+            let is_copy = ty.is_copy_v01();
+            let temp_id = self.new_temp(ty);
             self.temp_origins[temp_id.as_usize()] = Some(local);
             let from_name = self.locals[local.as_usize()]
                 .symbol
@@ -376,9 +419,9 @@ impl LowerCtx<'_> {
             let param = BlockParam {
                 id: temp_id,
                 local,
-                ty: ty.clone(),
+                ty: ty_id,
                 from: from_name,
-                moved: !ty.is_copy_v01(),
+                moved: !is_copy,
             };
             self.blocks[block.as_usize()].params.push(param);
             let op = AmirOperand::Copy(temp_id);
@@ -392,8 +435,10 @@ impl LowerCtx<'_> {
             if preds.len() == 1 {
                 self.read_variable(preds[0], local)
             } else {
-                let ty = self.locals[local.as_usize()].ty.clone();
-                let temp_id = self.new_temp(ty.clone());
+                let ty_id = self.locals[local.as_usize()].ty;
+                let ty = self.resolve_ty(ty_id);
+                let is_copy = ty.is_copy_v01();
+                let temp_id = self.new_temp(ty);
                 self.temp_origins[temp_id.as_usize()] = Some(local);
                 let from_name = self.locals[local.as_usize()]
                     .symbol
@@ -401,9 +446,9 @@ impl LowerCtx<'_> {
                 let param = BlockParam {
                     id: temp_id,
                     local,
-                    ty: ty.clone(),
+                    ty: ty_id,
                     from: from_name,
-                    moved: !ty.is_copy_v01(),
+                    moved: !is_copy,
                 };
                 self.blocks[block.as_usize()].params.push(param);
                 let op = AmirOperand::Copy(temp_id);

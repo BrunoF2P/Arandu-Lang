@@ -253,6 +253,11 @@ fn emit_uninit_diag(
 
 #[cfg(test)]
 mod tests {
+
+    fn intern_ty(ty: crate::types::ArType) -> crate::types::TypeId {
+        // Fresh interner per call is OK in unit tests (pre-interns primitives).
+        crate::types::TypeInterner::new().intern(ty)
+    }
     use super::*;
     use crate::SymbolId;
     use crate::SymbolTable;
@@ -273,7 +278,8 @@ mod tests {
     fn make_local(id: usize, sym: Option<SymbolId>) -> AmirLocal {
         AmirLocal {
             id: LocalId::from_usize(id),
-            ty: ArType::Primitive(crate::passes::type_checker::types::Primitive::Int),
+            ty: intern_ty(ArType::Primitive(crate::passes::type_checker::types::Primitive::Int)),
+            is_memory: false,
             symbol: sym,
             span: Span::new(0, 0, 0),
             use_span: None,
@@ -283,7 +289,8 @@ mod tests {
     fn make_temp(id: usize) -> AmirTemp {
         AmirTemp {
             id: TempId::from_usize(id),
-            ty: ArType::Primitive(crate::passes::type_checker::types::Primitive::Int),
+            ty: intern_ty(ArType::Primitive(crate::passes::type_checker::types::Primitive::Int)),
+            is_copy: true,
             span: Span::new(0, 0, 0),
         }
     }
@@ -325,7 +332,7 @@ mod tests {
         let cfg = crate::cfg::compute_cfg_edges(&blocks);
         AmirFunc {
             symbol: SymbolId::new(0, 0),
-            return_type: ArType::Void,
+            return_type: intern_ty(ArType::Void),
             receiver: None,
             params: vec![],
             locals,
@@ -397,6 +404,38 @@ mod tests {
         let diags = check_definite_init(&func, &st);
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].code, DiagCode::O008UseBeforeInit);
+    }
+
+    #[test]
+    fn test_o008_prefers_use_span_over_decl_span() {
+        // Declaration at 0..3; recorded use at 10..15 — O008 must point at use.
+        let mut local = make_local(0, None);
+        local.span = Span::new(0, 0, 3);
+        local.use_span = Some(Span::new(0, 10, 15));
+
+        let mut stmts = AmirStmtTable::new();
+        let blocks = vec![make_block(
+            0,
+            vec![AmirStmt::Assign {
+                lhs: TempId::from_usize(1),
+                rhs: AmirRvalue::Load(place(0)),
+            }],
+            AmirTerminator::Return,
+            &[],
+            &[],
+            &mut stmts,
+        )];
+        let func = make_func(
+            blocks,
+            stmts,
+            vec![local],
+            vec![make_temp(0), make_temp(1)],
+        );
+        let st = make_symbol_table();
+        let diags = check_definite_init(&func, &st);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].code, DiagCode::O008UseBeforeInit);
+        assert_eq!(diags[0].span, Span::new(0, 10, 15));
     }
 
     #[test]

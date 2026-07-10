@@ -39,6 +39,11 @@ pub fn optimize_amir_func(func: &mut AmirFunc, literal_pool: &mut AmirLiteralPoo
 
 #[cfg(test)]
 mod tests {
+
+    fn intern_ty(ty: crate::types::ArType) -> crate::types::TypeId {
+        // Fresh interner per call is OK in unit tests (pre-interns primitives).
+        crate::types::TypeInterner::new().intern(ty)
+    }
     use super::*;
     use crate::amir::program::extend_block_range;
     use crate::amir::{
@@ -54,7 +59,8 @@ mod tests {
     fn int_temp(id: usize) -> AmirTemp {
         AmirTemp {
             id: TempId::from_usize(id),
-            ty: ArType::Primitive(Primitive::Int),
+            ty: intern_ty(ArType::Primitive(Primitive::Int)),
+            is_copy: true,
             span: arandu_lexer::Span::new(0, 0, 0),
         }
     }
@@ -62,7 +68,8 @@ mod tests {
     fn bool_temp(id: usize) -> AmirTemp {
         AmirTemp {
             id: TempId::from_usize(id),
-            ty: ArType::Primitive(Primitive::Bool),
+            ty: intern_ty(ArType::Primitive(Primitive::Bool)),
+            is_copy: true,
             span: arandu_lexer::Span::new(0, 0, 0),
         }
     }
@@ -83,7 +90,7 @@ mod tests {
         let cfg = compute_cfg_edges(&blocks);
         AmirFunc {
             symbol: crate::SymbolId::new(0, 0),
-            return_type: ArType::Void,
+            return_type: intern_ty(ArType::Void),
             receiver: None,
             params: Vec::new(),
             locals: Vec::new(),
@@ -286,20 +293,22 @@ mod tests {
         });
         let mut func = AmirFunc {
             symbol: crate::SymbolId::new(0, 0),
-            return_type: ArType::Void,
+            return_type: intern_ty(ArType::Void),
             receiver: None,
             params: Vec::new(),
             locals: vec![
                 crate::amir::AmirLocal {
                     id: crate::amir::LocalId::from_usize(0),
-                    ty: ArType::Primitive(Primitive::Bool),
+                    ty: intern_ty(ArType::Primitive(Primitive::Bool)),
+            is_memory: false,
                     symbol: None,
                     span: arandu_lexer::Span::new(0, 0, 0),
                     use_span: None,
                 },
                 crate::amir::AmirLocal {
                     id: crate::amir::LocalId::from_usize(1),
-                    ty: ArType::Primitive(Primitive::Bool),
+                    ty: intern_ty(ArType::Primitive(Primitive::Bool)),
+            is_memory: false,
                     symbol: None,
                     span: arandu_lexer::Span::new(0, 0, 0),
                     use_span: None,
@@ -442,20 +451,22 @@ mod tests {
         });
         let mut func = AmirFunc {
             symbol: crate::SymbolId::new(0, 0),
-            return_type: ArType::Void,
+            return_type: intern_ty(ArType::Void),
             receiver: None,
             params: Vec::new(),
             locals: vec![
                 crate::amir::AmirLocal {
                     id: crate::amir::LocalId::from_usize(0),
-                    ty: ArType::Primitive(Primitive::Bool),
+                    ty: intern_ty(ArType::Primitive(Primitive::Bool)),
+            is_memory: false,
                     symbol: None,
                     span: arandu_lexer::Span::new(0, 0, 0),
                     use_span: None,
                 },
                 crate::amir::AmirLocal {
                     id: crate::amir::LocalId::from_usize(1),
-                    ty: ArType::Primitive(Primitive::Bool),
+                    ty: intern_ty(ArType::Primitive(Primitive::Bool)),
+            is_memory: false,
                     symbol: None,
                     span: arandu_lexer::Span::new(0, 0, 0),
                     use_span: None,

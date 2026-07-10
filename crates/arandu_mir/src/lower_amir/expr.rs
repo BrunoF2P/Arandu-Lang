@@ -232,6 +232,7 @@ impl LowerCtx<'_> {
         symbols: &SymbolTable,
     ) -> Result<AmirOperand, Diagnostic> {
         let expr = self.hir.pool.expr(expr_id);
+        self.current_span = expr.span;
         match &expr.kind {
             HirExprKind::Int(v) => {
                 let op =

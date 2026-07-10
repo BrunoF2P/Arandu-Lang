@@ -5,7 +5,7 @@ use crate::SymbolId;
 use crate::cfg::ControlFlowGraph;
 use crate::layout::DenseRange;
 use crate::literal_pool::AmirLiteralPool;
-use crate::types::ArType;
+use crate::types::TypeId;
 
 #[derive(Debug, Clone)]
 pub struct AmirProgram {
@@ -18,7 +18,8 @@ pub struct AmirProgram {
 #[derive(Debug, Clone)]
 pub struct AmirFunc {
     pub symbol: SymbolId,
-    pub return_type: ArType,
+    /// Interned return type (dense `TypeId`).
+    pub return_type: TypeId,
     pub receiver: Option<AmirReceiver>,
     pub params: Vec<TempId>,
     pub locals: Vec<AmirLocal>,
@@ -112,9 +113,10 @@ mod tests {
     }
 
     fn func() -> AmirFunc {
+        let interner = crate::types::TypeInterner::new();
         AmirFunc {
             symbol: SymbolId::new(0, 0),
-            return_type: ArType::Void,
+            return_type: interner.intern(ArType::Void),
             receiver: None,
             params: Vec::new(),
             locals: Vec::new(),

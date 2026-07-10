@@ -103,13 +103,29 @@ impl TypeInterner {
         id
     }
 
-    /// Resolve a `TypeId` back to its `ArType`.
+    /// Resolve a `TypeId` back to its `ArType` (clones the interned value).
+    ///
+    /// Prefer [`with_type`] / [`is_copy`] when you only need a temporary view —
+    /// those avoid an `ArType` heap clone.
     ///
     /// # Panics
     /// Panics if `id` was not produced by this interner.
     #[must_use]
     pub fn resolve(&self, id: TypeId) -> ArType {
         self.types.read().unwrap()[id.as_usize()].clone()
+    }
+
+    /// Borrow the interned type for the duration of `f` (no `ArType` clone).
+    #[inline]
+    pub fn with_type<R>(&self, id: TypeId, f: impl FnOnce(&ArType) -> R) -> R {
+        let types = self.types.read().unwrap();
+        f(&types[id.as_usize()])
+    }
+
+    /// Whether the interned type is copy under v0.1 rules (no clone of `ArType`).
+    #[must_use]
+    pub fn is_copy_v01(&self, id: TypeId) -> bool {
+        self.with_type(id, ArType::is_copy_v01)
     }
 
     /// Try to resolve a `TypeId`, returning `None` if out of range.

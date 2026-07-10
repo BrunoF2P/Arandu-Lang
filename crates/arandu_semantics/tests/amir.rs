@@ -301,11 +301,16 @@ fn dummy_span() -> Span {
     Span::new(0, 0, 0)
 }
 
+fn intern_ty(ty: ArType) -> arandu_middle::types::TypeId {
+    arandu_middle::types::TypeInterner::new().intern(ty)
+}
+
 fn test_local(id: usize, symbol_id: u32) -> AmirLocal {
     AmirLocal {
         id: local(id),
         symbol: Some(symbol(symbol_id)),
-        ty: ArType::Void,
+        ty: intern_ty(ArType::Void),
+        is_memory: false,
         span: dummy_span(),
         use_span: None,
     }
@@ -314,7 +319,8 @@ fn test_local(id: usize, symbol_id: u32) -> AmirLocal {
 fn test_temp(id: usize) -> AmirTemp {
     AmirTemp {
         id: temp(id),
-        ty: ArType::Void,
+        ty: intern_ty(ArType::Void),
+        is_copy: true,
         span: dummy_span(),
     }
 }
@@ -328,7 +334,7 @@ fn test_func(
     let cfg = arandu_semantics::cfg::compute_cfg_edges(&blocks);
     AmirFunc {
         symbol: symbol(0),
-        return_type: ArType::Void,
+        return_type: intern_ty(ArType::Void),
         receiver: None,
         params: Vec::new(),
         locals,
@@ -462,8 +468,9 @@ fn validate_amir_rejects_poison_temp_with_icegen002() {
         params: Vec::new(),
         terminator: AmirTerminator::Return,
     };
+    // Dense-id invariant (TYP-2): temp at index 0 must have TempId(0).
     let mut poison_temp = test_temp(0);
-    poison_temp.ty = arandu_middle::types::ArType::Error;
+    poison_temp.id = TempId::from_usize(99);
     let func = test_func(
         Vec::new(),
         vec![poison_temp],
