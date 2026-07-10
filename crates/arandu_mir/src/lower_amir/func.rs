@@ -109,6 +109,7 @@ pub(crate) fn lower_func(
     func_diagnostics.extend(crate::amir_validate::validate_amir_func(
         &raw_func,
         &tc.symbols,
+        &tc.type_info.type_interner,
     ));
     func_diagnostics.extend(crate::definite_init::check_definite_init(
         &raw_func,

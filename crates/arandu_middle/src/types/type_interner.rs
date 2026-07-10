@@ -128,6 +128,18 @@ impl TypeInterner {
         self.with_type(id, ArType::is_copy_v01)
     }
 
+    /// Whether `id` is the poison [`ArType::Error`] (no clone).
+    #[must_use]
+    pub fn is_error(&self, id: TypeId) -> bool {
+        self.with_type(id, ArType::is_error)
+    }
+
+    /// Canonical id for [`ArType::Error`] in this interner (pre-interned in [`new`]).
+    #[must_use]
+    pub fn error_type_id(&self) -> TypeId {
+        self.intern(ArType::Error)
+    }
+
     /// Try to resolve a `TypeId`, returning `None` if out of range.
     #[must_use]
     pub fn try_resolve(&self, id: TypeId) -> Option<ArType> {

@@ -337,3 +337,29 @@ fn c_emit_arstr_is_fat_pointer() {
     );
     assert!(c.contains("AR_STR_"), "expected named string constants");
 }
+
+#[test]
+fn c_emit_arstr_layout_32bit() {
+    // S-C-32BIT: emit-only with W=4 (no Cranelift). ArStr.len is int32_t.
+    let src = r#"
+    func main(): int {
+        let s = "hi"
+        return 0
+    }
+    "#;
+    let (amir, tc) = compile_src(src);
+    let layout = LayoutEngine::new(4);
+    let c = CEmitter::new(
+        &amir,
+        &tc.symbols,
+        &layout,
+        &tc.type_info,
+        &tc.type_info.type_interner,
+    )
+    .emit();
+    assert!(
+        c.contains("typedef struct { const uint8_t *ptr; int32_t len; } ArStr;"),
+        "expected 32-bit ArStr, headers:\n{}",
+        c.lines().take(40).collect::<Vec<_>>().join("\n")
+    );
+}

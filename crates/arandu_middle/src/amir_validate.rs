@@ -3,19 +3,28 @@
 use crate::SymbolTable;
 use crate::amir::{AmirFunc, AmirProgram, AmirTerminator, BlockId, reachable_blocks_dense};
 use crate::diagnostics::{DiagCode, Diagnostic};
+use crate::types::TypeInterner;
 
 /// Validate all functions in an AMIR program.
 #[must_use]
-pub fn validate_amir_program(program: &AmirProgram, symbols: &SymbolTable) -> Vec<Diagnostic> {
+pub fn validate_amir_program(
+    program: &AmirProgram,
+    symbols: &SymbolTable,
+    interner: &TypeInterner,
+) -> Vec<Diagnostic> {
     program
         .funcs
         .iter()
-        .flat_map(|f| validate_amir_func(f, symbols))
+        .flat_map(|f| validate_amir_func(f, symbols, interner))
         .collect()
 }
 
 #[must_use]
-pub fn validate_amir_func(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagnostic> {
+pub fn validate_amir_func(
+    func: &AmirFunc,
+    symbols: &SymbolTable,
+    interner: &TypeInterner,
+) -> Vec<Diagnostic> {
     let span = symbols.get(func.symbol).span;
     let mut diags = Vec::new();
 
@@ -78,8 +87,16 @@ pub fn validate_amir_func(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagnos
                 span,
             ));
         }
-        // TypeId-based: full Error check needs interner; dense id validity is enough here.
-        let _ = local.ty;
+        if interner.is_error(local.ty) {
+            diags.push(Diagnostic::ice(
+                DiagCode::ICEGEN002,
+                format!(
+                    "local s{} has poison type Error (TYP-1)",
+                    local.id.as_usize()
+                ),
+                span,
+            ));
+        }
     }
 
     for (i, temp) in func.temps.iter().enumerate() {
@@ -93,8 +110,13 @@ pub fn validate_amir_func(func: &AmirFunc, symbols: &SymbolTable) -> Vec<Diagnos
                 span,
             ));
         }
-        let _ = temp.ty;
-        let _ = temp.is_copy;
+        if interner.is_error(temp.ty) {
+            diags.push(Diagnostic::ice(
+                DiagCode::ICEGEN002,
+                format!("temp _{} has poison type Error (TYP-1)", temp.id.as_usize()),
+                span,
+            ));
+        }
     }
 
     diags

@@ -62,7 +62,8 @@ fn test_amir_golden_files() {
         hir.validate_invariants(&hir.pool, &tc.symbols)
             .unwrap_or_else(|err| panic!("HIR invariant validation failed for {name}: {err:?}"));
         let amir = lower_to_amir(&tc, &hir).expect("AMIR lowering failed");
-        let amir_issues = validate_amir_program(&amir, &tc.symbols);
+        let amir_issues =
+            validate_amir_program(&amir, &tc.symbols, &tc.type_info.type_interner);
         assert!(
             amir_issues.is_empty(),
             "AMIR validation failed for {name}: {amir_issues:?}"
@@ -468,9 +469,10 @@ fn validate_amir_rejects_poison_temp_with_icegen002() {
         params: Vec::new(),
         terminator: AmirTerminator::Return,
     };
-    // Dense-id invariant (TYP-2): temp at index 0 must have TempId(0).
+    // TYP-1: poison Error type must ICE when validated with the interner.
+    let interner = arandu_middle::types::TypeInterner::new();
     let mut poison_temp = test_temp(0);
-    poison_temp.id = TempId::from_usize(99);
+    poison_temp.ty = interner.error_type_id();
     let func = test_func(
         Vec::new(),
         vec![poison_temp],
@@ -486,7 +488,7 @@ fn validate_amir_rejects_poison_temp_with_icegen002() {
             dummy_span(),
         )
         .unwrap();
-    let issues = arandu_middle::amir_validate::validate_amir_func(&func, &symbols);
+    let issues = arandu_middle::amir_validate::validate_amir_func(&func, &symbols, &interner);
     assert_eq!(issues.len(), 1);
     assert_eq!(issues[0].code, DiagCode::ICEGEN002);
 }
