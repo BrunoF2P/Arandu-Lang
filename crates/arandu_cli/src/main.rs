@@ -56,7 +56,7 @@ fn parse_and_check(
 ) -> CheckedProgram {
     let program_res = arandu_query::passes::parse(db, file);
     let program = match &*program_res {
-        Ok(program) => program.clone(),
+        Ok(program) => program.as_ref().clone(),
         Err(err) => print_parse_error_and_exit(err, filepath),
     };
 
@@ -93,7 +93,7 @@ fn parse_and_check(
 
 fn usage_and_exit() -> ! {
     eprintln!(
-        "usage: arandu_cli <lex|parse|check|hir|amir|run|emit-c|graph> <path> [--debug] [--opt] [--parallel]"
+        "usage: arandu_cli <lex|parse|check|hir|amir|run|emit-c|graph|fmt> <path> [--debug] [--opt] [--parallel]"
     );
     eprintln!("       emit-c options: --layout=host|ptr4|i686  (default: host)");
     eprintln!("       -Z flags: -Ztime-passes  -Zprofile-queries  -Zprint-alloc-stats  -Zdump-mir");
@@ -174,7 +174,7 @@ fn main() {
 
     if !matches!(
         command.as_str(),
-        "lex" | "parse" | "check" | "hir" | "amir" | "run" | "emit-c" | "graph"
+        "lex" | "parse" | "check" | "hir" | "amir" | "run" | "emit-c" | "graph" | "fmt"
     ) {
         usage_and_exit();
     }
@@ -195,6 +195,32 @@ fn main() {
     if paths.is_empty() {
         eprintln!("no .aru source files found at {}", path.display());
         process::exit(1);
+    }
+
+    if command == "fmt" {
+        let mut changed = 0usize;
+        for p in &paths {
+            let src = match fs::read_to_string(p) {
+                Ok(s) => s,
+                Err(err) => {
+                    eprintln!("failed to read {}: {err}", p.display());
+                    process::exit(1);
+                }
+            };
+            let formatted = arandu_fmt::format_source(&src);
+            if formatted != src {
+                if let Err(err) = fs::write(p, &formatted) {
+                    eprintln!("failed to write {}: {err}", p.display());
+                    process::exit(1);
+                }
+                changed += 1;
+                eprintln!("formatted {}", p.display());
+            }
+        }
+        if changed == 0 {
+            eprintln!("already formatted ({} file(s))", paths.len());
+        }
+        return;
     }
 
     let use_parallel = parallel || paths.len() > 1;

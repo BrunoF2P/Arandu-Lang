@@ -1,0 +1,13 @@
+[package]
+name = "arandu_fmt"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+authors.workspace = true
+description = "Source formatter for Arandu (pure; no Salsa/LSP)"
+
+[dependencies]
+arandu_parser = { path = "../arandu_parser" }
+
+[lints]
+workspace = true

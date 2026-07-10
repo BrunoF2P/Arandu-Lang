@@ -59,8 +59,9 @@ SourceFile.text
 | One-line `return 1 }` | `;` opcional antes de `RBRACE`/`EOF` no parser |
 | Heap H0 | Arc tokens/text, token splice, `Arc<Program>`, `HashEq::share` |
 | Highlight tipado (F2a) | `file_highlights` + legend LSP (`function`/`parameter`/…) |
+| Format + code action (F3) | crate `arandu_fmt`; CLI `fmt`; LSP formatting + quickfix `;` |
 
 ## Em progresso / próximo
 
-- Code actions / format (`arandu_fmt`, quickfixes).  
-- Lower AST por walk estrutural de green nodes (F1; CST com `FUNC`/`STMT`).
+- Lower AST por walk estrutural de green nodes (F1; CST com `FUNC`/`STMT`).  
+- Format pretty-print por AST/green (hoje: higiene de whitespace).

@@ -16,6 +16,7 @@ members = [
     "crates/arandu_backend_c",
     "crates/arandu_query",
     "crates/arandu_lsp",
+    "crates/arandu_fmt",
 ]
 resolver = "3"
 

@@ -18,16 +18,18 @@ use lsp_types::notification::{
     Notification as _, PublishDiagnostics,
 };
 use lsp_types::request::{
-    Completion, DocumentSymbolRequest, GotoDefinition, HoverRequest, References, Rename,
-    Request as _, SemanticTokensFullRequest, SignatureHelpRequest, WorkspaceSymbolRequest,
+    CodeActionRequest, Completion, DocumentSymbolRequest, Formatting, GotoDefinition, HoverRequest,
+    References, Rename, Request as _, SemanticTokensFullRequest, SignatureHelpRequest,
+    WorkspaceSymbolRequest,
 };
 use lsp_types::{
-    CompletionOptions, CompletionResponse, Diagnostic, DiagnosticSeverity, DocumentSymbolResponse,
-    GotoDefinitionResponse, HoverProviderCapability, InitializeResult, Location, NumberOrString,
-    OneOf, Position, PublishDiagnosticsParams, RenameOptions, SemanticTokensFullOptions,
-    SemanticTokensOptions, SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo,
-    SignatureHelpOptions, TextDocumentSyncCapability, TextDocumentSyncKind, Url,
-    WorkDoneProgressOptions, WorkspaceSymbolParams,
+    CodeActionOptions, CodeActionProviderCapability, CompletionOptions, CompletionResponse,
+    Diagnostic, DiagnosticSeverity, DocumentSymbolResponse, GotoDefinitionResponse,
+    HoverProviderCapability, InitializeResult, Location, NumberOrString, OneOf, Position,
+    PublishDiagnosticsParams, RenameOptions, SemanticTokensFullOptions, SemanticTokensOptions,
+    SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, SignatureHelpOptions,
+    TextDocumentSyncCapability, TextDocumentSyncKind, Url, WorkDoneProgressOptions,
+    WorkspaceSymbolParams,
 };
 use pool::WorkerPool;
 use rustc_hash::FxHashMap;
@@ -103,6 +105,12 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
                 work_done_progress_options: WorkDoneProgressOptions::default(),
             },
         )),
+        document_formatting_provider: Some(OneOf::Left(true)),
+        code_action_provider: Some(CodeActionProviderCapability::Options(CodeActionOptions {
+            code_action_kinds: Some(vec![lsp_types::CodeActionKind::QUICKFIX]),
+            work_done_progress_options: WorkDoneProgressOptions::default(),
+            resolve_provider: None,
+        })),
         ..ServerCapabilities::default()
     };
     let init_result = InitializeResult {
@@ -249,7 +257,9 @@ fn on_request(
         | SignatureHelpRequest::METHOD
         | DocumentSymbolRequest::METHOD
         | WorkspaceSymbolRequest::METHOD
-        | SemanticTokensFullRequest::METHOD => {
+        | SemanticTokensFullRequest::METHOD
+        | Formatting::METHOD
+        | CodeActionRequest::METHOD => {
             flush_for_request(state, pool, job_tx);
         }
         _ => {}
@@ -378,6 +388,33 @@ fn on_request(
                 };
                 let tokens = ide::semantic_tokens(snap, info.source);
                 serde_json::to_value(tokens).unwrap_or(serde_json::Value::Null)
+            });
+        }
+        Formatting::METHOD => {
+            let (id, params) =
+                req.extract::<lsp_types::DocumentFormattingParams>(Formatting::METHOD)?;
+            let uri = params.text_document.uri;
+            spawn_json(state, pool, job_tx, id, move |snap, docs| {
+                let Some(info) = docs.get(uri.as_str()) else {
+                    return serde_json::Value::Null;
+                };
+                let text = info.source.text(&snap.db);
+                let edits = ide::format_document(&text);
+                serde_json::to_value(edits).unwrap_or(serde_json::Value::Null)
+            });
+        }
+        CodeActionRequest::METHOD => {
+            let (id, params) =
+                req.extract::<lsp_types::CodeActionParams>(CodeActionRequest::METHOD)?;
+            let uri = params.text_document.uri;
+            let context = params.context;
+            spawn_json(state, pool, job_tx, id, move |_snap, docs| {
+                let Some(info) = docs.get(uri.as_str()) else {
+                    return serde_json::Value::Null;
+                };
+                let actions = ide::code_actions(&uri, &context);
+                let _ = info;
+                serde_json::to_value(actions).unwrap_or(serde_json::Value::Null)
             });
         }
         _ => {

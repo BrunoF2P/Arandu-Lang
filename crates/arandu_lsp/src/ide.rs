@@ -7,9 +7,10 @@ use arandu_middle::{NodeKey, SymbolId, SymbolKind};
 use arandu_query::{AnalysisSnapshot, SourceFile};
 use arandu_semantics::TypeCheckResult;
 use lsp_types::{
-    CompletionItem, CompletionItemKind, Documentation, Hover, HoverContents, Location,
-    MarkedString, Position, SemanticToken, SemanticTokenType, SemanticTokens, SemanticTokensLegend,
-    SymbolInformation, SymbolKind as LspSymbolKind, Url,
+    CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionResponse, CompletionItem,
+    CompletionItemKind, Documentation, Hover, HoverContents, Location, MarkedString, Position,
+    SemanticToken, SemanticTokenType, SemanticTokens, SemanticTokensLegend, SymbolInformation,
+    SymbolKind as LspSymbolKind, TextEdit as LspTextEdit, Url, WorkspaceEdit,
 };
 use rustc_hash::FxHashMap;
 use std::collections::HashMap;
@@ -413,6 +414,59 @@ pub fn semantic_tokens_legend() -> SemanticTokensLegend {
         ],
         token_modifiers: vec![],
     }
+}
+
+/// Format entire document (F3a) → LSP text edits (usually one full replace).
+#[must_use]
+pub fn format_document(text: &str) -> Vec<LspTextEdit> {
+    let edits = arandu_fmt::format_edits(text);
+    if edits.is_empty() {
+        return Vec::new();
+    }
+    let index = LineIndex::new(text);
+    edits
+        .into_iter()
+        .map(|e| {
+            let start = offset_to_position_local(&index, e.start);
+            let end = offset_to_position_local(&index, e.end);
+            LspTextEdit {
+                range: lsp_types::Range { start, end },
+                new_text: e.new_text,
+            }
+        })
+        .collect()
+}
+
+/// Code actions (F3b MVP): quickfix insert `;` from diagnostic messages.
+#[must_use]
+pub fn code_actions(uri: &Url, context: &lsp_types::CodeActionContext) -> CodeActionResponse {
+    let mut out = Vec::new();
+    for d in &context.diagnostics {
+        if arandu_fmt::actions_for_expected_semicolon(0, 0, d.message.as_str()).is_none() {
+            continue;
+        }
+        // Insert `;` at the start of the diagnostic range (zero-width insert).
+        let start = d.range.start;
+        let mut changes = HashMap::new();
+        changes.insert(
+            uri.clone(),
+            vec![LspTextEdit {
+                range: lsp_types::Range { start, end: start },
+                new_text: ";".into(),
+            }],
+        );
+        out.push(CodeActionOrCommand::CodeAction(CodeAction {
+            title: "Insert `;`".into(),
+            kind: Some(CodeActionKind::QUICKFIX),
+            diagnostics: Some(vec![d.clone()]),
+            edit: Some(WorkspaceEdit {
+                changes: Some(changes),
+                ..WorkspaceEdit::default()
+            }),
+            ..CodeAction::default()
+        }));
+    }
+    out
 }
 
 /// Build LSP semantic tokens from type-aware [`arandu_query::file_highlights`].
