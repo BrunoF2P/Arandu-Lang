@@ -39,7 +39,7 @@ Func testError() -> Result<void, Err>
     _3: bool
 
   bb0:
-    _1 = call fn@err.new("interpolated")
+    _1 = call fn@err.new("boom")
     _0 = enumConstruct(1, _1)
     _2 = discriminant(_0)
     _3 = eq _2, 1

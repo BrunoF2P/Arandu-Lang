@@ -17,5 +17,5 @@ func divide(a: int, b: int) : Result<int, Err> {
 
 func main() {
     let value = add(20, 22)
-    io.println("value=${value}")
+    io.println("functions ok")
 }

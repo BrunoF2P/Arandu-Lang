@@ -20,7 +20,7 @@ Program
     Var state: LoadState =
       Call: LoadState
         TypePath(LoadState.Loaded): func(str) LoadState
-        Str(interpolated): str
+        Str(hello): str
     Var res: int =
       Match: int
         LocalRef(state): LoadState

@@ -12,7 +12,7 @@ Program
     Var c: bool =
       Bool(true): bool
     Var d: str =
-      Str(interpolated): str
+      Str(hello): str
     Var (a2: int, b2: bool) =
       Call: (int, bool)
         Path(foo): func() (int, bool)

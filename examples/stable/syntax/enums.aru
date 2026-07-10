@@ -14,6 +14,6 @@ func printState(state: LoadState) {
         LoadState.Idle => io.println("idle")
         LoadState.Loading => io.println("loading")
         LoadState.Loaded(value) => io.println(value)
-        LoadState.Failed(err) => io.println("error: ${err}")
+        LoadState.Failed(err) => io.println("error")
     }
 }

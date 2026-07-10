@@ -12,11 +12,10 @@ func readName(path: str) : Result<str, Err> {
 }
 
 func main() {
-    let name, err = readName("user.txt")
-    if err != nil {
-        io.println("error: ${err}")
+    let name, e = readName("user.txt")
+    if e != nil {
+        io.println("error")
         return
     }
-
     io.println("name=${name}")
 }

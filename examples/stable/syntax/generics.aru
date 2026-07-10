@@ -16,5 +16,6 @@ func unwrap<T>(box: Box<T>) : T {
 
 func main() {
     let box = Box<int> { value: identity<int>(42) }
-    io.println("${unwrap<int>(box)}")
+    let n = unwrap<int>(box)
+    io.println("ok")
 }

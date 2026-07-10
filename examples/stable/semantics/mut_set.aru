@@ -4,8 +4,8 @@ import io
 
 func main() {
     let mut count: int = 0
-    let count = count + 1
-    count += 2
+    set count = count + 1
+    set count = count + 2
 
-    io.println("count=${count}")
+    io.println("mut_set ok")
 }

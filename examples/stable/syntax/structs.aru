@@ -7,11 +7,11 @@ public struct User {
     age: int
 }
 
-func User.greet(user: User) : str {
-    return "Ola, ${user.name}"
+func User.greet(shared self) : str {
+    return "Ola, ${self.name}"
 }
 
 func main() {
     let user = User { name: "Ana", age: 30 }
-    io.println(User.greet(user))
+    io.println(user.greet())
 }

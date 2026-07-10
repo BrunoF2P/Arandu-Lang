@@ -11,7 +11,7 @@ Program
     Var user: User =
       StructLiteral(User): User
         name:
-          Str(interpolated): str
+          Str(Ada): str
     Var _: str =
       Call: str
         Field(greet): func(User) str

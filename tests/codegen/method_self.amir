@@ -22,7 +22,7 @@ Func main() -> void
     s1: str // _
 
   bb0:
-    _1 = User { name: "interpolated" }
+    _1 = User { name: "Ada" }
     s0 = move _1
     _2 = s0
     _3 = s0

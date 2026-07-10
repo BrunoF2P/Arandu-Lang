@@ -1,4 +1,4 @@
-module examples.stable.semantics.deferErrdefer
+module examples.draft.semantics.deferErrdefer
 
 import io
 

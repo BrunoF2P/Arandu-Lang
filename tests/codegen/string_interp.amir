@@ -1,0 +1,40 @@
+Func greet(name: str) -> str
+  locals:
+    _0: str // return
+    _1: str
+    _2: str
+    s0: str // name
+
+  bb0:
+    s0 = _1
+    _2 = s0
+    _0 = stringInterp("Oi, ", _2)
+    return
+
+Func dollarName(name: str) -> str
+  locals:
+    _0: str // return
+    _1: str
+    _2: str
+    s0: str // name
+
+  bb0:
+    s0 = _1
+    _2 = s0
+    _0 = stringInterp("Oi, ", _2)
+    return
+
+Func main() -> void
+  locals:
+    _0: void // return
+    _1: str
+    _2: str
+    s0: str // a
+    s1: str // b
+
+  bb0:
+    _1 = call fn@greet("Bruno")
+    s0 = move _1
+    _2 = call fn@dollarName("Ana")
+    s1 = move _2
+    return

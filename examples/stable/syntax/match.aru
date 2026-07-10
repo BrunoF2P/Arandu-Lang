@@ -1,7 +1,5 @@
 module examples.stable.syntax.match
 
-import io
-
 enum Token {
     Number(int),
     Word(str),

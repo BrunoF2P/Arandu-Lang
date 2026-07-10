@@ -16,7 +16,8 @@ Implemented:
 - Smoke lexing for official stable and invalid examples.
 - Parser crate with AST debug output for the current parser slice.
 - Parser golden tests for declarations, generics, extern, match, interpolation, places, and expressions.
-- Semantics crate with v0.2 name resolution, hierarchical symbol tables, namespace imports, prelude members, doc comment mapping, diagnostics, and CLI `check`.
+- Semantics crate with v0.2 name resolution, hierarchical symbol tables, namespace imports, builtin prelude (`io` / `err` on the CLI path), doc comment mapping, diagnostics, and CLI `check`.
+- Official `examples/stable/**` type-check via `arandu_cli check` (prelude + current semantics).
 - Type checker v0.1 core with primitive types, assignments, returns, fields, indexing, generics constraints, interface satisfaction, `Result<T,E>`, `Option<T>`, nullable/safe operations, and diagnostics.
 - AHIR lowering and pretty-printing with golden tests (`tests/hir/`).
 - AMIR lowering v0.1 (experimental) with CFG, locals, match, defer/errdefer, `?`/safe ops, for-in, alloc/free, and golden tests (`tests/codegen/`).

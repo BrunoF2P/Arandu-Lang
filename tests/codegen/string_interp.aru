@@ -1,0 +1,12 @@
+func greet(name: str): str {
+    return "Oi, ${name}"
+}
+
+func dollarName(name: str): str {
+    return "Oi, $name"
+}
+
+func main(): void {
+    let a = greet("Bruno")
+    let b = dollarName("Ana")
+}

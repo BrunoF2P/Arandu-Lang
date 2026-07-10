@@ -7,5 +7,7 @@ extern "C" {
 }
 
 func length(x: f64, y: f64): f64 {
-    return cos(x) + sin(y)
+    unsafe {
+        return cos(x) + sin(y)
+    }
 }

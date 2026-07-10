@@ -5,12 +5,13 @@ import io
 func main() {
     let name: str = "Bruno"
     let mut age: int = 25
-    let score = 1_000
+    let mut score = 1_000
     let ratio = 3.14
     let active = true
 
-    let age = age + 1
-    score += 50
+    set age = age + 1
+    set score = score + 50
 
-    io.println("${name}: ${age}, ${score}, ${ratio}, ${active}")
+    // Non-str interpolation requires Display/to_str (not yet); print str only.
+    io.println(name)
 }

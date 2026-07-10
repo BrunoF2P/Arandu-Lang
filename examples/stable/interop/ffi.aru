@@ -6,5 +6,7 @@ extern "C" {
 }
 
 func writeLine(text: ptr[u8]) : int {
-    return puts(text)
+    unsafe {
+        return puts(text)
+    }
 }
