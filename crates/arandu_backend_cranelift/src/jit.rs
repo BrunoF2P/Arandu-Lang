@@ -75,6 +75,11 @@ impl AranduJit {
             "io.println",
             crate::to_str_runtime::ar_jit_println as *const u8,
         );
+        // Prelude `err.new(str) -> Err` (ZST return; fat-pointer str arg).
+        builder.symbol(
+            "err.new",
+            crate::to_str_runtime::ar_jit_err_new as *const u8,
+        );
         let module = JITModule::new(builder);
 
         Ok(Self { module })
@@ -250,10 +255,11 @@ impl AranduJit {
             }
         }
 
-        // Builtin prelude: `io.println(str)` → host `ar_jit_println` (ptr, len).
+        // Builtin prelude host imports (fat-pointer `str` args).
+        let str_ty = ArType::Primitive(Primitive::Str);
+        let void_ty = ArType::Void;
+        let err_ty = ArType::Err;
         if !func_ids.contains_key("io.println") {
-            let str_ty = ArType::Primitive(Primitive::Str);
-            let void_ty = ArType::Void;
             let sig = build_signature(
                 std::slice::from_ref(&str_ty),
                 &void_ty,
@@ -265,6 +271,20 @@ impl AranduJit {
                 .declare_function("io.println", Linkage::Import, &sig)
                 .map_err(|err| codegen_ice(format!("failed to declare io.println: {err:?}")))?;
             func_ids.insert("io.println".to_string(), id);
+        }
+        // `err.new(str) -> Err` (Err is ZST → zero return slots).
+        if !func_ids.contains_key("err.new") {
+            let sig = build_signature(
+                std::slice::from_ref(&str_ty),
+                &err_ty,
+                default_call_conv,
+                ptr_type,
+            );
+            let id = self
+                .module
+                .declare_function("err.new", Linkage::Import, &sig)
+                .map_err(|err| codegen_ice(format!("failed to declare err.new: {err:?}")))?;
+            func_ids.insert("err.new".to_string(), id);
         }
 
         // 2. Define/compile each function

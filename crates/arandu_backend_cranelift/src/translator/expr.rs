@@ -594,8 +594,10 @@ impl FunctionTranslator<'_, '_> {
                     }
                     _ => arandu_semantics::types::ArType::Error,
                 };
+                // Unwrap ptr / nullable so layout sees the struct/tuple payload.
                 let struct_ty = match base_ty {
-                    arandu_semantics::types::ArType::Ptr(inner) => {
+                    arandu_semantics::types::ArType::Ptr(inner)
+                    | arandu_semantics::types::ArType::Nullable(inner) => {
                         self.type_info.resolve_type_id(inner)
                     }
                     other => other,
@@ -607,7 +609,11 @@ impl FunctionTranslator<'_, '_> {
                     &self.type_info.type_interner,
                     self.type_info,
                 );
-                let offset = layout.field_offsets[*field] as i32;
+                let Some(&off) = layout.field_offsets.get(*field) else {
+                    // Dead `p?.field` access branch with nil/ZST base, or incomplete layout.
+                    return self.poison_i32();
+                };
+                let offset = off as i32;
 
                 let clif_ty = expected_ty.unwrap_or(self.ptr_type);
                 self.builder.ins().load(
@@ -651,7 +657,13 @@ impl FunctionTranslator<'_, '_> {
 
                 if let Some(op) = payload {
                     let op_ty = self.get_operand_ar_type(op);
-                    if matches!(op_ty, ArType::Primitive(Primitive::Str)) {
+                    // ZST payloads (`Err`, void) only need the discriminant tag.
+                    if matches!(
+                        op_ty,
+                        ArType::Err | ArType::Void | ArType::Error
+                    ) {
+                        // no payload bytes
+                    } else if matches!(op_ty, ArType::Primitive(Primitive::Str)) {
                         let (elem_ptr, elem_len) = self.translate_str_operand(op);
                         self.builder.ins().store(
                             cranelift_codegen::ir::MemFlagsData::new(),

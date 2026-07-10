@@ -685,21 +685,27 @@ impl LowerCtx<'_> {
                     self.lower_expr(*callee, None, symbols)?
                 };
                 let args_slice = self.hir.pool.expr_list(*args);
-                let mut arg_ops = Vec::with_capacity(args_slice.len() + 1);
+                // Method calls: HIR already includes the receiver as arg 0 when
+                // typeck rewrites `obj.m(a)` → Call(Field(m), [obj, a]). Only inject
+                // `base` when args are short of the formal arity (legacy / incomplete HIR).
                 let formal_params: Vec<ArType> = match &callee_expr.ty {
                     ArType::Func(params, _) => {
                         params.iter().map(|&id| self.resolve_ty(id)).collect()
                     }
                     _ => Vec::new(),
                 };
-                let arg_param_offset = if method_target.is_some() { 1 } else { 0 };
-                if method_target.is_some()
+                let mut arg_ops = Vec::with_capacity(args_slice.len() + 1);
+                let inject_receiver = method_target.is_some()
+                    && !formal_params.is_empty()
+                    && args_slice.len() < formal_params.len();
+                if inject_receiver
                     && let HirExprKind::Field { base, .. } | HirExprKind::SafeField { base, .. } =
                         &callee_expr.kind
                 {
                     let base_op = self.lower_expr(*base, None, symbols)?;
                     arg_ops.push(base_op);
                 }
+                let arg_param_offset = if inject_receiver { 1 } else { 0 };
                 for (i, &arg) in args_slice.iter().enumerate() {
                     let arg_expr = self.hir.pool.expr(arg);
                     let arg_op = self.lower_expr(arg, None, symbols)?;

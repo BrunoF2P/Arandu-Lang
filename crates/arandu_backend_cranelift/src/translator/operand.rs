@@ -93,6 +93,16 @@ impl FunctionTranslator<'_, '_> {
                 match self.temp_map.get(temp_id) {
                     Some(var) => self.builder.use_var(*var),
                     None => {
+                        // ZST temps (`Err`, void) have no Cranelift vars.
+                        let ty = self.temp_ar_ty(*temp_id);
+                        if matches!(
+                            ty,
+                            arandu_semantics::types::ArType::Err
+                                | arandu_semantics::types::ArType::Void
+                                | arandu_semantics::types::ArType::Error
+                        ) {
+                            return self.poison_i32();
+                        }
                         self.record_ice(
                             "use of undeclared AMIR temp in codegen",
                             self.temp_span(*temp_id),

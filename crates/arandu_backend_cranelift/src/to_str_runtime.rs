@@ -127,3 +127,16 @@ pub unsafe extern "C" fn ar_jit_println(ptr: *const u8, len: i64) {
     let _ = handle.write_all(b"\n");
     let _ = handle.flush();
 }
+
+/// Prelude `err.new(str) -> Err`.
+///
+/// `Err` is a ZST in the JIT ABI (`clif_types` → no return slots). The message is
+/// accepted for API parity and ignored in debug JIT (no heap `Err` object yet).
+///
+/// Linked as the JIT symbol `err.new`.
+///
+/// # Safety
+/// `ptr` must be valid for `len` bytes if `len > 0`. `len` must be non-negative.
+pub unsafe extern "C" fn ar_jit_err_new(ptr: *const u8, len: i64) {
+    let _ = (ptr, len);
+}
