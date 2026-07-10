@@ -67,8 +67,22 @@ fn parse_and_check(
     >(db, file);
     let diags: Vec<_> = diagnostics.into_iter().map(|d| d.0.clone()).collect();
 
+    // Always print user-facing diagnostics (errors and warnings).
+    // Exit only on Error / ICE — warnings must not fail `check`.
+    let has_fatal = diags
+        .iter()
+        .any(|d| matches!(d.severity, arandu_middle::Severity::Error));
     if !diags.is_empty() {
-        print_diagnostics_and_exit(&diags, filepath);
+        let source = std::fs::read_to_string(filepath).unwrap_or_default();
+        let named_source = miette::NamedSource::new(filepath, source);
+        for diagnostic in &diags {
+            let report =
+                miette::Report::new(diagnostic.clone()).with_source_code(named_source.clone());
+            eprintln!("{:?}", report);
+        }
+        if has_fatal {
+            std::process::exit(1);
+        }
     }
 
     CheckedProgram {

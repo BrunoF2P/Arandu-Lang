@@ -54,6 +54,81 @@ func main() {
     assert!(String::from_utf8_lossy(&check.stdout).contains("ok"));
 }
 
+/// Builtin prelude must resolve on the CLI/Salsa path without on-disk modules.
+#[test]
+fn check_import_io_prelude_succeeds() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_prelude_io.aru");
+    fs::write(
+        &file,
+        r#"module tests.cli.prelude
+
+import io
+import err
+
+func boom(): Result<int, Err> {
+    return Result.Err(err.new("x"))
+}
+
+func main() {
+    io.println("ok")
+}
+"#,
+    )
+    .expect("fixture should be writable");
+
+    let path = file.to_string_lossy();
+    let output = run_cli(&["check", &path]);
+    assert!(
+        output.status.success(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("ok"));
+}
+
+/// Official stable examples must type-check end-to-end on the CLI.
+#[test]
+fn check_stable_examples_succeed() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let workspace_root = std::path::Path::new(manifest_dir)
+        .join("../..")
+        .canonicalize()
+        .expect("workspace root");
+    let stable_root = workspace_root.join("examples/stable");
+
+    let mut files = Vec::new();
+    fn collect_aru(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in fs::read_dir(dir).expect("read examples/stable") {
+            let entry = entry.expect("dir entry");
+            let path = entry.path();
+            if path.is_dir() {
+                collect_aru(&path, out);
+            } else if path.extension().and_then(|s| s.to_str()) == Some("aru") {
+                out.push(path);
+            }
+        }
+    }
+    collect_aru(&stable_root, &mut files);
+    files.sort();
+    assert!(
+        !files.is_empty(),
+        "expected stable examples under {}",
+        stable_root.display()
+    );
+
+    for file in files {
+        let path = file.to_string_lossy();
+        let output = run_cli(&["check", &path]);
+        assert!(
+            output.status.success(),
+            "check failed for {}:\n{}",
+            path,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
 #[test]
 fn check_invalid_file_reports_name_error_and_exits_1() {
     let dir = std::env::temp_dir();
