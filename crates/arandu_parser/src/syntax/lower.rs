@@ -1,14 +1,19 @@
 //! Green-guided lower: walk typed top-level items; RD at each item seek.
 //!
 //! **Body without full-file RD:** simple `STMT` nodes can be hand-lowered from
-//! tokens ([`try_hand_lower_stmt`]); complex stmts still use seek + RD.
+//! tokens ([`try_hand_lower_stmt`]); simple free `FUNC_ITEM`s with hand-lowerable
+//! bodies skip RD entirely ([`try_hand_lower_func_item`]). Complex forms fall
+//! back to seek + RD.
 
 use super::SyntaxTree;
 use super::kind::{SyntaxKind, SyntaxNode};
-use crate::ast::ast_pool::{AstPool, ExprKind};
+use crate::ast::ast_pool::{AstPool, ExprId, ExprKind, StmtId};
 use crate::parser::{ParseError, ParseOutput, Parser};
-use crate::{Program, Stmt, TopLevelDecl};
-use arandu_lexer::{Token, TokenKind};
+use crate::{
+    BinaryOp, BindingItem, Block, FuncDecl, FuncName, Program, ResultType, Stmt, TopLevelDecl,
+    TypeExpr, TypeName, Visibility,
+};
+use arandu_lexer::{Span, Token, TokenKind};
 use smallvec::smallvec;
 use smol_str::SmolStr;
 use std::sync::Arc;
@@ -143,8 +148,34 @@ pub fn lower_from_green_recovering(tree: &SyntaxTree, file_id: u32) -> ParseOutp
                     walk_ok = false;
                 }
             },
-            SyntaxKind::FUNC_ITEM
-            | SyntaxKind::STRUCT_ITEM
+            SyntaxKind::FUNC_ITEM => {
+                // Prefer green body + simple signature without RD when possible.
+                if let Some(func) = try_hand_lower_func_item(
+                    &mut parser.pool,
+                    tree.text(),
+                    tree.tokens(),
+                    item,
+                    file_id,
+                ) {
+                    let end = u32::from(item.text_range().end());
+                    parser.seek_to_byte(end);
+                    let decl_id = parser.pool.alloc_decl(TopLevelDecl::Func(func));
+                    decls.push(decl_id);
+                } else {
+                    match parser.parse_top_level_decl() {
+                        Ok(decl) => {
+                            let decl_id = parser.pool.alloc_decl(decl);
+                            decls.push(decl_id);
+                        }
+                        Err(err) => {
+                            parser.report_error(err);
+                            parser.synchronize_top_level();
+                            walk_ok = false;
+                        }
+                    }
+                }
+            }
+            SyntaxKind::STRUCT_ITEM
             | SyntaxKind::ENUM_ITEM
             | SyntaxKind::INTERFACE_ITEM
             | SyntaxKind::CONST_ITEM
@@ -219,9 +250,188 @@ pub fn decl_count(program: &Program) -> usize {
         .count()
 }
 
+/// Collect non-EOF, non-inserted-semicolon tokens inside `[start, end)`.
+fn tokens_in_range(tokens: &[Token], start: u32, end: u32) -> Vec<&Token> {
+    tokens
+        .iter()
+        .filter(|t| {
+            !matches!(t.kind, TokenKind::Eof)
+                && t.start >= start
+                && t.start < end
+                && !(t.kind == TokenKind::Semicolon && t.inserted)
+        })
+        .collect()
+}
+
+fn token_text<'a>(source: &'a str, t: &Token) -> Option<&'a str> {
+    let ts = t.start as usize;
+    let te = t.start.saturating_add(t.len) as usize;
+    source.get(ts..te.min(source.len()))
+}
+
+fn token_span(file_id: u32, t: &Token) -> Span {
+    Span::new(file_id, t.start, t.start + t.len)
+}
+
+/// Binary op binding power (left, right) for simple arithmetic.
+fn bin_bp(kind: TokenKind) -> Option<(u8, u8, BinaryOp)> {
+    match kind {
+        TokenKind::Plus => Some((1, 2, BinaryOp::Add)),
+        TokenKind::Minus => Some((1, 2, BinaryOp::Sub)),
+        TokenKind::Star => Some((3, 4, BinaryOp::Mul)),
+        TokenKind::Slash => Some((3, 4, BinaryOp::Div)),
+        _ => None,
+    }
+}
+
+/// Hand-lower a simple expression (int, path, binary `+ - * /`).
+///
+/// Returns `(expr, next_index)` over `toks`.
+fn try_hand_lower_expr(
+    pool: &mut AstPool,
+    source: &str,
+    toks: &[&Token],
+    mut pos: usize,
+    min_bp: u8,
+    file_id: u32,
+) -> Option<(ExprId, usize)> {
+    if pos >= toks.len() {
+        return None;
+    }
+    let t = toks[pos];
+    let mut left = match t.kind {
+        TokenKind::IntDec | TokenKind::IntHex | TokenKind::IntBin | TokenKind::IntOct => {
+            let text = token_text(source, t)?;
+            pos += 1;
+            pool.alloc_expr(
+                ExprKind::Int {
+                    value: SmolStr::new(text),
+                },
+                token_span(file_id, t),
+            )
+        }
+        TokenKind::IdentValue => {
+            let text = token_text(source, t)?;
+            pos += 1;
+            pool.alloc_expr(
+                ExprKind::Path {
+                    path: smallvec![SmolStr::new(text)],
+                },
+                token_span(file_id, t),
+            )
+        }
+        TokenKind::LParen => {
+            pos += 1;
+            let (inner, next) = try_hand_lower_expr(pool, source, toks, pos, 0, file_id)?;
+            pos = next;
+            if pos >= toks.len() || !matches!(toks[pos].kind, TokenKind::RParen) {
+                return None;
+            }
+            let close = toks[pos];
+            pos += 1;
+            let span = Span::new(file_id, t.start, close.start + close.len);
+            pool.alloc_expr(ExprKind::Group { expr: inner }, span)
+        }
+        _ => return None,
+    };
+
+    loop {
+        if pos >= toks.len() {
+            break;
+        }
+        let Some((l_bp, r_bp, op)) = bin_bp(toks[pos].kind) else {
+            break;
+        };
+        if l_bp < min_bp {
+            break;
+        }
+        pos += 1;
+        let (right, next) = try_hand_lower_expr(pool, source, toks, pos, r_bp, file_id)?;
+        pos = next;
+        let left_span = pool.expr_span(left);
+        let right_span = pool.expr_span(right);
+        let span = Span::new(file_id, left_span.start, right_span.end);
+        left = pool.alloc_expr(ExprKind::Binary { op, left, right }, span);
+    }
+
+    Some((left, pos))
+}
+
+/// Hand-lower the full token slice as one expression (must consume all).
+fn try_hand_lower_expr_all(
+    pool: &mut AstPool,
+    source: &str,
+    toks: &[&Token],
+    file_id: u32,
+) -> Option<ExprId> {
+    if toks.is_empty() {
+        return None;
+    }
+    let (expr, end) = try_hand_lower_expr(pool, source, toks, 0, 0, file_id)?;
+    if end != toks.len() {
+        return None;
+    }
+    Some(expr)
+}
+
+/// Map a primitive type token kind to its source name.
+fn primitive_type_token_name(kind: TokenKind) -> Option<&'static str> {
+    match kind {
+        TokenKind::TypeInt => Some("int"),
+        TokenKind::TypeUint => Some("uint"),
+        TokenKind::TypeFloat => Some("float"),
+        TokenKind::TypeI8 => Some("i8"),
+        TokenKind::TypeI16 => Some("i16"),
+        TokenKind::TypeI32 => Some("i32"),
+        TokenKind::TypeI64 => Some("i64"),
+        TokenKind::TypeU8 => Some("u8"),
+        TokenKind::TypeU16 => Some("u16"),
+        TokenKind::TypeU32 => Some("u32"),
+        TokenKind::TypeU64 => Some("u64"),
+        TokenKind::TypeF32 => Some("f32"),
+        TokenKind::TypeF64 => Some("f64"),
+        TokenKind::TypeBool => Some("bool"),
+        TokenKind::TypeByte => Some("byte"),
+        TokenKind::TypeChar => Some("char"),
+        TokenKind::TypeStr => Some("str"),
+        TokenKind::TypeAny => Some("any"),
+        TokenKind::TypeErr => Some("Err"),
+        _ => None,
+    }
+}
+
+/// Hand-lower a simple type token (`int`, `IdentType`, single-segment name).
+fn try_hand_lower_type(
+    pool: &mut AstPool,
+    source: &str,
+    t: &Token,
+    file_id: u32,
+) -> Option<crate::ast::ast_pool::TypeExprId> {
+    let span = token_span(file_id, t);
+    if let Some(name) = primitive_type_token_name(t.kind) {
+        return Some(pool.alloc_type_expr(TypeExpr::Primitive {
+            span,
+            name: SmolStr::new_static(name),
+        }));
+    }
+    match t.kind {
+        TokenKind::IdentType | TokenKind::IdentValue => {
+            let text = token_text(source, t)?;
+            let name = TypeName {
+                span,
+                path: smallvec![SmolStr::new(text)],
+            };
+            let args = pool.alloc_type_expr_list(&[]);
+            Some(pool.alloc_type_expr(TypeExpr::Named { span, name, args }))
+        }
+        _ => None,
+    }
+}
+
 /// Hand-lower a green `STMT` without calling RD (simple patterns only).
 ///
-/// Supports: `return`, `return <int|ident>`, `break`, `continue` (+ optional `;`).
+/// Supports `break`/`continue`, `return`/`return <expr>` (int, path, binary
+/// `+ - * /`), and `let [mut] name = <expr>` (optional trailing `;`).
 #[must_use]
 pub fn try_hand_lower_stmt(
     pool: &mut AstPool,
@@ -229,19 +439,11 @@ pub fn try_hand_lower_stmt(
     tokens: &[Token],
     stmt: &SyntaxNode,
     file_id: u32,
-) -> Option<crate::ast_pool::StmtId> {
+) -> Option<StmtId> {
     let r = stmt.text_range();
     let s = u32::from(r.start());
     let e = u32::from(r.end());
-    let mut toks: Vec<&Token> = tokens
-        .iter()
-        .filter(|t| {
-            !matches!(t.kind, TokenKind::Eof)
-                && t.start >= s
-                && t.start < e
-                && !(t.kind == TokenKind::Semicolon && t.inserted)
-        })
-        .collect();
+    let mut toks = tokens_in_range(tokens, s, e);
     // Drop trailing explicit semicolon for matching.
     if toks
         .last()
@@ -252,44 +454,226 @@ pub fn try_hand_lower_stmt(
     if toks.is_empty() {
         return None;
     }
-    let span = arandu_lexer::Span::new(file_id, s, e);
+    let span = Span::new(file_id, s, e);
     match toks[0].kind {
         TokenKind::KwBreak if toks.len() == 1 => Some(pool.alloc_stmt(Stmt::Break { span })),
         TokenKind::KwContinue if toks.len() == 1 => Some(pool.alloc_stmt(Stmt::Continue { span })),
         TokenKind::KwReturn => {
             let values = if toks.len() == 1 {
                 Vec::new()
-            } else if toks.len() == 2 {
-                let t = toks[1];
-                let te = t.start.saturating_add(t.len) as usize;
-                let ts = t.start as usize;
-                let text = source.get(ts..te.min(source.len()))?;
-                let expr = match t.kind {
-                    TokenKind::IntDec
-                    | TokenKind::IntHex
-                    | TokenKind::IntBin
-                    | TokenKind::IntOct => pool.alloc_expr(
-                        ExprKind::Int {
-                            value: SmolStr::new(text),
-                        },
-                        arandu_lexer::Span::new(file_id, t.start, t.start + t.len),
-                    ),
-                    TokenKind::IdentValue => pool.alloc_expr(
-                        ExprKind::Path {
-                            path: smallvec![SmolStr::new(text)],
-                        },
-                        arandu_lexer::Span::new(file_id, t.start, t.start + t.len),
-                    ),
-                    _ => return None,
-                };
-                vec![expr]
             } else {
-                return None;
+                let expr = try_hand_lower_expr_all(pool, source, &toks[1..], file_id)?;
+                vec![expr]
             };
             Some(pool.alloc_stmt(Stmt::Return { span, values }))
         }
+        TokenKind::KwLet => {
+            // let [mut] name = expr
+            let mut i = 1usize;
+            if i >= toks.len() {
+                return None;
+            }
+            let mutable = if matches!(toks[i].kind, TokenKind::KwMut) {
+                i += 1;
+                true
+            } else {
+                false
+            };
+            if i >= toks.len() || !matches!(toks[i].kind, TokenKind::IdentValue) {
+                return None;
+            }
+            let name_tok = toks[i];
+            let name = SmolStr::new(token_text(source, name_tok)?);
+            let name_span = token_span(file_id, name_tok);
+            i += 1;
+            // Optional `: type` — skip for hand path when present (type-annotated let).
+            if i < toks.len() && matches!(toks[i].kind, TokenKind::Colon) {
+                return None;
+            }
+            if i >= toks.len() || !matches!(toks[i].kind, TokenKind::Equal) {
+                return None;
+            }
+            i += 1;
+            let value = try_hand_lower_expr_all(pool, source, &toks[i..], file_id)?;
+            let binding = BindingItem {
+                span: name_span,
+                mutable,
+                name,
+                ty: None,
+            };
+            Some(pool.alloc_stmt(Stmt::VarDecl {
+                span,
+                bindings: vec![binding],
+                value,
+            }))
+        }
         _ => None,
     }
+}
+
+/// Hand-lower every direct `STMT` child of a green `BLOCK`.
+///
+/// Requires a real closing `}` so incomplete sources fall back to RD diagnostics.
+#[must_use]
+pub fn try_hand_lower_block(
+    pool: &mut AstPool,
+    source: &str,
+    tokens: &[Token],
+    block: &SyntaxNode,
+    file_id: u32,
+) -> Option<Block> {
+    let r = block.text_range();
+    let bs = u32::from(r.start());
+    let be = u32::from(r.end());
+    // Incomplete `{` without `}`: refuse (green may still form a BLOCK node).
+    let has_rbrace = tokens.iter().any(|t| {
+        matches!(t.kind, TokenKind::RBrace) && !t.inserted && t.start > bs && t.start <= be
+    });
+    if !has_rbrace {
+        return None;
+    }
+    let span = Span::new(file_id, bs, be);
+    let mut statements = Vec::new();
+    for child in block.children() {
+        if child.kind() != SyntaxKind::STMT {
+            continue;
+        }
+        statements.push(try_hand_lower_stmt(pool, source, tokens, &child, file_id)?);
+    }
+    Some(Block { span, statements })
+}
+
+/// Hand-lower a simple free `FUNC_ITEM` (no attrs/async/generics/where) when the
+/// body block is fully hand-lowerable.
+///
+/// Signature shape: `func name([p: T, ...])[: R] { ... }`
+#[must_use]
+pub fn try_hand_lower_func_item(
+    pool: &mut AstPool,
+    source: &str,
+    tokens: &[Token],
+    func: &SyntaxNode,
+    file_id: u32,
+) -> Option<FuncDecl> {
+    let block_node = func_body_block(func)?;
+    let body = try_hand_lower_block(pool, source, tokens, &block_node, file_id)?;
+
+    let fr = func.text_range();
+    let fs = u32::from(fr.start());
+    let fe = u32::from(fr.end());
+    let bs = u32::from(block_node.text_range().start());
+
+    let sig_toks = tokens_in_range(tokens, fs, bs);
+    if sig_toks.is_empty() {
+        return None;
+    }
+    let mut i = 0usize;
+    // Reject visibility / async / attrs (not hand-supported).
+    if matches!(
+        sig_toks[i].kind,
+        TokenKind::KwPublic | TokenKind::KwAsync | TokenKind::At
+    ) {
+        return None;
+    }
+    if !matches!(sig_toks[i].kind, TokenKind::KwFunc) {
+        return None;
+    }
+    i += 1;
+    if i >= sig_toks.len() || !matches!(sig_toks[i].kind, TokenKind::IdentValue) {
+        return None;
+    }
+    let name_tok = sig_toks[i];
+    let name = SmolStr::new(token_text(source, name_tok)?);
+    let name_span = token_span(file_id, name_tok);
+    i += 1;
+    // No generics.
+    if i < sig_toks.len() && matches!(sig_toks[i].kind, TokenKind::Lt) {
+        return None;
+    }
+    if i >= sig_toks.len() || !matches!(sig_toks[i].kind, TokenKind::LParen) {
+        return None;
+    }
+    i += 1;
+
+    let mut params = Vec::new();
+    if i < sig_toks.len() && !matches!(sig_toks[i].kind, TokenKind::RParen) {
+        loop {
+            if i >= sig_toks.len() || !matches!(sig_toks[i].kind, TokenKind::IdentValue) {
+                return None;
+            }
+            let p_name_tok = sig_toks[i];
+            let p_name = SmolStr::new(token_text(source, p_name_tok)?);
+            let p_start = p_name_tok.start;
+            i += 1;
+            if i >= sig_toks.len() || !matches!(sig_toks[i].kind, TokenKind::Colon) {
+                return None;
+            }
+            i += 1;
+            if i >= sig_toks.len() {
+                return None;
+            }
+            let ty_tok = sig_toks[i];
+            let ty = try_hand_lower_type(pool, source, ty_tok, file_id)?;
+            i += 1;
+            let p_span = Span::new(file_id, p_start, ty_tok.start + ty_tok.len);
+            params.push(crate::Param {
+                span: p_span,
+                attrs: smallvec![],
+                ownership: None,
+                name: p_name,
+                ty,
+                is_variadic: false,
+                is_receiver: false,
+            });
+            if i < sig_toks.len() && matches!(sig_toks[i].kind, TokenKind::Comma) {
+                i += 1;
+                continue;
+            }
+            break;
+        }
+    }
+    if i >= sig_toks.len() || !matches!(sig_toks[i].kind, TokenKind::RParen) {
+        return None;
+    }
+    i += 1;
+
+    let result = if i < sig_toks.len() && matches!(sig_toks[i].kind, TokenKind::Colon) {
+        i += 1;
+        if i >= sig_toks.len() {
+            return None;
+        }
+        let ty_tok = sig_toks[i];
+        let ty = try_hand_lower_type(pool, source, ty_tok, file_id)?;
+        let ty_span = token_span(file_id, ty_tok);
+        i += 1;
+        Some(ResultType::Single {
+            span: ty_span,
+            ty,
+        })
+    } else {
+        None
+    };
+
+    // Signature must be fully consumed (no trailing where/etc.).
+    if i != sig_toks.len() {
+        return None;
+    }
+
+    Some(FuncDecl {
+        span: Span::new(file_id, fs, fe),
+        attrs: smallvec![],
+        visibility: Visibility::Private,
+        is_async: false,
+        name: FuncName::Free {
+            span: name_span,
+            name,
+        },
+        generic_params: smallvec![],
+        params,
+        result,
+        where_clause: smallvec![],
+        body,
+    })
 }
 
 /// Count how many green STMTs under `tree` hand-lower without RD.
@@ -307,6 +691,24 @@ pub fn count_hand_lowerable_stmts(tree: &SyntaxTree) -> (usize, usize) {
             if try_hand_lower_stmt(&mut pool, tree.text(), tree.tokens(), &n, 0).is_some() {
                 hand += 1;
             }
+        }
+    }
+    (total, hand)
+}
+
+/// Count top-level `FUNC_ITEM`s that fully hand-lower (signature + body).
+#[must_use]
+pub fn count_hand_lowerable_funcs(tree: &SyntaxTree) -> (usize, usize) {
+    let mut total = 0usize;
+    let mut hand = 0usize;
+    let mut pool = AstPool::new();
+    for item in tree.items() {
+        if item.kind() != SyntaxKind::FUNC_ITEM {
+            continue;
+        }
+        total += 1;
+        if try_hand_lower_func_item(&mut pool, tree.text(), tree.tokens(), &item, 0).is_some() {
+            hand += 1;
         }
     }
     (total, hand)
@@ -378,6 +780,50 @@ mod tests {
         let (total, hand) = count_hand_lowerable_stmts(&tree);
         assert!(total >= 1, "stmts={total}");
         assert!(hand >= 1, "hand-lowerable={hand} total={total}");
+    }
+
+    #[test]
+    fn hand_lower_let_and_binary_return() {
+        let src = "func main(): int {\n    let x = 1\n    let mut y = x + 2\n    return y * 3\n}\n";
+        let tree = parse_syntax(src);
+        let (total, hand) = count_hand_lowerable_stmts(&tree);
+        assert!(total >= 3, "stmts={total}");
+        assert_eq!(hand, total, "all stmts hand-lowerable, hand={hand} total={total}");
+
+        let (ftotal, fhand) = count_hand_lowerable_funcs(&tree);
+        assert_eq!(ftotal, 1);
+        assert_eq!(fhand, 1, "func should fully hand-lower");
+    }
+
+    #[test]
+    fn hand_lower_func_integrated_in_green_walk() {
+        let src = "func add(a: int, b: int): int {\n    return a + b\n}\n";
+        let tree = parse_syntax(src);
+        let prog = lower_from_green(&tree, 0).expect("hand/green lower");
+        assert_eq!(decl_count(&prog), 1);
+        match prog.pool.decl(prog.decls[0]) {
+            TopLevelDecl::Func(f) => {
+                assert_eq!(f.params.len(), 2);
+                assert_eq!(f.body.statements.len(), 1);
+                assert!(matches!(
+                    prog.pool.stmt(f.body.statements[0]),
+                    Stmt::Return { .. }
+                ));
+            }
+            other => panic!("expected Func, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn hand_lower_func_matches_rd_decl_count() {
+        let src = "func main(): int {\n    let x = 1 + 2\n    return x\n}\n";
+        let tree = parse_syntax(src);
+        let via_walk = lower_from_green(&tree, 0).expect("walk");
+        let via_rd = crate::syntax::build::lower_syntax_to_program_rd_only(&tree, 0).expect("rd");
+        assert_eq!(via_walk.decls.len(), via_rd.decls.len());
+        assert_eq!(decl_count(&via_walk), 1);
+        let (ftotal, fhand) = count_hand_lowerable_funcs(&tree);
+        assert_eq!((ftotal, fhand), (1, 1));
     }
 
     #[test]
