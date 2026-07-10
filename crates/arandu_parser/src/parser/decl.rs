@@ -36,7 +36,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    pub(super) fn parse_module(&mut self) -> Result<ModuleDecl, ParseError> {
+    pub(crate) fn parse_module(&mut self) -> Result<ModuleDecl, ParseError> {
         self.collect_doc_comments();
         let docs = self.take_pending_docs();
         let start = self.mark();
@@ -51,7 +51,7 @@ impl<'a> Parser<'a> {
         Ok(module)
     }
 
-    pub(super) fn parse_import(&mut self) -> Result<ImportDecl, ParseError> {
+    pub(crate) fn parse_import(&mut self) -> Result<ImportDecl, ParseError> {
         self.collect_doc_comments();
         let docs = self.take_pending_docs();
         let start = self.mark();
@@ -174,7 +174,7 @@ impl<'a> Parser<'a> {
         Ok(text.into())
     }
 
-    pub(super) fn parse_top_level_decl(&mut self) -> Result<TopLevelDecl, ParseError> {
+    pub(crate) fn parse_top_level_decl(&mut self) -> Result<TopLevelDecl, ParseError> {
         let start = self.mark();
         match self.try_parse_top_level_decl() {
             Ok(decl) => Ok(decl),

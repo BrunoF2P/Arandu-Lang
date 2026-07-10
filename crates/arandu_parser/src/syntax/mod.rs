@@ -1,10 +1,9 @@
 //! CST-first pipeline via [`rowan`] (P5 + F1 structured green).
 //!
 //! 1. Lex → green tree with typed top-level items (`FUNC_ITEM`, …) and `BLOCK` bodies.
-//! 2. Lower CST tokens → AST [`Program`] for resolve/typeck (RD on shared tokens).
-//! 3. Subtree reparse via [`reparse_subtree`] when an edit stays inside one item
-//!    (re-lex only that item; sibling green nodes reused via `replace_child`).
-//! 4. [`lower`] inspects structure for F1 metrics / future walk-based lower.
+//! 2. Lower: green-guided walk over top-level items (RD at each seek) with full-RD fallback.
+//! 3. Subtree reparse via [`reparse_subtree`] when an edit stays inside one item.
+//! 4. [`BLOCK`] contains [`STMT`] fragments (semicolon-split); see [`lower`].
 
 mod build;
 mod kind;
@@ -19,8 +18,8 @@ pub use build::{
 };
 pub use kind::{AranduLanguage, SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};
 pub use lower::{
-    GreenStructure, first_func_item, func_body_block, inspect_green_structure,
-    is_fully_typed_toplevel,
+    GreenStructure, block_stmt_count, first_func_item, func_body_block, inspect_green_structure,
+    is_fully_typed_toplevel, lower_from_green,
 };
 
 use crate::{ParseError, ParseOutput, Program};

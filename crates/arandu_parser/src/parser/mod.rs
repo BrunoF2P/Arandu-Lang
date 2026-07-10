@@ -123,10 +123,10 @@ pub struct Parser<'a> {
     tokens: std::sync::Arc<Vec<Token>>,
     pos: usize,
     allow_block_calls: bool,
-    docs: Vec<DocCommentAttachment>,
+    pub(crate) docs: Vec<DocCommentAttachment>,
     pending_docs: Vec<PendingDoc>,
     pub pool: crate::ast::ast_pool::AstPool,
-    pub(super) diagnostics: Vec<ParseError>,
+    pub(crate) diagnostics: Vec<ParseError>,
     pub file_id: u32,
     pub suppression_window: u32,
 }
@@ -158,6 +158,29 @@ impl<'a> Parser<'a> {
     pub fn with_file_id(mut self, file_id: u32) -> Self {
         self.file_id = file_id;
         self
+    }
+
+    /// Seek to the first non-EOF token whose `start >= offset` (green-guided lower).
+    pub(crate) fn seek_to_byte(&mut self, offset: u32) {
+        self.pos = self
+            .tokens
+            .iter()
+            .position(|t| !matches!(t.kind, TokenKind::Eof) && t.start >= offset)
+            .unwrap_or_else(|| self.tokens.len().saturating_sub(1));
+    }
+
+    /// Seek to an item start, rewinding over immediately preceding doc comments /
+    /// semicolons so attachments match linear `parse_program`.
+    pub(crate) fn seek_to_item_start(&mut self, item_start: u32) {
+        self.seek_to_byte(item_start);
+        while self.pos > 0 {
+            let prev = &self.tokens[self.pos - 1];
+            if matches!(prev.kind, TokenKind::DocComment | TokenKind::Semicolon) {
+                self.pos -= 1;
+            } else {
+                break;
+            }
+        }
     }
 
     /// Parses a full program, collecting recoverable errors in [`Self::diagnostics`].
@@ -214,11 +237,11 @@ impl<'a> Parser<'a> {
             pool: std::mem::take(&mut self.pool),
         })
     }
-    pub(super) fn mark(&self) -> usize {
+    pub(crate) fn mark(&self) -> usize {
         self.pos
     }
 
-    pub(super) fn span_from_mark(&self, start: usize) -> Span {
+    pub(crate) fn span_from_mark(&self, start: usize) -> Span {
         let start_span = self.tokens.get(start).map_or_else(
             || self.current().span(self.file_id),
             |token| token.span(self.file_id),
@@ -233,13 +256,13 @@ impl<'a> Parser<'a> {
         span_between(start_span, end_span)
     }
 
-    pub(super) fn skip_semicolons(&mut self) {
+    pub(crate) fn skip_semicolons(&mut self) {
         while self.at_kind_name("SEMICOLON") {
             self.advance();
         }
     }
 
-    pub(super) fn collect_doc_comments(&mut self) {
+    pub(crate) fn collect_doc_comments(&mut self) {
         while matches!(self.current().kind, TokenKind::DocComment) {
             self.pending_docs.push(PendingDoc {
                 span: self.current().span(self.file_id),
@@ -444,7 +467,7 @@ impl<'a> Parser<'a> {
         token
     }
 
-    pub(super) fn report_error(&mut self, err: ParseError) {
+    pub(crate) fn report_error(&mut self, err: ParseError) {
         if self.suppression_window >= 3 {
             self.diagnostics.push(err);
         }
@@ -453,7 +476,7 @@ impl<'a> Parser<'a> {
 
     #[cold]
     #[inline(never)]
-    pub(super) fn synchronize_top_level(&mut self) {
+    pub(crate) fn synchronize_top_level(&mut self) {
         if matches!(
             self.current().kind,
             TokenKind::KwFunc

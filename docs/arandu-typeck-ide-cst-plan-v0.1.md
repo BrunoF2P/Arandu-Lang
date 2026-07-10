@@ -61,14 +61,15 @@ SourceFile.text
 | Highlight tipado (F2a) | `file_highlights` + legend LSP (`function`/`parameter`/…) |
 | Format + code action (F3) | crate `arandu_fmt`; CLI `fmt`; LSP formatting + quickfix `;` |
 
-## F1a — green estrutural (feito)
+## F1 — green estrutural + lower guiado (feito)
 
-- Kinds: `FUNC_ITEM`, `STRUCT_ITEM`, `MODULE_ITEM`, … + `BLOCK`.  
-- Builder emite `BLOCK` no primeiro `{…}` do item (corpo opaco em tokens).  
-- `reparse_subtree` reconstrói green tipado; `inspect_green_structure` para métricas.  
-- Lower AST ainda RD nos tokens (F1b+ = walk por nó).
+- Kinds: `FUNC_ITEM` / `STRUCT_ITEM` / … + `BLOCK` + `STMT` (split por `;` no bloco).  
+- Item spans **brace-depth aware** (métodos em interface/extern não viram top-level).  
+- Prefixos `public` / `async` / `@attr` dobrados à esquerda do keyword.  
+- Lower: walk nos itens green + RD com `seek_to_item_start` (docs); fallback full RD se walk incompleto.  
+- `inspect_green_structure` conta funcs/blocks/stmts.
 
 ## Em progresso / próximo
 
-- Lower AST por walk de green (`FUNC`/`STMT` tipados).  
+- Lower 100% por walk de nós `STMT`/`EXPR` (sem RD sequencial).  
 - Format pretty-print por green (hoje: higiene de whitespace).

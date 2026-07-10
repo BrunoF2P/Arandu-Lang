@@ -37,8 +37,10 @@ pub enum SyntaxKind {
     TYPE_ALIAS_ITEM,
     EXTERN_ITEM,
 
-    /// `{ ... }` body (function body, struct body, …). Children are tokens (opaque in F1a).
+    /// `{ ... }` body (function body, struct body, …).
     BLOCK,
+    /// Statement fragment inside a [`Self::BLOCK`] (tokens until `;` / next stmt; F1b).
+    STMT,
     /// Unparsed / error region.
     ERROR,
 

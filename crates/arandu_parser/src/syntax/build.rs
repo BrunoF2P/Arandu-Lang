@@ -176,21 +176,23 @@ fn lex_diags_as_parse(tree: &SyntaxTree, file_id: u32) -> Vec<crate::ParseError>
         .collect()
 }
 
-/// Lower CST → AST using the **cached token stream** (no re-lex, no token `Vec` clone).
+/// Lower CST → AST: **green-guided walk** (F1b) with RD at each top-level item.
 ///
-/// Typeck/resolve consume [`crate::Program`]; the source of truth is the CST.
-/// Green structure (`FUNC_ITEM`/`BLOCK`) is available via [`super::lower`]; full AST
-/// still uses recursive-descent on tokens until a complete green walk exists (F1b+).
+/// Falls back to a full linear RD pass when the green tree has no items or the walk
+/// cannot recover a complete program. No re-lex; tokens come from the CST cache.
 pub fn lower_syntax_to_program(
     tree: &SyntaxTree,
     file_id: u32,
 ) -> Result<crate::Program, crate::ParseError> {
-    let output = crate::parser::parse_token_stream(
-        tree.text(),
-        Arc::clone(tree.tokens_arc()),
-        file_id,
-        lex_diags_as_parse(tree, file_id),
-    );
+    super::lower::lower_from_green(tree, file_id)
+}
+
+/// Linear RD lower (no green walk) — tests / fallback.
+pub fn lower_syntax_to_program_rd_only(
+    tree: &SyntaxTree,
+    file_id: u32,
+) -> Result<crate::Program, crate::ParseError> {
+    let output = lower_syntax_to_program_recovering_rd_only(tree, file_id);
     if let Some(err) = output.diagnostics.into_iter().next() {
         Err(err)
     } else {
@@ -198,9 +200,18 @@ pub fn lower_syntax_to_program(
     }
 }
 
-/// Recovering lower (keeps parse diagnostics); no re-lex / no token clone.
+/// Recovering lower via green-guided walk (keeps diagnostics).
 #[must_use]
 pub fn lower_syntax_to_program_recovering(tree: &SyntaxTree, file_id: u32) -> crate::ParseOutput {
+    super::lower::lower_from_green_recovering(tree, file_id)
+}
+
+/// Recovering linear RD lower (no green walk).
+#[must_use]
+pub fn lower_syntax_to_program_recovering_rd_only(
+    tree: &SyntaxTree,
+    file_id: u32,
+) -> crate::ParseOutput {
     crate::parser::parse_token_stream(
         tree.text(),
         Arc::clone(tree.tokens_arc()),
@@ -374,13 +385,114 @@ fn emit_structured_item(
         }
     }
 
-    builder.start_node(SyntaxKind::BLOCK.into());
-    emit_tokens(builder, source, tokens, open_brace, close_end);
-    builder.finish_node();
+    emit_block_with_stmts(builder, source, tokens, open_brace, close_end);
 
     if close_end < range_end {
         emit_tokens(builder, source, tokens, close_end, range_end);
     }
+    builder.finish_node();
+}
+
+/// `BLOCK` with `{` / `STMT`* / `}` (statements split on `;` at brace-depth 1).
+fn emit_block_with_stmts(
+    builder: &mut GreenNodeBuilder<'_>,
+    source: &str,
+    tokens: &[Token],
+    open_brace: u32,
+    close_end: u32,
+) {
+    builder.start_node(SyntaxKind::BLOCK.into());
+
+    // Tokens strictly inside the block range.
+    let in_block: Vec<&Token> = tokens
+        .iter()
+        .filter(|t| {
+            !matches!(t.kind, TokenKind::Eof | TokenKind::Error(_))
+                && t.start >= open_brace
+                && t.start < close_end
+        })
+        .collect();
+
+    if in_block.is_empty() {
+        builder.finish_node();
+        return;
+    }
+
+    // Opening `{`
+    let first = in_block[0];
+    if matches!(first.kind, TokenKind::LBrace) {
+        emit_tokens(
+            builder,
+            source,
+            tokens,
+            first.start,
+            first.start.saturating_add(first.len),
+        );
+    }
+
+    let close_tok = in_block
+        .last()
+        .filter(|t| matches!(t.kind, TokenKind::RBrace));
+    let inner_end = close_tok.map_or(close_end, |t| t.start);
+
+    // Split interior into STMTs on `;` at depth==1 (inside outer braces).
+    let mut depth = 0i32;
+    let mut stmt_start: Option<u32> = None;
+    for t in &in_block {
+        match t.kind {
+            TokenKind::LBrace => {
+                depth += 1;
+                if depth == 1 {
+                    // just opened outer `{` — next content starts after this token
+                    stmt_start = Some(t.start.saturating_add(t.len));
+                }
+            }
+            TokenKind::RBrace => {
+                if depth == 1 {
+                    // flush last stmt before closing `}`
+                    if let Some(ss) = stmt_start {
+                        if ss < t.start {
+                            builder.start_node(SyntaxKind::STMT.into());
+                            emit_tokens(builder, source, tokens, ss, t.start);
+                            builder.finish_node();
+                        }
+                    }
+                    stmt_start = None;
+                }
+                depth -= 1;
+            }
+            TokenKind::Semicolon if depth == 1 => {
+                let te = t.start.saturating_add(t.len);
+                if let Some(ss) = stmt_start {
+                    if ss < te {
+                        builder.start_node(SyntaxKind::STMT.into());
+                        emit_tokens(builder, source, tokens, ss, te);
+                        builder.finish_node();
+                    }
+                }
+                stmt_start = Some(te);
+            }
+            _ => {
+                if depth == 1 && stmt_start.is_none() {
+                    stmt_start = Some(t.start);
+                }
+            }
+        }
+    }
+
+    // Closing `}`
+    if let Some(t) = close_tok {
+        emit_tokens(
+            builder,
+            source,
+            tokens,
+            t.start,
+            t.start.saturating_add(t.len),
+        );
+    } else if inner_end < close_end {
+        emit_tokens(builder, source, tokens, inner_end, close_end);
+    }
+
     builder.finish_node();
 }
 
@@ -396,30 +508,51 @@ pub fn build_item_green(item_text: &str, tokens: &[Token]) -> GreenNode {
     builder.finish()
 }
 
-/// Heuristic top-level item ranges from tokens (brace-aware).
+/// Heuristic top-level item ranges from tokens (**brace-depth aware**).
 ///
 /// Starts an item at module/import/decl keywords (optionally after `public`)
-/// and extends until the next top-level keyword at depth 0 or EOF.
+/// only when `{}` depth is 0 — so `func` methods inside `interface` / `extern`
+/// / `struct` are not treated as new top-level items.
 #[must_use]
 pub fn find_top_level_item_spans(tokens: &[Token], source_len: u32) -> Vec<(u32, u32)> {
     let mut starts: Vec<u32> = Vec::new();
+    let mut depth = 0i32;
     let mut i = 0;
+    // Last item-start keyword seen at depth 0 (to suppress `import` after `from`).
+    let mut last_item_kw: Option<TokenKind> = None;
     while i < tokens.len() {
         let tok = &tokens[i];
         if matches!(tok.kind, TokenKind::Eof | TokenKind::Error(_)) {
             i += 1;
             continue;
         }
-        let is_public = matches!(tok.kind, TokenKind::KwPublic);
-        let kw_i = if is_public { i + 1 } else { i };
-        if kw_i >= tokens.len() {
-            break;
+
+        // Keyword check at current depth (before this token modifies depth).
+        // Item openers: module/import/from/func/struct/… — not `async`/`public` alone
+        // (those are prefixes). Leading `@attr` / `public` / `async` are folded left.
+        if depth == 0 && is_item_start_keyword(tok.kind) {
+            if matches!(tok.kind, TokenKind::KwImport)
+                && matches!(last_item_kw, Some(TokenKind::KwFrom))
+            {
+                // `from path import {…}` — do not split at `import`.
+            } else {
+                let start = expand_item_start_left(tokens, i);
+                starts.push(start);
+                last_item_kw = Some(tok.kind);
+                i += 1;
+                continue;
+            }
         }
-        let kw = &tokens[kw_i];
-        if is_item_start_keyword(kw.kind) {
-            starts.push(if is_public { tok.start } else { kw.start });
-            i = kw_i + 1;
-            continue;
+
+        match tok.kind {
+            TokenKind::LBrace => depth += 1,
+            TokenKind::RBrace => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    last_item_kw = None;
+                }
+            }
+            _ => {}
         }
         i += 1;
     }
@@ -461,9 +594,72 @@ fn is_item_start_keyword(kind: TokenKind) -> bool {
             | TokenKind::KwInterface
             | TokenKind::KwConst
             | TokenKind::KwType
-            | TokenKind::KwExtern
-            | TokenKind::KwAsync // async func
+            | TokenKind::KwExtern // Note: KwAsync / KwPublic are prefixes — folded via `expand_item_start_left`.
     )
+}
+
+/// Include leading `@attr…`, `public`, and `async` before an item keyword.
+fn expand_item_start_left(tokens: &[Token], kw_index: usize) -> u32 {
+    let mut idx = kw_index;
+    let mut start = tokens[kw_index].start;
+    while idx > 0 {
+        let prev = &tokens[idx - 1];
+        match prev.kind {
+            // ASI often inserts `;` after bare `@Attr` / names before `public`/`func`.
+            TokenKind::Semicolon => {
+                idx -= 1;
+            }
+            TokenKind::KwAsync | TokenKind::KwPublic => {
+                start = prev.start;
+                idx -= 1;
+            }
+            TokenKind::RParen => {
+                // Walk back a `(…)` group (attribute args), then name + `@`.
+                let mut depth = 1i32;
+                start = prev.start;
+                idx -= 1;
+                while idx > 0 && depth > 0 {
+                    match tokens[idx - 1].kind {
+                        TokenKind::RParen => depth += 1,
+                        TokenKind::LParen => depth -= 1,
+                        _ => {}
+                    }
+                    start = tokens[idx - 1].start;
+                    idx -= 1;
+                }
+                // optional attr name
+                if idx > 0
+                    && matches!(
+                        tokens[idx - 1].kind,
+                        TokenKind::IdentValue | TokenKind::IdentType
+                    )
+                {
+                    start = tokens[idx - 1].start;
+                    idx -= 1;
+                }
+                if idx > 0 && matches!(tokens[idx - 1].kind, TokenKind::At) {
+                    start = tokens[idx - 1].start;
+                    idx -= 1;
+                } else {
+                    break;
+                }
+            }
+            TokenKind::IdentValue | TokenKind::IdentType if idx >= 2 => {
+                if matches!(tokens[idx - 2].kind, TokenKind::At) {
+                    start = tokens[idx - 2].start;
+                    idx -= 2;
+                } else {
+                    break;
+                }
+            }
+            TokenKind::At => {
+                start = prev.start;
+                idx -= 1;
+            }
+            _ => break,
+        }
+    }
+    start
 }
 
 fn emit_tokens(
