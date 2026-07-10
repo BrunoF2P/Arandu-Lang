@@ -168,7 +168,7 @@ pub fn parse_syntax_with_item_spans(source: &str, item_spans: &[(u32, u32)]) -> 
     tree_from_lexed(source, lexed, item_spans)
 }
 
-fn lex_diags_as_parse(tree: &SyntaxTree, file_id: u32) -> Vec<crate::ParseError> {
+pub(crate) fn lex_diags_as_parse(tree: &SyntaxTree, file_id: u32) -> Vec<crate::ParseError> {
     tree.lex_diagnostics()
         .iter()
         .copied()
@@ -187,7 +187,7 @@ pub fn lower_syntax_to_program(
     super::lower::lower_from_green(tree, file_id)
 }
 
-/// Linear RD lower (no green walk) — tests / fallback.
+/// Linear RD lower (no green walk) — tests / explicit fallback.
 pub fn lower_syntax_to_program_rd_only(
     tree: &SyntaxTree,
     file_id: u32,
@@ -450,12 +450,12 @@ fn emit_block_with_stmts(
             TokenKind::RBrace => {
                 if depth == 1 {
                     // flush last stmt before closing `}`
-                    if let Some(ss) = stmt_start {
-                        if ss < t.start {
-                            builder.start_node(SyntaxKind::STMT.into());
-                            emit_tokens(builder, source, tokens, ss, t.start);
-                            builder.finish_node();
-                        }
+                    if let Some(ss) = stmt_start
+                        && ss < t.start
+                    {
+                        builder.start_node(SyntaxKind::STMT.into());
+                        emit_tokens(builder, source, tokens, ss, t.start);
+                        builder.finish_node();
                     }
                     stmt_start = None;
                 }
@@ -463,12 +463,12 @@ fn emit_block_with_stmts(
             }
             TokenKind::Semicolon if depth == 1 => {
                 let te = t.start.saturating_add(t.len);
-                if let Some(ss) = stmt_start {
-                    if ss < te {
-                        builder.start_node(SyntaxKind::STMT.into());
-                        emit_tokens(builder, source, tokens, ss, te);
-                        builder.finish_node();
-                    }
+                if let Some(ss) = stmt_start
+                    && ss < te
+                {
+                    builder.start_node(SyntaxKind::STMT.into());
+                    emit_tokens(builder, source, tokens, ss, te);
+                    builder.finish_node();
                 }
                 stmt_start = Some(te);
             }

@@ -12,7 +12,8 @@ pub mod lower;
 pub use build::{
     SyntaxTree, apply_text_edit, build_item_green, classify_item_kind, find_top_level_item_spans,
     for_each_highlight_token, highlight_spans, lower_syntax_to_program,
-    lower_syntax_to_program_recovering, parse_syntax, parse_syntax_arc,
+    lower_syntax_to_program_rd_only, lower_syntax_to_program_recovering,
+    lower_syntax_to_program_recovering_rd_only, parse_syntax, parse_syntax_arc,
     parse_syntax_with_item_spans, reparse_edit, reparse_subtree, single_contiguous_edit,
     splice_tokens_for_item_edit, text_range,
 };
