@@ -17,6 +17,7 @@ pub fn can_start_type_kind(kind: TokenKind) -> bool {
             | TokenKind::LBracket
             | TokenKind::LParen
             | TokenKind::KwFunc
+            | TokenKind::Amp // `&T` / `&mut T`
     ) || primitive_type_token_name(kind).is_some()
 }
 
@@ -71,6 +72,19 @@ pub fn try_hand_lower_type(
 pub fn parse_type(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<TypeExprId> {
     let start_tok = cur.peek()?;
     let start = start_tok.start;
+
+    // `&mut T` / `&T` — safe reference types (F2.0). Not raw `ptr[T]`.
+    if cur.eat(TokenKind::Amp) {
+        let is_mut = cur.eat(TokenKind::KwMut);
+        let inner = parse_type(ctx, cur)?;
+        let end = ctx.pool.type_expr_span(inner).end;
+        let span = ctx.span(start, end);
+        return Some(ctx.pool.alloc_type_expr(if is_mut {
+            TypeExpr::RefMut { span, inner }
+        } else {
+            TypeExpr::Ref { span, inner }
+        }));
+    }
 
     // `ptr[T]` (RD requires brackets after KwPtr)
     if cur.eat(TokenKind::KwPtr) {

@@ -35,6 +35,16 @@ pub enum TypeExpr {
         span: Span,
         inner: TypeExprId,
     },
+    /// Shared reference type: `&T` (F2.0).
+    Ref {
+        span: Span,
+        inner: TypeExprId,
+    },
+    /// Exclusive reference type: `&mut T` (F2.0).
+    RefMut {
+        span: Span,
+        inner: TypeExprId,
+    },
     Slice {
         span: Span,
         inner: TypeExprId,
@@ -63,6 +73,8 @@ impl TypeExpr {
             | TypeExpr::Named { span, .. }
             | TypeExpr::Nullable { span, .. }
             | TypeExpr::Pointer { span, .. }
+            | TypeExpr::Ref { span, .. }
+            | TypeExpr::RefMut { span, .. }
             | TypeExpr::Slice { span, .. }
             | TypeExpr::Array { span, .. }
             | TypeExpr::Func { span, .. }

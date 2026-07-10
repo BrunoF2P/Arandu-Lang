@@ -65,7 +65,10 @@ Fase 2 — A Construção da Infraestrutura & Execução (v0.2) · [EM ANDAMENTO
    ├─ [x] BC.1   Fat Pointer String JIT (tratar String como ptr + len na convenção de chamadas do Cranelift)
    ├─ [x] BC.2   Implementar EnumPayload & Discriminant no Cranelift JIT (Garantia estática contra double-free depende de M2; atualmente mitigado via poison-check em debug)
    ├─ [x] BC.3   Implementar IndexAccess & Array/Tuple no Cranelift JIT (Garantia estática contra double-free depende de M2; atualmente mitigado via poison-check em debug)
-   ├─ [ ] BC.4   Implementar Borrow/BorrowMut e Await no Cranelift JIT (Borrow de heap pointers; stack local borrow depende de F2)
+   ├─ [ ] BC.4a  Borrow/BorrowMut no Cranelift JIT
+   │              · heap/`ptr`: implementável sem F2 (ponteiro já materializado)
+   │              · stack local `&`/`&mut`: depende de F2.0–F2.3
+   ├─ [ ] BC.4b  Await no Cranelift JIT (depende inteiramente de A3 — independente de F2)
    └─ [x] FUZZ   Fuzzing Lexer/Parser SIMD (arandu_fuzz e cron jobs semanais de robustez)
 [x] C_FB   Backend C de portabilidade e bootstrapping
 [x] DX     Diagnostics & Tooling Infrastructure (DX1-DX3, DX4 CFG visualization; DX2 recovery anchors completed)
@@ -878,11 +881,11 @@ O Arandu garante a reprodutibilidade de compilação byte a byte (byte-by-byte b
 | **T025** | Error | Interface não satisfeita (métodos faltantes no Go-style) |
 | **P006** | Parser | Uso sintático inválido de tupla para retorno de erro |
 | **O001** | Ownership | Uso de variável local após comando de move no CFG |
-| **O002** | Ownership | Tentativa de mover dados que estão sob empréstimo ativo |
+| **O002** | Ownership | Move/consume while borrowed (`O002MoveWhileBorrowed`) |
 | **O003** | Ownership | Empréstimo mutável concorrendo com referências compartilhadas |
-| **O004** | Info | Nota descritiva de inserção de checagem geracional dinâmica |
+| **O004** | Info | Generational/escape fallback (G2/F2.3) — not shared-borrow conflict |
 | **O005** | Ownership | Dupla liberação de memória (Double Free) |
-| **O006** | Ownership | Liberação ou invalidação manual de dados emprestados |
+| **O006** | Ownership | Destroy/free while borrow still active (`O006DestroyWhileBorrowed`) |
 | **O007** | Ownership | Estado de move inconsistente entre branches no merge do CFG |
 | **O008** | Ownership | Leitura ou cópia de slot local não inicializado |
 

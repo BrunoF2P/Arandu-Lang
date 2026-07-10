@@ -7,6 +7,12 @@ pub enum UnaryOp {
     Not,
     BitNot,
     Await,
+    /// Shared address-of: `&expr` (F2.0).
+    Ref,
+    /// Exclusive address-of: `&mut expr` (F2.0).
+    RefMut,
+    /// Dereference `*expr` (safe for refs; raw ptr needs unsafe).
+    Deref,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -58,6 +64,9 @@ impl From<arandu_parser::UnaryOp> for UnaryOp {
             arandu_parser::UnaryOp::Not => Self::Not,
             arandu_parser::UnaryOp::BitNot => Self::BitNot,
             arandu_parser::UnaryOp::Await => Self::Await,
+            arandu_parser::UnaryOp::Ref => Self::Ref,
+            arandu_parser::UnaryOp::RefMut => Self::RefMut,
+            arandu_parser::UnaryOp::Deref => Self::Deref,
         }
     }
 }

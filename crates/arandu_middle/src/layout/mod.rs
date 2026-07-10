@@ -284,7 +284,8 @@ impl LayoutEngine {
                 align: 1,
                 field_offsets: Vec::new(),
             },
-            ArType::Ptr(_) => {
+            ArType::Ptr(_) | ArType::Ref(_) | ArType::RefMut(_) => {
+                // Safe refs and raw pointers are single machine pointers (fat types later).
                 let p = self.data_layout.pointer;
                 TypeLayout {
                     size: p.size,
@@ -526,6 +527,18 @@ fn substitute(ty: &ArType, subst: &FxHashMap<SymbolId, TypeId>, interner: &TypeI
             let substituted_inner = substitute(&inner_ty, subst, interner);
             let new_inner = interner.lookup(&substituted_inner).unwrap_or(*inner);
             ArType::Ptr(new_inner)
+        }
+        ArType::Ref(inner) => {
+            let inner_ty = interner.resolve(*inner);
+            let substituted_inner = substitute(&inner_ty, subst, interner);
+            let new_inner = interner.lookup(&substituted_inner).unwrap_or(*inner);
+            ArType::Ref(new_inner)
+        }
+        ArType::RefMut(inner) => {
+            let inner_ty = interner.resolve(*inner);
+            let substituted_inner = substitute(&inner_ty, subst, interner);
+            let new_inner = interner.lookup(&substituted_inner).unwrap_or(*inner);
+            ArType::RefMut(new_inner)
         }
         ArType::Tuple(tys) => {
             let new_tys = tys

@@ -482,5 +482,8 @@ fn unary_op_name(op: &UnaryOp) -> &'static str {
         UnaryOp::Neg => "neg",
         UnaryOp::BitNot => "bitnot",
         UnaryOp::Await => "await",
+        UnaryOp::Ref => "&",
+        UnaryOp::RefMut => "&mut",
+        UnaryOp::Deref => "*",
     }
 }

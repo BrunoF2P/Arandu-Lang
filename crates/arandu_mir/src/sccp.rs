@@ -398,7 +398,7 @@ fn fold_unary(
             let val = const_as_i128(&v, pool)?;
             Some(AmirConstant::Pool(pool.intern_int((!val).to_string())))
         }
-        (UnaryOp::Await, _) => None,
+        (UnaryOp::Await | UnaryOp::Ref | UnaryOp::RefMut | UnaryOp::Deref, _) => None,
         _ => None,
     }
 }

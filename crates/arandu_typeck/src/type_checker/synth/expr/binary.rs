@@ -172,6 +172,53 @@ pub(super) fn synth_binary_unary_expr(
                         Some(checker.intern(ArType::Error))
                     }
                 }
+                // F2.0: safe shared/exclusive address-of (not raw ptr).
+                UnaryOp::Ref => {
+                    let inner_id = if expr_ty.is_error() {
+                        checker.intern(ArType::Error)
+                    } else {
+                        expr_ty_id
+                    };
+                    Some(checker.intern(ArType::Ref(inner_id)))
+                }
+                UnaryOp::RefMut => {
+                    let inner_id = if expr_ty.is_error() {
+                        checker.intern(ArType::Error)
+                    } else {
+                        expr_ty_id
+                    };
+                    Some(checker.intern(ArType::RefMut(inner_id)))
+                }
+                UnaryOp::Deref => match expr_ty {
+                    ArType::Ref(inner) | ArType::RefMut(inner) => Some(inner),
+                    ArType::Ptr(inner) => {
+                        if !checker.ctx.is_in_unsafe() {
+                            checker.diagnostics.push(
+                                crate::Diagnostic::error(
+                                    crate::DiagCode::O012AllocRequiresUnsafe,
+                                    "dereferencing a raw pointer requires an `unsafe` block",
+                                    span,
+                                )
+                                .with_label(span, "raw `ptr[T]` deref is unsafe")
+                                .with_note(
+                                    "use `&T` / `&mut T` for safe borrows (F2.0)".to_string(),
+                                ),
+                            );
+                        }
+                        Some(inner)
+                    }
+                    _ => {
+                        checker.add_constraint(
+                            ArType::Error,
+                            expr_ty_id,
+                            ConstraintOrigin::UnaryOp {
+                                op_span: span,
+                                operand_span: checker.pool.expr_span(inner_id),
+                            },
+                        );
+                        Some(checker.intern(ArType::Error))
+                    }
+                },
             }
         }
         ExprKind::Binary { op, left, right } => {

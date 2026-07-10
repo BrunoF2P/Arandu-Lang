@@ -95,7 +95,13 @@ pub(crate) fn is_memory_type(ty: &ArType) -> bool {
         ArType::IntLiteral | ArType::FloatLiteral | ArType::Void | ArType::Err | ArType::Error => {
             false
         }
-        ArType::Ptr(_) | ArType::Nullable(_) | ArType::Func(_, _) | ArType::Slice(_) => false,
+        // Pointers and safe refs are scalar values (fat/thin pointers), not memory objects.
+        ArType::Ptr(_)
+        | ArType::Ref(_)
+        | ArType::RefMut(_)
+        | ArType::Nullable(_)
+        | ArType::Func(_, _)
+        | ArType::Slice(_) => false,
         ArType::Array(_, _)
         | ArType::Named(_, _)
         | ArType::Tuple(_)

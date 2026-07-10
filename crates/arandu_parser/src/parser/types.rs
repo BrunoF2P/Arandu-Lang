@@ -208,6 +208,17 @@ impl<'a> Parser<'a> {
 
     pub(super) fn parse_type_primary(&mut self) -> Result<TypeExprId, ParseError> {
         let start = self.mark();
+        // `&mut T` / `&T` (F2.0 safe references)
+        if self.eat_name("AMP") {
+            let is_mut = self.eat_name("KW_MUT");
+            let inner = self.parse_type()?;
+            let span = self.span_from_mark(start);
+            return Ok(self.pool.alloc_type_expr(if is_mut {
+                TypeExpr::RefMut { span, inner }
+            } else {
+                TypeExpr::Ref { span, inner }
+            }));
+        }
         if self.eat_name("KW_PTR") {
             self.expect_name("LBRACKET")?;
             let inner = self.parse_type()?;

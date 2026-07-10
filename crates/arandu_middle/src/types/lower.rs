@@ -84,6 +84,16 @@ pub fn lower_type_expr_ctx(
             let id = interner.intern(inner_ty);
             ArType::Ptr(id)
         }
+        TypeExpr::Ref { inner, .. } => {
+            let inner_ty = lower_type_expr_ctx(*inner, ctx, interner);
+            let id = interner.intern(inner_ty);
+            ArType::Ref(id)
+        }
+        TypeExpr::RefMut { inner, .. } => {
+            let inner_ty = lower_type_expr_ctx(*inner, ctx, interner);
+            let id = interner.intern(inner_ty);
+            ArType::RefMut(id)
+        }
         TypeExpr::Slice { inner, .. } => {
             let inner_ty = lower_type_expr_ctx(*inner, ctx, interner);
             let id = interner.intern(inner_ty);

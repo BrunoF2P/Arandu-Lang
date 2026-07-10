@@ -27,6 +27,8 @@ impl<'a> Resolver<'a> {
             }
             TypeExpr::Nullable { inner, .. }
             | TypeExpr::Pointer { inner, .. }
+            | TypeExpr::Ref { inner, .. }
+            | TypeExpr::RefMut { inner, .. }
             | TypeExpr::Slice { inner, .. }
             | TypeExpr::Group { inner, .. } => self.resolve_type_expr(scope, *inner),
             TypeExpr::Array { elem, .. } => self.resolve_type_expr(scope, *elem),

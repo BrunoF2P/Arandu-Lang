@@ -116,6 +116,18 @@ pub(crate) fn translate_type(ty: &ArType, from: &TypeInterner, to: &mut TypeInte
             let new_inner = to.intern(translated);
             ArType::Ptr(new_inner)
         }
+        ArType::Ref(inner) => {
+            let resolved = from.resolve(*inner);
+            let translated = translate_type(&resolved, from, to);
+            let new_inner = to.intern(translated);
+            ArType::Ref(new_inner)
+        }
+        ArType::RefMut(inner) => {
+            let resolved = from.resolve(*inner);
+            let translated = translate_type(&resolved, from, to);
+            let new_inner = to.intern(translated);
+            ArType::RefMut(new_inner)
+        }
         ArType::Tuple(items) => {
             let new_items = items
                 .iter()

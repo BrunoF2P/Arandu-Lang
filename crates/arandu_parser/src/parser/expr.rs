@@ -276,6 +276,35 @@ impl<'a> Parser<'a> {
                     span,
                 ))
             }
+            TokenKind::Amp => {
+                self.advance();
+                let is_mut = self.eat_name("KW_MUT");
+                let expr = self.parse_expr(150)?;
+                let span = self.span_from_mark(start);
+                Ok(self.pool.alloc_expr(
+                    ExprKind::Unary {
+                        op: if is_mut {
+                            UnaryOp::RefMut
+                        } else {
+                            UnaryOp::Ref
+                        },
+                        expr,
+                    },
+                    span,
+                ))
+            }
+            TokenKind::Star => {
+                self.advance();
+                let expr = self.parse_expr(150)?;
+                let span = self.span_from_mark(start);
+                Ok(self.pool.alloc_expr(
+                    ExprKind::Unary {
+                        op: UnaryOp::Deref,
+                        expr,
+                    },
+                    span,
+                ))
+            }
             TokenKind::KwAsync => {
                 self.advance();
                 let block = self.parse_block()?;

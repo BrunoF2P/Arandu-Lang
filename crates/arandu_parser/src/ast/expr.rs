@@ -11,6 +11,12 @@ pub enum UnaryOp {
     Not,
     BitNot,
     Await,
+    /// Shared address-of: `&expr` → `&T` (F2.0 safe borrow).
+    Ref,
+    /// Exclusive address-of: `&mut expr` → `&mut T` (F2.0 safe borrow).
+    RefMut,
+    /// Dereference: `*expr` — safe load for `&T`/`&mut T`; raw `ptr[T]` needs unsafe.
+    Deref,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

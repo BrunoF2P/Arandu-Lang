@@ -146,6 +146,34 @@ pub fn unify(a: &ArType, b: &ArType, interner: &TypeInterner) -> bool {
                     interner,
                 )
         }
+        // Shared refs unify structurally.
+        (ArType::Ref(inner_a), ArType::Ref(inner_b)) => {
+            *inner_a == *inner_b
+                || unify(
+                    &interner.resolve(*inner_a),
+                    &interner.resolve(*inner_b),
+                    interner,
+                )
+        }
+        // Exclusive refs unify with each other.
+        (ArType::RefMut(inner_a), ArType::RefMut(inner_b)) => {
+            *inner_a == *inner_b
+                || unify(
+                    &interner.resolve(*inner_a),
+                    &interner.resolve(*inner_b),
+                    interner,
+                )
+        }
+        // Coercion: `&mut T` can decay to `&T` (exclusive → shared). Never reverse.
+        (ArType::Ref(inner_a), ArType::RefMut(inner_b))
+        | (ArType::RefMut(inner_b), ArType::Ref(inner_a)) => {
+            *inner_a == *inner_b
+                || unify(
+                    &interner.resolve(*inner_a),
+                    &interner.resolve(*inner_b),
+                    interner,
+                )
+        }
         (ArType::Tuple(types_a), ArType::Tuple(types_b)) => {
             types_a.len() == types_b.len()
                 && types_a.iter().zip(types_b).all(|(&x, &y)| {
@@ -598,6 +626,34 @@ mod tests {
         assert!(!unify(
             &ArType::Ptr(int_t(&mut i)),
             &ArType::Ptr(bool_t(&mut i)),
+            &i
+        ));
+    }
+
+    // ── F2.0 Ref / RefMut unification ──
+
+    #[test]
+    fn ref_same_inner() {
+        let mut i = new_interner();
+        let inner = int_t(&mut i);
+        assert!(unify(&ArType::Ref(inner), &ArType::Ref(inner), &i));
+    }
+
+    #[test]
+    fn refmut_decays_to_ref() {
+        let mut i = new_interner();
+        let inner = int_t(&mut i);
+        // Exclusive may decay to shared (Rust rule).
+        assert!(unify(&ArType::Ref(inner), &ArType::RefMut(inner), &i));
+        assert!(unify(&ArType::RefMut(inner), &ArType::Ref(inner), &i));
+    }
+
+    #[test]
+    fn ref_does_not_unify_with_different_inner() {
+        let mut i = new_interner();
+        assert!(!unify(
+            &ArType::Ref(int_t(&mut i)),
+            &ArType::Ref(bool_t(&mut i)),
             &i
         ));
     }

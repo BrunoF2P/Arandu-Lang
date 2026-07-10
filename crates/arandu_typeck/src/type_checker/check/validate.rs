@@ -29,6 +29,8 @@ pub(crate) fn contains_any(pool: &AstPool, ty: TypeExprId) -> Option<Span> {
         }
         TypeExpr::Nullable { inner, .. }
         | TypeExpr::Pointer { inner, .. }
+        | TypeExpr::Ref { inner, .. }
+        | TypeExpr::RefMut { inner, .. }
         | TypeExpr::Slice { inner, .. }
         | TypeExpr::Array { elem: inner, .. }
         | TypeExpr::Group { inner, .. } => contains_any(pool, *inner),

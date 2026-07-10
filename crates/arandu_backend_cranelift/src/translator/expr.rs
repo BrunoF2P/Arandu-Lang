@@ -595,19 +595,43 @@ impl FunctionTranslator<'_, '_> {
                 self.translate_binary_op(*op, lhs, rhs, Some(left), Some(right))
             }
             AmirRvalue::Unary { op, operand } => {
+                // Deref loads through a pointer: operand is always pointer-width;
+                // result width comes from the assign target (`expected_ty`).
+                if matches!(op, UnaryOp::Deref) {
+                    let ptr = self.translate_operand(operand, Some(self.ptr_type));
+                    let load_ty = expected_ty.unwrap_or(self.ptr_type);
+                    return self.builder.ins().load(
+                        load_ty,
+                        cranelift_codegen::ir::MemFlagsData::new(),
+                        ptr,
+                        0,
+                    );
+                }
                 let val = self.translate_operand(operand, expected_ty);
                 self.translate_unary_op(*op, val)
             }
             AmirRvalue::Load(place) => {
                 if place.projections.is_empty() {
-                    match self.local_map.get(&place.local) {
-                        Some(var) => self.builder.use_var(*var),
-                        None => {
-                            self.record_ice(
-                                "use of undeclared AMIR local in codegen",
-                                self.local_span(place.local),
-                            );
-                            self.poison_i32()
+                    // Address-taken scalar: load from stack home (F2.0).
+                    if let Some(&slot) = self.local_stack_slots.get(&place.local) {
+                        let addr = self.builder.ins().stack_addr(self.ptr_type, slot, 0);
+                        let clif_ty = expected_ty.unwrap_or(self.ptr_type);
+                        self.builder.ins().load(
+                            clif_ty,
+                            cranelift_codegen::ir::MemFlagsData::new(),
+                            addr,
+                            0,
+                        )
+                    } else {
+                        match self.local_map.get(&place.local) {
+                            Some(var) => self.builder.use_var(*var),
+                            None => {
+                                self.record_ice(
+                                    "use of undeclared AMIR local in codegen",
+                                    self.local_span(place.local),
+                                );
+                                self.poison_i32()
+                            }
                         }
                     }
                 } else {
@@ -1001,13 +1025,19 @@ impl FunctionTranslator<'_, '_> {
             }
             AmirRvalue::Borrow(place) | AmirRvalue::BorrowMut(place) => {
                 let ty = self.local_ar_ty(place.local);
-                let is_memory_backed = !place.projections.is_empty()
+                let local_is_memory = self.current_func.locals[place.local.as_usize()].is_memory;
+                let has_stack_home = self.local_stack_slots.contains_key(&place.local);
+                let is_memory_backed = has_stack_home
+                    || local_is_memory
+                    || !place.projections.is_empty()
                     || matches!(
                         ty,
                         ArType::Tuple(_)
                             | ArType::Array(_, _)
                             | ArType::Slice(_)
                             | ArType::Primitive(Primitive::Str)
+                            | ArType::Ref(_)
+                            | ArType::RefMut(_)
                     )
                     || matches!(
                         ty,
@@ -1028,7 +1058,7 @@ impl FunctionTranslator<'_, '_> {
                 } else {
                     self.record_error(
                         arandu_semantics::DiagCode::U001FeatureNotSupported,
-                        "borrow de variável escalar sem endereço físico ainda não suportado — requer F2.0/address_taken (Fase 3)",
+                        "borrow of non-memory local without address_taken (F2.0 should mark is_memory)",
                         self.local_span(place.local),
                     );
                     self.poison_i32()
@@ -1139,12 +1169,33 @@ impl FunctionTranslator<'_, '_> {
                 );
                 self.poison_i32()
             }
-            _ => {
+            // F2.0: Ref/RefMut are lowered as Borrow rvalues, not Unary.
+            // Deref of a pointer-valued SSA: load pointee as expected return type.
+            UnaryOp::Ref | UnaryOp::RefMut => {
                 self.record_ice(
-                    format!(
-                        "Unary operator {:?} not implemented in Cranelift JIT yet",
-                        op
-                    ),
+                    "Unary Ref/RefMut should lower as Borrow, not Unary",
+                    self.func_span(),
+                );
+                self.poison_i32()
+            }
+            UnaryOp::Deref => {
+                // `val` is a pointer; load a machine word (int-sized) by default.
+                let load_ty = if ty.is_int() || ty.is_float() {
+                    ty
+                } else {
+                    self.ptr_type
+                };
+                // When the value is already a pointer type, load through it.
+                let ptr = val;
+                self.builder
+                    .ins()
+                    .load(load_ty, cranelift_codegen::ir::MemFlagsData::new(), ptr, 0)
+            }
+            // `UnaryOp` is `#[non_exhaustive]` across crate boundaries.
+            _ => {
+                self.record_error(
+                    arandu_semantics::DiagCode::U001FeatureNotSupported,
+                    "unsupported unary operator in Cranelift backend",
                     self.func_span(),
                 );
                 self.poison_i32()

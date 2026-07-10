@@ -52,6 +52,14 @@ fn mangle_type_into(out: &mut String, ty: &ArType, symbols: &SymbolTable, intern
             out.push_str("ptr_");
             mangle_type_into(out, &interner.resolve(*inner), symbols, interner);
         }
+        ArType::Ref(inner) => {
+            out.push_str("ref_");
+            mangle_type_into(out, &interner.resolve(*inner), symbols, interner);
+        }
+        ArType::RefMut(inner) => {
+            out.push_str("refmut_");
+            mangle_type_into(out, &interner.resolve(*inner), symbols, interner);
+        }
         ArType::Slice(inner) => {
             out.push_str("slice_");
             mangle_type_into(out, &interner.resolve(*inner), symbols, interner);

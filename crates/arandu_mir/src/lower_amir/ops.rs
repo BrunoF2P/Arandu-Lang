@@ -37,15 +37,79 @@ impl LowerCtx<'_> {
         target: Option<TempId>,
         symbols: &SymbolTable,
     ) -> Result<AmirOperand, Diagnostic> {
-        let sub_op = self.lower_expr(sub_expr, None, symbols)?;
-        let dest = target.unwrap_or_else(|| self.new_temp_id(expr_ty));
-        self.emit_assign_temp(
-            dest,
-            AmirRvalue::Unary {
-                op,
-                operand: sub_op,
-            },
-        );
-        Ok(AmirOperand::Copy(dest))
+        // F2.0: `&`/`&mut` lower to place borrows; `*` on a ref loads through the pointer.
+        match op {
+            UnaryOp::Ref | UnaryOp::RefMut => {
+                let place = self.lower_expr_to_place(sub_expr, symbols)?;
+                // Scalars that are address-taken must live in memory (stack slots)
+                // so Cranelift can form a pointer (F2.0).
+                if place.projections.is_empty() {
+                    let idx = place.local.as_usize();
+                    if idx < self.locals.len() {
+                        self.locals[idx].is_memory = true;
+                    }
+                }
+                let dest = target.unwrap_or_else(|| self.new_temp_id(expr_ty));
+                let rv = if matches!(op, UnaryOp::RefMut) {
+                    AmirRvalue::BorrowMut(place)
+                } else {
+                    AmirRvalue::Borrow(place)
+                };
+                self.emit_assign_temp(dest, rv);
+                Ok(AmirOperand::Copy(dest))
+            }
+            UnaryOp::Deref => {
+                // `*p` where p is `&T` / `&mut T` / local holding a ref: load pointee.
+                // If sub is a place of the referent (`*&x` after fold would be x), use Load.
+                // Otherwise treat the operand as a pointer value and load through it via
+                // FieldAccess-free Load of a temporary place when possible.
+                if let Ok(place) = self.lower_expr_to_place(sub_expr, symbols) {
+                    // Local of type Ref/RefMut still needs one indirection — Load the place
+                    // yields the reference bits; for stack locals of Ref, that *is* the
+                    // pointer. Backend maps Load of Ref-typed local as "use pointer value"
+                    // and for Borrow result we already have a pointer temp.
+                    //
+                    // Gold path: `*p` with p: &T → emit Load after reinterpreting.
+                    // Use Unary Deref for pointer-valued operands so backends can load.
+                    let sub_op = self.read_variable_source(place.local)?;
+                    let dest = target.unwrap_or_else(|| self.new_temp_id(expr_ty));
+                    if place.projections.is_empty() {
+                        self.emit_assign_temp(
+                            dest,
+                            AmirRvalue::Unary {
+                                op: UnaryOp::Deref,
+                                operand: sub_op,
+                            },
+                        );
+                    } else {
+                        self.emit_assign_temp(dest, AmirRvalue::Load(place));
+                    }
+                    Ok(AmirOperand::Copy(dest))
+                } else {
+                    let sub_op = self.lower_expr(sub_expr, None, symbols)?;
+                    let dest = target.unwrap_or_else(|| self.new_temp_id(expr_ty));
+                    self.emit_assign_temp(
+                        dest,
+                        AmirRvalue::Unary {
+                            op: UnaryOp::Deref,
+                            operand: sub_op,
+                        },
+                    );
+                    Ok(AmirOperand::Copy(dest))
+                }
+            }
+            _ => {
+                let sub_op = self.lower_expr(sub_expr, None, symbols)?;
+                let dest = target.unwrap_or_else(|| self.new_temp_id(expr_ty));
+                self.emit_assign_temp(
+                    dest,
+                    AmirRvalue::Unary {
+                        op,
+                        operand: sub_op,
+                    },
+                );
+                Ok(AmirOperand::Copy(dest))
+            }
+        }
     }
 }

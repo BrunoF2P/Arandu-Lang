@@ -6,7 +6,11 @@ use super::FunctionTranslator;
 
 impl FunctionTranslator<'_, '_> {
     pub(super) fn translate_place_address_for_load(&mut self, place: &AmirPlace) -> (Value, i32) {
-        let mut ptr_val = if let Some(&var) = self.local_map.get(&place.local) {
+        // Scalar address-taken locals: address is the stack slot.
+        // Pointer-valued aggregates: SSA local holds the base pointer.
+        let mut ptr_val = if let Some(&slot) = self.local_stack_slots.get(&place.local) {
+            self.builder.ins().stack_addr(self.ptr_type, slot, 0)
+        } else if let Some(&var) = self.local_map.get(&place.local) {
             self.builder.use_var(var)
         } else if let Some(&(var_ptr, _)) = self.str_local_map.get(&place.local) {
             self.builder.use_var(var_ptr)
@@ -112,16 +116,28 @@ impl FunctionTranslator<'_, '_> {
             return;
         }
         if lhs.projections.is_empty() {
+            // Keep SSA var in sync for any non-memory path that still reads it,
+            // and materialize to stack home when address-taken (F2.0).
             if let Some(&var) = self.local_map.get(&lhs.local) {
                 self.builder.def_var(var, val);
-            } else {
+            }
+            if let Some(&slot) = self.local_stack_slots.get(&lhs.local) {
+                let addr = self.builder.ins().stack_addr(self.ptr_type, slot, 0);
+                self.builder
+                    .ins()
+                    .store(cranelift_codegen::ir::MemFlagsData::new(), val, addr, 0);
+            } else if !self.local_map.contains_key(&lhs.local)
+                && !self.str_local_map.contains_key(&lhs.local)
+            {
                 self.record_ice(
                     "use of undeclared AMIR local in codegen",
                     self.local_span(lhs.local),
                 );
             }
         } else {
-            let mut ptr_val = if let Some(&var) = self.local_map.get(&lhs.local) {
+            let mut ptr_val = if let Some(&slot) = self.local_stack_slots.get(&lhs.local) {
+                self.builder.ins().stack_addr(self.ptr_type, slot, 0)
+            } else if let Some(&var) = self.local_map.get(&lhs.local) {
                 self.builder.use_var(var)
             } else {
                 self.record_ice(

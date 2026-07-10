@@ -1073,6 +1073,9 @@ fn unary_op_str(op: &UnaryOp) -> &str {
         UnaryOp::Neg => "-",
         UnaryOp::BitNot => "~",
         UnaryOp::Await => "await ",
+        UnaryOp::Ref => "&",
+        UnaryOp::RefMut => "&mut ",
+        UnaryOp::Deref => "*",
     }
 }
 

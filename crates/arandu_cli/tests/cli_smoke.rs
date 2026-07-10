@@ -894,6 +894,116 @@ func main(): int {
     );
 }
 
+/// F2.0: `&T` / `*p` safe borrow + deref via stack home in Cranelift JIT.
+#[test]
+fn run_ref_borrow_deref_exits_42() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_f20_ref.aru");
+    fs::write(
+        &file,
+        r#"module tests.cli.f20_ref
+
+func main(): int {
+    let n = 42
+    let p = &n
+    return *p
+}
+"#,
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+
+    let check = run_cli(&["check", &path]);
+    assert!(
+        check.status.success(),
+        "check stderr:\n{}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+
+    let amir = run_cli(&["amir", &path]);
+    assert!(
+        amir.status.success(),
+        "amir stderr:\n{}",
+        String::from_utf8_lossy(&amir.stderr)
+    );
+    let amir_out = String::from_utf8_lossy(&amir.stdout);
+    assert!(
+        amir_out.contains("&") || amir_out.contains("Borrow") || amir_out.contains("&int"),
+        "expected borrow in AMIR, got:\n{amir_out}"
+    );
+
+    let output = run_cli(&["run", &path]);
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// F2.0: `&mut T` exclusive borrow + deref.
+#[test]
+fn run_refmut_borrow_deref_exits_7() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_f20_refmut.aru");
+    fs::write(
+        &file,
+        r#"module tests.cli.f20_refmut
+
+func main(): int {
+    let n = 7
+    let p = &mut n
+    return *p
+}
+"#,
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+    let output = run_cli(&["run", &path]);
+    assert_eq!(
+        output.status.code(),
+        Some(7),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// F2.0: automatic coercion `&mut T` → `&T` (exclusive may decay to shared).
+#[test]
+fn run_refmut_coerces_to_ref_exits_9() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_f20_refmut_coerce.aru");
+    fs::write(
+        &file,
+        r#"module tests.cli.f20_coerce
+
+func take_shared(p: &int): int {
+    return *p
+}
+
+func main(): int {
+    let n = 9
+    return take_shared(&mut n)
+}
+"#,
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+    let check = run_cli(&["check", &path]);
+    assert!(
+        check.status.success(),
+        "check stderr:\n{}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let output = run_cli(&["run", &path]);
+    assert_eq!(
+        output.status.code(),
+        Some(9),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 /// `shared self` does not move; receiver field usable after call.
 #[test]
 fn run_shared_self_reuse_exits_40() {

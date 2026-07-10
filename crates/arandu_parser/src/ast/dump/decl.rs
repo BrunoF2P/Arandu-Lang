@@ -326,6 +326,20 @@ pub(super) fn dump_type(ty: &TypeExpr, pool: &AstPool) -> String {
                 dump_type(pool.type_expr(*inner), pool)
             )
         }
+        TypeExpr::Ref { span, inner } => {
+            format!(
+                "Ref {} {}",
+                dump_span(*span),
+                dump_type(pool.type_expr(*inner), pool)
+            )
+        }
+        TypeExpr::RefMut { span, inner } => {
+            format!(
+                "RefMut {} {}",
+                dump_span(*span),
+                dump_type(pool.type_expr(*inner), pool)
+            )
+        }
         TypeExpr::Slice { span, inner } => {
             format!(
                 "Slice {} {}",

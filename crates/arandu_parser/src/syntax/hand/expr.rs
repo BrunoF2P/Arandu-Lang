@@ -155,6 +155,37 @@ fn parse_unary_primary_post(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Opti
                     .alloc_expr(ExprKind::Unary { op, expr }, ctx.span(start, end)),
             )
         }
+        // `&mut expr` / `&expr` — address-of (F2.0). Distinct from binary `a & b`.
+        TokenKind::Amp => {
+            let start = t.start;
+            cur.bump();
+            let is_mut = cur.eat(TokenKind::KwMut);
+            let expr = try_hand_lower_expr(ctx, cur, 100)?;
+            let end = ctx.pool.expr_span(expr).end;
+            let op = if is_mut {
+                UnaryOp::RefMut
+            } else {
+                UnaryOp::Ref
+            };
+            Some(
+                ctx.pool
+                    .alloc_expr(ExprKind::Unary { op, expr }, ctx.span(start, end)),
+            )
+        }
+        // `*expr` — deref (F2.0). Binary `*` is higher in Pratt; unary handled here.
+        TokenKind::Star => {
+            let start = t.start;
+            cur.bump();
+            let expr = try_hand_lower_expr(ctx, cur, 100)?;
+            let end = ctx.pool.expr_span(expr).end;
+            Some(ctx.pool.alloc_expr(
+                ExprKind::Unary {
+                    op: UnaryOp::Deref,
+                    expr,
+                },
+                ctx.span(start, end),
+            ))
+        }
         TokenKind::KwAlloc => {
             let start = t.start;
             cur.bump();

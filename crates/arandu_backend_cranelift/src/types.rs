@@ -76,9 +76,12 @@ pub fn clif_type(ty: &ArType, ptr_type: Type) -> ClifType {
             }
             Primitive::Any => ClifType::Concrete(ptr_type),
         },
-        ArType::Ptr(_) | ArType::Nullable(_) | ArType::Slice(_) | ArType::Array(_, _) => {
-            ClifType::Concrete(ptr_type)
-        }
+        ArType::Ptr(_)
+        | ArType::Ref(_)
+        | ArType::RefMut(_)
+        | ArType::Nullable(_)
+        | ArType::Slice(_)
+        | ArType::Array(_, _) => ClifType::Concrete(ptr_type),
         // `Err` is a message handle (pointer to UTF-8 buffer from `err.new`).
         ArType::Err => ClifType::Concrete(ptr_type),
         ArType::Void | ArType::Error => ClifType::Void,

@@ -183,12 +183,18 @@ pub enum DiagCode {
     G002GenericInstantiationLimit,
 
     // ── Ownership / Memory (O) ──
+    // Roadmap F2/M2/G2: O002 move-while-borrowed · O003 exclusive conflict ·
+    // O004 generational-fallback info · O006 destroy/free while borrowed.
     O001UseAfterMove,
-    O002BorrowAfterMove,
+    /// Move/consume while an active borrow exists (M2).
+    O002MoveWhileBorrowed,
+    /// Exclusive borrow conflict (`&mut` vs any) or mutation under shared borrow.
     O003MutableBorrowConflict,
-    O004SharedBorrowConflict,
+    /// Informative: generational/escape fallback (G2 / F2.3) — not shared-borrow conflict.
+    O004GenerationalFallback,
     O005DoubleFree,
-    O006DanglingReference,
+    /// Destroy/free/drop while a borrow is still active (M2; static double-free).
+    O006DestroyWhileBorrowed,
     O007InconsistentMoveBetweenBranches,
     O008UseBeforeInit,
     O009LifetimeMismatch,
@@ -280,11 +286,11 @@ impl DiagCode {
             DiagCode::G001GenericInstantiationCycle => "G001",
             DiagCode::G002GenericInstantiationLimit => "G002",
             DiagCode::O001UseAfterMove => "O001",
-            DiagCode::O002BorrowAfterMove => "O002",
+            DiagCode::O002MoveWhileBorrowed => "O002",
             DiagCode::O003MutableBorrowConflict => "O003",
-            DiagCode::O004SharedBorrowConflict => "O004",
+            DiagCode::O004GenerationalFallback => "O004",
             DiagCode::O005DoubleFree => "O005",
-            DiagCode::O006DanglingReference => "O006",
+            DiagCode::O006DestroyWhileBorrowed => "O006",
             DiagCode::O007InconsistentMoveBetweenBranches => "O007",
             DiagCode::O008UseBeforeInit => "O008",
             DiagCode::O009LifetimeMismatch => "O009",

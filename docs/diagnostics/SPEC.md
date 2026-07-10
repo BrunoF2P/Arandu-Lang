@@ -272,11 +272,11 @@ Abaixo estão listados todos os diagnósticos mapeados para o compilador Arandu.
 | Código | Mensagem Principal no Compilador | Severidade Padrão | Introduzido em | Descrição e Contexto |
 | :--- | :--- | :--- | :--- | :--- |
 | **O001** | `use of moved value: '{name}'` | Error | `0.1.0` | Tentativa de ler ou acessar uma variável cujo valor já foi movido (ownership transferida) em uma linha anterior. |
-| **O002** | `borrow after move: cannot reference moved value '{name}'` | Error | `0.1.0` | Tentativa de criar uma referência (borrow) para uma variável que já foi movida para outro escopo. |
-| **O003** | `mutable borrow conflict: cannot borrow '{name}' as mutable more than once or while borrowed as shared` | Error | `0.1.0` | Violação de alias mútuo: tentativa de criar mais de uma referência mutável simultânea ou misturar referências compartilhadas e mutáveis. |
-| **O004** | `shared borrow conflict: cannot mutate '{name}' while borrowed as shared` | Error | `0.1.0` | Tentativa de alterar o valor de um objeto enquanto ele está sendo emprestado para leitura. |
+| **O002** | `cannot move '{name}' while borrowed` | Error | `0.1.0` | Move/consume de valor com empréstimo ativo (M2). |
+| **O003** | `mutable borrow conflict on '{name}'` | Error | `0.1.0` | Empréstimos exclusivos sobrepostos (`&mut` vs qualquer) ou mutação sob empréstimo shared. Shared+shared é permitido. |
+| **O004** | `generational fallback: '{name}' escapes stack-limited borrow window` | Info | `0.1.0` | Nota de fallback geracional/escape (G2/F2.3) — **não** conflito shared. |
 | **O005** | `double free detected for '{name}'` | Error | `0.1.0` | Análise estática do CFG detectou que o mesmo objeto sob ownership exclusiva seria destruído ou liberado mais de uma vez. |
-| **O006** | `dangling reference: reference to '{name}' outlives its storage owner` | Error | `0.1.0` | Uma referência permanece ativa na memória depois que a variável que possui os dados reais já saiu de escopo. |
+| **O006** | `cannot destroy '{name}' while borrowed` | Error | `0.1.0` | Destroy/free/drop com empréstimo ainda ativo (double-free estático; M2). |
 | **O007** | `inconsistent move status for '{name}' between branches` | Error | `0.1.0` | Uma variável é movida em uma ramificação condicional (ex: `if`), mas não na outra, deixando seu estado pós-bloco ambíguo. |
 | **O008** | `use of possibly uninitialized variable: '{name}'` | Error | `0.1.0` | Tentativa de ler uma variável local antes de garantir sua atribuição/inicialização em todos os caminhos do fluxo de controle. |
 | **O009** | `lifetime mismatch: lifetime of '{expected}' does not match lifetime of '{found}'` | Error | `0.1.0` | As restrições de tempo de vida de referências genéricas não conferem na passagem de argumentos ou atribuição. |

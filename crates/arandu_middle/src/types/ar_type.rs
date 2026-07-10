@@ -22,8 +22,14 @@ pub enum ArType {
     /// Fixed-size array: [4]float
     Array(u64, TypeId),
 
-    /// Pointer type: ptr[Vec2]
+    /// Pointer type: ptr[Vec2] — raw, unsafe to deref without `unsafe`
     Ptr(TypeId),
+
+    /// Shared reference: `&T` — safe first-class borrow (F2.0)
+    Ref(TypeId),
+
+    /// Exclusive reference: `&mut T` — safe first-class borrow (F2.0)
+    RefMut(TypeId),
 
     /// Multi-value tuple (non-`Result` returns only)
     Tuple(Vec<TypeId>),
@@ -200,6 +206,14 @@ impl ArType {
                 let inner_str = interner.resolve(*inner).display(symbols, interner);
                 format!("ptr[{}]", inner_str)
             }
+            ArType::Ref(inner) => {
+                let inner_str = interner.resolve(*inner).display(symbols, interner);
+                format!("&{}", inner_str)
+            }
+            ArType::RefMut(inner) => {
+                let inner_str = interner.resolve(*inner).display(symbols, interner);
+                format!("&mut {}", inner_str)
+            }
             ArType::Tuple(types) => {
                 let parts: Vec<String> = types
                     .iter()
@@ -266,9 +280,12 @@ impl ArType {
                         Primitive::Bool | Primitive::Char | Primitive::Byte | Primitive::Any
                     )
             }
-            ArType::IntLiteral | ArType::FloatLiteral | ArType::Ptr(_) | ArType::Nullable(_) => {
-                true
-            }
+            ArType::IntLiteral
+            | ArType::FloatLiteral
+            | ArType::Ptr(_)
+            | ArType::Nullable(_)
+            | ArType::Ref(_)
+            | ArType::RefMut(_) => true,
             ArType::Error | ArType::Void | ArType::Err => true,
             ArType::Named(_, _)
             | ArType::Func(_, _)
@@ -495,6 +512,9 @@ mod tests {
         let i = new_interner();
         assert!(ArType::Ptr(i.intern(ArType::Primitive(Primitive::Int))).is_copy_v01());
         assert!(ArType::Nullable(i.intern(ArType::Primitive(Primitive::Int))).is_copy_v01());
+        // F2.0: safe refs are Copy (pointer-width handles).
+        assert!(ArType::Ref(i.intern(ArType::Primitive(Primitive::Int))).is_copy_v01());
+        assert!(ArType::RefMut(i.intern(ArType::Primitive(Primitive::Int))).is_copy_v01());
     }
 
     #[test]

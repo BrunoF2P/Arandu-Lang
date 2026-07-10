@@ -21,7 +21,7 @@ use arandu_semantics::amir::{
 use arandu_semantics::passes::type_checker::types::{ArType, Primitive};
 use arandu_semantics::{DiagCode, Diagnostic, SymbolTable};
 use cranelift_codegen::ir::types::I64;
-use cranelift_codegen::ir::{Block, InstBuilder, Type, Value};
+use cranelift_codegen::ir::{Block, InstBuilder, StackSlot, Type, Value};
 use cranelift_frontend::{FunctionBuilder, Variable};
 use cranelift_jit::JITModule;
 use cranelift_module::FuncId;
@@ -52,6 +52,9 @@ pub struct FunctionTranslator<'a, 'b> {
     pub block_map: FxHashMap<BlockId, Block>,
     pub temp_map: FxHashMap<TempId, Variable>,
     pub local_map: FxHashMap<LocalId, Variable>,
+    /// Stack homes for address-taken scalar locals (F2.0 `&`/`&mut`).
+    /// Aggregate/heap locals keep their address in `local_map` (pointer SSA).
+    pub local_stack_slots: FxHashMap<LocalId, StackSlot>,
     pub str_temp_map: FxHashMap<TempId, (Variable, Variable)>,
     pub str_local_map: FxHashMap<LocalId, (Variable, Variable)>,
     pub ptr_type: Type,
@@ -81,6 +84,7 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
             block_map: FxHashMap::default(),
             temp_map: FxHashMap::default(),
             local_map: FxHashMap::default(),
+            local_stack_slots: FxHashMap::default(),
             str_temp_map: FxHashMap::default(),
             str_local_map: FxHashMap::default(),
             ptr_type,
@@ -88,6 +92,18 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
             current_func,
             type_info,
             error: None,
+        }
+    }
+
+    /// Scalars that normally live in registers need a stack home when
+    /// address-taken (`is_memory` from F2.0 `&`/`&mut` lower).
+    ///
+    /// Pointer-valued / aggregate locals already hold an address in SSA.
+    pub(crate) fn needs_scalar_stack_home(ty: &ArType) -> bool {
+        match ty {
+            ArType::Primitive(Primitive::Str) => false,
+            ArType::Primitive(_) | ArType::IntLiteral | ArType::FloatLiteral => true,
+            _ => false,
         }
     }
 
@@ -220,6 +236,25 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
             } else if let ClifType::Concrete(clif_ty) = clif_type(&lty, self.ptr_type) {
                 let var = self.builder.declare_var(clif_ty);
                 self.local_map.insert(local.id, var);
+                // F2.0: address-taken scalars get a real stack slot so `&x` is valid.
+                if local.is_memory && Self::needs_scalar_stack_home(&lty) {
+                    let pointer_width = self.ptr_type.bytes() as u64;
+                    let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
+                    let layout =
+                        engine.layout_of_type(&lty, &self.type_info.type_interner, self.type_info);
+                    let size = layout.size.max(1) as u32;
+                    let align = layout.align.max(1);
+                    let align_shift = align.trailing_zeros() as u8;
+                    let slot = self.builder.create_sized_stack_slot(
+                        cranelift_codegen::ir::StackSlotData {
+                            kind: cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+                            size,
+                            align_shift,
+                            key: None,
+                        },
+                    );
+                    self.local_stack_slots.insert(local.id, slot);
+                }
             }
         }
 
