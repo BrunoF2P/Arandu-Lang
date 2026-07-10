@@ -205,13 +205,25 @@ impl HirPool {
         self.exprs.push(expr)
     }
 
+    /// Fallible lookup (prefer this when the id may be untrusted).
+    #[must_use]
+    pub fn try_expr(&self, id: HirExprId) -> Option<&super::HirExpr> {
+        self.exprs.get(id)
+    }
+
     #[must_use]
     pub fn expr(&self, id: HirExprId) -> &super::HirExpr {
-        self.exprs.get(id).expect("invalid HirExprId")
+        match self.exprs.get(id) {
+            Some(e) => e,
+            None => crate::ice::invalid_dense_id("HirExprId", id.as_usize()),
+        }
     }
 
     pub fn expr_mut(&mut self, id: HirExprId) -> &mut super::HirExpr {
-        self.exprs.get_mut(id).expect("invalid HirExprId")
+        match self.exprs.get_mut(id) {
+            Some(e) => e,
+            None => crate::ice::invalid_dense_id("HirExprId", id.as_usize()),
+        }
     }
 
     pub fn alloc_stmt(&mut self, stmt: super::HirStmt) -> HirStmtId {
@@ -219,8 +231,16 @@ impl HirPool {
     }
 
     #[must_use]
+    pub fn try_stmt(&self, id: HirStmtId) -> Option<&super::HirStmt> {
+        self.stmts.get(id)
+    }
+
+    #[must_use]
     pub fn stmt(&self, id: HirStmtId) -> &super::HirStmt {
-        self.stmts.get(id).expect("invalid HirStmtId")
+        match self.stmts.get(id) {
+            Some(s) => s,
+            None => crate::ice::invalid_dense_id("HirStmtId", id.as_usize()),
+        }
     }
 
     pub fn alloc_block(&mut self, block: super::HirBlock) -> HirBlockId {
@@ -228,8 +248,16 @@ impl HirPool {
     }
 
     #[must_use]
+    pub fn try_block(&self, id: HirBlockId) -> Option<&super::HirBlock> {
+        self.blocks.get(id)
+    }
+
+    #[must_use]
     pub fn block(&self, id: HirBlockId) -> &super::HirBlock {
-        self.blocks.get(id).expect("invalid HirBlockId")
+        match self.blocks.get(id) {
+            Some(b) => b,
+            None => crate::ice::invalid_dense_id("HirBlockId", id.as_usize()),
+        }
     }
 
     pub fn alloc_decl(&mut self, decl: super::HirDecl) -> HirDeclId {
@@ -237,8 +265,16 @@ impl HirPool {
     }
 
     #[must_use]
+    pub fn try_decl(&self, id: HirDeclId) -> Option<&super::HirDecl> {
+        self.decls.get(id)
+    }
+
+    #[must_use]
     pub fn decl(&self, id: HirDeclId) -> &super::HirDecl {
-        self.decls.get(id).expect("invalid HirDeclId")
+        match self.decls.get(id) {
+            Some(d) => d,
+            None => crate::ice::invalid_dense_id("HirDeclId", id.as_usize()),
+        }
     }
 
     pub fn alloc_pattern(&mut self, pattern: super::HirPattern) -> HirPatternId {
@@ -246,8 +282,16 @@ impl HirPool {
     }
 
     #[must_use]
+    pub fn try_pattern(&self, id: HirPatternId) -> Option<&super::HirPattern> {
+        self.patterns.get(id)
+    }
+
+    #[must_use]
     pub fn pattern(&self, id: HirPatternId) -> &super::HirPattern {
-        self.patterns.get(id).expect("invalid HirPatternId")
+        match self.patterns.get(id) {
+            Some(p) => p,
+            None => crate::ice::invalid_dense_id("HirPatternId", id.as_usize()),
+        }
     }
 
     pub fn alloc_field_pattern(&mut self, field: super::HirFieldPattern) -> HirFieldPatternId {
@@ -255,10 +299,16 @@ impl HirPool {
     }
 
     #[must_use]
+    pub fn try_field_pattern(&self, id: HirFieldPatternId) -> Option<&super::HirFieldPattern> {
+        self.field_patterns.get(id)
+    }
+
+    #[must_use]
     pub fn field_pattern(&self, id: HirFieldPatternId) -> &super::HirFieldPattern {
-        self.field_patterns
-            .get(id)
-            .expect("invalid HirFieldPatternId")
+        match self.field_patterns.get(id) {
+            Some(f) => f,
+            None => crate::ice::invalid_dense_id("HirFieldPatternId", id.as_usize()),
+        }
     }
 
     // List allocators for IndexRange

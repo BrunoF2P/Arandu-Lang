@@ -20,6 +20,7 @@ pub mod codegen;
 pub mod db;
 pub mod diagnostics;
 pub mod hir;
+pub mod ice;
 pub mod layout;
 pub mod literal_pool;
 pub mod ops;

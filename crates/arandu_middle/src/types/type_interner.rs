@@ -85,12 +85,12 @@ impl TypeInterner {
     /// Intern a type, returning its canonical `TypeId`.
     /// If the type has been interned before, returns the same id.
     pub fn intern(&self, ty: ArType) -> TypeId {
-        if let Some(&id) = self.map.read().unwrap().get(&ty) {
+        if let Some(&id) = self.map.read().unwrap_or_else(|e| e.into_inner()).get(&ty) {
             return id;
         }
 
-        let mut map = self.map.write().unwrap();
-        let mut types = self.types.write().unwrap();
+        let mut map = self.map.write().unwrap_or_else(|e| e.into_inner());
+        let mut types = self.types.write().unwrap_or_else(|e| e.into_inner());
 
         // Double checked locking
         if let Some(&id) = map.get(&ty) {
@@ -112,13 +112,13 @@ impl TypeInterner {
     /// Panics if `id` was not produced by this interner.
     #[must_use]
     pub fn resolve(&self, id: TypeId) -> ArType {
-        self.types.read().unwrap()[id.as_usize()].clone()
+        self.types.read().unwrap_or_else(|e| e.into_inner())[id.as_usize()].clone()
     }
 
     /// Borrow the interned type for the duration of `f` (no `ArType` clone).
     #[inline]
     pub fn with_type<R>(&self, id: TypeId, f: impl FnOnce(&ArType) -> R) -> R {
-        let types = self.types.read().unwrap();
+        let types = self.types.read().unwrap_or_else(|e| e.into_inner());
         f(&types[id.as_usize()])
     }
 
@@ -143,26 +143,26 @@ impl TypeInterner {
     /// Try to resolve a `TypeId`, returning `None` if out of range.
     #[must_use]
     pub fn try_resolve(&self, id: TypeId) -> Option<ArType> {
-        self.types.read().unwrap().get(id.as_usize()).cloned()
+        self.types.read().unwrap_or_else(|e| e.into_inner()).get(id.as_usize()).cloned()
     }
 
     /// Look up a type without interning it. Returns `None` if the type
     /// has never been interned.
     #[must_use]
     pub fn lookup(&self, ty: &ArType) -> Option<TypeId> {
-        self.map.read().unwrap().get(ty).copied()
+        self.map.read().unwrap_or_else(|e| e.into_inner()).get(ty).copied()
     }
 
     /// Number of unique types interned so far.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.types.read().unwrap().len()
+        self.types.read().unwrap_or_else(|e| e.into_inner()).len()
     }
 
     /// Returns `true` if no types have been interned.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.types.read().unwrap().is_empty()
+        self.types.read().unwrap_or_else(|e| e.into_inner()).is_empty()
     }
 
     /// Display a `TypeId` using the symbol table for named types.
@@ -173,7 +173,7 @@ impl TypeInterner {
 
     /// Merge all types from another interner into self.
     pub fn merge_from(&self, other: &Self) {
-        let types = other.types.read().unwrap();
+        let types = other.types.read().unwrap_or_else(|e| e.into_inner());
         for ty in types.iter() {
             self.intern(ty.clone());
         }
@@ -189,8 +189,8 @@ impl Default for TypeInterner {
 impl Clone for TypeInterner {
     fn clone(&self) -> Self {
         Self {
-            map: std::sync::RwLock::new(self.map.read().unwrap().clone()),
-            types: std::sync::RwLock::new(self.types.read().unwrap().clone()),
+            map: std::sync::RwLock::new(self.map.read().unwrap_or_else(|e| e.into_inner()).clone()),
+            types: std::sync::RwLock::new(self.types.read().unwrap_or_else(|e| e.into_inner()).clone()),
             generation: self.generation,
         }
     }

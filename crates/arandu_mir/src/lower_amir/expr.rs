@@ -281,7 +281,7 @@ impl LowerCtx<'_> {
             self.lower_result_err_field(base.clone(), err_ty.clone(), err_tmp);
             let err_local = self.new_local(err_ty.clone(), *err_sym, inner.span);
             let consumed = self.consume_operand(AmirOperand::Copy(err_tmp))?;
-            self.write_variable_source(err_local, consumed);
+            self.write_variable_source(err_local, consumed)?;
         }
         match handler {
             HirCatchHandler::Expr(h_expr) => {
@@ -459,7 +459,7 @@ impl LowerCtx<'_> {
                     _ => None,
                 };
                 let op: AmirOperand = if let Some(&local_id) = self.symbol_map.get(symbol) {
-                    Ok::<AmirOperand, Diagnostic>(self.read_variable_source(local_id))
+                    Ok::<AmirOperand, Diagnostic>(self.read_variable_source(local_id)?)
                 } else if let Some(&tag) =
                     self.tc.type_info.enum_variant_tags.get(symbol).or_else(|| {
                         // Fallback: find the canonical variant SymbolId whose parent enum
@@ -541,7 +541,7 @@ impl LowerCtx<'_> {
                 member_symbol,
             } => {
                 let op: AmirOperand = if let Some(&local_id) = self.symbol_map.get(member_symbol) {
-                    Ok::<AmirOperand, Diagnostic>(self.read_variable_source(local_id))
+                    Ok::<AmirOperand, Diagnostic>(self.read_variable_source(local_id)?)
                 } else if let Some(&tag) = self
                     .tc
                     .type_info

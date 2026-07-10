@@ -394,7 +394,10 @@ impl SymbolTable {
     }
 
     pub fn new_scope(&mut self, parent: ScopeId) -> ScopeId {
-        let id = ScopeId(u32::try_from(self.scopes.len()).expect("scope count overflow"));
+        let Ok(n) = u32::try_from(self.scopes.len()) else {
+            crate::ice::bug("scope count overflow (u32::MAX scopes)");
+        };
+        let id = ScopeId(n);
         self.scopes.push(Scope {
             parent: Some(parent),
             symbols: Vec::new(),
@@ -418,11 +421,12 @@ impl SymbolTable {
             return Err(existing);
         }
 
+        let Ok(local) = u32::try_from(self.symbols.len()) else {
+            crate::ice::bug("symbol count overflow (u32::MAX symbols)");
+        };
         let id = SymbolId {
             file_id: self.file_id,
-            local_id: LocalSymbolId(
-                u32::try_from(self.symbols.len()).expect("symbol count overflow"),
-            ),
+            local_id: LocalSymbolId(local),
         };
         self.symbols.push(Symbol {
             id,
@@ -461,8 +465,10 @@ impl SymbolTable {
 
     #[must_use]
     pub fn get(&self, id: SymbolId) -> &Symbol {
-        self.try_get(id)
-            .expect("symbol id not found in this SymbolTable")
+        match self.try_get(id) {
+            Some(s) => s,
+            None => crate::ice::bug("symbol id not found in this SymbolTable"),
+        }
     }
 
     /// Safe lookup: local ids out of range or missing imports return `None`.

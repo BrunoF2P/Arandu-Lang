@@ -57,14 +57,14 @@ impl LowerCtx<'_> {
         let err_tmp = self.new_temp(err_b.ty.clone());
         self.lower_result_err_field(result_op.clone(), err_b.ty.clone(), err_tmp);
         let err_consumed = self.consume_operand(AmirOperand::Copy(err_tmp))?;
-        self.write_variable_source(err_local, err_consumed);
+        self.write_variable_source(err_local, err_consumed)?;
         let ok_zero = self.new_temp(ok_b.ty.clone());
         self.emit_assign_temp(
             ok_zero,
             AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Nil)),
         );
         let ok_zero_c = self.consume_operand(AmirOperand::Copy(ok_zero))?;
-        self.write_variable_source(ok_local, ok_zero_c);
+        self.write_variable_source(ok_local, ok_zero_c)?;
         self.emit_goto(bb_join);
 
         // Ok branch: ok = payload, err = nil.
@@ -72,14 +72,14 @@ impl LowerCtx<'_> {
         let ok_tmp = self.new_temp(ok_b.ty.clone());
         self.lower_result_ok_field(result_op, ok_tmp);
         let ok_consumed = self.consume_operand(AmirOperand::Copy(ok_tmp))?;
-        self.write_variable_source(ok_local, ok_consumed);
+        self.write_variable_source(ok_local, ok_consumed)?;
         let nil_tmp = self.new_temp(err_b.ty.clone());
         self.emit_assign_temp(
             nil_tmp,
             AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Nil)),
         );
         let nil_consumed = self.consume_operand(AmirOperand::Copy(nil_tmp))?;
-        self.write_variable_source(err_local, nil_consumed);
+        self.write_variable_source(err_local, nil_consumed)?;
         self.emit_goto(bb_join);
 
         self.seal_block(bb_join);
@@ -112,7 +112,7 @@ impl LowerCtx<'_> {
                     let local_id = self.new_local(b.ty.clone(), b.symbol, b.span);
                     let val_op = self.lower_expr(*value, None, symbols)?;
                     let consumed = self.consume_operand(val_op)?;
-                    self.write_variable_source(local_id, consumed);
+                    self.write_variable_source(local_id, consumed)?;
                 } else if bindings_slice.len() == 2 {
                     // Go-style `let ok, err = f()` for Result<T, E>:
                     // disc 0 → ok = payload, err = nil; disc 1 → ok zeroed, err = payload.
@@ -137,7 +137,7 @@ impl LowerCtx<'_> {
                                 },
                             );
                             let consumed = self.consume_operand(AmirOperand::Copy(temp))?;
-                            self.write_variable_source(local_id, consumed);
+                            self.write_variable_source(local_id, consumed)?;
                         }
                     }
                 } else {
@@ -153,7 +153,7 @@ impl LowerCtx<'_> {
                             },
                         );
                         let consumed = self.consume_operand(AmirOperand::Copy(temp))?;
-                        self.write_variable_source(local_id, consumed);
+                        self.write_variable_source(local_id, consumed)?;
                     }
                 }
             }
@@ -401,7 +401,7 @@ impl LowerCtx<'_> {
                             },
                         );
                         let consumed = self.consume_operand(AmirOperand::Copy(elem_temp))?;
-                        self.write_variable_source(local_id, consumed);
+                        self.write_variable_source(local_id, consumed)?;
                     }
 
                     self.lower_block(*body, symbols)?;
@@ -532,7 +532,7 @@ impl LowerCtx<'_> {
                     let local_id = self.new_local(b.ty.clone(), b.symbol, b.span);
                     let val_op = self.lower_expr(*value, None, symbols)?;
                     let consumed = self.consume_operand(val_op)?;
-                    self.write_variable_source(local_id, consumed);
+                    self.write_variable_source(local_id, consumed)?;
                 } else if bindings_slice.len() == 2 {
                     let val_expr = self.hir.pool.expr(*value);
                     let val_op = self.lower_expr(*value, None, symbols)?;
@@ -555,7 +555,7 @@ impl LowerCtx<'_> {
                                 },
                             );
                             let consumed = self.consume_operand(AmirOperand::Copy(temp))?;
-                            self.write_variable_source(local_id, consumed);
+                            self.write_variable_source(local_id, consumed)?;
                         }
                     }
                 } else {
@@ -571,7 +571,7 @@ impl LowerCtx<'_> {
                             },
                         );
                         let consumed = self.consume_operand(AmirOperand::Copy(temp))?;
-                        self.write_variable_source(local_id, consumed);
+                        self.write_variable_source(local_id, consumed)?;
                     }
                 }
             }
@@ -634,7 +634,7 @@ impl LowerCtx<'_> {
                 );
                 let val_to_store = this.consume_operand(AmirOperand::Copy(temp))?;
                 if projections.is_empty() {
-                    this.write_variable_source(local_id, val_to_store);
+                    this.write_variable_source(local_id, val_to_store)?;
                 } else {
                     this.emit_store_place(
                         AmirPlace {
@@ -707,7 +707,7 @@ impl LowerCtx<'_> {
                     SetOp::ShiftRightAssign => BinaryOp::ShiftRight,
                     _ => BinaryOp::Add,
                 };
-                let old_val = self.read_variable_source(local_id);
+                let old_val = self.read_variable_source(local_id)?;
                 let temp = self.new_temp(place.ty.clone());
                 self.emit_assign_temp(
                     temp,
@@ -720,7 +720,7 @@ impl LowerCtx<'_> {
                 AmirOperand::Copy(temp)
             };
             let consumed = self.consume_operand(final_val)?;
-            self.write_variable_source(local_id, consumed);
+            self.write_variable_source(local_id, consumed)?;
         } else if *op == SetOp::Assign {
             self.emit_store_place(amir_place, val_op.clone())?;
         } else {

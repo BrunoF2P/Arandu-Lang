@@ -182,10 +182,16 @@ fn intersect(
 ) -> BlockId {
     while b1 != b2 {
         while post_order_indices[b1.as_usize()] < post_order_indices[b2.as_usize()] {
-            b1 = idoms[b1.as_usize()].expect("dominator not set in intersection");
+            match idoms[b1.as_usize()] {
+                Some(p) => b1 = p,
+                None => crate::ice::bug("dominator not set in intersection"),
+            }
         }
         while post_order_indices[b2.as_usize()] < post_order_indices[b1.as_usize()] {
-            b2 = idoms[b2.as_usize()].expect("dominator not set in intersection");
+            match idoms[b2.as_usize()] {
+                Some(p) => b2 = p,
+                None => crate::ice::bug("dominator not set in intersection"),
+            }
         }
     }
     b1

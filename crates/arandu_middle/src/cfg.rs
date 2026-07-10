@@ -40,17 +40,18 @@ pub fn compute_cfg_edges(blocks: &[AmirBasicBlock]) -> ControlFlowGraph {
 /// When block `from`'s terminator changes so that its edge to `old` becomes
 /// an edge to `new`, update both successor and predecessor lists in place.
 ///
-/// Panics if `old` is not currently a successor of `from`.
-pub fn retarget_successor(cfg: &mut ControlFlowGraph, from: BlockId, old: BlockId, new: BlockId) {
+/// Returns `false` if `old` is not currently a successor of `from` (no mutation).
+#[must_use]
+pub fn retarget_successor(cfg: &mut ControlFlowGraph, from: BlockId, old: BlockId, new: BlockId) -> bool {
     let succs = &mut cfg.successors[from.as_usize()];
-    let pos = succs
-        .iter()
-        .position(|&s| s == old)
-        .expect("retarget_successor: old must be a current successor");
+    let Some(pos) = succs.iter().position(|&s| s == old) else {
+        return false;
+    };
     succs[pos] = new;
 
     cfg.predecessors[old.as_usize()].retain(|&p| p != from);
     cfg.predecessors[new.as_usize()].push(from);
+    true
 }
 
 /// Remove all CFG entries for `block` and remove `block` from every
@@ -287,12 +288,12 @@ mod tests {
             block(1, AmirTerminator::Return),
             block(2, AmirTerminator::Return),
         ]);
-        retarget_successor(
+        assert!(retarget_successor(
             &mut cfg,
             BlockId::from_usize(0),
             BlockId::from_usize(1),
             BlockId::from_usize(2),
-        );
+        ));
         assert_eq!(cfg.successors[0], vec![BlockId::from_usize(2)]);
         assert!(cfg.predecessors[1].is_empty());
         assert_eq!(cfg.predecessors[2], vec![BlockId::from_usize(0)]);

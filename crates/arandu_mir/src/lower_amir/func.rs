@@ -75,7 +75,7 @@ pub(crate) fn lower_func(
         params.push(p_temp);
         // Directly bind the parameter temp to the local variable in the entry block
         let p_local = ctx.new_local(param.ty.clone(), param.symbol, param.span);
-        ctx.write_variable_source(p_local, AmirOperand::Copy(p_temp));
+        ctx.write_variable_source(p_local, AmirOperand::Copy(p_temp))?;
     }
 
     ctx.current_span = f.span;

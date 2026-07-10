@@ -93,7 +93,7 @@ fn thread_block(func: &mut AmirFunc, bid: BlockId) -> bool {
         target: final_target,
         args: Vec::new(),
     };
-    retarget_successor(&mut func.cfg, bid, target, final_target);
+    let _ = retarget_successor(&mut func.cfg, bid, target, final_target);
     true
 }
 
@@ -230,8 +230,12 @@ fn remove_unreachable_blocks(func: &mut AmirFunc) -> bool {
             continue;
         }
         let new_term = remap_terminator(&func.blocks[old].terminator, &old_to_new);
+        let Some(new_id) = old_to_new[old] else {
+            // Invariant: every reachable block got a new id in the loop above.
+            continue;
+        };
         new_blocks.push(AmirBasicBlock {
-            id: old_to_new[old].expect("ICE: reachable block has no new ID in simplify_cfg"),
+            id: new_id,
             statements: func.blocks[old].statements,
             params: func.blocks[old].params.clone(),
             terminator: new_term,

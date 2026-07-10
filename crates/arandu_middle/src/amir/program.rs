@@ -40,12 +40,23 @@ impl AmirFunc {
     }
 
     #[must_use]
+    pub fn try_stmt(&self, id: InstrId) -> Option<&AmirStmt> {
+        self.stmts.get(id)
+    }
+
+    #[must_use]
     pub fn stmt(&self, id: InstrId) -> &AmirStmt {
-        self.stmts.get(id).expect("invalid AMIR instruction id")
+        match self.stmts.get(id) {
+            Some(s) => s,
+            None => crate::ice::invalid_dense_id("AmirInstrId", id.as_usize()),
+        }
     }
 
     pub fn stmt_mut(&mut self, id: InstrId) -> &mut AmirStmt {
-        self.stmts.get_mut(id).expect("invalid AMIR instruction id")
+        match self.stmts.get_mut(id) {
+            Some(s) => s,
+            None => crate::ice::invalid_dense_id("AmirInstrId", id.as_usize()),
+        }
     }
 
     pub fn block_stmt_ids(

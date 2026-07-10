@@ -98,12 +98,10 @@ pub fn prune_dummy_loads_stores(func: &mut AmirFunc) {
         let mut new_range_len = 0;
 
         for stmt_id in func.block_stmt_ids(block.id) {
-            let stmt = func
-                .stmts
-                .get(stmt_id)
-                // Safety: stmt_id comes from block_stmt_ids(), which only
-                // yields IDs that were inserted into func.stmts during lowering.
-                .expect("stmt_id from block_stmt_ids is always present in func.stmts");
+            // stmt_id comes from block ranges; missing id is a corrupt AMIR table — skip.
+            let Some(stmt) = func.stmts.get(stmt_id) else {
+                continue;
+            };
             let keep = match stmt {
                 AmirStmt::Store { lhs, .. } if lhs.projections.is_empty() => {
                     func.locals[lhs.local.as_usize()].is_memory

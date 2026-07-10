@@ -411,10 +411,23 @@ impl LowerCtx<'_> {
         self.current_def.insert((block, local), value);
     }
 
-    pub(crate) fn write_variable_source(&mut self, local: LocalId, value: AmirOperand) {
-        let block = self
-            .current_block
-            .expect("must be in a block to write variable");
+    /// Current basic block, or ICE diagnostic if lowering lost block context.
+    pub(crate) fn require_block(&self) -> Result<BlockId, Diagnostic> {
+        self.current_block.ok_or_else(|| {
+            Diagnostic::ice(
+                crate::DiagCode::ICEGEN001,
+                "AMIR lower: no current basic block",
+                self.diag_span(self.current_span),
+            )
+        })
+    }
+
+    pub(crate) fn write_variable_source(
+        &mut self,
+        local: LocalId,
+        value: AmirOperand,
+    ) -> Result<(), Diagnostic> {
+        let block = self.require_block()?;
         let value = self.materialize_nullable_const(local, value);
         self.write_variable(block, local, value.clone());
         // Emit a dummy Store statement
@@ -425,6 +438,7 @@ impl LowerCtx<'_> {
             },
             rhs: value,
         });
+        Ok(())
     }
 
     pub(crate) fn read_variable(&mut self, block: BlockId, local: LocalId) -> AmirOperand {
@@ -435,10 +449,11 @@ impl LowerCtx<'_> {
         }
     }
 
-    pub(crate) fn read_variable_source(&mut self, local: LocalId) -> AmirOperand {
-        let block = self
-            .current_block
-            .expect("must be in a block to read variable");
+    pub(crate) fn read_variable_source(
+        &mut self,
+        local: LocalId,
+    ) -> Result<AmirOperand, Diagnostic> {
+        let block = self.require_block()?;
         let val = self.read_variable(block, local);
 
         self.note_local_use(local, self.current_span);
@@ -493,7 +508,7 @@ impl LowerCtx<'_> {
             }
         }
 
-        AmirOperand::Copy(temp)
+        Ok(AmirOperand::Copy(temp))
     }
 
     pub(crate) fn read_variable_recursive(
@@ -1029,8 +1044,10 @@ impl LowerCtx<'_> {
     pub(crate) fn build_target_args(&mut self, target: BlockId) -> Vec<AmirOperand> {
         let params = self.blocks[target.as_usize()].params.clone();
         let mut args = Vec::new();
+        let Some(curr) = self.current_block else {
+            return args;
+        };
         for p in params {
-            let curr = self.current_block.unwrap();
             let arg = self.read_variable(curr, p.local);
             args.push(arg);
         }
