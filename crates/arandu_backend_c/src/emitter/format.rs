@@ -11,10 +11,10 @@ impl<'a> CEmitter<'a> {
             AmirOperand::Constant(c) => match c {
                 AmirConstant::Pool(id) => match self.program.literal_pool.get(*id) {
                     AmirLiteralEntry::Int(v) => arandu_middle::literal_pool::int_literal_c_source(v)
-                        .unwrap_or_else(|| v.clone()),
+                        .unwrap_or_else(|| v.to_string()),
                     AmirLiteralEntry::Float(v) => {
                         arandu_middle::literal_pool::float_literal_c_source(v)
-                            .unwrap_or_else(|| v.clone())
+                            .unwrap_or_else(|| v.to_string())
                     }
                     AmirLiteralEntry::Str(_) => {
                         // Prefer named constant when available; compound literal fallback
@@ -162,7 +162,11 @@ impl<'a> CEmitter<'a> {
                     let offset = layout.field_offsets[field_idx];
 
                     let field_ty = match self.provider.get_struct_fields(struct_id) {
-                        Some(fields) => fields.get(field_name).cloned().unwrap_or(ArType::Error),
+                        Some(fields) => fields
+                            .get(field_name)
+                            .copied()
+                            .map(|tid| self.interner.resolve(tid))
+                            .unwrap_or(ArType::Error),
                         None => ArType::Error,
                     };
                     let field_c_ty = self.format_type(&field_ty);

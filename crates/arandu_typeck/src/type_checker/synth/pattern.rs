@@ -163,14 +163,14 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                                         ));
                                     }
                                 }
-                                super::super::EnumPayloadShape::Tuple(tys) => {
-                                    if tys.len() != payload.len as usize {
+                                super::super::EnumPayloadShape::Tuple(tids) => {
+                                    if tids.len() != payload.len as usize {
                                         checker.diagnostics.push(crate::Diagnostic::error(
                                             crate::DiagCode::T012WrongArgCount,
                                             format!(
                                                 "enum variant '{}' expects {} payload items, found {}",
                                                 variant,
-                                                tys.len(),
+                                                tids.len(),
                                                 payload.len
                                             ),
                                             *span,
@@ -179,10 +179,15 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                                     for (i, &pat_id) in
                                         checker.pool.pattern_list(*payload).iter().enumerate()
                                     {
-                                        let expected_pat_ty =
-                                            tys.get(i).cloned().unwrap_or(ArType::Error);
-                                        let expected_pat_ty_id =
-                                            checker.type_info.type_interner.intern(expected_pat_ty);
+                                        let expected_pat_ty_id = tids
+                                            .get(i)
+                                            .copied()
+                                            .unwrap_or_else(|| {
+                                                checker
+                                                    .type_info
+                                                    .type_interner
+                                                    .error_type_id()
+                                            });
                                         check_pattern(checker, pat_id, expected_pat_ty_id);
                                     }
                                 }
@@ -252,14 +257,14 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                                             ));
                                         }
                                     }
-                                    super::super::EnumPayloadShape::Tuple(tys) => {
-                                        if tys.len() != payload.len as usize {
+                                    super::super::EnumPayloadShape::Tuple(tids) => {
+                                        if tids.len() != payload.len as usize {
                                             checker.diagnostics.push(crate::Diagnostic::error(
                                                 crate::DiagCode::T012WrongArgCount,
                                                 format!(
                                                     "enum variant '{}' expects {} payload items, found {}",
                                                     name,
-                                                    tys.len(),
+                                                    tids.len(),
                                                     payload.len
                                                 ),
                                                 *span,
@@ -268,12 +273,15 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                                         for (i, &pat_id) in
                                             checker.pool.pattern_list(*payload).iter().enumerate()
                                         {
-                                            let expected_pat_ty =
-                                                tys.get(i).cloned().unwrap_or(ArType::Error);
-                                            let expected_pat_ty_id = checker
-                                                .type_info
-                                                .type_interner
-                                                .intern(expected_pat_ty);
+                                            let expected_pat_ty_id = tids
+                                                .get(i)
+                                                .copied()
+                                                .unwrap_or_else(|| {
+                                                    checker
+                                                        .type_info
+                                                        .type_interner
+                                                        .error_type_id()
+                                                });
                                             check_pattern(checker, pat_id, expected_pat_ty_id);
                                         }
                                     }
@@ -425,13 +433,12 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                 }
                 for &field_id in checker.pool.field_pattern_list(*fields) {
                     let field = checker.pool.field_pattern(field_id);
-                    let field_ty_opt = checker
+                    let field_ty_id_opt = checker
                         .type_info
                         .struct_fields
                         .get(&struct_symbol_id)
-                        .and_then(|df| df.get(field.name.as_str()).cloned());
-                    if let Some(field_ty) = field_ty_opt {
-                        let field_ty_id = checker.type_info.type_interner.intern(field_ty);
+                        .and_then(|df| df.get(field.name.as_str()).copied());
+                    if let Some(field_ty_id) = field_ty_id_opt {
                         if let Some(pat_id) = field.pattern {
                             check_pattern(checker, pat_id, field_ty_id);
                         } else {

@@ -1,4 +1,5 @@
 use rustc_hash::FxHashMap;
+use std::sync::Arc;
 
 use arandu_middle::SymbolId;
 use arandu_parser::ast_pool::{ExprId, ExprKind};
@@ -42,8 +43,8 @@ pub fn struct_fields_instantiated(
     struct_id: SymbolId,
     generic_args: &[ArType],
 ) -> Option<FxHashMap<String, ArType>> {
-    let fields = checker.type_info.struct_fields.get(&struct_id)?.clone();
-    let params = checker.type_info.generic_params.get(&struct_id)?.clone();
+    let fields = Arc::clone(checker.type_info.struct_fields.get(&struct_id)?);
+    let params = Arc::clone(checker.type_info.generic_params.get(&struct_id)?);
     if params.len() != generic_args.len() {
         return None;
     }
@@ -57,10 +58,11 @@ pub fn struct_fields_instantiated(
     );
     let subst = build_subst(&params, generic_args);
     let res: FxHashMap<String, ArType> = fields
-        .into_iter()
-        .map(|(name, ty)| {
+        .iter()
+        .map(|(name, &tid)| {
+            let ty = checker.resolve(tid);
             let inst = instantiate_type(&ty, &subst, &mut checker.type_info.type_interner);
-            (name, inst)
+            (name.clone(), inst)
         })
         .collect();
     Some(res)

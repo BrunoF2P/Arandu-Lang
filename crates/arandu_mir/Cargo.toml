@@ -14,6 +14,7 @@ arandu_middle = { path = "../arandu_middle" }
 arandu_typeck = { path = "../arandu_typeck" }
 rustc-hash = { workspace = true }
 smallvec = { workspace = true }
+smol_str.workspace = true
 tracing.workspace = true
 
 [lib]

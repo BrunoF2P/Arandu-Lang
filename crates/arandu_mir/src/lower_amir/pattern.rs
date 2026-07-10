@@ -2,7 +2,6 @@ use super::LowerCtx;
 use crate::amir::{AmirConstant, AmirOperand, AmirPlace, AmirRvalue};
 use crate::diagnostics::{DiagCode, Diagnostic};
 use crate::hir::{HirCondition, HirDecl, HirPattern};
-use crate::literal_pool::AmirLiteralEntry;
 use crate::ops::BinaryOp;
 use crate::passes::type_checker::types::{ArType, Primitive};
 use crate::{SymbolId, SymbolTable};
@@ -94,7 +93,7 @@ impl LowerCtx<'_> {
         );
 
         let tag_op = AmirOperand::Constant(
-            self.intern_literal(AmirLiteralEntry::Int(tag_value.to_string())),
+            self.intern_literal_int(&tag_value.to_string()),
         );
         let tag_matches = self.new_temp(ArType::Primitive(Primitive::Bool));
         self.emit_assign_temp(
@@ -111,7 +110,7 @@ impl LowerCtx<'_> {
         } else {
             let variant_symbol_actual = found_variant_symbol.unwrap_or(variant_symbol_id);
             let shape_opt = self.tc.type_info.enum_variants.get(&variant_symbol_actual);
-            let Some((_, crate::passes::type_checker::EnumPayloadShape::Tuple(tys))) = shape_opt
+            let Some((_, crate::passes::type_checker::EnumPayloadShape::Tuple(tids))) = shape_opt
             else {
                 return Err(Diagnostic::error(
                     DiagCode::T012WrongArgCount,
@@ -124,13 +123,13 @@ impl LowerCtx<'_> {
                 ));
             };
 
-            if tys.len() != payload.len() {
+            if tids.len() != payload.len() {
                 return Err(Diagnostic::error(
                     DiagCode::T012WrongArgCount,
                     format!(
                         "enum variant '{}' expects {} payload items, found {}",
                         variant,
-                        tys.len(),
+                        tids.len(),
                         payload.len()
                     ),
                     span,
@@ -140,7 +139,7 @@ impl LowerCtx<'_> {
             let mut current_matches = AmirOperand::Copy(tag_matches);
 
             for (i, &pat_id) in payload.iter().enumerate() {
-                let tmp_payload = self.new_temp_ref(&tys[i]);
+                let tmp_payload = self.new_temp_id(tids[i]);
                 self.emit_assign_temp(
                     tmp_payload,
                     AmirRvalue::EnumPayload {
@@ -253,9 +252,9 @@ impl LowerCtx<'_> {
                 let field_ids = self.hir.pool.field_pattern_list(*fields);
                 for &fid in field_ids {
                     let field = self.hir.pool.field_pattern(fid);
-                    let field_ty_ref = fields_map.and_then(|m| m.get(&field.name));
-                    let tmp_field = match field_ty_ref {
-                        Some(t) => self.new_temp_ref(t),
+                    let field_tid = fields_map.and_then(|m| m.get(&field.name).copied());
+                    let tmp_field = match field_tid {
+                        Some(tid) => self.new_temp_id(tid),
                         None => self.new_temp(ArType::Error),
                     };
                     let field_idx = self
@@ -289,8 +288,8 @@ impl LowerCtx<'_> {
                                 field.span,
                             ));
                         };
-                        let local_id = match field_ty_ref {
-                            Some(t) => self.new_local_ref(t, symbol_id, field.span),
+                        let local_id = match field_tid {
+                            Some(tid) => self.new_local_id(tid, symbol_id, field.span),
                             None => self.new_local(ArType::Error, symbol_id, field.span),
                         };
                         self.emit_store_place(

@@ -639,19 +639,21 @@ mod tests {
     #[test]
     fn merge_from_struct_fields() {
         let mut from_info = TypeInfo::new();
+        let int_id = from_info
+            .type_interner
+            .intern(ArType::Primitive(Primitive::Int));
         from_info.struct_fields.insert(
             SymbolId::new(0, 0),
-            [("x".to_string(), ArType::Primitive(Primitive::Int))]
-                .into_iter()
-                .collect(),
+            std::sync::Arc::new([("x".to_string(), int_id)].into_iter().collect()),
         );
         let mut to_info = TypeInfo::new();
         to_info.merge_from(&from_info);
         let fields = to_info.struct_fields.get(&SymbolId::new(0, 0));
         assert!(fields.is_some());
+        let tid = *fields.unwrap().get("x").unwrap();
         assert_eq!(
-            fields.unwrap().get("x"),
-            Some(&ArType::Primitive(Primitive::Int))
+            to_info.type_interner.resolve(tid),
+            ArType::Primitive(Primitive::Int)
         );
     }
 
@@ -677,7 +679,9 @@ mod tests {
             SymbolId::new(0, 2),
             (
                 SymbolId::new(0, 0),
-                EnumPayloadShape::Tuple(vec![ArType::Primitive(Primitive::Int)]),
+                EnumPayloadShape::Tuple(vec![from_info
+                    .type_interner
+                    .intern(ArType::Primitive(Primitive::Int))]),
             ),
         );
         let mut to_info = TypeInfo::new();

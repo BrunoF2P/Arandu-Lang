@@ -91,12 +91,11 @@ pub(crate) fn lower_decl(
             let symbol = require_def_symbol(&type_check.resolved, d.span)?;
             let mut fields = Vec::new();
             if let Some(struct_fields_map) = type_check.type_info.struct_fields.get(&symbol) {
-                let interner = &type_check.type_info.type_interner;
                 for f in &d.fields {
                     let field_symbol = require_def_symbol(&type_check.resolved, f.span)?;
                     let field_ty = struct_fields_map
                         .get(f.name.as_str())
-                        .map(|t| interner.intern_ref(t))
+                        .copied()
                         .unwrap_or_else(error_ty);
                     fields.push(HirStructField {
                         symbol: field_symbol,
@@ -124,16 +123,14 @@ pub(crate) fn lower_decl(
                         .get(&v_symbol)
                         .and_then(|(_, shape)| match shape {
                             crate::passes::type_checker::EnumPayloadShape::Unit => None,
-                            crate::passes::type_checker::EnumPayloadShape::Tuple(tys) => {
-                                if tys.is_empty() {
+                            crate::passes::type_checker::EnumPayloadShape::Tuple(tids) => {
+                                if tids.is_empty() {
                                     None
-                                } else if tys.len() == 1 {
-                                    Some(type_check.type_info.type_interner.intern_ref(&tys[0]))
+                                } else if tids.len() == 1 {
+                                    Some(tids[0])
                                 } else {
                                     let interner = &type_check.type_info.type_interner;
-                                    let tys_ids: Vec<TypeId> =
-                                        tys.iter().map(|t| interner.intern_ref(t)).collect();
-                                    Some(interner.intern(ArType::Tuple(tys_ids)))
+                                    Some(interner.intern(ArType::Tuple(tids.clone())))
                                 }
                             }
                         });

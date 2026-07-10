@@ -262,7 +262,8 @@ impl FunctionTranslator<'_, '_> {
 
                 let fields_def = self.type_info.struct_fields.get(&struct_symbol);
                 let field_ty = fields_def
-                    .and_then(|m| m.get(name.as_str()).cloned())
+                    .and_then(|m| m.get(name.as_str()).copied())
+                    .map(|tid| self.type_info.resolve_type_id(tid))
                     .unwrap_or(arandu_semantics::types::ArType::Error);
 
                 let generic_params = self

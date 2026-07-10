@@ -10,7 +10,8 @@ use super::types::{self, ArType, TypeId, TypeInterner};
 #[derive(Debug, Clone, PartialEq)]
 pub enum EnumPayloadShape {
     Unit,
-    Tuple(Vec<ArType>),
+    /// Payload element types as interned ids (no owned `ArType` trees).
+    Tuple(Vec<TypeId>),
 }
 
 /// Shared metadata maps use `Arc` so `merge_from` (item body typeck fold) is O(1)
@@ -20,7 +21,8 @@ pub struct TypeInfo {
     pub type_interner: TypeInterner,
     pub expr_types: Vec<Option<TypeId>>,
     pub decl_types: FxHashMap<SymbolId, TypeId>,
-    pub struct_fields: FxHashMap<SymbolId, FxHashMap<String, ArType>>,
+    /// Struct field name → interned field type.
+    pub struct_fields: FxHashMap<SymbolId, Arc<FxHashMap<String, TypeId>>>,
     pub struct_field_symbols: FxHashMap<SymbolId, Arc<FxHashMap<String, SymbolId>>>,
     pub struct_field_indices: FxHashMap<SymbolId, Arc<FxHashMap<String, usize>>>,
     pub enum_variants: FxHashMap<SymbolId, (SymbolId, EnumPayloadShape)>,
@@ -173,11 +175,13 @@ impl TypeInfo {
         }
         for (symbol, fields) in &other.struct_fields {
             let mut translated_fields = FxHashMap::default();
-            for (name, ty) in fields {
-                let translated = translate_type(ty, &other.type_interner, &mut self.type_interner);
-                translated_fields.insert(name.clone(), translated);
+            for (name, &tid) in fields.iter() {
+                let ty = other.type_interner.resolve(tid);
+                let translated = translate_type(&ty, &other.type_interner, &mut self.type_interner);
+                translated_fields.insert(name.clone(), self.type_interner.intern(translated));
             }
-            self.struct_fields.insert(*symbol, translated_fields);
+            self.struct_fields
+                .insert(*symbol, Arc::new(translated_fields));
         }
         for (symbol, field_symbols) in &other.struct_field_symbols {
             self.struct_field_symbols
@@ -190,16 +194,15 @@ impl TypeInfo {
         for (symbol, (enum_id, shape)) in &other.enum_variants {
             let translated_shape = match shape {
                 EnumPayloadShape::Unit => EnumPayloadShape::Unit,
-                EnumPayloadShape::Tuple(tys) => {
-                    let mut new_tys = Vec::new();
-                    for ty in tys {
-                        new_tys.push(translate_type(
-                            ty,
-                            &other.type_interner,
-                            &mut self.type_interner,
-                        ));
+                EnumPayloadShape::Tuple(tids) => {
+                    let mut new_tids = Vec::with_capacity(tids.len());
+                    for &tid in tids {
+                        let ty = other.type_interner.resolve(tid);
+                        let translated =
+                            translate_type(&ty, &other.type_interner, &mut self.type_interner);
+                        new_tids.push(self.type_interner.intern(translated));
                     }
-                    EnumPayloadShape::Tuple(new_tys)
+                    EnumPayloadShape::Tuple(new_tids)
                 }
             };
             self.enum_variants
@@ -293,8 +296,8 @@ impl arandu_middle::layout::StructLayoutProvider for TypeInfo {
     fn get_struct_fields(
         &self,
         struct_id: SymbolId,
-    ) -> Option<&rustc_hash::FxHashMap<String, ArType>> {
-        self.struct_fields.get(&struct_id)
+    ) -> Option<&rustc_hash::FxHashMap<String, TypeId>> {
+        self.struct_fields.get(&struct_id).map(|a| a.as_ref())
     }
 
     fn get_struct_field_indices(
@@ -333,21 +336,14 @@ impl arandu_middle::layout::StructLayoutProvider for TypeInfo {
         for (_tag, shape) in variant_list {
             let payload_ty = match shape {
                 EnumPayloadShape::Unit => None,
-                EnumPayloadShape::Tuple(tys) => {
-                    if tys.is_empty() {
+                EnumPayloadShape::Tuple(tids) => {
+                    if tids.is_empty() {
                         None
-                    } else if tys.len() == 1 {
-                        self.type_interner.lookup(&tys[0])
+                    } else if tids.len() == 1 {
+                        Some(tids[0])
                     } else {
-                        let mut tids = Vec::new();
-                        for t in tys {
-                            if let Some(tid) = self.type_interner.lookup(t) {
-                                tids.push(tid);
-                            } else {
-                                return None;
-                            }
-                        }
-                        self.type_interner.lookup(&ArType::Tuple(tids))
+                        // Multi-payload: layout uses the interned Tuple type if present.
+                        self.type_interner.lookup(&ArType::Tuple(tids.clone()))
                     }
                 }
             };

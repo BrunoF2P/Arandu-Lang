@@ -104,7 +104,8 @@ pub(crate) fn resolve_field(
                 .type_info
                 .struct_fields
                 .get(&struct_id)
-                .and_then(|fields| fields.get(field).cloned())
+                .and_then(|fields| fields.get(field).copied())
+                .map(|tid| checker.resolve(tid))
         };
 
         if let Some(field_ty) = field_from_struct {

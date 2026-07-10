@@ -106,8 +106,8 @@ mod tests {
     #[test]
     fn folds_integer_binary_and_comparison() {
         let mut pool = AmirLiteralPool::default();
-        let two = AmirConstant::Pool(pool.intern(AmirLiteralEntry::Int("2".to_string())));
-        let three = AmirConstant::Pool(pool.intern(AmirLiteralEntry::Int("3".to_string())));
+        let two = AmirConstant::Pool(pool.intern_int("2"));
+        let three = AmirConstant::Pool(pool.intern_int("3"));
         let mut f = func(
             vec![
                 AmirStmt::Assign {
@@ -172,7 +172,7 @@ mod tests {
     #[test]
     fn fold_neg_int() {
         let mut pool = AmirLiteralPool::default();
-        let five = AmirConstant::Pool(pool.intern(AmirLiteralEntry::Int("5".to_string())));
+        let five = AmirConstant::Pool(pool.intern_int("5"));
         let mut f = func(
             vec![AmirStmt::Assign {
                 lhs: TempId::from_usize(0),
@@ -190,7 +190,10 @@ mod tests {
             ..
         } = stmt
         {
-            assert_eq!(pool.get(*id), &AmirLiteralEntry::Int("-5".to_string()));
+            assert_eq!(
+                pool.get(*id),
+                &AmirLiteralEntry::Int(smol_str::SmolStr::new_static("-5"))
+            );
         } else {
             panic!("expected folded neg");
         }
@@ -199,8 +202,8 @@ mod tests {
     #[test]
     fn fold_int_mul() {
         let mut pool = AmirLiteralPool::default();
-        let a = AmirConstant::Pool(pool.intern(AmirLiteralEntry::Int("7".to_string())));
-        let b = AmirConstant::Pool(pool.intern(AmirLiteralEntry::Int("6".to_string())));
+        let a = AmirConstant::Pool(pool.intern_int("7"));
+        let b = AmirConstant::Pool(pool.intern_int("6"));
         let mut f = func(
             vec![AmirStmt::Assign {
                 lhs: TempId::from_usize(0),
@@ -219,7 +222,10 @@ mod tests {
             ..
         } = stmt
         {
-            assert_eq!(pool.get(*id), &AmirLiteralEntry::Int("42".to_string()));
+            assert_eq!(
+                pool.get(*id),
+                &AmirLiteralEntry::Int(smol_str::SmolStr::new_static("42"))
+            );
         } else {
             panic!("expected folded mul");
         }
@@ -393,7 +399,7 @@ mod tests {
     #[test]
     fn dce_removes_unused_binary() {
         let mut pool = crate::literal_pool::AmirLiteralPool::default();
-        let a = AmirConstant::Pool(pool.intern(AmirLiteralEntry::Int("3".to_string())));
+        let a = AmirConstant::Pool(pool.intern_int("3"));
         let mut f = func(
             vec![AmirStmt::Assign {
                 lhs: TempId::from_usize(1),

@@ -6,7 +6,6 @@ use crate::amir::{
 };
 use crate::diagnostics::Diagnostic;
 use crate::hir::{HirForClause, HirPlace, HirPlaceSuffix, HirSimpleStmt, HirStmt, HirStmtKind};
-use crate::literal_pool::AmirLiteralEntry;
 use crate::ops::{BinaryOp, SetOp};
 use crate::passes::type_checker::types::{ArType, Primitive, result_ok_err_id};
 
@@ -33,7 +32,7 @@ impl LowerCtx<'_> {
             },
         );
 
-        let one_lit = self.intern_literal(AmirLiteralEntry::Int("1".to_string()));
+        let one_lit = self.intern_literal_int("1");
         let is_err = self.new_temp(ArType::Primitive(Primitive::Bool));
         self.emit_assign_temp(
             is_err,
@@ -192,7 +191,7 @@ impl LowerCtx<'_> {
                         },
                     );
 
-                    let one_lit = self.intern_literal(AmirLiteralEntry::Int("1".to_string()));
+                    let one_lit = self.intern_literal_int("1");
                     let cond_tmp = self.new_temp(ArType::Primitive(Primitive::Bool));
                     self.emit_assign_temp(
                         cond_tmp,
@@ -314,7 +313,7 @@ impl LowerCtx<'_> {
                     let iter_op = self.lower_expr(*iterable, None, symbols)?;
 
                     let idx_local = self.new_compiler_local(ArType::Primitive(Primitive::Int));
-                    let zero_lit = self.intern_literal(AmirLiteralEntry::Int("0".to_string()));
+                    let zero_lit = self.intern_literal_int("0");
                     self.emit_store_place(
                         AmirPlace {
                             local: idx_local,
@@ -411,7 +410,7 @@ impl LowerCtx<'_> {
                             local: idx_local,
                             projections: smallvec::SmallVec::new(),
                         }, arandu_middle::types::TypeInterner::preinterned_primitive(Primitive::Int))?;
-                    let one_lit = self.intern_literal(AmirLiteralEntry::Int("1".to_string()));
+                    let one_lit = self.intern_literal_int("1");
                     let next_idx = self.new_temp(ArType::Primitive(Primitive::Int));
                     self.emit_assign_temp(
                         next_idx,

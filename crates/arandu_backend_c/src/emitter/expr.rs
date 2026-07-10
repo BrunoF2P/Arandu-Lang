@@ -188,8 +188,8 @@ impl<'a> CEmitter<'a> {
                     };
                     let offset = layout.field_offsets.get(field_idx).copied().unwrap_or(0);
                     let field_ty = field_defs
-                        .and_then(|m| m.get(name))
-                        .cloned()
+                        .and_then(|m| m.get(name).copied())
+                        .map(|tid| self.interner.resolve(tid))
                         .unwrap_or(ArType::Error);
                     let field_c_ty = self.format_type(&field_ty);
                     let op_str = self.format_operand(op, func);

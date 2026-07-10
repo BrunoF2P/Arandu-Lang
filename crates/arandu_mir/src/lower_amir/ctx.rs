@@ -26,6 +26,26 @@ impl LowerCtx<'_> {
         AmirConstant::Pool(self.literal_pool.intern(entry))
     }
 
+    #[inline]
+    pub(crate) fn intern_literal_int(&mut self, s: &str) -> AmirConstant {
+        AmirConstant::Pool(self.literal_pool.intern_int(s))
+    }
+
+    #[inline]
+    pub(crate) fn intern_literal_float(&mut self, s: &str) -> AmirConstant {
+        AmirConstant::Pool(self.literal_pool.intern_float(s))
+    }
+
+    #[inline]
+    pub(crate) fn intern_literal_str(&mut self, s: &str) -> AmirConstant {
+        AmirConstant::Pool(self.literal_pool.intern_str(s))
+    }
+
+    #[inline]
+    pub(crate) fn intern_literal_char(&mut self, s: &str) -> AmirConstant {
+        AmirConstant::Pool(self.literal_pool.intern_char(s))
+    }
+
     pub(crate) fn intern_ty(&self, ty: ArType) -> crate::types::TypeId {
         self.intern_ty_ref(&ty)
     }

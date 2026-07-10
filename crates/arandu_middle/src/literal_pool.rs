@@ -2,18 +2,23 @@
 //!
 //! Lexemes keep source spelling (underscores, base prefixes). Use
 //! [`parse_int_literal`] / [`parse_float_literal`] at consume sites (codegen, SCCP).
+//!
+//! Entries use [`smol_str::SmolStr`]: short strings are stack-inline (no heap);
+//! longer ones are refcounted. Callers pass `&str` via [`AmirLiteralPool::intern_str`]
+//! etc. so lowering does not need to `String::clone` just to intern.
 
 use rustc_hash::FxHashMap;
+use smol_str::SmolStr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LiteralId(pub u32);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum AmirLiteralEntry {
-    Int(String),
-    Float(String),
-    Str(String),
-    Char(String),
+    Int(SmolStr),
+    Float(SmolStr),
+    Str(SmolStr),
+    Char(SmolStr),
 }
 
 #[derive(Debug, Default, Clone)]
@@ -31,6 +36,30 @@ impl AmirLiteralPool {
         self.index.insert(entry.clone(), id);
         self.entries.push(entry);
         id
+    }
+
+    /// Intern an integer lexeme without allocating a `String` at the call site.
+    #[inline]
+    pub fn intern_int(&mut self, s: &str) -> LiteralId {
+        self.intern(AmirLiteralEntry::Int(SmolStr::new(s)))
+    }
+
+    /// Intern a float lexeme.
+    #[inline]
+    pub fn intern_float(&mut self, s: &str) -> LiteralId {
+        self.intern(AmirLiteralEntry::Float(SmolStr::new(s)))
+    }
+
+    /// Intern a string literal body.
+    #[inline]
+    pub fn intern_str(&mut self, s: &str) -> LiteralId {
+        self.intern(AmirLiteralEntry::Str(SmolStr::new(s)))
+    }
+
+    /// Intern a char lexeme (source spelling, possibly multi-byte escape form).
+    #[inline]
+    pub fn intern_char(&mut self, s: &str) -> LiteralId {
+        self.intern(AmirLiteralEntry::Char(SmolStr::new(s)))
     }
 
     #[must_use]
@@ -110,13 +139,23 @@ mod tests {
     #[test]
     fn test_literal_deduplication() {
         let mut pool = AmirLiteralPool::default();
-        let lit1 = pool.intern(AmirLiteralEntry::Int("42".to_string()));
-        let lit2 = pool.intern(AmirLiteralEntry::Int("42".to_string()));
-        let lit3 = pool.intern(AmirLiteralEntry::Int("100".to_string()));
+        let lit1 = pool.intern_int("42");
+        let lit2 = pool.intern_int("42");
+        let lit3 = pool.intern_int("100");
 
         assert_eq!(lit1, lit2);
         assert_ne!(lit1, lit3);
         assert_eq!(pool.entries.len(), 2);
+    }
+
+    #[test]
+    fn intern_str_dedups() {
+        let mut pool = AmirLiteralPool::default();
+        let a = pool.intern_str("hello");
+        let b = pool.intern_str("hello");
+        let c = pool.intern_str("world");
+        assert_eq!(a, b);
+        assert_ne!(a, c);
     }
 
     #[test]

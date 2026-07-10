@@ -1,7 +1,6 @@
 use super::{LowerCtx, amir_unsupported};
 use crate::amir::{AmirConstant, AmirOperand, AmirRvalue, AmirStmt, AmirTerminator, TempId};
 use crate::diagnostics::{DiagCode, Diagnostic};
-use crate::literal_pool::AmirLiteralEntry;
 use crate::ops::BinaryOp;
 use crate::passes::type_checker::types::{
     ArType, Primitive, is_option_type, result_ok_err_id,
@@ -166,7 +165,7 @@ impl LowerCtx<'_> {
             },
         );
 
-        let one_lit = self.intern_literal(AmirLiteralEntry::Int("1".to_string()));
+        let one_lit = self.intern_literal_int("1");
         let cond_tmp = self.new_temp(ArType::Primitive(Primitive::Bool));
         self.emit_assign_temp(
             cond_tmp,
@@ -251,7 +250,7 @@ impl LowerCtx<'_> {
             },
         );
 
-        let one_lit = self.intern_literal(AmirLiteralEntry::Int("1".to_string()));
+        let one_lit = self.intern_literal_int("1");
         let is_err = self.new_temp(ArType::Primitive(Primitive::Bool));
         self.emit_assign_temp(
             is_err,
@@ -361,7 +360,7 @@ impl LowerCtx<'_> {
         match &expr.kind {
             HirExprKind::Int(v) => {
                 let op =
-                    AmirOperand::Constant(self.intern_literal(AmirLiteralEntry::Int(v.clone())));
+                    AmirOperand::Constant(self.intern_literal_int(v));
                 if let Some(dest) = target {
                     self.emit_assign_temp(dest, AmirRvalue::Use(op));
                 }
@@ -369,7 +368,7 @@ impl LowerCtx<'_> {
             }
             HirExprKind::Float(v) => {
                 let op =
-                    AmirOperand::Constant(self.intern_literal(AmirLiteralEntry::Float(v.clone())));
+                    AmirOperand::Constant(self.intern_literal_float(v));
                 if let Some(dest) = target {
                     self.emit_assign_temp(dest, AmirRvalue::Use(op));
                 }
@@ -384,7 +383,7 @@ impl LowerCtx<'_> {
             }
             HirExprKind::Str(v) => {
                 let op =
-                    AmirOperand::Constant(self.intern_literal(AmirLiteralEntry::Str(v.clone())));
+                    AmirOperand::Constant(self.intern_literal_str(v));
                 if let Some(dest) = target {
                     self.emit_assign_temp(dest, AmirRvalue::Use(op));
                 }
@@ -395,7 +394,7 @@ impl LowerCtx<'_> {
                 for part in parts {
                     let op = match part {
                         arandu_middle::hir::HirStringPart::Text(t) => AmirOperand::Constant(
-                            self.intern_literal(AmirLiteralEntry::Str(t.clone())),
+                            self.intern_literal_str(t),
                         ),
                         arandu_middle::hir::HirStringPart::Expr(e) => {
                             let part_expr = self.hir.pool.expr(*e);
@@ -423,7 +422,7 @@ impl LowerCtx<'_> {
             }
             HirExprKind::Char(v) => {
                 let op =
-                    AmirOperand::Constant(self.intern_literal(AmirLiteralEntry::Char(v.clone())));
+                    AmirOperand::Constant(self.intern_literal_char(v));
                 if let Some(dest) = target {
                     self.emit_assign_temp(dest, AmirRvalue::Use(op));
                 }

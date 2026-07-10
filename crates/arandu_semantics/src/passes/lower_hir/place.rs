@@ -75,7 +75,7 @@ pub(crate) fn lower_place(
                 };
                 let (field_ty, field_symbol) = if let Some(struct_id) = struct_id_opt
                     && let Some(fields) = type_check.type_info.struct_fields.get(&struct_id)
-                    && let Some(ty) = fields.get(name.as_str())
+                    && let Some(&tid) = fields.get(name.as_str())
                 {
                     let symbol = type_check
                         .type_info
@@ -83,7 +83,7 @@ pub(crate) fn lower_place(
                         .get(&struct_id)
                         .and_then(|fields| fields.get(name.as_str()))
                         .copied();
-                    (interner.intern_ref(ty), symbol)
+                    (tid, symbol)
                 } else {
                     (error_id, None)
                 };

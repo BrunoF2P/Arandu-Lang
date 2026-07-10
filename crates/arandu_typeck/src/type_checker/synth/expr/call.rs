@@ -162,10 +162,9 @@ pub(super) fn synth_call_expr(
                         crate::type_checker::EnumPayloadShape::Unit => {
                             return Some(checker.intern(enum_ty));
                         }
-                        crate::type_checker::EnumPayloadShape::Tuple(tys) => {
-                            let param_ids = tys.iter().map(|t| checker.intern(t.clone())).collect();
+                        crate::type_checker::EnumPayloadShape::Tuple(tids) => {
                             let enum_id = checker.intern(enum_ty);
-                            return Some(checker.intern(ArType::Func(param_ids, enum_id)));
+                            return Some(checker.intern(ArType::Func(tids.clone(), enum_id)));
                         }
                     }
                 }
