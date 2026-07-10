@@ -2,7 +2,7 @@
 
 use arandu_backend_cranelift::CraneliftBackend;
 use arandu_middle::amir::AmirProgram;
-use arandu_middle::layout::{DataLayout, LayoutEngine};
+use arandu_middle::layout::DataLayout;
 use arandu_semantics::{
     CodegenBackend, TypeCheckResult, lower_to_amir, lower_to_hir, resolve_for_test, type_check,
 };
