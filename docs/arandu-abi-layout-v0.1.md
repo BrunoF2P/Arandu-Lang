@@ -38,7 +38,8 @@ The size and alignment of primitive types are defined below (under a target poin
 | `i16`, `u16` | 2 | 2 | |
 | `i32`, `u32`, `f32` | 4 | 4 | |
 | `i64`, `u64`, `f64` | 8 | 8 | Fixed-width types |
-| `int`, `uint`, `float` | $W$ | $W$ | Platform-dependent integer and float types |
+| `int`, `uint` | $W$ | $W$ | Platform-dependent integer types |
+| `float` | 8 | 8† | Always IEEE f64 (`DataLayout`); †i686 may use abi_align 4 |
 | `ptr[T]` | $W$ | $W$ | Platform-dependent pointer |
 | `any` | $W$ | $W$ | Boxed dynamic pointer |
 | `void`, `error` | 0 | 1 | ZSTs (Zero Sized Types) |
@@ -48,7 +49,7 @@ The size and alignment of primitive types are defined below (under a target poin
 For compilation backends (such as the C backend and Cranelift JIT), platform-dependent types map to the corresponding native sized types:
 - **`int` / `IntLiteral`**: Represented as a signed integer of width $W$ bytes (`int64_t` / `int32_t` in C; target `ptr_type` `I64` / `I32` in Cranelift).
 - **`uint`**: Represented as an unsigned integer of width $W$ bytes (`uint64_t` / `uint32_t` in C; target `ptr_type` `I64` / `I32` in Cranelift).
-- **`float` / `FloatLiteral`**: Represented as a double-precision floating-point number (`double` in C; `F64` in Cranelift) across all target architectures.
+- **`float` / `FloatLiteral`**: Always IEEE **f64** (`double` in C; `F64` in Cranelift) on all targets — **not** reduced to 4 bytes on 32-bit. Alignment may be 4 under `DataLayout::i686_sysv()`.
 
 ---
 

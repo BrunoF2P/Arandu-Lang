@@ -50,7 +50,9 @@ Still used widely as a thin wrapper over `resolve_imports_and_bodies` + `EmptyMo
 1. **S1** — populate `use_span`; dual-resolve policy docs/tests — **done**  
    - Extended: `with_span` on stmts/places, note origin on consume/free, temp spans from current_span, O* fallback use→decl→symbol  
 
-2. **S2** — fat-pointer `usize` len, no magic `+8`, layout W=4/8 — **done** (full i686 DataLayout later)  
+2. **S2** — fat-pointer `usize` len, no magic `+8`, layout W=4/8 — **done**  
+   - Extended: `DataLayout`/`SizeAlign`, `host()`/`i686_sysv()`, float always f64, i64 abi_align on i686  
+
 3. **S3** — host C↔Cranelift parity expand + C ArStr audit — **done** (parity quiet + control_flow + audit)  
 4. **S4** — AMIR `TypeId` on locals/temps/return + denormalized `is_copy`/`is_memory` — **done**  
 5. **S5** — gate before language Fase 3 features (remaining: clippy, optional TypeId on more IR)  

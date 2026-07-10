@@ -1,3 +1,7 @@
+mod data_layout;
+
+pub use data_layout::{DataLayout, SizeAlign};
+
 use crate::SymbolId;
 use crate::index_vec::IdIndex;
 use crate::types::{ArType, Primitive, TypeId, TypeInterner};
@@ -101,30 +105,39 @@ pub trait StructLayoutProvider {
 
 /// The physical memory layout engine.
 ///
-/// Target-dependent sizes (e.g. `Float`, `Int`) are derived from
-/// `pointer_width`. On 64-bit targets `Float` = F64 (8 bytes); on
-/// 32-bit targets `Float` = F32 (4 bytes).
+/// All target-dependent sizes/alignments come from [`DataLayout`]. Prefer
+/// [`LayoutEngine::from_data_layout`] / [`LayoutEngine::host`];
+/// [`LayoutEngine::new`] remains as sugar for [`DataLayout::ptr_width`].
 ///
-/// TODO: When adding support for i686, wasm32, or aarch64, replace the ad-hoc
-/// `pointer_width`/`float_size` fields with a proper `DataLayout` struct that
-/// stores (size, abi_align, pref_align) per type class (see the full design
-/// discussed in `arandu_base::target`). Key insight: `i686_sysv` requires
-/// i64/f64 to have size=8 but abi_align=4, which `pointer_width` alone cannot
-/// express. The `DataLayout` approach also decouples target identity (triple)
-/// from data-layout rules, allowing manual overrides like `soft-float` ABI.
+/// Language `float` is always IEEE f64 (see [`DataLayout`]); platform `int`
+/// follows pointer width. i686 uses [`DataLayout::i686_sysv`] for i64/f64
+/// abi_align=4.
 #[derive(Debug, Clone)]
 pub struct LayoutEngine {
-    pub pointer_width: u64,
-    pub float_size: u64,
+    pub data_layout: DataLayout,
 }
 
 impl LayoutEngine {
+    /// Sugar for [`DataLayout::ptr_width`] (standard LP64/ILP32-style rules).
     #[must_use]
     pub fn new(pointer_width: u64) -> Self {
-        Self {
-            pointer_width,
-            float_size: pointer_width, // 8 on 64-bit → F64, 4 on 32-bit → F32
-        }
+        Self::from_data_layout(DataLayout::ptr_width(pointer_width))
+    }
+
+    #[must_use]
+    pub fn from_data_layout(data_layout: DataLayout) -> Self {
+        Self { data_layout }
+    }
+
+    /// Host process layout (Cranelift JIT / host C parity).
+    #[must_use]
+    pub fn host() -> Self {
+        Self::from_data_layout(DataLayout::host())
+    }
+
+    #[must_use]
+    pub fn pointer_width(&self) -> u64 {
+        self.data_layout.pointer_width()
     }
 
     /// Fat pointer ABI for `str` and `[]T`: `{ ptr, len }` where `len` is
@@ -132,10 +145,11 @@ impl LayoutEngine {
     /// 64-bit → size 16; 32-bit → size 8 (matches `arandu-abi-layout`).
     #[must_use]
     pub fn fat_pointer_layout(&self) -> TypeLayout {
-        let w = self.pointer_width;
+        let w = self.pointer_width();
+        let align = self.data_layout.pointer_align();
         TypeLayout {
             size: w * 2,
-            align: w,
+            align,
             field_offsets: vec![0, w],
         }
     }
@@ -143,13 +157,13 @@ impl LayoutEngine {
     /// Byte offset of the `len` field in a fat pointer (`str` / slice).
     #[must_use]
     pub fn fat_ptr_len_offset(&self) -> u64 {
-        self.pointer_width
+        self.pointer_width()
     }
 
     /// Byte size of the `len` field (`usize` of the target).
     #[must_use]
     pub fn fat_ptr_len_size(&self) -> u64 {
-        self.pointer_width
+        self.pointer_width()
     }
 
     /// Compute the memory layout of any canonical `TypeId`.
@@ -196,59 +210,77 @@ impl LayoutEngine {
                     field_offsets: Vec::new(),
                 },
                 Primitive::Float => {
-                    let align = self.float_size;
+                    let f = self.data_layout.float;
                     TypeLayout {
-                        size: self.float_size,
-                        align,
+                        size: f.size,
+                        align: f.abi_align,
                         field_offsets: Vec::new(),
                     }
                 }
-                Primitive::I64 | Primitive::U64 | Primitive::F64 => TypeLayout {
-                    size: 8,
-                    align: 8,
-                    field_offsets: Vec::new(),
-                },
-                Primitive::Int | Primitive::Uint => {
-                    let align = self.pointer_width;
+                Primitive::I64 | Primitive::U64 => {
+                    let t = self.data_layout.i64;
                     TypeLayout {
-                        size: self.pointer_width,
-                        align,
+                        size: t.size,
+                        align: t.abi_align,
+                        field_offsets: Vec::new(),
+                    }
+                }
+                Primitive::F64 => {
+                    let t = self.data_layout.f64;
+                    TypeLayout {
+                        size: t.size,
+                        align: t.abi_align,
+                        field_offsets: Vec::new(),
+                    }
+                }
+                Primitive::Int | Primitive::Uint => {
+                    let p = self.data_layout.pointer;
+                    TypeLayout {
+                        size: p.size,
+                        align: p.abi_align,
                         field_offsets: Vec::new(),
                     }
                 }
                 Primitive::Str => self.fat_pointer_layout(),
                 Primitive::Any => {
                     // Any is dynamic box pointer
+                    let p = self.data_layout.pointer;
                     TypeLayout {
-                        size: self.pointer_width,
-                        align: self.pointer_width,
+                        size: p.size,
+                        align: p.abi_align,
                         field_offsets: Vec::new(),
                     }
                 }
             },
             ArType::IntLiteral => {
-                let align = self.pointer_width;
+                let p = self.data_layout.pointer;
                 TypeLayout {
-                    size: self.pointer_width,
-                    align,
+                    size: p.size,
+                    align: p.abi_align,
                     field_offsets: Vec::new(),
                 }
             }
-            ArType::FloatLiteral => TypeLayout {
-                size: 8,
-                align: 8,
-                field_offsets: Vec::new(),
-            },
+            ArType::FloatLiteral => {
+                let f = self.data_layout.float;
+                TypeLayout {
+                    size: f.size,
+                    align: f.abi_align,
+                    field_offsets: Vec::new(),
+                }
+            }
             ArType::Void | ArType::Err | ArType::Error => TypeLayout {
                 size: 0,
                 align: 1,
                 field_offsets: Vec::new(),
             },
-            ArType::Ptr(_) => TypeLayout {
-                size: self.pointer_width,
-                align: self.pointer_width,
-                field_offsets: Vec::new(),
-            },
+            ArType::Ptr(_) => {
+                let p = self.data_layout.pointer;
+                TypeLayout {
+                    size: p.size,
+                    align: p.abi_align,
+                    field_offsets: Vec::new(),
+                }
+            }
             ArType::Nullable(inner) => {
                 // If it is inner nullable, layout matches inner size/alignment (since ptr can be null)
                 self.layout_of(*inner, interner, provider)
@@ -332,7 +364,7 @@ impl LayoutEngine {
                         }
                     }
                 } else if let Some(variants) = provider.get_enum_variants(*symbol_id) {
-                    let tag_size = self.pointer_width;
+                    let tag_size = self.pointer_width();
                     let mut max_payload_size = 0;
                     let mut max_payload_align = 1;
                     for variant in variants {
@@ -363,8 +395,8 @@ impl LayoutEngine {
             }
 
             ArType::Func(_, _) => TypeLayout {
-                size: self.pointer_width,
-                align: self.pointer_width,
+                size: self.pointer_width(),
+                align: self.pointer_width(),
                 field_offsets: Vec::new(),
             },
             ArType::Result(ok, err) => {
@@ -373,9 +405,9 @@ impl LayoutEngine {
                 let max_align = ok_layout
                     .align
                     .max(err_layout.align)
-                    .max(self.pointer_width);
+                    .max(self.pointer_width());
                 let tag_offset = 0;
-                let payload_offset = self.pointer_width;
+                let payload_offset = self.pointer_width();
                 let max_payload_size = ok_layout.size.max(err_layout.size);
                 let total_size =
                     (payload_offset + max_payload_size + max_align - 1) & !(max_align - 1);
@@ -388,9 +420,9 @@ impl LayoutEngine {
             }
             ArType::Option(inner) => {
                 let inner_layout = self.layout_of(*inner, interner, provider);
-                let max_align = inner_layout.align.max(self.pointer_width);
+                let max_align = inner_layout.align.max(self.pointer_width());
                 let tag_offset = 0;
-                let payload_offset = self.pointer_width;
+                let payload_offset = self.pointer_width();
                 let total_size =
                     (payload_offset + inner_layout.size + max_align - 1) & !(max_align - 1);
 
@@ -401,8 +433,8 @@ impl LayoutEngine {
                 }
             }
             ArType::Coroutine(_) => TypeLayout {
-                size: self.pointer_width,
-                align: self.pointer_width,
+                size: self.pointer_width(),
+                align: self.pointer_width(),
                 field_offsets: Vec::new(),
             },
             ArType::Range(inner) => {
@@ -658,7 +690,8 @@ mod tests {
                 (Primitive::I32, 4, 4),
                 (Primitive::U32, 4, 4),
                 (Primitive::F32, 4, 4),
-                (Primitive::Float, ptr_width, ptr_width),
+                // Language float is always IEEE f64 (DataLayout), not pointer-width.
+                (Primitive::Float, 8, 8),
                 (Primitive::Int, ptr_width, ptr_width),
                 (Primitive::Uint, ptr_width, ptr_width),
                 (Primitive::I64, 8, 8),
@@ -677,6 +710,26 @@ mod tests {
                 assert!(layout.field_offsets.is_empty());
             }
         }
+    }
+
+    #[test]
+    fn test_i686_sysv_i64_align_4() {
+        let engine = LayoutEngine::from_data_layout(DataLayout::i686_sysv());
+        let interner = TypeInterner::new();
+        let provider = MockProvider;
+        let i64_id = interner.intern(ArType::Primitive(Primitive::I64));
+        let layout = engine.layout_of(i64_id, &interner, &provider);
+        assert_eq!(layout.size, 8);
+        assert_eq!(layout.align, 4);
+        let f64_id = interner.intern(ArType::Primitive(Primitive::F64));
+        let fl = engine.layout_of(f64_id, &interner, &provider);
+        assert_eq!(fl.size, 8);
+        assert_eq!(fl.align, 4);
+        // Fat pointer still 8 bytes on 32-bit pointer width.
+        let str_id = interner.intern(ArType::Primitive(Primitive::Str));
+        let sl = engine.layout_of(str_id, &interner, &provider);
+        assert_eq!(sl.size, 8);
+        assert_eq!(sl.field_offsets, vec![0, 4]);
     }
 
     #[test]

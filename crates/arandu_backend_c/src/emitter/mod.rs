@@ -113,7 +113,7 @@ impl<'a> CEmitter<'a> {
         writeln!(&mut self.output, "#endif").unwrap();
         writeln!(&mut self.output).unwrap();
         // ArStr = LayoutEngine fat pointer: { ptr, len:usize } (target-dependent width).
-        let len_c_ty = if self.layout.pointer_width == 4 {
+        let len_c_ty = if self.layout.pointer_width() == 4 {
             "int32_t"
         } else {
             "int64_t"

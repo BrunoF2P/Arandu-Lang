@@ -40,8 +40,8 @@ fn execute_cranelift(amir: &AmirProgram, tc: &TypeCheckResult) -> i32 {
 }
 
 fn emit_c(amir: &AmirProgram, tc: &TypeCheckResult) -> String {
-    // Host parity only (64-bit); Cranelift is host-only — see solidification matrix.
-    let layout_engine = LayoutEngine::new(8);
+    // Host parity only; Cranelift is host-only — see solidification matrix.
+    let layout_engine = LayoutEngine::host();
     CEmitter::new(
         amir,
         &tc.symbols,
@@ -348,7 +348,7 @@ fn c_emit_arstr_layout_32bit() {
     }
     "#;
     let (amir, tc) = compile_src(src);
-    let layout = LayoutEngine::new(4);
+    let layout = LayoutEngine::from_data_layout(arandu_middle::layout::DataLayout::ptr_width(4));
     let c = CEmitter::new(
         &amir,
         &tc.symbols,
@@ -361,5 +361,32 @@ fn c_emit_arstr_layout_32bit() {
         c.contains("typedef struct { const uint8_t *ptr; int32_t len; } ArStr;"),
         "expected 32-bit ArStr, headers:\n{}",
         c.lines().take(40).collect::<Vec<_>>().join("\n")
+    );
+}
+
+#[test]
+fn c_emit_arstr_i686_sysv() {
+    // DataLayout::i686_sysv: pointer 4; i64/f64 abi_align 4 — ArStr still {ptr, int32_t len}.
+    let src = r#"
+    func main(): int {
+        let s = "hi"
+        return 0
+    }
+    "#;
+    let (amir, tc) = compile_src(src);
+    let layout =
+        LayoutEngine::from_data_layout(arandu_middle::layout::DataLayout::i686_sysv());
+    let c = CEmitter::new(
+        &amir,
+        &tc.symbols,
+        &layout,
+        &tc.type_info,
+        &tc.type_info.type_interner,
+    )
+    .emit();
+    assert!(
+        c.contains("typedef struct { const uint8_t *ptr; int32_t len; } ArStr;"),
+        "i686 ArStr: {}",
+        c.lines().take(30).collect::<Vec<_>>().join("\n")
     );
 }

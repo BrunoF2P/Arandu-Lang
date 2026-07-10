@@ -66,21 +66,21 @@ impl<'a> CEmitter<'a> {
             ArType::Primitive(Primitive::F32) => "float".to_string(),
             ArType::Primitive(Primitive::F64) => "double".to_string(),
             ArType::Primitive(Primitive::Uint) => {
-                if self.layout.pointer_width == 8 {
+                if self.layout.pointer_width() == 8 {
                     "uint64_t".to_string()
                 } else {
                     "uint32_t".to_string()
                 }
             }
             ArType::IntLiteral => {
-                if self.layout.pointer_width == 8 {
+                if self.layout.pointer_width() == 8 {
                     "int64_t".to_string()
                 } else {
                     "int32_t".to_string()
                 }
             }
             ArType::Primitive(Primitive::Int) => {
-                if self.layout.pointer_width == 8 {
+                if self.layout.pointer_width() == 8 {
                     "int64_t".to_string()
                 } else {
                     "int32_t".to_string()

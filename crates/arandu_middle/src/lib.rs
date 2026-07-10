@@ -35,7 +35,10 @@ pub use arandu_base::span::Span;
 
 pub use arandu_base::bitset::{BitMatrix, BitSet};
 pub use arandu_base::newtype_index;
-pub use layout::{DenseRange, EnumPayloadShape, LayoutEngine, StructLayoutProvider, TypeLayout};
+pub use layout::{
+    DataLayout, DenseRange, EnumPayloadShape, LayoutEngine, SizeAlign, StructLayoutProvider,
+    TypeLayout,
+};
 
 pub use amir_validate::validate_amir_program;
 pub use codegen::{CodegenBackend, CompiledCode, JitError};
