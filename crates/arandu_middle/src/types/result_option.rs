@@ -2,7 +2,7 @@ use arandu_parser::{ResultType, TypeExprId, TypeName};
 
 use super::ar_type::ArType;
 use super::lower::LowerCtx;
-use super::type_interner::TypeInterner;
+use super::type_interner::{TypeId, TypeInterner};
 
 #[must_use]
 pub fn result_type_decl_span(result: &ResultType) -> arandu_lexer::Span {
@@ -34,6 +34,16 @@ pub fn result_ok_err(ty: &ArType, interner: &TypeInterner) -> Option<(ArType, Ar
             let err_ty = interner.resolve(*err);
             Some((ok_ty, err_ty))
         }
+        _ => None,
+    }
+}
+
+/// Extract ok/err from an interned `Result<T,E>` (avoids an extra outer clone when the
+/// caller only has a `TypeId`).
+#[must_use]
+pub fn result_ok_err_id(id: TypeId, interner: &TypeInterner) -> Option<(ArType, ArType)> {
+    match interner.resolve(id) {
+        ArType::Result(ok, err) => Some((interner.resolve(ok), interner.resolve(err))),
         _ => None,
     }
 }

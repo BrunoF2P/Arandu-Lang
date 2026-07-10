@@ -46,15 +46,15 @@ impl LowerCtx<'_> {
         value_id: HirExprId,
         arms_range: &IndexRange,
         target: Option<TempId>,
-        expr_ty: &ArType,
+        expr_ty: crate::types::TypeId,
         symbols: &SymbolTable,
     ) -> Result<AmirOperand, Diagnostic> {
         let value_expr = self.hir.pool.expr(value_id);
-        let value_ty = value_expr.ty.clone();
+        let value_ty = self.resolve_ty(value_expr.ty);
         let value_span = value_expr.span;
 
         let scrutinee = self.lower_expr(value_id, None, symbols)?;
-        let dest = target.unwrap_or_else(|| self.new_temp_ref(expr_ty));
+        let dest = target.unwrap_or_else(|| self.new_temp_id(expr_ty));
         let bb_end = self.new_block();
 
         let arms = self.hir.pool.match_arms_list(*arms_range).to_vec();
@@ -91,7 +91,7 @@ impl LowerCtx<'_> {
         symbols: &SymbolTable,
     ) -> Result<(), Diagnostic> {
         let value_expr = self.hir.pool.expr(value_id);
-        let value_ty = value_expr.ty.clone();
+        let value_ty = self.resolve_ty(value_expr.ty);
         let value_span = value_expr.span;
 
         let scrutinee = self.lower_expr(value_id, None, symbols)?;

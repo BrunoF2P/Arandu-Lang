@@ -3,7 +3,9 @@ use crate::amir::{AmirConstant, AmirOperand, AmirRvalue, AmirStmt, AmirTerminato
 use crate::diagnostics::{DiagCode, Diagnostic};
 use crate::literal_pool::AmirLiteralEntry;
 use crate::ops::BinaryOp;
-use crate::passes::type_checker::types::{ArType, Primitive, is_option_type, result_ok_err};
+use crate::passes::type_checker::types::{
+    ArType, Primitive, is_option_type, result_ok_err_id,
+};
 use crate::{SymbolKind, SymbolTable};
 
 use crate::hir::{HirExpr, HirExprId, HirExprKind, ResultCtorVariant};
@@ -22,10 +24,10 @@ fn resolve_method_target(
     };
 
     let base_expr = pool.expr(base_id);
-    let base_ty = &base_expr.ty;
+    let base_ty = interner.resolve(base_expr.ty);
     let struct_id = match base_ty {
         ArType::Nullable(inner) => {
-            let inner_ty = interner.resolve(*inner);
+            let inner_ty = interner.resolve(inner);
             match inner_ty {
                 ArType::Named(id, _) => Some(id),
                 ArType::Ptr(ptr_inner) => {
@@ -38,9 +40,9 @@ fn resolve_method_target(
                 _ => None,
             }
         }
-        ArType::Named(id, _) => Some(*id),
+        ArType::Named(id, _) => Some(id),
         ArType::Ptr(inner) => {
-            let inner_ty = interner.resolve(*inner);
+            let inner_ty = interner.resolve(inner);
             match inner_ty {
                 ArType::Named(id, _) => Some(id),
                 _ => None,
@@ -60,15 +62,18 @@ impl LowerCtx<'_> {
     pub(crate) fn maybe_to_str(
         &mut self,
         op: AmirOperand,
-        src_ty: &ArType,
+        src_ty: crate::types::TypeId,
     ) -> Result<AmirOperand, Diagnostic> {
-        if matches!(src_ty, ArType::Primitive(Primitive::Str)) || src_ty.is_error() {
+        if self.tc.type_info.type_interner.is_error(src_ty) {
             return Ok(op);
         }
-        if !src_ty.is_to_str_v01() {
+        let needs = self.tc.type_info.type_interner.with_type(src_ty, |t| {
+            !matches!(t, ArType::Primitive(Primitive::Str)) && t.is_to_str_v01()
+        });
+        if !needs {
             return Ok(op);
         }
-        let src_ty_id = self.intern_ty(src_ty.clone());
+        let src_ty_id = src_ty;
         let dest = self.new_temp(ArType::Primitive(Primitive::Str));
         self.emit_assign_temp(
             dest,
@@ -95,12 +100,12 @@ impl LowerCtx<'_> {
                 ..
             } => false,
             HirExprKind::Nil => false,
-            _ => matches!(expr.ty, ArType::Err) && !Self::expr_is_nil(expr),
+            _ => self.with_ty(expr.ty, |t| matches!(t, ArType::Err)) && !Self::expr_is_nil(expr),
         }
     }
 
     pub(crate) fn is_error_return(&self, values: &[HirExprId]) -> bool {
-        if result_ok_err(&self.func_return_type, &self.tc.type_info.type_interner).is_none() {
+        if result_ok_err_id(self.func_return_type, &self.tc.type_info.type_interner).is_none() {
             return false;
         }
         match values.len() {
@@ -122,15 +127,15 @@ impl LowerCtx<'_> {
         &mut self,
         inner_id: HirExprId,
         target: Option<TempId>,
-        expr_ty: &ArType,
+        expr_ty: crate::types::TypeId,
         symbols: &SymbolTable,
     ) -> Result<AmirOperand, Diagnostic> {
         let inner = self.hir.pool.expr(inner_id);
-        let ok_err = result_ok_err(&inner.ty, &self.tc.type_info.type_interner);
+        let ok_err = result_ok_err_id(inner.ty, &self.tc.type_info.type_interner);
         let (_, err_ty) = match ok_err {
             Some(tup) => tup,
             None => {
-                if matches!(inner.ty, ArType::Error) {
+                if self.tc.type_info.type_interner.is_error(inner.ty) {
                     // Tipo Error = diagnóstico já emitido antes (type checker já rejeitou).
                     // NÃO é bug interno — bail silenciosamente com um valor poison,
                     // sem duplicar erro nem gerar ICE.
@@ -146,7 +151,7 @@ impl LowerCtx<'_> {
         };
         let base = self.lower_expr(inner_id, None, symbols)?;
         if self.current_block.is_none() {
-            let dest = target.unwrap_or_else(|| self.new_temp_ref(expr_ty));
+            let dest = target.unwrap_or_else(|| self.new_temp_id(expr_ty));
             return Ok(AmirOperand::Copy(dest));
         }
 
@@ -182,8 +187,7 @@ impl LowerCtx<'_> {
         self.current_block = Some(bb_return_err);
         self.exit_all_defer_frames(true, symbols)?;
         // Clone once: new_temp_ref needs &mut self + &ArType simultaneously.
-        let ret_ty = self.func_return_type.clone();
-        let err_ctor_tmp = self.new_temp_ref(&ret_ty);
+        let err_ctor_tmp = self.new_temp_id(self.func_return_type);
         self.emit_assign_temp(
             err_ctor_tmp,
             AmirRvalue::EnumConstruct {
@@ -197,7 +201,7 @@ impl LowerCtx<'_> {
         self.current_block = None;
 
         self.current_block = Some(bb_continue);
-        let dest = target.unwrap_or_else(|| self.new_temp_ref(expr_ty));
+        let dest = target.unwrap_or_else(|| self.new_temp_id(expr_ty));
         self.lower_result_ok_field(base, dest);
         Ok(AmirOperand::Copy(dest))
     }
@@ -208,17 +212,17 @@ impl LowerCtx<'_> {
         inner_id: HirExprId,
         handler: &crate::hir::HirCatchHandler,
         target: Option<TempId>,
-        expr_ty: &ArType,
+        expr_ty: crate::types::TypeId,
         symbols: &SymbolTable,
     ) -> Result<AmirOperand, Diagnostic> {
         use crate::hir::HirCatchHandler;
 
         let inner = self.hir.pool.expr(inner_id);
-        let ok_err = result_ok_err(&inner.ty, &self.tc.type_info.type_interner);
+        let ok_err = result_ok_err_id(inner.ty, &self.tc.type_info.type_interner);
         let (ok_ty, err_ty) = match ok_err {
             Some(tup) => tup,
             None => {
-                if matches!(inner.ty, ArType::Error) {
+                if self.tc.type_info.type_interner.is_error(inner.ty) {
                     let dest = target.unwrap_or_else(|| self.new_temp(ArType::Error));
                     return Ok(AmirOperand::Copy(dest));
                 }
@@ -233,11 +237,11 @@ impl LowerCtx<'_> {
 
         let base = self.lower_expr(inner_id, None, symbols)?;
         if self.current_block.is_none() {
-            let dest = target.unwrap_or_else(|| self.new_temp_ref(expr_ty));
+            let dest = target.unwrap_or_else(|| self.new_temp_id(expr_ty));
             return Ok(AmirOperand::Copy(dest));
         }
 
-        let dest = target.unwrap_or_else(|| self.new_temp_ref(expr_ty));
+        let dest = target.unwrap_or_else(|| self.new_temp_id(expr_ty));
 
         let tag_tmp = self.new_temp(ArType::Primitive(Primitive::Int));
         self.emit_assign_temp(
@@ -305,12 +309,12 @@ impl LowerCtx<'_> {
         &mut self,
         inner_id: HirExprId,
         target: Option<TempId>,
-        expr_ty: &ArType,
+        expr_ty: crate::types::TypeId,
         symbols: &SymbolTable,
     ) -> Result<AmirOperand, Diagnostic> {
         let base = self.lower_expr(inner_id, None, symbols)?;
         if self.current_block.is_none() {
-            let dest = target.unwrap_or_else(|| self.new_temp_ref(expr_ty));
+            let dest = target.unwrap_or_else(|| self.new_temp_id(expr_ty));
             return Ok(AmirOperand::Copy(dest));
         }
 
@@ -341,7 +345,7 @@ impl LowerCtx<'_> {
         self.current_block = None;
 
         self.current_block = Some(bb_continue);
-        let dest = target.unwrap_or_else(|| self.new_temp_ref(expr_ty));
+        let dest = target.unwrap_or_else(|| self.new_temp_id(expr_ty));
         self.emit_assign_temp(dest, AmirRvalue::Use(base));
         Ok(AmirOperand::Copy(dest))
     }
@@ -396,12 +400,12 @@ impl LowerCtx<'_> {
                         arandu_middle::hir::HirStringPart::Expr(e) => {
                             let part_expr = self.hir.pool.expr(*e);
                             let part_op = self.lower_expr(*e, None, symbols)?;
-                            self.maybe_to_str(part_op, &part_expr.ty)?
+                            self.maybe_to_str(part_op, part_expr.ty)?
                         }
                     };
                     part_ops.push(op);
                 }
-                let dest = target.unwrap_or_else(|| self.new_temp_ref(&expr.ty));
+                let dest = target.unwrap_or_else(|| self.new_temp_id(expr.ty));
                 self.emit_assign_temp(dest, AmirRvalue::StringInterp { parts: part_ops });
                 Ok(AmirOperand::Copy(dest))
             }
@@ -409,7 +413,7 @@ impl LowerCtx<'_> {
                 let value_expr = self.hir.pool.expr(*value);
                 let op = self.lower_expr(*value, None, symbols)?;
                 // Always materialize ToStr (even for `str` identity is a no-op in maybe_to_str).
-                let str_op = self.maybe_to_str(op, &value_expr.ty)?;
+                let str_op = self.maybe_to_str(op, value_expr.ty)?;
                 if let Some(dest) = target {
                     self.emit_assign_temp(dest, AmirRvalue::Use(str_op.clone()));
                     Ok(AmirOperand::Copy(dest))
@@ -426,8 +430,8 @@ impl LowerCtx<'_> {
                 Ok(op)
             }
             HirExprKind::Nil => {
-                let op = if is_option_type(&expr.ty) {
-                    let dest = target.unwrap_or_else(|| self.new_temp_ref(&expr.ty));
+                let op = if self.with_ty(expr.ty, is_option_type) {
+                    let dest = target.unwrap_or_else(|| self.new_temp_id(expr.ty));
                     self.emit_assign_temp(
                         dest,
                         AmirRvalue::EnumConstruct {
@@ -439,7 +443,7 @@ impl LowerCtx<'_> {
                 } else {
                     AmirOperand::Constant(AmirConstant::Nil)
                 };
-                if let (Some(dest), false) = (target, is_option_type(&expr.ty)) {
+                if let (Some(dest), false) = (target, self.with_ty(expr.ty, is_option_type)) {
                     self.emit_assign_temp(dest, AmirRvalue::Use(op));
                 }
                 Ok(op)
@@ -450,8 +454,8 @@ impl LowerCtx<'_> {
                 // ArType::Named(enum_sym, []), so we can use that as a filter anchor
                 // instead of doing a global name-based scan — which would silently
                 // pick the wrong discriminant when two enums share a variant name.
-                let enum_sym_from_ty = match &expr.ty {
-                    ArType::Named(id, _) => Some(*id),
+                let enum_sym_from_ty = match self.resolve_ty(expr.ty) {
+                    ArType::Named(id, _) => Some(id),
                     _ => None,
                 };
                 let op: AmirOperand = if let Some(&local_id) = self.symbol_map.get(symbol) {
@@ -490,7 +494,7 @@ impl LowerCtx<'_> {
                             .and_then(|(v_sym, _)| self.tc.type_info.enum_variant_tags.get(v_sym))
                     })
                 {
-                    let dest = target.unwrap_or_else(|| self.new_temp_ref(&expr.ty));
+                    let dest = target.unwrap_or_else(|| self.new_temp_id(expr.ty));
                     self.emit_assign_temp(
                         dest,
                         AmirRvalue::EnumConstruct {
@@ -565,7 +569,7 @@ impl LowerCtx<'_> {
                             .and_then(|(v_sym, _)| self.tc.type_info.enum_variant_tags.get(v_sym))
                     })
                 {
-                    let dest = target.unwrap_or_else(|| self.new_temp_ref(&expr.ty));
+                    let dest = target.unwrap_or_else(|| self.new_temp_id(expr.ty));
                     self.emit_assign_temp(
                         dest,
                         AmirRvalue::EnumConstruct {
@@ -608,21 +612,21 @@ impl LowerCtx<'_> {
             HirExprKind::Generic { callee, .. } => self.lower_expr(*callee, target, symbols),
             HirExprKind::Alloc { expr: inner } => {
                 let inner_op = self.lower_expr(*inner, None, symbols)?;
-                let dest = target.unwrap_or_else(|| self.new_temp_ref(&expr.ty));
+                let dest = target.unwrap_or_else(|| self.new_temp_id(expr.ty));
                 self.emit_assign_temp(dest, AmirRvalue::Alloc(inner_op));
                 Ok(AmirOperand::Copy(dest))
             }
             HirExprKind::Binary { op, left, right } => {
-                self.lower_binary(*op, *left, *right, &expr.ty, target, symbols)
+                self.lower_binary(*op, *left, *right, expr.ty, target, symbols)
             }
             HirExprKind::Unary { op, expr: sub_expr } => {
-                self.lower_unary(*op, *sub_expr, &expr.ty, target, symbols)
+                self.lower_unary(*op, *sub_expr, expr.ty, target, symbols)
             }
             HirExprKind::Field { base, field } => {
-                self.lower_field(*base, field, &expr.ty, target, symbols)
+                self.lower_field(*base, field, expr.ty, target, symbols)
             }
             HirExprKind::Index { base, index } => {
-                self.lower_index(*base, *index, &expr.ty, target, symbols)
+                self.lower_index(*base, *index, expr.ty, target, symbols)
             }
             HirExprKind::Array { items } => {
                 let items_slice = self.hir.pool.expr_list(*items);
@@ -630,7 +634,7 @@ impl LowerCtx<'_> {
                 for &item in items_slice {
                     item_ops.push(self.lower_expr(item, None, symbols)?);
                 }
-                let dest = target.unwrap_or_else(|| self.new_temp_ref(&expr.ty));
+                let dest = target.unwrap_or_else(|| self.new_temp_id(expr.ty));
                 self.emit_assign_temp(dest, AmirRvalue::Array { items: item_ops });
                 Ok(AmirOperand::Copy(dest))
             }
@@ -640,10 +644,10 @@ impl LowerCtx<'_> {
                 let mut is_enum_ctor = None;
                 match &callee_expr.kind {
                     HirExprKind::Path { symbol } => {
-                        let enum_sym_from_ty = match &callee_expr.ty {
-                            ArType::Named(id, _) => Some(*id),
+                        let enum_sym_from_ty = match self.resolve_ty(callee_expr.ty) {
+                            ArType::Named(id, _) => Some(id),
                             ArType::Func(_, ret) => {
-                                match self.tc.type_info.type_interner.resolve(*ret) {
+                                match self.tc.type_info.type_interner.resolve(ret) {
                                     ArType::Named(id, _) => Some(id),
                                     _ => None,
                                 }
@@ -744,8 +748,8 @@ impl LowerCtx<'_> {
                             for &arg in args_slice {
                                 item_ops.push(self.lower_expr(arg, None, symbols)?);
                             }
-                            let param_tys = match &callee_expr.ty {
-                                ArType::Func(params, _) => params.clone(),
+                            let param_tys = match self.resolve_ty(callee_expr.ty) {
+                                ArType::Func(params, _) => params,
                                 _ => vec![],
                             };
                             let tuple_ty = ArType::Tuple(param_tys);
@@ -757,7 +761,7 @@ impl LowerCtx<'_> {
                             Some(AmirOperand::Copy(dest_tuple))
                         }
                     };
-                    let dest = target.unwrap_or_else(|| self.new_temp_ref(&expr.ty));
+                    let dest = target.unwrap_or_else(|| self.new_temp_id(expr.ty));
                     self.emit_assign_temp(
                         dest,
                         AmirRvalue::EnumConstruct {
@@ -783,7 +787,7 @@ impl LowerCtx<'_> {
                 // Method calls: HIR already includes the receiver as arg 0 when
                 // typeck rewrites `obj.m(a)` → Call(Field(m), [obj, a]). Only inject
                 // `base` when args are short of the formal arity (legacy / incomplete HIR).
-                let formal_params: Vec<ArType> = match &callee_expr.ty {
+                let formal_params: Vec<ArType> = match self.resolve_ty(callee_expr.ty) {
                     ArType::Func(params, _) => {
                         params.iter().map(|&id| self.resolve_ty(id)).collect()
                     }
@@ -807,7 +811,7 @@ impl LowerCtx<'_> {
                     let arg_op = self.consume_operand(arg_op)?;
                     let arg_op = if let Some(param_ty) = formal_params.get(i + arg_param_offset) {
                         if matches!(param_ty, ArType::Primitive(Primitive::Str)) {
-                            self.maybe_to_str(arg_op, &arg_expr.ty)?
+                            self.maybe_to_str(arg_op, arg_expr.ty)?
                         } else {
                             arg_op
                         }
@@ -816,10 +820,10 @@ impl LowerCtx<'_> {
                     };
                     arg_ops.push(arg_op);
                 }
-                let dest = if matches!(expr.ty, ArType::Void) {
+                let dest = if self.with_ty(expr.ty, |t| matches!(t, ArType::Void)) {
                     None
                 } else {
-                    Some(target.unwrap_or_else(|| self.new_temp_ref(&expr.ty)))
+                    Some(target.unwrap_or_else(|| self.new_temp_id(expr.ty)))
                 };
                 self.push_stmt(AmirStmt::Call {
                     lhs: dest,
@@ -837,7 +841,7 @@ impl LowerCtx<'_> {
                 for f in fields_slice {
                     field_ops.push((f.name.clone(), self.lower_expr(f.value, None, symbols)?));
                 }
-                let dest = target.unwrap_or_else(|| self.new_temp_ref(&expr.ty));
+                let dest = target.unwrap_or_else(|| self.new_temp_id(expr.ty));
                 self.emit_assign_temp(
                     dest,
                     AmirRvalue::StructLiteral {
@@ -854,14 +858,14 @@ impl LowerCtx<'_> {
             } => {
                 let cond_op = self.lower_condition(condition, symbols)?;
                 if self.current_block.is_none() {
-                    let dest = target.unwrap_or_else(|| self.new_temp_ref(&expr.ty));
+                    let dest = target.unwrap_or_else(|| self.new_temp_id(expr.ty));
                     return Ok(AmirOperand::Copy(dest));
                 }
                 let bb_then = self.new_block();
                 let bb_else = self.new_block();
                 let bb_join = self.new_block();
 
-                let dest = target.unwrap_or_else(|| self.new_temp_ref(&expr.ty));
+                let dest = target.unwrap_or_else(|| self.new_temp_id(expr.ty));
 
                 self.set_bool_branch(cond_op, bb_then, bb_else);
                 self.seal_block(bb_then);
@@ -888,17 +892,17 @@ impl LowerCtx<'_> {
             }
             HirExprKind::Cast { expr: sub_expr, .. } => {
                 let sub_op = self.lower_expr(*sub_expr, None, symbols)?;
-                let dest = target.unwrap_or_else(|| self.new_temp_ref(&expr.ty));
+                let dest = target.unwrap_or_else(|| self.new_temp_id(expr.ty));
                 self.emit_assign_temp(dest, AmirRvalue::Use(sub_op));
                 Ok(AmirOperand::Copy(dest))
             }
 
             HirExprKind::Match { value, arms } => {
-                self.lower_match(*value, arms, target, &expr.ty, symbols)
+                self.lower_match(*value, arms, target, expr.ty, symbols)
             }
             HirExprKind::ResultCtor { variant, value } => {
                 let val_op = self.lower_expr(*value, None, symbols)?;
-                let dest = target.unwrap_or_else(|| self.new_temp_ref(&expr.ty));
+                let dest = target.unwrap_or_else(|| self.new_temp_id(expr.ty));
                 match variant {
                     ResultCtorVariant::Ok => {
                         self.emit_assign_temp(
@@ -933,18 +937,18 @@ impl LowerCtx<'_> {
 
             HirExprKind::Try { expr: inner } => {
                 let inner_expr = self.hir.pool.expr(*inner);
-                if result_ok_err(&inner_expr.ty, &self.tc.type_info.type_interner).is_some() {
-                    self.lower_try_result(*inner, target, &expr.ty, symbols)
-                } else if is_option_type(&inner_expr.ty)
-                    || matches!(inner_expr.ty, ArType::Nullable(_))
+                if result_ok_err_id(inner_expr.ty, &self.tc.type_info.type_interner).is_some() {
+                    self.lower_try_result(*inner, target, expr.ty, symbols)
+                } else if self.with_ty(inner_expr.ty, is_option_type)
+                    || self.with_ty(inner_expr.ty, |t| matches!(t, ArType::Nullable(_)))
                 {
-                    self.lower_try_nullable(*inner, target, &expr.ty, symbols)
+                    self.lower_try_nullable(*inner, target, expr.ty, symbols)
                 } else {
-                    self.lower_try_result(*inner, target, &expr.ty, symbols)
+                    self.lower_try_result(*inner, target, expr.ty, symbols)
                 }
             }
             HirExprKind::SafeField { base, field } => {
-                let dest = target.unwrap_or_else(|| self.new_temp_ref(&expr.ty));
+                let dest = target.unwrap_or_else(|| self.new_temp_id(expr.ty));
                 let base_op = self.lower_expr(*base, None, symbols)?;
                 if self.current_block.is_none() {
                     return Ok(AmirOperand::Copy(dest));
@@ -980,9 +984,10 @@ impl LowerCtx<'_> {
                 // Materialize base into a typed temp so FieldAccess never takes a
                 // bare Constant(Nil) operand (pretty-print `nil.0` / ZST layout).
                 // Nullable bases are pointer handles; field load goes through that ptr.
-                let base_tmp = self.new_temp_ref(&base_expr.ty);
+                let base_tmp = self.new_temp_id(base_expr.ty);
                 self.emit_assign_temp(base_tmp, AmirRvalue::Use(base_op));
-                let field_idx = self.resolve_field_index(&base_expr.ty, field);
+                let base_ty = self.resolve_ty(base_expr.ty);
+                let field_idx = self.resolve_field_index(&base_ty, field);
                 self.emit_assign_temp(
                     dest,
                     AmirRvalue::FieldAccess {
@@ -997,7 +1002,7 @@ impl LowerCtx<'_> {
                 Ok(AmirOperand::Copy(dest))
             }
             HirExprKind::SafeIndex { base, index } => {
-                let dest = target.unwrap_or_else(|| self.new_temp_ref(&expr.ty));
+                let dest = target.unwrap_or_else(|| self.new_temp_id(expr.ty));
                 let base_op = self.lower_expr(*base, None, symbols)?;
                 if self.current_block.is_none() {
                     return Ok(AmirOperand::Copy(dest));
@@ -1046,7 +1051,7 @@ impl LowerCtx<'_> {
                 Ok(AmirOperand::Copy(dest))
             }
             HirExprKind::NullCoalesce { left, right } => {
-                let dest = target.unwrap_or_else(|| self.new_temp_ref(&expr.ty));
+                let dest = target.unwrap_or_else(|| self.new_temp_id(expr.ty));
                 let left_op = self.lower_expr(*left, None, symbols)?;
                 if self.current_block.is_none() {
                     return Ok(AmirOperand::Copy(dest));
@@ -1085,7 +1090,7 @@ impl LowerCtx<'_> {
                 Ok(AmirOperand::Copy(dest))
             }
             HirExprKind::Catch { expr: inner, handler } => {
-                self.lower_catch(*inner, handler, target, &expr.ty, symbols)
+                self.lower_catch(*inner, handler, target, expr.ty, symbols)
             }
             HirExprKind::Lambda { .. } => Err(amir_unsupported(
                 expr.span,

@@ -2,6 +2,7 @@ use crate::diagnostics::Diagnostic;
 use crate::hir::{HirPlace, HirPlaceSuffix};
 use crate::passes::type_checker::types::ArType;
 use crate::{NodeKey, TypeCheckResult};
+use arandu_middle::types::{TypeId, TypeInterner};
 use arandu_parser::ast_pool::AstPool;
 use arandu_parser::{Place, PlaceSuffix};
 
@@ -26,22 +27,22 @@ pub(crate) fn lower_place(
             )
         })?;
 
-    let mut current_ty = if let Some(ty) = type_check.type_info.decl_type(root_symbol) {
-        ty.clone()
-    } else {
-        ArType::Error
-    };
+    let error_id = TypeInterner::preinterned_error_id();
+    let mut current_ty: TypeId = type_check
+        .type_info
+        .decl_type_id(root_symbol)
+        .unwrap_or(error_id);
 
     let mut suffixes = Vec::new();
     for suffix in &place.suffixes {
-        if current_ty.is_error() {
+        if current_ty == error_id {
             match suffix {
                 PlaceSuffix::Field { span, name } => {
                     suffixes.push(HirPlaceSuffix::Field {
                         span: *span,
                         name: name.to_string(),
                         field_symbol: None,
-                        ty: ArType::Error,
+                        ty: error_id,
                     });
                 }
                 PlaceSuffix::Index { span, expr } => {
@@ -49,7 +50,7 @@ pub(crate) fn lower_place(
                     suffixes.push(HirPlaceSuffix::Index {
                         span: *span,
                         expr: eid,
-                        ty: ArType::Error,
+                        ty: error_id,
                     });
                 }
             }
@@ -59,9 +60,10 @@ pub(crate) fn lower_place(
         let interner = &type_check.type_info.type_interner;
         match suffix {
             PlaceSuffix::Field { span, name } => {
-                let actual_base_ty = match &current_ty {
-                    ArType::Nullable(inner) => interner.resolve(*inner),
-                    other => other.clone(),
+                let base = interner.resolve(current_ty);
+                let actual_base_ty = match base {
+                    ArType::Nullable(inner) => interner.resolve(inner),
+                    other => other,
                 };
                 let struct_id_opt = match &actual_base_ty {
                     ArType::Named(id, _) => Some(*id),
@@ -81,11 +83,11 @@ pub(crate) fn lower_place(
                         .get(&struct_id)
                         .and_then(|fields| fields.get(name.as_str()))
                         .copied();
-                    (ty.clone(), symbol)
+                    (interner.intern_ref(ty), symbol)
                 } else {
-                    (ArType::Error, None)
+                    (error_id, None)
                 };
-                current_ty = field_ty.clone();
+                current_ty = field_ty;
                 suffixes.push(HirPlaceSuffix::Field {
                     span: *span,
                     name: name.to_string(),
@@ -94,15 +96,16 @@ pub(crate) fn lower_place(
                 });
             }
             PlaceSuffix::Index { span, expr } => {
-                let actual_base_ty = match &current_ty {
-                    ArType::Nullable(inner) => interner.resolve(*inner),
-                    other => other.clone(),
+                let base = interner.resolve(current_ty);
+                let actual_base_ty = match base {
+                    ArType::Nullable(inner) => interner.resolve(inner),
+                    other => other,
                 };
                 let elem_ty = match &actual_base_ty {
-                    ArType::Array(_, inner) | ArType::Slice(inner) => interner.resolve(*inner),
-                    _ => ArType::Error,
+                    ArType::Array(_, inner) | ArType::Slice(inner) => *inner,
+                    _ => error_id,
                 };
-                current_ty = elem_ty.clone();
+                current_ty = elem_ty;
                 let eid = super::expr::lower_expr(type_check, pool, hir_pool, *expr)?;
                 suffixes.push(HirPlaceSuffix::Index {
                     span: *span,

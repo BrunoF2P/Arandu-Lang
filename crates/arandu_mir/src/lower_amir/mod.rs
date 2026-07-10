@@ -155,7 +155,7 @@ pub(crate) struct DeferFrame {
 pub(crate) struct LowerCtx<'a> {
     tc: &'a TypeCheckResult,
     hir: &'a HirProgram,
-    func_return_type: ArType,
+    func_return_type: crate::types::TypeId,
     locals: Vec<AmirLocal>,
     temps: Vec<AmirTemp>,
     blocks: Vec<AmirBasicBlock>,

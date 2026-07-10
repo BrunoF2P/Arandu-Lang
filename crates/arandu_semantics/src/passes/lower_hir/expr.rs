@@ -4,8 +4,9 @@ use crate::hir::{
     HirStringPart,
 };
 use crate::passes::lowering::{require_def_symbol, require_type_symbol, require_value_symbol};
-use crate::passes::type_checker::types::ArType;
+use crate::passes::type_checker::types::{ArType, Primitive};
 use crate::{NodeKey, TypeCheckResult};
+use arandu_middle::types::{TypeId, TypeInterner};
 use arandu_parser::CatchHandler;
 use arandu_parser::ast_pool::{AstPool, ExprId, ExprKind};
 
@@ -47,55 +48,56 @@ fn builtin_ctor_variant(pool: &AstPool, callee: ExprId) -> Option<crate::hir::Re
     }
 }
 
+fn error_ty() -> TypeId {
+    TypeInterner::preinterned_error_id()
+}
+
 fn expr_type_for_kind(
     type_check: &mut TypeCheckResult,
     hir_pool: &crate::hir::HirPool,
     kind: &HirExprKind,
-    fallback: ArType,
-) -> ArType {
-    use crate::passes::type_checker::types::Primitive;
-
+    fallback: TypeId,
+) -> TypeId {
+    let interner = &type_check.type_info.type_interner;
     match kind {
-        HirExprKind::Error => ArType::Error,
+        HirExprKind::Error => error_ty(),
         HirExprKind::Str(_) | HirExprKind::StringInterp { .. } | HirExprKind::ToStr { .. } => {
-            ArType::Primitive(Primitive::Str)
+            TypeInterner::preinterned_primitive(Primitive::Str)
         }
-        HirExprKind::Int(_) => ArType::IntLiteral,
-        HirExprKind::Float(_) => ArType::FloatLiteral,
-        HirExprKind::Bool(_) => ArType::Primitive(Primitive::Bool),
-        HirExprKind::Char(_) => ArType::Primitive(Primitive::Char),
+        HirExprKind::Int(_) => interner.intern(ArType::IntLiteral),
+        HirExprKind::Float(_) => interner.intern(ArType::FloatLiteral),
+        HirExprKind::Bool(_) => TypeInterner::preinterned_primitive(Primitive::Bool),
+        HirExprKind::Char(_) => TypeInterner::preinterned_primitive(Primitive::Char),
         HirExprKind::Nil => {
-            if fallback.is_error() {
+            if fallback == error_ty() {
                 let interner =
                     &mut std::sync::Arc::make_mut(&mut type_check.type_info).type_interner;
                 let err_id = interner.intern(ArType::Error);
-                ArType::Nullable(err_id)
+                interner.intern(ArType::Nullable(err_id))
             } else {
                 fallback
             }
         }
         HirExprKind::Path { symbol } => type_check
             .type_info
-            .decl_type(*symbol)
-            .filter(|ty| !ty.is_error())
+            .decl_type_id(*symbol)
+            .filter(|&id| id != error_ty())
             .unwrap_or(fallback),
         HirExprKind::Call { callee, .. } => {
             let callee_expr = hir_pool.expr(*callee);
             let interner = &type_check.type_info.type_interner;
-            if !callee_expr.ty.is_error() {
-                match &callee_expr.ty {
-                    ArType::Func(_, ret) => {
-                        return interner.resolve(*ret);
-                    }
-                    other => return other.clone(),
-                }
+            if callee_expr.ty != error_ty() {
+                return match interner.resolve(callee_expr.ty) {
+                    ArType::Func(_, ret) => ret,
+                    _ => callee_expr.ty,
+                };
             }
             match &callee_expr.kind {
                 HirExprKind::Path { symbol } => type_check
                     .type_info
-                    .decl_type(*symbol)
-                    .and_then(|ty| match ty {
-                        ArType::Func(_, ret) => Some(interner.resolve(ret)),
+                    .decl_type_id(*symbol)
+                    .and_then(|id| match interner.resolve(id) {
+                        ArType::Func(_, ret) => Some(ret),
                         _ => None,
                     })
                     .unwrap_or(fallback),
@@ -116,8 +118,8 @@ pub(crate) fn lower_expr_raw(
     let span = pool.expr_span(expr);
     let fallback_ty = type_check
         .type_info
-        .expr_type(expr)
-        .unwrap_or(ArType::Error);
+        .expr_type_id(expr)
+        .unwrap_or_else(error_ty);
 
     let kind = match pool.expr(expr) {
         ExprKind::Path { .. } => {
@@ -142,14 +144,15 @@ pub(crate) fn lower_expr_raw(
             let arg_ids = pool.type_expr_list(*args).to_vec();
             let interner = &mut std::sync::Arc::make_mut(&mut type_check.type_info).type_interner;
             for arg_id in arg_ids {
-                hir_args.push(crate::passes::type_checker::types::lower_type_expr(
+                let ar = crate::passes::type_checker::types::lower_type_expr(
                     arg_id,
                     pool,
                     &type_check.symbols,
                     crate::ScopeId(0),
                     &type_check.resolved,
                     interner,
-                ));
+                );
+                hir_args.push(interner.intern(ar));
             }
             HirExprKind::Generic {
                 callee: callee_id,
@@ -276,7 +279,7 @@ pub(crate) fn lower_expr_raw(
             }
         }
         ExprKind::StructLiteral { ty: _, fields, .. } => {
-            let struct_symbol = match &fallback_ty {
+            let struct_symbol = match type_check.type_info.type_interner.resolve(fallback_ty) {
                 ArType::Named(id, _) => id,
                 _ => {
                     return Err(Diagnostic::error(
@@ -299,7 +302,7 @@ pub(crate) fn lower_expr_raw(
             }
             let fields_range = hir_pool.alloc_field_init_list(&hir_fields);
             HirExprKind::StructLiteral {
-                struct_symbol: *struct_symbol,
+                struct_symbol,
                 fields: fields_range,
             }
         }
@@ -320,8 +323,8 @@ pub(crate) fn lower_expr_raw(
                 let symbol = require_def_symbol(&type_check.resolved, p.span)?;
                 let p_ty = type_check
                     .type_info
-                    .decl_type(symbol)
-                    .unwrap_or(ArType::Error);
+                    .decl_type_id(symbol)
+                    .unwrap_or_else(error_ty);
                 hir_params.push(HirLambdaParam {
                     span: p.span,
                     symbol,
@@ -431,7 +434,7 @@ pub(crate) fn lower_expr_raw(
             ..
         } => {
             let interner = &mut std::sync::Arc::make_mut(&mut type_check.type_info).type_interner;
-            let target_ty = crate::passes::type_checker::types::lower_type_expr(
+            let target_ar = crate::passes::type_checker::types::lower_type_expr(
                 *cast_ty,
                 pool,
                 &type_check.symbols,
@@ -439,6 +442,7 @@ pub(crate) fn lower_expr_raw(
                 &type_check.resolved,
                 interner,
             );
+            let target_ty = interner.intern(target_ar);
             let inner_id = lower_expr(type_check, pool, hir_pool, *inner_expr)?;
             HirExprKind::Cast {
                 expr: inner_id,

@@ -19,7 +19,7 @@ pub(crate) fn lower_func(
     let mut ctx = LowerCtx {
         tc,
         hir,
-        func_return_type: f.return_type.clone(),
+        func_return_type: f.return_type,
         locals: Vec::new(),
         temps: Vec::new(),
         blocks: Vec::new(),
@@ -41,9 +41,12 @@ pub(crate) fn lower_func(
     };
 
     // Return register is TempId(0) — span is the function header.
-    let ret_is_copy = f.return_type.is_copy_v01();
-    let ret_is_nullable = matches!(f.return_type, crate::types::ArType::Nullable(_));
-    let ret_ty = ctx.intern_ty(f.return_type.clone());
+    let ret_ty = f.return_type;
+    let ret_is_copy = tc.type_info.type_interner.is_copy_v01(ret_ty);
+    let ret_is_nullable = tc
+        .type_info
+        .type_interner
+        .with_type(ret_ty, |t| matches!(t, crate::types::ArType::Nullable(_)));
     ctx.temps.push(AmirTemp {
         id: TempId(0),
         ty: ret_ty,
@@ -63,7 +66,7 @@ pub(crate) fn lower_func(
     ctx.current_block = Some(bb0);
 
     for param in hir.pool.params_list(f.params) {
-        let p_temp = ctx.with_span(param.span, |this| this.new_temp_ref(&param.ty));
+        let p_temp = ctx.with_span(param.span, |this| this.new_temp_id(param.ty));
         if param.is_receiver {
             receiver = Some(crate::amir::AmirReceiver {
                 temp: p_temp,
@@ -74,7 +77,7 @@ pub(crate) fn lower_func(
         }
         params.push(p_temp);
         // Directly bind the parameter temp to the local variable in the entry block
-        let p_local = ctx.new_local(param.ty.clone(), param.symbol, param.span);
+        let p_local = ctx.new_local_id(param.ty, param.symbol, param.span);
         ctx.write_variable_source(p_local, AmirOperand::Copy(p_temp))?;
     }
 

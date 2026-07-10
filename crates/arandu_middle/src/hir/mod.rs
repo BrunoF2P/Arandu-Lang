@@ -4,7 +4,7 @@ pub use pattern::{HirFieldPattern, HirPattern};
 pub use pretty::HirPrettyCtx;
 
 use crate::ops::{BinaryOp, SetOp, UnaryOp};
-use crate::types::ArType;
+use crate::types::TypeId;
 use crate::{SymbolId, SymbolTable};
 use arandu_lexer::Span;
 use smallvec::SmallVec;
@@ -56,7 +56,7 @@ impl HirDecl {
 #[derive(Debug)]
 pub struct HirConst {
     pub symbol: SymbolId,
-    pub ty: ArType,
+    pub ty: TypeId,
     pub value: HirExprId,
     pub span: Span,
 }
@@ -64,7 +64,7 @@ pub struct HirConst {
 #[derive(Debug)]
 pub struct HirTypeAlias {
     pub symbol: SymbolId,
-    pub target: ArType,
+    pub target: TypeId,
     pub span: Span,
 }
 
@@ -72,7 +72,7 @@ pub struct HirTypeAlias {
 pub struct HirFunc {
     pub symbol: SymbolId,
     pub params: IndexRange,
-    pub return_type: ArType,
+    pub return_type: TypeId,
     pub body: Option<HirBlockId>,
     pub span: Span,
 }
@@ -87,7 +87,7 @@ pub enum ReceiverKind {
 #[derive(Debug, Clone)]
 pub struct HirParam {
     pub symbol: SymbolId,
-    pub ty: ArType,
+    pub ty: TypeId,
     pub span: Span,
     pub is_receiver: bool,
     pub receiver_kind: Option<ReceiverKind>,
@@ -103,7 +103,7 @@ pub struct HirStruct {
 #[derive(Debug, Clone)]
 pub struct HirStructField {
     pub symbol: SymbolId,
-    pub ty: ArType,
+    pub ty: TypeId,
     pub span: Span,
 }
 
@@ -117,7 +117,7 @@ pub struct HirEnum {
 #[derive(Debug, Clone)]
 pub struct HirEnumVariant {
     pub symbol: SymbolId,
-    pub payload: Option<ArType>,
+    pub payload: Option<TypeId>,
     pub span: Span,
 }
 
@@ -138,7 +138,7 @@ pub struct HirExtern {
 pub struct HirFuncSignature {
     pub symbol: SymbolId,
     pub params: IndexRange,
-    pub return_type: ArType,
+    pub return_type: TypeId,
     pub span: Span,
 }
 
@@ -222,7 +222,7 @@ pub enum HirForClause {
 #[derive(Debug, Clone)]
 pub struct HirForBinding {
     pub symbol: SymbolId,
-    pub ty: ArType,
+    pub ty: TypeId,
     pub span: Span,
 }
 
@@ -243,7 +243,7 @@ pub enum HirSimpleStmt {
 #[derive(Debug, Clone)]
 pub struct HirBindingItem {
     pub symbol: SymbolId,
-    pub ty: ArType,
+    pub ty: TypeId,
     pub span: Span,
 }
 
@@ -251,7 +251,7 @@ pub struct HirBindingItem {
 pub struct HirPlace {
     pub root_symbol: SymbolId,
     pub suffixes: SmallVec<[HirPlaceSuffix; 2]>,
-    pub ty: ArType,
+    pub ty: TypeId,
     pub span: Span,
 }
 
@@ -261,19 +261,19 @@ pub enum HirPlaceSuffix {
         span: Span,
         name: String,
         field_symbol: Option<SymbolId>,
-        ty: ArType,
+        ty: TypeId,
     },
     Index {
         span: Span,
         expr: HirExprId,
-        ty: ArType,
+        ty: TypeId,
     },
 }
 
 #[derive(Debug, Clone)]
 pub struct HirExpr {
     pub kind: HirExprKind,
-    pub ty: ArType,
+    pub ty: TypeId,
     pub span: Span,
 }
 
@@ -296,7 +296,7 @@ pub enum HirExprKind {
     },
     Generic {
         callee: HirExprId,
-        args: Vec<ArType>,
+        args: Vec<TypeId>,
     },
     Field {
         base: HirExprId,
@@ -365,7 +365,7 @@ pub enum HirExprKind {
     },
     Cast {
         expr: HirExprId,
-        target_ty: ArType,
+        target_ty: TypeId,
     },
     Unary {
         op: UnaryOp,
@@ -414,7 +414,7 @@ pub struct HirFieldInit {
 pub struct HirLambdaParam {
     pub span: Span,
     pub symbol: SymbolId,
-    pub ty: ArType,
+    pub ty: TypeId,
 }
 
 #[derive(Debug, Clone)]
@@ -544,7 +544,7 @@ impl HirStmt {
             HirStmtKind::VarDecl { bindings, value } => {
                 for b in pool.bindings_list(*bindings) {
                     check_span(b.span)?;
-                    if matches!(b.ty, ArType::Error) {
+                    if b.ty == crate::types::TypeInterner::preinterned_error_id() {
                         return Err(format!(
                             "Variable declaration binding '{}' has Error type",
                             symbol_name(symbols, b.symbol)
@@ -564,7 +564,7 @@ impl HirStmt {
                 }
                 for p in places_slice {
                     check_span(p.span)?;
-                    if matches!(p.ty, ArType::Error) {
+                    if p.ty == crate::types::TypeInterner::preinterned_error_id() {
                         return Err(format!(
                             "Set target place '{}' has Error type",
                             symbol_name(symbols, p.root_symbol)
@@ -670,7 +670,7 @@ impl HirSimpleStmt {
             HirSimpleStmt::VarDecl { bindings, value } => {
                 for b in pool.bindings_list(*bindings) {
                     check_span(b.span)?;
-                    if matches!(b.ty, ArType::Error) {
+                    if b.ty == crate::types::TypeInterner::preinterned_error_id() {
                         return Err(format!(
                             "Variable declaration binding '{}' has Error type",
                             symbol_name(symbols, b.symbol)
@@ -703,7 +703,7 @@ impl HirExpr {
         if matches!(self.kind, HirExprKind::Error) {
             return Ok(());
         }
-        if matches!(self.ty, ArType::Error) {
+        if self.ty == crate::types::TypeInterner::preinterned_error_id() {
             return Err(format!(
                 "Expression has Error type at byte {}",
                 self.span.start
@@ -727,7 +727,7 @@ impl HirExpr {
             HirExprKind::Field { base, .. } | HirExprKind::SafeField { base, .. } => {
                 let base_node = pool.expr(*base);
                 base_node.validate_invariants(pool, symbols)?;
-                if matches!(base_node.ty, ArType::Error) {
+                if base_node.ty == crate::types::TypeInterner::preinterned_error_id() {
                     return Err("Field access base expression has Error type".to_string());
                 }
             }
@@ -745,7 +745,7 @@ impl HirExpr {
             } => {
                 let callee_node = pool.expr(*callee);
                 callee_node.validate_invariants(pool, symbols)?;
-                if matches!(callee_node.ty, ArType::Error) {
+                if callee_node.ty == crate::types::TypeInterner::preinterned_error_id() {
                     return Err("Call callee expression has Error type".to_string());
                 }
                 for &arg in pool.expr_list(*args) {

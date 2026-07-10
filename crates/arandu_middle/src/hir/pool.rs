@@ -3,24 +3,30 @@ mod tests {
     use super::*;
     use crate::SymbolId;
     use crate::hir::{HirBlock, HirConst, HirDecl, HirExpr, HirExprKind, HirStmt, HirStmtKind};
-    use crate::types::{ArType, Primitive};
+    use crate::types::{Primitive, TypeInterner};
     use arandu_base::span::Span;
     const S: Span = Span::new(0, 0, 0);
-    const INT: ArType = ArType::Primitive(Primitive::Int);
-    const BOOL: ArType = ArType::Primitive(Primitive::Bool);
-    const FLOAT: ArType = ArType::Primitive(Primitive::Float);
+    fn int_ty() -> crate::types::TypeId {
+        TypeInterner::preinterned_primitive(Primitive::Int)
+    }
+    fn bool_ty() -> crate::types::TypeId {
+        TypeInterner::preinterned_primitive(Primitive::Bool)
+    }
+    fn float_ty() -> crate::types::TypeId {
+        TypeInterner::preinterned_primitive(Primitive::Float)
+    }
 
     #[test]
     fn alloc_and_get_expr() {
         let mut pool = HirPool::new();
         let expr = HirExpr {
             kind: HirExprKind::Int("42".into()),
-            ty: INT.clone(),
+            ty: int_ty(),
             span: S,
         };
         let id = pool.alloc_expr(expr);
         assert_eq!(id, HirExprId::from_usize(0));
-        assert_eq!(pool.expr(id).ty, INT);
+        assert_eq!(pool.expr(id).ty, int_ty());
     }
 
     #[test]
@@ -52,7 +58,7 @@ mod tests {
         let mut pool = HirPool::new();
         let decl = HirDecl::Const(HirConst {
             symbol: SymbolId::new(0, 0),
-            ty: INT.clone(),
+            ty: int_ty(),
             value: HirExprId::from_usize(0),
             span: S,
         });
@@ -65,12 +71,12 @@ mod tests {
         let mut pool = HirPool::new();
         let e1 = pool.alloc_expr(HirExpr {
             kind: HirExprKind::Bool(true),
-            ty: BOOL.clone(),
+            ty: bool_ty(),
             span: S,
         });
         let e2 = pool.alloc_expr(HirExpr {
             kind: HirExprKind::Bool(false),
-            ty: BOOL.clone(),
+            ty: bool_ty(),
             span: S,
         });
         let range = pool.alloc_expr_list(&[e1, e2]);
@@ -83,7 +89,7 @@ mod tests {
         let mut pool = HirPool::new();
         let params = vec![crate::hir::HirParam {
             symbol: SymbolId::new(0, 0),
-            ty: INT.clone(),
+            ty: int_ty(),
             span: S,
             is_receiver: false,
             receiver_kind: None,
@@ -97,7 +103,7 @@ mod tests {
         let mut pool = HirPool::new();
         let fields = vec![crate::hir::HirStructField {
             symbol: SymbolId::new(0, 1),
-            ty: FLOAT.clone(),
+            ty: float_ty(),
             span: S,
         }];
         let range = pool.alloc_struct_field_list(&fields);
@@ -109,14 +115,14 @@ mod tests {
         let mut pool = HirPool::new();
         let b_range = pool.alloc_binding_list(&[crate::hir::HirBindingItem {
             symbol: SymbolId::new(0, 2),
-            ty: INT.clone(),
+            ty: int_ty(),
             span: S,
         }]);
         assert_eq!(pool.bindings_list(b_range).len(), 1);
         let p_range = pool.alloc_place_list(&[crate::hir::HirPlace {
             root_symbol: SymbolId::new(0, 3),
             suffixes: smallvec::SmallVec::new(),
-            ty: INT.clone(),
+            ty: int_ty(),
             span: S,
         }]);
         assert_eq!(pool.places_list(p_range).len(), 1);

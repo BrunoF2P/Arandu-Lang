@@ -146,6 +146,33 @@ impl TypeInterner {
         self.intern(ArType::Error)
     }
 
+    /// Stable id of pre-interned [`ArType::Error`] for any interner built with [`Self::new`].
+    ///
+    /// All fresh interners share the same pre-intern order, so this id is comparable across
+    /// them (used by HIR invariant checks that only store `TypeId`s).
+    #[must_use]
+    pub fn preinterned_error_id() -> TypeId {
+        use std::sync::OnceLock;
+        static ID: OnceLock<TypeId> = OnceLock::new();
+        *ID.get_or_init(|| TypeInterner::new().error_type_id())
+    }
+
+    /// Pre-interned [`ArType::Void`].
+    #[must_use]
+    pub fn preinterned_void_id() -> TypeId {
+        use std::sync::OnceLock;
+        static ID: OnceLock<TypeId> = OnceLock::new();
+        *ID.get_or_init(|| TypeInterner::new().intern(ArType::Void))
+    }
+
+    /// Pre-interned primitive id (same index for every [`Self::new`] interner).
+    #[must_use]
+    pub fn preinterned_primitive(p: Primitive) -> TypeId {
+        use std::sync::OnceLock;
+        static CACHE: OnceLock<TypeInterner> = OnceLock::new();
+        CACHE.get_or_init(TypeInterner::new).intern(ArType::Primitive(p))
+    }
+
     /// Try to resolve a `TypeId`, returning `None` if out of range.
     #[must_use]
     pub fn try_resolve(&self, id: TypeId) -> Option<ArType> {

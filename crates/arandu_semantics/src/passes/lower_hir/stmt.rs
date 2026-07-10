@@ -79,23 +79,24 @@ fn lower_stmt_raw(
         Stmt::VarDecl {
             bindings, value, ..
         } => {
-            let value_ty = type_check.type_info.expr_type(*value);
+            let value_ty_id = type_check.type_info.expr_type_id(*value);
+            let error_id = arandu_middle::types::TypeInterner::preinterned_error_id();
             let mut hir_bindings = Vec::new();
             for (i, b) in bindings.iter().enumerate() {
                 let symbol = require_def_symbol(&type_check.resolved, b.span)?;
                 let ty = type_check
                     .type_info
-                    .decl_type(symbol)
+                    .decl_type_id(symbol)
                     .or_else(|| {
-                        value_ty.as_ref().and_then(|val_ty| match val_ty {
-                            ArType::Tuple(elems) => elems.get(i).map(|&tid| {
-                                type_check.type_info.type_interner.resolve(tid).clone()
-                            }),
-                            _ if bindings.len() == 1 => Some(val_ty.clone()),
-                            _ => None,
+                        value_ty_id.and_then(|vid| {
+                            match type_check.type_info.type_interner.resolve(vid) {
+                                ArType::Tuple(elems) => elems.get(i).copied(),
+                                _ if bindings.len() == 1 => Some(vid),
+                                _ => None,
+                            }
                         })
                     })
-                    .unwrap_or(ArType::Error);
+                    .unwrap_or(error_id);
                 hir_bindings.push(HirBindingItem {
                     symbol,
                     ty,
@@ -296,12 +297,13 @@ pub(crate) fn lower_for_clause(
             iterable,
         } => {
             let mut hir_bindings = Vec::new();
+            let error_id = arandu_middle::types::TypeInterner::preinterned_error_id();
             for b in bindings {
                 let symbol = require_def_symbol(&type_check.resolved, b.span)?;
                 let ty = type_check
                     .type_info
-                    .decl_type(symbol)
-                    .unwrap_or(ArType::Error);
+                    .decl_type_id(symbol)
+                    .unwrap_or(error_id);
                 hir_bindings.push(HirForBinding {
                     symbol,
                     ty,
@@ -355,12 +357,13 @@ pub(crate) fn lower_simple_stmt(
             bindings, value, ..
         } => {
             let mut hir_bindings = Vec::new();
+            let error_id = arandu_middle::types::TypeInterner::preinterned_error_id();
             for b in bindings {
                 let symbol = require_def_symbol(&type_check.resolved, b.span)?;
                 let ty = type_check
                     .type_info
-                    .decl_type(symbol)
-                    .unwrap_or(ArType::Error);
+                    .decl_type_id(symbol)
+                    .unwrap_or(error_id);
                 hir_bindings.push(HirBindingItem {
                     symbol,
                     ty,

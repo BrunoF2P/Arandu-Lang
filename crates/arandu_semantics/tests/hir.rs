@@ -1,5 +1,5 @@
 use arandu_semantics::hir::*;
-use arandu_semantics::passes::type_checker::types::ArType;
+use arandu_semantics::passes::type_checker::types::{Primitive, TypeInterner};
 use arandu_semantics::{SymbolTable, lower_to_hir, resolve_for_test, type_check};
 
 fn lower(src: &str) -> (HirProgram, SymbolTable) {
@@ -15,6 +15,10 @@ fn lower(src: &str) -> (HirProgram, SymbolTable) {
     hir.validate_invariants(&hir.pool, &tc.symbols)
         .expect("HIR invariant validation failed");
     (hir, std::sync::Arc::unwrap_or_clone(tc.symbols))
+}
+
+fn int_ty() -> arandu_middle::types::TypeId {
+    TypeInterner::preinterned_primitive(Primitive::Int)
 }
 
 #[test]
@@ -104,7 +108,7 @@ fn lowers_struct_fields_with_types() {
             let fields = hir.pool.struct_fields_list(s.fields);
             assert_eq!(fields.len(), 2);
             assert_eq!(symbol_name(&symbols, fields[0].symbol), "x");
-            assert!(matches!(fields[0].ty, ArType::Primitive(_)));
+            assert_eq!(fields[0].ty, int_ty());
             assert_eq!(symbol_name(&symbols, fields[1].symbol), "y");
         }
         other => panic!("expected Struct, got {other:?}"),
@@ -128,10 +132,11 @@ fn lowers_function_with_params_and_return_type() {
             assert_eq!(params.len(), 2);
             assert_eq!(symbol_name(&symbols, params[0].symbol), "x");
             assert_eq!(symbol_name(&symbols, params[1].symbol), "y");
-            // return_type is extracted from ArType::Func(params, ret)
-            assert!(
-                matches!(f.return_type, ArType::Primitive(_)),
-                "expected Primitive return type, got {:?}",
+            // return_type is the interned return TypeId from Func(params, ret)
+            assert_eq!(
+                f.return_type,
+                int_ty(),
+                "expected int return type, got {:?}",
                 f.return_type
             );
             assert!(f.body.is_some());
@@ -173,7 +178,7 @@ fn lowers_var_decl_with_type_annotation() {
                     assert_eq!(bindings_slice.len(), 1);
                     assert_eq!(symbol_name(&symbols, bindings_slice[0].symbol), "x");
                     assert!(
-                        !matches!(bindings_slice[0].ty, ArType::Error),
+                        bindings_slice[0].ty != arandu_middle::types::TypeInterner::preinterned_error_id(),
                         "expected resolved type, got Error"
                     );
                     match &hir.pool.expr(*value).kind {
@@ -205,7 +210,7 @@ fn expr_nodes_carry_resolved_types() {
             match &hir.pool.stmt(statements[1]).kind {
                 HirStmtKind::VarDecl { value, .. } => {
                     assert!(
-                        !matches!(hir.pool.expr(*value).ty, ArType::Error),
+                        hir.pool.expr(*value).ty != arandu_middle::types::TypeInterner::preinterned_error_id(),
                         "binary expr should have a resolved type"
                     );
                 }
@@ -419,7 +424,7 @@ fn lowers_const_declaration() {
             assert_eq!(symbol_name(&symbols, c.symbol), "MAX");
             // const type comes from synth_expr, which gives IntLiteral for unadorned int
             assert!(
-                !matches!(c.ty, ArType::Error),
+                c.ty != arandu_middle::types::TypeInterner::preinterned_error_id(),
                 "const type should be resolved, got {:?}",
                 c.ty
             );

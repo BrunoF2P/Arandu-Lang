@@ -34,6 +34,70 @@ impl LowerCtx<'_> {
         self.tc.type_info.type_interner.intern_ref(ty)
     }
 
+    /// Resolve a HIR/AMIR `TypeId` to an owned `ArType` (clones from the interner).
+    #[inline]
+    pub(crate) fn resolve_ty(&self, id: crate::types::TypeId) -> ArType {
+        self.tc.type_info.type_interner.resolve(id)
+    }
+
+    /// Borrow the interned type without cloning.
+    #[inline]
+    pub(crate) fn with_ty<R>(&self, id: crate::types::TypeId, f: impl FnOnce(&ArType) -> R) -> R {
+        self.tc.type_info.type_interner.with_type(id, f)
+    }
+
+    /// Allocate a temp from an already-interned type id (no `ArType` clone).
+    pub(crate) fn new_temp_id(&mut self, ty: crate::types::TypeId) -> TempId {
+        let is_copy = self.tc.type_info.type_interner.is_copy_v01(ty);
+        let is_nullable = self
+            .tc
+            .type_info
+            .type_interner
+            .with_type(ty, |t| matches!(t, ArType::Nullable(_)));
+        let id = self.next_temp_id();
+        let span = if Self::span_is_usable(self.current_span) {
+            self.current_span
+        } else {
+            Span::new(0, 0, 0)
+        };
+        self.temps.push(AmirTemp {
+            id,
+            ty,
+            is_copy,
+            is_nullable,
+            span,
+        });
+        self.temp_states.push(MoveState::Available);
+        self.temp_origins.push(None);
+        id
+    }
+
+    /// Allocate a local from an already-interned type id.
+    pub(crate) fn new_local_id(
+        &mut self,
+        ty: crate::types::TypeId,
+        symbol: SymbolId,
+        span: Span,
+    ) -> LocalId {
+        let is_memory = self
+            .tc
+            .type_info
+            .type_interner
+            .with_type(ty, super::is_memory_type);
+        let id = self.next_local_id();
+        self.locals.push(AmirLocal {
+            id,
+            ty,
+            is_memory,
+            symbol: Some(symbol),
+            span,
+            use_span: None,
+        });
+        self.local_states.push(MoveState::Available);
+        self.symbol_map.insert(symbol, id);
+        id
+    }
+
     /// Non-empty source span (start != end). Empty spans are treated as unknown.
     #[inline]
     pub(crate) fn span_is_usable(span: Span) -> bool {
@@ -131,10 +195,6 @@ impl LowerCtx<'_> {
         });
         self.local_states.push(MoveState::Available);
         id
-    }
-
-    pub(crate) fn resolve_ty(&self, id: crate::types::TypeId) -> ArType {
-        self.tc.type_info.type_interner.resolve(id)
     }
 
     pub(crate) fn operand_type(&self, op: &AmirOperand) -> ArType {
@@ -345,10 +405,10 @@ impl LowerCtx<'_> {
     pub(crate) fn load_place(
         &mut self,
         place: &AmirPlace,
-        ty: &ArType,
+        ty: crate::types::TypeId,
     ) -> Result<AmirOperand, Diagnostic> {
         self.note_local_use(place.local, self.current_span);
-        let temp = self.new_temp_ref(ty);
+        let temp = self.new_temp_id(ty);
         self.emit_assign_temp(temp, AmirRvalue::Load(place.clone()));
         if place.projections.is_empty() {
             self.temp_origins[temp.as_usize()] = Some(place.local);

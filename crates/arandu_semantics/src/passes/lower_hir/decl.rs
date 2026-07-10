@@ -6,8 +6,13 @@ use crate::hir::{
 };
 use crate::passes::lowering::require_def_symbol;
 use crate::passes::type_checker::types::ArType;
+use arandu_middle::types::{TypeId, TypeInterner};
 use arandu_parser::TopLevelDecl;
 use arandu_parser::ast_pool::AstPool;
+
+fn error_ty() -> TypeId {
+    TypeInterner::preinterned_error_id()
+}
 
 pub(crate) fn lower_decl(
     type_check: &mut TypeCheckResult,
@@ -20,8 +25,8 @@ pub(crate) fn lower_decl(
             let symbol = require_def_symbol(&type_check.resolved, d.span)?;
             let ty = type_check
                 .type_info
-                .decl_type(symbol)
-                .unwrap_or(ArType::Error);
+                .decl_type_id(symbol)
+                .unwrap_or_else(error_ty);
             let value_vid = super::expr::lower_expr(type_check, pool, hir_pool, d.value)?;
             Ok(Some(HirDecl::Const(HirConst {
                 symbol,
@@ -34,8 +39,8 @@ pub(crate) fn lower_decl(
             let symbol = require_def_symbol(&type_check.resolved, d.span)?;
             let target = type_check
                 .type_info
-                .decl_type(symbol)
-                .unwrap_or(ArType::Error);
+                .decl_type_id(symbol)
+                .unwrap_or_else(error_ty);
             Ok(Some(HirDecl::TypeAlias(HirTypeAlias {
                 symbol,
                 target,
@@ -48,21 +53,21 @@ pub(crate) fn lower_decl(
                 arandu_parser::FuncName::Method { span, .. } => *span,
             };
             let symbol = require_def_symbol(&type_check.resolved, name_span)?;
-            let decl_ty = type_check
+            let decl_ty_id = type_check
                 .type_info
-                .decl_type(symbol)
-                .unwrap_or(ArType::Error);
-            let return_type = match decl_ty {
-                ArType::Func(_, ret) => type_check.type_info.type_interner.resolve(ret).clone(),
-                other => other,
+                .decl_type_id(symbol)
+                .unwrap_or_else(error_ty);
+            let return_type = match type_check.type_info.type_interner.resolve(decl_ty_id) {
+                ArType::Func(_, ret) => ret,
+                _ => decl_ty_id,
             };
             let mut params = Vec::new();
             for p in &d.params {
                 let p_symbol = require_def_symbol(&type_check.resolved, p.span)?;
                 let p_ty = type_check
                     .type_info
-                    .decl_type(p_symbol)
-                    .unwrap_or(ArType::Error);
+                    .decl_type_id(p_symbol)
+                    .unwrap_or_else(error_ty);
                 params.push(HirParam {
                     symbol: p_symbol,
                     ty: p_ty,
@@ -86,12 +91,13 @@ pub(crate) fn lower_decl(
             let symbol = require_def_symbol(&type_check.resolved, d.span)?;
             let mut fields = Vec::new();
             if let Some(struct_fields_map) = type_check.type_info.struct_fields.get(&symbol) {
+                let interner = &type_check.type_info.type_interner;
                 for f in &d.fields {
                     let field_symbol = require_def_symbol(&type_check.resolved, f.span)?;
                     let field_ty = struct_fields_map
                         .get(f.name.as_str())
-                        .cloned()
-                        .unwrap_or(ArType::Error);
+                        .map(|t| interner.intern_ref(t))
+                        .unwrap_or_else(error_ty);
                     fields.push(HirStructField {
                         symbol: field_symbol,
                         ty: field_ty,
@@ -122,12 +128,12 @@ pub(crate) fn lower_decl(
                                 if tys.is_empty() {
                                     None
                                 } else if tys.len() == 1 {
-                                    Some(tys[0].clone())
+                                    Some(type_check.type_info.type_interner.intern_ref(&tys[0]))
                                 } else {
                                     let interner = &type_check.type_info.type_interner;
-                                    let tys_ids =
-                                        tys.iter().map(|t| interner.intern(t.clone())).collect();
-                                    Some(ArType::Tuple(tys_ids))
+                                    let tys_ids: Vec<TypeId> =
+                                        tys.iter().map(|t| interner.intern_ref(t)).collect();
+                                    Some(interner.intern(ArType::Tuple(tys_ids)))
                                 }
                             }
                         });
@@ -155,21 +161,21 @@ pub(crate) fn lower_decl(
             let mut members = Vec::new();
             for m in &d.members {
                 let symbol = require_def_symbol(&type_check.resolved, m.span)?;
-                let m_ty = type_check
+                let m_ty_id = type_check
                     .type_info
-                    .decl_type(symbol)
-                    .unwrap_or(ArType::Error);
-                let return_type = match m_ty {
-                    ArType::Func(_, ret) => type_check.type_info.type_interner.resolve(ret).clone(),
-                    other => other,
+                    .decl_type_id(symbol)
+                    .unwrap_or_else(error_ty);
+                let return_type = match type_check.type_info.type_interner.resolve(m_ty_id) {
+                    ArType::Func(_, ret) => ret,
+                    _ => m_ty_id,
                 };
                 let mut params = Vec::new();
                 for p in &m.params {
                     let p_symbol = require_def_symbol(&type_check.resolved, p.span)?;
                     let p_ty = type_check
                         .type_info
-                        .decl_type(p_symbol)
-                        .unwrap_or(ArType::Error);
+                        .decl_type_id(p_symbol)
+                        .unwrap_or_else(error_ty);
                     params.push(HirParam {
                         symbol: p_symbol,
                         ty: p_ty,

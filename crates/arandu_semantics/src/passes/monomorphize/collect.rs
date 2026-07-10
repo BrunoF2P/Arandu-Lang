@@ -198,11 +198,8 @@ impl InstantiationAnalyzer<'_> {
             HirExprKind::Generic { callee, args } => {
                 self.visit_expr(*callee, current);
                 if let Some(symbol) = generic_callee_symbol(*callee, &self.hir.pool) {
-                    let type_args = args
-                        .iter()
-                        .cloned()
-                        .map(|ty| self.interner.intern(ty))
-                        .collect();
+                    // HIR generic args are already interned TypeIds.
+                    let type_args = args.clone();
                     let key = InstantiationKey { symbol, type_args };
                     if let Some(callee_node) = self.insert_key(key, expr.span)
                         && let Some(caller_node) = current

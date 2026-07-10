@@ -51,14 +51,15 @@ impl LowerCtx<'_> {
         &mut self,
         base: HirExprId,
         field: &str,
-        expr_ty: &ArType,
+        expr_ty: crate::types::TypeId,
         target: Option<TempId>,
         symbols: &SymbolTable,
     ) -> Result<AmirOperand, Diagnostic> {
         let base_op = self.lower_expr(base, None, symbols)?;
-        let dest = target.unwrap_or_else(|| self.new_temp_ref(expr_ty));
+        let dest = target.unwrap_or_else(|| self.new_temp_id(expr_ty));
         let base_expr = self.hir.pool.expr(base);
-        let field_idx = self.resolve_field_index(&base_expr.ty, field);
+        let base_ty = self.resolve_ty(base_expr.ty);
+        let field_idx = self.resolve_field_index(&base_ty, field);
         self.emit_assign_temp(
             dest,
             AmirRvalue::FieldAccess {
@@ -73,13 +74,13 @@ impl LowerCtx<'_> {
         &mut self,
         base: HirExprId,
         index: HirExprId,
-        expr_ty: &ArType,
+        expr_ty: crate::types::TypeId,
         target: Option<TempId>,
         symbols: &SymbolTable,
     ) -> Result<AmirOperand, Diagnostic> {
         let base_op = self.lower_expr(base, None, symbols)?;
         let idx_op = self.lower_expr(index, None, symbols)?;
-        let dest = target.unwrap_or_else(|| self.new_temp_ref(expr_ty));
+        let dest = target.unwrap_or_else(|| self.new_temp_id(expr_ty));
         self.emit_assign_temp(
             dest,
             AmirRvalue::IndexAccess {
