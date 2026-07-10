@@ -240,7 +240,6 @@ fn main() {
                         filepath: String,
                         source: String,
                         db: arandu_query::db::DatabaseImpl| {
-        let data_layout = data_layout;
         match command.as_str() {
             "lex" => match arandu_lexer::lex_to_string(&source) {
                 Ok(output) => println!("{output}"),
