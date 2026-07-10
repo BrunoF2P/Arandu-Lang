@@ -59,11 +59,8 @@ impl<'a> Resolver<'a> {
 
     pub(crate) fn define_prelude(&mut self, _program: Option<&Program>) {
         let span = Span::new(0, 0, 0);
-        for (module, members) in [
-            ("io", ["println", "create", "remove"].as_slice()),
-            ("err", ["new"].as_slice()),
-        ] {
-            for member in members {
+        for (module, members) in super::PRELUDE_MODULE_MEMBERS {
+            for member in *members {
                 let _ = self.symbols.define_module_member(module, member, span);
             }
         }

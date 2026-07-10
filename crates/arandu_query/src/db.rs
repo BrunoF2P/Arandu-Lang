@@ -4,15 +4,7 @@ use std::sync::Arc;
 
 pub type FileId = u32;
 
-pub trait StableHash {
-    fn stable_hash(&self) -> blake3::Hash;
-}
-
-impl<T: std::fmt::Debug> StableHash for T {
-    fn stable_hash(&self) -> blake3::Hash {
-        blake3::hash(format!("{:?}", self).as_bytes())
-    }
-}
+pub use crate::stable_hash::StableHash;
 
 #[derive(Clone)]
 pub struct HashEq<T> {

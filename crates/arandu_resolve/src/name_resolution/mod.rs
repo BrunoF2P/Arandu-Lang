@@ -12,17 +12,39 @@ mod symbols;
 mod types;
 mod util;
 
+/// Builtin prelude modules injected by [`define_prelude`] / this helper.
+/// Kept in one place so Salsa import resolution can short-circuit without
+/// requiring on-disk `io.aru` / `err.aru` files.
+pub const PRELUDE_MODULES: &[&str] = &["io", "err"];
+
+/// Members registered for each prelude module (must stay in sync with
+/// [`super::program::Resolver::define_prelude`]).
+const PRELUDE_MODULE_MEMBERS: &[(&str, &[&str])] = &[
+    ("io", &["println", "create", "remove"]),
+    ("err", &["new"]),
+];
+
+/// Returns the prelude module name if `path` is a single-segment prelude path.
+#[must_use]
+pub fn prelude_module_from_path(path: &[SmolStr]) -> Option<&'static str> {
+    if path.len() != 1 {
+        return None;
+    }
+    let name = path[0].as_str();
+    PRELUDE_MODULES
+        .iter()
+        .copied()
+        .find(|&m| m == name)
+}
+
 pub fn create_symbol_table_with_prelude(
     file_id: u32,
 ) -> Result<SymbolTable, Vec<crate::Diagnostic>> {
     let mut table = SymbolTable::new(file_id);
     let span = arandu_lexer::Span::new(0, 0, 0);
     tracing::debug!(target: "arandu_resolve", "Creating symbol table with prelude");
-    for (module, members) in [
-        ("io", ["println", "create", "remove"].as_slice()),
-        ("err", ["new"].as_slice()),
-    ] {
-        for member in members {
+    for (module, members) in PRELUDE_MODULE_MEMBERS {
+        for member in *members {
             let _ = table.define_module_member(module, member, span);
         }
     }
@@ -41,45 +63,20 @@ pub fn resolve_local(file_id: u32, program: &Program) -> ResolutionResult {
     Resolver::new(file_id, &program.pool, Some(program)).resolve_local(program)
 }
 
+/// Single-file / unit-test resolve that runs the **same** import pipeline as
+/// production, with an empty module loader (no multi-file loads).
+///
+/// Prefer this over hand-rolled import collection so prelude short-circuit and
+/// `canonicalize_import_path` stay shared with the CLI (RC-DUAL-RESOLVE).
 #[must_use]
 pub fn resolve_for_test(file_id: u32, program: &Program) -> ResolutionResult {
-    let result = resolve_local(file_id, program);
-    let mut resolver = Resolver {
-        symbols: result.symbols,
-        resolved: result.resolved,
-        docs: result.docs,
-        diagnostics: result.diagnostics,
-        pool: &program.pool,
-        import_aliases: rustc_hash::FxHashMap::default(),
-        current_module: program.module.as_ref().map(|m| m.path.join(".")),
-        imported_symbols: rustc_hash::FxHashMap::default(),
-        used_symbols: rustc_hash::FxHashSet::default(),
-    };
-
-    let global = resolver.symbols.global_scope();
-    for import in &program.imports {
-        resolver.collect_import(global, import);
-    }
-
-    for decl_id in &program.decls {
-        let decl = resolver.pool.decl(*decl_id);
-        resolver.resolve_top_level(global, decl);
-    }
-
-    resolver.check_unused_imports();
-
-    ResolutionResult {
-        is_cycle_fallback: false,
-        symbols: resolver.symbols,
-        resolved: resolver.resolved,
-        docs: resolver.docs,
-        diagnostics: resolver.diagnostics,
-    }
+    let local = resolve_local(file_id, program);
+    resolve_imports_and_bodies(&crate::EmptyModuleLoader, program, local)
 }
 
 #[must_use]
 pub fn resolve_imports_and_bodies(
-    db: &dyn arandu_middle::db::SourceDatabase,
+    db: &dyn crate::ModuleLoader,
     program: &Program,
     result: ResolutionResult,
 ) -> ResolutionResult {
@@ -107,30 +104,40 @@ pub fn resolve_imports_and_bodies(
 
         resolver.collect_import(global, import);
 
-        // Merge exports from DB
-        let module_path = match import {
-            arandu_parser::ImportDecl::ModuleAlias { path, .. }
-            | arandu_parser::ImportDecl::Named { path, .. } => {
-                let path_str = path.join("/");
-                if let Some(stripped) = path_str.strip_prefix("std/core/") {
-                    Some(format!("stdlib/core/{}.aru", stripped))
-                } else if let Some(stripped) = path_str.strip_prefix("std/alloc/") {
-                    Some(format!("stdlib/alloc/{}.aru", stripped))
-                } else {
-                    Some(format!("{path_str}.aru"))
+        // Builtin prelude (`import io`, `import err`): members already live in
+        // the symbol table from `define_prelude`. Do not require on-disk files.
+        // Prefer a real file if one is registered; otherwise short-circuit.
+        if let arandu_parser::ImportDecl::ModuleAlias { path, alias, .. } = import
+            && let Some(prelude_name) = prelude_module_from_path(path)
+        {
+            let file_key = format!("{prelude_name}.aru");
+            if db.resolve_module_path(&file_key).is_none() {
+                // Alias points at the prelude module key used by module_members.
+                if alias.as_str() != prelude_name {
+                    resolver
+                        .import_aliases
+                        .insert(alias.clone(), SmolStr::new(prelude_name));
+                    // Typeck looks up members by the in-scope name (`out.println`
+                    // after `import io as out`), so mirror the prelude members
+                    // under the alias key as well.
+                    if let Some(members) = resolver
+                        .symbols
+                        .module_members
+                        .get(prelude_name)
+                        .cloned()
+                    {
+                        resolver
+                            .symbols
+                            .module_members
+                            .insert(alias.clone(), members);
+                    }
                 }
+                continue;
             }
-            arandu_parser::ImportDecl::ExternalAlias { source, .. }
-            | arandu_parser::ImportDecl::ExternalNamed { source, .. } => {
-                if let Some(stripped) = source.strip_prefix("std.core.") {
-                    Some(format!("stdlib/core/{}.aru", stripped))
-                } else {
-                    source
-                        .strip_prefix("std.alloc.")
-                        .map(|stripped| format!("stdlib/alloc/{}.aru", stripped))
-                }
-            }
-        };
+        }
+
+        // Merge exports from DB (single path helper — RC-PATH-TRIPLE).
+        let module_path = crate::canonicalize_import_path(import);
 
         if let Some(path) = &module_path {
             if let Some(imported_file) = db.resolve_module_path(path) {
@@ -186,7 +193,7 @@ pub fn resolve_imports_and_bodies(
                         }
                     }
                 }
-            } else {
+            } else if db.missing_import_is_error() {
                 let import_name = match import {
                     arandu_parser::ImportDecl::ModuleAlias { path, .. }
                     | arandu_parser::ImportDecl::Named { path, .. } => path.join("."),
@@ -199,7 +206,7 @@ pub fn resolve_imports_and_bodies(
                     import.span(),
                 ));
             }
-        } else {
+        } else if db.missing_import_is_error() {
             let import_name = match import {
                 arandu_parser::ImportDecl::ModuleAlias { path, .. }
                 | arandu_parser::ImportDecl::Named { path, .. } => path.join("."),

@@ -20,7 +20,11 @@ pub fn cycle_recover(
     _id: salsa::Id,
     file: SourceFile,
 ) -> HashEq<ResolutionResult> {
-    println!("cycle_recover for resolve on file {:?}", file.file_id(_db));
+    tracing::debug!(
+        target: "arandu_query",
+        file = ?file.file_id(_db),
+        "cycle_recover for resolve"
+    );
     HashEq::new(ResolutionResult::cycle_fallback())
 }
 
@@ -101,7 +105,7 @@ pub fn resolve(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<ResolutionR
 
     let resolved = match &*program_res {
         Ok(program) => arandu_resolve::resolve_imports_and_bodies(
-            db.as_source_db(),
+            &arandu_resolve::SourceDbLoader(db.as_source_db()),
             program,
             (*locals_arc).clone(),
         ),
@@ -151,39 +155,17 @@ pub fn module_signatures(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<T
             let mut checker =
                 arandu_semantics::TypeChecker::new(symbols, resolved, diagnostics, &program.pool);
 
-            // Merge imported type info
+            // Merge imported type info (path rewrite shared with resolve).
             for import in &program.imports {
-                let module_path = match import {
-                    arandu_parser::ImportDecl::ModuleAlias { path, .. }
-                    | arandu_parser::ImportDecl::Named { path, .. } => {
-                        let path_str = path.join("/");
-                        if let Some(stripped) = path_str.strip_prefix("std/core/") {
-                            Some(format!("stdlib/core/{}.aru", stripped))
-                        } else if let Some(stripped) = path_str.strip_prefix("std/alloc/") {
-                            Some(format!("stdlib/alloc/{}.aru", stripped))
-                        } else {
-                            Some(format!("{path_str}.aru"))
-                        }
-                    }
-                    arandu_parser::ImportDecl::ExternalAlias { source, .. }
-                    | arandu_parser::ImportDecl::ExternalNamed { source, .. } => {
-                        if let Some(stripped) = source.strip_prefix("std.core.") {
-                            Some(format!("stdlib/core/{}.aru", stripped))
-                        } else if let Some(stripped) = source.strip_prefix("std.alloc.") {
-                            Some(format!("stdlib/alloc/{}.aru", stripped))
-                        } else {
-                            Some(source.to_string())
-                        }
-                    }
-                };
-                if let Some(path) = module_path {
+                if let Some(path) = arandu_resolve::canonicalize_import_path(import) {
                     if let Some(imported_file) = db.as_source_db().resolve_module_path(&path) {
                         let imported_sigs = module_signatures(db, imported_file);
-                        println!(
-                            "Imported sigs for {} into {:?}: {:?}",
-                            path,
-                            file.file_id(db),
-                            imported_sigs.diagnostics
+                        tracing::debug!(
+                            target: "arandu_query",
+                            %path,
+                            file = ?file.file_id(db),
+                            diags = ?imported_sigs.diagnostics,
+                            "merged imported module signatures"
                         );
                         checker.type_info.merge_from(&imported_sigs.type_info);
                         for diag in &imported_sigs.diagnostics {
@@ -220,10 +202,11 @@ pub fn type_check(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<TypeChec
 
     let program_res = parse(db, file);
     let signatures_arc = module_signatures(db, file);
-    println!(
-        "TypeCheckResult of module_signatures for {:?}: {:?}",
-        file.file_id(db),
-        signatures_arc.diagnostics
+    tracing::debug!(
+        target: "arandu_query",
+        file = ?file.file_id(db),
+        diags = ?signatures_arc.diagnostics,
+        "module_signatures complete"
     );
 
     let res = match &*program_res {
@@ -231,10 +214,11 @@ pub fn type_check(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<TypeChec
         Ok(program) => arandu_semantics::check_bodies_only(&signatures_arc, program),
         Err(_) => (*signatures_arc).clone(),
     };
-    println!(
-        "TypeCheckResult at end of type_check for {:?}: {:?}",
-        file.file_id(db),
-        res.diagnostics
+    tracing::debug!(
+        target: "arandu_query",
+        file = ?file.file_id(db),
+        diags = ?res.diagnostics,
+        "type_check complete"
     );
 
     // Accumulate diagnostics without removing them from the return value!
@@ -323,30 +307,7 @@ pub fn module_dependency_graph(
         let program_res = crate::passes::parse(db, file);
         if let Ok(program) = &*program_res {
             for import in &program.imports {
-                let module_path = match import {
-                    arandu_parser::ImportDecl::ModuleAlias { path, .. }
-                    | arandu_parser::ImportDecl::Named { path, .. } => {
-                        let path_str = path.join("/");
-                        if let Some(stripped) = path_str.strip_prefix("std/core/") {
-                            Some(format!("stdlib/core/{}.aru", stripped))
-                        } else if let Some(stripped) = path_str.strip_prefix("std/alloc/") {
-                            Some(format!("stdlib/alloc/{}.aru", stripped))
-                        } else {
-                            Some(format!("{path_str}.aru"))
-                        }
-                    }
-                    arandu_parser::ImportDecl::ExternalAlias { source, .. }
-                    | arandu_parser::ImportDecl::ExternalNamed { source, .. } => {
-                        if let Some(stripped) = source.strip_prefix("std.core.") {
-                            Some(format!("stdlib/core/{}.aru", stripped))
-                        } else if let Some(stripped) = source.strip_prefix("std.alloc.") {
-                            Some(format!("stdlib/alloc/{}.aru", stripped))
-                        } else {
-                            Some(source.to_string())
-                        }
-                    }
-                };
-                if let Some(path) = module_path {
+                if let Some(path) = arandu_resolve::canonicalize_import_path(import) {
                     if let Some(imported_file) = db.as_source_db().resolve_module_path(&path) {
                         let imported_node = walk(db, imported_file, graph, visited);
                         graph.add_edge(node, imported_node, ());

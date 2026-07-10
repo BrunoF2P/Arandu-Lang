@@ -1,6 +1,63 @@
 use arandu_query::DatabaseImpl;
 use salsa::Setter;
 
+/// Regression: builtin prelude (`import io` / `import err`) must resolve on the
+/// Salsa/CLI path without requiring on-disk `io.aru` / `err.aru` files.
+#[test]
+fn test_prelude_import_io_err_without_files() {
+    let mut db = DatabaseImpl::default();
+    let src = r#"
+        module tests.prelude_import
+
+        import io
+        import err
+
+        func main() {
+            let msg = err.new("x")
+            io.println("ok")
+        }
+    "#;
+    let file = db.new_file("tests_prelude_import.aru".to_string(), src.to_string());
+
+    let resolved = arandu_query::passes::resolve(&db, file);
+    let has_m001 = resolved.diagnostics.iter().any(|d| {
+        matches!(d.code, arandu_middle::DiagCode::M001UnresolvedImport)
+    });
+    assert!(
+        !has_m001,
+        "prelude import must not emit M001, got: {:?}",
+        resolved.diagnostics
+    );
+
+    let tc = arandu_query::passes::type_check(&db, file);
+    assert!(
+        tc.diagnostics.is_empty(),
+        "type check with import io/err should succeed, got: {:?}",
+        tc.diagnostics
+    );
+}
+
+#[test]
+fn test_prelude_import_io_as_alias() {
+    let mut db = DatabaseImpl::default();
+    let src = r#"
+        module tests.prelude_alias
+
+        import io as out
+
+        func main() {
+            out.println("hi")
+        }
+    "#;
+    let file = db.new_file("tests_prelude_alias.aru".to_string(), src.to_string());
+    let tc = arandu_query::passes::type_check(&db, file);
+    assert!(
+        tc.diagnostics.is_empty(),
+        "import io as out should resolve prelude members, got: {:?}",
+        tc.diagnostics
+    );
+}
+
 #[test]
 fn test_cross_file_type_check() {
     let mut db = DatabaseImpl::default();
