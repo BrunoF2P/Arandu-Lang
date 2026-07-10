@@ -31,6 +31,16 @@ impl FunctionTranslator<'_, '_> {
                     (self.poison_i32(), self.poison_i32())
                 }
             }
+            AmirOperand::Constant(AmirConstant::Nil) => {
+                // Empty string / null fat pointer (used when zeroing the Ok binding
+                // on a Result.Err path of `let ok, err = …`).
+                let ptr_val = self.builder.ins().iconst(self.ptr_type, 0);
+                let len_val = self
+                    .builder
+                    .ins()
+                    .iconst(cranelift_codegen::ir::types::I64, 0);
+                (ptr_val, len_val)
+            }
             AmirOperand::Constant(AmirConstant::Pool(lit_id)) => {
                 let entry = self.literal_pool.get(*lit_id);
                 if let arandu_semantics::literal_pool::AmirLiteralEntry::Str(s) = entry {
@@ -93,12 +103,12 @@ impl FunctionTranslator<'_, '_> {
                 match self.temp_map.get(temp_id) {
                     Some(var) => self.builder.use_var(*var),
                     None => {
-                        // ZST temps (`Err`, void) have no Cranelift vars.
+                        // ZST temps (void / typeck error) have no Cranelift vars.
+                        // `Err` is pointer-sized and must be declared like other scalars.
                         let ty = self.temp_ar_ty(*temp_id);
                         if matches!(
                             ty,
-                            arandu_semantics::types::ArType::Err
-                                | arandu_semantics::types::ArType::Void
+                            arandu_semantics::types::ArType::Void
                                 | arandu_semantics::types::ArType::Error
                         ) {
                             return self.poison_i32();
@@ -118,10 +128,12 @@ impl FunctionTranslator<'_, '_> {
                         .ins()
                         .iconst(cranelift_codegen::ir::types::I8, imm)
                 }
-                AmirConstant::Nil => self
-                    .builder
-                    .ins()
-                    .iconst(cranelift_codegen::ir::types::I32, 0),
+                AmirConstant::Nil => {
+                    // Prefer the expected ABI type so `int?`/`Point?`/`Err?` compares
+                    // against a zero of the same width as the left-hand side.
+                    let ty = expected_ty.unwrap_or(cranelift_codegen::ir::types::I32);
+                    self.builder.ins().iconst(ty, 0)
+                }
                 AmirConstant::Pool(lit_id) => {
                     let entry = self.literal_pool.get(*lit_id);
                     match entry {

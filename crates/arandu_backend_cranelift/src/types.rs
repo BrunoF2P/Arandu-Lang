@@ -79,7 +79,9 @@ pub fn clif_type(ty: &ArType, ptr_type: Type) -> ClifType {
         ArType::Ptr(_) | ArType::Nullable(_) | ArType::Slice(_) | ArType::Array(_, _) => {
             ClifType::Concrete(ptr_type)
         }
-        ArType::Void | ArType::Err | ArType::Error => ClifType::Void,
+        // `Err` is a message handle (pointer to UTF-8 buffer from `err.new`).
+        ArType::Err => ClifType::Concrete(ptr_type),
+        ArType::Void | ArType::Error => ClifType::Void,
         ArType::IntLiteral => ClifType::Concrete(ptr_type),
         ArType::FloatLiteral => ClifType::Concrete(F64),
         ArType::Named(_, _) => {
@@ -122,7 +124,7 @@ pub fn clif_types(ty: &ArType, ptr_type: Type) -> Vec<Type> {
 pub fn clif_slot_count(ty: &ArType) -> usize {
     match ty {
         ArType::Primitive(Primitive::Str) => 2,
-        ArType::Void | ArType::Err | ArType::Error => 0,
+        ArType::Void | ArType::Error => 0,
         _ => 1,
     }
 }

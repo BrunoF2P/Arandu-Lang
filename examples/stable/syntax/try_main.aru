@@ -1,0 +1,24 @@
+// Result.Ok / Result.Err, `?` propagation, and `err.new` with main.
+import err
+
+func loadOk(): Result<int, Err> {
+    return Result.Ok(21)
+}
+
+func loadFail(): Result<int, Err> {
+    return Result.Err(err.new("missingPath"))
+}
+
+func doubleOk(): int {
+    return loadOk()? * 2
+}
+
+func main(): int {
+    let v = doubleOk()
+    let _, e = loadFail()
+    if e != nil {
+        // Err handle is non-nil when loadFail builds err.new(...)
+        return v
+    }
+    return 0
+}

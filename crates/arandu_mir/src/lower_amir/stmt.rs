@@ -11,6 +11,82 @@ use crate::ops::{BinaryOp, SetOp};
 use crate::passes::type_checker::types::{ArType, Primitive, result_ok_err};
 
 impl LowerCtx<'_> {
+    /// Lower Go-style `let ok, err = result` for `Result<T, E>`.
+    ///
+    /// On Ok (disc 0): `ok` ← payload, `err` ← nil.
+    /// On Err (disc 1): `ok` left zero-init / unused, `err` ← payload.
+    fn lower_result_multi_bind(
+        &mut self,
+        result_op: AmirOperand,
+        ok_b: &crate::hir::HirBindingItem,
+        err_b: &crate::hir::HirBindingItem,
+        _symbols: &SymbolTable,
+    ) -> Result<(), Diagnostic> {
+        let ok_local = self.new_local(ok_b.ty.clone(), ok_b.symbol, ok_b.span);
+        let err_local = self.new_local(err_b.ty.clone(), err_b.symbol, err_b.span);
+
+        let tag_tmp = self.new_temp(ArType::Primitive(Primitive::Int));
+        self.emit_assign_temp(
+            tag_tmp,
+            AmirRvalue::Discriminant {
+                value: result_op.clone(),
+            },
+        );
+
+        let one_lit = self.intern_literal(AmirLiteralEntry::Int("1".to_string()));
+        let is_err = self.new_temp(ArType::Primitive(Primitive::Bool));
+        self.emit_assign_temp(
+            is_err,
+            AmirRvalue::Binary {
+                op: BinaryOp::Equal,
+                left: AmirOperand::Copy(tag_tmp),
+                right: AmirOperand::Constant(one_lit),
+            },
+        );
+
+        let bb_err = self.new_block();
+        let bb_ok = self.new_block();
+        let bb_join = self.new_block();
+
+        self.set_bool_branch(AmirOperand::Copy(is_err), bb_err, bb_ok);
+        self.seal_block(bb_err);
+        self.seal_block(bb_ok);
+
+        // Err branch: err = payload; ok = zero/nil so both locals are defined on all paths.
+        self.current_block = Some(bb_err);
+        let err_tmp = self.new_temp(err_b.ty.clone());
+        self.lower_result_err_field(result_op.clone(), err_b.ty.clone(), err_tmp);
+        let err_consumed = self.consume_operand(AmirOperand::Copy(err_tmp))?;
+        self.write_variable_source(err_local, err_consumed);
+        let ok_zero = self.new_temp(ok_b.ty.clone());
+        self.emit_assign_temp(
+            ok_zero,
+            AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Nil)),
+        );
+        let ok_zero_c = self.consume_operand(AmirOperand::Copy(ok_zero))?;
+        self.write_variable_source(ok_local, ok_zero_c);
+        self.emit_goto(bb_join);
+
+        // Ok branch: ok = payload, err = nil.
+        self.current_block = Some(bb_ok);
+        let ok_tmp = self.new_temp(ok_b.ty.clone());
+        self.lower_result_ok_field(result_op, ok_tmp);
+        let ok_consumed = self.consume_operand(AmirOperand::Copy(ok_tmp))?;
+        self.write_variable_source(ok_local, ok_consumed);
+        let nil_tmp = self.new_temp(err_b.ty.clone());
+        self.emit_assign_temp(
+            nil_tmp,
+            AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Nil)),
+        );
+        let nil_consumed = self.consume_operand(AmirOperand::Copy(nil_tmp))?;
+        self.write_variable_source(err_local, nil_consumed);
+        self.emit_goto(bb_join);
+
+        self.seal_block(bb_join);
+        self.current_block = Some(bb_join);
+        Ok(())
+    }
+
     pub(crate) fn lower_stmt(
         &mut self,
         stmt: &HirStmt,
@@ -37,6 +113,33 @@ impl LowerCtx<'_> {
                     let val_op = self.lower_expr(*value, None, symbols)?;
                     let consumed = self.consume_operand(val_op)?;
                     self.write_variable_source(local_id, consumed);
+                } else if bindings_slice.len() == 2 {
+                    // Go-style `let ok, err = f()` for Result<T, E>:
+                    // disc 0 → ok = payload, err = nil; disc 1 → ok zeroed, err = payload.
+                    let val_expr = self.hir.pool.expr(*value);
+                    let val_op = self.lower_expr(*value, None, symbols)?;
+                    if result_ok_err(&val_expr.ty, &self.tc.type_info.type_interner).is_some() {
+                        self.lower_result_multi_bind(
+                            val_op,
+                            &bindings_slice[0],
+                            &bindings_slice[1],
+                            symbols,
+                        )?;
+                    } else {
+                        for (i, b) in bindings_slice.iter().enumerate() {
+                            let local_id = self.new_local(b.ty.clone(), b.symbol, b.span);
+                            let temp = self.new_temp(b.ty.clone());
+                            self.emit_assign_temp(
+                                temp,
+                                AmirRvalue::FieldAccess {
+                                    base: val_op.clone(),
+                                    field: i,
+                                },
+                            );
+                            let consumed = self.consume_operand(AmirOperand::Copy(temp))?;
+                            self.write_variable_source(local_id, consumed);
+                        }
+                    }
                 } else {
                     let val_op = self.lower_expr(*value, None, symbols)?;
                     for (i, b) in bindings_slice.iter().enumerate() {
@@ -430,6 +533,31 @@ impl LowerCtx<'_> {
                     let val_op = self.lower_expr(*value, None, symbols)?;
                     let consumed = self.consume_operand(val_op)?;
                     self.write_variable_source(local_id, consumed);
+                } else if bindings_slice.len() == 2 {
+                    let val_expr = self.hir.pool.expr(*value);
+                    let val_op = self.lower_expr(*value, None, symbols)?;
+                    if result_ok_err(&val_expr.ty, &self.tc.type_info.type_interner).is_some() {
+                        self.lower_result_multi_bind(
+                            val_op,
+                            &bindings_slice[0],
+                            &bindings_slice[1],
+                            symbols,
+                        )?;
+                    } else {
+                        for (i, b) in bindings_slice.iter().enumerate() {
+                            let local_id = self.new_local(b.ty.clone(), b.symbol, b.span);
+                            let temp = self.new_temp(b.ty.clone());
+                            self.emit_assign_temp(
+                                temp,
+                                AmirRvalue::FieldAccess {
+                                    base: val_op.clone(),
+                                    field: i,
+                                },
+                            );
+                            let consumed = self.consume_operand(AmirOperand::Copy(temp))?;
+                            self.write_variable_source(local_id, consumed);
+                        }
+                    }
                 } else {
                     let val_op = self.lower_expr(*value, None, symbols)?;
                     for (i, b) in bindings_slice.iter().enumerate() {

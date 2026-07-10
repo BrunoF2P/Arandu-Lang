@@ -1,0 +1,18 @@
+// Safe field access (`?.`) and null-coalesce (`??`) with main.
+struct Point {
+    x: int
+    y: int
+}
+
+func readX(p: Point?): int {
+    return p?.x ?? 0
+}
+
+func main(): int {
+    let missing: Point? = nil
+    let a = readX(missing)
+    let p: Point? = Point { x: 3, y: 9 }
+    let b = readX(p)
+    // a=0, b=3 → exit 3 when only non-nil contributes
+    return a + b
+}

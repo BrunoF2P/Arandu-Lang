@@ -16,8 +16,7 @@ Func main() -> void
     _0: void // return
     _1: User
     _2: User
-    _3: User
-    _4: str
+    _3: str
     s0: User // user
     s1: str // _
 
@@ -25,7 +24,6 @@ Func main() -> void
     _1 = User { name: "Ada" }
     s0 = move _1
     _2 = s0
-    _3 = s0
-    _4 = call fn@User.greet(_2, move _3)
-    s1 = move _4
+    _3 = call fn@User.greet(move _2)
+    s1 = move _3
     return

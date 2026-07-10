@@ -272,6 +272,74 @@ impl FunctionTranslator<'_, '_> {
         (ptr, len)
     }
 
+    /// Compare two `str` fat pointers for equality (`==` / `!=`).
+    /// Equal when lengths match and `memcmp` reports zero (empty strings included).
+    fn translate_str_eq(
+        &mut self,
+        left: &AmirOperand,
+        right: &AmirOperand,
+        op: arandu_semantics::ops::BinaryOp,
+    ) -> Value {
+        let (l_ptr, l_len) = self.translate_str_operand(left);
+        let (r_ptr, r_len) = self.translate_str_operand(right);
+        let i8_ty = cranelift_codegen::ir::types::I8;
+        let i32_ty = cranelift_codegen::ir::types::I32;
+        let i64_ty = cranelift_codegen::ir::types::I64;
+
+        let len_eq = self.builder.ins().icmp(
+            cranelift_codegen::ir::condcodes::IntCC::Equal,
+            l_len,
+            r_len,
+        );
+
+        // If lengths differ → not equal. If both zero-length → equal.
+        // Else memcmp(l_ptr, r_ptr, len) == 0.
+        let zero_i64 = self.builder.ins().iconst(i64_ty, 0);
+        let len_nonzero = self.builder.ins().icmp(
+            cranelift_codegen::ir::condcodes::IntCC::NotEqual,
+            l_len,
+            zero_i64,
+        );
+
+        let Some(memcmp_id) = self.memcmp_func_id() else {
+            return self.poison_i32();
+        };
+        let memcmp_ref = self
+            .module
+            .declare_func_in_func(memcmp_id, self.builder.func);
+        // memcmp size is size_t (= pointer width).
+        let size = if self.ptr_type == i64_ty {
+            l_len
+        } else if self.ptr_type.bits() < 64 {
+            self.builder.ins().ireduce(self.ptr_type, l_len)
+        } else {
+            self.builder.ins().uextend(self.ptr_type, l_len)
+        };
+        let call = self
+            .builder
+            .ins()
+            .call(memcmp_ref, &[l_ptr, r_ptr, size]);
+        let cmp = self.builder.inst_results(call)[0];
+        let zero_i32 = self.builder.ins().iconst(i32_ty, 0);
+        let bytes_eq = self.builder.ins().icmp(
+            cranelift_codegen::ir::condcodes::IntCC::Equal,
+            cmp,
+            zero_i32,
+        );
+
+        // content_eq = !len_nonzero || bytes_eq  (icmp results are already i8 bools)
+        let not_nonzero = self.builder.ins().bxor_imm(len_nonzero, 1);
+        let content_eq = self.builder.ins().bor(not_nonzero, bytes_eq);
+        let eq = self.builder.ins().band(len_eq, content_eq);
+        let _ = i8_ty;
+
+        match op {
+            arandu_semantics::ops::BinaryOp::Equal => eq,
+            arandu_semantics::ops::BinaryOp::NotEqual => self.builder.ins().bxor_imm(eq, 1),
+            _ => self.poison_i32(),
+        }
+    }
+
     /// Concatenate `str` fat-pointer parts via `malloc` + `memcpy`.
     /// Returns `(ptr, len)` for the newly allocated buffer (not freed; debug/JIT lifetime).
     fn translate_string_interp(&mut self, parts: &[AmirOperand]) -> (Value, Value) {
@@ -379,12 +447,54 @@ impl FunctionTranslator<'_, '_> {
         match rvalue {
             AmirRvalue::Use(op) => self.translate_operand(op, expected_ty),
             AmirRvalue::Binary { op, left, right } => {
+                // `str` equality uses fat pointers + memcmp (not scalar icmp).
+                let left_is_str =
+                    matches!(self.get_operand_ar_type(left), ArType::Primitive(Primitive::Str));
+                let right_is_str =
+                    matches!(self.get_operand_ar_type(right), ArType::Primitive(Primitive::Str));
+                if left_is_str || right_is_str {
+                    match op {
+                        arandu_semantics::ops::BinaryOp::Equal
+                        | arandu_semantics::ops::BinaryOp::NotEqual => {
+                            return self.translate_str_eq(left, right, *op);
+                        }
+                        _ => {
+                            self.record_ice(
+                                "unsupported binary op on str in codegen",
+                                self.func_span(),
+                            );
+                            return self.poison_i32();
+                        }
+                    }
+                }
                 let opt_ty = match op {
                     arandu_semantics::ops::BinaryOp::Add
                     | arandu_semantics::ops::BinaryOp::Sub
                     | arandu_semantics::ops::BinaryOp::Mul
                     | arandu_semantics::ops::BinaryOp::Div
                     | arandu_semantics::ops::BinaryOp::Mod => expected_ty,
+                    // Comparisons (incl. `x == nil` / `x != nil`): prefer the
+                    // non-constant side's ABI type so Nil is a zero of matching width.
+                    arandu_semantics::ops::BinaryOp::Equal
+                    | arandu_semantics::ops::BinaryOp::NotEqual
+                    | arandu_semantics::ops::BinaryOp::Lt
+                    | arandu_semantics::ops::BinaryOp::LtEqual
+                    | arandu_semantics::ops::BinaryOp::Gt
+                    | arandu_semantics::ops::BinaryOp::GtEqual => {
+                        let left_ty = match left {
+                            AmirOperand::Copy(t) | AmirOperand::Move(t) => {
+                                self.get_temp_clif_type(*t)
+                            }
+                            _ => None,
+                        };
+                        let right_ty = match right {
+                            AmirOperand::Copy(t) | AmirOperand::Move(t) => {
+                                self.get_temp_clif_type(*t)
+                            }
+                            _ => None,
+                        };
+                        left_ty.or(right_ty).or(expected_ty)
+                    }
                     _ => None,
                 };
                 let lhs = self.translate_operand(left, opt_ty);
@@ -657,11 +767,9 @@ impl FunctionTranslator<'_, '_> {
 
                 if let Some(op) = payload {
                     let op_ty = self.get_operand_ar_type(op);
-                    // ZST payloads (`Err`, void) only need the discriminant tag.
-                    if matches!(
-                        op_ty,
-                        ArType::Err | ArType::Void | ArType::Error
-                    ) {
+                    // ZST payloads (void / typeck error) only need the discriminant tag.
+                    // `Err` is a message handle (pointer) and is stored like other scalars.
+                    if matches!(op_ty, ArType::Void | ArType::Error) {
                         // no payload bytes
                     } else if matches!(op_ty, ArType::Primitive(Primitive::Str)) {
                         let (elem_ptr, elem_len) = self.translate_str_operand(op);

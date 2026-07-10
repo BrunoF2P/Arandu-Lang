@@ -11,11 +11,18 @@ func readName(path: str) : Result<str, Err> {
     return Result.Ok("Bruno")
 }
 
-func main() {
+func main(): int {
     let name, e = readName("user.txt")
     if e != nil {
         io.println("error")
-        return
+        return 1
     }
     io.println("name=${name}")
+
+    let _, e2 = readName("")
+    if e2 != nil {
+        io.println("got missingPath")
+        return 0
+    }
+    return 2
 }

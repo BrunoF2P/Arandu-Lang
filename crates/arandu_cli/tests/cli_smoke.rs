@@ -87,6 +87,39 @@ func main() {
     assert!(String::from_utf8_lossy(&output.stdout).contains("ok"));
 }
 
+/// Runnable `*_main.aru` demos must `run` with the expected exit codes.
+#[test]
+fn run_stable_main_demos() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let workspace_root = std::path::Path::new(manifest_dir)
+        .join("../..")
+        .canonicalize()
+        .expect("workspace root");
+    let demos = [
+        ("examples/stable/syntax/enums_main.aru", 2),
+        ("examples/stable/syntax/match_main.aru", 7),
+        ("examples/stable/syntax/safe_main.aru", 3),
+        ("examples/stable/syntax/try_main.aru", 42),
+        ("examples/stable/syntax/fib_main.aru", 55),
+    ];
+    for (rel, expected) in demos {
+        let path = workspace_root.join(rel);
+        let path_str = path.to_string_lossy();
+        let output = run_cli(&["run", &path_str]);
+        assert!(
+            output.status.success() || output.status.code() == Some(expected),
+            "run failed for {rel}:\nstdout:{}\nstderr:{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            output.status.code(),
+            Some(expected),
+            "unexpected exit for {rel}"
+        );
+    }
+}
+
 /// Official stable examples must type-check end-to-end on the CLI.
 #[test]
 fn check_stable_examples_succeed() {

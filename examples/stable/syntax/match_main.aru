@@ -1,0 +1,19 @@
+// Match with payload + main (exit code encodes the arm taken).
+enum Token {
+    Number(int),
+    Word(str),
+    End,
+}
+
+func score(token: Token): int {
+    return match token {
+        Token.Number(value) if value > 0 => value
+        Token.Number(_) => 0
+        Token.Word(_) => -1
+        Token.End => -2
+    }
+}
+
+func main(): int {
+    return score(Token.Number(7))
+}

@@ -268,7 +268,18 @@ impl LayoutEngine {
                     field_offsets: Vec::new(),
                 }
             }
-            ArType::Void | ArType::Err | ArType::Error => TypeLayout {
+            // `Err` is a non-null message handle (pointer to a NUL-terminated
+            // UTF-8 buffer allocated by `err.new`). Not a ZST — payload of
+            // `Result<T, Err>` must be distinguishable from nil.
+            ArType::Err => {
+                let p = self.data_layout.pointer;
+                TypeLayout {
+                    size: p.size,
+                    align: p.abi_align,
+                    field_offsets: Vec::new(),
+                }
+            }
+            ArType::Void | ArType::Error => TypeLayout {
                 size: 0,
                 align: 1,
                 field_offsets: Vec::new(),
@@ -782,12 +793,17 @@ mod tests {
         let engine = LayoutEngine::new(8);
         let interner = TypeInterner::new();
         let provider = MockProvider;
-        for ty in [ArType::Void, ArType::Err, ArType::Error] {
+        for ty in [ArType::Void, ArType::Error] {
             let tid = interner.intern(ty);
             let layout = engine.layout_of(tid, &interner, &provider);
             assert_eq!(layout.size, 0);
             assert_eq!(layout.align, 1);
         }
+        // `Err` is a message handle (pointer-sized), not a ZST.
+        let err_tid = interner.intern(ArType::Err);
+        let err_layout = engine.layout_of(err_tid, &interner, &provider);
+        assert_eq!(err_layout.size, 8);
+        assert_eq!(err_layout.align, 8);
     }
 
     #[test]

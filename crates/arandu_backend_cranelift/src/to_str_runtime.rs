@@ -130,13 +130,21 @@ pub unsafe extern "C" fn ar_jit_println(ptr: *const u8, len: i64) {
 
 /// Prelude `err.new(str) -> Err`.
 ///
-/// `Err` is a ZST in the JIT ABI (`clif_types` → no return slots). The message is
-/// accepted for API parity and ignored in debug JIT (no heap `Err` object yet).
+/// `Err` is a non-null message handle: a `malloc`'d NUL-terminated copy of the
+/// input bytes (same lifetime policy as ToStr helpers). Callers compare handles
+/// against `nil` and may treat the pointer as a C string for debug printing.
 ///
 /// Linked as the JIT symbol `err.new`.
 ///
 /// # Safety
 /// `ptr` must be valid for `len` bytes if `len > 0`. `len` must be non-negative.
-pub unsafe extern "C" fn ar_jit_err_new(ptr: *const u8, len: i64) {
-    let _ = (ptr, len);
+pub unsafe extern "C" fn ar_jit_err_new(ptr: *const u8, len: i64) -> *mut u8 {
+    let slice = if len > 0 && !ptr.is_null() {
+        unsafe { std::slice::from_raw_parts(ptr, len as usize) }
+    } else {
+        b""
+    };
+    // Lossy only if input is not valid UTF-8; messages are language string literals.
+    let s = std::str::from_utf8(slice).unwrap_or("");
+    unsafe { pack_string(s, std::ptr::null_mut()) }
 }

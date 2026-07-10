@@ -967,3 +967,106 @@ fn jit_ice_indirect_call() {
         err.message
     );
 }
+
+#[test]
+fn jit_err_new_is_non_nil_handle() {
+    // `err.new` returns a non-null message handle so `e != nil` works for Result.Err.
+    let src = r#"
+        import err
+
+        func fail(): Result<int, Err> {
+            return Result.Err(err.new("boom"))
+        }
+
+        func ok(): Result<int, Err> {
+            return Result.Ok(7)
+        }
+
+        func main(): int {
+            let v = ok()?
+            let _, e = fail()
+            if e != nil {
+                return v
+            }
+            return 0
+        }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    let backend = backend_for_test();
+    let module = backend
+        .compile(&amir, &symbols, &type_info)
+        .expect("err.new Result path should compile");
+
+    let result: i32 = unsafe {
+        let f: unsafe fn() -> i32 = module.get_fn("main").unwrap();
+        f()
+    };
+    assert_eq!(result, 7, "Err handle from err.new must be non-nil");
+}
+
+#[test]
+fn jit_safe_field_and_null_coalesce() {
+    let src = r#"
+        struct Point {
+            x: int
+            y: int
+        }
+
+        func readX(p: Point?): int {
+            return p?.x ?? 0
+        }
+
+        func main(): int {
+            let missing: Point? = nil
+            let a = readX(missing)
+            let p: Point? = Point { x: 3, y: 9 }
+            let b = readX(p)
+            return a + b
+        }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    let backend = backend_for_test();
+    let module = backend
+        .compile(&amir, &symbols, &type_info)
+        .expect("safe field should compile");
+
+    let result: i32 = unsafe {
+        let f: unsafe fn() -> i32 = module.get_fn("main").unwrap();
+        f()
+    };
+    assert_eq!(result, 3);
+}
+
+#[test]
+fn jit_enum_match_main() {
+    let src = r#"
+        enum Color {
+            Red,
+            Green,
+            Blue,
+        }
+
+        func pick(c: Color): int {
+            return match c {
+                Color.Red => 1
+                Color.Green => 2
+                Color.Blue => 3
+            }
+        }
+
+        func main(): int {
+            return pick(Color.Green)
+        }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    let backend = backend_for_test();
+    let module = backend
+        .compile(&amir, &symbols, &type_info)
+        .expect("enum match should compile");
+
+    let result: i32 = unsafe {
+        let f: unsafe fn() -> i32 = module.get_fn("main").unwrap();
+        f()
+    };
+    assert_eq!(result, 2);
+}

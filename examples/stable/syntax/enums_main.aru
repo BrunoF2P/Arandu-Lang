@@ -1,0 +1,18 @@
+// Enums + match with a runnable main (exit code = pick result).
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+func pick(c: Color): int {
+    return match c {
+        Color.Red => 1
+        Color.Green => 2
+        Color.Blue => 3
+    }
+}
+
+func main(): int {
+    return pick(Color.Green)
+}

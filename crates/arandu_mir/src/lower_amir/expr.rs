@@ -882,11 +882,16 @@ impl LowerCtx<'_> {
 
                 self.current_block = Some(bb_access);
                 let base_expr = self.hir.pool.expr(*base);
+                // Materialize base into a typed temp so FieldAccess never takes a
+                // bare Constant(Nil) operand (pretty-print `nil.0` / ZST layout).
+                // Nullable bases are pointer handles; field load goes through that ptr.
+                let base_tmp = self.new_temp(base_expr.ty.clone());
+                self.emit_assign_temp(base_tmp, AmirRvalue::Use(base_op));
                 let field_idx = self.resolve_field_index(&base_expr.ty, field);
                 self.emit_assign_temp(
                     dest,
                     AmirRvalue::FieldAccess {
-                        base: base_op,
+                        base: AmirOperand::Copy(base_tmp),
                         field: field_idx,
                     },
                 );

@@ -75,7 +75,7 @@ impl AranduJit {
             "io.println",
             crate::to_str_runtime::ar_jit_println as *const u8,
         );
-        // Prelude `err.new(str) -> Err` (ZST return; fat-pointer str arg).
+        // Prelude `err.new(str) -> Err` (message handle = non-null ptr; fat-pointer str arg).
         builder.symbol(
             "err.new",
             crate::to_str_runtime::ar_jit_err_new as *const u8,
@@ -167,6 +167,28 @@ impl AranduJit {
             .declare_function("memcpy", Linkage::Import, &memcpy_sig)
             .map_err(|err| codegen_ice(format!("failed to declare memcpy: {err:?}")))?;
         func_ids.insert("memcpy".to_string(), memcpy_id);
+
+        // Declare memcmp as import (used by `str` equality / inequality).
+        let mut memcmp_sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+        memcmp_sig
+            .params
+            .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+        memcmp_sig
+            .params
+            .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+        memcmp_sig
+            .params
+            .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+        memcmp_sig
+            .returns
+            .push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I32,
+            ));
+        let memcmp_id = self
+            .module
+            .declare_function("memcmp", Linkage::Import, &memcmp_sig)
+            .map_err(|err| codegen_ice(format!("failed to declare memcmp: {err:?}")))?;
+        func_ids.insert("memcmp".to_string(), memcmp_id);
 
         // ToStr v0.1: host helpers `(value, *mut i64 out_len) -> *mut u8`
         let i64_ty = cranelift_codegen::ir::types::I64;
@@ -272,7 +294,7 @@ impl AranduJit {
                 .map_err(|err| codegen_ice(format!("failed to declare io.println: {err:?}")))?;
             func_ids.insert("io.println".to_string(), id);
         }
-        // `err.new(str) -> Err` (Err is ZST → zero return slots).
+        // `err.new(str) -> Err` (Err = message pointer handle).
         if !func_ids.contains_key("err.new") {
             let sig = build_signature(
                 std::slice::from_ref(&str_ty),

@@ -42,7 +42,8 @@ The size and alignment of primitive types are defined below (under a target poin
 | `float` | 8 | 8† | Always IEEE f64 (`DataLayout`); †i686 may use abi_align 4 |
 | `ptr[T]` | $W$ | $W$ | Platform-dependent pointer |
 | `any` | $W$ | $W$ | Boxed dynamic pointer |
-| `void`, `error` | 0 | 1 | ZSTs (Zero Sized Types) |
+| `void`, typeck `error` | 0 | 1 | ZSTs (Zero Sized Types) |
+| `Err` | $W$ | $W$ | Message handle: non-null pointer to a NUL-terminated UTF-8 buffer from `err.new` |
 
 ### Platform-Dependent Primitive Mappings
 
