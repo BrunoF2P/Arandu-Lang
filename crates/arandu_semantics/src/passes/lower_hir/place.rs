@@ -40,7 +40,7 @@ pub(crate) fn lower_place(
                 PlaceSuffix::Field { span, name } => {
                     suffixes.push(HirPlaceSuffix::Field {
                         span: *span,
-                        name: name.to_string(),
+                        name: name.clone(),
                         field_symbol: None,
                         ty: error_id,
                     });
@@ -90,7 +90,7 @@ pub(crate) fn lower_place(
                 current_ty = field_ty;
                 suffixes.push(HirPlaceSuffix::Field {
                     span: *span,
-                    name: name.to_string(),
+                    name: name.clone(),
                     field_symbol,
                     ty: field_ty,
                 });

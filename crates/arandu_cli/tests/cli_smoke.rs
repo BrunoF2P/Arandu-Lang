@@ -534,3 +534,71 @@ fn emit_c_i686_uses_int32_for_platform_int() {
         "expected 32-bit layout types:\n{stdout}"
     );
 }
+
+/// Regression: package demo (generics + Result/?/catch + nullable + enums) exits 42.
+#[test]
+fn run_package_main_exits_42() {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../examples/stable/syntax/package_main.aru"
+    );
+    let output = run_cli(&["run", path]);
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "stderr:\n{}\nstdout:\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
+/// Stable demos keep documented exit codes (Result/catch/enums/match/safe).
+#[test]
+fn run_stable_syntax_demos_exit_codes() {
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/stable/syntax/");
+    let cases = [
+        ("try_main.aru", 42),
+        ("catch_main.aru", 37),
+        ("enums_main.aru", 2),
+        ("match_main.aru", 7),
+        ("safe_main.aru", 3),
+        ("fib_main.aru", 55),
+    ];
+    for (file, code) in cases {
+        let path = format!("{root}{file}");
+        let output = run_cli(&["run", &path]);
+        assert_eq!(
+            output.status.code(),
+            Some(code),
+            "{file}: stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+/// Simple free-function monomorphization: `id<int>` works end-to-end.
+#[test]
+fn run_generic_identity_exits_42() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_generic_id.aru");
+    fs::write(
+        &file,
+        r#"func id<T>(x: T): T {
+    return x
+}
+
+func main(): int {
+    return id<int>(41) + 1
+}
+"#,
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+    let output = run_cli(&["run", &path]);
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

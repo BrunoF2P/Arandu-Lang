@@ -12,8 +12,9 @@ use arandu_middle::types::lower::{lower_result_type_ctx, lower_type_expr_ctx};
 
 #[derive(Debug, Clone)]
 pub struct InterfaceInfo {
-    /// Method name → function type **without** receiver (params are only explicit parameters).
-    pub methods: Vec<(smol_str::SmolStr, ArType)>,
+    /// Method name → interned function type **without** receiver
+    /// (`ArType::Func` stored as `TypeId`).
+    pub methods: Vec<(smol_str::SmolStr, crate::type_checker::types::TypeId)>,
 }
 
 /// Collect interface method signatures and per-type-parameter trait constraints.
@@ -120,7 +121,8 @@ fn collect_interface(checker: &mut TypeChecker, decl: &arandu_parser::InterfaceD
     let mut methods = Vec::new();
     for member in &decl.members {
         let sig_ty = lower_func_signature(checker, member, iface_scope);
-        methods.push((member.name.clone(), sig_ty));
+        let sig_id = checker.intern(sig_ty);
+        methods.push((member.name.clone(), sig_id));
     }
 
     checker
@@ -322,10 +324,13 @@ pub(crate) fn type_satisfies_interface(
     let iface_subst = interface_subst_for_concrete(checker, iface_sym, concrete);
 
     // We can iterate and borrow interner mutably inside the loop
-    for (method, required) in &iface.methods {
+    // Collect (name, required TypeId) first — avoids holding borrow across resolve.
+    let method_specs: Vec<_> = iface.methods.clone();
+    for (method, required_id) in method_specs {
+        let required = checker.resolve(required_id);
         let required_inst =
-            substitute_type(required, &iface_subst, &mut checker.type_info.type_interner);
-        let Some(provided) = lookup_method_type(checker, &type_name, method) else {
+            substitute_type(&required, &iface_subst, &mut checker.type_info.type_interner);
+        let Some(provided) = lookup_method_type(checker, &type_name, &method) else {
             return false;
         };
         let provided = strip_receiver(provided);
@@ -352,10 +357,12 @@ fn missing_interface_methods(
     let iface_subst = interface_subst_for_concrete(checker, iface_sym, concrete);
 
     let mut missing = Vec::new();
-    for (method, required) in &iface.methods {
+    let method_specs: Vec<_> = iface.methods.clone();
+    for (method, required_id) in method_specs {
+        let required = checker.resolve(required_id);
         let required_inst =
-            substitute_type(required, &iface_subst, &mut checker.type_info.type_interner);
-        let Some(provided) = lookup_method_type(checker, &type_name, method) else {
+            substitute_type(&required, &iface_subst, &mut checker.type_info.type_interner);
+        let Some(provided) = lookup_method_type(checker, &type_name, &method) else {
             let mut similar = Vec::new();
             if let Some(methods) = checker.symbols.associated_members.get(type_name.as_str()) {
                 let max_distance = if method.len() <= 4 { 2 } else { 3 };
@@ -363,7 +370,7 @@ fn missing_interface_methods(
                     let dist = if prov_name.to_lowercase() == method.to_lowercase() {
                         0
                     } else {
-                        strsim::levenshtein(method, prov_name)
+                        strsim::levenshtein(method.as_str(), prov_name)
                     };
                     if dist <= max_distance {
                         similar.push(prov_name.to_string());

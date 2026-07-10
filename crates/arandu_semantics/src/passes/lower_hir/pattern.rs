@@ -29,7 +29,7 @@ pub(crate) fn lower_pattern(
             let symbol = require_def_symbol(&type_check.resolved, *span)?;
             Ok(HirPattern::Bind {
                 span: *span,
-                name: name.to_string(),
+                name: name.clone(),
                 symbol,
             })
         }
@@ -60,7 +60,7 @@ pub(crate) fn lower_pattern(
             Ok(HirPattern::Enum {
                 span: *span,
                 type_symbol,
-                variant: variant.to_string(),
+                variant: variant.clone(),
                 variant_symbol,
                 payload: payload_range,
             })
@@ -77,7 +77,7 @@ pub(crate) fn lower_pattern(
             let payload_range = hir_pool.alloc_pattern_list(&hir_payload);
             Ok(HirPattern::TypeTuple {
                 span: *span,
-                name: name.to_string(),
+                name: name.clone(),
                 payload: payload_range,
             })
         }
@@ -96,7 +96,7 @@ pub(crate) fn lower_pattern(
                 };
                 let field_pat = HirFieldPattern {
                     span: f.span,
-                    name: f.name.to_string(),
+                    name: f.name.clone(),
                     pattern: pat_id,
                 };
                 let field_pat_id = hir_pool.alloc_field_pattern(field_pat);

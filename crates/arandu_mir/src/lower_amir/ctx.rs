@@ -22,6 +22,7 @@ impl LowerCtx<'_> {
         TempId::from_usize(self.temps.len())
     }
 
+    #[allow(dead_code)] // general entry point; call sites prefer typed intern_literal_* helpers
     pub(crate) fn intern_literal(&mut self, entry: AmirLiteralEntry) -> AmirConstant {
         AmirConstant::Pool(self.literal_pool.intern(entry))
     }

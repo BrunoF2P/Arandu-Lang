@@ -252,7 +252,7 @@ impl LowerCtx<'_> {
                 let field_ids = self.hir.pool.field_pattern_list(*fields);
                 for &fid in field_ids {
                     let field = self.hir.pool.field_pattern(fid);
-                    let field_tid = fields_map.and_then(|m| m.get(&field.name).copied());
+                    let field_tid = fields_map.and_then(|m| m.get(field.name.as_str()).copied());
                     let tmp_field = match field_tid {
                         Some(tid) => self.new_temp_id(tid),
                         None => self.new_temp(ArType::Error),
@@ -262,7 +262,7 @@ impl LowerCtx<'_> {
                         .type_info
                         .struct_field_indices
                         .get(struct_symbol)
-                        .and_then(|m| m.get(&field.name).copied())
+                        .and_then(|m| m.get(field.name.as_str()).copied())
                         .unwrap_or(0);
                     self.emit_assign_temp(
                         tmp_field,

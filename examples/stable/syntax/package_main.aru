@@ -1,0 +1,40 @@
+// Package demo: generics, Result/`?`/catch, multi-bind, nullable, enums.
+// Expected process exit code: 42
+import err
+
+func id<T>(x: T): T {
+    return x
+}
+
+func loadOk(): Result<int, Err> {
+    return Result.Ok(20)
+}
+
+func loadFail(): Result<int, Err> {
+    return Result.Err(err.new("boom"))
+}
+
+enum Tag {
+    A
+    B
+}
+
+func main(): int {
+    let base = id<int>(10)
+    let v = loadOk()?
+    let recovered = loadFail() catch 2
+    let ok_val, e = loadOk()
+    if e != nil {
+        return 0
+    }
+    let n2: int? = 5
+    let n_ok = if n2 != nil { 1 } else { 0 }
+    let t = Tag.A
+    let tag_ok = match t {
+        Tag.A => 1
+        Tag.B => 0
+    }
+    let eight = id<int>(8)
+    // 10 + 20 + 2 + 1 + 1 + 8 = 42
+    return base + v + recovered + n_ok + tag_ok + eight
+}

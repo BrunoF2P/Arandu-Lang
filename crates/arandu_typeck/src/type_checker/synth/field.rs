@@ -120,10 +120,10 @@ pub(crate) fn resolve_field(
                 let mut found_method_ty = None;
                 for &iface_sym in constraints.iter() {
                     if let Some(iface_info) = checker.type_info.interfaces.get(&iface_sym)
-                        && let Some((_, method_sig)) =
+                        && let Some((_, method_tid)) =
                             iface_info.methods.iter().find(|(m, _)| m == field)
                     {
-                        found_method_ty = Some(method_sig.clone());
+                        found_method_ty = Some(checker.resolve(*method_tid));
                         break;
                     }
                 }

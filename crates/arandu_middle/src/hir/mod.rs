@@ -260,7 +260,7 @@ pub struct HirPlace {
 pub enum HirPlaceSuffix {
     Field {
         span: Span,
-        name: String,
+        name: SmolStr,
         field_symbol: Option<SymbolId>,
         ty: TypeId,
     },
@@ -301,11 +301,11 @@ pub enum HirExprKind {
     },
     Field {
         base: HirExprId,
-        field: String,
+        field: SmolStr,
     },
     SafeField {
         base: HirExprId,
-        field: String,
+        field: SmolStr,
     },
     Index {
         base: HirExprId,
@@ -407,7 +407,7 @@ pub enum HirStringPart {
 #[derive(Debug, Clone)]
 pub struct HirFieldInit {
     pub span: Span,
-    pub name: String,
+    pub name: SmolStr,
     pub value: HirExprId,
 }
 

@@ -66,6 +66,7 @@ mod tests {
 
 use crate::SymbolId;
 use arandu_lexer::Span;
+use smol_str::SmolStr;
 
 #[derive(Debug, Clone)]
 pub enum HirPattern {
@@ -74,7 +75,7 @@ pub enum HirPattern {
     },
     Bind {
         span: Span,
-        name: String,
+        name: SmolStr,
         symbol: SymbolId,
     },
     Literal {
@@ -84,13 +85,13 @@ pub enum HirPattern {
     Enum {
         span: Span,
         type_symbol: SymbolId,
-        variant: String,
+        variant: SmolStr,
         variant_symbol: Option<SymbolId>,
         payload: super::pool::IndexRange,
     },
     TypeTuple {
         span: Span,
-        name: String,
+        name: SmolStr,
         payload: super::pool::IndexRange,
     },
     Struct {
@@ -113,7 +114,7 @@ pub enum HirPattern {
 #[derive(Debug, Clone)]
 pub struct HirFieldPattern {
     pub span: Span,
-    pub name: String,
+    pub name: SmolStr,
     pub pattern: Option<super::pool::HirPatternId>,
 }
 

@@ -169,7 +169,7 @@ pub(crate) fn lower_expr_raw(
                 let base_vid = lower_expr(type_check, pool, hir_pool, base_id)?;
                 HirExprKind::Field {
                     base: base_vid,
-                    field: field.to_string(),
+                    field: field.clone(),
                 }
             }
         }
@@ -183,7 +183,7 @@ pub(crate) fn lower_expr_raw(
                 let base_vid = lower_expr(type_check, pool, hir_pool, base_id)?;
                 HirExprKind::SafeField {
                     base: base_vid,
-                    field: field.to_string(),
+                    field: field.clone(),
                 }
             }
         }
@@ -296,7 +296,7 @@ pub(crate) fn lower_expr_raw(
                 let value_id = lower_expr(type_check, pool, hir_pool, f.value)?;
                 hir_fields.push(HirFieldInit {
                     span: f.span,
-                    name: f.name.to_string(),
+                    name: f.name.clone(),
                     value: value_id,
                 });
             }

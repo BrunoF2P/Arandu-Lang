@@ -188,9 +188,9 @@ pub(crate) fn synth_method_call(
     {
         for &iface_sym in constraints.iter() {
             if let Some(iface_info) = checker.type_info.interfaces.get(&iface_sym)
-                && let Some((_, method_sig)) = iface_info.methods.iter().find(|(m, _)| m == method)
+                && let Some((_, method_tid)) = iface_info.methods.iter().find(|(m, _)| m == method)
             {
-                resolved_method = Some(method_sig.clone());
+                resolved_method = Some(checker.resolve(*method_tid));
                 break;
             }
         }

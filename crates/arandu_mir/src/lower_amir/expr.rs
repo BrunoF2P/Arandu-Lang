@@ -619,7 +619,7 @@ impl LowerCtx<'_> {
                 self.lower_unary(*op, *sub_expr, expr.ty, target, symbols)
             }
             HirExprKind::Field { base, field } => {
-                self.lower_field(*base, field, expr.ty, target, symbols)
+                self.lower_field(*base, field.as_str(), expr.ty, target, symbols)
             }
             HirExprKind::Index { base, index } => {
                 self.lower_index(*base, *index, expr.ty, target, symbols)

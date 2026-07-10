@@ -220,9 +220,10 @@ impl TypeInfo {
         }
         for (symbol, interface_info) in &other.interfaces {
             let mut translated_methods = Vec::new();
-            for (name, ty) in &interface_info.methods {
-                let translated = translate_type(ty, &other.type_interner, &mut self.type_interner);
-                translated_methods.push((name.clone(), translated));
+            for (name, tid) in &interface_info.methods {
+                let ty = other.type_interner.resolve(*tid);
+                let translated = translate_type(&ty, &other.type_interner, &mut self.type_interner);
+                translated_methods.push((name.clone(), self.type_interner.intern(translated)));
             }
             self.interfaces.insert(
                 *symbol,

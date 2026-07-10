@@ -35,7 +35,7 @@ pub enum AmirRvalue {
     },
     StructLiteral {
         struct_symbol: SymbolId,
-        fields: Vec<(String, AmirOperand)>,
+        fields: Vec<(smol_str::SmolStr, AmirOperand)>,
     },
     IndexAccess {
         base: AmirOperand,

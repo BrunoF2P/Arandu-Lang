@@ -183,12 +183,12 @@ impl<'a> CEmitter<'a> {
                 let mut resolved_fields = Vec::new();
                 for (i, (name, op)) in fields.iter().enumerate() {
                     let field_idx = match self.provider.get_struct_field_indices(*struct_symbol) {
-                        Some(indices) => indices.get(name).copied().unwrap_or(i),
+                        Some(indices) => indices.get(name.as_str()).copied().unwrap_or(i),
                         None => i,
                     };
                     let offset = layout.field_offsets.get(field_idx).copied().unwrap_or(0);
                     let field_ty = field_defs
-                        .and_then(|m| m.get(name).copied())
+                        .and_then(|m| m.get(name.as_str()).copied())
                         .map(|tid| self.interner.resolve(tid))
                         .unwrap_or(ArType::Error);
                     let field_c_ty = self.format_type(&field_ty);
