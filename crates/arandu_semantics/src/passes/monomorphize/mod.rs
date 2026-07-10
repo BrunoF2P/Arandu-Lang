@@ -1,12 +1,32 @@
 mod collect;
 mod demangle;
+mod expand;
 mod graph;
 
 pub use collect::analyze_instantiations;
 pub use demangle::{demangle_symbol, mangle_symbol};
+pub use expand::expand_specializations;
 pub use graph::{
     InstantiationGraph, InstantiationKey, InstantiationNode, InstantiationNodeId, MonoError,
 };
+
+use arandu_diagnostics::Diagnostic;
+use arandu_middle::hir::HirProgram;
+use arandu_typeck::TypeCheckResult;
+
+/// Full monomorphization: analyze instantiation graph, expand free-function
+/// specializations into the HIR, and rewrite call sites.
+///
+/// Call after HIR lower and before AMIR lower. Generic **templates** stay in
+/// the HIR but are skipped by AMIR lowering.
+#[tracing::instrument(level = "debug", target = "arandu_semantics::mono", skip_all)]
+pub fn monomorphize_program(
+    tc: &mut TypeCheckResult,
+    hir: &mut HirProgram,
+) -> Result<usize, Vec<Diagnostic>> {
+    let graph = analyze_instantiations(tc, hir)?;
+    expand_specializations(tc, hir, &graph)
+}
 
 #[cfg(test)]
 mod tests {

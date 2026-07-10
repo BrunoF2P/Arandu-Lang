@@ -32,3 +32,4 @@ pub use arandu_typeck::{
     check_signatures_only, free_func_symbols, item_source_span, primary_def_key, type_check,
 };
 pub use passes::lower_hir::lower_to_hir;
+pub use passes::monomorphize::monomorphize_program;

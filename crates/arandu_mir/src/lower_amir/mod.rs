@@ -52,6 +52,11 @@ pub fn lower_to_amir(
             },
         ) = hir.pool.decl(decl_id)
         {
+            // Skip generic templates — only monomorphized specializations (and
+            // non-generic functions) are lowered to AMIR.
+            if tc.type_info.generic_params.contains_key(&f.symbol) {
+                continue;
+            }
             match lower_func(f, *body, tc, hir, &mut literal_pool, &mut diagnostics) {
                 Ok(amir_f) => {
                     funcs.push(amir_f);

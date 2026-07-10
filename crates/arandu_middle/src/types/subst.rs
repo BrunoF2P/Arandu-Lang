@@ -14,8 +14,27 @@ pub fn build_subst(param_symbols: &[SymbolId], args: &[ArType]) -> GenericSubst 
     subst
 }
 
+/// Build a subst from interned type-argument ids.
 #[must_use]
-pub fn substitute_type(ty: &ArType, subst: &GenericSubst, interner: &mut TypeInterner) -> ArType {
+pub fn build_subst_ids(
+    param_symbols: &[SymbolId],
+    arg_ids: &[TypeId],
+    interner: &TypeInterner,
+) -> GenericSubst {
+    let args: smallvec::SmallVec<[ArType; 2]> =
+        arg_ids.iter().map(|&id| interner.resolve(id)).collect();
+    build_subst(param_symbols, &args)
+}
+
+/// Substitute and re-intern a type id.
+#[must_use]
+pub fn substitute_type_id(id: TypeId, subst: &GenericSubst, interner: &TypeInterner) -> TypeId {
+    let ty = interner.resolve(id);
+    let new_ty = substitute_type(&ty, subst, interner);
+    interner.intern(new_ty)
+}
+
+pub fn substitute_type(ty: &ArType, subst: &GenericSubst, interner: &TypeInterner) -> ArType {
     match ty {
         ArType::Named(id, args) => {
             if let Some((_, concrete)) = subst.iter().find(|(param, _)| param == id) {

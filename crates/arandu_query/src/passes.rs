@@ -445,7 +445,7 @@ pub fn lower_amir(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<AmirProg
     // We clone only if we actually need a mutable owned copy for mutation below.
     let mut type_check_result = (*type_check_result_arc).clone();
 
-    let hir = match &*program_res {
+    let mut hir = match &*program_res {
         Ok(program) => match arandu_semantics::lower_to_hir(&mut type_check_result, program) {
             Ok(h) => h,
             Err(diags) => {
@@ -467,6 +467,20 @@ pub fn lower_amir(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<AmirProg
             })
         }
     };
+
+    if let Err(diags) = arandu_semantics::passes::monomorphize::monomorphize_program(
+        &mut type_check_result,
+        &mut hir,
+    ) {
+        for diag in diags {
+            arandu_middle::db::DiagnosticsAccumulator(diag).accumulate(db);
+        }
+        return HashEq::new(AmirProgram {
+            funcs: vec![],
+            literal_pool: arandu_middle::literal_pool::AmirLiteralPool::default(),
+            extern_funcs: Default::default(),
+        });
+    }
 
     let amir = match arandu_semantics::lower_to_amir(&type_check_result, &hir) {
         Ok(a) => a,

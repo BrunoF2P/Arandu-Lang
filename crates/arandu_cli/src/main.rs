@@ -27,9 +27,9 @@ fn print_parse_error_and_exit(err: &arandu_parser::ParseError, filepath: &str) -
     print_diagnostics_and_exit(&[diag], filepath);
 }
 
-fn validate_hir_and_analyze(
-    hir: &arandu_semantics::hir::HirProgram,
-    type_check: &arandu_semantics::TypeCheckResult,
+fn validate_hir_and_monomorphize(
+    hir: &mut arandu_semantics::hir::HirProgram,
+    type_check: &mut arandu_semantics::TypeCheckResult,
     filepath: &str,
 ) {
     if let Err(err) = hir.validate_invariants(&hir.pool, &type_check.symbols) {
@@ -38,7 +38,7 @@ fn validate_hir_and_analyze(
     }
 
     if let Err(diags) =
-        arandu_semantics::passes::monomorphize::analyze_instantiations(type_check, hir)
+        arandu_semantics::passes::monomorphize::monomorphize_program(type_check, hir)
     {
         print_diagnostics_and_exit(&diags, filepath);
     }
@@ -298,7 +298,7 @@ fn main() {
                 };
                 tracing::info!("Syntax analysis and type-check completed for {}", filepath);
 
-                let hir = {
+                let mut hir = {
                     arandu_base::time_pass!("lower-hir");
                     match arandu_semantics::lower_to_hir(&mut checked.type_check, &checked.program)
                     {
@@ -308,7 +308,7 @@ fn main() {
                 };
                 tracing::info!("HIR lowering completed for {}", filepath);
 
-                validate_hir_and_analyze(&hir, &checked.type_check, &filepath);
+                validate_hir_and_monomorphize(&mut hir, &mut checked.type_check, &filepath);
                 {
                     arandu_base::time_pass!("lower-amir");
                     if let Err(diags) = arandu_semantics::lower_to_amir(&checked.type_check, &hir) {
@@ -327,7 +327,7 @@ fn main() {
                     arandu_base::time_pass!("parse+check");
                     parse_and_check(&db, source_file, &filepath)
                 };
-                let hir = {
+                let mut hir = {
                     arandu_base::time_pass!("lower-hir");
                     match arandu_semantics::lower_to_hir(&mut checked.type_check, &checked.program)
                     {
@@ -335,7 +335,7 @@ fn main() {
                         Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
                     }
                 };
-                validate_hir_and_analyze(&hir, &checked.type_check, &filepath);
+                validate_hir_and_monomorphize(&mut hir, &mut checked.type_check, &filepath);
 
                 if debug {
                     println!("{hir:#?}");
@@ -356,7 +356,7 @@ fn main() {
                     arandu_base::time_pass!("parse+check");
                     parse_and_check(&db, source_file, &filepath)
                 };
-                let hir = {
+                let mut hir = {
                     arandu_base::time_pass!("lower-hir");
                     match arandu_semantics::lower_to_hir(&mut checked.type_check, &checked.program)
                     {
@@ -364,7 +364,7 @@ fn main() {
                         Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
                     }
                 };
-                validate_hir_and_analyze(&hir, &checked.type_check, &filepath);
+                validate_hir_and_monomorphize(&mut hir, &mut checked.type_check, &filepath);
 
                 let amir_he = {
                     arandu_base::time_pass!("lower-amir");
@@ -408,7 +408,7 @@ fn main() {
                 };
                 tracing::info!("Syntax analysis and type-check completed");
 
-                let hir = {
+                let mut hir = {
                     arandu_base::time_pass!("lower-hir");
                     match arandu_semantics::lower_to_hir(&mut checked.type_check, &checked.program)
                     {
@@ -417,7 +417,7 @@ fn main() {
                     }
                 };
                 tracing::info!("HIR lowering completed");
-                validate_hir_and_analyze(&hir, &checked.type_check, &filepath);
+                validate_hir_and_monomorphize(&mut hir, &mut checked.type_check, &filepath);
 
                 let amir_he = {
                     arandu_base::time_pass!("lower-amir");
@@ -505,7 +505,7 @@ fn main() {
                     arandu_base::time_pass!("parse+check");
                     parse_and_check(&db, source_file, &filepath)
                 };
-                let hir = {
+                let mut hir = {
                     arandu_base::time_pass!("lower-hir");
                     match arandu_semantics::lower_to_hir(&mut checked.type_check, &checked.program)
                     {
@@ -513,7 +513,7 @@ fn main() {
                         Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
                     }
                 };
-                validate_hir_and_analyze(&hir, &checked.type_check, &filepath);
+                validate_hir_and_monomorphize(&mut hir, &mut checked.type_check, &filepath);
 
                 let amir_he = {
                     arandu_base::time_pass!("lower-amir");

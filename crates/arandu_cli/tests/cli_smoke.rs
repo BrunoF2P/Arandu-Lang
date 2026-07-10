@@ -602,3 +602,48 @@ func main(): int {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+/// Dual specialization: `id<str>` and `id<int>` expand to distinct mangled funcs
+/// (str fat ABI must not share the int monomorph).
+#[test]
+fn run_generic_id_str_and_int_coexist() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_generic_dual.aru");
+    fs::write(
+        &file,
+        r#"func id<T>(x: T): T {
+    return x
+}
+
+func main(): int {
+    let s = id<str>("hi")
+    let n = id<int>(41)
+    return n + 1
+}
+"#,
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+    let amir = run_cli(&["amir", &path]);
+    assert!(
+        amir.status.success(),
+        "amir dump failed: {}",
+        String::from_utf8_lossy(&amir.stderr)
+    );
+    let dump = String::from_utf8_lossy(&amir.stdout);
+    assert!(
+        dump.contains("_A$id$I_int_$E") && dump.contains("_A$id$I_str_$E"),
+        "expected specialized mangled funcs, got:\n{dump}"
+    );
+    assert!(
+        !dump.contains("Func id("),
+        "generic template should not be lowered to AMIR:\n{dump}"
+    );
+    let output = run_cli(&["run", &path]);
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
