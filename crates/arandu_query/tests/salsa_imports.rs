@@ -20,9 +20,10 @@ fn test_prelude_import_io_err_without_files() {
     let file = db.new_file("tests_prelude_import.aru".to_string(), src.to_string());
 
     let resolved = arandu_query::passes::resolve(&db, file);
-    let has_m001 = resolved.diagnostics.iter().any(|d| {
-        matches!(d.code, arandu_middle::DiagCode::M001UnresolvedImport)
-    });
+    let has_m001 = resolved
+        .diagnostics
+        .iter()
+        .any(|d| matches!(d.code, arandu_middle::DiagCode::M001UnresolvedImport));
     assert!(
         !has_m001,
         "prelude import must not emit M001, got: {:?}",

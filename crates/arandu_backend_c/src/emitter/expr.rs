@@ -340,10 +340,8 @@ impl<'a> CEmitter<'a> {
                 // Emit a call to the runtime helper: ar_str_concat_n(n, part0, part1, ..., partN-1)
                 // Each part must already be of type ArStr.
                 let n = parts.len();
-                let part_strs: Vec<String> = parts
-                    .iter()
-                    .map(|p| self.format_operand(p, func))
-                    .collect();
+                let part_strs: Vec<String> =
+                    parts.iter().map(|p| self.format_operand(p, func)).collect();
                 write!(
                     &mut self.output,
                     "ar_str_concat_n({}, {})",

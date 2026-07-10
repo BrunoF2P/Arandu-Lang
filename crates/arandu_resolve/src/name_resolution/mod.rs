@@ -19,10 +19,8 @@ pub const PRELUDE_MODULES: &[&str] = &["io", "err"];
 
 /// Members registered for each prelude module (must stay in sync with
 /// [`super::program::Resolver::define_prelude`]).
-const PRELUDE_MODULE_MEMBERS: &[(&str, &[&str])] = &[
-    ("io", &["println", "create", "remove"]),
-    ("err", &["new"]),
-];
+const PRELUDE_MODULE_MEMBERS: &[(&str, &[&str])] =
+    &[("io", &["println", "create", "remove"]), ("err", &["new"])];
 
 /// Returns the prelude module name if `path` is a single-segment prelude path.
 #[must_use]
@@ -31,10 +29,7 @@ pub fn prelude_module_from_path(path: &[SmolStr]) -> Option<&'static str> {
         return None;
     }
     let name = path[0].as_str();
-    PRELUDE_MODULES
-        .iter()
-        .copied()
-        .find(|&m| m == name)
+    PRELUDE_MODULES.iter().copied().find(|&m| m == name)
 }
 
 pub fn create_symbol_table_with_prelude(
@@ -120,11 +115,8 @@ pub fn resolve_imports_and_bodies(
                     // Typeck looks up members by the in-scope name (`out.println`
                     // after `import io as out`), so mirror the prelude members
                     // under the alias key as well.
-                    if let Some(members) = resolver
-                        .symbols
-                        .module_members
-                        .get(prelude_name)
-                        .cloned()
+                    if let Some(members) =
+                        resolver.symbols.module_members.get(prelude_name).cloned()
                     {
                         resolver
                             .symbols

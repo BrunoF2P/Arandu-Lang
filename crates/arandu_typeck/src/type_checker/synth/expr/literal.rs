@@ -48,17 +48,15 @@ pub(super) fn synth_literal_expr(
                 {
                     let part_ty_id = synth_expr(checker, *inner_expr);
                     let part_ty = checker.resolve(part_ty_id);
-                    let is_str = matches!(part_ty, ArType::Primitive(Primitive::Str))
-                        || part_ty.is_error();
+                    let is_str =
+                        matches!(part_ty, ArType::Primitive(Primitive::Str)) || part_ty.is_error();
                     if !is_str {
                         let interner = &checker.type_info.type_interner;
                         let found = part_ty.display(&checker.symbols, interner);
                         checker.diagnostics.push(
                             crate::Diagnostic::error(
                                 crate::DiagCode::T002IncompatibleAssignment,
-                                format!(
-                                    "string interpolation requires `str`, found `{found}`"
-                                ),
+                                format!("string interpolation requires `str`, found `{found}`"),
                                 checker.pool.expr_span(*inner_expr),
                             )
                             .with_note(

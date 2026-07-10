@@ -111,9 +111,7 @@ pub fn prune_dummy_loads_stores(func: &mut AmirFunc) {
                 AmirStmt::Assign {
                     rhs: AmirRvalue::Load(place),
                     ..
-                } if place.projections.is_empty() => {
-                    func.locals[place.local.as_usize()].is_memory
-                }
+                } if place.projections.is_empty() => func.locals[place.local.as_usize()].is_memory,
                 _ => true,
             };
 

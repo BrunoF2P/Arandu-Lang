@@ -46,10 +46,10 @@ impl AmirFunc {
             .iter()
             .enumerate()
             .map(|(i, p)| {
-                let ty = self.temps.get(p.as_usize()).map_or_else(
-                    || crate::types::ArType::Void,
-                    |t| interner.resolve(t.ty),
-                );
+                let ty = self
+                    .temps
+                    .get(p.as_usize())
+                    .map_or_else(|| crate::types::ArType::Void, |t| interner.resolve(t.ty));
                 let prefix = self
                     .receiver
                     .as_ref()

@@ -226,9 +226,7 @@ impl FunctionTranslator<'_, '_> {
             } else {
                 self.builder.ins().uextend(self.ptr_type, src_len)
             };
-            self.builder
-                .ins()
-                .call(memcpy_ref, &[dest, src_ptr, size]);
+            self.builder.ins().call(memcpy_ref, &[dest, src_ptr, size]);
             offset_i64 = self.builder.ins().iadd(offset_i64, src_len);
         }
 

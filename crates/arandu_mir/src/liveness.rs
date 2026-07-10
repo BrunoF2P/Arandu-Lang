@@ -5,8 +5,8 @@
 
 use crate::amir::reachability::terminator_targets;
 use crate::amir::{
-    for_each_rvalue_operand, for_each_rvalue_place, AmirFunc, AmirOperand, AmirPlace,
-    AmirProjection, AmirRvalue, AmirStmt, AmirTerminator, BlockId, LocalId,
+    AmirFunc, AmirOperand, AmirPlace, AmirProjection, AmirRvalue, AmirStmt, AmirTerminator,
+    BlockId, LocalId, for_each_rvalue_operand, for_each_rvalue_place,
 };
 use crate::{BitMatrix, BitSet};
 
@@ -230,7 +230,7 @@ mod tests {
             locals: vec![crate::amir::AmirLocal {
                 id: local_id(0),
                 ty: intern_ty(ArType::Void),
-            is_memory: false,
+                is_memory: false,
                 symbol: None,
                 span: crate::Span::new(0, 0, 0),
                 use_span: None,

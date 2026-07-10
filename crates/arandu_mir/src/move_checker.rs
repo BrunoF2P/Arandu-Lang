@@ -8,8 +8,8 @@
 #![allow(clippy::collapsible_if)]
 
 use crate::amir::{
-    for_each_rvalue_operand, for_each_rvalue_place, AmirFunc, AmirOperand, AmirPlace, AmirRvalue,
-    AmirStmt, AmirTerminator, LocalId, TempId,
+    AmirFunc, AmirOperand, AmirPlace, AmirRvalue, AmirStmt, AmirTerminator, LocalId, TempId,
+    for_each_rvalue_operand, for_each_rvalue_place,
 };
 use crate::diagnostics::{DiagCode, Diagnostic};
 use crate::{BitSet, SymbolTable};

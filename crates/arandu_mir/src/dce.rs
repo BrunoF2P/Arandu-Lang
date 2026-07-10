@@ -1,6 +1,6 @@
 use crate::amir::{
-    for_each_rvalue_operand, AmirFunc, AmirOperand, AmirProjection, AmirRvalue, AmirStmt,
-    AmirTerminator, BlockId, TempId,
+    AmirFunc, AmirOperand, AmirProjection, AmirRvalue, AmirStmt, AmirTerminator, BlockId, TempId,
+    for_each_rvalue_operand,
 };
 use crate::layout::DenseRange;
 use smallvec::SmallVec;

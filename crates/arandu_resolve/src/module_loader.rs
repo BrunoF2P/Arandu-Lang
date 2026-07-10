@@ -6,8 +6,8 @@
 
 use std::sync::Arc;
 
-use arandu_middle::db::SourceFile;
 use arandu_middle::ExportedSymbolTable;
+use arandu_middle::db::SourceFile;
 
 /// Capability needed by [`crate::resolve_imports_and_bodies`] to load imports.
 pub trait ModuleLoader {

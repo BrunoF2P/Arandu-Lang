@@ -323,10 +323,7 @@ fn emit_c_host_fib_main_contains_int_main() {
         stdout.contains("int main("),
         "expected int main in C, got:\n{stdout}"
     );
-    assert!(
-        stdout.contains("fib("),
-        "expected fib in C output"
-    );
+    assert!(stdout.contains("fib("), "expected fib in C output");
     // No str runtime for pure-int program
     assert!(
         !stdout.contains("ar_str_concat_n"),

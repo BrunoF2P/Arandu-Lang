@@ -92,13 +92,16 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
     }
 
     pub(crate) fn get_temp_clif_type(&self, temp_id: TempId) -> Option<Type> {
-        self.current_func.temps.get(temp_id.as_usize()).and_then(|t| {
-            let ty = self.resolve_ty(t.ty);
-            match clif_type(&ty, self.ptr_type) {
-                ClifType::Concrete(ty) => Some(ty),
-                ClifType::Void => None,
-            }
-        })
+        self.current_func
+            .temps
+            .get(temp_id.as_usize())
+            .and_then(|t| {
+                let ty = self.resolve_ty(t.ty);
+                match clif_type(&ty, self.ptr_type) {
+                    ClifType::Concrete(ty) => Some(ty),
+                    ClifType::Void => None,
+                }
+            })
     }
 
     pub(crate) fn func_span(&self) -> Span {

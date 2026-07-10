@@ -487,9 +487,7 @@ impl LowerCtx<'_> {
                         } => Ok(AmirProjection::Field(*symbol)),
                         HirPlaceSuffix::Field { span, name, .. } => Err(crate::Diagnostic::error(
                             crate::DiagCode::L001LoweringUnresolvedSymbol,
-                            format!(
-                                "cannot lower field projection `{name}`: symbol not resolved"
-                            ),
+                            format!("cannot lower field projection `{name}`: symbol not resolved"),
                             *span,
                         )),
                         HirPlaceSuffix::Index { expr, .. } => Ok(AmirProjection::Index(

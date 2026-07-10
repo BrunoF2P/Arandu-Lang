@@ -146,11 +146,7 @@ pub(super) fn synth_control_flow_expr(
                     let guard_ty = checker.resolve(guard_ty_id);
                     let bool_ty = ArType::Primitive(Primitive::Bool);
                     if !guard_ty.is_error()
-                        && !types::unify(
-                            &guard_ty,
-                            &bool_ty,
-                            &checker.type_info.type_interner,
-                        )
+                        && !types::unify(&guard_ty, &bool_ty, &checker.type_info.type_interner)
                     {
                         let interner = &checker.type_info.type_interner;
                         checker.diagnostics.push(

@@ -26,11 +26,11 @@
     clippy::collapsible_if
 )]
 use crate::amir::block::BlockId;
+use crate::amir::for_each_rvalue_place;
 use crate::amir::local::LocalId;
 use crate::amir::program::AmirFunc;
 use crate::amir::stmt::{AmirStmt, AmirTerminator};
 use crate::amir::value::AmirRvalue;
-use crate::amir::for_each_rvalue_place;
 use crate::diagnostics::{DiagCode, Diagnostic};
 use crate::{BitMatrix, BitSet, SymbolTable};
 
@@ -298,7 +298,9 @@ mod tests {
     fn make_local(id: usize, sym: Option<SymbolId>) -> AmirLocal {
         AmirLocal {
             id: LocalId::from_usize(id),
-            ty: intern_ty(ArType::Primitive(crate::passes::type_checker::types::Primitive::Int)),
+            ty: intern_ty(ArType::Primitive(
+                crate::passes::type_checker::types::Primitive::Int,
+            )),
             is_memory: false,
             symbol: sym,
             span: Span::new(0, 0, 0),
@@ -309,7 +311,9 @@ mod tests {
     fn make_temp(id: usize) -> AmirTemp {
         AmirTemp {
             id: TempId::from_usize(id),
-            ty: intern_ty(ArType::Primitive(crate::passes::type_checker::types::Primitive::Int)),
+            ty: intern_ty(ArType::Primitive(
+                crate::passes::type_checker::types::Primitive::Int,
+            )),
             is_copy: true,
             span: Span::new(0, 0, 0),
         }
@@ -445,12 +449,7 @@ mod tests {
             &[],
             &mut stmts,
         )];
-        let func = make_func(
-            blocks,
-            stmts,
-            vec![local],
-            vec![make_temp(0), make_temp(1)],
-        );
+        let func = make_func(blocks, stmts, vec![local], vec![make_temp(0), make_temp(1)]);
         let st = make_symbol_table();
         let diags = check_definite_init(&func, &st);
         assert_eq!(diags.len(), 1);

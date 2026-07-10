@@ -62,8 +62,7 @@ fn test_amir_golden_files() {
         hir.validate_invariants(&hir.pool, &tc.symbols)
             .unwrap_or_else(|err| panic!("HIR invariant validation failed for {name}: {err:?}"));
         let amir = lower_to_amir(&tc, &hir).expect("AMIR lowering failed");
-        let amir_issues =
-            validate_amir_program(&amir, &tc.symbols, &tc.type_info.type_interner);
+        let amir_issues = validate_amir_program(&amir, &tc.symbols, &tc.type_info.type_interner);
         assert!(
             amir_issues.is_empty(),
             "AMIR validation failed for {name}: {amir_issues:?}"
@@ -576,7 +575,9 @@ func main(): int {
                 .unwrap_or(false)
         })
         .expect("local x");
-    let use_sp = x.use_span.expect("use_span must be set after path load of x");
+    let use_sp = x
+        .use_span
+        .expect("use_span must be set after path load of x");
     assert!(
         use_sp.start != use_sp.end,
         "use_span must be non-empty, got {use_sp:?}"

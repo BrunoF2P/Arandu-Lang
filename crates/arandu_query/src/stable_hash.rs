@@ -5,8 +5,8 @@
 
 use arandu_middle::{Diagnostic, ResolutionResult, SymbolId};
 use arandu_parser::{ParseError, Program};
-use arandu_semantics::TypeCheckResult;
 use arandu_semantics::amir::AmirProgram;
+use arandu_semantics::TypeCheckResult;
 use blake3::Hasher;
 
 /// Types that can be content-addressed for [`super::HashEq`].

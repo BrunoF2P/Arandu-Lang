@@ -300,7 +300,7 @@ mod tests {
                 crate::amir::AmirLocal {
                     id: crate::amir::LocalId::from_usize(0),
                     ty: intern_ty(ArType::Primitive(Primitive::Bool)),
-            is_memory: false,
+                    is_memory: false,
                     symbol: None,
                     span: arandu_lexer::Span::new(0, 0, 0),
                     use_span: None,
@@ -308,7 +308,7 @@ mod tests {
                 crate::amir::AmirLocal {
                     id: crate::amir::LocalId::from_usize(1),
                     ty: intern_ty(ArType::Primitive(Primitive::Bool)),
-            is_memory: false,
+                    is_memory: false,
                     symbol: None,
                     span: arandu_lexer::Span::new(0, 0, 0),
                     use_span: None,
@@ -458,7 +458,7 @@ mod tests {
                 crate::amir::AmirLocal {
                     id: crate::amir::LocalId::from_usize(0),
                     ty: intern_ty(ArType::Primitive(Primitive::Bool)),
-            is_memory: false,
+                    is_memory: false,
                     symbol: None,
                     span: arandu_lexer::Span::new(0, 0, 0),
                     use_span: None,
@@ -466,7 +466,7 @@ mod tests {
                 crate::amir::AmirLocal {
                     id: crate::amir::LocalId::from_usize(1),
                     ty: intern_ty(ArType::Primitive(Primitive::Bool)),
-            is_memory: false,
+                    is_memory: false,
                     symbol: None,
                     span: arandu_lexer::Span::new(0, 0, 0),
                     use_span: None,

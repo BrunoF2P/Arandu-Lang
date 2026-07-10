@@ -127,9 +127,9 @@ func main() {
     let resolution = resolve_for_test(0, &program);
     let tc = type_check(resolution, &program);
     assert!(
-        tc.diagnostics.iter().any(|d| {
-            d.message.contains("string interpolation requires `str`")
-        }),
+        tc.diagnostics
+            .iter()
+            .any(|d| { d.message.contains("string interpolation requires `str`") }),
         "expected str-only interp diagnostic, got {:?}",
         tc.diagnostics
     );

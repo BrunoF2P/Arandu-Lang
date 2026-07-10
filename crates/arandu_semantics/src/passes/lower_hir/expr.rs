@@ -57,9 +57,7 @@ fn expr_type_for_kind(
 
     match kind {
         HirExprKind::Error => ArType::Error,
-        HirExprKind::Str(_) | HirExprKind::StringInterp { .. } => {
-            ArType::Primitive(Primitive::Str)
-        }
+        HirExprKind::Str(_) | HirExprKind::StringInterp { .. } => ArType::Primitive(Primitive::Str),
         HirExprKind::Int(_) => ArType::IntLiteral,
         HirExprKind::Float(_) => ArType::FloatLiteral,
         HirExprKind::Bool(_) => ArType::Primitive(Primitive::Bool),
@@ -472,7 +470,9 @@ pub(crate) fn lower_expr_raw(
                     arandu_parser::StringPart::Text { text, .. } => {
                         hir_parts.push(HirStringPart::Text(text.to_string()));
                     }
-                    arandu_parser::StringPart::Expr { expr: inner_expr, .. } => {
+                    arandu_parser::StringPart::Expr {
+                        expr: inner_expr, ..
+                    } => {
                         has_expr = true;
                         let lowered = lower_expr(type_check, pool, hir_pool, *inner_expr)?;
                         hir_parts.push(HirStringPart::Expr(lowered));

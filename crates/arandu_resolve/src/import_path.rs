@@ -68,7 +68,12 @@ mod tests {
     fn module_alias_std_core() {
         let import = ImportDecl::ModuleAlias {
             span: span(),
-            path: vec![SmolStr::new("std"), SmolStr::new("core"), SmolStr::new("mem")].into(),
+            path: vec![
+                SmolStr::new("std"),
+                SmolStr::new("core"),
+                SmolStr::new("mem"),
+            ]
+            .into(),
             alias: SmolStr::new("mem"),
         };
         // path joined with / → std/core/mem → stdlib rewrite

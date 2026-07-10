@@ -268,10 +268,7 @@ pub(super) fn synth_call_expr(
                                     span,
                                 )
                                 .with_label(field_span, "call target is here")
-                                .with_label(
-                                    span,
-                                    format!("{} arguments provided", arg_ids.len()),
-                                ),
+                                .with_label(span, format!("{} arguments provided", arg_ids.len())),
                             );
                         }
                         for (i, arg_id) in arg_ids.iter().copied().enumerate() {
