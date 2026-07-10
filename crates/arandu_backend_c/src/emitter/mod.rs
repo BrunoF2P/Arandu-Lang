@@ -80,8 +80,11 @@ impl<'a> CEmitter<'a> {
     /// Emits all type definitions, string literal globals, and function bodies,
     /// then returns the complete C source as a `String`.
     pub fn emit(mut self) -> String {
-        self.emit_headers();
-        self.emit_str_literals();
+        let needs_str = self.program_uses_str();
+        self.emit_headers(needs_str);
+        if needs_str {
+            self.emit_str_literals();
+        }
 
         for func in &self.program.funcs {
             let ret = self.interner.resolve(func.return_type);
@@ -102,16 +105,58 @@ impl<'a> CEmitter<'a> {
         self.output
     }
 
-    fn emit_headers(&mut self) {
+    /// Whether any local/temp/return or pool entry needs the ArStr runtime.
+    fn program_uses_str(&self) -> bool {
+        use arandu_middle::types::{ArType, Primitive};
+        if self
+            .program
+            .literal_pool
+            .entries
+            .iter()
+            .any(|e| matches!(e, AmirLiteralEntry::Str(_)))
+        {
+            return true;
+        }
+        for func in &self.program.funcs {
+            let ret = self.interner.resolve(func.return_type);
+            if matches!(ret, ArType::Primitive(Primitive::Str)) {
+                return true;
+            }
+            for local in &func.locals {
+                if matches!(
+                    self.interner.resolve(local.ty),
+                    ArType::Primitive(Primitive::Str)
+                ) {
+                    return true;
+                }
+            }
+            for temp in &func.temps {
+                if matches!(
+                    self.interner.resolve(temp.ty),
+                    ArType::Primitive(Primitive::Str)
+                ) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn emit_headers(&mut self, needs_str: bool) {
         writeln!(&mut self.output, "#include <stdint.h>").unwrap();
         writeln!(&mut self.output, "#include <stdbool.h>").unwrap();
         writeln!(&mut self.output, "#include <stdlib.h>").unwrap();
-        writeln!(&mut self.output, "#include <string.h>").unwrap();
-        writeln!(&mut self.output, "#include <stdarg.h>").unwrap();
+        if needs_str {
+            writeln!(&mut self.output, "#include <string.h>").unwrap();
+            writeln!(&mut self.output, "#include <stdarg.h>").unwrap();
+        }
         writeln!(&mut self.output, "#ifndef AR_UNREACHABLE").unwrap();
         writeln!(&mut self.output, "#define AR_UNREACHABLE() abort()").unwrap();
         writeln!(&mut self.output, "#endif").unwrap();
         writeln!(&mut self.output).unwrap();
+        if !needs_str {
+            return;
+        }
         // ArStr = LayoutEngine fat pointer: { ptr, len:usize } (target-dependent width).
         let len_c_ty = if self.layout.pointer_width() == 4 {
             "int32_t"
@@ -159,6 +204,16 @@ impl<'a> CEmitter<'a> {
         writeln!(&mut self.output, "    return ar_str_pack(buf, total);").unwrap();
         writeln!(&mut self.output, "}}").unwrap();
         writeln!(&mut self.output).unwrap();
+    }
+
+    /// C linkage name for a function's return type (`main` is always `int`).
+    fn c_func_return_type(&self, func: &AmirFunc) -> String {
+        let name = sanitize_c_ident(&self.symbols.get(func.symbol).name);
+        if name == "main" {
+            return "int".to_string();
+        }
+        let ret = self.interner.resolve(func.return_type);
+        self.format_type(&ret)
     }
 
     fn emit_str_literals(&mut self) {
@@ -218,8 +273,7 @@ impl<'a> CEmitter<'a> {
 
     fn emit_func_decl(&mut self, func: &AmirFunc) {
         let name = sanitize_c_ident(&self.symbols.get(func.symbol).name);
-        let ret = self.interner.resolve(func.return_type);
-        let ret_ty = self.format_type(&ret);
+        let ret_ty = self.c_func_return_type(func);
         write!(&mut self.output, "{} {}(", ret_ty, name).unwrap();
         for (i, param) in func.params.iter().enumerate() {
             if i > 0 {
@@ -237,8 +291,7 @@ impl<'a> CEmitter<'a> {
 
     fn emit_func(&mut self, func: &AmirFunc) {
         let name = sanitize_c_ident(&self.symbols.get(func.symbol).name);
-        let ret = self.interner.resolve(func.return_type);
-        let ret_ty = self.format_type(&ret);
+        let ret_ty = self.c_func_return_type(func);
         write!(&mut self.output, "{} {}(", ret_ty, name).unwrap();
         for (i, param) in func.params.iter().enumerate() {
             if i > 0 {
@@ -467,9 +520,37 @@ impl<'a> CEmitter<'a> {
             }
         }
 
+        // Labels only for blocks that are jump targets (avoids -Wunused-label).
+        let mut jump_targets = rustc_hash::FxHashSet::default();
+        for block in &func.blocks {
+            match &block.terminator {
+                AmirTerminator::Goto { target, .. } => {
+                    jump_targets.insert(target.as_usize());
+                }
+                AmirTerminator::Branch {
+                    if_true, if_false, ..
+                } => {
+                    jump_targets.insert(if_true.as_usize());
+                    jump_targets.insert(if_false.as_usize());
+                }
+                AmirTerminator::SwitchInt {
+                    targets, otherwise, ..
+                } => {
+                    for (_, t, _) in targets {
+                        jump_targets.insert(t.as_usize());
+                    }
+                    jump_targets.insert(otherwise.0.as_usize());
+                }
+                AmirTerminator::Return | AmirTerminator::Unreachable => {}
+            }
+        }
+
         // Emit blocks
         for block in &func.blocks {
-            writeln!(&mut self.output, "bb{}:", block.id.as_usize()).unwrap();
+            let bid = block.id.as_usize();
+            if jump_targets.contains(&bid) {
+                writeln!(&mut self.output, "bb{bid}:").unwrap();
+            }
             for stmt in func.block_stmts(block.id) {
                 self.emit_stmt(stmt, func);
             }

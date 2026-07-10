@@ -93,8 +93,9 @@ fn parse_and_check(
 
 fn usage_and_exit() -> ! {
     eprintln!(
-        "usage: arandu_cli <lex|parse|check|hir|amir|run|graph> <path> [--debug] [--opt] [--parallel]"
+        "usage: arandu_cli <lex|parse|check|hir|amir|run|emit-c|graph> <path> [--debug] [--opt] [--parallel]"
     );
+    eprintln!("       emit-c options: --layout=host|ptr4|i686  (default: host)");
     eprintln!("       -Z flags: -Ztime-passes  -Zprofile-queries  -Zprint-alloc-stats  -Zdump-mir");
     eprintln!(
         "                : -Zdebug-parser -Zdebug-typeck -Zdebug-ossa -Zdebug-layout -Zdebug-backend -Zdebug-all"
@@ -102,6 +103,25 @@ fn usage_and_exit() -> ! {
     eprintln!("                : -Zself-profile=<path>");
 
     process::exit(2);
+}
+
+fn parse_data_layout(flags: &[String]) -> arandu_middle::layout::DataLayout {
+    use arandu_middle::layout::DataLayout;
+    for f in flags {
+        if let Some(rest) = f.strip_prefix("--layout=") {
+            return match rest {
+                "host" => DataLayout::host(),
+                "ptr4" | "32" => DataLayout::ptr_width(4),
+                "i686" | "i686-sysv" => DataLayout::i686_sysv(),
+                "ptr8" | "64" => DataLayout::ptr_width(8),
+                other => {
+                    eprintln!("unknown --layout={other} (use host|ptr4|ptr8|i686)");
+                    process::exit(2);
+                }
+            };
+        }
+    }
+    DataLayout::host()
 }
 
 fn find_aru_files(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
@@ -125,6 +145,7 @@ fn main() {
     let mut parallel = false;
     let mut args = Vec::new();
     let mut z_flags: Vec<String> = Vec::new();
+    let mut layout_flags: Vec<String> = Vec::new();
 
     for arg in env::args() {
         match arg.as_str() {
@@ -132,9 +153,11 @@ fn main() {
             "--opt" => opt = true,
             "--parallel" => parallel = true,
             s if s.starts_with("-Z") => z_flags.push(arg.clone()),
+            s if s.starts_with("--layout=") => layout_flags.push(arg.clone()),
             _ => args.push(arg),
         }
     }
+    let data_layout = parse_data_layout(&layout_flags);
 
     // Initialise global perf flags (written once, read-only afterwards).
     arandu_base::init_z_flags(&z_flags);
@@ -151,7 +174,7 @@ fn main() {
 
     if !matches!(
         command.as_str(),
-        "lex" | "parse" | "check" | "hir" | "amir" | "run" | "graph"
+        "lex" | "parse" | "check" | "hir" | "amir" | "run" | "emit-c" | "graph"
     ) {
         usage_and_exit();
     }
@@ -177,7 +200,7 @@ fn main() {
     let use_parallel = parallel || paths.len() > 1;
 
     if use_parallel {
-        if matches!(command.as_str(), "lex" | "parse" | "run") {
+        if matches!(command.as_str(), "lex" | "parse" | "run" | "emit-c") {
             eprintln!(
                 "parallel/multi-file mode is not supported for command '{}'",
                 command
@@ -217,6 +240,7 @@ fn main() {
                         filepath: String,
                         source: String,
                         db: arandu_query::db::DatabaseImpl| {
+        let data_layout = data_layout;
         match command.as_str() {
             "lex" => match arandu_lexer::lex_to_string(&source) {
                 Ok(output) => println!("{output}"),
@@ -396,6 +420,42 @@ fn main() {
                     }
                 }
             }
+            "emit-c" => {
+                let mut checked = {
+                    arandu_base::time_pass!("parse+check");
+                    parse_and_check(&db, source_file, &filepath)
+                };
+                let hir = {
+                    arandu_base::time_pass!("lower-hir");
+                    match arandu_semantics::lower_to_hir(&mut checked.type_check, &checked.program)
+                    {
+                        Ok(hir) => hir,
+                        Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
+                    }
+                };
+                validate_hir_and_analyze(&hir, &checked.type_check, &filepath);
+
+                let mut amir = {
+                    arandu_base::time_pass!("lower-amir");
+                    let amir_program = arandu_query::passes::lower_amir(&db, source_file);
+                    (*amir_program).clone()
+                };
+                if opt {
+                    arandu_base::time_pass!("optimize-amir");
+                    arandu_semantics::optimize_amir(&mut amir);
+                }
+
+                arandu_base::time_pass!("emit-c");
+                let c_src = arandu_backend_c::emit_c(
+                    &amir,
+                    &checked.type_check.symbols,
+                    &checked.type_check.type_info,
+                    &checked.type_check.type_info.type_interner,
+                    data_layout,
+                );
+                print!("{c_src}");
+            }
+
             "graph" => {
                 use arandu_query::db::ArandCompilerDb;
                 let dep_graph = arandu_query::passes::module_dependency_graph(&db, source_file);

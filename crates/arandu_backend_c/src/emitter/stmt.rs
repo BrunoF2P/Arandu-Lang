@@ -47,8 +47,16 @@ impl<'a> CEmitter<'a> {
     pub(super) fn emit_terminator(&mut self, term: &AmirTerminator, func: &AmirFunc) {
         match term {
             AmirTerminator::Return => {
+                let name = super::sanitize_c_ident(&self.symbols.get(func.symbol).name);
                 let ret = self.interner.resolve(func.return_type);
-                if matches!(ret, ArType::Void) {
+                if name == "main" {
+                    // ISO C requires `int main`; void Arandu main becomes `return 0`.
+                    if matches!(ret, ArType::Void) {
+                        writeln!(&mut self.output, "    return 0;").unwrap();
+                    } else {
+                        writeln!(&mut self.output, "    return (int)t0;").unwrap();
+                    }
+                } else if matches!(ret, ArType::Void) {
                     writeln!(&mut self.output, "    return;").unwrap();
                 } else {
                     writeln!(&mut self.output, "    return t0;").unwrap();

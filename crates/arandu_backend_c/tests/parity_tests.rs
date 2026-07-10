@@ -1,9 +1,8 @@
 #![cfg(target_pointer_width = "64")]
 
-use arandu_backend_c::CEmitter;
 use arandu_backend_cranelift::CraneliftBackend;
 use arandu_middle::amir::AmirProgram;
-use arandu_middle::layout::LayoutEngine;
+use arandu_middle::layout::{DataLayout, LayoutEngine};
 use arandu_semantics::{
     CodegenBackend, TypeCheckResult, lower_to_amir, lower_to_hir, resolve_for_test, type_check,
 };
@@ -41,15 +40,13 @@ fn execute_cranelift(amir: &AmirProgram, tc: &TypeCheckResult) -> i32 {
 
 fn emit_c(amir: &AmirProgram, tc: &TypeCheckResult) -> String {
     // Host parity only; Cranelift is host-only — see solidification matrix.
-    let layout_engine = LayoutEngine::host();
-    CEmitter::new(
+    arandu_backend_c::emit_c(
         amir,
         &tc.symbols,
-        &layout_engine,
         &tc.type_info,
         &tc.type_info.type_interner,
+        arandu_middle::layout::DataLayout::host(),
     )
-    .emit()
 }
 
 fn test_execution_parity(name: &str, src: &str) {
@@ -348,15 +345,13 @@ fn c_emit_arstr_layout_32bit() {
     }
     "#;
     let (amir, tc) = compile_src(src);
-    let layout = LayoutEngine::from_data_layout(arandu_middle::layout::DataLayout::ptr_width(4));
-    let c = CEmitter::new(
+    let c = arandu_backend_c::emit_c(
         &amir,
         &tc.symbols,
-        &layout,
         &tc.type_info,
         &tc.type_info.type_interner,
-    )
-    .emit();
+        DataLayout::ptr_width(4),
+    );
     assert!(
         c.contains("typedef struct { const uint8_t *ptr; int32_t len; } ArStr;"),
         "expected 32-bit ArStr, headers:\n{}",
@@ -374,16 +369,13 @@ fn c_emit_arstr_i686_sysv() {
     }
     "#;
     let (amir, tc) = compile_src(src);
-    let layout =
-        LayoutEngine::from_data_layout(arandu_middle::layout::DataLayout::i686_sysv());
-    let c = CEmitter::new(
+    let c = arandu_backend_c::emit_c(
         &amir,
         &tc.symbols,
-        &layout,
         &tc.type_info,
         &tc.type_info.type_interner,
-    )
-    .emit();
+        DataLayout::i686_sysv(),
+    );
     assert!(
         c.contains("typedef struct { const uint8_t *ptr; int32_t len; } ArStr;"),
         "i686 ArStr: {}",
