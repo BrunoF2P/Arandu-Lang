@@ -89,6 +89,21 @@ struct SliceLayout {
 - **64-bit Target**: `size = 16`, `align = 8`, field offsets: `ptr` at offset `0`, `len` at offset `8`.
 - **32-bit Target**: `size = 8`, `align = 4`, field offsets: `ptr` at offset `0`, `len` at offset `4`.
 
+### Generational reference (`GenRef`) — F2.3.runtime
+
+See **`docs/arandu-genref-abi-rfc-v0.1.md`**. Summary:
+
+```text
+struct GenRef {
+    index: u32,        // offset 0
+    generation: u32,   // offset 4
+}
+// size = 8, align = 4 on all targets
+```
+
+Not a `(ptr, len)` fat pointer. Payload lives in `std.alloc.gen_arena` slots.
+Mismatch on use → `std.core.intrinsics.abort_generational_mismatch` (trap, not UB).
+
 ---
 
 ## 4. Enums and Sum Types (`Result<T, E>` and `Option<T>`)

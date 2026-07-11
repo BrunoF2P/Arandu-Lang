@@ -90,7 +90,7 @@ arandu_core
  ├─ borrow       # Abstrações de empréstimo (Borrow, BorrowMut)
  ├─ fmt          # Formatação e diagnostics de baixo nível (Debug, Display, formatting engines)
  ├─ panic        # Handlers básicos de pânico e asserções estáticas
- ├─ intrinsics   # Mapeamento 1:1 para instruções intrínsecas do compilador
+ ├─ intrinsics   # abort, abort_generational_mismatch (traps; zero heap)
  ├─ simd         # Tipos vetoriais e primitivas portáveis de SIMD (Fase A7)
  ├─ atomic       # Tipos atômicos puros suportados pelo hardware
  └─ arch         # Especificações arquiteturais específicas (x86_64, AArch64, RISC-V)
@@ -111,6 +111,7 @@ arandu_alloc
  ├─ allocator_api      # Traits para custom allocators (Arena, Slab, Bump, Global)
  ├─ arena              # Alocadores do tipo Bump, Growable Arena, Scratch Arenas
  ├─ slab               # Alocadores de tamanho fixo com reciclagem rápida por Free Lists
+ ├─ gen_arena          # GenSlot / GenRef / GenArena — fallback geracional F2.3 (não em core)
  ├─ rc                 # Referência compartilhada thread-local (Reference Counting)
  ├─ arc                # Referência compartilhada thread-safe (Atomic Reference Counting)
  ├─ boxed              # Ponteiro exclusivo alocado na heap (`Box<T>`)
@@ -121,6 +122,10 @@ arandu_alloc
  ├─ bitset             # Primitivas e estruturas genéricas de conjuntos de bits (dense arrays, roaring bitmaps)
  └─ arena_collections  # Coleções otimizadas para viver estritamente dentro de Arenas
 ```
+
+> **F2.3 / GenRef:** `gen_arena` is the only place dynamic generational tables live.
+> Trap on mismatch is `std.core.intrinsics.abort_generational_mismatch`.
+> Compiler ABI: `docs/arandu-genref-abi-rfc-v0.1.md`.
 
 ### Filosofia de Alocadores Customizados
 Diferente de linguagens tradicionais onde todas as coleções apontam implicitamente para um único alocador global, todas as estruturas em `arandu_alloc` suportam um parâmetro genérico opcional de alocador:

@@ -1,0 +1,83 @@
+// arandu_alloc::gen_arena — generational slots (F2.3.runtime prerequisite).
+//
+// Lives in alloc (not core): free-list + dynamic slots are heap/arena tier.
+// See docs/arandu-genref-abi-rfc-v0.1.md for ABI and compiler contract.
+//
+// Status: API skeleton. Full Vec-backed tables and compiler GenRef lowering
+// land with F2.3.runtime; until then this documents the surface language types.
+
+module std.alloc.gen_arena
+
+import std.core.intrinsics as intrinsics
+import std.core.option as option
+import std.alloc.allocator_api as allocApi
+
+/// Fat handle: slot index + remembered generation (8 bytes on all targets).
+/// Not interchangeable with ptr[T] or &T without compiler promotion.
+public struct GenRef {
+    index: u32
+    generation: u32
+}
+
+/// One arena entry. `value` empty after remove; generation still identifies the epoch.
+public struct GenSlot<T> {
+    value: option.Option<T>
+    generation: u32
+}
+
+/// Recyclable generational arena (slab-like free list + gen bump on recycle).
+///
+/// Default store is language-level; host JIT may mirror this layout in Rust
+/// until self-host. Compiler emits GenInsert/GenGet/GenRemove against this API.
+public struct GenArena<T, A: allocApi.Allocator> {
+    // Implementation of contiguous storage is deferred to F2.3.runtime
+    // (Vec<GenSlot<T>> + free_list). Fields left for ABI discussion:
+    //   slots, free_list, allocator
+    _pad: u8
+    allocator: A
+}
+
+public func new<T>() : GenArena<T, allocApi.GlobalAllocator> {
+    return GenArena<T, allocApi.GlobalAllocator> {
+        _pad: 0 as u8,
+        allocator: allocApi.GlobalAllocator{},
+    }
+}
+
+public func newIn<T, A: allocApi.Allocator>(allocator: A) : GenArena<T, A> {
+    return GenArena<T, A> {
+        _pad: 0 as u8,
+        allocator: allocator,
+    }
+}
+
+/// Insert `value`; returns a GenRef valid until remove (or recycle of that index).
+/// Compiler: maps to GenInsert after escape promotion.
+func GenArena.insert<T, A: allocApi.Allocator>(mut self, value: T) : GenRef {
+    // TODO(F2.3.runtime): free_list pop or push_back slot; set generation.
+    // Stub: invalid ref — must not be called until runtime lands.
+    return GenRef { index: 0 as u32, generation: 0 as u32 }
+}
+
+/// Drop ownership of the slot if `r.generation` still matches; else None.
+/// Compiler: maps to GenRemove / Destroy of promoted locals.
+func GenArena.remove<T, A: allocApi.Allocator>(mut self, r: GenRef) : option.Option<T> {
+    // TODO(F2.3.runtime): generation check + free_list push + take value.
+    return option.Option.None
+}
+
+/// Load payload; **aborts** (not UB) if generation mismatches.
+/// Compiler: maps to GenGet before Load/Field through a GenRef.
+func GenArena.get<T, A: allocApi.Allocator>(shared self, r: GenRef) : T {
+    // TODO(F2.3.runtime): real slot lookup.
+    // Always treat stub as mismatch so accidental use fails closed.
+    intrinsics.abort_generational_mismatch()
+    // unreachable
+    return value_unreachable_after_abort<T>()
+}
+
+// Placeholder to keep type-check happy if abort is not yet terminal in typeck.
+func value_unreachable_after_abort<T>() : T {
+    intrinsics.abort()
+    return value_unreachable_after_abort<T>()
+}
