@@ -275,16 +275,46 @@ impl LowerCtx<'_> {
         }
     }
 
-    /// A3.1: end the current block at an `await` frontier and continue in a fresh resume BB.
+    /// A3.1/A3.5: end the current block at an `await` frontier and continue in `resume`.
     ///
-    /// `future` is the coroutine being driven; `args` are live state carried as resume
-    /// block params (empty for now — SSA `current_def` still flows via incomplete phis;
-    /// explicit capture from liveness is A3.1 hardening). Returns the resume block id.
+    /// **Dense live capture (gold design):** every local that currently has a definition
+    /// in this function (`Available` + a `current_def` in the suspend block) is forced
+    /// onto the resume block as a block param *before* building terminator args. That
+    /// makes `Suspend.args` the explicit coroutine state at the frontier (same shape
+    /// as `goto bb_resume(x, y, …)`), not an empty edge relying only on later phis.
+    ///
+    /// Over-approx vs true liveness is intentional for lower-time (no full dataflow
+    /// yet); unused captures are cheap SSA params that later DCE can drop.
     pub(crate) fn emit_suspend(
         &mut self,
         future: AmirOperand,
         resume: BlockId,
     ) -> Result<(), Diagnostic> {
+        let Some(curr) = self.current_block else {
+            return Err(Diagnostic::ice(
+                crate::DiagCode::ICEGEN001,
+                "AMIR lower: emit_suspend without current block",
+                self.diag_span(self.current_span),
+            ));
+        };
+        // Seed resume params for locals defined on this path (coroutine state slots).
+        let n_locals = self.locals.len();
+        for i in 0..n_locals {
+            let local = LocalId::from_usize(i);
+            if !matches!(self.local_states.get(i), Some(MoveState::Available)) {
+                continue;
+            }
+            // Only capture if we have a def reaching this block (skip never-written).
+            if !self.current_def.contains_key(&(curr, local)) {
+                // Also try recursive read — may still be live via pred.
+                // Avoid creating params for completely unused locals: require
+                // either current_def here or a use after would need it.
+                // Conservative: only current_def at suspend block.
+                continue;
+            }
+            // Unsealed resume → incomplete phi / block param for `local`.
+            let _ = self.read_variable(resume, local);
+        }
         let args = self.build_target_args(resume);
         self.set_terminator(AmirTerminator::Suspend {
             future,
@@ -728,11 +758,29 @@ impl LowerCtx<'_> {
         val
     }
 
+    /// A3.5: resume blocks of `Suspend` keep explicit state params (do not
+    /// fold away as trivial phis) so `Suspend.args` remains the task state.
+    fn is_suspend_resume_target(&self, block: BlockId) -> bool {
+        let Some(preds) = self.predecessors.get(&block) else {
+            return false;
+        };
+        preds.iter().any(|pred| {
+            matches!(
+                &self.blocks[pred.as_usize()].terminator,
+                AmirTerminator::Suspend { resume, .. } if *resume == block
+            )
+        })
+    }
+
     pub(crate) fn eliminate_trivial_phis(&mut self) {
         loop {
             let mut changed = false;
             for block_idx in 0..self.blocks.len() {
                 let block_id = BlockId::from_usize(block_idx);
+                // Keep coroutine state slots materialised on resume BBs.
+                if self.is_suspend_resume_target(block_id) {
+                    continue;
+                }
                 let params = self.blocks[block_idx].params.clone();
                 for (param_idx, p) in params.into_iter().enumerate() {
                     if self.redirected_temps.contains_key(&p.id) {
@@ -798,6 +846,10 @@ impl LowerCtx<'_> {
     pub(crate) fn prune_eliminated_parameters(&mut self) {
         for block_idx in 0..self.blocks.len() {
             let block_id = BlockId::from_usize(block_idx);
+            // A3.5: never drop resume block params of a Suspend frontier.
+            if self.is_suspend_resume_target(block_id) {
+                continue;
+            }
             let old_params = std::mem::take(&mut self.blocks[block_idx].params);
             let mut keep_indices = Vec::new();
             let mut new_params = Vec::new();

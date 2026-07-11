@@ -1207,6 +1207,52 @@ func main(): int {
     );
 }
 
+/// A3.5: Suspend.args carries live non-constant locals (dense state at frontier).
+/// AMIR-only (no JIT). Constants may be folded out of params after phi simplify.
+#[test]
+fn check_a3_5_suspend_captures_live_local() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_a35_capture.aru");
+    fs::write(
+        &file,
+        r#"module tests.cli.a35_capture
+
+async func tick(): int {
+    return 1
+}
+
+async func outer(seed: int): int {
+    let a = seed
+    let _p = &a
+    let b = await tick()
+    return a + b + *_p
+}
+
+func main(): int {
+    return 0
+}
+"#,
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+    let amir = run_cli(&["amir", &path]);
+    assert!(
+        amir.status.success(),
+        "amir stderr:\n{}",
+        String::from_utf8_lossy(&amir.stderr)
+    );
+    let amir_out = String::from_utf8_lossy(&amir.stdout);
+    // Expect suspend with captured arg(s), e.g. `suspend _1 → bb1(_2)` or `bb1(…)`
+    let has_suspend_args = amir_out.lines().any(|l| {
+        let t = l.trim();
+        t.starts_with("suspend") && t.contains('(') && t.contains(')')
+    });
+    assert!(
+        has_suspend_args,
+        "expected suspend with captured state args, got:\n{amir_out}"
+    );
+}
+
 /// A3.1: `await` inside `async func` splits CFG with `suspend → resume`.
 #[test]
 fn run_a3_1_suspend_split_exits_11() {
