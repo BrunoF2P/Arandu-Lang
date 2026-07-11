@@ -159,7 +159,7 @@ Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
    ├─ [x] T3.5   Contrato parser: import_module + import_module_alias_path
    └─ [x] T3.6   LSP complete em path tokens `import std.▮` + members `alias.▮` (W4)
 [→] SL_S   Stdlib de Sistema: multi-file HIR link + `std.path` runnable; host path/rt helpers; more OS API later
-[→] SL_R   Async Runtime: design lock + SL_R.0 host (`ar_rt_spawn/join/block_on`) + `std.runtime` SyncExecutor wrappers; reactor/OS later
+[→] SL_R   Async Runtime: SL_R.0 typed spawn/join/block_on Coroutine + SyncExecutor; SL_R.2 EpollReactor (epoll+timerfd); SL_R.1/3 open
 [ ] SL_T   Testing Harness: arandu_std::testing (test runner integrado e benchmark engine)
 
 Fase 4 — Expressividade de Linguagem e Tipagem (v0.35) · [NÃO INICIADA]

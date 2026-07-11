@@ -1,14 +1,15 @@
 module std.runtime
 
-/// SL_R.0 — cooperative async **library** runtime (explicit executor, no global).
+/// SL_R — cooperative async **library** runtime (explicit executor / reactor).
 ///
 /// Design: docs/arandu-async-runtime-design-v0.1.md
 /// - `await` / `Coroutine[T]` = compiler (A3)
-/// - this module = optional multi-task drive (host i64 MVP)
+/// - this module = multi-task drive + OS reactor (optional import)
 ///
-/// Host symbols (`ar_rt_*`) are linked by the Cranelift JIT. Bodies of wrappers
-/// are linked into the entry unit via multi-file HIR.
+/// Host symbols (`ar_rt_*`) are linked by the Cranelift JIT. Bodies are linked
+/// into the entry unit via multi-file HIR.
 
+// ── Host: SyncExecutor queue (i64 payload MVP) ─────────────────────────────
 extern "C" {
     func ar_rt_block_on_i64(state: ptr[u8]): int
     func ar_rt_spawn_i64(state: ptr[u8]): int
@@ -16,9 +17,27 @@ extern "C" {
     func ar_rt_cancel_i64(handle: int): void
 }
 
+// ── Host: SL_R.2 reactor (epoll + timerfd on Linux) ────────────────────────
+extern "C" {
+    func ar_rt_reactor_create(): int
+    func ar_rt_reactor_destroy(id: int): void
+    func ar_rt_reactor_sleep_ms(id: int, ms: int): int
+    func ar_rt_reactor_arm_timer_ms(id: int, ms: int): int
+    func ar_rt_reactor_poll_ms(id: int, timeout_ms: int): int
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SL_R.0 — SyncExecutor + typed Coroutine surface
+// ═══════════════════════════════════════════════════════════════════════════
+
 /// Explicit executor value — never a process-wide singleton.
 public struct SyncExecutor {
     flags: int
+}
+
+/// Opaque join handle for a spawned task (int payload MVP).
+public struct TaskHandle {
+    id: int
 }
 
 /// Construct a SyncExecutor (free function for reliable cross-module export).
@@ -26,16 +45,16 @@ public func new_sync_executor(): SyncExecutor {
     return SyncExecutor { flags: 0 }
 }
 
-/// Drive one coroutine state to Ready (i64 payload MVP).
-///
-/// `shared ex` keeps the executor reusable (explicit value, not moved away).
+// ── Low-level (state blob = ptr[u8]) ───────────────────────────────────────
+
+/// Drive one coroutine state blob to Ready (i64 payload MVP).
 public func block_on_i64(shared ex: SyncExecutor, state: ptr[u8]): int {
     unsafe {
         return ar_rt_block_on_i64(state)
     }
 }
 
-/// Park a coroutine; returns an opaque handle for `join_i64`.
+/// Park a state blob; returns an opaque handle for `join_i64`.
 public func spawn_i64(shared ex: SyncExecutor, state: ptr[u8]): int {
     unsafe {
         return ar_rt_spawn_i64(state)
@@ -53,5 +72,85 @@ public func join_i64(shared ex: SyncExecutor, handle: int): int {
 public func cancel_i64(shared ex: SyncExecutor, handle: int): void {
     unsafe {
         ar_rt_cancel_i64(handle)
+    }
+}
+
+// ── Typed surface: Coroutine<int> (A3 ABI = state pointer) ─────────────────
+//
+// `Coroutine[T]` is a state-blob pointer at runtime. Cast to `ptr[u8]` is the
+// ABI bridge into host `ar_rt_*` (allowed by typeck for this pair only).
+
+/// Drive `job` to completion; returns the `int` payload.
+public func block_on_int(shared ex: SyncExecutor, job: Coroutine<int>): int {
+    unsafe {
+        return ar_rt_block_on_i64(job as ptr[u8])
+    }
+}
+
+/// Spawn `job` onto the executor queue; join with `join_int`.
+public func spawn_int(shared ex: SyncExecutor, job: Coroutine<int>): TaskHandle {
+    unsafe {
+        let id = ar_rt_spawn_i64(job as ptr[u8])
+        return TaskHandle { id: id }
+    }
+}
+
+/// Join a handle from `spawn_int`; returns the `int` payload.
+public func join_int(shared ex: SyncExecutor, handle: TaskHandle): int {
+    unsafe {
+        return ar_rt_join_i64(handle.id)
+    }
+}
+
+/// Cancel without joining.
+public func cancel_int(shared ex: SyncExecutor, handle: TaskHandle): void {
+    unsafe {
+        ar_rt_cancel_i64(handle.id)
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SL_R.2 — EpollReactor (explicit, no global)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// OS-backed reactor handle (epoll + timerfd on Linux).
+public struct EpollReactor {
+    id: int
+}
+
+/// Create a reactor. `id < 0` means create failed.
+public func new_epoll_reactor(): EpollReactor {
+    unsafe {
+        return EpollReactor { id: ar_rt_reactor_create() }
+    }
+}
+
+/// Free OS resources.
+public func destroy_reactor(shared r: EpollReactor): void {
+    unsafe {
+        ar_rt_reactor_destroy(r.id)
+    }
+}
+
+/// Block until `ms` elapses (timerfd + epoll_wait on Linux).
+/// Returns 0 on success, non-zero on error.
+public func reactor_sleep_ms(shared r: EpollReactor, ms: int): int {
+    unsafe {
+        return ar_rt_reactor_sleep_ms(r.id, ms)
+    }
+}
+
+/// Arm a one-shot timer without blocking.
+public func reactor_arm_timer_ms(shared r: EpollReactor, ms: int): int {
+    unsafe {
+        return ar_rt_reactor_arm_timer_ms(r.id, ms)
+    }
+}
+
+/// Wait for the next event (timer). `timeout_ms`: -1 forever, 0 nonblock.
+/// Returns 1 if timer fired, 0 timeout, -1 error.
+public func reactor_poll_ms(shared r: EpollReactor, timeout_ms: int): int {
+    unsafe {
+        return ar_rt_reactor_poll_ms(r.id, timeout_ms)
     }
 }

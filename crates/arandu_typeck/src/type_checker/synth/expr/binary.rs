@@ -22,7 +22,20 @@ pub(super) fn cast_types_compatible(
     if found.is_numeric() && target.is_numeric() {
         return true;
     }
-    matches!(found, ArType::Ptr(_)) && matches!(target, ArType::Ptr(_))
+    if matches!(found, ArType::Ptr(_)) && matches!(target, ArType::Ptr(_)) {
+        return true;
+    }
+    // A3/SL_R ABI: `Coroutine[T]` is a state-blob pointer at runtime (Cranelift
+    // `clif_type` → pointer). Allow `job as ptr[u8]` so `std.runtime` typed
+    // spawn/block_on can hand the blob to host `ar_rt_*` / `ar_co_*`.
+    if let (ArType::Coroutine(_), ArType::Ptr(inner)) = (found, target) {
+        let inner_ty = interner.resolve(*inner);
+        return matches!(
+            inner_ty,
+            ArType::Primitive(Primitive::Byte) | ArType::Primitive(Primitive::U8)
+        );
+    }
+    false
 }
 
 #[tracing::instrument(level = "trace", target = "arandu_typeck", skip(checker, _expr))]

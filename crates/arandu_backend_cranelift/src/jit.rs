@@ -160,6 +160,27 @@ impl AranduJit {
             "ar_path_is_empty",
             crate::rt_runtime::ar_path_is_empty as *const u8,
         );
+        // SL_R.2 reactor (epoll + timerfd)
+        builder.symbol(
+            "ar_rt_reactor_create",
+            crate::reactor_runtime::ar_rt_reactor_create as *const u8,
+        );
+        builder.symbol(
+            "ar_rt_reactor_destroy",
+            crate::reactor_runtime::ar_rt_reactor_destroy as *const u8,
+        );
+        builder.symbol(
+            "ar_rt_reactor_sleep_ms",
+            crate::reactor_runtime::ar_rt_reactor_sleep_ms as *const u8,
+        );
+        builder.symbol(
+            "ar_rt_reactor_arm_timer_ms",
+            crate::reactor_runtime::ar_rt_reactor_arm_timer_ms as *const u8,
+        );
+        builder.symbol(
+            "ar_rt_reactor_poll_ms",
+            crate::reactor_runtime::ar_rt_reactor_poll_ms as *const u8,
+        );
         let module = JITModule::new(builder);
 
         Ok(Self { module })
@@ -354,6 +375,68 @@ impl AranduJit {
                 .declare_function(name, Linkage::Import, &path_sig)
                 .map_err(|err| codegen_ice(format!("failed to declare {name}: {err:?}")))?;
             func_ids.insert(name.to_string(), id);
+        }
+
+        // SL_R.2 reactor host imports
+        {
+            let mut create_sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+            create_sig
+                .returns
+                .push(cranelift_codegen::ir::AbiParam::new(
+                    cranelift_codegen::ir::types::I64,
+                ));
+            let id = self
+                .module
+                .declare_function("ar_rt_reactor_create", Linkage::Import, &create_sig)
+                .map_err(|err| {
+                    codegen_ice(format!("failed to declare ar_rt_reactor_create: {err:?}"))
+                })?;
+            func_ids.insert("ar_rt_reactor_create".to_string(), id);
+        }
+        {
+            let mut destroy_sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+            destroy_sig
+                .params
+                .push(cranelift_codegen::ir::AbiParam::new(
+                    cranelift_codegen::ir::types::I64,
+                ));
+            let id = self
+                .module
+                .declare_function("ar_rt_reactor_destroy", Linkage::Import, &destroy_sig)
+                .map_err(|err| {
+                    codegen_ice(format!("failed to declare ar_rt_reactor_destroy: {err:?}"))
+                })?;
+            func_ids.insert("ar_rt_reactor_destroy".to_string(), id);
+        }
+        // sleep/arm/poll: (reactor_id: i64, ms: i64) -> i64
+        {
+            let mut two_i64_ret_i64 = cranelift_codegen::ir::Signature::new(default_call_conv);
+            two_i64_ret_i64
+                .params
+                .push(cranelift_codegen::ir::AbiParam::new(
+                    cranelift_codegen::ir::types::I64,
+                ));
+            two_i64_ret_i64
+                .params
+                .push(cranelift_codegen::ir::AbiParam::new(
+                    cranelift_codegen::ir::types::I64,
+                ));
+            two_i64_ret_i64
+                .returns
+                .push(cranelift_codegen::ir::AbiParam::new(
+                    cranelift_codegen::ir::types::I64,
+                ));
+            for name in [
+                "ar_rt_reactor_sleep_ms",
+                "ar_rt_reactor_arm_timer_ms",
+                "ar_rt_reactor_poll_ms",
+            ] {
+                let id = self
+                    .module
+                    .declare_function(name, Linkage::Import, &two_i64_ret_i64)
+                    .map_err(|err| codegen_ice(format!("failed to declare {name}: {err:?}")))?;
+                func_ids.insert(name.to_string(), id);
+            }
         }
 
         // Declare fmod as import

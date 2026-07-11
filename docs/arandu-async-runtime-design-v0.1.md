@@ -1,6 +1,6 @@
 # Arandu — Async Runtime Design (SL_R) v0.1
 
-**Status:** design lock + **SL_R.0 implemented** (host cooperative spawn/join/block_on i64 MVP + `std.runtime` wrappers). Reactor/OS and SL_R.1 supervisor still open. Consumes A3 compiler semantics.
+**Status:** design lock + **SL_R.0 + SL_R.2 implemented** (typed Coroutine spawn/join/block_on, SyncExecutor, EpollReactor with timerfd). SL_R.1 supervisor and SL_R.3 io_uring still open. Consumes A3 compiler semantics.
 
 | Layer | Owns | Does not own |
 |-------|------|----------------|
@@ -21,19 +21,20 @@ This split is intentional and **correct** relative to the Rust and Go extremes.
 **Arandu (locked):**
 
 1. **Semantics in core/compiler** — `Coroutine[T]` + `await` always exist; a program that never `spawn`s needs **no** `std.runtime` import. Drive one coroutine with block_on (A3.6) or a test “sync executor”.
-2. **Concurrency as library** — multi-task queues, timers, sockets live in `arandu_std::runtime`, optional like allocators.
+2. **Concurrency as library** — multi-task queues, timers, sockets live in `std.runtime`, optional like allocators.
 3. **No implicit global executor** — see §2 (effect-handler / explicit Executor).
 
 ---
 
 ## 2. Gold decision 1 — Effect handler, not singleton
 
-**Rule:** `spawn` / `block_on_multi` take an **explicit** `Executor` (value or type param), analogous to `Vec<T, A = GlobalAllocator>`.
+**Rule:** `spawn` / `block_on` take an **explicit** executor (value), analogous to `Vec<T, A = GlobalAllocator>`.
 
 ```text
-// Conceptual surface (SL_R implementation later)
-func spawn<E: Executor, T>(ex: E, job: Coroutine[T]): TaskHandle[T]
-func block_on<E: Executor, T>(ex: E, job: Coroutine[T]): T
+// Implemented surface (int payload MVP; full generic T follows mono/codegen)
+func block_on_int(shared ex: SyncExecutor, job: Coroutine<int>): int
+func spawn_int(shared ex: SyncExecutor, job: Coroutine<int>): TaskHandle
+func join_int(shared ex: SyncExecutor, handle: TaskHandle): int
 ```
 
 Consequences:
@@ -41,28 +42,30 @@ Consequences:
 | Goal | How |
 |------|-----|
 | Unit tests without OS reactor | Pass `SyncExecutor` (run one task to completion, no threads) |
-| Multiple runtimes in one process | Different `Executor` values; no process-wide “the” runtime |
-| Avoid Tokio-vs-async-std split | Libraries depend on `Executor` / `Reactor` **traits** in core or std.runtime.api, not a concrete global |
+| Multiple runtimes in one process | Different `SyncExecutor` / `EpollReactor` values; no process-wide “the” runtime |
+| Avoid Tokio-vs-async-std split | Libraries depend on explicit handles, not a concrete global |
 
 **Anti-pattern (forbidden):** `static RUNTIME: Tokio = …` assumed by every `spawn()`.
 
-`stdlib/std/runtime.aru` exposes `SyncExecutor` / `spawn_i64` / `join_i64` / `block_on_i64` over host `ar_rt_*` (no process-global language runtime).
+**ABI bridge:** at runtime `Coroutine[T]` is a state-blob pointer (A3). Typeck allows `job as ptr[u8]` so host `ar_rt_*` receives the blob without erasing the language type at call sites in user code (stdlib does the cast once).
 
 ---
 
 ## 3. Gold decision 2 — Reactor backends + runtime io_uring detect
 
-Roadmap layout remains valid:
-
 ```text
-std.runtime.reactor
-  trait Reactor { … }
-  epoll | kqueue | iocp | io_uring
+std.runtime
+  EpollReactor          // SL_R.2 — epoll + timerfd (Linux); portable sleep fallback
+  // future: kqueue | iocp | io_uring (SL_R.3 runtime detect)
 ```
 
 **Decision:** prefer **io_uring when the running kernel supports it**, else epoll (Linux). Selection is **runtime**, not a single compile-time target that freezes an old binary to epoll-only forever *or* fails on old kernels.
 
 Windows/macOS keep iocp/kqueue. Same pattern as CPU feature dispatch (A7).
+
+**SL_R.2 shipped:**
+- Host: `ar_rt_reactor_create/destroy/sleep_ms/arm_timer_ms/poll_ms`
+- Language: `EpollReactor`, `new_epoll_reactor`, `reactor_sleep_ms`, `reactor_arm_timer_ms`, `reactor_poll_ms`, `destroy_reactor`
 
 ---
 
@@ -86,33 +89,35 @@ Name: **SL_R.1 — supervised worker isolation** (design item under SL_R, not A3
 
 | A3 artifact | Runtime consumption |
 |-------------|---------------------|
-| `Coroutine[T]` state machine | Polled by Executor until `Poll.Ready` |
-| `Suspend` / resume | Yield to scheduler; register waker with Reactor |
+| `Coroutine[T]` state machine | Polled by Executor until Ready (`block_on_int` / `join_int`) |
+| `Suspend` / resume | Yield to scheduler; timer registration with Reactor (arm/poll) |
 | `RelativeBorrow` / pin-free | Safe to move coroutine heap blob between queues |
-| `block_on` (single) | Remains valid **without** `std.runtime` |
-| `Future[T]` auto-impl (stdlib vision) | Trait for generic spawn bounds; compiler-generated for coroutines |
+| `block_on` (single) | Remains valid **without** `std.runtime` (`await`) |
+| Typed `spawn_int` | Takes `Coroutine<int>` from `async func` / `async {}` |
 
 **Order constraint (unchanged):** SL_R **after** A3 — the runtime schedules objects A3 already produces; it does not define `await`.
 
 ---
 
-## 6. Honesty — what is SL_R.0 vs what remains
+## 6. Honesty — what is done vs what remains
 
-**Done (SL_R.0 MVP):**
-- Host `ar_rt_spawn_i64` / `join_i64` / `block_on_i64` / `cancel_i64` (cooperative, i64 payload).
-- `std.runtime`: `SyncExecutor`, `new_sync_executor`, free wrappers (explicit executor, no singleton).
-- Multi-file HIR link in `lower_amir` so imported module **bodies** (e.g. `std.path`, `std.runtime`) compile into the entry unit; import typeck uses `file_typeck_view` so dependency residuals do not poison entry diagnostics.
+**Done:**
+- SL_R.0: SyncExecutor, TaskHandle, typed `spawn_int` / `join_int` / `block_on_int`, low-level `*_i64` over `ptr[u8]`
+- Multi-file HIR link; import typeck without diagnostic leak into entry
+- SL_R.2: EpollReactor (Linux epoll + timerfd; portable sleep fallback), sleep/arm/poll demos
+- Coroutine → `ptr[u8]` cast (ABI truth)
 
 **Not yet:**
-- Typed `spawn<E, T>(ex, Coroutine[T])` surface (still i64 host MVP).
-- Thread pool, epoll/io_uring reactor, Waker/Context.
-- `std.core.future` beyond `Poll`.
+- Generic `spawn<T>` / non-int payloads
+- Thread pool, Waker/Context trait surface, socket I/O
+- SL_R.3 io_uring detect + fallback
+- SL_R.1 supervisor process model
 
 ---
 
 ## 7. Remaining implementation slices
 
-1. **SL_R.0 done** — host + SyncExecutor + multi-file bodies linked.
-2. **SL_R.2** — Linux epoll reactor + async sleep/demo.
+1. **SL_R.0 done** — typed Coroutine + SyncExecutor.
+2. **SL_R.2 done** — EpollReactor + timer sleep/poll.
 3. **SL_R.3** — io_uring detect + fallback.
-4. **SL_R.1** — supervisor process model (can parallelize with 2/3 as ops design).
+4. **SL_R.1** — supervisor process model (can parallelize with 3 as ops design).
