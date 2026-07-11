@@ -153,6 +153,20 @@ pub fn resolve_imports_and_bodies(
                                 .entry(module_name.clone())
                                 .or_default()
                                 .insert(name.clone().into(), id);
+                            // Root of T025 across modules: associated methods are
+                            // exported as `"Type.method"` but interface satisfaction
+                            // looks up `associated_members[Type][method]`. Rebuild
+                            // that index on import so GlobalAllocator.alloc is found.
+                            if matches!(kind, arandu_middle::SymbolKind::AssociatedFunc)
+                                && let Some((ty, method)) = name.rsplit_once('.')
+                            {
+                                resolver
+                                    .symbols
+                                    .associated_members
+                                    .entry(smol_str::SmolStr::new(ty))
+                                    .or_default()
+                                    .insert(smol_str::SmolStr::new(method), id);
+                            }
                         }
                     }
                     arandu_parser::ImportDecl::Named { items, .. }
@@ -538,6 +552,32 @@ mod tests {
         assert!(dup.is_none());
         assert_eq!(r.diagnostics.len(), 1);
         assert_eq!(r.diagnostics[0].code, DiagCode::N003RedefinedName);
+    }
+
+    /// Methods restate receiver type params (`func Vec.push<T, A>(…)` after
+    /// `import_receiver_type_params`). Must reuse SymbolIds, not emit N003.
+    #[test]
+    fn method_restated_type_params_reuse_existing_bindings() {
+        let source = r#"
+module t
+struct BoxG<T> {
+    v: T
+}
+func BoxG.get<T>(shared self): T {
+    return self.v
+}
+"#;
+        let program = arandu_parser::parse(source).expect("parse");
+        let r = crate::resolve_for_test(0, &program);
+        let n003: Vec<_> = r
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == DiagCode::N003RedefinedName)
+            .collect();
+        assert!(
+            n003.is_empty(),
+            "restating receiver type params must not redefine: {n003:?}"
+        );
     }
 
     #[test]

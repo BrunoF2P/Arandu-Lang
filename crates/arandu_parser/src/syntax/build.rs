@@ -609,7 +609,11 @@ fn is_item_start_keyword(kind: TokenKind) -> bool {
     )
 }
 
-/// Include leading `@attr…`, `public`, and `async` before an item keyword.
+/// Include leading `@attr…`, `public`, `async`, and doc comments before an item keyword.
+///
+/// Doc comments must attach to the **following** item. Otherwise the previous
+/// item's span absorbs `/// …` (end = next start), hand-lower sees leftover
+/// tokens after `}`, falls back to RD, and fails mid-field (e.g. gen_arena.aru).
 fn expand_item_start_left(tokens: &[Token], kw_index: usize) -> u32 {
     let mut idx = kw_index;
     let mut start = tokens[kw_index].start;
@@ -618,6 +622,10 @@ fn expand_item_start_left(tokens: &[Token], kw_index: usize) -> u32 {
         match prev.kind {
             // ASI often inserts `;` after bare `@Attr` / names before `public`/`func`.
             TokenKind::Semicolon => {
+                idx -= 1;
+            }
+            TokenKind::DocComment => {
+                start = prev.start;
                 idx -= 1;
             }
             TokenKind::KwAsync | TokenKind::KwPublic => {

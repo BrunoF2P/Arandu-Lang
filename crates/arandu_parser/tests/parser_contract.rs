@@ -220,6 +220,28 @@ fn generic_default_param() {
     );
 }
 
+/// Doc comments after a struct must attach to the **next** item, not poison the
+/// previous item's hand-lower (root cause of gen_arena.aru parse failures).
+#[test]
+fn doc_comment_between_structs_parses() {
+    let program = parse(
+        r#"module t
+import std.core.option as option
+public struct GenRef {
+    index: u32
+    generation: u32
+}
+/// slot docs
+public struct GenSlot<T> {
+    value: option.Option<T>
+    generation: u32
+}
+"#,
+    )
+    .expect("doc between structs + option.Option field must parse");
+    assert_eq!(program.decls.len(), 2);
+}
+
 #[test]
 fn import_named() {
     assert_contract_ast(

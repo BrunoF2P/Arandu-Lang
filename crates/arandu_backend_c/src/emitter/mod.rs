@@ -228,9 +228,12 @@ static int64_t ar_gen_remove_i64(int64_t r) {{
     }
 
     fn emit_co_poll_runtime(&mut self) {
+        // Typed await in expr.rs inlines disc/payload loads for the real C type.
+        // Keep i64 helpers only for host/test parity paths that still use them.
         let _ = writeln!(
             &mut self.output,
-            r#"/* A3.6: disc 0=Ready payload@8; disc 1=PendingOnce then Ready. */
+            r#"/* A3.6: disc 0=Ready payload@8; disc 1=PendingOnce then Ready.
+ * Prefer typed inline await (no i64 cast). i64 helpers remain for MVP host tests. */
 static int ar_co_poll_i64(uint8_t *state, int64_t *out) {{
     uint32_t disc = *(uint32_t*)state;
     if (disc == 0) {{ *out = *(int64_t*)(state + 8); return 0; }}

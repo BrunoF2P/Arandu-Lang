@@ -86,6 +86,15 @@ fn parse_visibility(cur: &mut Cursor<'_>) -> Visibility {
     }
 }
 
+/// Skip item-leading `///` folded into the item span by `expand_item_start_left`.
+/// Field/variant docs are **not** skipped here — they stay for parse_field to
+/// reject hand lower so RD can attach them (see parser_contract doc test).
+fn skip_leading_doc_comments(cur: &mut Cursor<'_>) {
+    while matches!(cur.peek_kind(), Some(TokenKind::DocComment)) {
+        cur.bump();
+    }
+}
+
 /// `@name` or `@name(...)` — args must be hand-lowerable exprs.
 fn parse_attributes(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<Vec<Attribute>> {
     let mut attrs = Vec::new();
@@ -351,6 +360,7 @@ pub fn try_hand_lower_func_item(
         file_id,
     };
     let mut cur = Cursor::new(&sig_toks);
+    skip_leading_doc_comments(&mut cur);
     let attrs = parse_attributes(&mut ctx, &mut cur)?;
     let visibility = parse_visibility(&mut cur);
     let is_async = cur.eat(TokenKind::KwAsync);
@@ -653,6 +663,7 @@ fn try_hand_lower_const(
         file_id,
     };
     let mut cur = Cursor::new(&toks);
+    skip_leading_doc_comments(&mut cur);
     let attrs = parse_attributes(&mut ctx, &mut cur)?;
     let visibility = parse_visibility(&mut cur);
     cur.expect(TokenKind::KwConst)?;
@@ -696,6 +707,7 @@ fn try_hand_lower_type_alias(
         file_id,
     };
     let mut cur = Cursor::new(&toks);
+    skip_leading_doc_comments(&mut cur);
     let attrs = parse_attributes(&mut ctx, &mut cur)?;
     let visibility = parse_visibility(&mut cur);
     cur.expect(TokenKind::KwType)?;
@@ -735,6 +747,7 @@ fn try_hand_lower_struct(
         file_id,
     };
     let mut cur = Cursor::new(&toks);
+    skip_leading_doc_comments(&mut cur);
     let attrs = parse_attributes(&mut ctx, &mut cur)?;
     let visibility = parse_visibility(&mut cur);
     cur.expect(TokenKind::KwStruct)?;
@@ -818,6 +831,7 @@ fn try_hand_lower_enum(
         file_id,
     };
     let mut cur = Cursor::new(&toks);
+    skip_leading_doc_comments(&mut cur);
     let attrs = parse_attributes(&mut ctx, &mut cur)?;
     let visibility = parse_visibility(&mut cur);
     cur.expect(TokenKind::KwEnum)?;
@@ -919,6 +933,7 @@ fn try_hand_lower_interface(
         file_id,
     };
     let mut cur = Cursor::new(&toks);
+    skip_leading_doc_comments(&mut cur);
     let attrs = parse_attributes(&mut ctx, &mut cur)?;
     let visibility = parse_visibility(&mut cur);
     cur.expect(TokenKind::KwInterface)?;
@@ -1002,6 +1017,7 @@ fn try_hand_lower_extern(
         file_id,
     };
     let mut cur = Cursor::new(&toks);
+    skip_leading_doc_comments(&mut cur);
     let attrs = parse_attributes(&mut ctx, &mut cur)?;
     cur.expect(TokenKind::KwExtern)?;
     let abi = parse_static_string(&mut ctx, &mut cur)?;

@@ -156,15 +156,26 @@ impl<'a> CEmitter<'a> {
                         _ => ArType::Error,
                     };
                     let payload_c_ty = self.format_type(&payload_ty);
+                    // Tag width follows target pointer width (same as payload projection).
+                    let tag_c = if self.layout.pointer_width() == 4 {
+                        "int32_t"
+                    } else {
+                        "int64_t"
+                    };
                     let _ = write!(
                         &mut self.output,
-                        "*({expected_c_type}*)&(struct {{ int64_t tag; {payload_c_ty} payload; }}){{ {}, {} }}",
+                        "*({expected_c_type}*)&(struct {{ {tag_c} tag; {payload_c_ty} payload; }}){{ {}, {} }}",
                         variant_tag, payload_str
                     );
                 } else {
+                    let tag_c = if self.layout.pointer_width() == 4 {
+                        "int32_t"
+                    } else {
+                        "int64_t"
+                    };
                     let _ = write!(
                         &mut self.output,
-                        "*({expected_c_type}*)&(struct {{ int64_t tag; }}){{ {} }}",
+                        "*({expected_c_type}*)&(struct {{ {tag_c} tag; }}){{ {} }}",
                         variant_tag
                     );
                 }
@@ -220,16 +231,23 @@ impl<'a> CEmitter<'a> {
                     UnaryOp::BitNot => {
                         let _ = write!(&mut self.output, "~{}", op_val);
                     }
-                    // A3.6: await = block_on until Ready; disc@0, payload@8.
+                    // A3.6: await = poll until Ready; disc@0, payload@8.
+                    // Load/store the **expected payload C type** (not i64 cast). Casting
+                    // block_on_i64 → float/ptr was the root of nonsensical C for non-int.
                     UnaryOp::Await => {
                         let _ = write!(
                             &mut self.output,
                             "({{ uint8_t* __ar_aw = (uint8_t*)({op_val}); \
                              {expected_c_type} __ar_av; \
-                             if (*(uint32_t*)__ar_aw == 0) {{ \
+                             for (;;) {{ \
+                               uint32_t __ar_d = *(uint32_t*)__ar_aw; \
+                               if (__ar_d == 0) {{ \
+                                 __ar_av = *({expected_c_type}*)(__ar_aw + 8); \
+                                 break; \
+                               }} \
+                               if (__ar_d == 1) {{ *(uint32_t*)__ar_aw = 0; continue; }} \
                                __ar_av = *({expected_c_type}*)(__ar_aw + 8); \
-                             }} else {{ \
-                               __ar_av = ({expected_c_type})ar_co_block_on_i64(__ar_aw); \
+                               break; \
                              }} \
                              __ar_av; }})"
                         );

@@ -294,13 +294,16 @@ pub(crate) fn check_instantiation_constraints(
             if !type_satisfies_interface(checker, arg_ty, iface_sym, span) {
                 let iface_name = checker.symbols.get(iface_sym).name.clone();
                 let ty_display = arg_ty.display(&checker.symbols, &checker.type_info.type_interner);
-                let note = missing_methods_note(checker, arg_ty, iface_sym);
+                let detail = missing_methods_note(checker, arg_ty, iface_sym);
+                // Put the method-level root cause in the primary message (notes are easy to miss).
                 let diag = crate::Diagnostic::error(
                     crate::DiagCode::T025InterfaceNotSatisfied,
-                    format!("type '{ty_display}' does not satisfy interface '{iface_name}'"),
+                    format!(
+                        "type '{ty_display}' does not satisfy interface '{iface_name}': {detail}"
+                    ),
                     span,
                 )
-                .with_note(note);
+                .with_note(detail);
                 checker.diagnostics.push(diag);
             }
         }
@@ -327,6 +330,23 @@ pub(crate) fn type_satisfies_interface(
     iface_sym: SymbolId,
     _span: Span,
 ) -> bool {
+    // Free type parameters are not concrete types. A param `A: Allocator` is an
+    // obligation on instantiations, not something we can structural-check here.
+    // Treating `Named(A, [])` as a concrete type caused T025 on every method that
+    // restates `A` (Vec, GenArena) even when constraints were well-formed.
+    if let ArType::Named(id, args) = concrete {
+        if args.is_empty() {
+            let kind = checker.symbols.get(*id).kind;
+            if kind == SymbolKind::TypeParam {
+                // Satisfied iff this param lists `iface_sym` among its constraints.
+                if let Some(cs) = checker.type_info.param_constraints.get(id) {
+                    return cs.iter().any(|&c| c == iface_sym);
+                }
+                return false;
+            }
+        }
+    }
+
     let Some(iface) = checker.type_info.interfaces.get(&iface_sym) else {
         return false;
     };
