@@ -170,6 +170,52 @@ impl<'a> CEmitter<'a> {
         false
     }
 
+    fn emit_gen_arena_runtime(&mut self) {
+        let _ = writeln!(
+            &mut self.output,
+            r#"/* GenRef = (index<<32)|generation; gen mismatch aborts (F2.3.runtime). */
+static struct {{ int64_t value; int used; uint32_t generation; }} ar_gen_slots[256];
+static uint32_t ar_gen_free[256];
+static int ar_gen_nslots = 0;
+static int ar_gen_nfree = 0;
+static int64_t ar_gen_insert_i64(int64_t v) {{
+    uint32_t idx; uint32_t g;
+    if (ar_gen_nfree > 0) {{
+        idx = ar_gen_free[--ar_gen_nfree];
+        g = ar_gen_slots[idx].generation + 1;
+        ar_gen_slots[idx].generation = g;
+        ar_gen_slots[idx].value = v;
+        ar_gen_slots[idx].used = 1;
+    }} else {{
+        if (ar_gen_nslots >= 256) abort();
+        idx = (uint32_t)ar_gen_nslots++;
+        g = 0;
+        ar_gen_slots[idx].generation = 0;
+        ar_gen_slots[idx].value = v;
+        ar_gen_slots[idx].used = 1;
+    }}
+    return ((int64_t)idx << 32) | (int64_t)g;
+}}
+static int64_t ar_gen_get_i64(int64_t r) {{
+    uint32_t idx = (uint32_t)((uint64_t)r >> 32);
+    uint32_t g = (uint32_t)r;
+    if (idx >= (uint32_t)ar_gen_nslots || !ar_gen_slots[idx].used || ar_gen_slots[idx].generation != g)
+        abort();
+    return ar_gen_slots[idx].value;
+}}
+static int64_t ar_gen_remove_i64(int64_t r) {{
+    uint32_t idx = (uint32_t)((uint64_t)r >> 32);
+    uint32_t g = (uint32_t)r;
+    if (idx >= (uint32_t)ar_gen_nslots || !ar_gen_slots[idx].used || ar_gen_slots[idx].generation != g)
+        return 0;
+    int64_t v = ar_gen_slots[idx].value;
+    ar_gen_slots[idx].used = 0;
+    if (ar_gen_nfree < 256) ar_gen_free[ar_gen_nfree++] = idx;
+    return v;
+}}"#
+        );
+    }
+
     fn emit_headers(&mut self, needs_str: bool) {
         let _ = writeln!(&mut self.output, "#include <stdint.h>");
         let _ = writeln!(&mut self.output, "#include <stdbool.h>");
@@ -183,6 +229,8 @@ impl<'a> CEmitter<'a> {
         let _ = writeln!(&mut self.output, "#ifndef AR_UNREACHABLE");
         let _ = writeln!(&mut self.output, "#define AR_UNREACHABLE() abort()");
         let _ = writeln!(&mut self.output, "#endif");
+        // F2.3.runtime: process-lifetime gen arena (i64 payload MVP; mirrors JIT host).
+        self.emit_gen_arena_runtime();
         let _ = writeln!(&mut self.output);
         if !needs_str {
             return;
@@ -570,6 +618,13 @@ impl<'a> CEmitter<'a> {
                                 {
                                     used_temps.insert(t.as_usize());
                                 }
+                            }
+                        }
+                        AmirRvalue::GenInsert { value }
+                        | AmirRvalue::GenGet { gen_ref: value }
+                        | AmirRvalue::GenRemove { gen_ref: value } => {
+                            if let AmirOperand::Copy(t) | AmirOperand::Move(t) = value {
+                                used_temps.insert(t.as_usize());
                             }
                         }
                         AmirRvalue::StringInterp { parts } => {

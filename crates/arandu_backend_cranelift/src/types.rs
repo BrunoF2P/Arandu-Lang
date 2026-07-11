@@ -82,6 +82,8 @@ pub fn clif_type(ty: &ArType, ptr_type: Type) -> ClifType {
         | ArType::Nullable(_)
         | ArType::Slice(_)
         | ArType::Array(_, _) => ClifType::Concrete(ptr_type),
+        // Packed GenRef: always 8-byte {u32,u32} (I64 on all hosts we JIT).
+        ArType::GenRef => ClifType::Concrete(I64),
         // `Err` is a message handle (pointer to UTF-8 buffer from `err.new`).
         ArType::Err => ClifType::Concrete(ptr_type),
         ArType::Void | ArType::Error => ClifType::Void,

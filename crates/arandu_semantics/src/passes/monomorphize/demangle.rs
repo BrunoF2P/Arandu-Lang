@@ -60,6 +60,7 @@ fn mangle_type_into(out: &mut String, ty: &ArType, symbols: &SymbolTable, intern
             out.push_str("refmut_");
             mangle_type_into(out, &interner.resolve(*inner), symbols, interner);
         }
+        ArType::GenRef => out.push_str("genref"),
         ArType::Slice(inner) => {
             out.push_str("slice_");
             mangle_type_into(out, &interner.resolve(*inner), symbols, interner);

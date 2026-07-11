@@ -312,6 +312,24 @@ impl AmirRvalue {
                 out.push_str("&mut ");
                 place.pretty_print_to(out, symbols, pool);
             }
+            AmirRvalue::GenInsert { value } => {
+                out.push_str(&format!(
+                    "gen_insert({})",
+                    value.to_pretty_string(symbols, pool)
+                ));
+            }
+            AmirRvalue::GenGet { gen_ref } => {
+                out.push_str(&format!(
+                    "gen_get({})",
+                    gen_ref.to_pretty_string(symbols, pool)
+                ));
+            }
+            AmirRvalue::GenRemove { gen_ref } => {
+                out.push_str(&format!(
+                    "gen_remove({})",
+                    gen_ref.to_pretty_string(symbols, pool)
+                ));
+            }
             AmirRvalue::StringInterp { parts } => {
                 let parts_str: Vec<String> = parts
                     .iter()

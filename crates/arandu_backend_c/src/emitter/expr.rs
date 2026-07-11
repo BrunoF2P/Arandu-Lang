@@ -336,6 +336,18 @@ impl<'a> CEmitter<'a> {
                 let size_str = self.format_operand(op, func);
                 let _ = write!(&mut self.output, "malloc((size_t)({}))", size_str);
             }
+            AmirRvalue::GenInsert { value } => {
+                let v = self.format_operand(value, func);
+                let _ = write!(&mut self.output, "ar_gen_insert_i64((int64_t)({v}))");
+            }
+            AmirRvalue::GenGet { gen_ref } => {
+                let r = self.format_operand(gen_ref, func);
+                let _ = write!(&mut self.output, "ar_gen_get_i64((int64_t)({r}))");
+            }
+            AmirRvalue::GenRemove { gen_ref } => {
+                let r = self.format_operand(gen_ref, func);
+                let _ = write!(&mut self.output, "ar_gen_remove_i64((int64_t)({r}))");
+            }
             AmirRvalue::StringInterp { parts } => {
                 // Emit a call to the runtime helper: ar_str_concat_n(n, part0, part1, ..., partN-1)
                 // Each part must already be of type ArStr.

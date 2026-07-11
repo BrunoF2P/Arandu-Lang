@@ -97,6 +97,7 @@ impl<'a> CEmitter<'a> {
             ArType::Primitive(Primitive::Float) | ArType::FloatLiteral => "double".to_string(),
             ArType::Void => "void".to_string(),
             ArType::Ptr(inner) => format!("{}*", self.format_type(&self.interner.resolve(*inner))),
+            ArType::GenRef => "int64_t".to_string(),
             ArType::Named(id, _) => sanitize_c_ident(&self.symbols.get(*id).name),
             ArType::Slice(inner) => {
                 let inner_name = self.format_type(&self.interner.resolve(*inner));

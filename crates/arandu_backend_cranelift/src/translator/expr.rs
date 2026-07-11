@@ -1066,6 +1066,11 @@ impl FunctionTranslator<'_, '_> {
             }
             AmirRvalue::Len(op) => self.translate_len(op, expected_ty),
             AmirRvalue::Alloc(op) => self.translate_alloc(op),
+            AmirRvalue::GenInsert { value } => self.translate_gen_call("ar_gen_insert_i64", value),
+            AmirRvalue::GenGet { gen_ref } => self.translate_gen_call("ar_gen_get_i64", gen_ref),
+            AmirRvalue::GenRemove { gen_ref } => {
+                self.translate_gen_call("ar_gen_remove_i64", gen_ref)
+            }
             AmirRvalue::ToStr { .. } | AmirRvalue::StringInterp { .. } => {
                 // Fat-pointer results must go through translate_str_rvalue.
                 self.record_ice(
@@ -1075,6 +1080,41 @@ impl FunctionTranslator<'_, '_> {
                 self.poison_i32()
             }
         }
+    }
+
+    /// Call a host gen-arena helper: `i64 -> i64` (packed GenRef or payload).
+    fn translate_gen_call(&mut self, name: &str, arg: &AmirOperand) -> Value {
+        use cranelift_codegen::ir::types::I64;
+        let arg_val = self.translate_operand(arg, Some(I64));
+        let Some(&func_id) = self.func_ids.get(name) else {
+            // Declare on demand if not pre-declared in this module's map.
+            return self.call_gen_symbol(name, arg_val);
+        };
+        let fref = self.module.declare_func_in_func(func_id, self.builder.func);
+        let call = self.builder.ins().call(fref, &[arg_val]);
+        self.builder.inst_results(call)[0]
+    }
+
+    fn call_gen_symbol(&mut self, name: &str, arg_val: Value) -> Value {
+        use cranelift_codegen::ir::{AbiParam, Signature, types::I64};
+        use cranelift_codegen::isa::CallConv;
+        use cranelift_module::Linkage;
+        let mut sig = Signature::new(CallConv::SystemV);
+        sig.params.push(AbiParam::new(I64));
+        sig.returns.push(AbiParam::new(I64));
+        let func_id = match self.module.declare_function(name, Linkage::Import, &sig) {
+            Ok(id) => id,
+            Err(e) => {
+                self.record_ice(
+                    format!("failed to declare gen runtime `{name}`: {e}"),
+                    self.func_span(),
+                );
+                return self.poison_i32();
+            }
+        };
+        let fref = self.module.declare_func_in_func(func_id, self.builder.func);
+        let call = self.builder.ins().call(fref, &[arg_val]);
+        self.builder.inst_results(call)[0]
     }
 
     /// `Len` for array (constant), `str` fat-pointer (SSA pair), slice (memory fat ptr).

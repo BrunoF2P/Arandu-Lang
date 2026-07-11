@@ -161,13 +161,14 @@ Promotion is **compiler-driven** and **visible** (O004). No silent heap.
 
 ## 9. Acceptance criteria for “F2.3.runtime done”
 
-- [ ] `stdlib/core` exposes `abort_generational_mismatch`  
-- [ ] `stdlib/alloc/gen_arena.aru` defines `GenRef` / `GenArena` API  
-- [ ] Escape `HeapStore` path can mark promotion (compiler)  
-- [ ] Cranelift: get after remove traps (test)  
-- [ ] C backend: parity stub or full helpers  
-- [ ] O004 still always emitted on promotion  
-- [ ] Roadmap item **F2.3.runtime** checked only after above  
+- [x] `stdlib/core` exposes `abort_generational_mismatch`  
+- [x] `stdlib/alloc/gen_arena.aru` defines `GenRef` / `GenArena` API  
+- [x] AMIR + Cranelift + C: `GenInsert`/`GenGet`/`GenRemove` (i64 payload MVP)  
+- [x] Cranelift host arena + JIT test `jit_gen_insert_get_i64`  
+- [ ] Escape `HeapStore` path auto-promotes in lower (language-level)  
+- [ ] Gen arena for general `T` (not only i64)  
+- [ ] O004 still always emitted on automatic promotion  
+- [ ] Roadmap **F2.3.runtime** fully checked only after auto-promotion  
 
 ---
 

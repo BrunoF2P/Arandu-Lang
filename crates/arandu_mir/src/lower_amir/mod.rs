@@ -99,6 +99,7 @@ pub(crate) fn is_memory_type(ty: &ArType) -> bool {
         ArType::Ptr(_)
         | ArType::Ref(_)
         | ArType::RefMut(_)
+        | ArType::GenRef
         | ArType::Nullable(_)
         | ArType::Func(_, _)
         | ArType::Slice(_) => false,

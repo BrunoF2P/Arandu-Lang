@@ -31,6 +31,10 @@ pub enum ArType {
     /// Exclusive reference: `&mut T` — safe first-class borrow (F2.0)
     RefMut(TypeId),
 
+    /// Generational handle `{index:u32, generation:u32}` (F2.3.runtime / GenArena).
+    /// ABI: 8 bytes; not a raw pointer — payload lives in `std.alloc.gen_arena`.
+    GenRef,
+
     /// Multi-value tuple (non-`Result` returns only)
     Tuple(Vec<TypeId>),
 
@@ -214,6 +218,7 @@ impl ArType {
                 let inner_str = interner.resolve(*inner).display(symbols, interner);
                 format!("&mut {}", inner_str)
             }
+            ArType::GenRef => "GenRef".to_string(),
             ArType::Tuple(types) => {
                 let parts: Vec<String> = types
                     .iter()
@@ -285,7 +290,8 @@ impl ArType {
             | ArType::Ptr(_)
             | ArType::Nullable(_)
             | ArType::Ref(_)
-            | ArType::RefMut(_) => true,
+            | ArType::RefMut(_)
+            | ArType::GenRef => true,
             ArType::Error | ArType::Void | ArType::Err => true,
             ArType::Named(_, _)
             | ArType::Func(_, _)

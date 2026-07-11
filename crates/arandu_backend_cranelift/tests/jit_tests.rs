@@ -1132,3 +1132,105 @@ fn jit_enum_match_main() {
     };
     assert_eq!(result, 2);
 }
+
+/// F2.3.runtime: hand-built AMIR with GenInsert/GenGet roundtrip via host arena.
+#[test]
+fn jit_gen_insert_get_i64() {
+    use arandu_base::span::Span;
+    use arandu_semantics::amir::{
+        AmirBasicBlock, AmirConstant, AmirFunc, AmirOperand, AmirProgram, AmirRvalue, AmirStmt,
+        AmirStmtTable, AmirTemp, AmirTerminator, BlockId, TempId,
+    };
+    use arandu_semantics::cfg::compute_cfg_edges;
+    use arandu_semantics::layout::DenseRange;
+    use arandu_semantics::literal_pool::AmirLiteralPool;
+    use arandu_semantics::types::{ArType, Primitive, TypeInterner};
+    use arandu_semantics::{SymbolKind, SymbolTable};
+
+    let interner = TypeInterner::new();
+    let int_ty = interner.intern(ArType::Primitive(Primitive::Int));
+    let gen_ty = interner.intern(ArType::GenRef);
+
+    let mut stmts = AmirStmtTable::new();
+    // t1 = gen_insert(42)
+    stmts.push(AmirStmt::Assign {
+        lhs: TempId::from_usize(1),
+        rhs: AmirRvalue::GenInsert {
+            value: AmirOperand::Constant(AmirConstant::Pool(
+                // use Nil then we need a constant - better use iconst path via Constant
+                // Pool needs literal - use Constant from int via... AmirConstant only has Pool for ints
+                arandu_semantics::literal_pool::LiteralId(0),
+            )),
+        },
+    });
+    // t0 = gen_get(t1)  // return temp
+    stmts.push(AmirStmt::Assign {
+        lhs: TempId::from_usize(0),
+        rhs: AmirRvalue::GenGet {
+            gen_ref: AmirOperand::Copy(TempId::from_usize(1)),
+        },
+    });
+    let block = AmirBasicBlock {
+        id: BlockId::from_usize(0),
+        statements: DenseRange::new(0, 2),
+        params: vec![],
+        terminator: AmirTerminator::Return,
+    };
+    let blocks = vec![block];
+    let cfg = compute_cfg_edges(&blocks);
+    let mut pool = AmirLiteralPool::default();
+    let lit = pool.intern_int("42");
+    assert_eq!(lit.0, 0);
+
+    let mut symbols = SymbolTable::new(0);
+    let scope = symbols.global_scope();
+    let main_sym = symbols
+        .define(scope, "main", SymbolKind::Func, Span::new(0, 0, 0))
+        .expect("define main");
+
+    let func = AmirFunc {
+        symbol: main_sym,
+        return_type: int_ty,
+        receiver: None,
+        params: vec![],
+        locals: vec![],
+        temps: vec![
+            AmirTemp {
+                id: TempId::from_usize(0),
+                ty: int_ty,
+                is_copy: true,
+                is_nullable: false,
+                span: Span::new(0, 0, 0),
+            },
+            AmirTemp {
+                id: TempId::from_usize(1),
+                ty: gen_ty,
+                is_copy: true,
+                is_nullable: false,
+                span: Span::new(0, 0, 0),
+            },
+        ],
+        blocks,
+        stmts,
+        cfg,
+    };
+    let program = AmirProgram {
+        funcs: vec![func],
+        literal_pool: pool,
+        extern_funcs: Default::default(),
+    };
+    let type_info = {
+        let mut ti = arandu_semantics::TypeInfo::default();
+        ti.type_interner = interner;
+        ti
+    };
+    let backend = backend_for_test();
+    let module = backend
+        .compile(&program, &symbols, &type_info)
+        .expect("gen JIT compile");
+    let result: i64 = unsafe {
+        let f: unsafe fn() -> i64 = module.get_fn("main").unwrap();
+        f()
+    };
+    assert_eq!(result, 42);
+}

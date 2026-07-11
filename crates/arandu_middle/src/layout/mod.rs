@@ -293,6 +293,12 @@ impl LayoutEngine {
                     field_offsets: Vec::new(),
                 }
             }
+            // F2.3: GenRef = {u32 index, u32 generation} — always 8 bytes.
+            ArType::GenRef => TypeLayout {
+                size: 8,
+                align: 4,
+                field_offsets: vec![0, 4],
+            },
             ArType::Nullable(_) => {
                 // Nullable is always a null-or-pointer handle (box for scalars;
                 // heap object pointer for Named/etc.). Never stores the payload

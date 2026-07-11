@@ -905,6 +905,12 @@ impl LowerCtx<'_> {
             AmirRvalue::BorrowMut(place) => {
                 Self::resolve_place(redirected_temps, place);
             }
+            AmirRvalue::GenInsert { value } => {
+                *value = Self::resolve_operand(redirected_temps, *value);
+            }
+            AmirRvalue::GenGet { gen_ref } | AmirRvalue::GenRemove { gen_ref } => {
+                *gen_ref = Self::resolve_operand(redirected_temps, *gen_ref);
+            }
             AmirRvalue::StringInterp { parts } => {
                 for op in parts {
                     *op = Self::resolve_operand(redirected_temps, *op);

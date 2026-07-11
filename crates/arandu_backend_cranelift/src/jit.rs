@@ -90,6 +90,19 @@ impl AranduJit {
             "ar_jit_err_to_str",
             crate::to_str_runtime::ar_jit_err_to_str as *const u8,
         );
+        // F2.3.runtime generational arena (i64 payload MVP).
+        builder.symbol(
+            "ar_gen_insert_i64",
+            crate::gen_runtime::ar_gen_insert_i64 as *const u8,
+        );
+        builder.symbol(
+            "ar_gen_get_i64",
+            crate::gen_runtime::ar_gen_get_i64 as *const u8,
+        );
+        builder.symbol(
+            "ar_gen_remove_i64",
+            crate::gen_runtime::ar_gen_remove_i64 as *const u8,
+        );
         let module = JITModule::new(builder);
 
         Ok(Self { module })
@@ -140,6 +153,22 @@ impl AranduJit {
             .declare_function("free", Linkage::Import, &free_sig)
             .map_err(|err| codegen_ice(format!("failed to declare free: {err:?}")))?;
         func_ids.insert("free".to_string(), free_id);
+
+        // F2.3.runtime: gen arena helpers (i64 → i64).
+        let mut gen_sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+        gen_sig.params.push(cranelift_codegen::ir::AbiParam::new(
+            cranelift_codegen::ir::types::I64,
+        ));
+        gen_sig.returns.push(cranelift_codegen::ir::AbiParam::new(
+            cranelift_codegen::ir::types::I64,
+        ));
+        for name in ["ar_gen_insert_i64", "ar_gen_get_i64", "ar_gen_remove_i64"] {
+            let id = self
+                .module
+                .declare_function(name, Linkage::Import, &gen_sig)
+                .map_err(|err| codegen_ice(format!("failed to declare {name}: {err:?}")))?;
+            func_ids.insert(name.to_string(), id);
+        }
 
         // Declare fmod as import
         let mut fmod_sig = cranelift_codegen::ir::Signature::new(default_call_conv);

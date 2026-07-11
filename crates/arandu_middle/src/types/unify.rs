@@ -174,6 +174,7 @@ pub fn unify(a: &ArType, b: &ArType, interner: &TypeInterner) -> bool {
                     interner,
                 )
         }
+        (ArType::GenRef, ArType::GenRef) => true,
         (ArType::Tuple(types_a), ArType::Tuple(types_b)) => {
             types_a.len() == types_b.len()
                 && types_a.iter().zip(types_b).all(|(&x, &y)| {

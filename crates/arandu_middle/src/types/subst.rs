@@ -95,6 +95,7 @@ pub fn substitute_type(ty: &ArType, subst: &GenericSubst, interner: &TypeInterne
             let id = interner.intern(substituted);
             ArType::RefMut(id)
         }
+        ArType::GenRef => ArType::GenRef,
         ArType::Slice(inner) => {
             let resolved = interner.resolve(*inner);
             let substituted = substitute_type(&resolved, subst, interner);
