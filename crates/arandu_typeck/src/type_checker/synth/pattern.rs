@@ -482,5 +482,12 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                 );
             }
         }
+        Pattern::Or { alts, .. } => {
+            // SYN.4: each alternative is checked against the same scrutinee type.
+            // Bindings across alts are not required to match (v0.1); prefer literals.
+            for &alt in checker.pool.pattern_list(*alts) {
+                check_pattern(checker, alt, value_ty);
+            }
+        }
     }
 }

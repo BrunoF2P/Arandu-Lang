@@ -140,6 +140,17 @@ fn format_pattern_ref(pat: &HirPattern, ctx: &HirPrettyCtx<'_>) -> String {
                 span, start, inclusive, end
             )
         }
+        HirPattern::Or { span, alts } => {
+            let mut alt_strs = Vec::new();
+            for &pid in ctx.pool.pattern_list(*alts) {
+                alt_strs.push(format_pattern_ref(ctx.pool.pattern(pid), ctx));
+            }
+            format!(
+                "Or {{ span: {:?}, alts: [{}] }}",
+                span,
+                alt_strs.join(" | ")
+            )
+        }
     }
 }
 

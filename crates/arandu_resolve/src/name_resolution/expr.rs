@@ -276,6 +276,11 @@ impl<'a> Resolver<'a> {
                 self.resolve_expr(scope, *start);
                 self.resolve_expr(scope, *end);
             }
+            Pattern::Or { alts, .. } => {
+                for &item in self.pool.pattern_list(*alts) {
+                    self.resolve_pattern(scope, item);
+                }
+            }
         }
     }
 

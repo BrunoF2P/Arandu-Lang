@@ -135,6 +135,17 @@ pub(crate) fn lower_pattern(
                 end: eid,
             })
         }
+        Pattern::Or { span, alts } => {
+            let mut hir_alts = Vec::new();
+            for &p in pool.pattern_list(*alts) {
+                hir_alts.push(lower_pattern_to_id(type_check, pool, hir_pool, p)?);
+            }
+            let alts_range = hir_pool.alloc_pattern_list(&hir_alts);
+            Ok(HirPattern::Or {
+                span: *span,
+                alts: alts_range,
+            })
+        }
     }
 }
 

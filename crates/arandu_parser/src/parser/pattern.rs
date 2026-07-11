@@ -39,6 +39,24 @@ impl<'a> Parser<'a> {
     }
 
     pub(super) fn parse_pattern(&mut self) -> Result<PatternId, ParseError> {
+        // SYN.4: `p1 | p2 | …`
+        let mark = self.mark();
+        let first = self.parse_pattern_atom()?;
+        if !matches!(self.current().kind, TokenKind::Pipe) {
+            return Ok(first);
+        }
+        let mut alts = vec![first];
+        while self.eat_name("PIPE") {
+            alts.push(self.parse_pattern_atom()?);
+        }
+        let range = self.pool.alloc_pattern_list(&alts);
+        Ok(self.pool.alloc_pattern(Pattern::Or {
+            span: self.span_from_mark(mark),
+            alts: range,
+        }))
+    }
+
+    pub(super) fn parse_pattern_atom(&mut self) -> Result<PatternId, ParseError> {
         let start = self.mark();
         if matches!(&self.current().kind, TokenKind::IdentValue) && self.current_text() == "_" {
             self.advance();

@@ -455,6 +455,24 @@ pub(super) fn clone_pattern(
             inclusive: *inclusive,
             end: clone_expr(hir, *end, subst, symbol_map, tc, name_prefix)?,
         },
+        HirPattern::Or { span, alts } => {
+            let old_p: Vec<_> = hir.pool.pattern_list(*alts).to_vec();
+            let mut new_p = Vec::with_capacity(old_p.len());
+            for &p in &old_p {
+                new_p.push(clone_pattern_id(
+                    hir,
+                    p,
+                    subst,
+                    symbol_map,
+                    tc,
+                    name_prefix,
+                )?);
+            }
+            HirPattern::Or {
+                span: *span,
+                alts: hir.pool.alloc_pattern_list(&new_p),
+            }
+        },
     })
 }
 

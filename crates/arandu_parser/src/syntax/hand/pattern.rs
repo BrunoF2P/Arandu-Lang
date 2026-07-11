@@ -10,6 +10,25 @@ use smallvec::smallvec;
 use smol_str::SmolStr;
 
 pub fn parse_pattern(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<PatternId> {
+    // SYN.4: `p1 | p2 | …` has lower precedence than atomic patterns.
+    let first = parse_pattern_atom(ctx, cur)?;
+    if cur.peek_kind() != Some(TokenKind::Pipe) {
+        return Some(first);
+    }
+    let start = ctx.pool.pattern(first).span().start;
+    let mut alts = vec![first];
+    while cur.eat(TokenKind::Pipe) {
+        alts.push(parse_pattern_atom(ctx, cur)?);
+    }
+    let end = ctx.pool.pattern(*alts.last()?).span().end;
+    let range = ctx.pool.alloc_pattern_list(&alts);
+    Some(ctx.pool.alloc_pattern(Pattern::Or {
+        span: ctx.span(start, end),
+        alts: range,
+    }))
+}
+
+fn parse_pattern_atom(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<PatternId> {
     let start_tok = cur.peek()?;
     let start = start_tok.start;
 

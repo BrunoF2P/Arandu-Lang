@@ -606,6 +606,36 @@ impl LowerCtx<'_> {
                 );
                 Ok(AmirOperand::Copy(range_dest))
             }
+            // SYN.4: `p1 | p2 | …` → boolean OR of alternative matches.
+            HirPattern::Or { alts, .. } => {
+                let alt_ids = self.hir.pool.pattern_list(*alts);
+                if alt_ids.is_empty() {
+                    return Ok(AmirOperand::Constant(AmirConstant::Bool(false)));
+                }
+                let mut acc = self.lower_pattern_match(
+                    scrutinee,
+                    self.hir.pool.pattern(alt_ids[0]),
+                    symbols,
+                )?;
+                for &aid in &alt_ids[1..] {
+                    let next = self.lower_pattern_match(
+                        scrutinee,
+                        self.hir.pool.pattern(aid),
+                        symbols,
+                    )?;
+                    let or_dest = self.new_temp(ArType::Primitive(Primitive::Bool));
+                    self.emit_assign_temp(
+                        or_dest,
+                        AmirRvalue::Binary {
+                            op: BinaryOp::Or,
+                            left: acc,
+                            right: next,
+                        },
+                    );
+                    acc = AmirOperand::Copy(or_dest);
+                }
+                Ok(acc)
+            }
         }
     }
 }

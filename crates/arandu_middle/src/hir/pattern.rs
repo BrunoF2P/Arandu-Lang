@@ -109,6 +109,11 @@ pub enum HirPattern {
         inclusive: bool,
         end: super::pool::HirExprId,
     },
+    /// SYN.4: ordered alternatives `p1 | p2 | …`.
+    Or {
+        span: Span,
+        alts: super::pool::IndexRange,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -129,7 +134,8 @@ impl HirPattern {
             | Self::TypeTuple { span, .. }
             | Self::Struct { span, .. }
             | Self::Tuple { span, .. }
-            | Self::Range { span, .. } => *span,
+            | Self::Range { span, .. }
+            | Self::Or { span, .. } => *span,
         }
     }
 }

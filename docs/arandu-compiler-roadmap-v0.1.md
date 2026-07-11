@@ -140,7 +140,7 @@ Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
 [x] M2     Move checker avançado (O002, O003, O006) — `borrow_check` sobre F2.1/F2.2
            └─ Poison 0xDE em debug (BC.2/BC.3) permanece defesa extra, não substituto de M2
 [x] G2     fundido em F2.3.3 (promote O004; ver acima)
-[→] T2     DX Enhancements: Default Generic Parameters & Scoped Enum Variant Sugar
+[x] T2     DX Enhancements: Default Generic Parameters & Scoped Enum Variant Sugar
    ├─ [x] T2.1   Default Generic Parameters (`T = Default`; expand on lower/return/instantiate; stdlib `Vec<T>` / `GenArena<T>` use `A = GlobalAllocator`)
    └─ [x] T2.2   Implicit Enum Variant Dot-Notation Sugar (`.Ok`/`.None`/`.Some`/`.Pending` via expected type on return/let/set; `VariantSugar` AST + HIR ResultCtor)
 [x] T3     DX: Import Sem Aspas para Módulos Internos (LSP-friendly path tokens)
@@ -164,9 +164,9 @@ Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
 
 Fase 4 — Expressividade de Linguagem e Tipagem (v0.35) · [NÃO INICIADA]
 [x] SYN.1  Retorno implícito: última `Expr` do body → valor de retorno (typeck + AMIR; async wrap A3)
-[ ] SYN.2  Interpolação de String ($name e ${expr}) no Lexer
+[x] SYN.2  Interpolação: `$name` + `${expr}` (lexer → StringInterp/ToStr; e2e CLI)
 [x] SYN.3  Opcionais: `nil` → Option.None (contexto); match Some/None no AMIR; `T?` permanece Nullable (§2.1)
-[ ] SYN.4  Pattern Matching Avançado (wildcards, bindings e ranges)
+[x] SYN.4  Patterns: `_`, binds, ranges, or-patterns `p1|p2` (parse/typeck/AMIR)
 [ ] TYP.1  Interfaces Implícitas / Structural Typing (Go-style duck typing no Type Checker)
 [ ] TYP.2  Constraints de Generics (cláusula `where` e sintaxe `<T: Trait>`)
 

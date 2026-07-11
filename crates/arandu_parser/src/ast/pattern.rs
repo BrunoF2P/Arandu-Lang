@@ -56,6 +56,11 @@ pub enum Pattern {
         inclusive: bool,
         end: ExprId,
     },
+    /// SYN.4: `p1 | p2 | …` alternatives (same bindings policy as typeck).
+    Or {
+        span: Span,
+        alts: IndexRange, // PatternId
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -76,7 +81,8 @@ impl Pattern {
             | Pattern::TypeTuple { span, .. }
             | Pattern::Struct { span, .. }
             | Pattern::Tuple { span, .. }
-            | Pattern::Range { span, .. } => *span,
+            | Pattern::Range { span, .. }
+            | Pattern::Or { span, .. } => *span,
         }
     }
 }

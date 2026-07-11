@@ -397,6 +397,15 @@ pub(super) fn dump_pattern(pool: &AstPool, pattern: &Pattern) -> String {
                 dump_expr(pool, *end)
             )
         }
+        Pattern::Or { span, alts } => {
+            let alts_str = pool
+                .pattern_list(*alts)
+                .iter()
+                .map(|&a| dump_pattern(pool, pool.pattern(a)))
+                .collect::<Vec<_>>()
+                .join(" | ");
+            format!("OrPattern {}([{alts_str}])", dump_span(*span))
+        }
     }
 }
 
