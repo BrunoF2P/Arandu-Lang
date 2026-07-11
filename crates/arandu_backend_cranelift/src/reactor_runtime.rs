@@ -301,12 +301,17 @@ pub unsafe extern "C" fn ar_rt_reactor_poll_ms(id: ReactorId, timeout_ms: i64) -
         }
 
         let mut events: [libc::epoll_event; 8] = unsafe { std::mem::zeroed() };
+        let timeout_arg = if timeout_ms < 0 {
+            -1
+        } else {
+            timeout_ms.min(i32::MAX as i64) as i32
+        };
         let n = unsafe {
             libc::epoll_wait(
                 epfd,
                 events.as_mut_ptr(),
                 events.len() as i32,
-                timeout_ms as i32,
+                timeout_arg,
             )
         };
         if n < 0 {

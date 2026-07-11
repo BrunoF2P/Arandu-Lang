@@ -141,6 +141,18 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
         self.builder.ins().iconst(self.ptr_type, 0)
     }
 
+    pub(crate) fn poison_value(&mut self, clif_ty: cranelift_codegen::ir::Type) -> Value {
+        if clif_ty.is_int() {
+            self.builder.ins().iconst(clif_ty, 0)
+        } else if clif_ty == cranelift_codegen::ir::types::F32 {
+            self.builder.ins().f32const(0.0)
+        } else if clif_ty == cranelift_codegen::ir::types::F64 {
+            self.builder.ins().f64const(0.0)
+        } else {
+            self.builder.ins().iconst(clif_ty, 0)
+        }
+    }
+
     pub(crate) fn temp_span(&self, temp_id: TempId) -> Span {
         self.current_func
             .temps

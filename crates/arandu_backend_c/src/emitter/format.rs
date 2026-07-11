@@ -7,7 +7,9 @@ impl<'a> CEmitter<'a> {
     pub(super) fn format_operand_str(&self, op: &AmirOperand) -> String {
         match op {
             AmirOperand::Copy(t) | AmirOperand::Move(t) => format!("t{}", t.as_usize()),
-            AmirOperand::FunctionRef(id) => sanitize_c_ident(&self.symbols.get(*id).name),
+            AmirOperand::FunctionRef(id) | AmirOperand::GlobalRef(id) => {
+                sanitize_c_ident(&self.symbols.get(*id).name)
+            }
             AmirOperand::Constant(c) => match c {
                 AmirConstant::Pool(id) => match self.program.literal_pool.get(*id) {
                     AmirLiteralEntry::Int(v) => {
@@ -34,7 +36,6 @@ impl<'a> CEmitter<'a> {
                 }
                 AmirConstant::Nil => "NULL".to_string(),
             },
-            _ => "/* unsupported operand */".to_string(),
         }
     }
 

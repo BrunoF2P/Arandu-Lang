@@ -18,30 +18,47 @@ impl<'a> CEmitter<'a> {
                 let _ = write!(&mut self.output, "{}", op_str);
             }
             AmirRvalue::Binary { op, left, right } => {
-                let left_str = self.format_operand(left, func);
-                let right_str = self.format_operand(right, func);
-                let op_str = match op {
-                    BinaryOp::Add => "+",
-                    BinaryOp::Sub => "-",
-                    BinaryOp::Mul => "*",
-                    BinaryOp::Div => "/",
-                    BinaryOp::Mod => "%",
-                    BinaryOp::Equal => "==",
-                    BinaryOp::NotEqual => "!=",
-                    BinaryOp::Lt => "<",
-                    BinaryOp::LtEqual => "<=",
-                    BinaryOp::Gt => ">",
-                    BinaryOp::GtEqual => ">=",
-                    BinaryOp::And => "&&",
-                    BinaryOp::Or => "||",
-                    BinaryOp::BitAnd => "&",
-                    BinaryOp::BitOr => "|",
-                    BinaryOp::BitXor => "^",
-                    BinaryOp::ShiftLeft => "<<",
-                    BinaryOp::ShiftRight => ">>",
-                    _ => "?",
-                };
-                let _ = write!(&mut self.output, "{} {} {}", left_str, op_str, right_str);
+                if matches!(op, BinaryOp::RangeExclusive | BinaryOp::RangeInclusive) {
+                    let left_str = self.format_operand(left, func);
+                    let right_str = self.format_operand(right, func);
+                    let _ = write!(
+                        &mut self.output,
+                        "({{ void** __r = (void**)malloc(sizeof(void*) * 2); \
+                         __r[0] = (void*)(intptr_t)({}); \
+                         __r[1] = (void*)(intptr_t)({}); \
+                         __r; }})",
+                        left_str, right_str
+                    );
+                } else {
+                    let left_str = self.format_operand(left, func);
+                    let right_str = self.format_operand(right, func);
+                    let op_str = match op {
+                        BinaryOp::Add => "+",
+                        BinaryOp::Sub => "-",
+                        BinaryOp::Mul => "*",
+                        BinaryOp::Div => "/",
+                        BinaryOp::Mod => "%",
+                        BinaryOp::Equal => "==",
+                        BinaryOp::NotEqual => "!=",
+                        BinaryOp::Lt => "<",
+                        BinaryOp::LtEqual => "<=",
+                        BinaryOp::Gt => ">",
+                        BinaryOp::GtEqual => ">=",
+                        BinaryOp::And => "&&",
+                        BinaryOp::Or => "||",
+                        BinaryOp::BitAnd => "&",
+                        BinaryOp::BitOr => "|",
+                        BinaryOp::BitXor => "^",
+                        BinaryOp::ShiftLeft => "<<",
+                        BinaryOp::ShiftRight => ">>",
+                        BinaryOp::NullCoalesce => {
+                            panic!("internal: NullCoalesce must be CFG-lowered before codegen (not a BinaryOp)");
+                        }
+                        BinaryOp::RangeExclusive | BinaryOp::RangeInclusive => unreachable!(),
+                        _ => unreachable!(),
+                    };
+                    let _ = write!(&mut self.output, "{} {} {}", left_str, op_str, right_str);
+                }
             }
             AmirRvalue::FieldAccess { base, field } => {
                 let base_ty = match base {
@@ -254,6 +271,12 @@ impl<'a> CEmitter<'a> {
                              __ar_av; }})"
                         );
                     }
+                    UnaryOp::Deref => {
+                        let _ = write!(&mut self.output, "*{}", op_val);
+                    }
+                    UnaryOp::Ref | UnaryOp::RefMut => {
+                        panic!("Unary Ref/RefMut should lower as Borrow/BorrowMut");
+                    }
                     _ => {
                         let _ = write!(&mut self.output, "{}", op_val);
                     }
@@ -294,7 +317,11 @@ impl<'a> CEmitter<'a> {
                 };
                 let _ = write!(&mut self.output, "*({expected_c_type}*)&(struct {{");
                 for (i, _) in items.iter().enumerate() {
-                    let field_ty = self.interner.resolve(tys[i]);
+                    let field_ty = if i < tys.len() {
+                        self.interner.resolve(tys[i])
+                    } else {
+                        ArType::Error
+                    };
                     let field_c_ty = self.format_type(&field_ty);
                     let _ = write!(&mut self.output, " {} f_{};", field_c_ty, i);
                 }

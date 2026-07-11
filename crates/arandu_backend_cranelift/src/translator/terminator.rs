@@ -27,13 +27,14 @@ impl FunctionTranslator<'_, '_> {
                     let ret_ty = self.resolve_ty(self.current_func.return_type);
                     let clif_ret = clif_type(&ret_ty, self.ptr_type);
                     match clif_ret {
-                        ClifType::Concrete(_) => {
+                        ClifType::Concrete(clif_ty) => {
                             let ret_temp = arandu_semantics::amir::TempId::from_usize(0);
                             if let Some(&var) = self.temp_map.get(&ret_temp) {
                                 let ret_val = self.builder.use_var(var);
                                 self.builder.ins().return_(&[ret_val]);
                             } else {
-                                self.builder.ins().return_(&[]);
+                                let poison = self.poison_value(clif_ty);
+                                self.builder.ins().return_(&[poison]);
                             }
                         }
                         ClifType::Void => {
@@ -113,14 +114,7 @@ impl FunctionTranslator<'_, '_> {
                 targets,
                 otherwise,
             } => {
-                let mut disc_val = self.translate_operand(discriminant, None);
-                let disc_ty = self.builder.func.dfg.value_type(disc_val);
-                if disc_ty == cranelift_codegen::ir::types::I64 {
-                    disc_val = self
-                        .builder
-                        .ins()
-                        .ireduce(cranelift_codegen::ir::types::I32, disc_val);
-                }
+                let disc_val = self.translate_operand(discriminant, None);
                 let otherwise_block = self.block_map[&otherwise.0];
                 assert!(
                     otherwise.1.is_empty(),

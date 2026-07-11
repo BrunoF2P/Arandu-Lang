@@ -250,7 +250,12 @@ pub unsafe extern "C" fn ar_rt_tcp_wait(sock: i64, events: i64, timeout_ms: i64)
         if events & WAIT_WRITE != 0 {
             pfd.events |= libc::POLLOUT;
         }
-        let rc = unsafe { libc::poll(&mut pfd, 1, timeout_ms as i32) };
+        let timeout_arg = if timeout_ms < 0 {
+            -1
+        } else {
+            timeout_ms.min(i32::MAX as i64) as i32
+        };
+        let rc = unsafe { libc::poll(&mut pfd, 1, timeout_arg) };
         if rc < 0 {
             return -1;
         }
