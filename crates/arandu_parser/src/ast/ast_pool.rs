@@ -143,6 +143,12 @@ pub enum ExprKind {
         type_name: super::TypeName,
         member: SmolStr,
     },
+    /// T2.2: scoped enum/result sugar `.Ok(x)` / `.None` (resolved via expected type).
+    VariantSugar {
+        name: SmolStr,
+        /// Empty range for unit variants (`.None`, `.Pending`).
+        args: IndexRange,
+    },
     Generic {
         callee: ExprId,
         args: IndexRange,

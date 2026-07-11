@@ -21,6 +21,12 @@ impl<'a> Resolver<'a> {
                     self.resolve_value_name(scope, root, expr, span);
                 }
             }
+            ExprKind::VariantSugar { args, .. } => {
+                // Resolved later in typeck via expected type; still walk payload exprs.
+                for arg in self.pool.expr_list(*args) {
+                    self.resolve_expr(scope, *arg);
+                }
+            }
             ExprKind::TypePath { type_name, member } => {
                 let base = type_name.path.last().map_or("", |s| s.as_str());
                 if matches!(

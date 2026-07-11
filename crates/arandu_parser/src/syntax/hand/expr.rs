@@ -6,7 +6,8 @@ use super::stmt::parse_block_tokens;
 use super::ty::{can_start_type_kind, parse_type, primitive_type_token_name};
 use crate::ast::ast_pool::{ExprId, ExprKind};
 use crate::{
-    CatchHandler, Condition, FieldInit, LambdaBody, LambdaParam, StringPart, TypeExpr, UnaryOp,
+    CatchHandler, Condition, FieldInit, LambdaBody, LambdaParam, StringPart, TypeExpr, TypeName,
+    UnaryOp,
 };
 use arandu_lexer::{Token, TokenKind};
 use smallvec::smallvec;
@@ -241,6 +242,17 @@ fn parse_primary_post(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<Exp
                 );
             }
             Some(TokenKind::LBrace) if allows_trailing_block(ctx, left) => {
+                // Root fix: `lib.Type {}` / `lib.Type { x: 1 }` starts as Path+Field
+                // (module is IdentValue). Empty `{}` successfully parses as a trailing
+                // *block* call, so the type never resolves (silent Error). Prefer
+                // struct-literal when the path ends in a type-like name and `{`
+                // looks like field inits (empty or `name:`).
+                if looks_like_struct_lit_after_type_path(ctx, cur, left)
+                    && let Some(sl) = try_struct_lit_from_type_path(ctx, cur, left)
+                {
+                    left = sl;
+                    continue;
+                }
                 // bare trailing block call: f { ... }
                 let left_span = ctx.pool.expr_span(left);
                 let block = parse_block_tokens(ctx, cur)?;
@@ -351,6 +363,117 @@ fn allows_trailing_block(ctx: &HandCtx<'_>, left: ExprId) -> bool {
     )
 }
 
+/// Type-like path segment: starts with uppercase (Arandu IdentType convention).
+fn is_type_like_name(name: &str) -> bool {
+    name.chars().next().is_some_and(|c| c.is_uppercase())
+}
+
+/// Collect `Path` / `a.b.Type` Field chains into type path segments.
+fn type_path_segments_from_expr(ctx: &HandCtx<'_>, expr: ExprId) -> Option<smallvec::SmallVec<[SmolStr; 3]>> {
+    match ctx.pool.expr(expr) {
+        ExprKind::Path { path } if path.len() == 1 && is_type_like_name(&path[0]) => {
+            Some(path.clone())
+        }
+        ExprKind::Field { base, field } if is_type_like_name(field) => {
+            let mut segs = type_path_segments_from_expr_module(ctx, *base)?;
+            segs.push(field.clone());
+            Some(segs)
+        }
+        _ => None,
+    }
+}
+
+/// Module path prefix: `lib` or `a.b` (all value/module segments).
+fn type_path_segments_from_expr_module(
+    ctx: &HandCtx<'_>,
+    expr: ExprId,
+) -> Option<smallvec::SmallVec<[SmolStr; 3]>> {
+    match ctx.pool.expr(expr) {
+        ExprKind::Path { path } => Some(path.clone()),
+        ExprKind::Field { base, field } => {
+            let mut segs = type_path_segments_from_expr_module(ctx, *base)?;
+            segs.push(field.clone());
+            Some(segs)
+        }
+        _ => None,
+    }
+}
+
+/// After a type-shaped path, `{` starts a struct lit if empty or `ident:`.
+fn looks_like_struct_lit_after_type_path(ctx: &HandCtx<'_>, cur: &Cursor<'_>, left: ExprId) -> bool {
+    if type_path_segments_from_expr(ctx, left).is_none() {
+        return false;
+    }
+    // Peek inside `{` without consuming.
+    if cur.peek_kind() != Some(TokenKind::LBrace) {
+        return false;
+    }
+    match cur.peek_at(1).map(|t| t.kind) {
+        Some(TokenKind::RBrace) => true, // `Type {}`
+        Some(TokenKind::IdentValue | TokenKind::IdentType) => {
+            // `Type { field: ... }`
+            cur.peek_at(2)
+                .is_some_and(|t| t.kind == TokenKind::Colon)
+        }
+        _ => false,
+    }
+}
+
+/// Parse `{ field: expr, ... }` after a type-shaped Path/Field into StructLiteral.
+fn try_struct_lit_from_type_path(
+    ctx: &mut HandCtx<'_>,
+    cur: &mut Cursor<'_>,
+    left: ExprId,
+) -> Option<ExprId> {
+    let segs = type_path_segments_from_expr(ctx, left)?;
+    let left_span = ctx.pool.expr_span(left);
+    let name = TypeName {
+        span: left_span,
+        path: segs,
+    };
+    let empty_args = ctx.pool.alloc_type_expr_list(&[]);
+    let ty = ctx.pool.alloc_type_expr(TypeExpr::Named {
+        span: left_span,
+        name,
+        args: empty_args,
+    });
+
+    cur.expect(TokenKind::LBrace)?;
+    let mut fields = Vec::new();
+    if cur.peek_kind() != Some(TokenKind::RBrace) {
+        loop {
+            let name_tok = cur.peek()?;
+            if !matches!(name_tok.kind, TokenKind::IdentValue | TokenKind::IdentType) {
+                return None;
+            }
+            let fname = SmolStr::new(ctx.text(name_tok)?);
+            let fstart = name_tok.start;
+            cur.bump();
+            cur.expect(TokenKind::Colon)?;
+            let value = try_hand_lower_expr(ctx, cur, 0)?;
+            let fend = ctx.pool.expr_span(value).end;
+            let init_id = ctx.pool.alloc_field_init(FieldInit {
+                span: ctx.span(fstart, fend),
+                name: fname,
+                value,
+            });
+            fields.push(init_id);
+            if !cur.eat(TokenKind::Comma) {
+                break;
+            }
+            if cur.peek_kind() == Some(TokenKind::RBrace) {
+                break;
+            }
+        }
+    }
+    let close = cur.expect(TokenKind::RBrace)?;
+    let range = ctx.pool.alloc_field_init_list(&fields);
+    Some(ctx.pool.alloc_expr(
+        ExprKind::StructLiteral { ty, fields: range },
+        ctx.span(left_span.start, close.start + close.len),
+    ))
+}
+
 fn looks_like_generic_args(cur: &Cursor<'_>) -> bool {
     // scan for matching `>` then `( ` or `{`
     let mut depth = 0i32;
@@ -435,6 +558,38 @@ fn parse_primary(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<ExprId> 
                     path: smallvec![SmolStr::new(text)],
                 },
                 ctx.token_span(t),
+            ))
+        }
+        // T2.2: `.Ok(val)` / `.None` — leading Dot + type/value ident (+ optional call args).
+        TokenKind::Dot => {
+            cur.bump();
+            let name_tok = cur.peek()?;
+            if !matches!(name_tok.kind, TokenKind::IdentValue | TokenKind::IdentType) {
+                return None;
+            }
+            let name = SmolStr::new(ctx.text(name_tok)?);
+            cur.bump();
+            let mut end = name_tok.start + name_tok.len;
+            let args = if cur.eat(TokenKind::LParen) {
+                let mut arg_ids = Vec::new();
+                if cur.peek_kind() != Some(TokenKind::RParen) {
+                    loop {
+                        arg_ids.push(try_hand_lower_expr(ctx, cur, 0)?);
+                        if cur.eat(TokenKind::Comma) {
+                            continue;
+                        }
+                        break;
+                    }
+                }
+                let close = cur.expect(TokenKind::RParen)?;
+                end = close.start + close.len;
+                ctx.pool.alloc_expr_list(&arg_ids)
+            } else {
+                ctx.pool.alloc_expr_list(&[])
+            };
+            Some(ctx.pool.alloc_expr(
+                ExprKind::VariantSugar { name, args },
+                ctx.span(start, end),
             ))
         }
         TokenKind::IdentType => parse_type_led(ctx, cur, start),

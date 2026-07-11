@@ -129,6 +129,82 @@ pub(crate) fn lower_expr_raw(
             let symbol = require_value_symbol(&type_check.resolved, expr, span)?;
             HirExprKind::Path { symbol }
         }
+        ExprKind::VariantSugar { name, args, .. } => {
+            // T2.2: lower like Result/Option/Poll ctors from the recorded expr type.
+            let arg_ids = pool.expr_list(*args).to_vec();
+            let variant = match name.as_str() {
+                "Ok" => Some(crate::hir::ResultCtorVariant::Ok),
+                "Err" => Some(crate::hir::ResultCtorVariant::Err),
+                "Some" => Some(crate::hir::ResultCtorVariant::Some),
+                "None" => Some(crate::hir::ResultCtorVariant::None),
+                "Ready" => Some(crate::hir::ResultCtorVariant::PollReady),
+                "Pending" => Some(crate::hir::ResultCtorVariant::PollPending),
+                _ => None,
+            };
+            if let Some(variant) = variant {
+                if arg_ids.len() == 1 {
+                    let value_id = lower_expr(type_check, pool, hir_pool, arg_ids[0])?;
+                    HirExprKind::ResultCtor {
+                        variant,
+                        value: value_id,
+                    }
+                } else if arg_ids.is_empty()
+                    && matches!(
+                        variant,
+                        crate::hir::ResultCtorVariant::None
+                            | crate::hir::ResultCtorVariant::PollPending
+                    )
+                {
+                    let dummy = hir_pool.alloc_expr(HirExpr {
+                        kind: HirExprKind::Bool(false),
+                        ty: TypeInterner::preinterned_primitive(Primitive::Bool),
+                        span,
+                    });
+                    HirExprKind::ResultCtor {
+                        variant,
+                        value: dummy,
+                    }
+                } else {
+                    return Err(Diagnostic::error(
+                        crate::DiagCode::ICET001,
+                        format!(
+                            "variant sugar `.{}` has unexpected arity {}",
+                            name,
+                            arg_ids.len()
+                        ),
+                        span,
+                    ));
+                }
+            } else if let Some(member_symbol) = type_check
+                .resolved
+                .value_refs
+                .get(&crate::NodeKey::from(span))
+                .copied()
+                .or_else(|| type_check.resolved.expr_symbol(expr))
+            {
+                // User enum: TypePath (payload args lowered only for builtins above).
+                let type_symbol = match type_check.type_info.expr_type(expr) {
+                    Some(ArType::Named(id, _)) => id,
+                    _ => {
+                        return Err(Diagnostic::error(
+                            crate::DiagCode::ICET001,
+                            format!("variant sugar `.{}` missing resolved enum type", name),
+                            span,
+                        ));
+                    }
+                };
+                HirExprKind::TypePath {
+                    type_symbol,
+                    member_symbol,
+                }
+            } else {
+                return Err(Diagnostic::error(
+                    crate::DiagCode::ICET001,
+                    format!("unresolved variant sugar `.{}`", name),
+                    span,
+                ));
+            }
+        }
         ExprKind::TypePath {
             type_name,
             member,

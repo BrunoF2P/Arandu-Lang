@@ -9,5 +9,5 @@ pub(crate) use field::{
     resolve_field, resolve_index, resolve_namespace_field, resolve_namespace_member_type,
 };
 
-pub use expr::synth_expr;
+pub use expr::{synth_expr, synth_expr_expected};
 pub use pattern::check_pattern;

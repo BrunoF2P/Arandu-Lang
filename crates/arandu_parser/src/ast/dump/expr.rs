@@ -20,6 +20,23 @@ pub(super) fn dump_expr(pool: &AstPool, expr: ExprId) -> String {
                 member
             )
         }
+        ExprKind::VariantSugar { name, args } => {
+            let arg_ids = pool.expr_list(*args);
+            if arg_ids.is_empty() {
+                format!("VariantSugar {}(.{})", dump_span(span), name)
+            } else {
+                let args_str = arg_ids
+                    .iter()
+                    .map(|id| dump_expr(pool, *id))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    "VariantSugar {}(.{}({args_str}))",
+                    dump_span(span),
+                    name
+                )
+            }
+        }
         ExprKind::Generic { callee, args } => {
             let type_expr_ids = pool.type_expr_list(*args);
             let args_str = type_expr_ids

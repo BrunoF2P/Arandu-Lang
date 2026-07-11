@@ -93,6 +93,254 @@ pub(crate) fn synth_option_ctor(
     }
 }
 
+/// T2.2: `.Ok(x)` / `.None` / `.Some(v)` / `.Pending` with expected type context.
+pub(crate) fn synth_variant_sugar(
+    checker: &mut TypeChecker<'_>,
+    expr: ExprId,
+    name: &str,
+    args: IndexRange,
+    expected: Option<TypeId>,
+    span: Span,
+) -> TypeId {
+    let arg_ids = checker.pool.expr_list(args).to_vec();
+    let Some(expected_id) = expected.filter(|id| !checker.resolve(*id).is_error()) else {
+        checker.diagnostics.push(
+            crate::Diagnostic::error(
+                crate::DiagCode::T003IncompatibleCallArg,
+                format!(
+                    "variant sugar `.{name}` requires an expected type (e.g. return type or annotation)"
+                ),
+                span,
+            )
+            .with_note(
+                "write `Result.Ok(...)` / `Option.None` explicitly, or use in a typed context"
+                    .to_string(),
+            ),
+        );
+        return checker.intern(ArType::Error);
+    };
+    let expected_ty = checker.resolve(expected_id);
+
+    match expected_ty {
+        ArType::Result(ok_id, err_id) => match name {
+            "Ok" => {
+                if arg_ids.len() != 1 {
+                    checker.diagnostics.push(crate::Diagnostic::error(
+                        crate::DiagCode::T012WrongArgCount,
+                        format!(".Ok expects 1 argument, found {}", arg_ids.len()),
+                        span,
+                    ));
+                    return checker.intern(ArType::Error);
+                }
+                let got = synth_expr(checker, arg_ids[0]);
+                if !checker.unify_ids(ok_id, got) {
+                    checker.add_constraint(
+                        ok_id,
+                        got,
+                        ConstraintOrigin::CallArg {
+                            call_span: span,
+                            param_span: span,
+                            arg_span: checker.pool.expr_span(arg_ids[0]),
+                            arg_index: 0,
+                        },
+                    );
+                }
+                expected_id
+            }
+            "Err" => {
+                if arg_ids.len() != 1 {
+                    checker.diagnostics.push(crate::Diagnostic::error(
+                        crate::DiagCode::T012WrongArgCount,
+                        format!(".Err expects 1 argument, found {}", arg_ids.len()),
+                        span,
+                    ));
+                    return checker.intern(ArType::Error);
+                }
+                let got = synth_expr(checker, arg_ids[0]);
+                if !checker.unify_ids(err_id, got) {
+                    checker.add_constraint(
+                        err_id,
+                        got,
+                        ConstraintOrigin::CallArg {
+                            call_span: span,
+                            param_span: span,
+                            arg_span: checker.pool.expr_span(arg_ids[0]),
+                            arg_index: 0,
+                        },
+                    );
+                }
+                expected_id
+            }
+            _ => {
+                checker.diagnostics.push(crate::Diagnostic::error(
+                    crate::DiagCode::T018UndefinedField,
+                    format!("`.{name}` is not a Result variant (expected Ok or Err)"),
+                    span,
+                ));
+                checker.intern(ArType::Error)
+            }
+        },
+        ArType::Option(inner_id) => match name {
+            "Some" => {
+                if arg_ids.len() != 1 {
+                    checker.diagnostics.push(crate::Diagnostic::error(
+                        crate::DiagCode::T012WrongArgCount,
+                        format!(".Some expects 1 argument, found {}", arg_ids.len()),
+                        span,
+                    ));
+                    return checker.intern(ArType::Error);
+                }
+                let got = synth_expr(checker, arg_ids[0]);
+                if !checker.unify_ids(inner_id, got) {
+                    checker.add_constraint(
+                        inner_id,
+                        got,
+                        ConstraintOrigin::CallArg {
+                            call_span: span,
+                            param_span: span,
+                            arg_span: checker.pool.expr_span(arg_ids[0]),
+                            arg_index: 0,
+                        },
+                    );
+                }
+                expected_id
+            }
+            "None" => {
+                if !arg_ids.is_empty() {
+                    checker.diagnostics.push(crate::Diagnostic::error(
+                        crate::DiagCode::T012WrongArgCount,
+                        format!(".None expects 0 arguments, found {}", arg_ids.len()),
+                        span,
+                    ));
+                    return checker.intern(ArType::Error);
+                }
+                expected_id
+            }
+            _ => {
+                checker.diagnostics.push(crate::Diagnostic::error(
+                    crate::DiagCode::T018UndefinedField,
+                    format!("`.{name}` is not an Option variant (expected Some or None)"),
+                    span,
+                ));
+                checker.intern(ArType::Error)
+            }
+        },
+        ArType::Poll(inner_id) => match name {
+            "Ready" => {
+                if arg_ids.len() != 1 {
+                    checker.diagnostics.push(crate::Diagnostic::error(
+                        crate::DiagCode::T012WrongArgCount,
+                        format!(".Ready expects 1 argument, found {}", arg_ids.len()),
+                        span,
+                    ));
+                    return checker.intern(ArType::Error);
+                }
+                let got = synth_expr(checker, arg_ids[0]);
+                if !checker.unify_ids(inner_id, got) {
+                    checker.add_constraint(
+                        inner_id,
+                        got,
+                        ConstraintOrigin::CallArg {
+                            call_span: span,
+                            param_span: span,
+                            arg_span: checker.pool.expr_span(arg_ids[0]),
+                            arg_index: 0,
+                        },
+                    );
+                }
+                expected_id
+            }
+            "Pending" => {
+                if !arg_ids.is_empty() {
+                    checker.diagnostics.push(crate::Diagnostic::error(
+                        crate::DiagCode::T012WrongArgCount,
+                        format!(".Pending expects 0 arguments, found {}", arg_ids.len()),
+                        span,
+                    ));
+                    return checker.intern(ArType::Error);
+                }
+                expected_id
+            }
+            _ => {
+                checker.diagnostics.push(crate::Diagnostic::error(
+                    crate::DiagCode::T018UndefinedField,
+                    format!("`.{name}` is not a Poll variant (expected Ready or Pending)"),
+                    span,
+                ));
+                checker.intern(ArType::Error)
+            }
+        },
+        ArType::Named(enum_id, _) => {
+            let enum_name = checker.symbols.get(enum_id).name.clone();
+            let Some(variant_sym) = checker
+                .symbols
+                .lookup_associated_member(&enum_name, name)
+            else {
+                checker.diagnostics.push(crate::Diagnostic::error(
+                    crate::DiagCode::T018UndefinedField,
+                    format!("`.{name}` is not a variant of `{enum_name}`"),
+                    span,
+                ));
+                return checker.intern(ArType::Error);
+            };
+            // Record resolution for HIR (same as TypePath member).
+            checker.resolved.value_ref(span, variant_sym);
+            checker.resolved.expr_ref(expr, variant_sym);
+            // Type args of payload: use variant decl type if Func-like, else unit.
+            if let Some(ArType::Func(params, ret)) = checker.decl_type(variant_sym) {
+                if params.len() != arg_ids.len() {
+                    checker.diagnostics.push(crate::Diagnostic::error(
+                        crate::DiagCode::T012WrongArgCount,
+                        format!(
+                            ".{name} expects {} argument(s), found {}",
+                            params.len(),
+                            arg_ids.len()
+                        ),
+                        span,
+                    ));
+                    return checker.intern(ArType::Error);
+                }
+                for (i, &arg) in arg_ids.iter().enumerate() {
+                    let got = synth_expr(checker, arg);
+                    if let Some(&param) = params.get(i)
+                        && !checker.unify_ids(param, got)
+                    {
+                        checker.add_constraint(
+                            param,
+                            got,
+                            ConstraintOrigin::CallArg {
+                                call_span: span,
+                                param_span: span,
+                                arg_span: checker.pool.expr_span(arg),
+                                arg_index: i,
+                            },
+                        );
+                    }
+                }
+                let _ = ret;
+            } else if !arg_ids.is_empty() {
+                checker.diagnostics.push(crate::Diagnostic::error(
+                    crate::DiagCode::T012WrongArgCount,
+                    format!(".{name} expects 0 arguments, found {}", arg_ids.len()),
+                    span,
+                ));
+                return checker.intern(ArType::Error);
+            }
+            expected_id
+        }
+        other => {
+            let interner = &checker.type_info.type_interner;
+            let disp = other.display(&checker.symbols, interner);
+            checker.diagnostics.push(crate::Diagnostic::error(
+                crate::DiagCode::T003IncompatibleCallArg,
+                format!("variant sugar `.{name}` cannot target type `{disp}`"),
+                span,
+            ));
+            checker.intern(ArType::Error)
+        }
+    }
+}
+
 /// A3.6: `Poll.Ready(v)` / `Poll.Pending` (builtin generic like Option).
 pub(crate) fn synth_poll_ctor(
     checker: &mut TypeChecker<'_>,

@@ -84,7 +84,22 @@ fn check_var_decl_stmt(
     bindings: &[arandu_parser::BindingItem],
     value: arandu_parser::ast_pool::ExprId,
 ) {
-    let val_ty_id = super::super::synth::synth_expr(checker, value);
+    // T2.2: when a single binding has a type annotation, pass it as expected type
+    // so `.Ok` / `.None` sugar can resolve.
+    let expected = if bindings.len() == 1
+        && let Some(binding) = bindings.first()
+        && let Some(ty_expr) = &binding.ty
+    {
+        let expected_ty = checker.lower_type_expr(*ty_expr, checker.type_scope());
+        if !expected_ty.is_error() {
+            Some(checker.intern(expected_ty))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let val_ty_id = super::super::synth::synth_expr_expected(checker, value, expected);
 
     if bindings.len() > 1 {
         check_multi_var_decl(checker, bindings, value, val_ty_id);
@@ -205,7 +220,12 @@ fn check_set_stmt(
     for place in places {
         validate_mutability(checker, place);
     }
-    let val_ty_id = super::super::synth::synth_expr(checker, value);
+    let expected = if places.len() == 1 {
+        places.first().map(|p| synth_place(checker, p))
+    } else {
+        None
+    };
+    let val_ty_id = super::super::synth::synth_expr_expected(checker, value, expected);
 
     if places.len() > 1 {
         let val_tys: Vec<TypeId> =
@@ -283,7 +303,8 @@ fn check_return_stmt(
     let val_ty_id = if values.is_empty() {
         checker.intern(ArType::Void)
     } else if values.len() == 1 {
-        super::super::synth::synth_expr(checker, values[0])
+        // T2.2: return type is the expected context for `.Ok` / `.None` sugar.
+        super::super::synth::synth_expr_expected(checker, values[0], Some(current_ret_id))
     } else {
         let tys = values
             .iter()

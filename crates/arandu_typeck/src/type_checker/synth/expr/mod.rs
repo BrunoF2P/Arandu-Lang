@@ -16,17 +16,35 @@ use literal::synth_literal_expr;
 pub(crate) use call::check_call_arg;
 
 use arandu_middle::types::type_interner::TypeId;
+use super::ctor::synth_variant_sugar;
 
 #[tracing::instrument(level = "trace", target = "arandu_typeck", skip(checker))]
 pub fn synth_expr(checker: &mut TypeChecker<'_>, expr: ExprId) -> TypeId {
-    let id = synth_expr_inner(checker, expr);
+    synth_expr_expected(checker, expr, None)
+}
+
+/// Like [`synth_expr`], but with an optional expected type (T2.2 variant sugar, nil, …).
+pub fn synth_expr_expected(
+    checker: &mut TypeChecker<'_>,
+    expr: ExprId,
+    expected: Option<TypeId>,
+) -> TypeId {
+    let id = synth_expr_inner(checker, expr, expected);
     checker.record_expr_type(expr, id);
     id
 }
 
-fn synth_expr_inner(checker: &mut TypeChecker<'_>, expr: ExprId) -> TypeId {
+fn synth_expr_inner(
+    checker: &mut TypeChecker<'_>,
+    expr: ExprId,
+    expected: Option<TypeId>,
+) -> TypeId {
     let span = checker.pool.expr_span(expr);
     let kind = checker.pool.expr(expr).clone();
+
+    if let ExprKind::VariantSugar { name, args } = &kind {
+        return synth_variant_sugar(checker, expr, name, *args, expected, span);
+    }
 
     if let Some(id) = synth_literal_expr(checker, expr, &kind, span) {
         return id;
@@ -42,7 +60,7 @@ fn synth_expr_inner(checker: &mut TypeChecker<'_>, expr: ExprId) -> TypeId {
     }
 
     match kind {
-        ExprKind::Group { expr: inner_expr } => synth_expr(checker, inner_expr),
+        ExprKind::Group { expr: inner_expr } => synth_expr_expected(checker, inner_expr, expected),
         ExprKind::Error => checker.intern(ArType::Error),
         _ => checker.intern(ArType::Error),
     }
