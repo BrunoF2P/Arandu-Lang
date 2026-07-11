@@ -115,6 +115,17 @@ pub fn completions(
     let offset = position_to_offset(&index, position, text);
     let prefix = prefix_at(text, offset);
     let prefix_l = prefix.to_ascii_lowercase();
+
+    // W4 / T3.6: import path completion (`import std.core.▮` / `import std.▮`).
+    if let Some(items) = import_path_completions(text, offset, &prefix) {
+        return items;
+    }
+
+    // Module member completion after `alias.` when alias is a Module import.
+    if let Some(items) = module_member_completions(snap, source, text, offset, &prefix) {
+        return items;
+    }
+
     let tc = typecheck(snap, source);
 
     let mut items = Vec::new();
@@ -183,6 +194,163 @@ pub fn completions(
     items.dedup_by(|a, b| a.label == b.label);
     items.truncate(200);
     items
+}
+
+/// Known top-level stdlib path roots for import completion (T3 tokens).
+const IMPORT_ROOTS: &[&str] = &["std", "io", "err"];
+
+/// Segments under `std.` that exist in the tree.
+const STD_CHILDREN: &[(&str, &[&str])] = &[
+    ("std", &["core", "alloc"]),
+    ("std.core", &["mem", "option", "result", "prelude", "intrinsics", "future", "ptr", "pointer"]),
+    ("std.alloc", &["vec", "allocator_api", "gen_arena"]),
+];
+
+/// If the cursor is inside an `import …` path (not after `as`), suggest next segments.
+fn import_path_completions(text: &str, offset: u32, prefix: &str) -> Option<Vec<CompletionItem>> {
+    let off = (offset as usize).min(text.len());
+    // Find start of current line.
+    let line_start = text[..off].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let line = &text[line_start..off];
+    let trimmed = line.trim_start();
+    if !trimmed.starts_with("import ") && !trimmed.starts_with("import\t") {
+        return None;
+    }
+    // After `as` → alias name, not path.
+    if trimmed.contains(" as ") {
+        return None;
+    }
+    // Path after `import `
+    let after_import = trimmed.strip_prefix("import")?.trim_start();
+    // Quoted imports are free-form paths; skip special completion.
+    if after_import.starts_with('"') {
+        return None;
+    }
+    // Segments before the incomplete last token (prefix).
+    let path_so_far = after_import;
+    let parent = if path_so_far.is_empty() || path_so_far.ends_with('.') {
+        path_so_far.trim_end_matches('.').to_string()
+    } else if let Some(dot) = path_so_far.rfind('.') {
+        path_so_far[..dot].to_string()
+    } else {
+        String::new()
+    };
+    let prefix_l = prefix.to_ascii_lowercase();
+    let mut labels: Vec<&str> = Vec::new();
+    if parent.is_empty() {
+        labels.extend(IMPORT_ROOTS.iter().copied());
+    } else {
+        for (key, kids) in STD_CHILDREN {
+            if *key == parent.as_str() {
+                labels.extend(kids.iter().copied());
+            }
+        }
+    }
+    if labels.is_empty() {
+        return None;
+    }
+    let mut items: Vec<CompletionItem> = labels
+        .into_iter()
+        .filter(|lab| {
+            prefix.is_empty()
+                || lab.starts_with(prefix)
+                || lab.to_ascii_lowercase().starts_with(&prefix_l)
+        })
+        .map(|lab| CompletionItem {
+            label: lab.into(),
+            kind: Some(CompletionItemKind::MODULE),
+            detail: Some("module path".into()),
+            ..CompletionItem::default()
+        })
+        .collect();
+    items.sort_by(|a, b| a.label.cmp(&b.label));
+    items.dedup_by(|a, b| a.label == b.label);
+    if items.is_empty() {
+        None
+    } else {
+        Some(items)
+    }
+}
+
+/// Completions for `alias.▮` when `alias` is an imported module.
+fn module_member_completions(
+    snap: &AnalysisSnapshot,
+    source: SourceFile,
+    text: &str,
+    offset: u32,
+    prefix: &str,
+) -> Option<Vec<CompletionItem>> {
+    let off = (offset as usize).min(text.len());
+    // Look for `ident.` immediately before prefix.
+    let before = &text[..off.saturating_sub(prefix.len())];
+    let before = before.trim_end();
+    if !before.ends_with('.') {
+        return None;
+    }
+    let without_dot = &before[..before.len() - 1];
+    let mut i = without_dot.len();
+    let bytes = without_dot.as_bytes();
+    while i > 0 {
+        let c = bytes[i - 1];
+        if c.is_ascii_alphanumeric() || c == b'_' {
+            i -= 1;
+        } else {
+            break;
+        }
+    }
+    let alias = &without_dot[i..];
+    if alias.is_empty() {
+        return None;
+    }
+
+    let tc = typecheck(snap, source);
+    // Resolve alias as Module in the file's symbol table.
+    let global = tc.symbols.global_scope();
+    let module_sym = tc.symbols.lookup_module(global, alias)?;
+    let _ = module_sym;
+    let members = tc.symbols.module_members.get(alias)?;
+    let prefix_l = prefix.to_ascii_lowercase();
+    let mut items = Vec::new();
+    for (name, &sym_id) in members {
+        let name_s = name.as_str();
+        // Skip associated method keys `Type.method` at top-level complete after alias.
+        if name_s.contains('.') {
+            continue;
+        }
+        if !prefix.is_empty()
+            && !name_s.starts_with(prefix)
+            && !name_s.to_ascii_lowercase().starts_with(&prefix_l)
+        {
+            continue;
+        }
+        let kind = tc
+            .symbols
+            .try_get(sym_id)
+            .map(|s| match s.kind {
+                SymbolKind::Func | SymbolKind::AssociatedFunc | SymbolKind::ExternFunc => {
+                    CompletionItemKind::FUNCTION
+                }
+                SymbolKind::Struct | SymbolKind::Enum | SymbolKind::Interface | SymbolKind::TypeAlias => {
+                    CompletionItemKind::STRUCT
+                }
+                SymbolKind::Const => CompletionItemKind::CONSTANT,
+                _ => CompletionItemKind::TEXT,
+            })
+            .unwrap_or(CompletionItemKind::TEXT);
+        items.push(CompletionItem {
+            label: name_s.into(),
+            kind: Some(kind),
+            detail: Some(format!("from `{alias}`")),
+            ..CompletionItem::default()
+        });
+    }
+    items.sort_by(|a, b| a.label.cmp(&b.label));
+    items.dedup_by(|a, b| a.label == b.label);
+    if items.is_empty() {
+        None
+    } else {
+        Some(items)
+    }
 }
 
 #[must_use]
@@ -579,6 +747,41 @@ mod tests {
             items.iter().any(|i| i.label == "func" || i.label == "main"),
             "expected keyword or main in completions, got {} items",
             items.len()
+        );
+    }
+
+    #[test]
+    fn import_path_completions_std() {
+        let mut host = AnalysisHost::new();
+        // Cursor after `import std.`
+        let text = "import std.\n";
+        let file = host.new_file("imp.aru".into(), text.into());
+        let snap = host.snapshot();
+        let items = completions(
+            &snap,
+            file,
+            text,
+            Position {
+                line: 0,
+                character: "import std.".len() as u32,
+            },
+        );
+        assert!(
+            items.iter().any(|i| i.label == "core" || i.label == "alloc"),
+            "expected std.core/alloc path segments, got {:?}",
+            items.iter().map(|i| &i.label).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn import_path_completions_root() {
+        let text = "import \n";
+        let items = import_path_completions(text, text.len() as u32 - 1, "")
+            .expect("import root completions");
+        assert!(
+            items.iter().any(|i| i.label == "std"),
+            "expected std root, got {:?}",
+            items.iter().map(|i| &i.label).collect::<Vec<_>>()
         );
     }
 

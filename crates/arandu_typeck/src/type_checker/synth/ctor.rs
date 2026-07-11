@@ -580,7 +580,21 @@ pub(crate) fn synth_method_call(
     }
 
     let receiver_ty_id = params[0];
-    if !checker.unify_ids(receiver_ty_id, actual_base_ty_id) {
+    let receiver_ok = checker.unify_ids(receiver_ty_id, actual_base_ty_id)
+        || match checker.resolve(receiver_ty_id) {
+            // Auto-ref: method/`self` formal is `&T`/`&mut T`, receiver is `T`.
+            ArType::Ref(inner) | ArType::RefMut(inner) => {
+                checker.unify_ids(inner, actual_base_ty_id)
+            }
+            _ => match checker.resolve(actual_base_ty_id) {
+                // Auto-deref: formal `T`, receiver is `&T`/`&mut T`.
+                ArType::Ref(inner) | ArType::RefMut(inner) => {
+                    checker.unify_ids(receiver_ty_id, inner)
+                }
+                _ => false,
+            },
+        };
+    if !receiver_ok {
         checker.add_constraint(
             receiver_ty_id,
             actual_base_ty_id,

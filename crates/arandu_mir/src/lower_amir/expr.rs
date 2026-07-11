@@ -796,25 +796,23 @@ impl LowerCtx<'_> {
                     && let HirExprKind::Field { base, .. } | HirExprKind::SafeField { base, .. } =
                         &callee_expr.kind
                 {
-                    let base_op = self.lower_expr(*base, None, symbols)?;
-                    let base_op = if self.arg_modes.is_borrowed(callee_for_modes, 0) {
-                        base_op
-                    } else {
-                        self.consume_operand(base_op)?
-                    };
-                    arg_ops.push(base_op);
+                    let formal0 = formal_params.first();
+                    arg_ops.push(self.lower_call_arg(
+                        *base,
+                        0,
+                        callee_for_modes,
+                        formal0,
+                        symbols,
+                    )?);
                 }
                 let arg_param_offset = if inject_receiver { 1 } else { 0 };
                 for (i, &arg) in args_slice.iter().enumerate() {
                     let arg_expr = self.hir.pool.expr(arg);
-                    let arg_op = self.lower_expr(arg, None, symbols)?;
                     let formal_i = i + arg_param_offset;
-                    let arg_op = if self.arg_modes.is_borrowed(callee_for_modes, formal_i) {
-                        arg_op
-                    } else {
-                        self.consume_operand(arg_op)?
-                    };
-                    let arg_op = if let Some(param_ty) = formal_params.get(formal_i) {
+                    let formal = formal_params.get(formal_i);
+                    let arg_op =
+                        self.lower_call_arg(arg, formal_i, callee_for_modes, formal, symbols)?;
+                    let arg_op = if let Some(param_ty) = formal {
                         if matches!(param_ty, ArType::Primitive(Primitive::Str)) {
                             self.maybe_to_str(arg_op, arg_expr.ty)?
                         } else {

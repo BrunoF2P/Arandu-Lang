@@ -112,10 +112,11 @@ Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
    └─ [→] SL_R    Runtime async real (fila, Waker, I/O) — **próximo marco async**, não residual A3
 [ ] A4     Memory Layout Optimization Engine (field reordering, niche tags, SOO)
 [x] F2     OSSA borrow completo — FECHADO no escopo de linguagem v0.3 compiler
-   │  Residuals (não reabrem F2 gold; trilha W3 do plano integrado):
-   │  · auto-ref em métodos (`T` → `&T` para `shared self`) ainda adiado
-   │  · `CalleeArgModes` ainda ponte post-mono (não assinaturas `&T` plenas)
-   │  · `BorrowMut` exclusive reborrow vs shared ainda simplificado no move-check
+   │  Residuals W3 (parcialmente fechados):
+   │  · [x] auto-ref/auto-deref call args & method receivers (`T` ↔ `&T`/`&mut T`)
+   │  · [x] lower materializa `Borrow`/`BorrowMut` quando formal é Ref/RefMut
+   │  · [x] `ArgConsumeKind::is_exclusive` (mut self vs shared)
+   │  · [→] assinaturas de método ainda `self: T` + ownership (não `&T` plenas na surface)
    ├─ [x] F2.0   Sintaxe de referências à pilha (& / &mut) no parser + type-checker
    ├─ [x] F2.1   Local Borrow Checking Incremental (Salsa `block_borrow_facts` / may-borrow dataflow A9)
    ├─ [x] F2.2   Janelas de Liveness de Empréstimos (loan window = live range da ref; `is_borrowed_at`)
@@ -153,8 +154,7 @@ Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
    ├─ [x] T3.3   Resolve: ModuleAlias via canonicalize_import_path + collect/load
    ├─ [x] T3.4   Stdlib migrada (core/alloc usam path tokens; residual aspas só onde External)
    ├─ [x] T3.5   Contrato parser: import_module + import_module_alias_path
-   └─ [/] T3.6   LSP complete em path tokens `import a.b.▮` — **documentado**; impl real em F4/W4
-                  (hoje `completions` = keywords + símbolos do arquivo, sem grafo de módulos)
+   └─ [x] T3.6   LSP complete em path tokens `import std.▮` + members `alias.▮` (W4)
 [ ] SL_S   Stdlib de Sistema: arandu_std (io, fs, process, env, path, time, random, sync, thread, ffi)
 [ ] SL_R   Async Runtime: arandu_std::runtime (scheduler cooperativo/work-stealing e reactor OS epoll/kqueue/io_uring)
 [ ] SL_T   Testing Harness: arandu_std::testing (test runner integrado e benchmark engine)

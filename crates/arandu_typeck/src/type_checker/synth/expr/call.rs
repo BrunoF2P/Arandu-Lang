@@ -50,6 +50,20 @@ pub(crate) fn check_call_arg(
 
     let param_ty = checker.resolve(param_id);
     let arg_ty = checker.resolve(arg_ty_id);
+
+    // W3.3 auto-ref: formal `&T` / `&mut T`, actual `T` → accept (lower inserts Borrow).
+    if let ArType::Ref(inner) | ArType::RefMut(inner) = param_ty
+        && checker.unify_ids(inner, arg_ty_id)
+    {
+        return;
+    }
+    // Auto-deref: formal `T`, actual `&T` / `&mut T`.
+    if let ArType::Ref(inner) | ArType::RefMut(inner) = arg_ty
+        && checker.unify_ids(param_id, inner)
+    {
+        return;
+    }
+
     if matches!(param_ty, ArType::Primitive(Primitive::Str)) {
         if arg_ty.is_error() || arg_ty.is_to_str_v01() {
             // ToStr v0.1: lower will insert AmirRvalue::ToStr.

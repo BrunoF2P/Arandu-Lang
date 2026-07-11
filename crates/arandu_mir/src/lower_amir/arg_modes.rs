@@ -13,9 +13,9 @@ use smallvec::SmallVec;
 pub enum ArgConsumeKind {
     /// Move (or copy if type is copy) — default for free params and `own self`.
     Move,
-    /// `shared self` — keep `Copy` operand so the local stays available.
+    /// `shared self` / shared reborrow — do not move the local.
     BorrowShared,
-    /// `mut self` — same as shared for move-checker v0.x (no exclusive reborrow yet).
+    /// `mut self` / exclusive reborrow — do not move; exclusive for O003.
     BorrowMut,
 }
 
@@ -23,6 +23,12 @@ impl ArgConsumeKind {
     #[inline]
     pub fn is_borrow(self) -> bool {
         matches!(self, Self::BorrowShared | Self::BorrowMut)
+    }
+
+    /// Exclusive loan (conflicts with any other loan of the same place — O003).
+    #[inline]
+    pub fn is_exclusive(self) -> bool {
+        matches!(self, Self::BorrowMut)
     }
 }
 
@@ -71,6 +77,7 @@ impl CalleeArgModes {
 
     #[inline]
     #[must_use]
+    #[allow(dead_code)] // kept for analyses / tooling over call-site modes
     pub fn is_borrowed(&self, callee: SymbolId, arg_index: usize) -> bool {
         self.kind(callee, arg_index).is_borrow()
     }

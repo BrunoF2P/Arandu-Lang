@@ -4,6 +4,7 @@ use crate::amir::{AmirOperand, AmirRvalue, TempId};
 use crate::diagnostics::Diagnostic;
 use crate::hir::HirExprId;
 use crate::ops::{BinaryOp, UnaryOp};
+use crate::passes::type_checker::types::ArType;
 
 impl LowerCtx<'_> {
     pub(crate) fn lower_binary(
@@ -135,6 +136,62 @@ impl LowerCtx<'_> {
                 );
                 Ok(AmirOperand::Copy(dest))
             }
+        }
+    }
+
+    /// Lower a call argument with consume mode + W3 auto-ref materialization.
+    ///
+    /// Auto-ref only when the **argument value** is not already a ref and the
+    /// formal is `&T`/`&mut T`. Re-borrowing an existing ref local would create
+    /// a loan of the *pointer cell* (not the pointee) and breaks O003 on
+    /// overlapping pointee loans (see cli_smoke O003 fixture).
+    pub(crate) fn lower_call_arg(
+        &mut self,
+        arg: HirExprId,
+        formal_index: usize,
+        callee: crate::SymbolId,
+        formal_ty: Option<&ArType>,
+        symbols: &SymbolTable,
+    ) -> Result<AmirOperand, Diagnostic> {
+        let mode = self.arg_modes.kind(callee, formal_index);
+        let arg_expr = self.hir.pool.expr(arg);
+        let arg_ty = self.resolve_ty(arg_expr.ty);
+        let formal_is_ref =
+            formal_ty.is_some_and(|t| matches!(t, ArType::Ref(_) | ArType::RefMut(_)));
+        let arg_is_ref = matches!(arg_ty, ArType::Ref(_) | ArType::RefMut(_));
+        let exclusive = matches!(formal_ty, Some(ArType::RefMut(_))) || mode.is_exclusive();
+
+        // W3.3 auto-ref: formal is ref, value is not — materialize Borrow of place.
+        if formal_is_ref
+            && !arg_is_ref
+            && let Ok(place) = self.lower_expr_to_place(arg, symbols)
+        {
+            if place.projections.is_empty() {
+                let idx = place.local.as_usize();
+                if idx < self.locals.len() {
+                    self.locals[idx].is_memory = true;
+                }
+            }
+            let formal_tid = match formal_ty {
+                Some(t) => self.intern_ty_ref(t),
+                None => arg_expr.ty,
+            };
+            let dest = self.new_temp_id(formal_tid);
+            let rv = if exclusive {
+                AmirRvalue::BorrowMut(place)
+            } else {
+                AmirRvalue::Borrow(place)
+            };
+            self.emit_assign_temp(dest, rv);
+            return Ok(AmirOperand::Copy(dest));
+        }
+
+        let op = self.lower_expr(arg, None, symbols)?;
+        if mode.is_borrow() || arg_is_ref {
+            // shared/mut self or already a reference: do not move.
+            Ok(op)
+        } else {
+            self.consume_operand(op)
         }
     }
 }
