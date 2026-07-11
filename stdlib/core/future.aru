@@ -1,0 +1,12 @@
+// arandu_core::future — Poll / Future surface for A3.6.
+//
+// The compiler implements Future-like drive for `Coroutine[T]` (await = block_on
+// poll until Ready). Full trait methods + Waker land with the async runtime (SL_R).
+
+module std.core.future
+
+/// Result of one poll step on a coroutine / future.
+enum Poll[T] {
+    Ready(T)
+    Pending
+}

@@ -221,9 +221,19 @@ impl<'a> CEmitter<'a> {
                     UnaryOp::BitNot => {
                         let _ = write!(&mut self.output, "~{}", op_val);
                     }
-                    // A3.0: ready coroutine — payload at offset 0 of state blob.
+                    // A3.6: await = block_on until Ready; disc@0, payload@8.
                     UnaryOp::Await => {
-                        let _ = write!(&mut self.output, "(*({expected_c_type}*)({op_val}))");
+                        let _ = write!(
+                            &mut self.output,
+                            "({{ uint8_t* __ar_aw = (uint8_t*)({op_val}); \
+                             {expected_c_type} __ar_av; \
+                             if (*(uint32_t*)__ar_aw == 0) {{ \
+                               __ar_av = *({expected_c_type}*)(__ar_aw + 8); \
+                             }} else {{ \
+                               __ar_av = ({expected_c_type})ar_co_block_on_i64(__ar_aw); \
+                             }} \
+                             __ar_av; }})"
+                        );
                     }
                     _ => {
                         let _ = write!(&mut self.output, "{}", op_val);
@@ -347,6 +357,7 @@ impl<'a> CEmitter<'a> {
                 let _ = write!(&mut self.output, "malloc((size_t)({}))", size_str);
             }
             // Heap CoroutineReady (stack:true is multi-stmt in emit_stmt).
+            // A3.6 layout: disc@0 (u32 Ready=0), payload@8.
             AmirRvalue::CoroutineReady {
                 value,
                 payload_ty,
@@ -355,18 +366,22 @@ impl<'a> CEmitter<'a> {
                 let payload_ar = self.interner.resolve(*payload_ty);
                 let payload_c = self.format_type(&payload_ar);
                 let v = self.format_operand(value, func);
-                let size = self
+                let payload_size = self
                     .layout
                     .layout_of_type(&payload_ar, self.interner, self.provider)
                     .size
                     .max(1);
+                let size = 8 + payload_size;
                 let _ = write!(
                     &mut self.output,
-                    "({{ {payload_c}* __ar_co = ({payload_c}*)malloc({size}); *__ar_co = ({payload_c})({v}); (void*)__ar_co; }})"
+                    "({{ uint8_t* __ar_co = (uint8_t*)malloc({size}); \
+                     *(uint32_t*)__ar_co = 0; \
+                     *({payload_c}*)(__ar_co + 8) = ({payload_c})({v}); \
+                     (void*)__ar_co; }})"
                 );
             }
             AmirRvalue::CoroutineReady { stack: true, .. } => {
-                // Should have been handled as multi-stmt Assign; fallback heap.
+                // Should have been handled as multi-stmt Assign; fallback null.
                 let _ = write!(&mut self.output, "((void*)0)");
             }
             // A3.4: pin-free index (LocalId), not a raw address.

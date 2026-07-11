@@ -103,6 +103,23 @@ impl AranduJit {
             "ar_gen_remove_i64",
             crate::gen_runtime::ar_gen_remove_i64 as *const u8,
         );
+        // A3.6: coroutine poll / block_on (i64 payload MVP).
+        builder.symbol(
+            "ar_co_block_on_i64",
+            crate::poll_runtime::ar_co_block_on_i64 as *const u8,
+        );
+        builder.symbol(
+            "ar_co_poll_i64",
+            crate::poll_runtime::ar_co_poll_i64 as *const u8,
+        );
+        builder.symbol(
+            "ar_co_pending_once_i64",
+            crate::poll_runtime::ar_co_pending_once_i64 as *const u8,
+        );
+        builder.symbol(
+            "ar_co_make_ready_i64",
+            crate::poll_runtime::ar_co_make_ready_i64 as *const u8,
+        );
         let module = JITModule::new(builder);
 
         Ok(Self { module })
@@ -169,6 +186,39 @@ impl AranduJit {
                 .map_err(|err| codegen_ice(format!("failed to declare {name}: {err:?}")))?;
             func_ids.insert(name.to_string(), id);
         }
+
+        // A3.6: block_on(state) -> i64
+        let mut block_on_sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+        block_on_sig
+            .params
+            .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+        block_on_sig
+            .returns
+            .push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
+        let block_on_id = self
+            .module
+            .declare_function("ar_co_block_on_i64", Linkage::Import, &block_on_sig)
+            .map_err(|err| codegen_ice(format!("failed to declare ar_co_block_on_i64: {err:?}")))?;
+        func_ids.insert("ar_co_block_on_i64".to_string(), block_on_id);
+
+        // A3.6: poll(state, *out) -> i32
+        let mut poll_sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+        poll_sig
+            .params
+            .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+        poll_sig
+            .params
+            .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+        poll_sig.returns.push(cranelift_codegen::ir::AbiParam::new(
+            cranelift_codegen::ir::types::I32,
+        ));
+        let poll_id = self
+            .module
+            .declare_function("ar_co_poll_i64", Linkage::Import, &poll_sig)
+            .map_err(|err| codegen_ice(format!("failed to declare ar_co_poll_i64: {err:?}")))?;
+        func_ids.insert("ar_co_poll_i64".to_string(), poll_id);
 
         // Declare fmod as import
         let mut fmod_sig = cranelift_codegen::ir::Signature::new(default_call_conv);

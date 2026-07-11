@@ -227,6 +227,25 @@ static int64_t ar_gen_remove_i64(int64_t r) {{
         );
     }
 
+    fn emit_co_poll_runtime(&mut self) {
+        let _ = writeln!(
+            &mut self.output,
+            r#"/* A3.6: disc 0=Ready payload@8; disc 1=PendingOnce then Ready. */
+static int ar_co_poll_i64(uint8_t *state, int64_t *out) {{
+    uint32_t disc = *(uint32_t*)state;
+    if (disc == 0) {{ *out = *(int64_t*)(state + 8); return 0; }}
+    if (disc == 1) {{ *(uint32_t*)state = 0; return 1; }}
+    *out = *(int64_t*)(state + 8); return 0;
+}}
+static int64_t ar_co_block_on_i64(uint8_t *state) {{
+    int64_t out = 0;
+    for (;;) {{
+        if (ar_co_poll_i64(state, &out) == 0) return out;
+    }}
+}}"#
+        );
+    }
+
     fn emit_headers(&mut self, needs_str: bool) {
         let _ = writeln!(&mut self.output, "#include <stdint.h>");
         let _ = writeln!(&mut self.output, "#include <stdbool.h>");
@@ -242,6 +261,8 @@ static int64_t ar_gen_remove_i64(int64_t r) {{
         let _ = writeln!(&mut self.output, "#endif");
         // F2.3.runtime: process-lifetime gen arena (i64 payload MVP; mirrors JIT host).
         self.emit_gen_arena_runtime();
+        // A3.6: poll / block_on for coroutine state blobs (disc@0, payload@8).
+        self.emit_co_poll_runtime();
         let _ = writeln!(&mut self.output);
         if !needs_str {
             return;

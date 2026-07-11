@@ -1207,6 +1207,32 @@ func main(): int {
     );
 }
 
+/// A3.6: await with disc/payload layout still runs (Cranelift block_on path).
+#[test]
+fn run_a3_6_await_ready_exits_42() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_a36_ready.aru");
+    fs::write(
+        &file,
+        r#"module tests.cli.a36_ready
+
+func main(): int {
+    let x = async { 42 }
+    return await x
+}
+"#,
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+    let output = run_cli(&["run", &path]);
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 /// A3.5: Suspend.args carries live non-constant locals (dense state at frontier).
 /// AMIR-only (no JIT). Constants may be folded out of params after phi simplify.
 #[test]

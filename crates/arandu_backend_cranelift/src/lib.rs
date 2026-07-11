@@ -9,6 +9,7 @@
 pub mod abi;
 pub mod gen_runtime;
 pub mod jit;
+pub mod poll_runtime;
 pub mod to_str_runtime;
 pub mod translator;
 pub mod types;

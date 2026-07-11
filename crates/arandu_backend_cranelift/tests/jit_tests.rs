@@ -454,6 +454,49 @@ fn format_f64_v01_specials_and_integers() {
     assert!(format_f64_v01(1.5).starts_with("1.5"));
 }
 
+/// A3.6: host pending_once then block_on yields Ready(payload).
+#[test]
+fn jit_a3_6_pending_once_block_on() {
+    unsafe {
+        let s = arandu_backend_cranelift::poll_runtime::ar_co_pending_once_i64(42);
+        let mut out = 0i64;
+        assert_eq!(
+            arandu_backend_cranelift::poll_runtime::ar_co_poll_i64(s, &mut out),
+            1,
+            "first poll Pending"
+        );
+        assert_eq!(
+            arandu_backend_cranelift::poll_runtime::ar_co_poll_i64(s, &mut out),
+            0
+        );
+        assert_eq!(out, 42);
+        let s2 = arandu_backend_cranelift::poll_runtime::ar_co_pending_once_i64(7);
+        assert_eq!(
+            arandu_backend_cranelift::poll_runtime::ar_co_block_on_i64(s2),
+            7
+        );
+    }
+}
+
+/// A3.6: await through CoroutineReady (disc=0 fast path) still returns 42.
+#[test]
+fn jit_a3_6_await_ready_layout() {
+    let src = r#"
+    func main(): int {
+        let x = async { 42 }
+        return await x
+    }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    let backend = backend_for_test();
+    let module = backend.compile(&amir, &symbols, &type_info).unwrap();
+    let result: i32 = unsafe {
+        let f: unsafe fn() -> i32 = module.get_fn("main").unwrap();
+        f()
+    };
+    assert_eq!(result, 42);
+}
+
 /// A3.3: async block → stack-ready coroutine + await.
 #[test]
 fn jit_a3_3_stack_async_block() {

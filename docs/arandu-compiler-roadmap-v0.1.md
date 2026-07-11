@@ -121,7 +121,11 @@ Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
    ├─ [x] A3.5   Captura densa de estado em `Suspend.args` (locals Available@frontier)
    │              · `emit_suspend` força block params no resume + args explícitos
    │              · struct de estado da tarefa = params da fronteira (design gold)
-   └─ [ ] A3.6   Runtime poll / `Poll::Pending` (scheduler; fora do ready-only)
+   └─ [x] A3.6   Runtime poll / `Poll::Pending` (MVP block_on; full scheduler = SL_R)
+                  · state blob: disc@0 (0=Ready, 1=PendingOnce), payload@8
+                  · await → fast Ready load / `ar_co_block_on_i64` se disc≠0
+                  · host JIT: `poll_runtime` (poll / block_on / pending_once)
+                  · C: helpers espelhados no preamble; `stdlib/core/future.aru` (`Poll[T]`)
 [ ] A4     Memory Layout Optimization Engine (field reordering, niche tags, SOO)
 [ ] F2     OSSA borrow completo (borrow_shared, borrow_mut, end_borrow)
    ├─ [x] F2.0   Sintaxe de referências à pilha (& / &mut) no parser + type-checker

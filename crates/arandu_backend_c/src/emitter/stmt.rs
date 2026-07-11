@@ -17,17 +17,29 @@ impl<'a> CEmitter<'a> {
                     stack: true,
                 } = rhs
                 {
+                    // A3.6 stack blob: disc@0 + payload@8 (aligned buffer).
                     let payload_ar = self.interner.resolve(*payload_ty);
                     let payload_c = self.format_type(&payload_ar);
                     let v = self.format_operand(value, func);
                     let slot = self.next_co_stack_slot();
+                    let payload_size = self
+                        .layout
+                        .layout_of_type(&payload_ar, self.interner, self.provider)
+                        .size
+                        .max(1);
+                    let size = 8 + payload_size;
                     let _ = writeln!(
                         &mut self.output,
-                        "    {payload_c} __ar_co_{slot} = ({payload_c})({v});"
+                        "    uint8_t __ar_co_{slot}[{size}] __attribute__((aligned(8)));"
+                    );
+                    let _ = writeln!(&mut self.output, "    *(uint32_t*)__ar_co_{slot} = 0;");
+                    let _ = writeln!(
+                        &mut self.output,
+                        "    *({payload_c}*)(__ar_co_{slot} + 8) = ({payload_c})({v});"
                     );
                     let _ = writeln!(
                         &mut self.output,
-                        "    t{} = (void*)&__ar_co_{slot};",
+                        "    t{} = (void*)__ar_co_{slot};",
                         lhs.as_usize()
                     );
                     return;
