@@ -20,6 +20,7 @@ mod arg_modes;
 mod ctx;
 mod ssa;
 mod expr;
+mod flow;
 mod func;
 mod match_lower;
 mod ops;

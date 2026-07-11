@@ -2,14 +2,12 @@
 
 use super::cursor::{Cursor, HandCtx, drop_trailing_semi, tokens_in_range};
 use super::expr::try_hand_lower_expr;
-use super::stmt::try_hand_lower_block;
-use super::ty::{parse_dotted_ident_path, parse_result_type, parse_type};
+use super::ty::{parse_dotted_ident_path, parse_type};
 use crate::ast::ast_pool::AstPool;
 use crate::syntax::kind::{SyntaxKind, SyntaxNode};
 use crate::{
-    Attribute, ConstDecl, EnumDecl, EnumPayload, EnumVariant, ExternDecl, FieldDecl, FuncDecl,
-    FuncName, FuncSignature, GenericParam, ImportDecl, ImportItem, InterfaceDecl, ModuleDecl,
-    Ownership, Param, StructDecl, TopLevelDecl, TypeAliasDecl, TypeName, Visibility, WhereItem,
+    Attribute, ConstDecl, ExternDecl, GenericParam, ImportDecl, ImportItem, InterfaceDecl,
+    ModuleDecl, TopLevelDecl, TypeAliasDecl, TypeName, Visibility, WhereItem,
 };
 use arandu_lexer::{Span, Token, TokenKind};
 use smallvec::{SmallVec, smallvec};
@@ -26,13 +24,13 @@ pub fn try_hand_lower_top_level(
 ) -> Option<TopLevelDecl> {
     match item.kind() {
         SyntaxKind::FUNC_ITEM => {
-            try_hand_lower_func_item(pool, source, tokens, item, file_id).map(TopLevelDecl::Func)
+            super::func::try_hand_lower_func_item(pool, source, tokens, item, file_id).map(TopLevelDecl::Func)
         }
         SyntaxKind::STRUCT_ITEM => {
-            try_hand_lower_struct(pool, source, tokens, item, file_id).map(TopLevelDecl::Struct)
+            super::adt::try_hand_lower_struct(pool, source, tokens, item, file_id).map(TopLevelDecl::Struct)
         }
         SyntaxKind::ENUM_ITEM => {
-            try_hand_lower_enum(pool, source, tokens, item, file_id).map(TopLevelDecl::Enum)
+            super::adt::try_hand_lower_enum(pool, source, tokens, item, file_id).map(TopLevelDecl::Enum)
         }
         SyntaxKind::CONST_ITEM => {
             try_hand_lower_const(pool, source, tokens, item, file_id).map(TopLevelDecl::Const)
@@ -48,14 +46,14 @@ pub fn try_hand_lower_top_level(
         }
         SyntaxKind::ITEM => {
             // Heuristic: try func / const / struct by leading keyword after attrs.
-            try_hand_lower_func_item(pool, source, tokens, item, file_id)
+            super::func::try_hand_lower_func_item(pool, source, tokens, item, file_id)
                 .map(TopLevelDecl::Func)
                 .or_else(|| {
                     try_hand_lower_const(pool, source, tokens, item, file_id)
                         .map(TopLevelDecl::Const)
                 })
                 .or_else(|| {
-                    try_hand_lower_struct(pool, source, tokens, item, file_id)
+                    super::adt::try_hand_lower_struct(pool, source, tokens, item, file_id)
                         .map(TopLevelDecl::Struct)
                 })
         }
@@ -63,7 +61,7 @@ pub fn try_hand_lower_top_level(
     }
 }
 
-fn item_tokens<'a>(tokens: &'a [Token], item: &SyntaxNode) -> Vec<&'a Token> {
+pub(super) fn item_tokens<'a>(tokens: &'a [Token], item: &SyntaxNode) -> Vec<&'a Token> {
     let r = item.text_range();
     let mut toks = tokens_in_range(tokens, u32::from(r.start()), u32::from(r.end()));
     drop_trailing_semi(&mut toks);
@@ -72,13 +70,13 @@ fn item_tokens<'a>(tokens: &'a [Token], item: &SyntaxNode) -> Vec<&'a Token> {
 
 /// Span from first..last significant token (matches RD marks better than green ranges,
 /// which often include leading whitespace between items).
-fn token_bounds_span(file_id: u32, toks: &[&Token]) -> Option<Span> {
+pub(super) fn token_bounds_span(file_id: u32, toks: &[&Token]) -> Option<Span> {
     let first = *toks.first()?;
     let last = *toks.last()?;
     Some(Span::new(file_id, first.start, last.start + last.len))
 }
 
-fn parse_visibility(cur: &mut Cursor<'_>) -> Visibility {
+pub(super) fn parse_visibility(cur: &mut Cursor<'_>) -> Visibility {
     if cur.eat(TokenKind::KwPublic) {
         Visibility::Public
     } else {
@@ -89,14 +87,14 @@ fn parse_visibility(cur: &mut Cursor<'_>) -> Visibility {
 /// Skip item-leading `///` folded into the item span by `expand_item_start_left`.
 /// Field/variant docs are **not** skipped here — they stay for parse_field to
 /// reject hand lower so RD can attach them (see parser_contract doc test).
-fn skip_leading_doc_comments(cur: &mut Cursor<'_>) {
+pub(super) fn skip_leading_doc_comments(cur: &mut Cursor<'_>) {
     while matches!(cur.peek_kind(), Some(TokenKind::DocComment)) {
         cur.bump();
     }
 }
 
 /// `@name` or `@name(...)` — args must be hand-lowerable exprs.
-fn parse_attributes(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<Vec<Attribute>> {
+pub(super) fn parse_attributes(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<Vec<Attribute>> {
     let mut attrs = Vec::new();
     while cur.peek_kind() == Some(TokenKind::At) {
         let at = cur.bump()?;
@@ -132,7 +130,7 @@ fn parse_attributes(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<Vec<A
     Some(attrs)
 }
 
-fn parse_generic_params(
+pub(super) fn parse_generic_params(
     ctx: &mut HandCtx<'_>,
     cur: &mut Cursor<'_>,
 ) -> Option<SmallVec<[GenericParam; 2]>> {
@@ -192,7 +190,7 @@ fn parse_generic_params(
     Some(params)
 }
 
-fn parse_where_clause(
+pub(super) fn parse_where_clause(
     ctx: &mut HandCtx<'_>,
     cur: &mut Cursor<'_>,
 ) -> Option<SmallVec<[WhereItem; 2]>> {
@@ -242,222 +240,7 @@ fn parse_where_clause(
     Some(items)
 }
 
-fn parse_params(
-    ctx: &mut HandCtx<'_>,
-    cur: &mut Cursor<'_>,
-    method_receiver: Option<&TypeName>,
-) -> Option<Vec<Param>> {
-    let mut params = Vec::new();
-    if cur.peek_kind() == Some(TokenKind::RParen) {
-        return Some(params);
-    }
-    loop {
-        let p_start_tok = cur.peek()?;
-        let p_start = p_start_tok.start;
-        // ownership keywords
-        let ownership = match cur.peek_kind() {
-            Some(TokenKind::KwOwn) => {
-                cur.bump();
-                Some(Ownership::Own)
-            }
-            Some(TokenKind::KwMut) => {
-                cur.bump();
-                Some(Ownership::Mut)
-            }
-            Some(TokenKind::KwShared) => {
-                cur.bump();
-                Some(Ownership::Shared)
-            }
-            _ => None,
-        };
-        let name_tok = cur.peek()?;
-        let (name, is_receiver) = match name_tok.kind {
-            TokenKind::KwSelf => {
-                cur.bump();
-                (SmolStr::new_static("self"), true)
-            }
-            TokenKind::IdentValue => {
-                let n = SmolStr::new(ctx.text(name_tok)?);
-                cur.bump();
-                (n, false)
-            }
-            _ => return None,
-        };
-        let is_variadic = cur.eat(TokenKind::Ellipsis);
-        let ty = if cur.eat(TokenKind::Colon) {
-            parse_type(ctx, cur)?
-        } else if is_receiver {
-            if let Some(recv) = method_receiver {
-                let args = ctx.pool.alloc_type_expr_list(&[]);
-                ctx.pool.alloc_type_expr(crate::TypeExpr::Named {
-                    span: recv.span,
-                    name: recv.clone(),
-                    args,
-                })
-            } else {
-                let span = ctx.token_span(name_tok);
-                let args = ctx.pool.alloc_type_expr_list(&[]);
-                ctx.pool.alloc_type_expr(crate::TypeExpr::Named {
-                    span,
-                    name: TypeName {
-                        span,
-                        path: smallvec![SmolStr::new_static("Self")],
-                    },
-                    args,
-                })
-            }
-        } else {
-            return None;
-        };
-        // When self has an explicit `: Type`, use type end; if type span was
-        // synthesized from the method receiver name (elsewhere), clamp to `self`.
-        let ty_span = ctx.pool.type_expr_span(ty);
-        let p_end = if is_receiver && ty_span.start < p_start {
-            name_tok.start + name_tok.len
-        } else {
-            ty_span.end.max(name_tok.start + name_tok.len)
-        };
-        params.push(Param {
-            span: ctx.span(p_start, p_end),
-            attrs: smallvec![],
-            ownership,
-            name,
-            ty,
-            is_variadic,
-            is_receiver,
-        });
-        if cur.eat(TokenKind::Comma) {
-            continue;
-        }
-        break;
-    }
-    Some(params)
-}
 
-/// Free/method `func`, with `public`/`async`/attrs/generics/where when present.
-#[must_use]
-pub fn try_hand_lower_func_item(
-    pool: &mut AstPool,
-    source: &str,
-    tokens: &[Token],
-    func: &SyntaxNode,
-    file_id: u32,
-) -> Option<FuncDecl> {
-    let block_node = func.children().find(|n| n.kind() == SyntaxKind::BLOCK)?;
-    let body = try_hand_lower_block(pool, source, tokens, &block_node, file_id)?;
-
-    let fr = func.text_range();
-    let fs = u32::from(fr.start());
-    let bs = u32::from(block_node.text_range().start());
-    let sig_toks = tokens_in_range(tokens, fs, bs);
-    if sig_toks.is_empty() {
-        return None;
-    }
-
-    let mut ctx = HandCtx {
-        pool,
-        source,
-        file_id,
-    };
-    let mut cur = Cursor::new(&sig_toks);
-    skip_leading_doc_comments(&mut cur);
-    let attrs = parse_attributes(&mut ctx, &mut cur)?;
-    let visibility = parse_visibility(&mut cur);
-    let is_async = cur.eat(TokenKind::KwAsync);
-    cur.expect(TokenKind::KwFunc)?;
-    let name = parse_func_name(&mut ctx, &mut cur)?;
-    let generic_params = parse_generic_params(&mut ctx, &mut cur)?;
-    cur.expect(TokenKind::LParen)?;
-    let recv = match &name {
-        FuncName::Method { receiver, .. } => Some(receiver.clone()),
-        FuncName::Free { .. } => None,
-    };
-    let params = parse_params(&mut ctx, &mut cur, recv.as_ref())?;
-    cur.expect(TokenKind::RParen)?;
-    let result = if cur.eat(TokenKind::Colon) {
-        Some(parse_result_type(&mut ctx, &mut cur)?)
-    } else {
-        None
-    };
-    let where_clause = parse_where_clause(&mut ctx, &mut cur)?;
-    if !cur.at_end() {
-        return None;
-    }
-
-    // Span: RD marks at `async`/`func` after attrs+visibility are consumed.
-    let sig_start = sig_toks
-        .iter()
-        .find(|t| matches!(t.kind, TokenKind::KwAsync | TokenKind::KwFunc))
-        .map(|t| t.start)
-        .or_else(|| sig_toks.first().map(|t| t.start))
-        .unwrap_or(fs);
-    let body_end = {
-        let br = block_node.text_range();
-        let bs = u32::from(br.start());
-        let be = u32::from(br.end());
-        tokens
-            .iter()
-            .rev()
-            .find(|t| {
-                matches!(t.kind, TokenKind::RBrace)
-                    && !t.inserted
-                    && t.start >= bs
-                    && t.start < be.max(bs + 1)
-            })
-            .map(|t| t.start + t.len)
-            .unwrap_or(body.span.end)
-    };
-    Some(FuncDecl {
-        span: Span::new(file_id, sig_start, body_end),
-        attrs: attrs.into(),
-        visibility,
-        is_async,
-        name,
-        generic_params,
-        params,
-        result,
-        where_clause,
-        body,
-    })
-}
-
-fn parse_func_name(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<FuncName> {
-    let first = cur.peek()?;
-    // Method: Type.method or path.Type.method — require IdentType/Value . IdentValue
-    // without consuming multi-seg as free name.
-    if matches!(first.kind, TokenKind::IdentType | TokenKind::IdentValue) {
-        // Look ahead for `.` + method name and then `(`/`<`
-        if cur
-            .peek_at(1)
-            .is_some_and(|t| matches!(t.kind, TokenKind::Dot))
-            && cur
-                .peek_at(2)
-                .is_some_and(|t| matches!(t.kind, TokenKind::IdentValue))
-            && cur
-                .peek_at(3)
-                .is_some_and(|t| matches!(t.kind, TokenKind::LParen | TokenKind::Lt))
-        {
-            let recv_tok = cur.bump()?;
-            let recv_name = SmolStr::new(ctx.text(recv_tok)?);
-            cur.expect(TokenKind::Dot)?;
-            let method_tok = cur.expect(TokenKind::IdentValue)?;
-            let method = SmolStr::new(ctx.text(method_tok)?);
-            return Some(FuncName::Method {
-                span: ctx.span(recv_tok.start, method_tok.start + method_tok.len),
-                receiver: TypeName {
-                    span: ctx.token_span(recv_tok),
-                    path: smallvec![recv_name],
-                },
-                name: method,
-            });
-        }
-    }
-    let name_tok = cur.expect(TokenKind::IdentValue)?;
-    Some(FuncName::Free {
-        span: ctx.token_span(name_tok),
-        name: SmolStr::new(ctx.text(name_tok)?),
-    })
-}
 
 /// `module a.b.c`
 #[must_use]
@@ -733,191 +516,7 @@ fn try_hand_lower_type_alias(
     })
 }
 
-fn try_hand_lower_struct(
-    pool: &mut AstPool,
-    source: &str,
-    tokens: &[Token],
-    item: &SyntaxNode,
-    file_id: u32,
-) -> Option<StructDecl> {
-    let toks = item_tokens(tokens, item);
-    let mut ctx = HandCtx {
-        pool,
-        source,
-        file_id,
-    };
-    let mut cur = Cursor::new(&toks);
-    skip_leading_doc_comments(&mut cur);
-    let attrs = parse_attributes(&mut ctx, &mut cur)?;
-    let visibility = parse_visibility(&mut cur);
-    cur.expect(TokenKind::KwStruct)?;
-    let name_tok = cur
-        .peek()
-        .filter(|t| matches!(t.kind, TokenKind::IdentType | TokenKind::IdentValue))?;
-    let name = SmolStr::new(ctx.text(name_tok)?);
-    cur.bump();
-    let generic_params = parse_generic_params(&mut ctx, &mut cur)?;
-    let where_clause = parse_where_clause(&mut ctx, &mut cur)?;
-    cur.expect(TokenKind::LBrace)?;
-    let mut fields = Vec::new();
-    while cur.peek_kind() != Some(TokenKind::RBrace) && !cur.at_end() {
-        while cur.eat(TokenKind::Semicolon) {}
-        if cur.peek_kind() == Some(TokenKind::RBrace) {
-            break;
-        }
-        fields.push(parse_field(&mut ctx, &mut cur, true)?);
-    }
-    cur.expect(TokenKind::RBrace)?;
-    if !cur.at_end() {
-        return None;
-    }
-    // Span: RD marks at `struct` after attrs+visibility.
-    let start = toks
-        .iter()
-        .find(|t| matches!(t.kind, TokenKind::KwStruct))
-        .map(|t| t.start)
-        .or_else(|| toks.first().map(|t| t.start))?;
-    let end = toks.last().map(|t| t.start + t.len)?;
-    Some(StructDecl {
-        span: Span::new(file_id, start, end),
-        attrs: attrs.into(),
-        visibility,
-        name,
-        generic_params,
-        where_clause,
-        fields,
-    })
-}
 
-fn parse_field(
-    ctx: &mut HandCtx<'_>,
-    cur: &mut Cursor<'_>,
-    require_semi: bool,
-) -> Option<FieldDecl> {
-    let field_start = cur.peek()?.start;
-    let attrs = parse_attributes(ctx, cur)?;
-    let visibility = parse_visibility(cur);
-    let name_tok = cur.expect(TokenKind::IdentValue)?;
-    let name = SmolStr::new(ctx.text(name_tok)?);
-    cur.expect(TokenKind::Colon)?;
-    let ty = parse_type(ctx, cur)?;
-    if require_semi {
-        let _ = cur.eat(TokenKind::Semicolon);
-    } else {
-        let _ = cur.eat(TokenKind::Comma);
-        let _ = cur.eat(TokenKind::Semicolon);
-    }
-    let end = ctx.pool.type_expr_span(ty).end;
-    Some(FieldDecl {
-        span: ctx.span(field_start, end),
-        attrs: attrs.into(),
-        visibility,
-        name,
-        ty,
-    })
-}
-
-fn try_hand_lower_enum(
-    pool: &mut AstPool,
-    source: &str,
-    tokens: &[Token],
-    item: &SyntaxNode,
-    file_id: u32,
-) -> Option<EnumDecl> {
-    let toks = item_tokens(tokens, item);
-    let mut ctx = HandCtx {
-        pool,
-        source,
-        file_id,
-    };
-    let mut cur = Cursor::new(&toks);
-    skip_leading_doc_comments(&mut cur);
-    let attrs = parse_attributes(&mut ctx, &mut cur)?;
-    let visibility = parse_visibility(&mut cur);
-    cur.expect(TokenKind::KwEnum)?;
-    let name_tok = cur
-        .peek()
-        .filter(|t| matches!(t.kind, TokenKind::IdentType | TokenKind::IdentValue))?;
-    let name = SmolStr::new(ctx.text(name_tok)?);
-    cur.bump();
-    let generic_params = parse_generic_params(&mut ctx, &mut cur)?;
-    let where_clause = parse_where_clause(&mut ctx, &mut cur)?;
-    cur.expect(TokenKind::LBrace)?;
-    let mut variants = Vec::new();
-    while cur.peek_kind() != Some(TokenKind::RBrace) && !cur.at_end() {
-        while cur.eat(TokenKind::Semicolon) || cur.eat(TokenKind::Comma) {}
-        if cur.peek_kind() == Some(TokenKind::RBrace) {
-            break;
-        }
-        variants.push(parse_enum_variant(&mut ctx, &mut cur)?);
-        let _ = cur.eat(TokenKind::Comma);
-        let _ = cur.eat(TokenKind::Semicolon);
-    }
-    cur.expect(TokenKind::RBrace)?;
-    if !cur.at_end() {
-        return None;
-    }
-    Some(EnumDecl {
-        span: token_bounds_span(file_id, &toks)?,
-        attrs: attrs.into(),
-        visibility,
-        name,
-        generic_params,
-        where_clause,
-        variants,
-    })
-}
-
-fn parse_enum_variant(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<EnumVariant> {
-    let attrs = parse_attributes(ctx, cur)?;
-    let name_tok = cur
-        .peek()
-        .filter(|t| matches!(t.kind, TokenKind::IdentType | TokenKind::IdentValue))?;
-    let name = SmolStr::new(ctx.text(name_tok)?);
-    let start = name_tok.start;
-    cur.bump();
-    let payload = if cur.eat(TokenKind::LParen) {
-        let mut types = Vec::new();
-        if cur.peek_kind() != Some(TokenKind::RParen) {
-            loop {
-                types.push(parse_type(ctx, cur)?);
-                if cur.eat(TokenKind::Comma) {
-                    continue;
-                }
-                break;
-            }
-        }
-        let close = cur.expect(TokenKind::RParen)?;
-        let range = ctx.pool.alloc_type_expr_list(&types);
-        Some(EnumPayload::Tuple {
-            span: ctx.span(start, close.start + close.len),
-            types: range,
-        })
-    } else if cur.eat(TokenKind::LBrace) {
-        let mut fields = Vec::new();
-        while cur.peek_kind() != Some(TokenKind::RBrace) && !cur.at_end() {
-            fields.push(parse_field(ctx, cur, false)?);
-            let _ = cur.eat(TokenKind::Comma);
-        }
-        let close = cur.expect(TokenKind::RBrace)?;
-        Some(EnumPayload::Struct {
-            span: ctx.span(start, close.start + close.len),
-            fields,
-        })
-    } else {
-        None
-    };
-    let end = match &payload {
-        Some(EnumPayload::Tuple { span, .. } | EnumPayload::Struct { span, .. }) => span.end,
-        None => name_tok.start + name_tok.len,
-    };
-    Some(EnumVariant {
-        span: ctx.span(start, end),
-        attrs: attrs.into(),
-        name,
-        payload,
-    })
-}
 
 fn try_hand_lower_interface(
     pool: &mut AstPool,
@@ -951,7 +550,7 @@ fn try_hand_lower_interface(
         if cur.peek_kind() == Some(TokenKind::RBrace) {
             break;
         }
-        members.push(parse_func_signature(&mut ctx, &mut cur)?);
+        members.push(super::func::parse_func_signature(&mut ctx, &mut cur)?);
         let _ = cur.eat(TokenKind::Semicolon);
     }
     cur.expect(TokenKind::RBrace)?;
@@ -969,39 +568,7 @@ fn try_hand_lower_interface(
     })
 }
 
-fn parse_func_signature(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<FuncSignature> {
-    let attrs = parse_attributes(ctx, cur)?;
-    let start = cur.peek()?.start;
-    cur.expect(TokenKind::KwFunc)?;
-    let name_tok = cur.expect(TokenKind::IdentValue)?;
-    let name = SmolStr::new(ctx.text(name_tok)?);
-    let generic_params = parse_generic_params(ctx, cur)?;
-    cur.expect(TokenKind::LParen)?;
-    let params = parse_params(ctx, cur, None)?;
-    cur.expect(TokenKind::RParen)?;
-    let result = if cur.eat(TokenKind::Colon) {
-        Some(parse_result_type(ctx, cur)?)
-    } else {
-        None
-    };
-    let where_clause = parse_where_clause(ctx, cur)?;
-    let end = result
-        .as_ref()
-        .map(|r| match r {
-            crate::ResultType::Single { span, .. } => span.end,
-            crate::ResultType::Multi { span, .. } => span.end,
-        })
-        .unwrap_or(name_tok.start + name_tok.len);
-    Some(FuncSignature {
-        span: ctx.span(start, end),
-        attrs: attrs.into(),
-        name,
-        generic_params,
-        params,
-        result,
-        where_clause,
-    })
-}
+
 
 fn try_hand_lower_extern(
     pool: &mut AstPool,
@@ -1028,7 +595,7 @@ fn try_hand_lower_extern(
         if cur.peek_kind() == Some(TokenKind::RBrace) {
             break;
         }
-        members.push(parse_func_signature(&mut ctx, &mut cur)?);
+        members.push(super::func::parse_func_signature(&mut ctx, &mut cur)?);
         let _ = cur.eat(TokenKind::Semicolon);
     }
     cur.expect(TokenKind::RBrace)?;

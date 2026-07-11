@@ -4,18 +4,21 @@
 //! nodes and lower their token spans with a small cursor. Any construct that
 //! cannot be recognized returns [`None`] so the green walk can fall back to RD.
 
+mod adt;
 mod cursor;
 mod decl;
 mod expr;
+mod func;
 mod pattern;
 mod stmt;
 mod ty;
 
 pub use cursor::{Cursor, HandCtx, token_span, token_text, tokens_in_range};
 pub use decl::{
-    try_hand_lower_func_item, try_hand_lower_import, try_hand_lower_module,
+    try_hand_lower_import, try_hand_lower_module,
     try_hand_lower_top_level,
 };
+pub use func::try_hand_lower_func_item;
 pub use expr::{try_hand_lower_expr, try_hand_lower_expr_all};
 pub use stmt::{try_hand_lower_block, try_hand_lower_stmt};
 pub use ty::try_hand_lower_type;
