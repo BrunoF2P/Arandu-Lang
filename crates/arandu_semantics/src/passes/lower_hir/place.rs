@@ -61,10 +61,25 @@ pub(crate) fn lower_place(
         match suffix {
             PlaceSuffix::Field { span, name } => {
                 let base = interner.resolve(current_ty);
-                let actual_base_ty = match base {
+                // Auto-deref: Nullable / & / &mut / ptr (shared|mut self places).
+                let mut actual_base_ty = match base {
                     ArType::Nullable(inner) => interner.resolve(inner),
                     other => other,
                 };
+                for _ in 0..4 {
+                    actual_base_ty = match actual_base_ty {
+                        ArType::Ref(inner) | ArType::RefMut(inner) | ArType::Ptr(inner) => {
+                            interner.resolve(inner)
+                        }
+                        other => other,
+                    };
+                    if !matches!(
+                        actual_base_ty,
+                        ArType::Ref(_) | ArType::RefMut(_) | ArType::Ptr(_)
+                    ) {
+                        break;
+                    }
+                }
                 let struct_id_opt = match &actual_base_ty {
                     ArType::Named(id, _) => Some(*id),
                     ArType::Ptr(inner) => match interner.resolve(*inner) {

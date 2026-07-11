@@ -722,16 +722,21 @@ fn instantiate_method_sig_for_receiver(
 ) -> (Vec<TypeId>, TypeId) {
     use crate::type_checker::types::{build_subst, substitute_type};
 
-    let recv_args: Vec<ArType> = match checker.resolve(actual_base_ty_id) {
+    // Peel ptr/ref so specialization works when the receiver is already a ref
+    // (or when only the formal is `&T` after auto-ref at the call site).
+    let mut base_id = actual_base_ty_id;
+    for _ in 0..4 {
+        match checker.resolve(base_id) {
+            ArType::Ptr(inner) | ArType::Ref(inner) | ArType::RefMut(inner) => {
+                base_id = inner;
+            }
+            _ => break,
+        }
+    }
+    let recv_args: Vec<ArType> = match checker.resolve(base_id) {
         ArType::Named(id, args) if id == struct_id => {
             args.iter().map(|&a| checker.resolve(a)).collect()
         }
-        ArType::Ptr(inner) => match checker.resolve(inner) {
-            ArType::Named(id, args) if id == struct_id => {
-                args.iter().map(|&a| checker.resolve(a)).collect()
-            }
-            _ => return (params, ret),
-        },
         _ => return (params, ret),
     };
     if recv_args.is_empty() {

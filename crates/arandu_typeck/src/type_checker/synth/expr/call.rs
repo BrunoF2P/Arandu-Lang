@@ -426,7 +426,21 @@ pub(super) fn synth_call_expr(
                                 _ => base_ty_id,
                             };
                             let receiver_ty_id = params[0];
-                            if !checker.unify_ids(receiver_ty_id, actual_base_ty_id) {
+                            // Same auto-ref/auto-deref as synth_method_call: formal
+                            // `shared`/`mut self` is `&T`/`&mut T`, receiver value is `T`.
+                            let receiver_ok = checker.unify_ids(receiver_ty_id, actual_base_ty_id)
+                                || match checker.resolve(receiver_ty_id) {
+                                    ArType::Ref(inner) | ArType::RefMut(inner) => {
+                                        checker.unify_ids(inner, actual_base_ty_id)
+                                    }
+                                    _ => match checker.resolve(actual_base_ty_id) {
+                                        ArType::Ref(inner) | ArType::RefMut(inner) => {
+                                            checker.unify_ids(receiver_ty_id, inner)
+                                        }
+                                        _ => false,
+                                    },
+                                };
+                            if !receiver_ok {
                                 checker.add_constraint(
                                     receiver_ty_id,
                                     actual_base_ty_id,

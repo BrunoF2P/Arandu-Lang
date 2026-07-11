@@ -1,7 +1,25 @@
-use arandu_parser::{Program, TopLevelDecl};
+use arandu_parser::{Ownership, Program, TopLevelDecl};
 
 use crate::type_checker::TypeChecker;
 use crate::type_checker::types::ArType;
+
+/// Wrap a receiver's bare type with the ownership qualifier.
+///
+/// - `shared self: T` → `&T`
+/// - `mut self: T` → `&mut T`
+/// - `own self: T` / bare → `T`
+#[inline]
+pub(crate) fn apply_receiver_ownership(
+    checker: &mut TypeChecker<'_>,
+    bare_ty_id: arandu_middle::types::TypeId,
+    ownership: Option<Ownership>,
+) -> arandu_middle::types::TypeId {
+    match ownership {
+        Some(Ownership::Shared) => checker.intern(ArType::Ref(bare_ty_id)),
+        Some(Ownership::Mut) => checker.intern(ArType::RefMut(bare_ty_id)),
+        Some(Ownership::Own) | None => bare_ty_id,
+    }
+}
 
 #[tracing::instrument(level = "trace", target = "arandu_typeck", skip(checker, program))]
 pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Program) {
@@ -210,11 +228,12 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &P
                     );
                     // Generic struct receivers: `self: List` → `List<T>` using the
                     // *struct*'s type parameters — never the method's own params.
+                    // Then wrap by ownership: `shared`/`mut` → `&T` / `&mut T`.
                     let mut struct_params_for_mono: Option<std::sync::Arc<Vec<crate::SymbolId>>> =
                         None;
                     if let arandu_parser::FuncName::Method { .. } = &func_decl.name
                         && let Some(first_param) = func_decl.params.first()
-                        && first_param.name.as_str() == "self"
+                        && first_param.is_receiver
                         && let Some(first_ty_id) = param_types.first_mut()
                     {
                         let lowered_first_ty = checker.resolve(*first_ty_id);
@@ -233,6 +252,11 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &P
                             *first_ty_id = checker.intern(new_first_ty);
                             struct_params_for_mono = Some(struct_params);
                         }
+                        *first_ty_id = apply_receiver_ownership(
+                            checker,
+                            *first_ty_id,
+                            first_param.ownership,
+                        );
                     }
                     // Mono key params = struct type params (if method) ++ method type params.
                     // Enables specializing `Box.get` when only the receiver carries `T`.

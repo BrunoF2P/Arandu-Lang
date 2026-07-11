@@ -1,21 +1,19 @@
-Func User.greet(shared self: User) -> str
+Func User.greet(shared self: &User) -> str
   locals:
     _0: str // return
-    _1: User
-    _2: User
-    s0: User // self
+    _1: &User
+    _2: &User
+    s0: &User // self
 
   bb0:
-    s0 = _1
-    _2 = s0
-    _0 = _2.0
+    _0 = _1.0
     return
 
 Func main() -> void
   locals:
     _0: void // return
     _1: User
-    _2: User
+    _2: &User
     _3: str
     s0: User // user
     s1: str // _
@@ -23,7 +21,7 @@ Func main() -> void
   bb0:
     _1 = User { name: "Ada" }
     s0 = move _1
-    _2 = s0
+    _2 = &s0
     _3 = call fn@User.greet(_2)
     s1 = move _3
     return

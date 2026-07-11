@@ -51,7 +51,10 @@ impl FunctionTranslator<'_, '_> {
                     _ => arandu_semantics::types::ArType::Error,
                 };
                 let struct_ty = match base_ty {
-                    arandu_semantics::types::ArType::Ptr(inner) => {
+                    arandu_semantics::types::ArType::Ptr(inner)
+                    | arandu_semantics::types::ArType::Ref(inner)
+                    | arandu_semantics::types::ArType::RefMut(inner)
+                    | arandu_semantics::types::ArType::Nullable(inner) => {
                         self.type_info.resolve_type_id(inner)
                     }
                     other => other,
@@ -825,9 +828,12 @@ impl FunctionTranslator<'_, '_> {
                     }
                     _ => arandu_semantics::types::ArType::Error,
                 };
-                // Unwrap ptr / nullable so layout sees the struct/tuple payload.
+                // Unwrap ptr / ref / nullable so layout sees the struct/tuple payload.
+                // `shared`/`mut self` formals are `&T`/`&mut T` (pointer-sized SSA).
                 let struct_ty = match base_ty {
                     arandu_semantics::types::ArType::Ptr(inner)
+                    | arandu_semantics::types::ArType::Ref(inner)
+                    | arandu_semantics::types::ArType::RefMut(inner)
                     | arandu_semantics::types::ArType::Nullable(inner) => {
                         self.type_info.resolve_type_id(inner)
                     }

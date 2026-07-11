@@ -2,6 +2,25 @@ use super::super::TypeChecker;
 use super::super::constraints::ConstraintOrigin;
 use super::super::types::{ArType, Primitive, TypeId};
 
+/// Peel `Nullable` / `&` / `&mut` / `ptr` so place field/index works on `shared`/`mut self`.
+fn peel_auto_deref_place(checker: &TypeChecker<'_>, base_ty_id: TypeId) -> (TypeId, bool) {
+    let mut id = base_ty_id;
+    let mut was_nullable = false;
+    for _ in 0..8 {
+        match checker.resolve(id) {
+            ArType::Nullable(inner) => {
+                was_nullable = true;
+                id = inner;
+            }
+            ArType::Ref(inner) | ArType::RefMut(inner) | ArType::Ptr(inner) => {
+                id = inner;
+            }
+            _ => break,
+        }
+    }
+    (id, was_nullable)
+}
+
 pub(crate) fn synth_place(checker: &mut TypeChecker<'_>, place: &arandu_parser::Place) -> TypeId {
     let root_key = crate::NodeKey::from(place.span);
     let mut current_ty_id = if let Some(symbol_id) = checker.resolved.value_refs.get(&root_key) {
@@ -24,10 +43,8 @@ pub(crate) fn synth_place(checker: &mut TypeChecker<'_>, place: &arandu_parser::
         match suffix {
             arandu_parser::PlaceSuffix::Field { span, name } => {
                 let interner = &checker.type_info.type_interner;
-                let (actual_base_ty_id, was_nullable) = match checker.resolve(current_ty_id) {
-                    ArType::Nullable(inner) => (inner, true),
-                    _ => (current_ty_id, false),
-                };
+                let (actual_base_ty_id, was_nullable) =
+                    peel_auto_deref_place(checker, current_ty_id);
                 let actual_base_ty = checker.resolve(actual_base_ty_id);
                 if was_nullable {
                     let current_ty = checker.resolve(current_ty_id);
@@ -100,10 +117,8 @@ pub(crate) fn synth_place(checker: &mut TypeChecker<'_>, place: &arandu_parser::
             arandu_parser::PlaceSuffix::Index { span, expr } => {
                 let index_ty_id = super::super::synth::synth_expr(checker, *expr);
                 let interner = &checker.type_info.type_interner;
-                let (actual_base_ty_id, was_nullable) = match checker.resolve(current_ty_id) {
-                    ArType::Nullable(inner) => (inner, true),
-                    _ => (current_ty_id, false),
-                };
+                let (actual_base_ty_id, was_nullable) =
+                    peel_auto_deref_place(checker, current_ty_id);
                 let actual_base_ty = checker.resolve(actual_base_ty_id);
                 if was_nullable {
                     let current_ty = checker.resolve(current_ty_id);

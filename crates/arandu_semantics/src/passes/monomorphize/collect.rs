@@ -328,6 +328,24 @@ fn generic_callee_symbol(
     }
 }
 
+/// Peel Nullable / & / &mut / ptr layers so method mono keys see the Named receiver.
+fn peel_recv_base_ty(tc: &TypeCheckResult, base_ty: ArType) -> ArType {
+    let interner = &tc.type_info.type_interner;
+    let mut actual = match base_ty {
+        ArType::Nullable(inner) => interner.resolve(inner),
+        other => other,
+    };
+    for _ in 0..4 {
+        actual = match actual {
+            ArType::Ref(inner) | ArType::RefMut(inner) | ArType::Ptr(inner) => {
+                interner.resolve(inner)
+            }
+            other => return other,
+        };
+    }
+    actual
+}
+
 fn method_symbol_from_field(
     pool: &arandu_middle::hir::HirPool,
     tc: &TypeCheckResult,
@@ -335,10 +353,7 @@ fn method_symbol_from_field(
     field: &str,
 ) -> Option<SymbolId> {
     let base_ty = tc.type_info.type_interner.resolve(pool.expr(base).ty);
-    let actual = match base_ty {
-        ArType::Nullable(inner) => tc.type_info.type_interner.resolve(inner),
-        other => other,
-    };
+    let actual = peel_recv_base_ty(tc, base_ty);
     let struct_id = match actual {
         ArType::Named(id, _) => Some(id),
         ArType::Ptr(inner) => match tc.type_info.type_interner.resolve(inner) {
@@ -381,11 +396,9 @@ pub(super) fn instantiation_key_for_call(
                 return None;
             }
             // Type args from receiver `Named(S, [T1,…])` (struct params prefix).
+            // Peel Nullable / & / &mut so a ref-typed receiver still specializes.
             let base_ty = tc.type_info.type_interner.resolve(pool.expr(*base).ty);
-            let actual = match base_ty {
-                ArType::Nullable(inner) => tc.type_info.type_interner.resolve(inner),
-                other => other,
-            };
+            let actual = peel_recv_base_ty(tc, base_ty);
             let recv_args: Vec<_> = match actual {
                 ArType::Named(_, args) => args.clone(),
                 ArType::Ptr(inner) => match tc.type_info.type_interner.resolve(inner) {

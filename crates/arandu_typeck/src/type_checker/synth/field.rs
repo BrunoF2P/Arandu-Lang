@@ -6,6 +6,30 @@ use super::super::constraints::ConstraintOrigin;
 use super::super::types::{ArType, Primitive};
 use super::expr::synth_expr;
 
+/// Peel auto-deref layers for field/index bases: `Nullable`, then `&`/`&mut`/`ptr`.
+///
+/// Returns `(inner_ty_id, was_nullable)`. Used so `shared self` (`&T`) and
+/// `mut self` (`&mut T`) can use `self.field` without an explicit `*`.
+fn peel_auto_deref_base(checker: &TypeChecker<'_>, base_ty_id: TypeId) -> (TypeId, bool) {
+    let mut id = base_ty_id;
+    let mut was_nullable = false;
+    // Bound iterations: Nullable? + a few ref layers is plenty; avoid infinite
+    // loops on malformed interned graphs.
+    for _ in 0..8 {
+        match checker.resolve(id) {
+            ArType::Nullable(inner) => {
+                was_nullable = true;
+                id = inner;
+            }
+            ArType::Ref(inner) | ArType::RefMut(inner) | ArType::Ptr(inner) => {
+                id = inner;
+            }
+            _ => break,
+        }
+    }
+    (id, was_nullable)
+}
+
 pub(crate) fn resolve_namespace_field(
     checker: &mut TypeChecker<'_>,
     base: ExprId,
@@ -55,10 +79,7 @@ pub(crate) fn resolve_field(
         return checker.intern(ArType::Error);
     }
 
-    let (actual_base_ty_id, was_nullable) = match checker.resolve(base_ty_id) {
-        ArType::Nullable(inner) => (inner, true),
-        _ => (base_ty_id, false),
-    };
+    let (actual_base_ty_id, was_nullable) = peel_auto_deref_base(checker, base_ty_id);
     let actual_base_ty = checker.resolve(actual_base_ty_id);
 
     if was_nullable && !safe {
@@ -195,10 +216,7 @@ pub(crate) fn resolve_index(
         return checker.intern(ArType::Error);
     }
 
-    let (actual_base_ty_id, was_nullable) = match checker.resolve(base_ty_id) {
-        ArType::Nullable(inner) => (inner, true),
-        _ => (base_ty_id, false),
-    };
+    let (actual_base_ty_id, was_nullable) = peel_auto_deref_base(checker, base_ty_id);
     let actual_base_ty = checker.resolve(actual_base_ty_id);
 
     if was_nullable && !safe {

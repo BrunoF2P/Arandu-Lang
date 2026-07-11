@@ -52,7 +52,9 @@ impl<'a> CEmitter<'a> {
                     }
                 };
                 let struct_ty = match base_ty {
-                    ArType::Ptr(inner) => self.interner.resolve(inner),
+                    ArType::Ptr(inner) | ArType::Ref(inner) | ArType::RefMut(inner) => {
+                        self.interner.resolve(inner)
+                    }
                     other => other,
                 };
                 let layout = self

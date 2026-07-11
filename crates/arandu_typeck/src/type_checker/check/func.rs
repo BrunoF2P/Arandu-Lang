@@ -4,6 +4,7 @@ use super::super::TypeChecker;
 use super::super::constraints::ConstraintOrigin;
 use super::super::types::ArType;
 use super::block::check_block;
+use super::collect::apply_receiver_ownership;
 
 fn func_name_key(decl: &FuncDecl) -> crate::NodeKey {
     let name_span = match &decl.name {
@@ -130,7 +131,12 @@ pub fn check_func_body(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
             param_ty = ArType::Named(struct_id, new_args);
         }
 
-        let param_ty_id = checker.intern(param_ty);
+        let mut param_ty_id = checker.intern(param_ty);
+        // Method receivers: `shared`/`mut self` bind as `&T` / `&mut T` so body
+        // field access and call-site auto-ref share the same formal type.
+        if param.is_receiver {
+            param_ty_id = apply_receiver_ownership(checker, param_ty_id, param.ownership);
+        }
         let param_key = crate::NodeKey::from(param.span);
         if let Some(&symbol_id) = checker.resolved.definitions.get(&param_key) {
             checker.ctx.bind(symbol_id, param_ty_id);
