@@ -16,8 +16,9 @@ cranelift-native = "0.133.1"
 target-lexicon = "0.13.5"
 rustc-hash = { workspace = true }
 tracing.workspace = true
-# SL_R.2 reactor (epoll + timerfd on Linux)
+# SL_R.2 reactor (epoll + timerfd on Linux); SL_R.3 io_uring when available
 libc = "0.2"
+io-uring = "0.7"
 
 [dev-dependencies]
 arandu_parser = { path = "../arandu_parser" }

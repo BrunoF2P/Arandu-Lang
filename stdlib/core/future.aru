@@ -1,17 +1,15 @@
-// arandu_core::future — Poll / Future surface for A3 + SL_R.
-//
-// The compiler implements Future-like drive for `Coroutine[T]` (await = block_on
-// poll until Ready). Multi-task spawn/join and OS reactors live in `std.runtime`
-// (explicit Executor / EpollReactor — no global runtime).
+// arandu_core::future — Poll / Future / Waker surface for A3 + SL_R.
 
 module std.core.future
 
 /// Result of one poll step on a coroutine / future.
-/// Generic args use `<>` (same as structs/funcs); `Poll[T]` is not type syntax.
 public enum Poll<T> {
     Ready(T)
     Pending
 }
 
-// Waker / Context / Future.poll remain library-shaped for SL_R.3+ (io_uring,
-// multi-wake). SL_R.0/2 use host poll on the coroutine state blob instead.
+// Waker / Context live in `std.runtime` as concrete handles (explicit, no
+// global). Libraries that only need Poll stay free of the runtime import.
+// Full `Future.poll(self, ctx: Context): Poll[T]` trait lands when interface
+// methods support generic Self receivers end-to-end; today SyncExecutor drives
+// Coroutine state blobs via host poll/block_on.

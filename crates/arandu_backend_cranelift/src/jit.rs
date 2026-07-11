@@ -181,6 +181,81 @@ impl AranduJit {
             "ar_rt_reactor_poll_ms",
             crate::reactor_runtime::ar_rt_reactor_poll_ms as *const u8,
         );
+        builder.symbol(
+            "ar_rt_reactor_backend",
+            crate::reactor_runtime::ar_rt_reactor_backend as *const u8,
+        );
+        // SL_R Waker
+        builder.symbol(
+            "ar_rt_waker_create",
+            crate::waker_runtime::ar_rt_waker_create as *const u8,
+        );
+        builder.symbol(
+            "ar_rt_waker_wake",
+            crate::waker_runtime::ar_rt_waker_wake as *const u8,
+        );
+        builder.symbol(
+            "ar_rt_waker_wait",
+            crate::waker_runtime::ar_rt_waker_wait as *const u8,
+        );
+        builder.symbol(
+            "ar_rt_waker_destroy",
+            crate::waker_runtime::ar_rt_waker_destroy as *const u8,
+        );
+        // SL_R sockets
+        builder.symbol(
+            "ar_rt_tcp_listen",
+            crate::socket_runtime::ar_rt_tcp_listen as *const u8,
+        );
+        builder.symbol(
+            "ar_rt_tcp_accept",
+            crate::socket_runtime::ar_rt_tcp_accept as *const u8,
+        );
+        builder.symbol(
+            "ar_rt_tcp_connect",
+            crate::socket_runtime::ar_rt_tcp_connect as *const u8,
+        );
+        builder.symbol(
+            "ar_rt_tcp_read",
+            crate::socket_runtime::ar_rt_tcp_read as *const u8,
+        );
+        builder.symbol(
+            "ar_rt_tcp_write",
+            crate::socket_runtime::ar_rt_tcp_write as *const u8,
+        );
+        builder.symbol(
+            "ar_rt_tcp_close",
+            crate::socket_runtime::ar_rt_tcp_close as *const u8,
+        );
+        // SL_R.1 supervisor
+        builder.symbol(
+            "ar_rt_supervisor_create",
+            crate::supervisor_runtime::ar_rt_supervisor_create as *const u8,
+        );
+        builder.symbol(
+            "ar_rt_supervisor_destroy",
+            crate::supervisor_runtime::ar_rt_supervisor_destroy as *const u8,
+        );
+        builder.symbol(
+            "ar_rt_supervisor_spawn",
+            crate::supervisor_runtime::ar_rt_supervisor_spawn as *const u8,
+        );
+        builder.symbol(
+            "ar_rt_supervisor_spawn_str",
+            crate::supervisor_runtime::ar_rt_supervisor_spawn_str as *const u8,
+        );
+        builder.symbol(
+            "ar_rt_supervisor_poll",
+            crate::supervisor_runtime::ar_rt_supervisor_poll as *const u8,
+        );
+        builder.symbol(
+            "ar_rt_supervisor_wait",
+            crate::supervisor_runtime::ar_rt_supervisor_wait as *const u8,
+        );
+        builder.symbol(
+            "ar_rt_supervisor_kill",
+            crate::supervisor_runtime::ar_rt_supervisor_kill as *const u8,
+        );
         let module = JITModule::new(builder);
 
         Ok(Self { module })
@@ -430,10 +505,135 @@ impl AranduJit {
                 "ar_rt_reactor_sleep_ms",
                 "ar_rt_reactor_arm_timer_ms",
                 "ar_rt_reactor_poll_ms",
+                "ar_rt_waker_wait",
+                "ar_rt_supervisor_poll",
+                "ar_rt_supervisor_wait",
+                "ar_rt_supervisor_kill",
             ] {
                 let id = self
                     .module
                     .declare_function(name, Linkage::Import, &two_i64_ret_i64)
+                    .map_err(|err| codegen_ice(format!("failed to declare {name}: {err:?}")))?;
+                func_ids.insert(name.to_string(), id);
+            }
+        }
+        // 0-arg -> i64
+        {
+            let mut sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+            sig.returns
+                .push(cranelift_codegen::ir::AbiParam::new(
+                    cranelift_codegen::ir::types::I64,
+                ));
+            for name in [
+                "ar_rt_reactor_backend",
+                "ar_rt_waker_create",
+                "ar_rt_supervisor_create",
+            ] {
+                if !func_ids.contains_key(name) {
+                    let id = self
+                        .module
+                        .declare_function(name, Linkage::Import, &sig)
+                        .map_err(|err| codegen_ice(format!("failed to declare {name}: {err:?}")))?;
+                    func_ids.insert(name.to_string(), id);
+                }
+            }
+        }
+        // 1-arg i64 -> void / i64
+        {
+            let mut void_sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+            void_sig
+                .params
+                .push(cranelift_codegen::ir::AbiParam::new(
+                    cranelift_codegen::ir::types::I64,
+                ));
+            for name in [
+                "ar_rt_waker_wake",
+                "ar_rt_waker_destroy",
+                "ar_rt_supervisor_destroy",
+                "ar_rt_tcp_close",
+            ] {
+                let id = self
+                    .module
+                    .declare_function(name, Linkage::Import, &void_sig)
+                    .map_err(|err| codegen_ice(format!("failed to declare {name}: {err:?}")))?;
+                func_ids.insert(name.to_string(), id);
+            }
+            let mut ret_sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+            ret_sig
+                .params
+                .push(cranelift_codegen::ir::AbiParam::new(
+                    cranelift_codegen::ir::types::I64,
+                ));
+            ret_sig
+                .returns
+                .push(cranelift_codegen::ir::AbiParam::new(
+                    cranelift_codegen::ir::types::I64,
+                ));
+            for name in [
+                "ar_rt_tcp_listen",
+                "ar_rt_tcp_accept",
+                "ar_rt_tcp_connect",
+            ] {
+                let id = self
+                    .module
+                    .declare_function(name, Linkage::Import, &ret_sig)
+                    .map_err(|err| codegen_ice(format!("failed to declare {name}: {err:?}")))?;
+                func_ids.insert(name.to_string(), id);
+            }
+        }
+        // tcp_read/write: (sock, ptr, len) -> i64
+        {
+            let mut sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+            sig.params
+                .push(cranelift_codegen::ir::AbiParam::new(
+                    cranelift_codegen::ir::types::I64,
+                ));
+            sig.params
+                .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+            sig.params
+                .push(cranelift_codegen::ir::AbiParam::new(
+                    cranelift_codegen::ir::types::I64,
+                ));
+            sig.returns
+                .push(cranelift_codegen::ir::AbiParam::new(
+                    cranelift_codegen::ir::types::I64,
+                ));
+            for name in ["ar_rt_tcp_read", "ar_rt_tcp_write"] {
+                let id = self
+                    .module
+                    .declare_function(name, Linkage::Import, &sig)
+                    .map_err(|err| codegen_ice(format!("failed to declare {name}: {err:?}")))?;
+                func_ids.insert(name.to_string(), id);
+            }
+        }
+        // supervisor_spawn: (sup, path_ptr, path_len, max_restarts) -> i64
+        {
+            let mut sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+            for _ in 0..4 {
+                // params: i64, ptr, i64, i64 — first and last are i64; path is fat
+            }
+            sig.params
+                .push(cranelift_codegen::ir::AbiParam::new(
+                    cranelift_codegen::ir::types::I64,
+                ));
+            sig.params
+                .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+            sig.params
+                .push(cranelift_codegen::ir::AbiParam::new(
+                    cranelift_codegen::ir::types::I64,
+                ));
+            sig.params
+                .push(cranelift_codegen::ir::AbiParam::new(
+                    cranelift_codegen::ir::types::I64,
+                ));
+            sig.returns
+                .push(cranelift_codegen::ir::AbiParam::new(
+                    cranelift_codegen::ir::types::I64,
+                ));
+            for name in ["ar_rt_supervisor_spawn", "ar_rt_supervisor_spawn_str"] {
+                let id = self
+                    .module
+                    .declare_function(name, Linkage::Import, &sig)
                     .map_err(|err| codegen_ice(format!("failed to declare {name}: {err:?}")))?;
                 func_ids.insert(name.to_string(), id);
             }

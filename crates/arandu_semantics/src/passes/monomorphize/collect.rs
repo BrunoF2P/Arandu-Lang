@@ -233,9 +233,16 @@ impl InstantiationAnalyzer<'_> {
                 }
                 // Methods/funcs whose type args come only from the receiver or
                 // argument types (no `Generic` node): still need mono keys.
-                if let Some(key) =
-                    instantiation_key_for_call(self.hir, self.tc, *callee, *args, expr.span)
-                    && let Some(callee_node) = self.insert_key(key, expr.span)
+                // Pass the call's result type so `join<T>(h)` can recover `T`
+                // from the expected/inferred return type on the Call expr.
+                if let Some(key) = instantiation_key_for_call(
+                    self.hir,
+                    self.tc,
+                    *callee,
+                    *args,
+                    expr.ty,
+                    expr.span,
+                ) && let Some(callee_node) = self.insert_key(key, expr.span)
                     && let Some(caller_node) = current
                 {
                     self.graph.add_edge(caller_node, callee_node);
@@ -378,6 +385,7 @@ pub(in crate::passes::monomorphize) fn instantiation_key_for_call(
     tc: &TypeCheckResult,
     callee_id: HirExprId,
     args: arandu_middle::hir::IndexRange,
+    call_result_ty: arandu_middle::types::TypeId,
     _span: arandu_lexer::Span,
 ) -> Option<InstantiationKey> {
     let pool = &hir.pool;
@@ -426,7 +434,15 @@ pub(in crate::passes::monomorphize) fn instantiation_key_for_call(
             if params.is_empty() {
                 return None;
             }
-            let inferred = infer_free_func_type_args(tc, *symbol, &params, pool, args)?;
+            let inferred = infer_free_func_type_args(
+                tc,
+                *symbol,
+                &params,
+                pool,
+                callee_id,
+                args,
+                call_result_ty,
+            )?;
             (*symbol, inferred)
         }
         HirExprKind::TypePath { member_symbol, .. } => {
@@ -434,7 +450,15 @@ pub(in crate::passes::monomorphize) fn instantiation_key_for_call(
             if params.is_empty() {
                 return None;
             }
-            let inferred = infer_free_func_type_args(tc, *member_symbol, &params, pool, args)?;
+            let inferred = infer_free_func_type_args(
+                tc,
+                *member_symbol,
+                &params,
+                pool,
+                callee_id,
+                args,
+                call_result_ty,
+            )?;
             (*member_symbol, inferred)
         }
         _ => return None,
@@ -467,16 +491,20 @@ fn is_identity_args(
     })
 }
 
-/// Infer free-function type arguments by matching formal param types against arg expr types.
+/// Infer free-function type arguments by matching formal param types against
+/// arg expr types, plus the specialized callee type typeck recorded on the
+/// callee expr (covers `join<T>(h)` where `T` only appears in the return type).
 fn infer_free_func_type_args(
     tc: &TypeCheckResult,
     symbol: SymbolId,
     params: &[SymbolId],
     pool: &arandu_middle::hir::HirPool,
+    callee_id: HirExprId,
     args: arandu_middle::hir::IndexRange,
+    call_result_ty: arandu_middle::types::TypeId,
 ) -> Option<Vec<arandu_middle::types::TypeId>> {
     let func_ty = tc.type_info.decl_type(symbol)?;
-    let ArType::Func(formals, _) = func_ty else {
+    let ArType::Func(formals, ret) = func_ty else {
         return None;
     };
     let arg_ids = pool.expr_list(args);
@@ -493,6 +521,29 @@ fn infer_free_func_type_args(
         let formal = interner.resolve(formal_id);
         let arg_ty_id = pool.expr(arg_eid).ty;
         collect_param_bindings(interner, params, &formal, arg_ty_id, &mut bindings);
+    }
+
+    // Specialized Func type on the callee (typeck inference → HIR .ty).
+    let cal_ty = interner.resolve(pool.expr(callee_id).ty);
+    if let ArType::Func(spec_formals, spec_ret) = cal_ty {
+        for (&orig, &spec) in formals.iter().zip(spec_formals.iter()) {
+            let formal = interner.resolve(orig);
+            collect_param_bindings(interner, params, &formal, spec, &mut bindings);
+        }
+        let ret_formal = interner.resolve(ret);
+        collect_param_bindings(interner, params, &ret_formal, spec_ret, &mut bindings);
+    }
+
+    // Call expression result type (e.g. `return join(h)` expects int).
+    {
+        let ret_formal = interner.resolve(ret);
+        collect_param_bindings(
+            interner,
+            params,
+            &ret_formal,
+            call_result_ty,
+            &mut bindings,
+        );
     }
 
     let mut out = Vec::with_capacity(params.len());
@@ -533,6 +584,8 @@ fn collect_param_bindings(
         | ArType::Slice(inner)
         | ArType::Option(inner)
         | ArType::Array(_, inner)
+        | ArType::Ref(inner)
+        | ArType::RefMut(inner)
         | ArType::Coroutine(inner)
         | ArType::Poll(inner)
         | ArType::Range(inner) => {
@@ -543,6 +596,8 @@ fn collect_param_bindings(
                 | ArType::Slice(i)
                 | ArType::Option(i)
                 | ArType::Array(_, i)
+                | ArType::Ref(i)
+                | ArType::RefMut(i)
                 | ArType::Coroutine(i)
                 | ArType::Poll(i)
                 | ArType::Range(i) => Some(i),

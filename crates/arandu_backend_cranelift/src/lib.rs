@@ -12,9 +12,12 @@ pub mod jit;
 pub mod poll_runtime;
 pub mod reactor_runtime;
 pub mod rt_runtime;
+pub mod socket_runtime;
+pub mod supervisor_runtime;
 pub mod to_str_runtime;
 pub mod translator;
 pub mod types;
+pub mod waker_runtime;
 
 pub use crate::jit::CompiledModule;
 

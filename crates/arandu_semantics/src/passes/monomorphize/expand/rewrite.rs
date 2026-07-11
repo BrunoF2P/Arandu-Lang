@@ -295,11 +295,13 @@ pub(super) fn try_rewrite_generic_call(
         }
         // Receiver-driven method mono or free-func inferred mono (no Generic node).
         _ => {
+            let call_ty = hir.pool.expr(call_expr_id).ty;
             let Some(key) = super::super::collect::instantiation_key_for_call(
                 hir,
                 tc,
                 callee_id,
                 args,
+                call_ty,
                 hir.pool.expr(call_expr_id).span,
             ) else {
                 return;

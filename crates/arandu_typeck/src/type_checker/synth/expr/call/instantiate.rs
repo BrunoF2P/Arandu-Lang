@@ -9,6 +9,7 @@ pub(super) fn infer_and_instantiate_func(
     formals: &[TypeId],
     ret: TypeId,
     arg_tys: &[TypeId],
+    expected_ret: Option<TypeId>,
 ) -> Option<(Vec<TypeId>, TypeId)> {
     if formals.len() != arg_tys.len() {
         return None;
@@ -18,6 +19,11 @@ pub(super) fn infer_and_instantiate_func(
     for (&formal_id, &arg_id) in formals.iter().zip(arg_tys.iter()) {
         let formal = checker.resolve(formal_id);
         bind_type_params(checker, type_params, &formal, arg_id, &mut bindings);
+    }
+    // `join<T>(handle)` has no `T` in args — infer from expected return type.
+    if let Some(exp) = expected_ret {
+        let ret_ty = checker.resolve(ret);
+        bind_type_params(checker, type_params, &ret_ty, exp, &mut bindings);
     }
     let mut concrete = Vec::with_capacity(type_params.len());
     for &p in type_params {
@@ -66,13 +72,21 @@ pub(super) fn bind_type_params(
         | ArType::Nullable(inner)
         | ArType::Slice(inner)
         | ArType::Option(inner)
-        | ArType::Array(_, inner) => {
+        | ArType::Array(_, inner)
+        | ArType::Ref(inner)
+        | ArType::RefMut(inner)
+        | ArType::Coroutine(inner)
+        | ArType::Poll(inner) => {
             let act_inner = match interner.resolve(actual_id) {
                 ArType::Ptr(i)
                 | ArType::Nullable(i)
                 | ArType::Slice(i)
                 | ArType::Option(i)
-                | ArType::Array(_, i) => Some(i),
+                | ArType::Array(_, i)
+                | ArType::Ref(i)
+                | ArType::RefMut(i)
+                | ArType::Coroutine(i)
+                | ArType::Poll(i) => Some(i),
                 _ => None,
             };
             if let Some(ai) = act_inner {

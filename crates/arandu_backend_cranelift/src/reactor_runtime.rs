@@ -1,18 +1,26 @@
-//! SL_R.2 — cooperative reactor host for debug JIT (Linux epoll + timerfd).
+//! SL_R.2 / SL_R.3 — cooperative reactor host (epoll + timerfd; io_uring when available).
 //!
 //! ## Surface
 //! - [`ar_rt_reactor_create`] / [`ar_rt_reactor_destroy`]: opaque reactor handle
-//! - [`ar_rt_reactor_sleep_ms`]: block until `ms` elapses (timerfd + epoll_wait)
+//! - [`ar_rt_reactor_sleep_ms`]: block until `ms` elapses
 //! - [`ar_rt_reactor_poll_ms`]: wait up to `timeout_ms` for the next armed event
+//! - [`ar_rt_reactor_backend`]: runtime backend select (0 portable / 1 epoll / 2 io_uring)
 //!
-//! Non-Linux builds use a portable `thread::sleep` fallback so the language
-//! surface stays available; production path is Linux epoll (io_uring = SL_R.3).
+//! **SL_R.3:** prefer io_uring when the kernel supports it (runtime detect), else
+//! epoll+timerfd. Non-Linux uses portable `thread::sleep`.
 //!
 //! No global language-level reactor: handles are explicit values (like
 //! `SyncExecutor`).
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+
+/// Portable / no OS reactor.
+pub const BACKEND_PORTABLE: i64 = 0;
+/// Linux epoll + timerfd.
+pub const BACKEND_EPOLL: i64 = 1;
+/// Linux io_uring (timeout ops).
+pub const BACKEND_IO_URING: i64 = 2;
 
 /// Opaque reactor id (>= 0). Invalid / closed = negative.
 type ReactorId = i64;
@@ -33,6 +41,44 @@ static REACTORS: Mutex<Vec<Option<ReactorSlot>>> = Mutex::new(Vec::new());
 
 fn lock_reactors() -> std::sync::MutexGuard<'static, Vec<Option<ReactorSlot>>> {
     REACTORS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Runtime backend probe (cached). 2 = io_uring, 1 = epoll, 0 = portable.
+fn probe_backend() -> i64 {
+    #[cfg(target_os = "linux")]
+    {
+        // Prefer /proc (cheap) then try a real io_uring setup.
+        let proc_ok = std::fs::read_to_string("/proc/sys/kernel/io_uring_disabled")
+            .map(|s| s.trim() == "0")
+            .unwrap_or(true);
+        if proc_ok && try_io_uring_setup() {
+            return BACKEND_IO_URING;
+        }
+        BACKEND_EPOLL
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        BACKEND_PORTABLE
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn try_io_uring_setup() -> bool {
+    match io_uring::IoUring::new(8) {
+        Ok(_ring) => true,
+        Err(_) => false,
+    }
+}
+
+/// Report preferred reactor backend for this process (runtime detect).
+///
+/// # Safety
+/// C ABI.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ar_rt_reactor_backend() -> i64 {
+    use std::sync::OnceLock;
+    static CACHED: OnceLock<i64> = OnceLock::new();
+    *CACHED.get_or_init(probe_backend)
 }
 
 /// Create a reactor. Returns handle (>= 0) or -1 on failure.
@@ -113,7 +159,16 @@ pub unsafe extern "C" fn ar_rt_reactor_sleep_ms(id: ReactorId, ms: i64) -> i64 {
     if id < 0 || ms < 0 {
         return -1;
     }
-    // Arm then wait with infinite timeout for this one timer.
+    // SL_R.3: io_uring timeout path when backend says so.
+    #[cfg(target_os = "linux")]
+    {
+        if unsafe { ar_rt_reactor_backend() } == BACKEND_IO_URING
+            && sleep_ms_io_uring(ms as u64)
+        {
+            return 0;
+        }
+    }
+    // Arm then wait with infinite timeout for this one timer (epoll path).
     if unsafe { ar_rt_reactor_arm_timer_ms(id, ms) } != 0 {
         return -1;
     }
@@ -122,6 +177,28 @@ pub unsafe extern "C" fn ar_rt_reactor_sleep_ms(id: ReactorId, ms: i64) -> i64 {
         return -1;
     }
     0
+}
+
+#[cfg(target_os = "linux")]
+fn sleep_ms_io_uring(ms: u64) -> bool {
+    use io_uring::{IoUring, types};
+    let Ok(mut ring) = IoUring::new(8) else {
+        return false;
+    };
+    let ts = types::Timespec::from(Duration::from_millis(ms));
+    let entry = io_uring::opcode::Timeout::new(&ts).build().user_data(1);
+    // Safety: entry lives until submit_and_wait returns.
+    unsafe {
+        if ring.submission().push(&entry).is_err() {
+            return false;
+        }
+    }
+    if ring.submit_and_wait(1).is_err() {
+        return false;
+    }
+    // Drain one completion (timeout fires with -ETIME).
+    let mut cq = ring.completion();
+    cq.next().is_some()
 }
 
 /// Arm a one-shot timer for `ms` without blocking. Cancels any previous timer.
@@ -353,6 +430,19 @@ mod tests {
             let rc = ar_rt_reactor_poll_ms(r, 200);
             assert_eq!(rc, 1);
             ar_rt_reactor_destroy(r);
+        }
+    }
+
+    #[test]
+    fn backend_is_linux_or_portable() {
+        unsafe {
+            let b = ar_rt_reactor_backend();
+            assert!(
+                b == BACKEND_PORTABLE || b == BACKEND_EPOLL || b == BACKEND_IO_URING,
+                "backend={b}"
+            );
+            #[cfg(target_os = "linux")]
+            assert!(b == BACKEND_EPOLL || b == BACKEND_IO_URING);
         }
     }
 }

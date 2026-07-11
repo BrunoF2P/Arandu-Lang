@@ -26,6 +26,7 @@ pub(super) fn synth_call_expr(
     expr: ExprId,
     kind: &ExprKind,
     span: Span,
+    expected: Option<TypeId>,
 ) -> Option<TypeId> {
     match kind {
         ExprKind::Path { path: _ } => {
@@ -525,9 +526,14 @@ pub(super) fn synth_call_expr(
                         .copied()
                         .map(|aid| synth_expr(checker, aid))
                         .collect();
-                    if let Some((ip, ir)) =
-                        infer_and_instantiate_func(checker, &gp, &params, ret, &arg_tys)
-                    {
+                    if let Some((ip, ir)) = infer_and_instantiate_func(
+                        checker,
+                        &gp,
+                        &params,
+                        ret,
+                        &arg_tys,
+                        expected,
+                    ) {
                         params = ip;
                         ret = ir;
                         let inst_func = checker.intern(ArType::Func(params.clone(), ret));

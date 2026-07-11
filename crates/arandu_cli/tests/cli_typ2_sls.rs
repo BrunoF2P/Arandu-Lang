@@ -192,6 +192,163 @@ func main(): int {
     );
 }
 
+/// Same-module generic spawn/join with explicit type args (mono specialization).
+#[test]
+fn run_generic_spawn_join_explicit() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_generic_spawn.aru");
+    fs::write(
+        &file,
+        r#"
+module tests.cli.generic_spawn
+
+extern "C" {
+    func ar_rt_spawn_i64(state: ptr[u8]): int
+    func ar_rt_join_i64(handle: int): int
+}
+
+struct SyncExecutor { flags: int }
+struct TaskHandle { id: int }
+
+func spawn_g<T>(shared ex: SyncExecutor, job: Coroutine<T>): TaskHandle {
+    unsafe {
+        let id = ar_rt_spawn_i64(job as ptr[u8])
+        return TaskHandle { id: id }
+    }
+}
+
+func join_g<T>(shared ex: SyncExecutor, handle: TaskHandle): T {
+    unsafe {
+        let v = ar_rt_join_i64(handle.id)
+        return v as T
+    }
+}
+
+async func answer(): int {
+    return 42
+}
+
+func main(): int {
+    let ex = SyncExecutor { flags: 0 }
+    let h = spawn_g(ex, answer())
+    return join_g<int>(ex, h)
+}
+"#,
+    )
+    .unwrap();
+    let root = workspace_root();
+    let out = run_cli_in(&root, &["run", file.to_str().unwrap()]);
+    assert_eq!(
+        out.status.code(),
+        Some(42),
+        "generic spawn: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn run_waker_wake_wait() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_waker.aru");
+    fs::write(
+        &file,
+        r#"
+module tests.cli.waker
+import std.runtime as rt
+
+func main(): int {
+    let w = rt.new_waker()
+    rt.waker_wake(w)
+    let rc = rt.waker_wait(w, 100)
+    rt.destroy_waker(w)
+    if rc != 1 {
+        return 1
+    }
+    return 0
+}
+"#,
+    )
+    .unwrap();
+    let root = workspace_root();
+    let out = run_cli_in(&root, &["run", file.to_str().unwrap()]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "waker: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn run_reactor_backend_linux() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_backend.aru");
+    fs::write(
+        &file,
+        r#"
+module tests.cli.backend
+import std.runtime as rt
+
+func main(): int {
+    let b = rt.reactor_backend()
+    // Linux: 1 = epoll, 2 = io_uring
+    if b < 1 {
+        return 1
+    }
+    if b > 2 {
+        return 2
+    }
+    return 0
+}
+"#,
+    )
+    .unwrap();
+    let root = workspace_root();
+    let out = run_cli_in(&root, &["run", file.to_str().unwrap()]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "backend: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn run_supervisor_true() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_supervisor.aru");
+    fs::write(
+        &file,
+        r#"
+module tests.cli.supervisor
+import std.runtime as rt
+
+func main(): int {
+    let s = rt.new_supervisor()
+    if s.id < 0 {
+        return 1
+    }
+    let w = rt.supervisor_spawn(s, "/bin/true", 0)
+    if w.id < 0 {
+        return 2
+    }
+    let code = rt.supervisor_wait(s, w)
+    rt.destroy_supervisor(s)
+    return code
+}
+"#,
+    )
+    .unwrap();
+    let root = workspace_root();
+    let out = run_cli_in(&root, &["run", file.to_str().unwrap()]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "supervisor: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 /// Typed block_on over async func (no spawn).
 #[test]
 fn run_typed_block_on_int() {

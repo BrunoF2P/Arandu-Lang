@@ -12,6 +12,7 @@ pub(super) fn cast_types_compatible(
     found: &ArType,
     target: &ArType,
     interner: &arandu_middle::types::TypeInterner,
+    symbols: &arandu_middle::SymbolTable,
 ) -> bool {
     if found.is_error() || target.is_error() {
         return true;
@@ -34,6 +35,15 @@ pub(super) fn cast_types_compatible(
             inner_ty,
             ArType::Primitive(Primitive::Byte) | ArType::Primitive(Primitive::U8)
         );
+    }
+    // Host i64 payload bits → type param `T` (generic join/block_on).
+    // Only TypeParam targets — never arbitrary named types.
+    if found.is_integer()
+        && let ArType::Named(id, args) = target
+        && args.is_empty()
+        && symbols.get(*id).kind == arandu_middle::SymbolKind::TypeParam
+    {
+        return true;
     }
     false
 }
@@ -102,7 +112,12 @@ pub(super) fn synth_binary_unary_expr(
             let target_ty_id = checker.intern(target_ty);
             let found_ty = checker.resolve(found_ty_id);
             let target_ty = checker.resolve(target_ty_id);
-            if !cast_types_compatible(&found_ty, &target_ty, &checker.type_info.type_interner) {
+            if !cast_types_compatible(
+                &found_ty,
+                &target_ty,
+                &checker.type_info.type_interner,
+                &checker.symbols,
+            ) {
                 checker.add_constraint(
                     target_ty_id,
                     found_ty_id,

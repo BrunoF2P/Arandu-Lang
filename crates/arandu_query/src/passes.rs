@@ -295,16 +295,32 @@ pub fn item_source_input(
             continue;
         }
         let span = arandu_semantics::item_source_span(decl);
-        let start = (span.start as usize).min(text.len());
-        let end = (span.end as usize).min(text.len()).max(start);
+        // Floor/ceil to char boundaries — spans can land mid-UTF-8 sequence
+        // (e.g. multi-byte comment characters adjacent to an item).
+        let floor = |i: usize| {
+            let mut i = i.min(text.len());
+            while i > 0 && !text.is_char_boundary(i) {
+                i -= 1;
+            }
+            i
+        };
+        let ceil = |i: usize| {
+            let mut i = i.min(text.len());
+            while i < text.len() && !text.is_char_boundary(i) {
+                i += 1;
+            }
+            i
+        };
+        let start = floor(span.start as usize);
+        let end = ceil(span.end as usize).max(start);
         let mut h = blake3::Hasher::new();
         h.update(b"item_body_v4");
         // Prefer covering CST ITEM range (zero-copy slice of shared text).
         let mut used_cst = false;
         for &(s, e) in &ranges {
             if s <= span.start && span.end <= e {
-                let s = (s as usize).min(text.len());
-                let e = (e as usize).min(text.len()).max(s);
+                let s = floor(s as usize);
+                let e = ceil(e as usize).max(s);
                 h.update(text[s..e].as_bytes());
                 used_cst = true;
                 break;
