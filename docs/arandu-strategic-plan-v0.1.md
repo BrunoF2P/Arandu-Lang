@@ -25,16 +25,16 @@
 | Roadmap por fase semântica | Sustentável — não só “parser/checker/backend” |
 | Disciplina de escopo | Raro: saber o que **não** implementar ainda |
 
-### 1.2 Onde está o risco real (ordem)
+### 1.2 Onde está o risco real (ordem) — atualizado pós F2/A3/T3
 
-1. **Type checker monolítico** — `check.rs` / `synth.rs` / `types.rs` vão explodir com generics, flow, ownership metadata.
-2. **Semântica de memória ainda incompleta** — `Result`, `errdefer`, safe ops, definite init e M1 move checker já têm contrato AMIR; borrow checking, gen fallback e ownership interprocedural continuam pendentes.
-3. **Otimização middle-end ainda inicial** — O1 cobre constant folding + DCE opt-in; CFG cleanup, SCCP, DSE, inlining e escape analysis ficam para fases posteriores.
-4. **Ausência de módulos reais** — single-file não escala para projetos, incremental, pacotes.
-5. **Layout de memória do compilador** — `Box`/`Vec`/`String` em IR; falta arena + interning.
-6. **Ownership híbrido + generational fallback** — diferencial de mercado, mas exige transparência (O004 sempre visível).
+1. **Export/privacy multi-módulo** — `exported_symbols` deve filtrar `public` (root); stdlib e pacotes dependem disso.
+2. **Hotspots typeck/mono** — `call.rs`, `expand.rs` ainda grandes; modularizar ao tocar (não monólito único de entrada).
+3. **Residuals F2** — auto-ref, `CalleeArgModes`→`&T`, exclusive `BorrowMut` (janelas OSSA).
+4. **Otimização middle-end** — O1 + SCCP/simplify parcial; inlining/DSE globais depois.
+5. **Layout/ABI named types no Cranelift** — TODO multi-value residual.
+6. **GenArena tipada / SL_R** — adiados honestamente (não bloqueiam F2/A3 gold).
 
-O maior risco **não** é lexer nem parser.
+O maior risco **não** é lexer nem parser. Typeck já está modularizado em subpastas; o risco é **export stub** e monólitos de mono/lower/backend.
 
 ---
 

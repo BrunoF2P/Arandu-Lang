@@ -7,7 +7,7 @@ module std.core.future
 
 /// Result of one poll step on a coroutine / future.
 /// Generic args use `<>` (same as structs/funcs); `Poll[T]` is not type syntax.
-enum Poll<T> {
+public enum Poll<T> {
     Ready(T)
     Pending
 }

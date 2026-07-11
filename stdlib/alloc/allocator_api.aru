@@ -22,7 +22,7 @@ public interface Allocator {
 
 public struct GlobalAllocator {}
 
-func GlobalAllocator.alloc(shared self, size: u64, align: u64) : Result<ptr[u8], AllocError> {
+public func GlobalAllocator.alloc(shared self, size: u64, align: u64) : Result<ptr[u8], AllocError> {
     let p = malloc(size)
     if p == nil {
         return Result.Err(AllocError.OutOfMemory)
@@ -30,11 +30,11 @@ func GlobalAllocator.alloc(shared self, size: u64, align: u64) : Result<ptr[u8],
     return Result.Ok(p)
 }
 
-func GlobalAllocator.dealloc(shared self, p: ptr[u8], size: u64, align: u64) : void {
+public func GlobalAllocator.dealloc(shared self, p: ptr[u8], size: u64, align: u64) : void {
     free(p)
 }
 
-func GlobalAllocator.realloc(shared self, p: ptr[u8], oldSize: u64, newSize: u64, align: u64) : Result<ptr[u8], AllocError> {
+public func GlobalAllocator.realloc(shared self, p: ptr[u8], oldSize: u64, newSize: u64, align: u64) : Result<ptr[u8], AllocError> {
     let newPtr = realloc(p, newSize)
     if newPtr == nil {
         return Result.Err(AllocError.OutOfMemory)
@@ -58,7 +58,7 @@ public func newBumpArena(capacity: u64) : BumpArena {
     }
 }
 
-func BumpArena.alloc(mut self, size: u64, align: u64) : Result<ptr[u8], AllocError> {
+public func BumpArena.alloc(mut self, size: u64, align: u64) : Result<ptr[u8], AllocError> {
     // Simple align
     let current = self.offset
     let aligned = (current + align - 1) & ~(align - 1)
@@ -70,11 +70,11 @@ func BumpArena.alloc(mut self, size: u64, align: u64) : Result<ptr[u8], AllocErr
     return Result.Ok(p)
 }
 
-func BumpArena.dealloc(mut self, p: ptr[u8], size: u64, align: u64) : void {
+public func BumpArena.dealloc(mut self, p: ptr[u8], size: u64, align: u64) : void {
     // Bump arena does not free individual items
 }
 
-func BumpArena.realloc(mut self, p: ptr[u8], oldSize: u64, newSize: u64, align: u64) : Result<ptr[u8], AllocError> {
+public func BumpArena.realloc(mut self, p: ptr[u8], oldSize: u64, newSize: u64, align: u64) : Result<ptr[u8], AllocError> {
     let newPtr = self.alloc(newSize, align)?
     // mem.copy is not defined in mem.aru, we probably meant ptrCopy or a loop
     return Result.Ok(newPtr)

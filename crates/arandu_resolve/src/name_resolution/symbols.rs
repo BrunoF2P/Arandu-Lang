@@ -137,6 +137,17 @@ impl<'a> Resolver<'a> {
         kind: SymbolKind,
         span: Span,
     ) -> Option<crate::SymbolId> {
+        self.define_vis(scope, name, kind, span, false)
+    }
+
+    pub(crate) fn define_vis(
+        &mut self,
+        scope: ScopeId,
+        name: &str,
+        kind: SymbolKind,
+        span: Span,
+        is_public: bool,
+    ) -> Option<crate::SymbolId> {
         // A name is reserved if it is already defined in the prelude (ScopeId(0))
         // and we are currently not inside the prelude/std.* itself.
         let is_reserved =
@@ -156,7 +167,10 @@ impl<'a> Resolver<'a> {
                 return None;
             }
         }
-        match self.symbols.define(scope, name, kind, span) {
+        match self
+            .symbols
+            .define_vis(scope, name, kind, span, is_public)
+        {
             Ok(symbol) => {
                 self.resolved.define(span, symbol);
                 Some(symbol)

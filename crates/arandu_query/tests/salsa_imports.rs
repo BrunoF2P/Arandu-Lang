@@ -64,7 +64,7 @@ fn test_prelude_import_io_as_alias() {
 fn test_cross_file_type_check() {
     let mut db = DatabaseImpl::default();
     let mod_b_text = r#"
-        func add(a: int, b: int): int {
+        public func add(a: int, b: int): int {
             return a + b
         }
     "#;
@@ -91,7 +91,7 @@ fn test_early_cutoff_on_function_body_change() {
     let mut db = DatabaseImpl::default();
 
     // We create a base file mod_b
-    let mod_b_text = "func add(a: int, b: int): int {\n return a + b\n }";
+    let mod_b_text = "public func add(a: int, b: int): int {\n return a + b\n }";
     let mod_b = db.new_file("mod_b.aru".to_string(), mod_b_text.to_string());
 
     // And mod_a depends on mod_b
@@ -103,7 +103,8 @@ fn test_early_cutoff_on_function_body_change() {
     assert!(tc1.diagnostics.is_empty());
 
     // 2. Change the body of mod_b but keep the signature the same
-    let mod_b_text_new = "func add(a: int, b: int): int {\n let c = a\n return c + b\n }";
+    let mod_b_text_new =
+        "public func add(a: int, b: int): int {\n let c = a\n return c + b\n }";
     mod_b
         .set_text(&mut db)
         .to(std::sync::Arc::from(mod_b_text_new));
@@ -119,13 +120,13 @@ fn test_cross_file_collision_during_circular_import_is_still_deterministic() {
     // circular dependency: A imports B, B imports A
     let mod_a_text = r#"
         import mod_b
-        func foo() {
+        public func foo() {
             mod_b.bar()
         }
     "#;
     let mod_b_text = r#"
         import mod_a
-        func bar() {
+        public func bar() {
             mod_a.foo()
         }
     "#;

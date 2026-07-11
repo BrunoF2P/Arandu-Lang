@@ -40,7 +40,8 @@ impl<'a> Resolver<'a> {
         if let Some(module) = &program.module
             && let Some(root) = module.path.first()
         {
-            self.define(global, root, SymbolKind::Module, module.span);
+            // Module path root is always part of the file's public identity.
+            self.define_vis(global, root, SymbolKind::Module, module.span, true);
         }
 
         for decl_id in &program.decls {
@@ -65,27 +66,28 @@ impl<'a> Resolver<'a> {
             }
         }
         let global_scope = self.symbols.global_scope();
+        // Prelude builtins are always public (language surface).
         self.symbols.builtin_alloc = self
             .symbols
-            .define(global_scope, "alloc", SymbolKind::Func, span)
+            .define_vis(global_scope, "alloc", SymbolKind::Func, span, true)
             .ok();
         self.symbols.builtin_free = self
             .symbols
-            .define(global_scope, "free", SymbolKind::Func, span)
+            .define_vis(global_scope, "free", SymbolKind::Func, span, true)
             .ok();
 
         let _ = self
             .symbols
-            .define(global_scope, "Result", SymbolKind::Enum, span);
+            .define_vis(global_scope, "Result", SymbolKind::Enum, span, true);
         let _ = self
             .symbols
-            .define(global_scope, "Option", SymbolKind::Enum, span);
+            .define_vis(global_scope, "Option", SymbolKind::Enum, span, true);
         let _ = self
             .symbols
-            .define(global_scope, "Coroutine", SymbolKind::Enum, span);
+            .define_vis(global_scope, "Coroutine", SymbolKind::Enum, span, true);
         let _ = self
             .symbols
-            .define(global_scope, "Poll", SymbolKind::Enum, span);
+            .define_vis(global_scope, "Poll", SymbolKind::Enum, span, true);
 
         let global = self.symbols.global_scope();
         let has_result = self.symbols.lookup_type(global, "Result").is_some();

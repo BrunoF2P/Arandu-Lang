@@ -1,14 +1,20 @@
-use arandu_parser::{FuncName, ImportDecl, TopLevelDecl};
+use arandu_parser::{FuncName, ImportDecl, TopLevelDecl, Visibility};
 
 use crate::{DiagCode, Diagnostic, ScopeId, SymbolKind};
 
 use super::Resolver;
 use super::util::is_type_case;
 
+#[inline]
+fn is_public(vis: Visibility) -> bool {
+    matches!(vis, Visibility::Public)
+}
+
 impl<'a> Resolver<'a> {
     pub(crate) fn collect_import(&mut self, scope: ScopeId, import: &ImportDecl) {
         match import {
             ImportDecl::ModuleAlias { span, alias, .. } => {
+                // Import aliases are file-local (never re-exported via this name).
                 if let Some(sym) = self.define(scope, alias, SymbolKind::Module, *span) {
                     self.record_import_symbol(sym, alias.clone(), *span);
                 }
@@ -55,14 +61,32 @@ impl<'a> Resolver<'a> {
     pub(crate) fn collect_top_level(&mut self, scope: ScopeId, decl: &TopLevelDecl) {
         match decl {
             TopLevelDecl::Const(decl) => {
-                self.define(scope, &decl.name, SymbolKind::Const, decl.span);
+                self.define_vis(
+                    scope,
+                    &decl.name,
+                    SymbolKind::Const,
+                    decl.span,
+                    is_public(decl.visibility),
+                );
             }
             TopLevelDecl::TypeAlias(decl) => {
-                self.define(scope, &decl.name, SymbolKind::TypeAlias, decl.span);
+                self.define_vis(
+                    scope,
+                    &decl.name,
+                    SymbolKind::TypeAlias,
+                    decl.span,
+                    is_public(decl.visibility),
+                );
             }
             TopLevelDecl::Func(decl) => match &decl.name {
                 FuncName::Free { span, name } => {
-                    self.define(scope, name, SymbolKind::Func, *span);
+                    self.define_vis(
+                        scope,
+                        name,
+                        SymbolKind::Func,
+                        *span,
+                        is_public(decl.visibility),
+                    );
                 }
                 FuncName::Method {
                     span,
@@ -70,10 +94,12 @@ impl<'a> Resolver<'a> {
                     name,
                 } => {
                     let receiver = receiver.path.join(".");
-                    match self
-                        .symbols
-                        .define_associated_member(&receiver, name, *span)
-                    {
+                    match self.symbols.define_associated_member_vis(
+                        &receiver,
+                        name,
+                        *span,
+                        is_public(decl.visibility),
+                    ) {
                         Ok(symbol) => self.resolved.define(*span, symbol),
                         Err(previous) => {
                             let previous_symbol = self.symbols.get(previous);
@@ -92,26 +118,48 @@ impl<'a> Resolver<'a> {
                 }
             },
             TopLevelDecl::Struct(decl) => {
-                self.define(scope, &decl.name, SymbolKind::Struct, decl.span);
+                self.define_vis(
+                    scope,
+                    &decl.name,
+                    SymbolKind::Struct,
+                    decl.span,
+                    is_public(decl.visibility),
+                );
             }
             TopLevelDecl::Enum(decl) => {
-                self.define(scope, &decl.name, SymbolKind::Enum, decl.span);
+                let pub_ = is_public(decl.visibility);
+                self.define_vis(scope, &decl.name, SymbolKind::Enum, decl.span, pub_);
+                // Variants inherit the enum's export visibility (public enum → public ctors).
                 for variant in &decl.variants {
-                    if let Ok(symbol) = self.symbols.define_associated_member(
+                    if let Ok(symbol) = self.symbols.define_associated_member_vis(
                         &decl.name,
                         &variant.name,
                         variant.span,
+                        pub_,
                     ) {
                         self.resolved.define(variant.span, symbol);
                     }
                 }
             }
             TopLevelDecl::Interface(decl) => {
-                self.define(scope, &decl.name, SymbolKind::Interface, decl.span);
+                self.define_vis(
+                    scope,
+                    &decl.name,
+                    SymbolKind::Interface,
+                    decl.span,
+                    is_public(decl.visibility),
+                );
             }
             TopLevelDecl::Extern(decl) => {
+                // Intrinsics / FFI block members are the module surface (exportable).
                 for member in &decl.members {
-                    self.define(scope, &member.name, SymbolKind::ExternFunc, member.span);
+                    self.define_vis(
+                        scope,
+                        &member.name,
+                        SymbolKind::ExternFunc,
+                        member.span,
+                        true,
+                    );
                 }
             }
             TopLevelDecl::Error(_) => {}

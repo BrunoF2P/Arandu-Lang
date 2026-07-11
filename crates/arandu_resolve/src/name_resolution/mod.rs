@@ -45,10 +45,10 @@ pub fn create_symbol_table_with_prelude(
     }
     let global_scope = table.global_scope();
     table.builtin_alloc = table
-        .define(global_scope, "alloc", SymbolKind::Func, span)
+        .define_vis(global_scope, "alloc", SymbolKind::Func, span, true)
         .ok();
     table.builtin_free = table
-        .define(global_scope, "free", SymbolKind::Func, span)
+        .define_vis(global_scope, "free", SymbolKind::Func, span, true)
         .ok();
     Ok(table)
 }
@@ -145,6 +145,7 @@ pub fn resolve_imports_and_bodies(
                                 kind,
                                 span: import.span(),
                                 scope: global,
+                                is_public: true, // only public symbols appear in exports
                             };
                             resolver.symbols.register_imported_symbol(sym);
                             resolver
@@ -189,6 +190,7 @@ pub fn resolve_imports_and_bodies(
                                     kind,
                                     span: item.span,
                                     scope: global,
+                                    is_public: true, // only public symbols appear in exports
                                 };
                                 if let Err(existing) = resolver.symbols.insert_imported(sym) {
                                     let existing_span = resolver.symbols.get(existing).span;
@@ -204,6 +206,16 @@ pub fn resolve_imports_and_bodies(
                                         .with_label(existing_span, "already defined here"),
                                     );
                                 }
+                            } else {
+                                // Missing or private: not in the export table.
+                                resolver.diagnostics.push(arandu_middle::Diagnostic::error(
+                                    arandu_middle::DiagCode::M001UnresolvedImport,
+                                    format!(
+                                        "cannot import `{}`: not found or not public in module",
+                                        item.name
+                                    ),
+                                    item.span,
+                                ));
                             }
                         }
                     }
@@ -652,6 +664,7 @@ func BoxG.get<T>(shared self): T {
             kind: SymbolKind::Func,
             span: dummy_span(),
             scope: ScopeId(0),
+            is_public: true,
         }];
         assert_eq!(
             r.suggest_from("println", &syms),
@@ -668,6 +681,7 @@ func BoxG.get<T>(shared self): T {
             kind: SymbolKind::Func,
             span: dummy_span(),
             scope: ScopeId(0),
+            is_public: true,
         }];
         assert_eq!(r.suggest_from("prntln", &syms), Some("println".to_string()));
     }
@@ -681,6 +695,7 @@ func BoxG.get<T>(shared self): T {
             kind: SymbolKind::Func,
             span: dummy_span(),
             scope: ScopeId(0),
+            is_public: true,
         }];
         assert_eq!(r.suggest_from("abcdef", &syms), None);
     }
@@ -694,6 +709,7 @@ func BoxG.get<T>(shared self): T {
             kind: SymbolKind::Func,
             span: dummy_span(),
             scope: ScopeId(0),
+            is_public: true,
         }];
         assert_eq!(
             r.suggest_from("println", &syms),

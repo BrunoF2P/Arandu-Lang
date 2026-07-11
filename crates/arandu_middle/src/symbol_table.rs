@@ -234,6 +234,9 @@ pub struct Symbol {
     pub kind: SymbolKind,
     pub span: Span,
     pub scope: ScopeId,
+    /// `true` when the defining declaration used `public` (or is a prelude/extern API).
+    /// Used by `exported_symbols` so private names do not cross module boundaries.
+    pub is_public: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -337,6 +340,7 @@ impl SymbolTable {
                 kind: old_symbol.kind,
                 span: old_symbol.span,
                 scope: new_scope,
+                is_public: old_symbol.is_public,
             });
         }
 
@@ -447,6 +451,7 @@ impl SymbolTable {
     }
 
     /// Defines a new symbol in the specified scope.
+    /// Define a private (non-exported) symbol. Prefer [`define_vis`] for API items.
     ///
     /// # Errors
     ///
@@ -457,6 +462,22 @@ impl SymbolTable {
         name: &str,
         kind: SymbolKind,
         span: Span,
+    ) -> Result<SymbolId, SymbolId> {
+        self.define_vis(scope, name, kind, span, false)
+    }
+
+    /// Define a symbol with explicit export visibility (`public` → `is_public`).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(existing_symbol_id)` if a symbol with the same name already exists in the given scope.
+    pub fn define_vis(
+        &mut self,
+        scope: ScopeId,
+        name: &str,
+        kind: SymbolKind,
+        span: Span,
+        is_public: bool,
     ) -> Result<SymbolId, SymbolId> {
         if let Some(existing) = self.find_in_scope(scope, name) {
             return Err(existing);
@@ -475,6 +496,7 @@ impl SymbolTable {
             kind,
             span,
             scope,
+            is_public,
         });
         self.scope_mut(scope).symbols.push(id);
         Ok(id)
@@ -574,11 +596,13 @@ impl SymbolTable {
         member: &str,
         span: Span,
     ) -> Result<SymbolId, SymbolId> {
-        let id = self.define(
+        // Prelude / module surface is part of the public API of that namespace.
+        let id = self.define_vis(
             self.global_scope(),
             &format!("{module}.{member}"),
             SymbolKind::NamespaceMember,
             span,
+            true,
         )?;
         self.module_members
             .entry(module.into())
@@ -606,12 +630,24 @@ impl SymbolTable {
         member: &str,
         span: Span,
     ) -> Result<SymbolId, SymbolId> {
+        self.define_associated_member_vis(ty, member, span, false)
+    }
+
+    /// Associated method / enum variant with explicit export visibility.
+    pub fn define_associated_member_vis(
+        &mut self,
+        ty: &str,
+        member: &str,
+        span: Span,
+        is_public: bool,
+    ) -> Result<SymbolId, SymbolId> {
         let base_ty = ty.split('.').next_back().unwrap_or(ty);
-        let id = self.define(
+        let id = self.define_vis(
             self.global_scope(),
             &format!("{base_ty}.{member}"),
             SymbolKind::AssociatedFunc,
             span,
+            is_public,
         )?;
         self.associated_members
             .entry(base_ty.into())

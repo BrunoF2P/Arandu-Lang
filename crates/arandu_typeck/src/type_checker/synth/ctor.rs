@@ -165,6 +165,7 @@ pub(crate) fn synth_method_call(
 
     let base_ty_id = synth_expr(checker, base);
     if checker.resolve(base_ty_id).is_error() {
+        // Receiver already failed to type; avoid cascading "no method" noise.
         return Some(checker.intern(ArType::Error));
     }
 
@@ -273,14 +274,35 @@ pub(crate) fn synth_method_call(
         } else {
             return None;
         }
-    } else {
-        let sym = method_sym?;
+    } else if let Some(sym) = method_sym {
         let method_ty = checker.decl_type(sym)?;
         let (params, ret) = match &method_ty {
             ArType::Func(params, ret) => (params.clone(), *ret),
             _ => return None,
         };
         (params, ret, Some(sym))
+    } else {
+        // Root fix: missing method (including private methods not present in
+        // the import export table) must diagnose here. Returning `None` let the
+        // Call path fall through without a reliable diagnostic.
+        let interner = &checker.type_info.type_interner;
+        let ty_disp = base_resolved.display(&checker.symbols, interner);
+        checker.diagnostics.push(
+            crate::Diagnostic::error(
+                crate::DiagCode::T018UndefinedField,
+                format!("no method `{method}` on type `{ty_disp}`"),
+                field_span,
+            )
+            .with_label(
+                checker.pool.expr_span(base),
+                format!("receiver has type `{ty_disp}`"),
+            )
+            .with_note(
+                "if this is a method from another module, ensure it is declared `public`"
+                    .to_string(),
+            ),
+        );
+        return Some(checker.intern(ArType::Error));
     };
 
     // Instantiate template method type with the receiver's concrete type args

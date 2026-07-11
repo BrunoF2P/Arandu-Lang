@@ -49,6 +49,11 @@ pub fn local_symbols(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<Resol
     HashEq::new(resolved)
 }
 
+/// Symbols visible to other files via `import`.
+///
+/// Root fix for multi-module privacy: only **global-scope** symbols marked
+/// `is_public` (from `public` decls, extern surface, prelude) are exported.
+/// Private free functions / methods no longer leak across modules.
 #[salsa::tracked]
 pub fn exported_symbols(
     db: &dyn ArandCompilerDb,
@@ -57,10 +62,9 @@ pub fn exported_symbols(
     let locals = local_symbols(db, file);
     let mut map = std::collections::BTreeMap::new();
 
-    // For now, just expose everything in the global scope as exported.
     let global_scope = locals.symbols.global_scope();
     for symbol in locals.symbols.iter() {
-        if symbol.scope == global_scope {
+        if symbol.scope == global_scope && symbol.is_public {
             map.insert(symbol.name.to_string(), (symbol.id, symbol.kind));
         }
     }
