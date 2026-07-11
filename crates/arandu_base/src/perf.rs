@@ -48,6 +48,9 @@ pub static PROFILE_QUERIES: AtomicBool = AtomicBool::new(false);
 pub static PRINT_ALLOC_STATS: AtomicBool = AtomicBool::new(false);
 /// `-Zdump-mir` — dump MIR after each pass.
 pub static DUMP_MIR: AtomicBool = AtomicBool::new(false);
+/// `--no-generational-fallback` / `-Zno-generational-fallback` (G2 / F2.3.3):
+/// promote O004 escape notes to hard errors. Opt-in; never a silent default.
+pub static NO_GENERATIONAL_FALLBACK: AtomicBool = AtomicBool::new(false);
 
 /// `-Zdebug-parser` — enable trace-level logging for the parser.
 pub static DEBUG_PARSER: AtomicBool = AtomicBool::new(false);
@@ -169,6 +172,7 @@ pub fn init_z_flags(flags: &[String]) {
             "debug-backend" => DEBUG_BACKEND.store(true, Ordering::Relaxed),
             "debug-all" => DEBUG_ALL.store(true, Ordering::Relaxed),
             "explain-rebuild" => EXPLAIN_REBUILD.store(true, Ordering::Relaxed),
+            "no-generational-fallback" => NO_GENERATIONAL_FALLBACK.store(true, Ordering::Relaxed),
             "self-profile" => {
                 if let Some(path) = value {
                     let _ = SELF_PROFILE_PATH.set(path.to_string());

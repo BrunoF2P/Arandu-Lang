@@ -39,6 +39,44 @@ func main(): int {
 }
 
 #[test]
+fn return_ref_to_local_is_o010() {
+    let src = r#"
+func bad(): &int {
+    let x = 1
+    return &x
+}
+"#;
+    let program = arandu_parser::parse(src).expect("parse");
+    let resolution = resolve_for_test(0, &program);
+    let mut tc = type_check(resolution, &program);
+    let errors: Vec<_> = tc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == arandu_semantics::Severity::Error)
+        .collect();
+    assert!(errors.is_empty(), "typeck errors: {errors:?}");
+    let hir = lower_to_hir(&mut tc, &program).expect("hir");
+    let result = lower_to_amir(&tc, &hir);
+    match result {
+        Ok(_) => panic!("expected O010 from lower_to_amir"),
+        Err(diags) => {
+            assert!(
+                diags
+                    .iter()
+                    .any(|d| d.code == DiagCode::O010EscapeOfBorrowedValue),
+                "expected O010, got {diags:?}"
+            );
+            assert!(
+                diags
+                    .iter()
+                    .any(|d| d.code == DiagCode::O004GenerationalFallback),
+                "expected O004 note, got {diags:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn sequential_borrows_ok() {
     let src = r#"
 func main(): int {

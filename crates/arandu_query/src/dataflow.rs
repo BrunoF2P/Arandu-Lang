@@ -307,6 +307,18 @@ pub fn item_ide_diagnostics(
         {
             out.push(IdeDiagnostic::from_diag(&d, Some(item_sym), Some(bid)));
         }
+        // Escape / O004: global `--no-generational-fallback` applies; per-func
+        // `@no_fallback` is applied in `lower_to_amir` (HIR flag).
+        let no_fallback =
+            arandu_base::NO_GENERATIONAL_FALLBACK.load(std::sync::atomic::Ordering::Relaxed);
+        for (bid, d) in arandu_mir::escape_analysis::check_escapes_by_block(
+            &amir,
+            sigs.symbols.as_ref(),
+            &body_tc.type_info.type_interner,
+            arandu_mir::escape_analysis::EscapeCheckOptions { no_fallback },
+        ) {
+            out.push(IdeDiagnostic::from_diag(&d, Some(item_sym), Some(bid)));
+        }
 
         // Populate block facts only (do NOT call block_diagnostics — cycle risk).
         for bi in 0..amir.blocks.len() {

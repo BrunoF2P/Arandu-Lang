@@ -148,7 +148,9 @@ fn parse_unary_primary_post(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Opti
             };
             let start = t.start;
             cur.bump();
-            let expr = try_hand_lower_expr(ctx, cur, 100)?;
+            // Prefix binds tighter than all binary ops (RD uses 150; Mul is 130).
+            // min_bp=100 wrongly absorbed `*a + *b` as `*(a + *b)`.
+            let expr = try_hand_lower_expr(ctx, cur, 140)?;
             let end = ctx.pool.expr_span(expr).end;
             Some(
                 ctx.pool
@@ -160,7 +162,7 @@ fn parse_unary_primary_post(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Opti
             let start = t.start;
             cur.bump();
             let is_mut = cur.eat(TokenKind::KwMut);
-            let expr = try_hand_lower_expr(ctx, cur, 100)?;
+            let expr = try_hand_lower_expr(ctx, cur, 140)?;
             let end = ctx.pool.expr_span(expr).end;
             let op = if is_mut {
                 UnaryOp::RefMut
@@ -172,11 +174,11 @@ fn parse_unary_primary_post(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Opti
                     .alloc_expr(ExprKind::Unary { op, expr }, ctx.span(start, end)),
             )
         }
-        // `*expr` — deref (F2.0). Binary `*` is higher in Pratt; unary handled here.
+        // `*expr` — deref (F2.0). Unary binds tighter than binary `*`/`+` (bp ≤ 130).
         TokenKind::Star => {
             let start = t.start;
             cur.bump();
-            let expr = try_hand_lower_expr(ctx, cur, 100)?;
+            let expr = try_hand_lower_expr(ctx, cur, 140)?;
             let end = ctx.pool.expr_span(expr).end;
             Some(ctx.pool.alloc_expr(
                 ExprKind::Unary {

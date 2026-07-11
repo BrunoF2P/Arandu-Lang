@@ -1147,6 +1147,7 @@ mod tests {
             return_type: TypeInterner::preinterned_primitive(Primitive::Int),
             body: Some(body),
             span: Span::new(0, 0, 0),
+            no_fallback: false,
         }));
 
         let program = HirProgram {

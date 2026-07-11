@@ -234,6 +234,7 @@ fn specialize_free_func(
         return_type: ret_ty,
         body: Some(new_body),
         span: template.span,
+        no_fallback: template.no_fallback,
     };
     let decl_id = hir.pool.alloc_decl(HirDecl::Func(specialized));
     hir.decls.push(decl_id);
@@ -253,6 +254,7 @@ impl CloneShallow for HirFunc {
             return_type: self.return_type,
             body: self.body,
             span: self.span,
+            no_fallback: self.no_fallback,
         }
     }
 }

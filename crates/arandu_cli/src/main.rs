@@ -98,11 +98,14 @@ fn usage_and_exit() -> ! {
         "usage: arandu_cli <lex|parse|check|hir|amir|run|emit-c|graph|fmt> <path> [--debug] [--opt] [--parallel]"
     );
     eprintln!("       emit-c options: --layout=host|ptr4|i686  (default: host)");
+    eprintln!("       G2/F2.3: --no-generational-fallback  (promote O004 notes to errors)");
     eprintln!("       -Z flags: -Ztime-passes  -Zprofile-queries  -Zprint-alloc-stats  -Zdump-mir");
     eprintln!(
         "                : -Zdebug-parser -Zdebug-typeck -Zdebug-ossa -Zdebug-layout -Zdebug-backend -Zdebug-all"
     );
-    eprintln!("                : -Zself-profile=<path>  -Zexplain-rebuild");
+    eprintln!(
+        "                : -Zself-profile=<path>  -Zexplain-rebuild  -Zno-generational-fallback"
+    );
 
     process::exit(2);
 }
@@ -154,6 +157,10 @@ fn main() {
             "--debug" => debug = true,
             "--opt" => opt = true,
             "--parallel" => parallel = true,
+            // G2: long form of -Zno-generational-fallback (same atomic).
+            "--no-generational-fallback" => {
+                z_flags.push("-Zno-generational-fallback".into());
+            }
             s if s.starts_with("-Z") => z_flags.push(arg.clone()),
             s if s.starts_with("--layout=") => layout_flags.push(arg.clone()),
             _ => args.push(arg),

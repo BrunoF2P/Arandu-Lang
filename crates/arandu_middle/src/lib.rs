@@ -33,6 +33,8 @@ pub use arandu_base::index_vec;
 pub use arandu_base::span::Span;
 pub use smol_str::SmolStr;
 
+/// G2 / F2.3.3 global opt-in: promote O004 notes to errors.
+pub use arandu_base::NO_GENERATIONAL_FALLBACK;
 pub use arandu_base::bitset::{BitMatrix, BitSet};
 pub use arandu_base::newtype_index;
 pub use layout::{

@@ -77,6 +77,10 @@ pub(crate) fn lower_decl(
                 });
             }
             let params = hir_pool.alloc_param_list(&params);
+            let no_fallback = d
+                .attrs
+                .iter()
+                .any(|a| a.name == "no_fallback" || a.name == "no_generational_fallback");
             Ok(Some(HirDecl::Func(HirFunc {
                 symbol,
                 params,
@@ -85,6 +89,7 @@ pub(crate) fn lower_decl(
                     type_check, pool, hir_pool, &d.body,
                 )?),
                 span: d.span,
+                no_fallback,
             })))
         }
         TopLevelDecl::Struct(d) => {

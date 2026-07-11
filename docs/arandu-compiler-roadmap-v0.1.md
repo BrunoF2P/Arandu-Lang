@@ -103,10 +103,14 @@ Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
    ├─ [x] F2.0   Sintaxe de referências à pilha (& / &mut) no parser + type-checker
    ├─ [x] F2.1   Local Borrow Checking Incremental (Salsa `block_borrow_facts` / may-borrow dataflow A9)
    ├─ [x] F2.2   Janelas de Liveness de Empréstimos (loan window = live range da ref; `is_borrowed_at`)
-   └─ [ ] F2.3   Análise de Escape e Fallback Geracional (Vale-style generational refs para stack-locals que escapam)
+   └─ [x] F2.3   Análise de Escape + Fallback Geracional (diferencial; G2 fundido)
+      ├─ [x] F2.3.1 Escape detection (return → O010; heap-store → O004 path)
+      ├─ [x] F2.3.2 O004 nota informativa (Magia Inspecionável — nunca silencioso)
+      └─ [x] F2.3.3 G2: `@no_fallback` / `--no-generational-fallback` promove O004→erro
+                 (não é "modo estrito" global silencioso — opt-in por escopo/flag)
 [x] M2     Move checker avançado (O002, O003, O006) — `borrow_check` sobre F2.1/F2.2
            └─ Dependência: fecha a garantia estática de double-free que hoje é mitigada apenas por poison-check (0xDE) em debug (ver BC.2/BC.3)
-[ ] G2     Generational fallback opcional + O004 (escape analysis)
+[x] G2     fundido em F2.3.3 (promote O004; ver acima)
 [ ] T2     DX Enhancements: Default Generic Parameters & Scoped Enum Variant Sugar
    ├─ [ ] T2.1   Default Generic Parameters (e.g. struct Vec<T, A = GlobalAllocator> in parser, resolved and typechecker instantiation)
    └─ [ ] T2.2   Implicit Enum Variant Dot-Notation Sugar (e.g. .Ok(val) using bidirectional expected-type inference in typechecker)

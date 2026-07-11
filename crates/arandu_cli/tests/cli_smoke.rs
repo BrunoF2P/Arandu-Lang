@@ -960,6 +960,61 @@ func main(): int {
     );
 }
 
+/// Unary `*` binds tighter than `+` (hand parser F2.0 fix).
+#[test]
+fn run_deref_add_exits_3() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_deref_add.aru");
+    fs::write(
+        &file,
+        r#"module tests.cli.deref_add
+
+func main(): int {
+    let n = 1
+    let m = 2
+    let a = &n
+    let b = &m
+    return *a + *b
+}
+"#,
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+    let output = run_cli(&["run", &path]);
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// F2.3: returning `&local` is O010 (+ O004 note).
+#[test]
+fn check_return_ref_local_o010() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_o010.aru");
+    fs::write(
+        &file,
+        r#"module tests.cli.o010
+
+func bad(): &int {
+    let x = 42
+    return &x
+}
+"#,
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+    let output = run_cli(&["check", &path]);
+    assert!(!output.status.success());
+    let err = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        err.contains("O010") || err.contains("escape"),
+        "expected O010, got:\n{err}"
+    );
+}
+
 /// F2.0: `&T` / `*p` safe borrow + deref via stack home in Cranelift JIT.
 #[test]
 fn run_ref_borrow_deref_exits_42() {
