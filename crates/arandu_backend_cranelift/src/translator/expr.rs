@@ -1073,6 +1073,12 @@ impl FunctionTranslator<'_, '_> {
                     self.poison_i32()
                 }
             }
+            // A3.4: pin-free — value is LocalId index (not a raw address).
+            // Loads through it are rewritten to Load(local) before codegen.
+            AmirRvalue::RelativeBorrow { local, .. } => self
+                .builder
+                .ins()
+                .iconst(self.ptr_type, local.as_usize() as i64),
             AmirRvalue::Len(op) => self.translate_len(op, expected_ty),
             AmirRvalue::Alloc(op) => self.translate_alloc(op),
             // A3.0/A3.3: ready coroutine state = payload at +0 (stack or heap).

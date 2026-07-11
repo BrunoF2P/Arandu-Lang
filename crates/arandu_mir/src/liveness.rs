@@ -79,7 +79,12 @@ pub fn analyze_local_liveness(func: &AmirFunc) -> LocalLiveness {
     let mut new_out = BitSet::<LocalId>::with_capacity(num_locals);
     let mut new_in = BitSet::<LocalId>::with_capacity(num_locals);
 
-    while changed {
+    // Bound iterations: monotone lattice converges in ≤ |blocks| in theory;
+    // hard cap guards host freeze if CFG metadata is corrupt.
+    let max_iters = (num_blocks.saturating_mul(2)).max(8);
+    let mut iters = 0usize;
+    while changed && iters < max_iters {
+        iters += 1;
         changed = false;
         for &block_id in rpo.iter().rev() {
             let block = &func.blocks[block_id.as_usize()];
@@ -134,7 +139,10 @@ pub fn analyze_temp_liveness(func: &AmirFunc) -> TempLiveness {
     let mut new_out = BitSet::<TempId>::with_capacity(num_temps);
     let mut new_in = BitSet::<TempId>::with_capacity(num_temps);
 
-    while changed {
+    let max_iters = (num_blocks.saturating_mul(2)).max(8);
+    let mut iters = 0usize;
+    while changed && iters < max_iters {
+        iters += 1;
         changed = false;
         for &block_id in rpo.iter().rev() {
             let block = &func.blocks[block_id.as_usize()];

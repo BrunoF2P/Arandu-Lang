@@ -71,6 +71,14 @@ pub enum AmirRvalue {
     Borrow(AmirPlace),
     /// Create a mutable borrow (mutable reference) of a place.
     BorrowMut(AmirPlace),
+    /// A3.4: pin-free borrow — value is `LocalId` as an index into coroutine /
+    /// frame state, **not** a raw address. Survives stack↔heap moves of the
+    /// state blob. Loads through it are rewritten to [`Load`] of the local.
+    RelativeBorrow {
+        local: LocalId,
+        /// When true, surface type is `&mut T`; otherwise `&T`.
+        mutable: bool,
+    },
     /// A3.0/A3.3: wrap a ready payload as `Coroutine[T]` (pointer to state / payload).
     /// Full multi-state machines land in later A3; ready-only has state = payload at +0.
     CoroutineReady {

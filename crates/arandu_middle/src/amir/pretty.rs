@@ -319,6 +319,13 @@ impl AmirRvalue {
                 out.push_str("&mut ");
                 place.pretty_print_to(out, symbols, pool);
             }
+            AmirRvalue::RelativeBorrow { local, mutable } => {
+                if *mutable {
+                    out.push_str(&format!("relative_borrow_mut(s{})", local.0));
+                } else {
+                    out.push_str(&format!("relative_borrow(s{})", local.0));
+                }
+            }
             AmirRvalue::CoroutineReady {
                 value,
                 payload_ty,

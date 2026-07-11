@@ -1253,24 +1253,71 @@ func main(): int {
     );
 }
 
-/// A3.2: `&local` live across `await` → O010 (borrow across suspension).
+/// A3.4: local-only `&n` across `await` rewrites to pin-free `relative_borrow` (no O010).
+/// Uses `check`/`amir` only — avoid Cranelift JIT in this suite when host is memory-tight.
 #[test]
-fn check_a3_2_borrow_across_await_o010() {
+fn check_a3_4_relative_borrow_across_await() {
     let dir = std::env::temp_dir();
-    let file = dir.join("arandu_cli_a32_borrow.aru");
+    let file = dir.join("arandu_cli_a34_relative.aru");
     fs::write(
         &file,
-        r#"module tests.cli.a32_borrow
+        r#"module tests.cli.a34_relative
 
 async func tick(): int {
     return 1
+}
+
+async func ok(): int {
+    let n = 5
+    let p = &n
+    let x = await tick()
+    return *p + x
+}
+
+func main(): int {
+    return await ok()
+}
+"#,
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+    let check = run_cli(&["check", &path]);
+    assert!(
+        check.status.success(),
+        "A3.4 should allow local-only ref across await, stderr:\n{}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let amir = run_cli(&["amir", &path]);
+    assert!(amir.status.success());
+    let amir_out = String::from_utf8_lossy(&amir.stdout);
+    assert!(
+        amir_out.contains("relative_borrow") || amir_out.contains("RelativeBorrow"),
+        "expected pin-free relative_borrow rewrite, got:\n{amir_out}"
+    );
+}
+
+/// A3.2/A3.4: absolute ref escaped as call arg across `await` → still O010.
+#[test]
+fn check_a3_2_escaped_ref_across_await_o010() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_a32_escape.aru");
+    fs::write(
+        &file,
+        r#"module tests.cli.a32_escape
+
+async func tick(): int {
+    return 1
+}
+
+func take(p: &int): int {
+    return *p
 }
 
 async func bad(): int {
     let n = 5
     let p = &n
     let x = await tick()
-    return *p + x
+    return take(p) + x
 }
 
 func main(): int {
@@ -1283,13 +1330,13 @@ func main(): int {
     let output = run_cli(&["check", &path]);
     assert!(
         !output.status.success(),
-        "expected O010, stdout:\n{}",
+        "expected O010 for escaped ref, stdout:\n{}",
         String::from_utf8_lossy(&output.stdout)
     );
     let err = String::from_utf8_lossy(&output.stderr);
     assert!(
         err.contains("O010") || err.contains("await") || err.contains("suspension"),
-        "expected O010 borrow-across-await, got:\n{err}"
+        "expected O010 escaped ref across await, got:\n{err}"
     );
 }
 

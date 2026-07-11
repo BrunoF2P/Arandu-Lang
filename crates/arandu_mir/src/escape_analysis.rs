@@ -180,6 +180,16 @@ pub fn find_escapes(func: &AmirFunc, interner: &crate::types::TypeInterner) -> V
                     temp_to_place[i] = Some(place.local);
                 }
             }
+            if let AmirStmt::Assign {
+                lhs,
+                rhs: AmirRvalue::RelativeBorrow { local, .. },
+            } = stmt
+            {
+                let i = lhs.as_usize();
+                if i < temp_to_place.len() {
+                    temp_to_place[i] = Some(*local);
+                }
+            }
         }
     }
 

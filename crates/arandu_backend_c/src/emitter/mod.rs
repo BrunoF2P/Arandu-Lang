@@ -36,6 +36,8 @@ pub struct CEmitter<'a> {
     pub(super) interner: &'a TypeInterner,
     pub(super) output: String,
     pub(super) emitted_types: rustc_hash::FxHashSet<String>,
+    /// A3.3: unique id for `__ar_co_N` stack payload locals (multi-stmt).
+    pub(super) co_stack_slot: u32,
 }
 
 impl<'a> CEmitter<'a> {
@@ -55,7 +57,16 @@ impl<'a> CEmitter<'a> {
             interner,
             output: String::new(),
             emitted_types: rustc_hash::FxHashSet::default(),
+            co_stack_slot: 0,
         }
+    }
+
+    /// Next `__ar_co_N` id for stack-first CoroutineReady multi-stmt emission.
+    #[inline]
+    pub(super) fn next_co_stack_slot(&mut self) -> u32 {
+        let n = self.co_stack_slot;
+        self.co_stack_slot = self.co_stack_slot.saturating_add(1);
+        n
     }
 
     /// Resolve an AMIR temp's dense `TypeId` (DoD — no `ArType` on the IR).
@@ -620,6 +631,9 @@ static int64_t ar_gen_remove_i64(int64_t r) {{
                                     used_temps.insert(t.as_usize());
                                 }
                             }
+                        }
+                        AmirRvalue::RelativeBorrow { local, .. } => {
+                            used_locals.insert(local.as_usize());
                         }
                         AmirRvalue::GenInsert { value }
                         | AmirRvalue::GenGet { gen_ref: value }

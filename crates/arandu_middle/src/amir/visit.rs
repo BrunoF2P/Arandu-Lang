@@ -63,6 +63,9 @@ pub fn for_each_rvalue_operand(rvalue: &AmirRvalue, mut f: impl FnMut(&AmirOpera
         AmirRvalue::Load(place) | AmirRvalue::Borrow(place) | AmirRvalue::BorrowMut(place) => {
             for_each_place_operand(place, &mut f);
         }
+
+        // A3.4: index only — no nested operands.
+        AmirRvalue::RelativeBorrow { .. } => {}
     }
 }
 

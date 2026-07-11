@@ -136,6 +136,22 @@ fn check_stmt(
                     diags,
                 );
             }
+            AmirRvalue::RelativeBorrow { local, mutable } => {
+                check_new_loan(
+                    *local,
+                    if *mutable {
+                        LoanKind::Exclusive
+                    } else {
+                        LoanKind::Shared
+                    },
+                    point,
+                    live,
+                    facts,
+                    func,
+                    symbols,
+                    diags,
+                );
+            }
             other => {
                 check_rvalue_moves(
                     other,

@@ -261,6 +261,23 @@ fn collect_loans(func: &AmirFunc) -> (Vec<Loan>, Vec<u32>) {
                             origin_block: block.id,
                         });
                     }
+                    // A3.4: same loan as absolute borrow of that local.
+                    AmirRvalue::RelativeBorrow { local, mutable } => {
+                        borrow_site_counts[bi] += 1;
+                        let mut holder_temps = BitSet::with_capacity(num_temps);
+                        holder_temps.insert(*lhs);
+                        loans.push(Loan {
+                            kind: if *mutable {
+                                LoanKind::Exclusive
+                            } else {
+                                LoanKind::Shared
+                            },
+                            place_local: *local,
+                            holder_temps,
+                            holder_locals: BitSet::with_capacity(num_locals),
+                            origin_block: block.id,
+                        });
+                    }
                     _ => {}
                 }
             }

@@ -931,6 +931,7 @@ impl LowerCtx<'_> {
             AmirRvalue::BorrowMut(place) => {
                 Self::resolve_place(redirected_temps, place);
             }
+            AmirRvalue::RelativeBorrow { .. } => {}
             AmirRvalue::GenInsert { value } => {
                 *value = Self::resolve_operand(redirected_temps, *value);
             }

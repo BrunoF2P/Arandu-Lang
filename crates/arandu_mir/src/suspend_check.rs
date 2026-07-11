@@ -1,13 +1,9 @@
 //! A3.2: OSSA checks at suspension frontiers (`await` / [`AmirTerminator::Suspend`]).
 //!
-//! A shared/mutable borrow (`&T` / `&mut T` temp) whose live range crosses a
-//! suspend point is only safe if the referent lives in coroutine state that
-//! outlasts the suspension. Stack frames of the creator may not exist when the
-//! task resumes — so a live `Ref`/`RefMut` temp into resume is treated as an
-//! escape of a borrowed value (same class as O010).
-//!
-//! This is the concrete checker the A3 design specified: a liveness query at the
-//! await frontier (F2.2 / temp liveness), not a separate analysis engine.
+//! Absolute (`Borrow`) refs whose live range crosses a suspend point would dangle
+//! if the task state moves. A3.4 rewrites eligible borrows to pin-free
+//! [`crate::amir::AmirRvalue::RelativeBorrow`] first; **this** pass only rejects
+//! remaining absolute `Ref`/`RefMut` temps still live into a resume block (O010).
 
 use crate::DiagCode;
 use crate::SymbolTable;
@@ -50,25 +46,48 @@ pub fn check_borrow_across_suspend(
             if !matches!(ty, ArType::Ref(_) | ArType::RefMut(_)) {
                 continue;
             }
+            // RelativeBorrow temps still have Ref type but hold a LocalId index —
+            // safe across suspend. Detect by scanning defining assign.
+            if temp_is_relative_borrow(func, tid) {
+                continue;
+            }
             let span = temp.span;
             diags.push(
                 Diagnostic::error(
                     DiagCode::O010EscapeOfBorrowedValue,
                     "borrow cannot cross an `await` suspension point \
-                     (reference would outlive the stack frame / task state)",
+                     (absolute reference would outlive the stack frame / task state)",
                     span,
                 )
                 .with_label(
                     span,
-                    "this reference is still live when the coroutine suspends",
+                    "this absolute reference is still live when the coroutine suspends",
                 )
                 .with_hint(
-                    "copy the value before `await`, or wait for A3.4 pin-free \
-                     LocalId refs in coroutine state",
+                    "copy the value before `await`, or use a local-only borrow that \
+                     A3.4 can rewrite to a pin-free LocalId relative ref",
                 ),
             );
         }
     }
 
     diags
+}
+
+fn temp_is_relative_borrow(func: &AmirFunc, tid: TempId) -> bool {
+    use crate::amir::{AmirRvalue, AmirStmt};
+    for block in &func.blocks {
+        for stmt in func.block_stmts(block.id) {
+            if let AmirStmt::Assign {
+                lhs,
+                rhs: AmirRvalue::RelativeBorrow { .. },
+            } = stmt
+            {
+                if *lhs == tid {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }

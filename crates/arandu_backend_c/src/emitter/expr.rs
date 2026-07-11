@@ -346,15 +346,11 @@ impl<'a> CEmitter<'a> {
                 let size_str = self.format_operand(op, func);
                 let _ = write!(&mut self.output, "malloc((size_t)({}))", size_str);
             }
-            // A3.0/A3.3 ready-only: state blob, payload at +0.
-            // Cranelift honours `stack` with a real stack slot. In C we cannot
-            // safely take the address of a statement-expression local and store
-            // it (storage ends with the expression) — always malloc here; true
-            // C stack placement needs multi-stmt emission (later).
+            // Heap CoroutineReady (stack:true is multi-stmt in emit_stmt).
             AmirRvalue::CoroutineReady {
                 value,
                 payload_ty,
-                stack: _,
+                stack: false,
             } => {
                 let payload_ar = self.interner.resolve(*payload_ty);
                 let payload_c = self.format_type(&payload_ar);
@@ -368,6 +364,14 @@ impl<'a> CEmitter<'a> {
                     &mut self.output,
                     "({{ {payload_c}* __ar_co = ({payload_c}*)malloc({size}); *__ar_co = ({payload_c})({v}); (void*)__ar_co; }})"
                 );
+            }
+            AmirRvalue::CoroutineReady { stack: true, .. } => {
+                // Should have been handled as multi-stmt Assign; fallback heap.
+                let _ = write!(&mut self.output, "((void*)0)");
+            }
+            // A3.4: pin-free index (LocalId), not a raw address.
+            AmirRvalue::RelativeBorrow { local, .. } => {
+                let _ = write!(&mut self.output, "((void*)(uintptr_t){})", local.as_usize());
             }
             AmirRvalue::GenInsert { value } => {
                 let v = self.format_operand(value, func);

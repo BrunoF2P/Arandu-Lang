@@ -9,6 +9,29 @@ impl<'a> CEmitter<'a> {
             AmirStmt::Assign { lhs, rhs } => {
                 let lhs_ty = self.temp_ty(func, *lhs);
                 let lhs_c_ty = self.format_type(&lhs_ty);
+                // A3.3 multi-stmt stack: declare payload local, store value, take address.
+                // (Statement-expression `&local` would dangle after the expression ends.)
+                if let arandu_middle::amir::AmirRvalue::CoroutineReady {
+                    value,
+                    payload_ty,
+                    stack: true,
+                } = rhs
+                {
+                    let payload_ar = self.interner.resolve(*payload_ty);
+                    let payload_c = self.format_type(&payload_ar);
+                    let v = self.format_operand(value, func);
+                    let slot = self.next_co_stack_slot();
+                    let _ = writeln!(
+                        &mut self.output,
+                        "    {payload_c} __ar_co_{slot} = ({payload_c})({v});"
+                    );
+                    let _ = writeln!(
+                        &mut self.output,
+                        "    t{} = (void*)&__ar_co_{slot};",
+                        lhs.as_usize()
+                    );
+                    return;
+                }
                 let _ = write!(&mut self.output, "    t{} = ", lhs.as_usize());
                 self.emit_rvalue(rhs, func, &lhs_ty, &lhs_c_ty);
                 let _ = writeln!(&mut self.output, ";");

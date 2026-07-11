@@ -155,11 +155,15 @@ pub(crate) fn lower_func(
     // 4. Prune dummy loads and stores
     super::prune_dummy_loads_stores(&mut amir_f);
 
+    // A3.4: rewrite Borrow→RelativeBorrow (LocalId index) for refs that cross Suspend;
+    // *p becomes Load of the local so addresses never pin the state blob.
+    crate::pin_free::apply_pin_free_refs(&mut amir_f, &tc.type_info.type_interner);
+
     // M2: O002/O003/O006 on the *final* AMIR (after prune/rewrite).
     // Dummy Store of `&T` locals would otherwise hide holder liveness on raw AMIR.
     func_diagnostics.extend(crate::borrow_check::check_borrows(&amir_f, &tc.symbols));
 
-    // A3.2: Ref/RefMut temps live into a Suspend resume → O010 (borrow across await).
+    // A3.2: remaining absolute Ref/RefMut live into resume → O010.
     func_diagnostics.extend(crate::suspend_check::check_borrow_across_suspend(
         &amir_f,
         &tc.symbols,
