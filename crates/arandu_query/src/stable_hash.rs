@@ -161,6 +161,15 @@ impl StableHash for AmirProgram {
     }
 }
 
+impl StableHash for crate::passes::LowerAmirArtifacts {
+    fn stable_hash(&self) -> blake3::Hash {
+        let mut h = Hasher::new();
+        h.update(self.amir.stable_hash().as_bytes());
+        h.update(self.type_check.stable_hash().as_bytes());
+        finish(h)
+    }
+}
+
 impl StableHash for petgraph::Graph<u32, ()> {
     fn stable_hash(&self) -> blake3::Hash {
         let mut h = Hasher::new();

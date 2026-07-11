@@ -7,7 +7,8 @@ use arandu_parser::{GenericParam, IndexRange};
 
 use crate::type_checker::TypeChecker;
 use crate::type_checker::types::{
-    ArType, GenericSubst, LowerCtx, TypeInterner, build_subst, substitute_type, type_name_base,
+    ArType, GenericSubst, LowerCtx, TypeId, TypeInterner, build_subst, substitute_type,
+    type_name_base,
 };
 use arandu_middle::types::lower::lower_type_expr_ctx;
 
@@ -37,6 +38,55 @@ pub(crate) fn instantiate_type(
     substitute_type(ty, subst, interner)
 }
 
+/// T2.1: pad trailing type args with declared defaults when fewer args are given.
+///
+/// Returns `None` if `provided.len() > params.len()`, or if a missing trailing
+/// parameter has no default. Full arity (`provided.len() == params.len()`) is a
+/// no-op pass-through.
+#[must_use]
+pub fn expand_type_args_with_defaults(
+    checker: &TypeChecker<'_>,
+    owner: SymbolId,
+    provided: &[ArType],
+) -> Option<Vec<ArType>> {
+    let params = checker.type_info.generic_params.get(&owner)?;
+    if provided.len() > params.len() {
+        return None;
+    }
+    if provided.len() == params.len() {
+        return Some(provided.to_vec());
+    }
+    let mut out = provided.to_vec();
+    for &param_sym in &params[provided.len()..] {
+        let &def_tid = checker.type_info.generic_defaults.get(&param_sym)?;
+        out.push(checker.resolve(def_tid));
+    }
+    Some(out)
+}
+
+/// Expand defaults on a `Named` type when args are a trailing subset of params.
+#[must_use]
+pub fn expand_named_with_defaults(checker: &mut TypeChecker<'_>, ty: ArType) -> ArType {
+    let ArType::Named(id, args) = &ty else {
+        return ty;
+    };
+    if !checker.type_info.generic_params.contains_key(id) {
+        return ty;
+    }
+    let provided: Vec<ArType> = args.iter().map(|&a| checker.resolve(a)).collect();
+    let Some(expanded) = expand_type_args_with_defaults(checker, *id, &provided) else {
+        return ty;
+    };
+    if expanded.len() == provided.len() {
+        return ty;
+    }
+    let arg_ids: Vec<TypeId> = expanded
+        .into_iter()
+        .map(|t| checker.intern(t))
+        .collect();
+    ArType::Named(*id, arg_ids)
+}
+
 #[must_use]
 pub fn struct_fields_instantiated(
     checker: &mut TypeChecker<'_>,
@@ -45,6 +95,7 @@ pub fn struct_fields_instantiated(
 ) -> Option<FxHashMap<String, ArType>> {
     let fields = Arc::clone(checker.type_info.struct_fields.get(&struct_id)?);
     let params = Arc::clone(checker.type_info.generic_params.get(&struct_id)?);
+    let generic_args = expand_type_args_with_defaults(checker, struct_id, generic_args)?;
     if params.len() != generic_args.len() {
         return None;
     }
@@ -53,10 +104,10 @@ pub fn struct_fields_instantiated(
         checker,
         struct_id,
         &params,
-        generic_args,
+        &generic_args,
         span,
     );
-    let subst = build_subst(&params, generic_args);
+    let subst = build_subst(&params, &generic_args);
     let res: FxHashMap<String, ArType> = fields
         .iter()
         .map(|(name, &tid)| {
@@ -172,6 +223,26 @@ pub fn synth_generic_instantiation(
             span,
         ));
         return ArType::Error;
+    };
+
+    // T2.1: fill trailing defaults when fewer type args are written.
+    let arg_tys = match expand_type_args_with_defaults(checker, callee_symbol, &arg_tys) {
+        Some(expanded) => expanded,
+        None => {
+            let diag = crate::Diagnostic::error(
+                crate::DiagCode::T012WrongArgCount,
+                format!(
+                    "generic callee expects {} type argument(s), found {}",
+                    param_symbols.len(),
+                    arg_tys.len()
+                ),
+                span,
+            )
+            .with_label(checker.pool.expr_span(callee), "generic callee is here")
+            .with_label(span, format!("{} type arguments provided", arg_tys.len()));
+            checker.diagnostics.push(diag);
+            return ArType::Error;
+        }
     };
 
     if param_symbols.len() != arg_tys.len() {

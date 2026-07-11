@@ -45,7 +45,7 @@ fn dump_type_alias(pool: &AstPool, decl: &TypeAliasDecl, out: &mut Vec<String>) 
         dump_span(decl.span),
         dump_visibility(decl.visibility),
         decl.name,
-        dump_generic_params(&decl.generic_params),
+        dump_generic_params(pool, &decl.generic_params),
         dump_type(pool.type_expr(decl.ty), pool)
     ));
 }
@@ -78,7 +78,7 @@ fn dump_func(pool: &AstPool, func: &FuncDecl, out: &mut Vec<String>) {
         "  Func {} {modifiers}{}{}({}) -> {}{}",
         dump_span(func.span),
         dump_func_name(&func.name),
-        dump_generic_params(&func.generic_params),
+        dump_generic_params(pool, &func.generic_params),
         params,
         result,
         dump_where_clause(&func.where_clause)
@@ -93,7 +93,7 @@ fn dump_struct(pool: &AstPool, decl: &StructDecl, out: &mut Vec<String>) {
         dump_span(decl.span),
         dump_visibility(decl.visibility),
         decl.name,
-        dump_generic_params(&decl.generic_params),
+        dump_generic_params(pool, &decl.generic_params),
         dump_where_clause(&decl.where_clause)
     ));
     for field in &decl.fields {
@@ -115,7 +115,7 @@ fn dump_enum(pool: &AstPool, decl: &EnumDecl, out: &mut Vec<String>) {
         dump_span(decl.span),
         dump_visibility(decl.visibility),
         decl.name,
-        dump_generic_params(&decl.generic_params),
+        dump_generic_params(pool, &decl.generic_params),
         dump_where_clause(&decl.where_clause)
     ));
     for variant in &decl.variants {
@@ -161,7 +161,7 @@ fn dump_interface(pool: &AstPool, decl: &InterfaceDecl, out: &mut Vec<String>) {
         dump_span(decl.span),
         dump_visibility(decl.visibility),
         decl.name,
-        dump_generic_params(&decl.generic_params),
+        dump_generic_params(pool, &decl.generic_params),
         dump_where_clause(&decl.where_clause)
     ));
     for member in &decl.members {
@@ -198,7 +198,7 @@ fn dump_signature(pool: &AstPool, signature: &FuncSignature, out: &mut Vec<Strin
         "{pad}Signature {} {}{}({}) -> {}{}",
         dump_span(signature.span),
         signature.name,
-        dump_generic_params(&signature.generic_params),
+        dump_generic_params(pool, &signature.generic_params),
         params,
         result,
         dump_where_clause(&signature.where_clause)

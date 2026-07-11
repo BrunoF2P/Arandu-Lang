@@ -195,6 +195,19 @@ fn collect_decl_constraints(
         let Some(&param_sym) = name_to_sym.get(&gp.name) else {
             continue;
         };
+        // T2.1: register default type arg for this type parameter.
+        if let Some(def_ty_id) = gp.default {
+            let ctx = LowerCtx {
+                pool: checker.pool,
+                symbols: &checker.symbols,
+                scope,
+                resolved: &checker.resolved,
+            };
+            let def_ty =
+                lower_type_expr_ctx(def_ty_id, &ctx, &mut checker.type_info.type_interner);
+            let tid = checker.type_info.type_interner.intern(def_ty);
+            checker.type_info.generic_defaults.insert(param_sym, tid);
+        }
         for constraint in &gp.constraints {
             if let Some(iface_sym) = resolve_interface_constraint(checker, constraint, scope) {
                 let entry = checker

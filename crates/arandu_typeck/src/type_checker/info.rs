@@ -30,6 +30,8 @@ pub struct TypeInfo {
     pub enum_variant_tags: FxHashMap<SymbolId, usize>,
     /// Ordered type-parameter symbols for generic decls (func, struct, …).
     pub generic_params: FxHashMap<SymbolId, Arc<Vec<SymbolId>>>,
+    /// T2.1: type-parameter symbol → default type (`A = GlobalAllocator`).
+    pub generic_defaults: FxHashMap<SymbolId, TypeId>,
     /// Type-parameter symbol → interface symbols required (`T: Display`).
     pub param_constraints: FxHashMap<SymbolId, Arc<Vec<SymbolId>>>,
     /// Interface symbol → method signatures (nominal, Go-style structural check).
@@ -54,6 +56,7 @@ impl TypeInfo {
             enum_variants: FxHashMap::default(),
             enum_variant_tags: FxHashMap::default(),
             generic_params: FxHashMap::default(),
+            generic_defaults: FxHashMap::default(),
             param_constraints: FxHashMap::default(),
             interfaces: FxHashMap::default(),
         }
@@ -232,6 +235,12 @@ impl TypeInfo {
         }
         for (symbol, params) in &other.generic_params {
             self.generic_params.insert(*symbol, Arc::clone(params));
+        }
+        for (symbol, &def_tid) in &other.generic_defaults {
+            let ty = other.type_interner.resolve(def_tid);
+            let translated = translate_type(&ty, &other.type_interner, &mut self.type_interner);
+            self.generic_defaults
+                .insert(*symbol, self.type_interner.intern(translated));
         }
         for (symbol, constraints) in &other.param_constraints {
             self.param_constraints

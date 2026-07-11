@@ -299,27 +299,34 @@ fn main() {
             },
 
             "check" => {
-                let mut checked = {
+                // Typeck only via Salsa; AMIR (OSSA/borrow) via lower_amir — no second
+                // HIR/mono outside the query (was doubling lower_to_hir + monomorphize).
+                let _checked = {
                     arandu_base::time_pass!("parse+check");
                     parse_and_check(&db, source_file, &filepath)
                 };
                 tracing::info!("Syntax analysis and type-check completed for {}", filepath);
-
-                let mut hir = {
-                    arandu_base::time_pass!("lower-hir");
-                    match arandu_semantics::lower_to_hir(&mut checked.type_check, &checked.program)
-                    {
-                        Ok(hir) => hir,
-                        Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
-                    }
-                };
-                tracing::info!("HIR lowering completed for {}", filepath);
-
-                validate_hir_and_monomorphize(&mut hir, &mut checked.type_check, &filepath);
                 {
                     arandu_base::time_pass!("lower-amir");
-                    if let Err(diags) = arandu_semantics::lower_to_amir(&checked.type_check, &hir) {
-                        print_diagnostics_and_exit(&diags, &filepath);
+                    let _ = arandu_query::passes::lower_amir(&db, source_file);
+                }
+                let lower_diags = arandu_query::passes::lower_amir::accumulated::<
+                    arandu_middle::db::DiagnosticsAccumulator,
+                >(&db, source_file);
+                let diags: Vec<_> = lower_diags.into_iter().map(|d| d.0.clone()).collect();
+                let has_fatal = diags
+                    .iter()
+                    .any(|d| matches!(d.severity, arandu_middle::Severity::Error));
+                if !diags.is_empty() {
+                    let source = std::fs::read_to_string(&filepath).unwrap_or_default();
+                    let named_source = miette::NamedSource::new(&filepath, source);
+                    for diagnostic in &diags {
+                        let report = miette::Report::new(diagnostic.clone())
+                            .with_source_code(named_source.clone());
+                        eprintln!("{:?}", report);
+                    }
+                    if has_fatal {
+                        process::exit(1);
                     }
                 }
                 tracing::info!(
@@ -359,29 +366,20 @@ fn main() {
             }
 
             "amir" => {
-                let mut checked = {
+                // Fatal type errors first; AMIR + post-mono typeck from one Salsa query.
+                let _ = {
                     arandu_base::time_pass!("parse+check");
                     parse_and_check(&db, source_file, &filepath)
                 };
-                let mut hir = {
-                    arandu_base::time_pass!("lower-hir");
-                    match arandu_semantics::lower_to_hir(&mut checked.type_check, &checked.program)
-                    {
-                        Ok(hir) => hir,
-                        Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
-                    }
-                };
-                validate_hir_and_monomorphize(&mut hir, &mut checked.type_check, &filepath);
-
-                let amir_he = {
+                let artifacts_he = {
                     arandu_base::time_pass!("lower-amir");
                     arandu_query::passes::lower_amir(&db, source_file)
                 };
-                // HashEq already holds Arc<AmirProgram>; only unshare if --opt mutates.
+                let symbols = artifacts_he.type_check.symbols.as_ref();
+                let interner = &artifacts_he.type_check.type_info.type_interner;
+                // Unshare only when --opt mutates AMIR.
                 let mut amir_owned = if opt {
-                    Some(std::sync::Arc::unwrap_or_clone(std::sync::Arc::clone(
-                        &amir_he.value,
-                    )))
+                    Some(artifacts_he.amir.clone())
                 } else {
                     None
                 };
@@ -391,51 +389,34 @@ fn main() {
                 }
                 let amir = match &amir_owned {
                     Some(a) => a,
-                    None => &*amir_he,
+                    None => &artifacts_he.amir,
                 };
 
                 if debug {
                     println!("{amir:#?}");
                 } else {
                     println!("--- AMIR for {} ---", filepath);
-                    print!(
-                        "{}",
-                        amir.pretty_print(
-                            &checked.type_check.symbols,
-                            &checked.type_check.type_info.type_interner
-                        )
-                    );
+                    print!("{}", amir.pretty_print(symbols, interner));
                 }
             }
 
             "run" => {
-                let mut checked = {
+                let _ = {
                     arandu_base::time_pass!("parse+check");
                     parse_and_check(&db, source_file, &filepath)
                 };
                 tracing::info!("Syntax analysis and type-check completed");
 
-                let mut hir = {
-                    arandu_base::time_pass!("lower-hir");
-                    match arandu_semantics::lower_to_hir(&mut checked.type_check, &checked.program)
-                    {
-                        Ok(hir) => hir,
-                        Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
-                    }
-                };
-                tracing::info!("HIR lowering completed");
-                validate_hir_and_monomorphize(&mut hir, &mut checked.type_check, &filepath);
-
-                let amir_he = {
+                let artifacts_he = {
                     arandu_base::time_pass!("lower-amir");
                     arandu_query::passes::lower_amir(&db, source_file)
                 };
-                tracing::info!("AMIR lowering completed");
+                tracing::info!("AMIR lowering completed (Salsa: hir+mono inside query)");
 
+                // Codegen must use post-mono type_check from the same query as AMIR.
+                let type_check = &artifacts_he.type_check;
                 let mut amir_owned = if opt {
-                    Some(std::sync::Arc::unwrap_or_clone(std::sync::Arc::clone(
-                        &amir_he.value,
-                    )))
+                    Some(artifacts_he.amir.clone())
                 } else {
                     None
                 };
@@ -446,7 +427,7 @@ fn main() {
                 }
                 let amir = match &amir_owned {
                     Some(a) => a,
-                    None => &*amir_he,
+                    None => &artifacts_he.amir,
                 };
 
                 use arandu_semantics::{CodegenBackend, CompiledCode};
@@ -459,8 +440,8 @@ fn main() {
                     match CodegenBackend::compile(
                         backend,
                         amir,
-                        checked.type_check.symbols.as_ref(),
-                        checked.type_check.type_info.as_ref(),
+                        type_check.symbols.as_ref(),
+                        type_check.type_info.as_ref(),
                     ) {
                         Ok(out) => out,
                         Err(diag) => print_diagnostics_and_exit(&[diag], &filepath),
@@ -470,23 +451,19 @@ fn main() {
 
                 // Resolve `main` return kind from AMIR (void → exit 0; int → process exit code).
                 let main_is_void = amir.funcs.iter().any(|f| {
-                    let name = checked.type_check.symbols.get(f.symbol).name.as_str();
+                    let name = type_check.symbols.get(f.symbol).name.as_str();
                     if name != "main" {
                         return false;
                     }
                     matches!(
-                        checked
-                            .type_check
-                            .type_info
-                            .type_interner
-                            .resolve(f.return_type),
+                        type_check.type_info.type_interner.resolve(f.return_type),
                         arandu_semantics::types::ArType::Void
                     )
                 });
                 let has_main = amir
                     .funcs
                     .iter()
-                    .any(|f| checked.type_check.symbols.get(f.symbol).name.as_str() == "main");
+                    .any(|f| type_check.symbols.get(f.symbol).name.as_str() == "main");
                 if !has_main {
                     eprintln!("Error: 'main' function not found in compiled program");
                     process::exit(1);
@@ -510,28 +487,17 @@ fn main() {
                 }
             }
             "emit-c" => {
-                let mut checked = {
+                let _ = {
                     arandu_base::time_pass!("parse+check");
                     parse_and_check(&db, source_file, &filepath)
                 };
-                let mut hir = {
-                    arandu_base::time_pass!("lower-hir");
-                    match arandu_semantics::lower_to_hir(&mut checked.type_check, &checked.program)
-                    {
-                        Ok(hir) => hir,
-                        Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
-                    }
-                };
-                validate_hir_and_monomorphize(&mut hir, &mut checked.type_check, &filepath);
-
-                let amir_he = {
+                let artifacts_he = {
                     arandu_base::time_pass!("lower-amir");
                     arandu_query::passes::lower_amir(&db, source_file)
                 };
+                let type_check = &artifacts_he.type_check;
                 let mut amir_owned = if opt {
-                    Some(std::sync::Arc::unwrap_or_clone(std::sync::Arc::clone(
-                        &amir_he.value,
-                    )))
+                    Some(artifacts_he.amir.clone())
                 } else {
                     None
                 };
@@ -541,15 +507,15 @@ fn main() {
                 }
                 let amir = match &amir_owned {
                     Some(a) => a,
-                    None => &*amir_he,
+                    None => &artifacts_he.amir,
                 };
 
                 arandu_base::time_pass!("emit-c");
                 let c_src = arandu_backend_c::emit_c(
                     amir,
-                    checked.type_check.symbols.as_ref(),
-                    checked.type_check.type_info.as_ref(),
-                    &checked.type_check.type_info.type_interner,
+                    type_check.symbols.as_ref(),
+                    type_check.type_info.as_ref(),
+                    &type_check.type_info.type_interner,
                     data_layout,
                 );
                 print!("{c_src}");

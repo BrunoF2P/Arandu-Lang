@@ -432,18 +432,35 @@ pub fn type_check(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<TypeChec
     HashEq::share(&res)
 }
 
+/// AMIR plus the **post-monomorphize** [`TypeCheckResult`] used to build it.
+///
+/// Codegen must use `type_check` from this bundle — monomorphization allocates
+/// new symbols that do not exist on the pre-mono `type_check` query alone.
+/// Returning both from one Salsa query avoids the old CLI double path
+/// (local HIR+mono + `lower_amir` HIR+mono) while keeping symbol tables aligned.
+#[derive(Debug, Clone)]
+pub struct LowerAmirArtifacts {
+    pub amir: AmirProgram,
+    pub type_check: TypeCheckResult,
+}
+
 #[salsa::tracked]
 #[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
     query = "lower_amir",
     file = ?file.file_id(db),
 ))]
-pub fn lower_amir(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<AmirProgram> {
+pub fn lower_amir(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<LowerAmirArtifacts> {
     let program_res = parse(db, file);
     let type_check_result_arc = type_check(db, file);
 
-    // Avoid cloning the full TypeCheckResult — lower_to_hir takes &mut TypeCheckResult.
-    // We clone only if we actually need a mutable owned copy for mutation below.
+    // Clone for mutation: lower_to_hir / monomorphize update symbols + type_info.
     let mut type_check_result = (*type_check_result_arc).clone();
+
+    let empty_amir = || AmirProgram {
+        funcs: vec![],
+        literal_pool: arandu_middle::literal_pool::AmirLiteralPool::default(),
+        extern_funcs: Default::default(),
+    };
 
     let mut hir = match &*program_res {
         Ok(program) => match arandu_semantics::lower_to_hir(&mut type_check_result, program) {
@@ -452,19 +469,17 @@ pub fn lower_amir(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<AmirProg
                 for diag in diags {
                     arandu_middle::db::DiagnosticsAccumulator(diag).accumulate(db);
                 }
-                return HashEq::new(AmirProgram {
-                    funcs: vec![],
-                    literal_pool: arandu_middle::literal_pool::AmirLiteralPool::default(),
-                    extern_funcs: Default::default(),
+                return HashEq::new(LowerAmirArtifacts {
+                    amir: empty_amir(),
+                    type_check: type_check_result,
                 });
             }
         },
         Err(_) => {
-            return HashEq::new(AmirProgram {
-                funcs: vec![],
-                literal_pool: arandu_middle::literal_pool::AmirLiteralPool::default(),
-                extern_funcs: Default::default(),
-            })
+            return HashEq::new(LowerAmirArtifacts {
+                amir: empty_amir(),
+                type_check: type_check_result,
+            });
         }
     };
 
@@ -475,10 +490,9 @@ pub fn lower_amir(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<AmirProg
         for diag in diags {
             arandu_middle::db::DiagnosticsAccumulator(diag).accumulate(db);
         }
-        return HashEq::new(AmirProgram {
-            funcs: vec![],
-            literal_pool: arandu_middle::literal_pool::AmirLiteralPool::default(),
-            extern_funcs: Default::default(),
+        return HashEq::new(LowerAmirArtifacts {
+            amir: empty_amir(),
+            type_check: type_check_result,
         });
     }
 
@@ -488,14 +502,13 @@ pub fn lower_amir(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<AmirProg
             for diag in diags {
                 arandu_middle::db::DiagnosticsAccumulator(diag).accumulate(db);
             }
-            AmirProgram {
-                funcs: vec![],
-                literal_pool: arandu_middle::literal_pool::AmirLiteralPool::default(),
-                extern_funcs: Default::default(),
-            }
+            empty_amir()
         }
     };
-    HashEq::new(amir)
+    HashEq::new(LowerAmirArtifacts {
+        amir,
+        type_check: type_check_result,
+    })
 }
 
 #[salsa::tracked]

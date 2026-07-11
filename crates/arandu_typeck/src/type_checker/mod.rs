@@ -242,11 +242,13 @@ impl<'a> TypeChecker<'a> {
             scope,
             resolved: &self.resolved,
         };
-        arandu_middle::types::lower::lower_type_expr_ctx(
+        let ty = arandu_middle::types::lower::lower_type_expr_ctx(
             expr_id,
             &ctx,
             &mut self.type_info.type_interner,
-        )
+        );
+        // T2.1: `Vec<int>` expands to `Vec<int, GlobalAllocator>` when A has a default.
+        types::expand_named_with_defaults(self, ty)
     }
 
     pub fn lower_result_type(

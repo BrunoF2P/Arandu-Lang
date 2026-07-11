@@ -80,14 +80,14 @@ pub(super) fn dump_attrs(
     }
 }
 
-pub(super) fn dump_generic_params(params: &[GenericParam]) -> String {
+pub(super) fn dump_generic_params(pool: &AstPool, params: &[GenericParam]) -> String {
     if params.is_empty() {
         return String::new();
     }
     let params_str = params
         .iter()
         .map(|param| {
-            if param.constraints.is_empty() {
+            let mut s = if param.constraints.is_empty() {
                 format!("{} {}", dump_span(param.span), param.name)
             } else {
                 let constraints = param
@@ -97,7 +97,13 @@ pub(super) fn dump_generic_params(params: &[GenericParam]) -> String {
                     .collect::<Vec<_>>()
                     .join(" + ");
                 format!("{} {}: {constraints}", dump_span(param.span), param.name)
+            };
+            // T2.1: default type argument
+            if let Some(def) = param.default {
+                s.push_str(" = ");
+                s.push_str(&decl::dump_type(pool.type_expr(def), pool));
             }
+            s
         })
         .collect::<Vec<_>>()
         .join(", ");

@@ -202,6 +202,24 @@ fn import_module() {
     );
 }
 
+/// T3.5: multi-segment unquoted module alias (`import std.core.mem as mem`).
+#[test]
+fn import_module_alias_path() {
+    assert_contract_ast(
+        "import_module_alias_path",
+        "Program @1:1-2:27\n  Module @1:1-1:30 tests.contract.imports\n  Import @2:1-2:27 std.core.mem as mem",
+    );
+}
+
+/// T2.1: default type parameter (`A = GlobalAlloc`).
+#[test]
+fn generic_default_param() {
+    assert_contract_ast(
+        "generic_default_param",
+        "Program @1:1-5:2\n  Module @1:1-1:31 tests.contract.generics\n  Struct @2:1-5:2 BoxG<@2:13-2:14 T, @2:16-2:31 A = Type @2:20-2:31 @2:20-2:31 GlobalAlloc>\n    Field @3:5-3:13 value Type @3:12-3:13 @3:12-3:13 T\n    Field @4:5-4:13 alloc Type @4:12-4:13 @4:12-4:13 A",
+    );
+}
+
 #[test]
 fn import_named() {
     assert_contract_ast(

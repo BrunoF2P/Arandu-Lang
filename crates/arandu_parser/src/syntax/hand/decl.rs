@@ -159,10 +159,19 @@ fn parse_generic_params(
                     break;
                 }
             }
+            // T2.1: `T = DefaultType` after optional constraints.
+            let default = if cur.eat(TokenKind::Equal) {
+                let ty = super::ty::parse_type(ctx, cur)?;
+                p_end = ctx.pool.type_expr_span(ty).end;
+                Some(ty)
+            } else {
+                None
+            };
             params.push(GenericParam {
                 span: ctx.span(p_start, p_end),
                 name,
                 constraints,
+                default,
             });
             if cur.eat(TokenKind::Comma) {
                 continue;

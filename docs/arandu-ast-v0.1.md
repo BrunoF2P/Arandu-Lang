@@ -331,13 +331,15 @@ Invariant:
 
 Fields:
 
-- `name`: `TypeName`
+- `name`: `TypeName` (identifier segment)
 - `constraints`: list of `TypeName`
+- `default`: optional `TypeExprId` (T2.1 — e.g. `A = GlobalAllocator`)
 - `span`
 
 Invariant:
 
-- v0.1 has no generic defaults.
+- Defaults apply only when fewer type arguments are written than parameters;
+  trailing parameters without a default still require an explicit arg.
 
 ### WhereItem
 

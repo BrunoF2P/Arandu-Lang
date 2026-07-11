@@ -1,0 +1,5 @@
+module tests.contract.generics
+struct BoxG<T, A = GlobalAlloc> {
+    value: T
+    alloc: A
+}

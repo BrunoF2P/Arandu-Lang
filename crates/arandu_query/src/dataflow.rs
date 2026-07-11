@@ -90,8 +90,8 @@ impl IdeDiagnostic {
     file = ?file.file_id(db),
 ))]
 pub fn file_func_symbols(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<Vec<SymbolId>> {
-    let amir = crate::passes::lower_amir(db, file);
-    let mut ids: Vec<SymbolId> = amir.funcs.iter().map(|f| f.symbol).collect();
+    let artifacts = crate::passes::lower_amir(db, file);
+    let mut ids: Vec<SymbolId> = artifacts.amir.funcs.iter().map(|f| f.symbol).collect();
     ids.sort_by_key(|s| (s.file_id, s.local_id.0));
     HashEq::new(ids)
 }
@@ -107,8 +107,9 @@ pub fn func_amir(
     file: SourceFile,
     func_sym: SymbolId,
 ) -> HashEq<AmirFunc> {
-    let amir_program = crate::passes::lower_amir(db, file);
-    let func = amir_program
+    let artifacts = crate::passes::lower_amir(db, file);
+    let func = artifacts
+        .amir
         .funcs
         .iter()
         .find(|f| f.symbol == func_sym)

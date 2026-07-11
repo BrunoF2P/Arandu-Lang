@@ -46,10 +46,17 @@ impl<'a> Parser<'a> {
             } else {
                 SmallVec::new()
             };
+            // T2.1: `T = DefaultType` after optional constraints.
+            let default = if parser.eat_name("EQUAL") {
+                Some(parser.parse_type()?)
+            } else {
+                None
+            };
             Ok(GenericParam {
                 span: parser.span_from_mark(start),
                 name,
                 constraints,
+                default,
             })
         })?;
         self.expect_name("GT")?;

@@ -119,6 +119,8 @@ pub struct GenericParam {
     pub span: Span,
     pub name: SmolStr,
     pub constraints: SmallVec<[TypeName; 2]>,
+    /// T2.1: optional default type arg, e.g. `A = GlobalAllocator` in `Vec<T, A = GlobalAllocator>`.
+    pub default: Option<TypeExprId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

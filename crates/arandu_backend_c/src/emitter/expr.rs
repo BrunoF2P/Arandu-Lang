@@ -114,9 +114,8 @@ impl<'a> CEmitter<'a> {
                 )
                 .is_some()
                 {
-                    // Tag occupies the first 8 bytes (pointer-width). Payload begins immediately after.
-                    // TODO: derive tag size from the layout engine once multi-target ABI is supported.
-                    let tag_size = 8usize;
+                    // Tag is pointer-width on the target layout (i686 → 4, host64 → 8).
+                    let tag_size = self.layout.pointer_width() as usize;
                     payload_offset = tag_size;
                 }
                 let _ = write!(

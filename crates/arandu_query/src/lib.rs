@@ -21,5 +21,5 @@ pub use highlight::{
     compute_highlights, file_highlights, highlights_in_range, HlKind, HlToken, MOD_DECLARATION,
     MOD_DEFINITION, MOD_MUTABLE,
 };
-pub use passes::{file_typeck_view, item_body_typeck, syntax_tree};
+pub use passes::{file_typeck_view, item_body_typeck, lower_amir, syntax_tree, LowerAmirArtifacts};
 pub use stable_hash::StableHash;
