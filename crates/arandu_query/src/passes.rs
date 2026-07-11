@@ -181,17 +181,18 @@ pub fn module_signatures(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<T
 
     let res = match &*program_res {
         Ok(program) => {
-            // Destructure once — avoids 3 separate full clones of ResolutionResult.
+            // Prefer unique ownership of the resolve Arc (no deep clone when sole owner).
             let ResolutionResult {
                 symbols,
                 resolved,
                 diagnostics,
                 ..
-            } = (*resolved_arc).clone();
+            } = std::sync::Arc::unwrap_or_clone(std::sync::Arc::clone(&resolved_arc.value));
             let mut checker =
                 arandu_semantics::TypeChecker::new(symbols, resolved, diagnostics, &program.pool);
 
             // Merge imported type info (path rewrite shared with resolve).
+            // Each `module_signatures` is Salsa-memoized; merge_from is the cold cost.
             for import in &program.imports {
                 if let Some(path) = arandu_resolve::canonicalize_import_path(import) {
                     if let Some(imported_file) = db.as_source_db().resolve_module_path(&path) {
@@ -377,29 +378,39 @@ pub fn file_typeck_view(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<Ty
     let signatures = module_signatures(db, file);
 
     let Ok(program) = &*program_res else {
-        return HashEq::new((*signatures).clone());
+        return HashEq::share(&signatures);
     };
 
     let item_syms = arandu_semantics::body_item_symbols(program, signatures.resolved.as_ref());
 
-    let mut merged_info = (*signatures.type_info).clone();
+    // O(1) Arc share until the first body merge; avoid deep-cloning TypeInfo up front.
+    let mut merged_info = Arc::clone(&signatures.type_info);
     let mut diagnostics = signatures.diagnostics.clone();
 
     for &item_sym in &item_syms {
         let item = item_body_typeck(db, file, item_sym);
-        merged_info.merge_from(item.type_info.as_ref());
+        Arc::make_mut(&mut merged_info).merge_from(item.type_info.as_ref());
         diagnostics.extend(item.diagnostics.iter().cloned());
     }
 
     // Residual for decls without primary keys (normally empty).
     let residual = arandu_semantics::check_non_func_bodies_only(&signatures, program);
-    merged_info.merge_from(residual.type_info.as_ref());
-    diagnostics.extend(residual.diagnostics);
+    if !residual.diagnostics.is_empty()
+        || residual
+            .type_info
+            .expr_types
+            .iter()
+            .any(|s| s.is_some())
+        || !residual.type_info.decl_types.is_empty()
+    {
+        Arc::make_mut(&mut merged_info).merge_from(residual.type_info.as_ref());
+        diagnostics.extend(residual.diagnostics);
+    }
 
     let res = TypeCheckResult {
         symbols: Arc::clone(&signatures.symbols),
         resolved: Arc::clone(&signatures.resolved),
-        type_info: Arc::new(merged_info),
+        type_info: merged_info,
         diagnostics,
     };
     HashEq::new(res)

@@ -50,6 +50,69 @@ struct CheckedProgram {
     type_check: arandu_semantics::TypeCheckResult,
 }
 
+/// Print Salsa-accumulated diagnostics once. Returns whether any Error was seen.
+fn print_accumulated_diags(
+    diags: &[impl std::ops::Deref<Target = arandu_middle::db::DiagnosticsAccumulator>],
+    filepath: &str,
+) -> bool {
+    if diags.is_empty() {
+        return false;
+    }
+    let source = std::fs::read_to_string(filepath).unwrap_or_default();
+    let named_source = miette::NamedSource::new(filepath, source);
+    let mut has_fatal = false;
+    for d in diags {
+        if matches!(d.0.severity, arandu_middle::Severity::Error) {
+            has_fatal = true;
+        }
+        let report = miette::Report::new(d.0.clone()).with_source_code(named_source.clone());
+        eprintln!("{:?}", report);
+    }
+    has_fatal
+}
+
+/// Single pipeline entry for check / run / amir / emit-c:
+/// parse → type_check (diags once) → lower_amir (lower diags once).
+/// Salsa memos each step; no second HIR/mono outside the query.
+fn pipeline_lower(
+    db: &dyn arandu_query::db::ArandCompilerDb,
+    file: arandu_query::db::SourceFile,
+    filepath: &str,
+) -> std::sync::Arc<arandu_query::LowerAmirArtifacts> {
+    {
+        arandu_base::time_pass!("parse");
+        let program_res = arandu_query::passes::parse(db, file);
+        if let Err(err) = &*program_res {
+            print_parse_error_and_exit(err, filepath);
+        }
+    }
+
+    {
+        arandu_base::time_pass!("type_check");
+        let _ = arandu_query::passes::type_check(db, file);
+    }
+    let type_diags = arandu_query::passes::type_check::accumulated::<
+        arandu_middle::db::DiagnosticsAccumulator,
+    >(db, file);
+    if print_accumulated_diags(&type_diags, filepath) {
+        process::exit(1);
+    }
+
+    let artifacts = {
+        arandu_base::time_pass!("lower-amir");
+        arandu_query::passes::lower_amir(db, file)
+    };
+    let lower_diags = arandu_query::passes::lower_amir::accumulated::<
+        arandu_middle::db::DiagnosticsAccumulator,
+    >(db, file);
+    if print_accumulated_diags(&lower_diags, filepath) {
+        process::exit(1);
+    }
+
+    std::sync::Arc::clone(&artifacts.value)
+}
+
+/// Parse + type-check for paths that still need a local TypeCheckResult (e.g. `hir`).
 fn parse_and_check(
     db: &dyn arandu_query::db::ArandCompilerDb,
     file: arandu_query::db::SourceFile,
@@ -72,21 +135,8 @@ fn parse_and_check(
     let diagnostics = arandu_query::passes::type_check::accumulated::<
         arandu_middle::db::DiagnosticsAccumulator,
     >(db, file);
-    // Prefer Arc clone of each Diagnostic only when printing (avoid map clone when empty).
-    if !diagnostics.is_empty() {
-        let source = std::fs::read_to_string(filepath).unwrap_or_else(|_| String::new());
-        let named_source = miette::NamedSource::new(filepath, source);
-        let mut has_fatal = false;
-        for d in &diagnostics {
-            if matches!(d.0.severity, arandu_middle::Severity::Error) {
-                has_fatal = true;
-            }
-            let report = miette::Report::new(d.0.clone()).with_source_code(named_source.clone());
-            eprintln!("{:?}", report);
-        }
-        if has_fatal {
-            std::process::exit(1);
-        }
+    if print_accumulated_diags(&diagnostics, filepath) {
+        process::exit(1);
     }
 
     // TypeCheckResult is Arc-heavy (symbols/resolved/type_info) — clone is O(1) for IR.
@@ -302,33 +352,8 @@ fn main() {
             },
 
             "check" => {
-                // Typeck only via Salsa; AMIR (OSSA/borrow) via lower_amir — no second
-                // HIR/mono outside the query (was doubling lower_to_hir + monomorphize).
-                let _checked = parse_and_check(&db, source_file, &filepath);
-                tracing::info!("Syntax analysis and type-check completed for {}", filepath);
-                {
-                    arandu_base::time_pass!("lower-amir");
-                    let _ = arandu_query::passes::lower_amir(&db, source_file);
-                }
-                let lower_diags = arandu_query::passes::lower_amir::accumulated::<
-                    arandu_middle::db::DiagnosticsAccumulator,
-                >(&db, source_file);
-                let diags: Vec<_> = lower_diags.into_iter().map(|d| d.0.clone()).collect();
-                let has_fatal = diags
-                    .iter()
-                    .any(|d| matches!(d.severity, arandu_middle::Severity::Error));
-                if !diags.is_empty() {
-                    let source = std::fs::read_to_string(&filepath).unwrap_or_default();
-                    let named_source = miette::NamedSource::new(&filepath, source);
-                    for diagnostic in &diags {
-                        let report = miette::Report::new(diagnostic.clone())
-                            .with_source_code(named_source.clone());
-                        eprintln!("{:?}", report);
-                    }
-                    if has_fatal {
-                        process::exit(1);
-                    }
-                }
+                // One pipeline: parse → typeck → lower_amir (Salsa memos; diags once each).
+                let _ = pipeline_lower(&db, source_file, &filepath);
                 tracing::info!(
                     "Compilation verified successfully — no errors found for {}",
                     filepath
@@ -363,17 +388,11 @@ fn main() {
             }
 
             "amir" => {
-                // Fatal type errors first; AMIR + post-mono typeck from one Salsa query.
-                let _ = parse_and_check(&db, source_file, &filepath);
-                let artifacts_he = {
-                    arandu_base::time_pass!("lower-amir");
-                    arandu_query::passes::lower_amir(&db, source_file)
-                };
-                let symbols = artifacts_he.type_check.symbols.as_ref();
-                let interner = &artifacts_he.type_check.type_info.type_interner;
-                // Unshare only when --opt mutates AMIR.
+                let artifacts = pipeline_lower(&db, source_file, &filepath);
+                let symbols = artifacts.type_check.symbols.as_ref();
+                let interner = &artifacts.type_check.type_info.type_interner;
                 let mut amir_owned = if opt {
-                    Some(artifacts_he.amir.clone())
+                    Some(artifacts.amir.clone())
                 } else {
                     None
                 };
@@ -383,7 +402,7 @@ fn main() {
                 }
                 let amir = match &amir_owned {
                     Some(a) => a,
-                    None => &artifacts_he.amir,
+                    None => &artifacts.amir,
                 };
 
                 if debug {
@@ -395,19 +414,12 @@ fn main() {
             }
 
             "run" => {
-                let _ = parse_and_check(&db, source_file, &filepath);
-                tracing::info!("Syntax analysis and type-check completed");
+                let artifacts = pipeline_lower(&db, source_file, &filepath);
+                tracing::info!("AMIR lowering completed (Salsa: single pipeline)");
 
-                let artifacts_he = {
-                    arandu_base::time_pass!("lower-amir");
-                    arandu_query::passes::lower_amir(&db, source_file)
-                };
-                tracing::info!("AMIR lowering completed (Salsa: hir+mono inside query)");
-
-                // Codegen must use post-mono type_check from the same query as AMIR.
-                let type_check = &artifacts_he.type_check;
+                let type_check = &artifacts.type_check;
                 let mut amir_owned = if opt {
-                    Some(artifacts_he.amir.clone())
+                    Some(artifacts.amir.clone())
                 } else {
                     None
                 };
@@ -418,13 +430,11 @@ fn main() {
                 }
                 let amir = match &amir_owned {
                     Some(a) => a,
-                    None => &artifacts_he.amir,
+                    None => &artifacts.amir,
                 };
 
                 use arandu_semantics::{CodegenBackend, CompiledCode};
                 let output = {
-                    // Split ISA/JIT module setup vs function translate — setup is often
-                    // most of the cost on tiny programs (host ISA + symbol table).
                     let backend = {
                         arandu_base::time_pass!("codegen-init");
                         match arandu_backend_cranelift::CraneliftBackend::try_new() {
@@ -445,7 +455,6 @@ fn main() {
                 };
                 tracing::info!("Machine code generated (Cranelift JIT backend)");
 
-                // Resolve `main` return kind from AMIR (void → exit 0; int → process exit code).
                 let main_is_void = amir.funcs.iter().any(|f| {
                     let name = type_check.symbols.get(f.symbol).name.as_str();
                     if name != "main" {
@@ -483,14 +492,10 @@ fn main() {
                 }
             }
             "emit-c" => {
-                let _ = parse_and_check(&db, source_file, &filepath);
-                let artifacts_he = {
-                    arandu_base::time_pass!("lower-amir");
-                    arandu_query::passes::lower_amir(&db, source_file)
-                };
-                let type_check = &artifacts_he.type_check;
+                let artifacts = pipeline_lower(&db, source_file, &filepath);
+                let type_check = &artifacts.type_check;
                 let mut amir_owned = if opt {
-                    Some(artifacts_he.amir.clone())
+                    Some(artifacts.amir.clone())
                 } else {
                     None
                 };
@@ -500,7 +505,7 @@ fn main() {
                 }
                 let amir = match &amir_owned {
                     Some(a) => a,
-                    None => &artifacts_he.amir,
+                    None => &artifacts.amir,
                 };
 
                 arandu_base::time_pass!("emit-c");

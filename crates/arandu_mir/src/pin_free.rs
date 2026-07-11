@@ -132,11 +132,11 @@ pub fn apply_pin_free_refs(func: &mut AmirFunc, interner: &TypeInterner) {
             let AmirStmt::Assign { lhs, rhs } = stmt else {
                 continue;
             };
-            if let Some(&(local, mutable)) = relative_of.get(lhs) {
-                if matches!(rhs, AmirRvalue::Borrow(_) | AmirRvalue::BorrowMut(_)) {
-                    *rhs = AmirRvalue::RelativeBorrow { local, mutable };
-                    continue;
-                }
+            if let Some(&(local, mutable)) = relative_of.get(lhs)
+                && matches!(rhs, AmirRvalue::Borrow(_) | AmirRvalue::BorrowMut(_))
+            {
+                *rhs = AmirRvalue::RelativeBorrow { local, mutable };
+                continue;
             }
             if let AmirRvalue::Unary {
                 op: UnaryOp::Deref,
@@ -163,10 +163,10 @@ fn note_escape_ops(
     relative_of: &FxHashMap<TempId, (LocalId, bool)>,
     escapes: &mut FxHashSet<TempId>,
 ) {
-    if let AmirOperand::Copy(t) | AmirOperand::Move(t) = op {
-        if relative_of.contains_key(t) {
-            escapes.insert(*t);
-        }
+    if let AmirOperand::Copy(t) | AmirOperand::Move(t) = op
+        && relative_of.contains_key(t)
+    {
+        escapes.insert(*t);
     }
 }
 

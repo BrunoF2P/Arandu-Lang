@@ -82,10 +82,9 @@ fn temp_is_relative_borrow(func: &AmirFunc, tid: TempId) -> bool {
                 lhs,
                 rhs: AmirRvalue::RelativeBorrow { .. },
             } = stmt
+                && *lhs == tid
             {
-                if *lhs == tid {
-                    return true;
-                }
+                return true;
             }
         }
     }

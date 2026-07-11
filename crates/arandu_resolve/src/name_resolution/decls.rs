@@ -159,14 +159,14 @@ impl<'a> Resolver<'a> {
             // Those names were already bound via `import_receiver_type_params` to the
             // **same** SymbolIds as the type — redefining them was the root of N003
             // cascades and bogus T025 ("type 'A' does not satisfy Allocator").
-            if let Some(existing) = self.symbols.find_in_scope(scope, &generic.name) {
-                if self.symbols.get(existing).kind == SymbolKind::TypeParam {
-                    self.resolved.define(generic.span, existing);
-                    for constraint in &generic.constraints {
-                        self.resolve_type_name(scope, constraint);
-                    }
-                    continue;
+            if let Some(existing) = self.symbols.find_in_scope(scope, &generic.name)
+                && self.symbols.get(existing).kind == SymbolKind::TypeParam
+            {
+                self.resolved.define(generic.span, existing);
+                for constraint in &generic.constraints {
+                    self.resolve_type_name(scope, constraint);
                 }
+                continue;
             }
             self.define(scope, &generic.name, SymbolKind::TypeParam, generic.span);
             for constraint in &generic.constraints {

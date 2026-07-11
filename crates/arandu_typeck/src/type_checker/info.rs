@@ -188,6 +188,22 @@ pub(crate) fn translate_type(ty: &ArType, from: &TypeInterner, to: &mut TypeInte
 
 impl TypeInfo {
     pub fn merge_from(&mut self, other: &TypeInfo) {
+        // Fast path: empty body shards / empty import stubs.
+        if other.decl_types.is_empty()
+            && other.struct_fields.is_empty()
+            && other.struct_field_symbols.is_empty()
+            && other.struct_field_indices.is_empty()
+            && other.enum_variants.is_empty()
+            && other.enum_variant_tags.is_empty()
+            && other.generic_params.is_empty()
+            && other.generic_defaults.is_empty()
+            && other.param_constraints.is_empty()
+            && other.interfaces.is_empty()
+            && other.expr_types.iter().all(|s| s.is_none())
+        {
+            return;
+        }
+
         for (&symbol, &other_type_id) in &other.decl_types {
             let other_type = other.type_interner.resolve(other_type_id);
             let translated =
@@ -261,6 +277,10 @@ impl TypeInfo {
             );
         }
         // Expr types (body typeck shards): re-intern TypeIds into `self`.
+        // Signature-only TypeInfos leave this empty — skip the O(n) scan.
+        if other.expr_types.iter().all(|s| s.is_none()) {
+            return;
+        }
         if other.expr_types.len() > self.expr_types.len() {
             self.expr_types.resize(other.expr_types.len(), None);
         }

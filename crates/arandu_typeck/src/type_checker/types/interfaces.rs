@@ -334,17 +334,15 @@ pub(crate) fn type_satisfies_interface(
     // obligation on instantiations, not something we can structural-check here.
     // Treating `Named(A, [])` as a concrete type caused T025 on every method that
     // restates `A` (Vec, GenArena) even when constraints were well-formed.
-    if let ArType::Named(id, args) = concrete {
-        if args.is_empty() {
-            let kind = checker.symbols.get(*id).kind;
-            if kind == SymbolKind::TypeParam {
-                // Satisfied iff this param lists `iface_sym` among its constraints.
-                if let Some(cs) = checker.type_info.param_constraints.get(id) {
-                    return cs.iter().any(|&c| c == iface_sym);
-                }
-                return false;
-            }
+    if let ArType::Named(id, args) = concrete
+        && args.is_empty()
+        && checker.symbols.get(*id).kind == SymbolKind::TypeParam
+    {
+        // Satisfied iff this param lists `iface_sym` among its constraints.
+        if let Some(cs) = checker.type_info.param_constraints.get(id) {
+            return cs.contains(&iface_sym);
         }
+        return false;
     }
 
     let Some(iface) = checker.type_info.interfaces.get(&iface_sym) else {

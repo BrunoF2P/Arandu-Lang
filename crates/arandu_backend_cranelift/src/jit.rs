@@ -10,14 +10,46 @@ use arandu_base::span::Span;
 use arandu_semantics::amir::AmirProgram;
 use arandu_semantics::passes::type_checker::types::{ArType, Primitive};
 use arandu_semantics::{DiagCode, Diagnostic, SymbolTable};
+use cranelift_codegen::isa::OwnedTargetIsa;
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{FuncId, Linkage, Module};
 use rustc_hash::FxHashMap;
+use std::sync::OnceLock;
 
 fn codegen_ice(message: impl Into<String>) -> Diagnostic {
     Diagnostic::ice(DiagCode::ICEGEN001, message, Span::new(0, 0, 0))
+}
+
+/// Host ISA is process-global and immutable. Building it once avoids re-running
+/// `cranelift_native` + flag setup on every `run` / compile (debug: tens of ms).
+fn cached_host_isa() -> Result<OwnedTargetIsa, Diagnostic> {
+    static ISA: OnceLock<Result<OwnedTargetIsa, String>> = OnceLock::new();
+    match ISA.get_or_init(|| {
+        let mut flag_builder = settings::builder();
+        for (key, val) in [
+            ("use_colocated_libcalls", "false"),
+            ("is_pic", "false"),
+            // Fastest compile for interactive JIT; release optimizers live elsewhere.
+            ("opt_level", "none"),
+        ] {
+            if let Err(e) = flag_builder.set(key, val) {
+                return Err(format!("failed to set Cranelift flag {key}={val}: {e}"));
+            }
+        }
+        let isa_builder = match cranelift_native::builder() {
+            Ok(b) => b,
+            Err(e) => return Err(format!("Failed to create Cranelift isa builder: {e}")),
+        };
+        match isa_builder.finish(settings::Flags::new(flag_builder)) {
+            Ok(isa) => Ok(isa),
+            Err(e) => Err(format!("Failed to build Cranelift isa: {e}")),
+        }
+    }) {
+        Ok(isa) => Ok(std::sync::Arc::clone(isa)),
+        Err(msg) => Err(codegen_ice(msg.clone())),
+    }
 }
 
 /// Stateful Cranelift JIT context.
@@ -33,27 +65,10 @@ pub struct AranduJit {
 impl AranduJit {
     /// Creates a new [`AranduJit`] with default Cranelift settings.
     ///
-    /// Configures the host ISA via `cranelift_native`, disables PIC and
-    /// library colocated calls, and sets optimization level to `none` (for
-    /// fastest JIT compilation during development/testing).
+    /// Reuses a process-cached host [`OwnedTargetIsa`] (Arc clone). Each call
+    /// still builds a fresh [`JITModule`] — modules cannot be reset after finalize.
     pub fn try_new() -> Result<Self, Diagnostic> {
-        let mut flag_builder = settings::builder();
-        for (key, val) in [
-            ("use_colocated_libcalls", "false"),
-            ("is_pic", "false"),
-            ("opt_level", "none"),
-        ] {
-            flag_builder.set(key, val).map_err(|e| {
-                codegen_ice(format!("failed to set Cranelift flag {key}={val}: {e}"))
-            })?;
-        }
-
-        let isa_builder = cranelift_native::builder()
-            .map_err(|e| codegen_ice(format!("Failed to create Cranelift isa builder: {e}")))?;
-        let isa = isa_builder
-            .finish(settings::Flags::new(flag_builder))
-            .map_err(|e| codegen_ice(format!("Failed to build Cranelift isa: {e}")))?;
-
+        let isa = cached_host_isa()?;
         let mut builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
         // ToStr v0.1 host helpers (malloc-backed fat strings).
         builder.symbol(
