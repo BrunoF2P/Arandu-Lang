@@ -163,7 +163,7 @@ Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
 [ ] SL_T   Testing Harness: arandu_std::testing (test runner integrado e benchmark engine)
 
 Fase 4 — Expressividade de Linguagem e Tipagem (v0.35) · [NÃO INICIADA]
-[ ] SYN.1  Retorno implícito na última expressão de bloco (parser: parse_block)
+[x] SYN.1  Retorno implícito: última `Expr` do body → valor de retorno (typeck + AMIR; async wrap A3)
 [ ] SYN.2  Interpolação de String ($name e ${expr}) no Lexer
 [x] SYN.3  Opcionais: `nil` → Option.None (contexto); match Some/None no AMIR; `T?` permanece Nullable (§2.1)
 [ ] SYN.4  Pattern Matching Avançado (wildcards, bindings e ranges)

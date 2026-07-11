@@ -322,8 +322,7 @@ impl LowerCtx<'_> {
                     self.emit_goto(bb_join);
                 }
 
-                self.seal_block(bb_join);
-                self.current_block = Some(bb_join);
+                self.finish_join(bb_join);
             }
             HirStmtKind::While { condition, body } => {
                 let bb_cond = self.new_block();
@@ -820,6 +819,27 @@ impl LowerCtx<'_> {
         target: Option<TempId>,
         symbols: &SymbolTable,
     ) -> Result<(), Diagnostic> {
+        self.lower_block_as_expr_inner(block, target, None, symbols)
+    }
+
+    /// SYN.1 + A3: async function body tail — last expr is bare payload `T`,
+    /// stored as `CoroutineReady` into return temp `_0`.
+    pub(crate) fn lower_block_as_expr_async_tail(
+        &mut self,
+        block: crate::hir::HirBlockId,
+        payload_ty: crate::types::TypeId,
+        symbols: &SymbolTable,
+    ) -> Result<(), Diagnostic> {
+        self.lower_block_as_expr_inner(block, Some(TempId(0)), Some(payload_ty), symbols)
+    }
+
+    fn lower_block_as_expr_inner(
+        &mut self,
+        block: crate::hir::HirBlockId,
+        target: Option<TempId>,
+        async_payload_ty: Option<crate::types::TypeId>,
+        symbols: &SymbolTable,
+    ) -> Result<(), Diagnostic> {
         self.defer_frames.push(DeferFrame {
             entries: Vec::new(),
         });
@@ -827,10 +847,21 @@ impl LowerCtx<'_> {
         let statements_slice = self.hir.pool.stmt_list(blk.statements);
         if statements_slice.is_empty() {
             if let Some(dest) = target {
-                self.emit_assign_temp(
-                    dest,
-                    AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Nil)),
-                );
+                if let Some(payload_ty) = async_payload_ty {
+                    self.emit_assign_temp(
+                        dest,
+                        AmirRvalue::CoroutineReady {
+                            value: AmirOperand::Constant(AmirConstant::Nil),
+                            payload_ty,
+                            stack: false,
+                        },
+                    );
+                } else {
+                    self.emit_assign_temp(
+                        dest,
+                        AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Nil)),
+                    );
+                }
             }
             if self.current_block.is_some() {
                 self.exit_current_defer_frame(false, symbols)?;
@@ -845,14 +876,39 @@ impl LowerCtx<'_> {
             let stmt = self.hir.pool.stmt(stmt_id);
             if i == last_idx {
                 if let HirStmtKind::Expr(expr) = stmt.kind {
-                    self.lower_expr(expr, target, symbols)?;
-                } else {
-                    self.lower_stmt(stmt, symbols)?;
-                    if let Some(dest) = target {
+                    if let (Some(dest), Some(payload_ty)) = (target, async_payload_ty) {
+                        let inner = self.lower_expr(expr, None, symbols)?;
                         self.emit_assign_temp(
                             dest,
-                            AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Nil)),
+                            AmirRvalue::CoroutineReady {
+                                value: inner,
+                                payload_ty,
+                                stack: false,
+                            },
                         );
+                    } else {
+                        self.lower_expr(expr, target, symbols)?;
+                    }
+                } else {
+                    self.lower_stmt(stmt, symbols)?;
+                    if let Some(dest) = target
+                        && self.current_block.is_some()
+                    {
+                        if let Some(payload_ty) = async_payload_ty {
+                            self.emit_assign_temp(
+                                dest,
+                                AmirRvalue::CoroutineReady {
+                                    value: AmirOperand::Constant(AmirConstant::Nil),
+                                    payload_ty,
+                                    stack: false,
+                                },
+                            );
+                        } else {
+                            self.emit_assign_temp(
+                                dest,
+                                AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Nil)),
+                            );
+                        }
                     }
                 }
             } else {

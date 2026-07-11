@@ -78,8 +78,8 @@ impl LowerCtx<'_> {
             self.lower_match_chain(scrutinee, &arms, dest, bb_end, symbols)?;
         }
 
-        self.seal_block(bb_end);
-        self.current_block = Some(bb_end);
+        // If every arm returned, bb_end has no preds — do not resume there (CFG-5).
+        self.finish_join(bb_end);
         Ok(AmirOperand::Copy(dest))
     }
 
@@ -115,8 +115,7 @@ impl LowerCtx<'_> {
         } else {
             self.lower_match_chain_stmt(scrutinee, &arms, bb_end, symbols)?;
         }
-        self.seal_block(bb_end);
-        self.current_block = Some(bb_end);
+        self.finish_join(bb_end);
         Ok(())
     }
 

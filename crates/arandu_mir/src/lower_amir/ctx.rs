@@ -238,6 +238,26 @@ impl LowerCtx<'_> {
         id
     }
 
+    /// Seal a join/exit block and resume after it **only if** some arm fell through.
+    ///
+    /// When every predecessor path diverged (`return` / `break` / …), nothing
+    /// targets `join`. Leaving `current_block = Some(join)` would later promote
+    /// the empty join from `Unreachable` → `Return` (end-of-func fill) and trip
+    /// CFG-5 (U001: block not reachable from bb0). With no preds, leave the
+    /// join as `Unreachable` (CFG-5 exempt) and clear `current_block`.
+    pub(crate) fn finish_join(&mut self, join: BlockId) {
+        self.seal_block(join);
+        let has_pred = self
+            .predecessors
+            .get(&join)
+            .is_some_and(|preds| !preds.is_empty());
+        if has_pred {
+            self.current_block = Some(join);
+        } else {
+            self.current_block = None;
+        }
+    }
+
     pub(crate) fn push_stmt(&mut self, stmt: AmirStmt) {
         if let Some(curr) = self.current_block {
             let id = self.stmts.push(stmt);

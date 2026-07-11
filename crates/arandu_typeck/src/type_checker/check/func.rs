@@ -3,7 +3,6 @@ use arandu_parser::FuncDecl;
 use super::super::TypeChecker;
 use super::super::constraints::ConstraintOrigin;
 use super::super::types::ArType;
-use super::block::check_block;
 use super::collect::apply_receiver_ownership;
 
 fn func_name_key(decl: &FuncDecl) -> crate::NodeKey {
@@ -146,7 +145,8 @@ pub fn check_func_body(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
 
     let ret_id = checker.intern(ret_ty);
     checker.ctx.push_return(ret_id, return_decl_span);
-    check_block(checker, checker.pool, &decl.body);
+    // SYN.1: last expression in the function body is an implicit return.
+    super::block::check_block_tail(checker, checker.pool, &decl.body, Some(ret_id));
     checker.ctx.pop_return();
     checker.type_scope_id = None;
 }

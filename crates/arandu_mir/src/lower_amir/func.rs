@@ -86,7 +86,34 @@ pub(crate) fn lower_func(
     }
 
     ctx.current_span = f.span;
-    ctx.lower_block(body, &tc.symbols)?;
+    // SYN.1: only when the last statement is an expression (implicit return).
+    // Empty bodies / last=`return`/`if`/… keep ordinary `lower_block` so we do
+    // not invent a `Nil` store into a `void` return temp (breaks C backend).
+    let last_is_expr = {
+        let stmts = hir.pool.stmt_list(hir.pool.block(body).statements);
+        stmts.last().is_some_and(|&sid| {
+            matches!(
+                hir.pool.stmt(sid).kind,
+                crate::hir::HirStmtKind::Expr(_)
+            )
+        })
+    };
+    if last_is_expr {
+        // Async bodies return bare `T` in source; wrap as `CoroutineReady` (A3).
+        if f.is_async {
+            if let crate::types::ArType::Coroutine(payload_ty) =
+                tc.type_info.type_interner.resolve(ret_ty)
+            {
+                ctx.lower_block_as_expr_async_tail(body, payload_ty, &tc.symbols)?;
+            } else {
+                ctx.lower_block_as_expr(body, Some(TempId(0)), &tc.symbols)?;
+            }
+        } else {
+            ctx.lower_block_as_expr(body, Some(TempId(0)), &tc.symbols)?;
+        }
+    } else {
+        ctx.lower_block(body, &tc.symbols)?;
+    }
 
     // If last block does not have a terminator, implicitly return
     if let Some(curr) = ctx.current_block {
