@@ -290,6 +290,8 @@ pub enum ResultCtorVariant {
     Ok,
     Err,
     Some,
+    /// Unit `Option.None` (no payload).
+    None,
     /// A3.6: `Poll.Ready(v)`
     PollReady,
     /// A3.6: `Poll.Pending`

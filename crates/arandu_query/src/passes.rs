@@ -454,6 +454,7 @@ pub fn lower_amir(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<LowerAmi
     let type_check_result_arc = type_check(db, file);
 
     // Clone for mutation: lower_to_hir / monomorphize update symbols + type_info.
+    // Arc fields are O(1); mono may Arc::make_mut type_info once.
     let mut type_check_result = (*type_check_result_arc).clone();
 
     let empty_amir = || AmirProgram {
@@ -462,47 +463,56 @@ pub fn lower_amir(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<LowerAmi
         extern_funcs: Default::default(),
     };
 
-    let mut hir = match &*program_res {
-        Ok(program) => match arandu_semantics::lower_to_hir(&mut type_check_result, program) {
-            Ok(h) => h,
-            Err(diags) => {
-                for diag in diags {
-                    arandu_middle::db::DiagnosticsAccumulator(diag).accumulate(db);
+    let mut hir = {
+        arandu_base::time_pass!("lower-hir");
+        match &*program_res {
+            Ok(program) => match arandu_semantics::lower_to_hir(&mut type_check_result, program) {
+                Ok(h) => h,
+                Err(diags) => {
+                    for diag in diags {
+                        arandu_middle::db::DiagnosticsAccumulator(diag).accumulate(db);
+                    }
+                    return HashEq::new(LowerAmirArtifacts {
+                        amir: empty_amir(),
+                        type_check: type_check_result,
+                    });
                 }
+            },
+            Err(_) => {
                 return HashEq::new(LowerAmirArtifacts {
                     amir: empty_amir(),
                     type_check: type_check_result,
                 });
             }
-        },
-        Err(_) => {
+        }
+    };
+
+    {
+        arandu_base::time_pass!("monomorphize");
+        if let Err(diags) = arandu_semantics::passes::monomorphize::monomorphize_program(
+            &mut type_check_result,
+            &mut hir,
+        ) {
+            for diag in diags {
+                arandu_middle::db::DiagnosticsAccumulator(diag).accumulate(db);
+            }
             return HashEq::new(LowerAmirArtifacts {
                 amir: empty_amir(),
                 type_check: type_check_result,
             });
         }
-    };
-
-    if let Err(diags) = arandu_semantics::passes::monomorphize::monomorphize_program(
-        &mut type_check_result,
-        &mut hir,
-    ) {
-        for diag in diags {
-            arandu_middle::db::DiagnosticsAccumulator(diag).accumulate(db);
-        }
-        return HashEq::new(LowerAmirArtifacts {
-            amir: empty_amir(),
-            type_check: type_check_result,
-        });
     }
 
-    let amir = match arandu_semantics::lower_to_amir(&type_check_result, &hir) {
-        Ok(a) => a,
-        Err(diags) => {
-            for diag in diags {
-                arandu_middle::db::DiagnosticsAccumulator(diag).accumulate(db);
+    let amir = {
+        arandu_base::time_pass!("lower-amir-body");
+        match arandu_semantics::lower_to_amir(&type_check_result, &hir) {
+            Ok(a) => a,
+            Err(diags) => {
+                for diag in diags {
+                    arandu_middle::db::DiagnosticsAccumulator(diag).accumulate(db);
+                }
+                empty_amir()
             }
-            empty_amir()
         }
     };
     HashEq::new(LowerAmirArtifacts {

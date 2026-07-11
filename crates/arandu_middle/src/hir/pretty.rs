@@ -779,6 +779,7 @@ impl HirExpr {
                     crate::hir::ResultCtorVariant::Ok => "Result.Ok",
                     crate::hir::ResultCtorVariant::Err => "Result.Err",
                     crate::hir::ResultCtorVariant::Some => "Option.Some",
+                    crate::hir::ResultCtorVariant::None => "Option.None",
                     crate::hir::ResultCtorVariant::PollReady => "Poll.Ready",
                     crate::hir::ResultCtorVariant::PollPending => "Poll.Pending",
                 };

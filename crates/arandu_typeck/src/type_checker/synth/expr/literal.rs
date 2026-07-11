@@ -191,8 +191,20 @@ pub(super) fn synth_literal_expr(
                 if let Some(fields_def) = field_map {
                     for fid in &field_ids {
                         let field = checker.pool.field_init(*fid);
-                        let field_val_ty_id = synth_expr(checker, field.value);
                         let defined_field_ty_opt = fields_def.get(field.name.as_str()).cloned();
+                        // `nil` in a field needs the field's expected type (`ptr[T]`, `T?`),
+                        // not the enclosing function return (which produced bogus `int?` /
+                        // `Vec?` for `data: nil` in Vec / BoxG).
+                        let field_val_ty_id =
+                            if matches!(checker.pool.expr(field.value), ExprKind::Nil)
+                                && let Some(ref expected) = defined_field_ty_opt
+                            {
+                                let expected_id = checker.intern(expected.clone());
+                                checker.type_info.record_expr_type(field.value, expected_id);
+                                expected_id
+                            } else {
+                                synth_expr(checker, field.value)
+                            };
                         if let Some(defined_field_ty) = defined_field_ty_opt {
                             let field_val_ty = checker.resolve(field_val_ty_id);
                             if !types::unify(

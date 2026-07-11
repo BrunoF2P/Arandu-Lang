@@ -215,23 +215,41 @@ pub(crate) fn synth_method_call(
         return Some(checker.intern(ArType::Error));
     }
 
-    let struct_id = match checker.resolve(actual_base_ty_id) {
-        ArType::Named(id, _) => Some(id),
-        ArType::Ptr(inner) => match checker.resolve(inner) {
+    let base_resolved = checker.resolve(actual_base_ty_id);
+
+    // Built-in `Result` / `Option` methods (`expectOrAbort`) live under the type
+    // name string, while the receiver is `ArType::Result` / `Option` (not Named).
+    let builtin_name: Option<&str> = match &base_resolved {
+        ArType::Result(_, _) => Some("Result"),
+        ArType::Option(_) => Some("Option"),
+        _ => None,
+    };
+
+    let struct_id = match &base_resolved {
+        ArType::Named(id, _) => Some(*id),
+        ArType::Ptr(inner) => match checker.resolve(*inner) {
             ArType::Named(id, _) => Some(id),
             _ => None,
         },
         _ => None,
-    }?;
+    };
 
-    let struct_name = checker.symbols.get(struct_id).name.clone();
+    let struct_name = if let Some(id) = struct_id {
+        checker.symbols.get(id).name.clone()
+    } else if let Some(n) = builtin_name {
+        n.into()
+    } else {
+        return None;
+    };
+
     let method_sym = checker
         .symbols
         .lookup_associated_member(&struct_name, method);
 
     let mut resolved_method = None;
     if method_sym.is_none()
-        && let Some(constraints) = checker.type_info.param_constraints.get(&struct_id)
+        && let Some(sid) = struct_id
+        && let Some(constraints) = checker.type_info.param_constraints.get(&sid)
     {
         for &iface_sym in constraints.iter() {
             if let Some(iface_info) = checker.type_info.interfaces.get(&iface_sym)
@@ -245,13 +263,12 @@ pub(crate) fn synth_method_call(
 
     let (params, ret, method_sym_recorded) = if let Some(method_sig) = resolved_method {
         if let ArType::Func(params, ret) = method_sig {
-            // The interface method signature already has `self` as params[0]
-            // (typed as the interface). Replace it with the actual base type
-            // so the receiver unification works correctly and arg count matches.
-            let mut new_params = vec![actual_base_ty_id];
-            if params.len() > 1 {
-                new_params.extend_from_slice(&params[1..]);
-            }
+            // Interface methods are stored **without** a receiver (`Func([size,align], R)`).
+            // Prepend the concrete receiver; do not drop params[0] as if it were `self`
+            // (that made `A.realloc` expect 3 args instead of 4 → Vec T012 cascade).
+            let mut new_params = Vec::with_capacity(params.len() + 1);
+            new_params.push(actual_base_ty_id);
+            new_params.extend_from_slice(&params);
             (new_params, ret, None)
         } else {
             return None;
@@ -268,14 +285,25 @@ pub(crate) fn synth_method_call(
 
     // Instantiate template method type with the receiver's concrete type args
     // so `BoxG<int>.get` sees `Func([BoxG<int>], int)` not `Func([BoxG<T>], T)`.
-    let (params, ret) = instantiate_method_sig_for_receiver(
-        checker,
-        struct_id,
-        actual_base_ty_id,
-        params,
-        ret,
-        method_sym_recorded,
-    );
+    // For Result/Option, substitute T/E from the builtin type shape.
+    let (params, ret) = if let Some(sid) = struct_id {
+        instantiate_method_sig_for_receiver(
+            checker,
+            sid,
+            actual_base_ty_id,
+            params,
+            ret,
+            method_sym_recorded,
+        )
+    } else {
+        instantiate_method_sig_for_result_option(
+            checker,
+            actual_base_ty_id,
+            params,
+            ret,
+            method_sym_recorded,
+        )
+    };
 
     if params.is_empty() {
         return None;
@@ -334,6 +362,68 @@ pub(crate) fn synth_method_call(
     checker.record_expr_type(callee, func_id);
 
     Some(ret)
+}
+
+/// Instantiate `Result.expectOrAbort` / `Option.expectOrAbort` from a builtin
+/// `ArType::Result` / `Option` receiver (not a Named type).
+fn instantiate_method_sig_for_result_option(
+    checker: &mut TypeChecker<'_>,
+    actual_base_ty_id: TypeId,
+    params: Vec<TypeId>,
+    ret: TypeId,
+    method_sym: Option<arandu_middle::SymbolId>,
+) -> (Vec<TypeId>, TypeId) {
+    use crate::type_checker::types::{build_subst, substitute_type};
+
+    let concrete_args: Vec<ArType> = match checker.resolve(actual_base_ty_id) {
+        ArType::Result(ok, err) => vec![checker.resolve(ok), checker.resolve(err)],
+        ArType::Option(inner) => vec![checker.resolve(inner)],
+        _ => return (params, ret),
+    };
+
+    let Some(sym) = method_sym else {
+        // No generic map: still force receiver to the concrete Result/Option type.
+        if params.is_empty() {
+            return (params, ret);
+        }
+        let mut new_params = params;
+        new_params[0] = actual_base_ty_id;
+        return (new_params, ret);
+    };
+
+    let Some(gp) = checker.type_info.generic_params.get(&sym).cloned() else {
+        if params.is_empty() {
+            return (params, ret);
+        }
+        let mut new_params = params;
+        new_params[0] = actual_base_ty_id;
+        return (new_params, ret);
+    };
+
+    let n = gp.len().min(concrete_args.len());
+    if n == 0 {
+        return (params, ret);
+    }
+    let subst = build_subst(&gp[..n], &concrete_args[..n]);
+    let new_params: Vec<TypeId> = params
+        .iter()
+        .enumerate()
+        .map(|(i, &p)| {
+            if i == 0 {
+                return actual_base_ty_id;
+            }
+            let ty = checker.resolve(p);
+            let inst = substitute_type(&ty, &subst, &checker.type_info.type_interner);
+            checker.intern(inst)
+        })
+        .collect();
+    let ret_ty = checker.resolve(ret);
+    let new_ret = checker.intern(substitute_type(
+        &ret_ty,
+        &subst,
+        &checker.type_info.type_interner,
+    ));
+    (new_params, new_ret)
 }
 
 /// Substitute struct type parameters in a method signature using the concrete

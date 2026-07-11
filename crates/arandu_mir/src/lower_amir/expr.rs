@@ -93,7 +93,11 @@ impl LowerCtx<'_> {
                 ..
             } => true,
             HirExprKind::ResultCtor {
-                variant: ResultCtorVariant::Ok | ResultCtorVariant::Some,
+                variant: ResultCtorVariant::Ok
+                    | ResultCtorVariant::Some
+                    | ResultCtorVariant::None
+                    | ResultCtorVariant::PollReady
+                    | ResultCtorVariant::PollPending,
                 ..
             } => false,
             HirExprKind::Nil => false,
@@ -929,6 +933,17 @@ impl LowerCtx<'_> {
                             AmirRvalue::EnumConstruct {
                                 variant_tag: 1,
                                 payload: Some(val_op),
+                            },
+                        );
+                    }
+                    // Option.None = tag 0, no payload (Some is tag 1).
+                    ResultCtorVariant::None => {
+                        let _ = val_op;
+                        self.emit_assign_temp(
+                            dest,
+                            AmirRvalue::EnumConstruct {
+                                variant_tag: 0,
+                                payload: None,
                             },
                         );
                     }

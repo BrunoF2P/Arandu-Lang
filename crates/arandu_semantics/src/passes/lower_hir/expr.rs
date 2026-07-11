@@ -44,6 +44,7 @@ fn builtin_ctor_variant(pool: &AstPool, callee: ExprId) -> Option<crate::hir::Re
         ("Result", "Ok") => Some(crate::hir::ResultCtorVariant::Ok),
         ("Result", "Err") => Some(crate::hir::ResultCtorVariant::Err),
         ("Option", "Some") => Some(crate::hir::ResultCtorVariant::Some),
+        ("Option", "None") => Some(crate::hir::ResultCtorVariant::None),
         ("Poll", "Ready") => Some(crate::hir::ResultCtorVariant::PollReady),
         ("Poll", "Pending") => Some(crate::hir::ResultCtorVariant::PollPending),
         _ => None,
@@ -130,14 +131,36 @@ pub(crate) fn lower_expr_raw(
         }
         ExprKind::TypePath {
             type_name,
-            member: _,
+            member,
             ..
         } => {
-            let type_symbol = require_type_symbol(&type_check.resolved, type_name.span)?;
-            let member_symbol = require_value_symbol(&type_check.resolved, expr, span)?;
-            HirExprKind::TypePath {
-                type_symbol,
-                member_symbol,
+            // Builtin unit ctors as bare TypePath (not Call): `Option.None`, `Poll.Pending`.
+            let base = type_name.path.last().map_or("", |s| s.as_str());
+            if matches!(
+                (base, member.as_str()),
+                ("Option", "None") | ("Poll", "Pending")
+            ) {
+                let variant = if base == "Option" {
+                    crate::hir::ResultCtorVariant::None
+                } else {
+                    crate::hir::ResultCtorVariant::PollPending
+                };
+                let dummy = hir_pool.alloc_expr(HirExpr {
+                    kind: HirExprKind::Bool(false),
+                    ty: TypeInterner::preinterned_primitive(Primitive::Bool),
+                    span,
+                });
+                HirExprKind::ResultCtor {
+                    variant,
+                    value: dummy,
+                }
+            } else {
+                let type_symbol = require_type_symbol(&type_check.resolved, type_name.span)?;
+                let member_symbol = require_value_symbol(&type_check.resolved, expr, span)?;
+                HirExprKind::TypePath {
+                    type_symbol,
+                    member_symbol,
+                }
             }
         }
         ExprKind::Generic { callee, args, .. } => {
@@ -239,9 +262,13 @@ pub(crate) fn lower_expr_raw(
                     let ty = expr_type_for_kind(type_check, hir_pool, &kind, fallback_ty);
                     return Ok(HirExpr { kind, ty, span });
                 }
-                // A3.6: `Poll.Pending` — unit ctor; dummy value ignored by AMIR lower.
+                // Unit ctors: `Poll.Pending` / `Option.None` — dummy value ignored by AMIR.
                 if arg_ids.is_empty()
-                    && matches!(variant, crate::hir::ResultCtorVariant::PollPending)
+                    && matches!(
+                        variant,
+                        crate::hir::ResultCtorVariant::PollPending
+                            | crate::hir::ResultCtorVariant::None
+                    )
                 {
                     let dummy = hir_pool.alloc_expr(HirExpr {
                         kind: HirExprKind::Bool(false),

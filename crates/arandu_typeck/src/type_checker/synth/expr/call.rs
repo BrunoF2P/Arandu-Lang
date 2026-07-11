@@ -535,6 +535,26 @@ pub(super) fn synth_call_expr(
                             callee_func_sym = Some(sym_id);
                         }
                     }
+                    // `mem.sizeOf` / `io.println` after Generic unwrap: Field on a module path.
+                    ExprKind::Field { base, field } => {
+                        if let ExprKind::Path { path } = checker.pool.expr(*base)
+                            && path.len() == 1
+                            && let Some(sym_id) =
+                                checker.symbols.lookup_module_member(&path[0], field)
+                        {
+                            let kind = checker.symbols.get(sym_id).kind;
+                            if matches!(
+                                kind,
+                                arandu_middle::SymbolKind::Func
+                                    | arandu_middle::SymbolKind::ExternFunc
+                                    | arandu_middle::SymbolKind::AssociatedFunc
+                            ) {
+                                is_direct = true;
+                                callee_func_sym = Some(sym_id);
+                                checker.resolved.expr_ref(current_callee, sym_id);
+                            }
+                        }
+                    }
                     _ => {}
                 }
 

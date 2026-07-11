@@ -1,6 +1,8 @@
 module std.alloc.vec
 
 import std.core.mem as mem
+import std.core.result as result
+import std.core.option as option
 import std.alloc.allocator_api as allocApi
 
 public struct Vec<T, A: allocApi.Allocator> {

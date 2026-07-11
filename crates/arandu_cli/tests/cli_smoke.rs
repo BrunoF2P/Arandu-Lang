@@ -336,7 +336,10 @@ fn run_with_ztime_passes_emits_perf_timings() {
     assert_eq!(output.status.code(), Some(0));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("parse+check") || stderr.contains("[perf]"),
+        stderr.contains("[perf]")
+            || stderr.contains("parse")
+            || stderr.contains("type_check")
+            || stderr.contains("codegen"),
         "expected perf output in stderr, got:\n{stderr}"
     );
 }

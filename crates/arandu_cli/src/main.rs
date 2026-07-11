@@ -55,30 +55,33 @@ fn parse_and_check(
     file: arandu_query::db::SourceFile,
     filepath: &str,
 ) -> CheckedProgram {
-    let program_res = arandu_query::passes::parse(db, file);
+    let program_res = {
+        arandu_base::time_pass!("parse");
+        arandu_query::passes::parse(db, file)
+    };
     let program = match &*program_res {
         Ok(program) => std::sync::Arc::clone(program),
         Err(err) => print_parse_error_and_exit(err, filepath),
     };
 
-    let type_check = arandu_query::passes::type_check(db, file);
+    let type_check = {
+        arandu_base::time_pass!("type_check");
+        arandu_query::passes::type_check(db, file)
+    };
 
     let diagnostics = arandu_query::passes::type_check::accumulated::<
         arandu_middle::db::DiagnosticsAccumulator,
     >(db, file);
-    let diags: Vec<_> = diagnostics.into_iter().map(|d| d.0.clone()).collect();
-
-    // Always print user-facing diagnostics (errors and warnings).
-    // Exit only on Error / ICE — warnings must not fail `check`.
-    let has_fatal = diags
-        .iter()
-        .any(|d| matches!(d.severity, arandu_middle::Severity::Error));
-    if !diags.is_empty() {
+    // Prefer Arc clone of each Diagnostic only when printing (avoid map clone when empty).
+    if !diagnostics.is_empty() {
         let source = std::fs::read_to_string(filepath).unwrap_or_else(|_| String::new());
         let named_source = miette::NamedSource::new(filepath, source);
-        for diagnostic in &diags {
-            let report =
-                miette::Report::new(diagnostic.clone()).with_source_code(named_source.clone());
+        let mut has_fatal = false;
+        for d in &diagnostics {
+            if matches!(d.0.severity, arandu_middle::Severity::Error) {
+                has_fatal = true;
+            }
+            let report = miette::Report::new(d.0.clone()).with_source_code(named_source.clone());
             eprintln!("{:?}", report);
         }
         if has_fatal {
@@ -301,10 +304,7 @@ fn main() {
             "check" => {
                 // Typeck only via Salsa; AMIR (OSSA/borrow) via lower_amir — no second
                 // HIR/mono outside the query (was doubling lower_to_hir + monomorphize).
-                let _checked = {
-                    arandu_base::time_pass!("parse+check");
-                    parse_and_check(&db, source_file, &filepath)
-                };
+                let _checked = parse_and_check(&db, source_file, &filepath);
                 tracing::info!("Syntax analysis and type-check completed for {}", filepath);
                 {
                     arandu_base::time_pass!("lower-amir");
@@ -337,10 +337,7 @@ fn main() {
             }
 
             "hir" => {
-                let mut checked = {
-                    arandu_base::time_pass!("parse+check");
-                    parse_and_check(&db, source_file, &filepath)
-                };
+                let mut checked = parse_and_check(&db, source_file, &filepath);
                 let mut hir = {
                     arandu_base::time_pass!("lower-hir");
                     match arandu_semantics::lower_to_hir(&mut checked.type_check, &checked.program)
@@ -367,10 +364,7 @@ fn main() {
 
             "amir" => {
                 // Fatal type errors first; AMIR + post-mono typeck from one Salsa query.
-                let _ = {
-                    arandu_base::time_pass!("parse+check");
-                    parse_and_check(&db, source_file, &filepath)
-                };
+                let _ = parse_and_check(&db, source_file, &filepath);
                 let artifacts_he = {
                     arandu_base::time_pass!("lower-amir");
                     arandu_query::passes::lower_amir(&db, source_file)
@@ -401,10 +395,7 @@ fn main() {
             }
 
             "run" => {
-                let _ = {
-                    arandu_base::time_pass!("parse+check");
-                    parse_and_check(&db, source_file, &filepath)
-                };
+                let _ = parse_and_check(&db, source_file, &filepath);
                 tracing::info!("Syntax analysis and type-check completed");
 
                 let artifacts_he = {
@@ -432,11 +423,16 @@ fn main() {
 
                 use arandu_semantics::{CodegenBackend, CompiledCode};
                 let output = {
-                    arandu_base::time_pass!("codegen");
-                    let backend = match arandu_backend_cranelift::CraneliftBackend::try_new() {
-                        Ok(backend) => backend,
-                        Err(diag) => print_diagnostics_and_exit(&[diag], &filepath),
+                    // Split ISA/JIT module setup vs function translate — setup is often
+                    // most of the cost on tiny programs (host ISA + symbol table).
+                    let backend = {
+                        arandu_base::time_pass!("codegen-init");
+                        match arandu_backend_cranelift::CraneliftBackend::try_new() {
+                            Ok(backend) => backend,
+                            Err(diag) => print_diagnostics_and_exit(&[diag], &filepath),
+                        }
                     };
+                    arandu_base::time_pass!("codegen-translate");
                     match CodegenBackend::compile(
                         backend,
                         amir,
@@ -487,10 +483,7 @@ fn main() {
                 }
             }
             "emit-c" => {
-                let _ = {
-                    arandu_base::time_pass!("parse+check");
-                    parse_and_check(&db, source_file, &filepath)
-                };
+                let _ = parse_and_check(&db, source_file, &filepath);
                 let artifacts_he = {
                     arandu_base::time_pass!("lower-amir");
                     arandu_query::passes::lower_amir(&db, source_file)

@@ -290,6 +290,15 @@ fn resolve_generic_callee_symbol(
                 .copied()
         }),
         ExprKind::Field { base, field } => {
+            // Namespace free/extern generic: `mem.sizeOf<T>` / `mem.alignOf<T>`.
+            // Must resolve before method dispatch — `mem` is a Module, not a value type.
+            if let ExprKind::Path { path } = checker.pool.expr(*base)
+                && path.len() == 1
+                && let Some(sym) = checker.symbols.lookup_module_member(&path[0], field)
+            {
+                checker.resolved.expr_ref(callee, sym);
+                return Some(sym);
+            }
             let base_ty_id = checker
                 .expr_type_id(*base)
                 .unwrap_or_else(|| crate::passes::type_checker::synth::synth_expr(checker, *base));
