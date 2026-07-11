@@ -117,6 +117,9 @@ Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
    │  · [x] lower materializa `Borrow`/`BorrowMut` quando formal é Ref/RefMut
    │  · [x] `ArgConsumeKind::is_exclusive` (mut self vs shared)
    │  · [→] assinaturas de método ainda `self: T` + ownership (não `&T` plenas na surface)
+   │  Backend honesty (W5):
+   │  · [x] T033 barrando call indireto no typeck; JIT só rede de segurança
+   │  · [x] `??` é CFG no AMIR; BinaryOp::NullCoalesce no JIT = ICE de pipeline
    ├─ [x] F2.0   Sintaxe de referências à pilha (& / &mut) no parser + type-checker
    ├─ [x] F2.1   Local Borrow Checking Incremental (Salsa `block_borrow_facts` / may-borrow dataflow A9)
    ├─ [x] F2.2   Janelas de Liveness de Empréstimos (loan window = live range da ref; `is_borrowed_at`)

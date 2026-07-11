@@ -172,7 +172,13 @@ impl ArType {
         match self {
             ArType::Primitive(p) => p.to_string(),
             ArType::Named(id, args) => {
-                let name = &symbols.get(*id).name;
+                // Multi-module: type args may reference SymbolIds from imported files
+                // that are not always present in the *local* SymbolTable. Never ICE in
+                // diagnostic display (W2 residual: ICE on missing symbol while printing).
+                let name = symbols
+                    .try_get(*id)
+                    .map(|s| s.name.as_str())
+                    .unwrap_or("?");
                 if args.is_empty() {
                     name.to_string()
                 } else {
@@ -722,5 +728,17 @@ mod tests {
         assert_eq!(ArType::IntLiteral.display(&syms, &i), "int");
         assert_eq!(ArType::FloatLiteral.display(&syms, &i), "float");
         assert_eq!(ArType::Error.display(&syms, &i), "<error>");
+    }
+
+    #[test]
+    fn display_named_missing_symbol_no_ice() {
+        let i = new_interner();
+        let foreign = SymbolId::new(99, 0); // not in empty table
+        let empty = empty_symbols();
+        let int_tid = i.intern(ArType::Primitive(Primitive::Int));
+        let ty = ArType::Named(foreign, vec![int_tid]);
+        let s = ty.display(&empty, &i);
+        assert!(s.contains('?'), "got {s}");
+        assert!(s.contains("int"), "got {s}");
     }
 }

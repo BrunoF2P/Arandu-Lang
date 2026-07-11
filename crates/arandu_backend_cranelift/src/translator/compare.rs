@@ -258,8 +258,11 @@ impl FunctionTranslator<'_, '_> {
                 ptr_val
             }
             BinaryOp::NullCoalesce => {
+                // Root honesty: `??` is CFG-lowered in AMIR (`HirExprKind::NullCoalesce` →
+                // branch on `!= nil`). A BinaryOp::NullCoalesce that reaches codegen is a
+                // pipeline bug, not a missing feature.
                 self.record_ice(
-                    "NullCoalesce binary operator is not implemented in Cranelift JIT yet",
+                    "internal: NullCoalesce must be CFG-lowered before codegen (not a BinaryOp)",
                     self.func_span(),
                 );
                 self.poison_i32()
