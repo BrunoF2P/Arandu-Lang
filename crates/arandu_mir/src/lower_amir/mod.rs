@@ -81,10 +81,23 @@ pub fn lower_to_amir(
     }
 
     if diagnostics.is_empty() {
+        let mut extern_funcs = rustc_hash::FxHashMap::default();
+        for sym in tc.symbols.iter() {
+            if sym.kind == arandu_middle::SymbolKind::ExternFunc
+                && let Some(&ty_id) = tc.type_info.decl_types.get(&sym.id)
+            {
+                let ty = tc.type_info.type_interner.resolve(ty_id);
+                if let arandu_middle::types::ArType::Func(params, ret) = ty {
+                    let param_types: Vec<_> = params.iter().map(|&p| tc.type_info.type_interner.resolve(p)).collect();
+                    let ret_type = tc.type_info.type_interner.resolve(ret);
+                    extern_funcs.insert(sym.id, (param_types, ret_type));
+                }
+            }
+        }
         Ok(AmirProgram {
             funcs,
             literal_pool,
-            extern_funcs: rustc_hash::FxHashMap::default(),
+            extern_funcs,
         })
     } else {
         Err(diagnostics)

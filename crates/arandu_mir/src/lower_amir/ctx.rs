@@ -1,8 +1,8 @@
 use super::{DeferKind, LowerCtx, MoveState};
 use crate::amir::program::extend_block_range;
 use crate::amir::{
-    AmirBasicBlock, AmirConstant, AmirLocal, AmirOperand, AmirPlace, AmirProjection, AmirRvalue,
-    AmirStmt, AmirTemp, AmirTerminator, BlockId, BlockParam, LocalId, TempId,
+    AmirBasicBlock, AmirConstant, AmirLocal, AmirOperand, AmirPlace, AmirRvalue,
+    AmirStmt, AmirTemp, AmirTerminator, BlockId, LocalId, TempId,
 };
 use crate::diagnostics::Diagnostic;
 use crate::hir::HirBlock;
@@ -11,7 +11,6 @@ use crate::literal_pool::AmirLiteralEntry;
 use crate::passes::type_checker::types::{ArType, Primitive};
 use crate::{SymbolId, SymbolTable};
 use arandu_lexer::Span;
-use rustc_hash::FxHashMap;
 
 impl LowerCtx<'_> {
     pub(crate) fn next_local_id(&self) -> LocalId {

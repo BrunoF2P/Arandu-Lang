@@ -24,6 +24,7 @@ extern "C" {
     func ar_rt_reactor_arm_timer_ms(id: int, ms: int): int
     func ar_rt_reactor_poll_ms(id: int, timeout_ms: int): int
     func ar_rt_reactor_backend(): int
+    func ar_rt_reactor_register_socket(reactor_id: int, sock_id: int, events: int, waker_id: int): int
 }
 
 // -- Host: Waker -------------------------------------------------------------
@@ -203,6 +204,12 @@ public func reactor_arm_timer_ms(shared r: EpollReactor, ms: int): int {
 public func reactor_poll_ms(shared r: EpollReactor, timeout_ms: int): int {
     unsafe {
         return ar_rt_reactor_poll_ms(r.id, timeout_ms)
+    }
+}
+
+public func reactor_register_socket(shared r: EpollReactor, shared s: TcpStream, events: int, shared w: Waker): int {
+    unsafe {
+        return ar_rt_reactor_register_socket(r.id, s.id, events, w.id)
     }
 }
 

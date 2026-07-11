@@ -1,17 +1,16 @@
 //! SL_R — host Waker / Context for cooperative wake (no OS thread park yet).
 //!
 //! Wakers are explicit handles (like SyncExecutor). `wake` sets a flag;
-//! `wait` spins / sleeps until set or timeout. Full task queues land with
-//! multi-thread SyncExecutor.
+//! `wait` blocks on a local Condvar until set or timeout.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Condvar, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
 struct WakerSlot {
-    woken: bool,
+    state: Arc<(StdMutex<bool>, Condvar)>,
 }
 
-static WAKERS: Mutex<Vec<Option<WakerSlot>>> = Mutex::new(Vec::new());
+static WAKERS: StdMutex<Vec<Option<WakerSlot>>> = StdMutex::new(Vec::new());
 
 fn lock() -> std::sync::MutexGuard<'static, Vec<Option<WakerSlot>>> {
     WAKERS.lock().unwrap_or_else(|e| e.into_inner())
@@ -24,7 +23,9 @@ fn lock() -> std::sync::MutexGuard<'static, Vec<Option<WakerSlot>>> {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ar_rt_waker_create() -> i64 {
     let mut g = lock();
-    let slot = WakerSlot { woken: false };
+    let slot = WakerSlot {
+        state: Arc::new((StdMutex::new(false), Condvar::new())),
+    };
     if let Some(idx) = g.iter().position(|s| s.is_none()) {
         g[idx] = Some(slot);
         return idx as i64;
@@ -43,9 +44,17 @@ pub unsafe extern "C" fn ar_rt_waker_wake(id: i64) {
     if id < 0 {
         return;
     }
-    let mut g = lock();
-    if let Some(Some(slot)) = g.get_mut(id as usize) {
-        slot.woken = true;
+    let state = {
+        let g = lock();
+        g.get(id as usize)
+            .and_then(|s| s.as_ref())
+            .map(|s| Arc::clone(&s.state))
+    };
+    if let Some(state) = state {
+        let (lock, cvar) = &*state;
+        let mut woken = lock.lock().unwrap_or_else(|e| e.into_inner());
+        *woken = true;
+        cvar.notify_one();
     }
 }
 
@@ -59,30 +68,53 @@ pub unsafe extern "C" fn ar_rt_waker_wait(id: i64, timeout_ms: i64) -> i64 {
     if id < 0 {
         return -1;
     }
-    let deadline = if timeout_ms < 0 {
-        None
-    } else {
-        Some(Instant::now() + Duration::from_millis(timeout_ms as u64))
+    let state = {
+        let g = lock();
+        g.get(id as usize)
+            .and_then(|s| s.as_ref())
+            .map(|s| Arc::clone(&s.state))
     };
-    loop {
-        {
-            let mut g = lock();
-            if let Some(Some(slot)) = g.get_mut(id as usize) {
-                if slot.woken {
-                    slot.woken = false;
-                    return 1;
-                }
-            } else {
-                return -1;
-            }
+    let Some(state) = state else {
+        return -1;
+    };
+
+    let (lock, cvar) = &*state;
+    let mut woken = lock.lock().unwrap_or_else(|e| e.into_inner());
+
+    if *woken {
+        *woken = false;
+        return 1;
+    }
+
+    if timeout_ms == 0 {
+        return 0;
+    }
+
+    if timeout_ms < 0 {
+        while !*woken {
+            woken = cvar.wait(woken).unwrap_or_else(|e| e.into_inner());
         }
-        if let Some(dl) = deadline
-            && Instant::now() >= dl
-        {
+        *woken = false;
+        return 1;
+    }
+
+    let timeout = Duration::from_millis(timeout_ms as u64);
+    let start = Instant::now();
+    while !*woken {
+        let elapsed = start.elapsed();
+        if elapsed >= timeout {
             return 0;
         }
-        std::thread::sleep(Duration::from_millis(1));
+        let (new_woken, wait_result) = cvar
+            .wait_timeout(woken, timeout - elapsed)
+            .unwrap_or_else(|e| e.into_inner());
+        woken = new_woken;
+        if wait_result.timed_out() && !*woken {
+            return 0;
+        }
     }
+    *woken = false;
+    1
 }
 
 /// Destroy a waker handle.
@@ -114,3 +146,4 @@ mod tests {
         }
     }
 }
+

@@ -107,6 +107,10 @@ pub fn analyze_local_liveness(func: &AmirFunc) -> LocalLiveness {
         }
     }
 
+    if changed {
+        arandu_middle::ice::bug("Liveness analysis failed to converge within iteration limit");
+    }
+
     LocalLiveness { live_in, live_out }
 }
 
@@ -160,6 +164,10 @@ pub fn analyze_temp_liveness(func: &AmirFunc) -> TempLiveness {
                 changed = true;
             }
         }
+    }
+
+    if changed {
+        arandu_middle::ice::bug("Liveness analysis failed to converge within iteration limit");
     }
 
     TempLiveness { live_in, live_out }

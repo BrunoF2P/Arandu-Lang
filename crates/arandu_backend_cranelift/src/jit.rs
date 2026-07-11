@@ -185,6 +185,10 @@ impl AranduJit {
             "ar_rt_reactor_backend",
             crate::reactor_runtime::ar_rt_reactor_backend as *const u8,
         );
+        builder.symbol(
+            "ar_rt_reactor_register_socket",
+            crate::reactor_runtime::ar_rt_reactor_register_socket as *const u8,
+        );
         // SL_R Waker
         builder.symbol(
             "ar_rt_waker_create",
@@ -536,6 +540,27 @@ impl AranduJit {
                     .map_err(|err| codegen_ice(format!("failed to declare {name}: {err:?}")))?;
                 func_ids.insert(name.to_string(), id);
             }
+        }
+        // register_socket: (reactor_id: i64, sock_id: i64, events: i64, waker_id: i64) -> i64
+        {
+            let mut sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+            for _ in 0..4 {
+                sig.params.push(cranelift_codegen::ir::AbiParam::new(
+                    cranelift_codegen::ir::types::I64,
+                ));
+            }
+            sig.returns.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
+            let id = self
+                .module
+                .declare_function("ar_rt_reactor_register_socket", Linkage::Import, &sig)
+                .map_err(|err| {
+                    codegen_ice(format!(
+                        "failed to declare ar_rt_reactor_register_socket: {err:?}"
+                    ))
+                })?;
+            func_ids.insert("ar_rt_reactor_register_socket".to_string(), id);
         }
         // 0-arg -> i64
         {

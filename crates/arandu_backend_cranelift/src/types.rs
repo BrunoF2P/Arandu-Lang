@@ -115,7 +115,7 @@ pub fn clif_type(ty: &ArType, ptr_type: Type) -> ClifType {
 #[must_use]
 pub fn clif_types(ty: &ArType, ptr_type: Type) -> Vec<Type> {
     match ty {
-        ArType::Primitive(Primitive::Str) => vec![ptr_type, I64],
+        ArType::Primitive(Primitive::Str) => vec![ptr_type, ptr_type],
         _ => match clif_type(ty, ptr_type) {
             ClifType::Concrete(t) => vec![t],
             ClifType::Void => vec![],
@@ -134,3 +134,19 @@ pub fn clif_slot_count(ty: &ArType) -> usize {
         _ => 1,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_string_length_matches_pointer_width() {
+        let ptr_type_32 = cranelift_codegen::ir::types::I32;
+        let str_ty = arandu_semantics::passes::type_checker::types::ArType::Primitive(
+            arandu_semantics::passes::type_checker::types::Primitive::Str,
+        );
+        let clif_tys = clif_types(&str_ty, ptr_type_32);
+        assert_eq!(clif_tys, vec![ptr_type_32, ptr_type_32]);
+    }
+}
+

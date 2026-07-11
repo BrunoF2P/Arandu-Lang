@@ -108,6 +108,26 @@ impl<'a> CEmitter<'a> {
             }
             self.emit_func_decl(func);
         }
+        for (symbol, (params, ret)) in &self.program.extern_funcs {
+            self.ensure_type_emitted(ret);
+            for param in params {
+                self.ensure_type_emitted(param);
+            }
+            let name = sanitize_c_ident(&self.symbols.get(*symbol).name);
+            let ret_str = self.format_type(ret);
+            let _ = write!(&mut self.output, "{} {}(", ret_str, name);
+            for (i, param) in params.iter().enumerate() {
+                if i > 0 {
+                    let _ = write!(&mut self.output, ", ");
+                }
+                let ty_str = self.format_type(param);
+                let _ = write!(&mut self.output, "{}", ty_str);
+            }
+            if params.is_empty() {
+                let _ = write!(&mut self.output, "void");
+            }
+            let _ = writeln!(&mut self.output, ");");
+        }
         for func in &self.program.funcs {
             self.emit_func(func);
         }

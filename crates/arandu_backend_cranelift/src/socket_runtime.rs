@@ -52,6 +52,14 @@ fn raw_fd_of(kind: &SockKind) -> i32 {
     }
 }
 
+#[cfg(unix)]
+pub fn get_socket_fd(sock_id: i64) -> Option<i32> {
+    let g = lock();
+    g.get(sock_id as usize)
+        .and_then(|s| s.as_ref())
+        .map(|s| raw_fd_of(&s.kind))
+}
+
 /// Events for [`ar_rt_tcp_wait`]: bit0 = readable, bit1 = writable.
 pub const WAIT_READ: i64 = 1;
 pub const WAIT_WRITE: i64 = 2;

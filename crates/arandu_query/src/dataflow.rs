@@ -280,7 +280,7 @@ pub fn item_ide_diagnostics(
     item_sym: SymbolId,
 ) -> HashEq<Vec<IdeDiagnostic>> {
     #[cfg(any(test, debug_assertions))]
-    ITEM_IDE_DIAGS_EXEC_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    ITEM_IDE_DIAGS_EXEC_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
     let body_tc = crate::passes::item_body_typeck(db, file, item_sym);
     let mut out: Vec<IdeDiagnostic> = body_tc

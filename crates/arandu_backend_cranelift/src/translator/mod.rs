@@ -22,7 +22,6 @@ use arandu_semantics::amir::{
 };
 use arandu_semantics::passes::type_checker::types::{ArType, Primitive};
 use arandu_semantics::{DiagCode, Diagnostic, SymbolTable};
-use cranelift_codegen::ir::types::I64;
 use cranelift_codegen::ir::{Block, InstBuilder, StackSlot, Type, Value};
 use cranelift_frontend::{FunctionBuilder, Variable};
 use cranelift_jit::JITModule;
@@ -233,7 +232,7 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
             let lty = self.resolve_ty(local.ty);
             if matches!(lty, ArType::Primitive(Primitive::Str)) {
                 let var_ptr = self.builder.declare_var(self.ptr_type);
-                let var_len = self.builder.declare_var(I64);
+                let var_len = self.builder.declare_var(self.ptr_type);
                 self.str_local_map.insert(local.id, (var_ptr, var_len));
             } else if let ClifType::Concrete(clif_ty) = clif_type(&lty, self.ptr_type) {
                 let var = self.builder.declare_var(clif_ty);
@@ -264,7 +263,7 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
             let tty = self.resolve_ty(temp.ty);
             if matches!(tty, ArType::Primitive(Primitive::Str)) {
                 let var_ptr = self.builder.declare_var(self.ptr_type);
-                let var_len = self.builder.declare_var(I64);
+                let var_len = self.builder.declare_var(self.ptr_type);
                 self.str_temp_map.insert(temp.id, (var_ptr, var_len));
             } else if let ClifType::Concrete(clif_ty) = clif_type(&tty, self.ptr_type) {
                 let var = self.builder.declare_var(clif_ty);
@@ -301,7 +300,7 @@ impl<'a, 'b> AmirVisitor for FunctionTranslator<'a, 'b> {
                 if matches!(lty, ArType::Primitive(Primitive::Str)) {
                     let &(var_ptr, var_len) = &self.str_local_map[&local.id];
                     let zero_ptr = self.builder.ins().iconst(self.ptr_type, 0);
-                    let zero_len = self.builder.ins().iconst(I64, 0);
+                    let zero_len = self.builder.ins().iconst(self.ptr_type, 0);
                     self.builder.def_var(var_ptr, zero_ptr);
                     self.builder.def_var(var_len, zero_len);
                 } else if let Some(&var) = self.local_map.get(&local.id) {

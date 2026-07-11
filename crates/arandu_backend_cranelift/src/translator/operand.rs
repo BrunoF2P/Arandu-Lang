@@ -21,7 +21,7 @@ impl FunctionTranslator<'_, '_> {
                     let len_val = self
                         .builder
                         .ins()
-                        .iconst(cranelift_codegen::ir::types::I64, 0);
+                        .iconst(self.ptr_type, 0);
                     (ptr_val, len_val)
                 } else {
                     self.record_ice(
@@ -38,7 +38,7 @@ impl FunctionTranslator<'_, '_> {
                 let len_val = self
                     .builder
                     .ins()
-                    .iconst(cranelift_codegen::ir::types::I64, 0);
+                    .iconst(self.ptr_type, 0);
                 (ptr_val, len_val)
             }
             AmirOperand::Constant(AmirConstant::Pool(lit_id)) => {
@@ -72,7 +72,7 @@ impl FunctionTranslator<'_, '_> {
                     let len_val = self
                         .builder
                         .ins()
-                        .iconst(cranelift_codegen::ir::types::I64, s.len() as i64);
+                        .iconst(self.ptr_type, s.len() as i64);
                     (ptr_val, len_val)
                 } else {
                     self.record_ice("expected string literal in pool", self.func_span());

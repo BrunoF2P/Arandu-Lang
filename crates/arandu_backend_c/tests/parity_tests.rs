@@ -457,3 +457,25 @@ fn c_emit_arstr_i686_sysv() {
         c.lines().take(30).collect::<Vec<_>>().join("\n")
     );
 }
+
+#[test]
+fn c_emit_extern_declaration_present() {
+    let src = r#"
+    extern "C" {
+        func my_custom_extern_func(x: int): int
+    }
+    func main(): int {
+        unsafe {
+            return my_custom_extern_func(42)
+        }
+    }
+    "#;
+    let (amir, tc) = compile_src(src);
+    let c = emit_c(&amir, &tc);
+    assert!(
+        c.contains("int64_t my_custom_extern_func(int64_t);"),
+        "expected custom extern function declaration, got:\n{}",
+        c
+    );
+}
+

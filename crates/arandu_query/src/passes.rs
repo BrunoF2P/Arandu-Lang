@@ -10,9 +10,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 #[cfg(any(test, debug_assertions))]
-pub static RESOLVE_EXEC_COUNT: AtomicUsize = AtomicUsize::new(0);
-
-#[cfg(any(test, debug_assertions))]
 pub static TYPE_CHECK_EXEC_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 /// Counts `item_body_typeck` body executions (P1 fine-grained).
@@ -140,8 +137,7 @@ pub fn parse(
     file = ?file.file_id(db),
 ))]
 pub fn resolve(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<ResolutionResult> {
-    #[cfg(any(test, debug_assertions))]
-    RESOLVE_EXEC_COUNT.fetch_add(1, Ordering::SeqCst);
+
 
     let program_res = parse(db, file);
     let locals_arc = local_symbols(db, file);
@@ -376,7 +372,7 @@ pub fn item_body_typeck(
     item_sym: arandu_middle::SymbolId,
 ) -> HashEq<TypeCheckResult> {
     #[cfg(any(test, debug_assertions))]
-    ITEM_BODY_TYPECK_EXEC_COUNT.fetch_add(1, Ordering::SeqCst);
+    ITEM_BODY_TYPECK_EXEC_COUNT.fetch_add(1, Ordering::Relaxed);
 
     let body_in = item_source_input(db, file, item_sym);
     let signatures = module_signatures(db, file);
@@ -443,7 +439,7 @@ pub fn file_typeck_view(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<Ty
 ))]
 pub fn type_check(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<TypeCheckResult> {
     #[cfg(any(test, debug_assertions))]
-    TYPE_CHECK_EXEC_COUNT.fetch_add(1, Ordering::SeqCst);
+    TYPE_CHECK_EXEC_COUNT.fetch_add(1, Ordering::Relaxed);
 
     // P1: compose per-function body checks (early cutoff across funcs).
     let res = file_typeck_view(db, file);

@@ -33,7 +33,7 @@ impl FunctionTranslator<'_, '_> {
                         offset,
                     );
                     let loaded_len = self.builder.ins().load(
-                        cranelift_codegen::ir::types::I64,
+                        self.ptr_type,
                         cranelift_codegen::ir::MemFlagsData::new(),
                         ptr_val,
                         offset + self.ptr_type.bytes() as i32,
@@ -74,7 +74,7 @@ impl FunctionTranslator<'_, '_> {
                     offset,
                 );
                 let loaded_len = self.builder.ins().load(
-                    cranelift_codegen::ir::types::I64,
+                    self.ptr_type,
                     cranelift_codegen::ir::MemFlagsData::new(),
                     ptr_val,
                     offset + pointer_width as i32,
@@ -143,7 +143,7 @@ impl FunctionTranslator<'_, '_> {
                     total_offset,
                 );
                 let loaded_len = self.builder.ins().load(
-                    cranelift_codegen::ir::types::I64,
+                    self.ptr_type,
                     cranelift_codegen::ir::MemFlagsData::new(),
                     ptr_val,
                     total_offset + self.ptr_type.bytes() as i32,
@@ -273,6 +273,11 @@ impl FunctionTranslator<'_, '_> {
         let call = self.builder.ins().call(local_ref, &[arg, len_ptr]);
         let ptr = self.builder.inst_results(call)[0];
         let len = self.builder.ins().stack_load(i64_ty, len_slot, 0);
+        let len = if self.ptr_type.bits() < 64 {
+            self.builder.ins().ireduce(self.ptr_type, len)
+        } else {
+            len
+        };
         (ptr, len)
     }
 
@@ -288,8 +293,6 @@ impl FunctionTranslator<'_, '_> {
         let (r_ptr, r_len) = self.translate_str_operand(right);
         let i8_ty = cranelift_codegen::ir::types::I8;
         let i32_ty = cranelift_codegen::ir::types::I32;
-        let i64_ty = cranelift_codegen::ir::types::I64;
-
         let len_eq =
             self.builder
                 .ins()
@@ -297,11 +300,11 @@ impl FunctionTranslator<'_, '_> {
 
         // If lengths differ → not equal. If both zero-length → equal.
         // Else memcmp(l_ptr, r_ptr, len) == 0.
-        let zero_i64 = self.builder.ins().iconst(i64_ty, 0);
+        let zero_len = self.builder.ins().iconst(self.ptr_type, 0);
         let len_nonzero = self.builder.ins().icmp(
             cranelift_codegen::ir::condcodes::IntCC::NotEqual,
             l_len,
-            zero_i64,
+            zero_len,
         );
 
         let Some(memcmp_id) = self.memcmp_func_id() else {
@@ -311,23 +314,7 @@ impl FunctionTranslator<'_, '_> {
             .module
             .declare_func_in_func(memcmp_id, self.builder.func);
         // memcmp size is size_t (= pointer width).
-        let size = if self.ptr_type == i64_ty {
-            l_len
-        } else if self.ptr_type.bits() < 64 {
-            self.builder.ins().ireduce(self.ptr_type, l_len)
-        } else {
-            self.builder.ins().uextend(self.ptr_type, l_len);
-            l_len // wait, let's keep logic exactly as original: `self.builder.ins().uextend(self.ptr_type, l_len)`
-        };
-        // wait, let's look at original code:
-        // size = if self.ptr_type == i64_ty { l_len } else if self.ptr_type.bits() < 64 { self.builder.ins().ireduce(self.ptr_type, l_len) } else { self.builder.ins().uextend(self.ptr_type, l_len) };
-        let size = if self.ptr_type == i64_ty {
-            l_len
-        } else if self.ptr_type.bits() < 64 {
-            self.builder.ins().ireduce(self.ptr_type, l_len)
-        } else {
-            self.builder.ins().uextend(self.ptr_type, l_len)
-        };
+        let size = l_len;
 
         let call = self.builder.ins().call(memcmp_ref, &[l_ptr, r_ptr, size]);
         let cmp = self.builder.inst_results(call)[0];
@@ -354,10 +341,9 @@ impl FunctionTranslator<'_, '_> {
     /// Concatenate `str` fat-pointer parts via `malloc` + `memcpy`.
     /// Returns `(ptr, len)` for the newly allocated buffer (not freed; debug/JIT lifetime).
     fn translate_string_interp(&mut self, parts: &[AmirOperand]) -> (Value, Value) {
-        let i64_ty = cranelift_codegen::ir::types::I64;
         if parts.is_empty() {
             let empty_ptr = self.builder.ins().iconst(self.ptr_type, 0);
-            let empty_len = self.builder.ins().iconst(i64_ty, 0);
+            let empty_len = self.builder.ins().iconst(self.ptr_type, 0);
             return (empty_ptr, empty_len);
         }
 
@@ -367,22 +353,15 @@ impl FunctionTranslator<'_, '_> {
             part_vals.push(self.translate_str_operand(part));
         }
 
-        // total = sum of lengths (i64)
-        let mut total = self.builder.ins().iconst(i64_ty, 0);
+        // total = sum of lengths (ptr_type)
+        let mut total = self.builder.ins().iconst(self.ptr_type, 0);
         for &(_, len) in &part_vals {
             total = self.builder.ins().iadd(total, len);
         }
 
         // malloc(total + 1) for trailing NUL safety
-        let one = self.builder.ins().iconst(i64_ty, 1);
-        let alloc_size_i64 = self.builder.ins().iadd(total, one);
-        let alloc_size = if self.ptr_type == i64_ty {
-            alloc_size_i64
-        } else if self.ptr_type.bits() < 64 {
-            self.builder.ins().ireduce(self.ptr_type, alloc_size_i64)
-        } else {
-            self.builder.ins().uextend(self.ptr_type, alloc_size_i64)
-        };
+        let one = self.builder.ins().iconst(self.ptr_type, 1);
+        let alloc_size = self.builder.ins().iadd(total, one);
 
         let Some(malloc_id) = self.malloc_func_id() else {
             return (self.poison_i32(), self.poison_i32());
@@ -401,25 +380,11 @@ impl FunctionTranslator<'_, '_> {
             .declare_func_in_func(memcpy_id, self.builder.func);
 
         // Copy each part into the buffer.
-        let mut offset_i64 = self.builder.ins().iconst(i64_ty, 0);
+        let mut offset_ptr = self.builder.ins().iconst(self.ptr_type, 0);
         for &(src_ptr, src_len) in &part_vals {
-            let offset_ptr = if self.ptr_type == i64_ty {
-                offset_i64
-            } else if self.ptr_type.bits() < 64 {
-                self.builder.ins().ireduce(self.ptr_type, offset_i64)
-            } else {
-                self.builder.ins().uextend(self.ptr_type, offset_i64)
-            };
             let dest = self.builder.ins().iadd(buf, offset_ptr);
-            let size = if self.ptr_type == i64_ty {
-                src_len
-            } else if self.ptr_type.bits() < 64 {
-                self.builder.ins().ireduce(self.ptr_type, src_len)
-            } else {
-                self.builder.ins().uextend(self.ptr_type, src_len)
-            };
-            self.builder.ins().call(memcpy_ref, &[dest, src_ptr, size]);
-            offset_i64 = self.builder.ins().iadd(offset_i64, src_len);
+            self.builder.ins().call(memcpy_ref, &[dest, src_ptr, src_len]);
+            offset_ptr = self.builder.ins().iadd(offset_ptr, src_len);
         }
 
         // Write trailing NUL at buf + total
@@ -427,14 +392,7 @@ impl FunctionTranslator<'_, '_> {
             .builder
             .ins()
             .iconst(cranelift_codegen::ir::types::I8, 0);
-        let total_ptr = if self.ptr_type == i64_ty {
-            total
-        } else if self.ptr_type.bits() < 64 {
-            self.builder.ins().ireduce(self.ptr_type, total)
-        } else {
-            self.builder.ins().uextend(self.ptr_type, total)
-        };
-        let end_ptr = self.builder.ins().iadd(buf, total_ptr);
+        let end_ptr = self.builder.ins().iadd(buf, total);
         self.builder.ins().store(
             cranelift_codegen::ir::MemFlagsData::new(),
             zero_byte,

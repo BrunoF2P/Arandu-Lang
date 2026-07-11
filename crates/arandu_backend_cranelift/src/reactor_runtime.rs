@@ -1,17 +1,9 @@
 //! SL_R.2 / SL_R.3 — cooperative reactor host (epoll + timerfd; io_uring when available).
-//!
-//! ## Surface
-//! - [`ar_rt_reactor_create`] / [`ar_rt_reactor_destroy`]: opaque reactor handle
-//! - [`ar_rt_reactor_sleep_ms`]: block until `ms` elapses
-//! - [`ar_rt_reactor_poll_ms`]: wait up to `timeout_ms` for the next armed event
-//! - [`ar_rt_reactor_backend`]: runtime backend select (0 portable / 1 epoll / 2 io_uring)
-//!
-//! **SL_R.3:** prefer io_uring when the kernel supports it (runtime detect), else
-//! epoll+timerfd. Non-Linux uses portable `thread::sleep`.
-//!
-//! No global language-level reactor: handles are explicit values (like
-//! `SyncExecutor`).
+// All `pub unsafe extern "C"` fns here are ABI host functions called only from JIT-compiled
+// Arandu code. Safety invariants are enforced by the compiler and JIT symbol resolution.
+#![allow(clippy::missing_safety_doc)]
 
+use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -25,6 +17,13 @@ pub const BACKEND_IO_URING: i64 = 2;
 /// Opaque reactor id (>= 0). Invalid / closed = negative.
 type ReactorId = i64;
 
+#[allow(dead_code)]
+struct RegisteredSocket {
+    fd: i32,
+    events: i64,
+    waker_id: i64,
+}
+
 struct ReactorSlot {
     /// Linux: epoll fd. Portable fallback: ignored (sleep only).
     #[cfg(target_os = "linux")]
@@ -32,22 +31,25 @@ struct ReactorSlot {
     /// Optional one-shot timer fd still registered (linux).
     #[cfg(target_os = "linux")]
     timer_fd: Option<i32>,
+    /// Capped ring reused for timeouts.
+    #[cfg(target_os = "linux")]
+    ring: Option<io_uring::IoUring>,
     /// Wall-clock deadline for the armed timer (all platforms).
     deadline: Option<Instant>,
+    /// Sockets registered to this reactor. Map from raw FD to RegisteredSocket.
+    #[cfg(target_os = "linux")]
+    sockets: HashMap<i64, RegisteredSocket>,
 }
 
-// JIT is single-threaded today; Mutex keeps the table sound if that changes.
 static REACTORS: Mutex<Vec<Option<ReactorSlot>>> = Mutex::new(Vec::new());
 
 fn lock_reactors() -> std::sync::MutexGuard<'static, Vec<Option<ReactorSlot>>> {
     REACTORS.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Runtime backend probe (cached). 2 = io_uring, 1 = epoll, 0 = portable.
 fn probe_backend() -> i64 {
     #[cfg(target_os = "linux")]
     {
-        // Prefer /proc (cheap) then try a real io_uring setup.
         let proc_ok = std::fs::read_to_string("/proc/sys/kernel/io_uring_disabled")
             .map(|s| s.trim() == "0")
             .unwrap_or(true);
@@ -70,10 +72,6 @@ fn try_io_uring_setup() -> bool {
     }
 }
 
-/// Report preferred reactor backend for this process (runtime detect).
-///
-/// # Safety
-/// C ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ar_rt_reactor_backend() -> i64 {
     use std::sync::OnceLock;
@@ -81,10 +79,6 @@ pub unsafe extern "C" fn ar_rt_reactor_backend() -> i64 {
     *CACHED.get_or_init(probe_backend)
 }
 
-/// Create a reactor. Returns handle (>= 0) or -1 on failure.
-///
-/// # Safety
-/// C ABI for Cranelift JIT.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ar_rt_reactor_create() -> ReactorId {
     #[cfg(target_os = "linux")]
@@ -93,10 +87,17 @@ pub unsafe extern "C" fn ar_rt_reactor_create() -> ReactorId {
         if epfd < 0 {
             return -1;
         }
+        let ring = if unsafe { ar_rt_reactor_backend() } == BACKEND_IO_URING {
+            io_uring::IoUring::new(8).ok()
+        } else {
+            None
+        };
         let slot = ReactorSlot {
             epoll_fd: epfd,
             timer_fd: None,
+            ring,
             deadline: None,
+            sockets: HashMap::new(),
         };
         let mut guard = lock_reactors();
         if let Some(idx) = guard.iter().position(|s| s.is_none()) {
@@ -121,10 +122,6 @@ pub unsafe extern "C" fn ar_rt_reactor_create() -> ReactorId {
     }
 }
 
-/// Destroy a reactor and free OS resources.
-///
-/// # Safety
-/// `id` from [`ar_rt_reactor_create`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ar_rt_reactor_destroy(id: ReactorId) {
     if id < 0 {
@@ -148,27 +145,22 @@ pub unsafe extern "C" fn ar_rt_reactor_destroy(id: ReactorId) {
     let _ = slot;
 }
 
-/// Block until `ms` milliseconds elapse (uses reactor's epoll + timerfd on Linux).
-///
-/// Returns 0 on success, -1 on error. Does not leave a pending timer armed.
-///
-/// # Safety
-/// `id` from create; `ms` >= 0.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ar_rt_reactor_sleep_ms(id: ReactorId, ms: i64) -> i64 {
     if id < 0 || ms < 0 {
         return -1;
     }
-    // SL_R.3: io_uring timeout path when backend says so.
     #[cfg(target_os = "linux")]
     {
-        if unsafe { ar_rt_reactor_backend() } == BACKEND_IO_URING
-            && sleep_ms_io_uring(ms as u64)
-        {
-            return 0;
+        if unsafe { ar_rt_reactor_backend() } == BACKEND_IO_URING {
+            let mut guard = lock_reactors();
+            if let Some(Some(slot)) = guard.get_mut(id as usize) {
+                if unsafe { sleep_ms_io_uring(slot, ms as u64) } {
+                    return 0;
+                }
+            }
         }
     }
-    // Arm then wait with infinite timeout for this one timer (epoll path).
     if unsafe { ar_rt_reactor_arm_timer_ms(id, ms) } != 0 {
         return -1;
     }
@@ -180,14 +172,13 @@ pub unsafe extern "C" fn ar_rt_reactor_sleep_ms(id: ReactorId, ms: i64) -> i64 {
 }
 
 #[cfg(target_os = "linux")]
-fn sleep_ms_io_uring(ms: u64) -> bool {
-    use io_uring::{IoUring, types};
-    let Ok(mut ring) = IoUring::new(8) else {
+unsafe fn sleep_ms_io_uring(slot: &mut ReactorSlot, ms: u64) -> bool {
+    let Some(ring) = &mut slot.ring else {
         return false;
     };
+    use io_uring::types;
     let ts = types::Timespec::from(Duration::from_millis(ms));
     let entry = io_uring::opcode::Timeout::new(&ts).build().user_data(1);
-    // Safety: entry lives until submit_and_wait returns.
     unsafe {
         if ring.submission().push(&entry).is_err() {
             return false;
@@ -196,15 +187,10 @@ fn sleep_ms_io_uring(ms: u64) -> bool {
     if ring.submit_and_wait(1).is_err() {
         return false;
     }
-    // Drain one completion (timeout fires with -ETIME).
     let mut cq = ring.completion();
     cq.next().is_some()
 }
 
-/// Arm a one-shot timer for `ms` without blocking. Cancels any previous timer.
-///
-/// # Safety
-/// `id` valid reactor.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ar_rt_reactor_arm_timer_ms(id: ReactorId, ms: i64) -> i64 {
     if id < 0 || ms < 0 {
@@ -218,7 +204,6 @@ pub unsafe extern "C" fn ar_rt_reactor_arm_timer_ms(id: ReactorId, ms: i64) -> i
 
     #[cfg(target_os = "linux")]
     {
-        // Drop previous timerfd if any.
         if let Some(old) = slot.timer_fd.take() {
             unsafe {
                 let _ = libc::epoll_ctl(slot.epoll_fd, libc::EPOLL_CTL_DEL, old, std::ptr::null_mut());
@@ -241,7 +226,6 @@ pub unsafe extern "C" fn ar_rt_reactor_arm_timer_ms(id: ReactorId, ms: i64) -> i
                 tv_nsec: ((ms % 1000) * 1_000_000) as libc::c_long,
             },
         };
-        // Zero it_value would disarm; clamp sub-ms to 1ns.
         let mut its = its;
         if its.it_value.tv_sec == 0 && its.it_value.tv_nsec == 0 {
             its.it_value.tv_nsec = 1;
@@ -266,15 +250,6 @@ pub unsafe extern "C" fn ar_rt_reactor_arm_timer_ms(id: ReactorId, ms: i64) -> i
     0
 }
 
-/// Wait for the next reactor event, up to `timeout_ms` (-1 = forever, 0 = nonblock).
-///
-/// Returns:
-/// - `1` if the armed timer fired (and is cleared)
-/// - `0` on timeout with no event
-/// - `-1` on error
-///
-/// # Safety
-/// `id` valid reactor.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ar_rt_reactor_poll_ms(id: ReactorId, timeout_ms: i64) -> i64 {
     if id < 0 {
@@ -291,8 +266,7 @@ pub unsafe extern "C" fn ar_rt_reactor_poll_ms(id: ReactorId, timeout_ms: i64) -
             (slot.epoll_fd, slot.timer_fd, slot.deadline)
         };
 
-        // If no timerfd but we have a deadline (shouldn't happen on linux path), sleep.
-        let Some(tfd) = tfd_opt else {
+        if tfd_opt.is_none() {
             if let Some(dl) = deadline {
                 let now = Instant::now();
                 if now >= dl {
@@ -324,9 +298,9 @@ pub unsafe extern "C" fn ar_rt_reactor_poll_ms(id: ReactorId, timeout_ms: i64) -
                 std::thread::sleep(Duration::from_millis(timeout_ms as u64));
             }
             return 0;
-        };
+        }
 
-        let mut events: [libc::epoll_event; 4] = unsafe { std::mem::zeroed() };
+        let mut events: [libc::epoll_event; 8] = unsafe { std::mem::zeroed() };
         let n = unsafe {
             libc::epoll_wait(
                 epfd,
@@ -341,25 +315,52 @@ pub unsafe extern "C" fn ar_rt_reactor_poll_ms(id: ReactorId, timeout_ms: i64) -
         if n == 0 {
             return 0;
         }
-        // Drain timerfd
-        let mut buf = [0u8; 8];
-        let _ = unsafe { libc::read(tfd, buf.as_mut_ptr() as *mut _, buf.len()) };
-        let mut guard = lock_reactors();
-        if let Some(Some(slot)) = guard.get_mut(id as usize) {
-            if let Some(old) = slot.timer_fd.take() {
-                unsafe {
-                    let _ = libc::epoll_ctl(
-                        slot.epoll_fd,
-                        libc::EPOLL_CTL_DEL,
-                        old,
-                        std::ptr::null_mut(),
-                    );
-                    let _ = libc::close(old);
+
+        let mut timer_fired = false;
+        for event in events.iter().take(n as usize) {
+            let fd_val = event.u64 as i32;
+            if Some(fd_val) == tfd_opt {
+                let mut buf = [0u8; 8];
+                let _ = unsafe { libc::read(fd_val, buf.as_mut_ptr() as *mut _, buf.len()) };
+                timer_fired = true;
+            } else {
+                let waker_to_wake = {
+                    let mut guard = lock_reactors();
+                    if let Some(Some(slot)) = guard.get_mut(id as usize) {
+                        slot.sockets.get(&(fd_val as i64)).map(|rs| rs.waker_id)
+                    } else {
+                        None
+                    }
+                };
+                if let Some(waker_id) = waker_to_wake {
+                    if waker_id >= 0 {
+                        unsafe {
+                            crate::waker_runtime::ar_rt_waker_wake(waker_id);
+                        }
+                    }
                 }
             }
-            slot.deadline = None;
         }
-        1
+
+        if timer_fired {
+            let mut guard = lock_reactors();
+            if let Some(Some(slot)) = guard.get_mut(id as usize) {
+                if let Some(old) = slot.timer_fd.take() {
+                    unsafe {
+                        let _ = libc::epoll_ctl(
+                            slot.epoll_fd,
+                            libc::EPOLL_CTL_DEL,
+                            old,
+                            std::ptr::null_mut(),
+                        );
+                        let _ = libc::close(old);
+                    }
+                }
+                slot.deadline = None;
+            }
+            return 1;
+        }
+        0
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -405,6 +406,64 @@ pub unsafe extern "C" fn ar_rt_reactor_poll_ms(id: ReactorId, timeout_ms: i64) -
     }
 }
 
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ar_rt_reactor_register_socket(
+    reactor_id: i64,
+    sock_id: i64,
+    events: i64,
+    waker_id: i64,
+) -> i64 {
+    if reactor_id < 0 || sock_id < 0 {
+        return -1;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let fd = match crate::socket_runtime::get_socket_fd(sock_id) {
+            Some(fd) => fd,
+            None => return -1,
+        };
+
+        let mut guard = lock_reactors();
+        let Some(Some(slot)) = guard.get_mut(reactor_id as usize) else {
+            return -1;
+        };
+
+        slot.sockets.insert(fd as i64, RegisteredSocket {
+            fd,
+            events,
+            waker_id,
+        });
+
+        let mut ev: libc::epoll_event = unsafe { std::mem::zeroed() };
+        if events & crate::socket_runtime::WAIT_READ != 0 {
+            ev.events |= libc::EPOLLIN as u32;
+        }
+        if events & crate::socket_runtime::WAIT_WRITE != 0 {
+            ev.events |= libc::EPOLLOUT as u32;
+        }
+        ev.events |= libc::EPOLLONESHOT as u32;
+        ev.u64 = fd as u64;
+
+        unsafe {
+            let rc = libc::epoll_ctl(slot.epoll_fd, libc::EPOLL_CTL_ADD, fd, &mut ev);
+            if rc < 0 {
+                let err = *libc::__errno_location();
+                if err == libc::EEXIST {
+                    libc::epoll_ctl(slot.epoll_fd, libc::EPOLL_CTL_MOD, fd, &mut ev);
+                } else {
+                    return -1;
+                }
+            }
+        }
+        0
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (reactor_id, sock_id, events, waker_id);
+        -1
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -426,7 +485,6 @@ mod tests {
         unsafe {
             let r = ar_rt_reactor_create();
             assert_eq!(ar_rt_reactor_arm_timer_ms(r, 5), 0);
-            // Wait long enough for the timer.
             let rc = ar_rt_reactor_poll_ms(r, 200);
             assert_eq!(rc, 1);
             ar_rt_reactor_destroy(r);
