@@ -5,7 +5,8 @@ use arandu_middle::resolved::NodeKey;
 use arandu_query::db::SourceFile;
 use arandu_query::{AnalysisHost, AnalysisRevision, AnalysisSnapshot, DocumentId, DocumentStore};
 use arandu_semantics::TypeCheckResult;
-use lsp_types::Url;
+use crate::uri_util::{parse_uri, path_from_uri, uri_from_path};
+use lsp_types::Uri;
 use rustc_hash::FxHashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -49,13 +50,12 @@ impl ServerState {
         self.host.revision()
     }
 
-    fn path_of(uri: &Url) -> PathBuf {
-        uri.to_file_path()
-            .unwrap_or_else(|_| PathBuf::from(uri.as_str()))
+    fn path_of(uri: &Uri) -> PathBuf {
+        path_from_uri(uri)
     }
 
     /// Open document or apply committed text (after VFS flush).
-    pub fn open_or_commit(&mut self, uri: &Url, text: String) -> DocumentId {
+    pub fn open_or_commit(&mut self, uri: &Uri, text: String) -> DocumentId {
         let path = Self::path_of(uri);
         let uri_s = uri.as_str().to_string();
         if let Some(&id) = self.by_uri.get(&uri_s) {
@@ -84,7 +84,7 @@ impl ServerState {
         id
     }
 
-    pub fn close_uri(&mut self, uri: &Url) {
+    pub fn close_uri(&mut self, uri: &Uri) {
         let uri_s = uri.as_str();
         if let Some(id) = self.by_uri.remove(uri_s) {
             if let Some(doc) = self.docs.get(id) {
@@ -108,26 +108,26 @@ impl ServerState {
     }
 
     /// Queue a change; does **not** bump Salsa revision until flush.
-    pub fn queue_change(&mut self, uri: &Url, text: String) {
+    pub fn queue_change(&mut self, uri: &Uri, text: String) {
         self.vfs.push_full_text(uri.as_str().to_string(), text);
     }
 
     /// Commit due VFS edits; returns (uri, DocumentId) pairs that were committed.
-    pub fn flush_due(&mut self) -> Vec<(Url, DocumentId)> {
+    pub fn flush_due(&mut self) -> Vec<(Uri, DocumentId)> {
         let due = self.vfs.take_due();
         self.commit_edits(due)
     }
 
     /// Commit all pending (didSave / flush).
-    pub fn flush_all(&mut self) -> Vec<(Url, DocumentId)> {
+    pub fn flush_all(&mut self) -> Vec<(Uri, DocumentId)> {
         let all = self.vfs.take_all();
         self.commit_edits(all)
     }
 
-    fn commit_edits(&mut self, edits: Vec<(String, String)>) -> Vec<(Url, DocumentId)> {
+    fn commit_edits(&mut self, edits: Vec<(String, String)>) -> Vec<(Uri, DocumentId)> {
         let mut out = Vec::with_capacity(edits.len());
         for (uri_s, text) in edits {
-            let Ok(uri) = Url::parse(&uri_s) else {
+            let Some(uri) = parse_uri(&uri_s) else {
                 continue;
             };
             let id = self.open_or_commit(&uri, text);
@@ -186,9 +186,8 @@ pub fn walk_register_aru(st: &mut ServerState, root: &std::path::Path) {
                 let Ok(text) = std::fs::read_to_string(&p) else {
                     continue;
                 };
-                let uri = match Url::from_file_path(&p) {
-                    Ok(u) => u,
-                    Err(_) => continue,
+                let Some(uri) = uri_from_path(&p) else {
+                    continue;
                 };
                 st.open_or_commit(&uri, text);
                 n += 1;
@@ -202,9 +201,10 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    fn file_url(name: &str) -> Url {
-        Url::from_file_path(std::path::PathBuf::from(format!("/tmp/{name}")))
-            .unwrap_or_else(|_| Url::parse(&format!("file:///tmp/{name}")).expect("uri"))
+    fn file_url(name: &str) -> Uri {
+        uri_from_path(std::path::Path::new(&format!("/tmp/{name}")))
+            .or_else(|| parse_uri(&format!("file:///tmp/{name}")))
+            .expect("uri")
     }
 
     #[test]

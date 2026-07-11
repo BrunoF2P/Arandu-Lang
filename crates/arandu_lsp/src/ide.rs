@@ -10,7 +10,7 @@ use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionResponse, CompletionItem,
     CompletionItemKind, Documentation, Hover, HoverContents, Location, MarkedString, Position,
     SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens, SemanticTokensLegend,
-    SymbolInformation, SymbolKind as LspSymbolKind, TextEdit as LspTextEdit, Url, WorkspaceEdit,
+    SymbolInformation, SymbolKind as LspSymbolKind, TextEdit as LspTextEdit, Uri, WorkspaceEdit,
 };
 use rustc_hash::FxHashMap;
 use std::collections::HashMap;
@@ -24,7 +24,7 @@ use crate::conv::{position_to_offset, span_to_range};
 pub struct DocSnap {
     pub source: SourceFile,
     pub path: Arc<PathBuf>,
-    pub uri: Url,
+    pub uri: Uri,
 }
 
 /// Type-check the file (composed P1/P2 view).
@@ -191,7 +191,7 @@ pub fn references(
     source: SourceFile,
     text: &str,
     position: Position,
-    uri: &Url,
+    uri: &Uri,
 ) -> Vec<Location> {
     let index = LineIndex::new(text);
     let offset = position_to_offset(&index, position, text);
@@ -228,28 +228,35 @@ pub fn references(
 }
 
 #[must_use]
+// lsp-types 0.97 Uri wraps fluent_uri with interior mutability; protocol map keys are still Uri.
+#[allow(clippy::mutable_key_type)]
 pub fn rename_edits(
     snap: &AnalysisSnapshot,
     source: SourceFile,
     text: &str,
     position: Position,
-    uri: &Url,
+    uri: &Uri,
     new_name: &str,
 ) -> Option<lsp_types::WorkspaceEdit> {
     let locs = references(snap, source, text, position, uri);
     if locs.is_empty() {
         return None;
     }
-    let mut changes: HashMap<Url, Vec<lsp_types::TextEdit>> = HashMap::new();
+    // Uri is not a plain Hash key (fluent_uri interior mutability); key by string.
+    let mut changes: HashMap<String, Vec<lsp_types::TextEdit>> = HashMap::new();
     for loc in locs {
         changes
-            .entry(loc.uri)
+            .entry(loc.uri.as_str().to_string())
             .or_default()
             .push(lsp_types::TextEdit {
                 range: loc.range,
                 new_text: new_name.to_string(),
             });
     }
+    let changes: HashMap<Uri, Vec<lsp_types::TextEdit>> = changes
+        .into_iter()
+        .filter_map(|(s, edits)| crate::uri_util::parse_uri(&s).map(|u| (u, edits)))
+        .collect();
     Some(lsp_types::WorkspaceEdit {
         changes: Some(changes),
         ..lsp_types::WorkspaceEdit::default()
@@ -262,7 +269,7 @@ pub fn document_symbols(
     snap: &AnalysisSnapshot,
     source: SourceFile,
     text: &str,
-    uri: &Url,
+    uri: &Uri,
 ) -> Vec<SymbolInformation> {
     let index = LineIndex::new(text);
     let tc = typecheck(snap, source);
@@ -442,7 +449,8 @@ pub fn format_document(text: &str) -> Vec<LspTextEdit> {
 
 /// Code actions from diagnostic messages (`;`, braces, parens).
 #[must_use]
-pub fn code_actions(uri: &Url, context: &lsp_types::CodeActionContext) -> CodeActionResponse {
+#[allow(clippy::mutable_key_type)] // WorkspaceEdit keys are `Uri` in lsp-types 0.97
+pub fn code_actions(uri: &Uri, context: &lsp_types::CodeActionContext) -> CodeActionResponse {
     let mut out = Vec::new();
     for d in &context.diagnostics {
         let actions = arandu_fmt::actions_for_diagnostic(0, 0, d.message.as_str());
@@ -453,14 +461,18 @@ pub fn code_actions(uri: &Url, context: &lsp_types::CodeActionContext) -> CodeAc
                 .first()
                 .map(|e| e.new_text.clone())
                 .unwrap_or_default();
-            let mut changes = HashMap::new();
-            changes.insert(
-                uri.clone(),
+            let mut by_str: HashMap<String, Vec<LspTextEdit>> = HashMap::new();
+            by_str.insert(
+                uri.as_str().to_string(),
                 vec![LspTextEdit {
                     range: lsp_types::Range { start, end: start },
                     new_text,
                 }],
             );
+            let changes: HashMap<Uri, Vec<LspTextEdit>> = by_str
+                .into_iter()
+                .filter_map(|(s, edits)| crate::uri_util::parse_uri(&s).map(|u| (u, edits)))
+                .collect();
             out.push(CodeActionOrCommand::CodeAction(CodeAction {
                 title: a.title.into(),
                 kind: Some(CodeActionKind::QUICKFIX),
@@ -588,7 +600,7 @@ mod tests {
         let file = host.new_file("h.aru".into(), "func main(): int { return 1 }\n".into());
         let snap = host.snapshot();
         let text = file.text(&snap.db);
-        let uri = Url::parse("file:///h.aru").unwrap();
+        let uri = crate::uri_util::parse_uri("file:///h.aru").expect("uri");
         let _syms = document_symbols(&snap, file, &text, &uri);
         // Table population depends on resolve+typeck paths; smoke only.
     }

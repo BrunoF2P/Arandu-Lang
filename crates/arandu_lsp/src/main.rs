@@ -6,6 +6,7 @@ mod conv;
 mod ide;
 mod pool;
 mod state;
+mod uri_util;
 mod vfs;
 
 use arandu_base::LineIndex;
@@ -28,7 +29,7 @@ use lsp_types::{
     HoverProviderCapability, InitializeResult, Location, NumberOrString, OneOf, Position,
     PublishDiagnosticsParams, RenameOptions, SemanticTokensFullOptions, SemanticTokensOptions,
     SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, SignatureHelpOptions,
-    TextDocumentSyncCapability, TextDocumentSyncKind, Url, WorkDoneProgressOptions,
+    TextDocumentSyncCapability, TextDocumentSyncKind, Uri, WorkDoneProgressOptions,
     WorkspaceSymbolParams,
 };
 use pool::WorkerPool;
@@ -38,10 +39,11 @@ use std::error::Error;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use uri_util::{parse_uri, path_from_uri, uri_from_path};
 
 enum JobResult {
     Diagnostics {
-        uri: Url,
+        uri: Uri,
         doc_id: DocumentId,
         revision: AnalysisRevision,
         fingerprint: [u8; 32],
@@ -68,12 +70,21 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     let mut state = ServerState::new();
     if let Some(folders) = init.workspace_folders {
         for folder in folders {
-            if let Ok(root) = folder.uri.to_file_path() {
+            let root = path_from_uri(&folder.uri);
+            if root.as_os_str().is_empty() {
+                continue;
+            }
+            walk_register_aru(&mut state, &root);
+        }
+    } else {
+        // root_uri deprecated in favor of workspace_folders; still used by older clients.
+        #[allow(deprecated)]
+        if let Some(root_uri) = init.root_uri.as_ref() {
+            let root = path_from_uri(root_uri);
+            if !root.as_os_str().is_empty() {
                 walk_register_aru(&mut state, &root);
             }
         }
-    } else if let Some(root) = init.root_uri.as_ref().and_then(|u| u.to_file_path().ok()) {
-        walk_register_aru(&mut state, &root);
     }
 
     let server_caps = ServerCapabilities {
@@ -383,7 +394,8 @@ fn on_request(
                     .map(|(uri_s, info)| ide::DocSnap {
                         source: info.source,
                         path: Arc::clone(&info.path),
-                        uri: Url::parse(uri_s).unwrap_or_else(|_| Url::parse("file:///").unwrap()),
+                        uri: parse_uri(uri_s)
+                            .unwrap_or_else(|| parse_uri("file:///").expect("file root")),
                     })
                     .collect();
                 let syms = ide::workspace_symbols(snap, &list, &query);
@@ -479,7 +491,7 @@ fn spawn_diagnostics(
     state: &ServerState,
     pool: &WorkerPool,
     job_tx: &Sender<JobResult>,
-    uri: Url,
+    uri: Uri,
     doc_id: DocumentId,
 ) {
     let Some(doc) = state.docs.get(doc_id) else {
@@ -506,7 +518,7 @@ fn spawn_goto(
     pool: &WorkerPool,
     job_tx: &Sender<JobResult>,
     req_id: RequestId,
-    uri: Url,
+    uri: Uri,
     pos: Position,
 ) {
     let snap = state.snapshot();
@@ -611,7 +623,7 @@ fn goto_on_snapshot(
     by_uri: &FxHashMap<String, DocumentId>,
     by_file_id: &FxHashMap<u32, DocumentId>,
     docs: &FxHashMap<DocumentId, DocInfo>,
-    uri: &Url,
+    uri: &Uri,
     position: Position,
 ) -> Option<Location> {
     use arandu_base::{LineIndex, Span};
@@ -650,17 +662,17 @@ fn uri_for_file_id(
     docs: &FxHashMap<DocumentId, DocInfo>,
     db: &arandu_query::DatabaseImpl,
     file_id: u32,
-) -> Option<Url> {
+) -> Option<Uri> {
     if let Some(&id) = by_file_id.get(&file_id) {
         if let Some(doc) = docs.get(&id) {
-            return Url::from_file_path(doc.path.as_ref()).ok();
+            return uri_from_path(doc.path.as_ref());
         }
     }
     let path = db.file_path(file_id);
     if path.as_os_str().is_empty() {
         return None;
     }
-    Url::from_file_path(path.as_ref()).ok()
+    uri_from_path(path.as_ref())
 }
 
 fn handle_job_result(
@@ -710,7 +722,7 @@ fn handle_job_result(
 
 fn publish_diagnostics(
     connection: &Connection,
-    uri: Url,
+    uri: Uri,
     diagnostics: Vec<Diagnostic>,
 ) -> Result<(), Box<dyn Error + Sync + Send>> {
     let params = PublishDiagnosticsParams {
