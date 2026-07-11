@@ -262,11 +262,13 @@ impl<'a> TypeChecker<'a> {
             scope,
             resolved: &self.resolved,
         };
-        arandu_middle::types::lower::lower_result_type_ctx(
+        let ty = arandu_middle::types::lower::lower_result_type_ctx(
             result,
             &ctx,
             &mut self.type_info.type_interner,
-        )
+        );
+        // T2.1: expand trailing defaults on Named return types (`Vec<T>` → `Vec<T, Adef>`).
+        types::expand_named_with_defaults(self, ty)
     }
 
     pub fn lower_named_type(
@@ -282,7 +284,9 @@ impl<'a> TypeChecker<'a> {
             scope,
             resolved: &self.resolved,
         };
-        types::lower_named_type(span, name, args, &ctx, &mut self.type_info.type_interner)
+        let ty =
+            types::lower_named_type(span, name, args, &ctx, &mut self.type_info.type_interner);
+        types::expand_named_with_defaults(self, ty)
     }
 
     /// Scope used when lowering type expressions in the current context.

@@ -12,6 +12,7 @@ module std.alloc.gen_arena
 
 import std.core.intrinsics as intrinsics
 import std.core.option as option
+import std.core.mem as mem
 import std.alloc.allocator_api as allocApi
 
 /// Fat handle: slot index + remembered generation (8 bytes on all targets).
@@ -31,7 +32,7 @@ public struct GenSlot<T> {
 ///
 /// Default store is language-level; host JIT may mirror this layout in Rust
 /// until self-host. Compiler emits GenInsert/GenGet/GenRemove against this API.
-public struct GenArena<T, A: allocApi.Allocator> {
+public struct GenArena<T, A: allocApi.Allocator = allocApi.GlobalAllocator> {
     // Implementation of contiguous storage is deferred to F2.3.runtime
     // (Vec<GenSlot<T>> + free_list). Fields left for ABI discussion:
     //   slots, free_list, allocator
@@ -39,8 +40,8 @@ public struct GenArena<T, A: allocApi.Allocator> {
     allocator: A
 }
 
-public func new<T>() : GenArena<T, allocApi.GlobalAllocator> {
-    return GenArena<T, allocApi.GlobalAllocator> {
+public func new<T>() : GenArena<T> {
+    return GenArena<T> {
         _pad: 0 as u8,
         allocator: allocApi.GlobalAllocator{},
     }
@@ -63,19 +64,25 @@ func GenArena.insert<T, A: allocApi.Allocator>(mut self, value: T) : GenRef {
 /// Drop ownership of the slot if `r.generation` still matches; else None.
 /// Compiler path today: host `ar_gen_remove_i64` (int MVP).
 func GenArena.remove<T, A: allocApi.Allocator>(mut self, r: GenRef) : option.Option<T> {
-    return option.Option.None
+    return .None
 }
 
 /// Load payload; **aborts** (not UB) if generation mismatches.
 /// Compiler path today: host `ar_gen_get_i64` (int MVP).
 func GenArena.get<T, A: allocApi.Allocator>(shared self, r: GenRef) : T {
     // Always treat stub as mismatch so accidental use fails closed.
-    intrinsics.abort_generational_mismatch()
+    unsafe {
+        intrinsics.abort_generational_mismatch()
+    }
     return value_unreachable_after_abort<T>()
 }
 
-// Placeholder to keep type-check happy if abort is not yet terminal in typeck.
+// After abort the host process never returns; dummy value for typeck only.
 func value_unreachable_after_abort<T>() : T {
-    intrinsics.abort()
-    return value_unreachable_after_abort<T>()
+    unsafe {
+        intrinsics.abort()
+    }
+    // Unreachable after abort — avoid mono recursion cycle (G001).
+    let p: ptr[T] = nil
+    return mem.ptrRead<T>(p)
 }

@@ -5,15 +5,16 @@ import std.core.result as result
 import std.core.option as option
 import std.alloc.allocator_api as allocApi
 
-public struct Vec<T, A: allocApi.Allocator> {
+// T2.1: `A` defaults to GlobalAllocator so callers write `Vec<T>` / `new<T>()`.
+public struct Vec<T, A: allocApi.Allocator = allocApi.GlobalAllocator> {
     data: ptr[T]
     len: u64
     capacity: u64
     allocator: A
 }
 
-public func new<T>() : Vec<T, allocApi.GlobalAllocator> {
-    return Vec<T, allocApi.GlobalAllocator> {
+public func new<T>() : Vec<T> {
+    return Vec<T> {
         data: nil,
         len: 0,
         capacity: 0,
@@ -30,7 +31,7 @@ public func newIn<T, A: allocApi.Allocator>(allocator: A) : Vec<T, A> {
     }
 }
 
-func Vec.grow<T, A: allocApi.Allocator>(mut self) : void {
+func Vec.grow<T, A: allocApi.Allocator = allocApi.GlobalAllocator>(mut self) : void {
     let newCap = if self.capacity == 0 { 8 as u64; } else { self.capacity * 2; }
     let newSize = newCap * mem.sizeOf<T>()
     let oldSize = self.capacity * mem.sizeOf<T>()

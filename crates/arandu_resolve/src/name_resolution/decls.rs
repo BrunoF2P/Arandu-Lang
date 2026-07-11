@@ -166,11 +166,20 @@ impl<'a> Resolver<'a> {
                 for constraint in &generic.constraints {
                     self.resolve_type_name(scope, constraint);
                 }
+                // T2.1: still resolve default type expr on restated params if present.
+                if let Some(def_ty) = generic.default {
+                    self.resolve_type_expr(scope, def_ty);
+                }
                 continue;
             }
             self.define(scope, &generic.name, SymbolKind::TypeParam, generic.span);
             for constraint in &generic.constraints {
                 self.resolve_type_name(scope, constraint);
+            }
+            // T2.1: default type arg (`A = GlobalAllocator`) must be name-resolved
+            // so typeck can lower it into `generic_defaults`.
+            if let Some(def_ty) = generic.default {
+                self.resolve_type_expr(scope, def_ty);
             }
         }
     }

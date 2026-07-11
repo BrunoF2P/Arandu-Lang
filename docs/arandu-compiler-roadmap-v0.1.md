@@ -137,7 +137,7 @@ Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
            └─ Poison 0xDE em debug (BC.2/BC.3) permanece defesa extra, não substituto de M2
 [x] G2     fundido em F2.3.3 (promote O004; ver acima)
 [→] T2     DX Enhancements: Default Generic Parameters & Scoped Enum Variant Sugar
-   ├─ [x] T2.1   Default Generic Parameters (`T = Default` in parser hand+RD, dump, TypeInfo.generic_defaults, expand on lower/instantiate; stdlib Vec keeps explicit args until Allocator satisfaction is cleaner)
+   ├─ [x] T2.1   Default Generic Parameters (`T = Default`; expand on lower/return/instantiate; stdlib `Vec<T>` / `GenArena<T>` use `A = GlobalAllocator`)
    └─ [x] T2.2   Implicit Enum Variant Dot-Notation Sugar (`.Ok`/`.None`/`.Some`/`.Pending` via expected type on return/let/set; `VariantSugar` AST + HIR ResultCtor)
 [x] T3     DX: Import Sem Aspas para Módulos Internos (LSP-friendly path tokens)
    │

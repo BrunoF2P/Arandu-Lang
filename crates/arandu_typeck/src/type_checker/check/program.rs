@@ -11,8 +11,10 @@ use super::validate::validate_top_level_any;
 pub fn check_signatures(checker: &mut TypeChecker<'_>, program: &Program) {
     register_prelude(checker, program);
     collect_type_shapes(checker, program);
-    collect_signature_types(checker, program);
+    // T2.1: register `generic_defaults` / constraints before func signature types
+    // so `func new<T>(): Vec<T>` expands to `Vec<T, GlobalAllocator>` at collect time.
     collect_interfaces_and_constraints(checker, program);
+    collect_signature_types(checker, program);
 
     duplicate_module_member_info(checker, program);
 }
