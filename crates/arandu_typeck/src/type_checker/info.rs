@@ -163,6 +163,12 @@ pub(crate) fn translate_type(ty: &ArType, from: &TypeInterner, to: &mut TypeInte
             let new_inner = to.intern(translated);
             ArType::Coroutine(new_inner)
         }
+        ArType::Poll(inner) => {
+            let resolved = from.resolve(*inner);
+            let translated = translate_type(&resolved, from, to);
+            let new_inner = to.intern(translated);
+            ArType::Poll(new_inner)
+        }
         ArType::Range(inner) => {
             let resolved = from.resolve(*inner);
             let translated = translate_type(&resolved, from, to);

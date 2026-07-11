@@ -1101,6 +1101,31 @@ fn test_async_block_and_await_typecheck() {
     );
 }
 
+/// A3.6 / typeck: builtin `Poll<T>` + `Poll.Ready` / `Poll.Pending`.
+#[test]
+fn test_poll_type_and_ctors() {
+    let source = r#"
+        func ready_one(): Poll<int> {
+            return Poll.Ready(1)
+        }
+        func pend(): Poll<int> {
+            return Poll.Pending()
+        }
+        func main(): void {
+            let a: Poll<int> = ready_one()
+            let b: Poll<str> = Poll.Pending()
+        }
+    "#;
+    let program = parse(source).expect("Failed to parse");
+    let resolution = resolve_for_test(0, &program);
+    let result = type_check(resolution, &program);
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected no type errors, got {:?}",
+        result.diagnostics
+    );
+}
+
 /// A3: `async func f(): T` is type-sugar for `func f(): Coroutine[T]`.
 #[test]
 fn test_async_func_return_is_coroutine() {

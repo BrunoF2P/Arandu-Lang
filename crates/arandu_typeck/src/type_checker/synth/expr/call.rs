@@ -7,7 +7,7 @@ use crate::type_checker::TypeChecker;
 use crate::type_checker::constraints::ConstraintOrigin;
 use crate::type_checker::synth::{
     resolve_field, resolve_index, resolve_namespace_field, resolve_namespace_member_type,
-    synth_method_call, synth_option_ctor, synth_result_ctor,
+    synth_method_call, synth_option_ctor, synth_poll_ctor, synth_result_ctor,
 };
 use crate::type_checker::types::{self, ArType, Primitive};
 
@@ -133,6 +133,20 @@ pub(super) fn synth_call_expr(
                     "None" => {
                         let err_id = checker.intern(ArType::Error);
                         checker.intern(ArType::Option(err_id))
+                    }
+                    _ => checker.intern(ArType::Error),
+                });
+            }
+            if types::type_name_base(type_name) == "Poll" {
+                return Some(match member.as_str() {
+                    "Ready" => {
+                        let inner = checker.intern(ArType::Error);
+                        let poll_id = checker.intern(ArType::Poll(inner));
+                        checker.intern(ArType::Func(vec![inner], poll_id))
+                    }
+                    "Pending" => {
+                        let inner = checker.intern(ArType::Error);
+                        checker.intern(ArType::Poll(inner))
                     }
                     _ => checker.intern(ArType::Error),
                 });
@@ -307,6 +321,9 @@ pub(super) fn synth_call_expr(
             }
             if let Some(option_ty) = synth_option_ctor(checker, callee_id, args_range, span) {
                 return Some(checker.intern(option_ty));
+            }
+            if let Some(poll_ty) = synth_poll_ctor(checker, callee_id, args_range, span) {
+                return Some(checker.intern(poll_ty));
             }
             if let ExprKind::Field { base, field } = checker.pool.expr(callee_id) {
                 let base_id = *base;

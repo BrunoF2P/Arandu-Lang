@@ -101,6 +101,24 @@ pub(crate) fn lower_builtin_generic(
             let id = interner.intern(lowered[0].clone());
             Some(ArType::Coroutine(id))
         }
+        ("Poll", 1) => {
+            let id = interner.intern(lowered[0].clone());
+            Some(ArType::Poll(id))
+        }
+        _ => None,
+    }
+}
+
+/// `Poll[T]` → `T` when Ready.
+#[must_use]
+pub fn is_poll_type(ty: &ArType) -> bool {
+    matches!(ty, ArType::Poll(_))
+}
+
+#[must_use]
+pub fn poll_ready_type(ty: &ArType, interner: &TypeInterner) -> Option<ArType> {
+    match ty {
+        ArType::Poll(inner) => Some(interner.resolve(*inner)),
         _ => None,
     }
 }

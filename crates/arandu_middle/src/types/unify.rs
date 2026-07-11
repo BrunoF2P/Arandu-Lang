@@ -209,6 +209,14 @@ pub fn unify(a: &ArType, b: &ArType, interner: &TypeInterner) -> bool {
                     interner,
                 )
         }
+        (ArType::Poll(inner_a), ArType::Poll(inner_b)) => {
+            *inner_a == *inner_b
+                || unify(
+                    &interner.resolve(*inner_a),
+                    &interner.resolve(*inner_b),
+                    interner,
+                )
+        }
         (ArType::Range(inner_a), ArType::Range(inner_b)) => {
             *inner_a == *inner_b
                 || unify(

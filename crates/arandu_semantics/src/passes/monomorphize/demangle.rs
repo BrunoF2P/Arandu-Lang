@@ -99,6 +99,10 @@ fn mangle_type_into(out: &mut String, ty: &ArType, symbols: &SymbolTable, intern
             out.push_str("coro_");
             mangle_type_into(out, &interner.resolve(*inner), symbols, interner);
         }
+        ArType::Poll(inner) => {
+            out.push_str("poll_");
+            mangle_type_into(out, &interner.resolve(*inner), symbols, interner);
+        }
         ArType::Range(inner) => {
             out.push_str("range_");
             mangle_type_into(out, &interner.resolve(*inner), symbols, interner);

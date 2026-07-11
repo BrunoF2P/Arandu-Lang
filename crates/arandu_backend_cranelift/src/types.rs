@@ -99,6 +99,7 @@ pub fn clif_type(ty: &ArType, ptr_type: Type) -> ClifType {
         | ArType::Result(_, _)
         | ArType::Option(_)
         | ArType::Coroutine(_)
+        | ArType::Poll(_)
         | ArType::Range(_) => {
             // Composite types map to pointers for JIT passing.
             ClifType::Concrete(ptr_type)

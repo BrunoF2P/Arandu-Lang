@@ -25,7 +25,9 @@ impl<'a> Resolver<'a> {
                 let base = type_name.path.last().map_or("", |s| s.as_str());
                 if matches!(
                     (base, member.as_str()),
-                    ("Result", "Ok" | "Err") | ("Option", "Some")
+                    ("Result", "Ok" | "Err")
+                        | ("Option", "Some" | "None")
+                        | ("Poll", "Ready" | "Pending")
                 ) {
                     return;
                 }

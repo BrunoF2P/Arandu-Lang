@@ -126,8 +126,9 @@ Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
                   · await → fast Ready load / `ar_co_block_on_i64` se disc≠0
                   · host JIT: `poll_runtime` (poll / block_on / pending_once)
                   · C: helpers espelhados no preamble; `stdlib/core/future.aru` (`Poll[T]`)
+                  · typeck: `ArType::Poll` + `Poll.Ready` / `Poll.Pending` builtins
 [ ] A4     Memory Layout Optimization Engine (field reordering, niche tags, SOO)
-[ ] F2     OSSA borrow completo (borrow_shared, borrow_mut, end_borrow)
+[/] F2     OSSA borrow completo (borrow_shared, borrow_mut, end_borrow)
    ├─ [x] F2.0   Sintaxe de referências à pilha (& / &mut) no parser + type-checker
    ├─ [x] F2.1   Local Borrow Checking Incremental (Salsa `block_borrow_facts` / may-borrow dataflow A9)
    ├─ [x] F2.2   Janelas de Liveness de Empréstimos (loan window = live range da ref; `is_borrowed_at`)
@@ -143,7 +144,8 @@ Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
         ├─ [x] Host JIT `gen_runtime` + Cranelift (insert/get/remove; mismatch abort)
         ├─ [x] C backend helpers (`ar_gen_*_i64`)
         ├─ [x] `gen_promote`: rewrite Borrow→GenInsert/Load for HeapStore int locals
-        └─ [ ] Gen arena tipada `T` genérica (hoje payload i64 MVP)
+        └─ [/] Gen arena tipada `T` genérica — API em `stdlib/alloc/gen_arena.aru`;
+                  host JIT permanece i64 MVP (`gen_runtime`); full `GenArena<T>` tables = self-host
 [x] M2     Move checker avançado (O002, O003, O006) — `borrow_check` sobre F2.1/F2.2
            └─ Dependência: fecha a garantia estática de double-free que hoje é mitigada apenas por poison-check (0xDE) em debug (ver BC.2/BC.3)
 [x] G2     fundido em F2.3.3 (promote O004; ver acima)

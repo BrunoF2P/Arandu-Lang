@@ -443,7 +443,7 @@ impl LayoutEngine {
                     field_offsets: vec![tag_offset, payload_offset],
                 }
             }
-            ArType::Option(inner) => {
+            ArType::Option(inner) | ArType::Poll(inner) => {
                 let inner_layout = self.layout_of(*inner, interner, provider);
                 let max_align = inner_layout.align.max(self.pointer_width());
                 let tag_offset = 0;
@@ -579,6 +579,12 @@ fn substitute(ty: &ArType, subst: &FxHashMap<SymbolId, TypeId>, interner: &TypeI
             let substituted_inner = substitute(&inner_ty, subst, interner);
             let new_inner = interner.lookup(&substituted_inner).unwrap_or(*inner);
             ArType::Coroutine(new_inner)
+        }
+        ArType::Poll(inner) => {
+            let inner_ty = interner.resolve(*inner);
+            let substituted_inner = substitute(&inner_ty, subst, interner);
+            let new_inner = interner.lookup(&substituted_inner).unwrap_or(*inner);
+            ArType::Poll(new_inner)
         }
         ArType::Range(inner) => {
             let inner_ty = interner.resolve(*inner);

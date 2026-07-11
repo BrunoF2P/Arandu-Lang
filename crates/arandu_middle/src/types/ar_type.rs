@@ -47,6 +47,9 @@ pub enum ArType {
     /// `Coroutine[T]` — coroutine machine state type returning T
     Coroutine(TypeId),
 
+    /// `Poll[T]` — one poll step: Ready(T) | Pending (A3.6 / std.core.future)
+    Poll(TypeId),
+
     /// `Range<T>` — representing ranges like 0..n
     Range(TypeId),
 
@@ -239,6 +242,10 @@ impl ArType {
                 let inner_str = interner.resolve(*inner).display(symbols, interner);
                 format!("Coroutine<{}>", inner_str)
             }
+            ArType::Poll(inner) => {
+                let inner_str = interner.resolve(*inner).display(symbols, interner);
+                format!("Poll<{}>", inner_str)
+            }
             ArType::Range(inner) => {
                 let inner_str = interner.resolve(*inner).display(symbols, interner);
                 format!("Range<{}>", inner_str)
@@ -301,6 +308,7 @@ impl ArType {
             | ArType::Result(_, _)
             | ArType::Option(_)
             | ArType::Coroutine(_)
+            | ArType::Poll(_)
             | ArType::Range(_) => false,
         }
     }

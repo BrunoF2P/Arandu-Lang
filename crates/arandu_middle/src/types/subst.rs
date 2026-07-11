@@ -62,6 +62,15 @@ pub fn substitute_type(ty: &ArType, subst: &GenericSubst, interner: &TypeInterne
             let id = interner.intern(substituted);
             ArType::Option(id)
         }
+        ArType::Coroutine(inner) | ArType::Poll(inner) => {
+            let resolved = interner.resolve(*inner);
+            let substituted = substitute_type(&resolved, subst, interner);
+            let id = interner.intern(substituted);
+            match ty {
+                ArType::Coroutine(_) => ArType::Coroutine(id),
+                _ => ArType::Poll(id),
+            }
+        }
         ArType::Range(inner) => {
             let resolved = interner.resolve(*inner);
             let substituted = substitute_type(&resolved, subst, interner);

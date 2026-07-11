@@ -521,6 +521,7 @@ fn collect_param_bindings(
         | ArType::Option(inner)
         | ArType::Array(_, inner)
         | ArType::Coroutine(inner)
+        | ArType::Poll(inner)
         | ArType::Range(inner) => {
             let actual = interner.resolve(actual_id);
             let act_inner = match actual {
@@ -530,6 +531,7 @@ fn collect_param_bindings(
                 | ArType::Option(i)
                 | ArType::Array(_, i)
                 | ArType::Coroutine(i)
+                | ArType::Poll(i)
                 | ArType::Range(i) => Some(i),
                 _ => None,
             };

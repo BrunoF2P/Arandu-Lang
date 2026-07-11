@@ -109,6 +109,7 @@ pub(crate) fn is_memory_type(ty: &ArType) -> bool {
         | ArType::Option(_)
         | ArType::Result(_, _)
         | ArType::Coroutine(_)
+        | ArType::Poll(_)
         | ArType::Range(_) => true,
     }
 }

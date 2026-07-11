@@ -932,6 +932,25 @@ impl LowerCtx<'_> {
                             },
                         );
                     }
+                    // A3.6: Poll.Ready = tag 0 + payload; Poll.Pending = tag 1, no payload.
+                    ResultCtorVariant::PollReady => {
+                        self.emit_assign_temp(
+                            dest,
+                            AmirRvalue::EnumConstruct {
+                                variant_tag: 0,
+                                payload: Some(val_op),
+                            },
+                        );
+                    }
+                    ResultCtorVariant::PollPending => {
+                        self.emit_assign_temp(
+                            dest,
+                            AmirRvalue::EnumConstruct {
+                                variant_tag: 1,
+                                payload: None,
+                            },
+                        );
+                    }
                 }
                 Ok(AmirOperand::Copy(dest))
             }

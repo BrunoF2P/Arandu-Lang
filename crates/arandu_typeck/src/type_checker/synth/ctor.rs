@@ -93,6 +93,53 @@ pub(crate) fn synth_option_ctor(
     }
 }
 
+/// A3.6: `Poll.Ready(v)` / `Poll.Pending` (builtin generic like Option).
+pub(crate) fn synth_poll_ctor(
+    checker: &mut TypeChecker<'_>,
+    callee: ExprId,
+    args: IndexRange,
+    span: Span,
+) -> Option<ArType> {
+    let (type_name, member) = type_path_member(checker.pool, callee)?;
+    if super::super::types::type_name_base(type_name) != "Poll" {
+        return None;
+    }
+    let arg_ids = checker.pool.expr_list(args).to_vec();
+    match member {
+        "Ready" => {
+            if arg_ids.len() != 1 {
+                let diag = crate::Diagnostic::error(
+                    crate::DiagCode::T012WrongArgCount,
+                    format!("Poll.Ready expects 1 argument, found {}", arg_ids.len()),
+                    span,
+                )
+                .with_label(checker.pool.expr_span(callee), "call target is here")
+                .with_label(span, format!("{} arguments provided", arg_ids.len()));
+                checker.diagnostics.push(diag);
+                return Some(ArType::Error);
+            }
+            let inner_id = synth_expr(checker, arg_ids[0]);
+            Some(ArType::Poll(inner_id))
+        }
+        "Pending" => {
+            if !arg_ids.is_empty() {
+                let diag = crate::Diagnostic::error(
+                    crate::DiagCode::T012WrongArgCount,
+                    format!("Poll.Pending expects 0 arguments, found {}", arg_ids.len()),
+                    span,
+                )
+                .with_label(checker.pool.expr_span(callee), "call target is here");
+                checker.diagnostics.push(diag);
+                return Some(ArType::Error);
+            }
+            // Inner type from expected context; Error placeholder if unknown.
+            let placeholder = checker.intern(ArType::Error);
+            Some(ArType::Poll(placeholder))
+        }
+        _ => None,
+    }
+}
+
 #[tracing::instrument(level = "trace", target = "arandu_typeck", skip(checker))]
 pub(crate) fn synth_method_call(
     checker: &mut TypeChecker<'_>,

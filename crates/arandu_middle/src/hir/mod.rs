@@ -290,6 +290,10 @@ pub enum ResultCtorVariant {
     Ok,
     Err,
     Some,
+    /// A3.6: `Poll.Ready(v)`
+    PollReady,
+    /// A3.6: `Poll.Pending`
+    PollPending,
 }
 
 #[derive(Debug, Clone)]

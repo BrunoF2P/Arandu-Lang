@@ -80,11 +80,18 @@ impl<'a> Resolver<'a> {
         let _ = self
             .symbols
             .define(global_scope, "Option", SymbolKind::Enum, span);
+        let _ = self
+            .symbols
+            .define(global_scope, "Coroutine", SymbolKind::Enum, span);
+        let _ = self
+            .symbols
+            .define(global_scope, "Poll", SymbolKind::Enum, span);
 
         let global = self.symbols.global_scope();
         let has_result = self.symbols.lookup_type(global, "Result").is_some();
         let has_option = self.symbols.lookup_type(global, "Option").is_some();
-        tracing::debug!(target: "arandu_resolve", has_result, has_option, "Prelude types in scope");
+        let has_poll = self.symbols.lookup_type(global, "Poll").is_some();
+        tracing::debug!(target: "arandu_resolve", has_result, has_option, has_poll, "Prelude types in scope");
         tracing::debug!(target: "arandu_resolve", total = self.symbols.iter().count(), "Symbol table after prelude load");
     }
 }

@@ -44,6 +44,8 @@ fn builtin_ctor_variant(pool: &AstPool, callee: ExprId) -> Option<crate::hir::Re
         ("Result", "Ok") => Some(crate::hir::ResultCtorVariant::Ok),
         ("Result", "Err") => Some(crate::hir::ResultCtorVariant::Err),
         ("Option", "Some") => Some(crate::hir::ResultCtorVariant::Some),
+        ("Poll", "Ready") => Some(crate::hir::ResultCtorVariant::PollReady),
+        ("Poll", "Pending") => Some(crate::hir::ResultCtorVariant::PollPending),
         _ => None,
     }
 }
@@ -227,15 +229,32 @@ pub(crate) fn lower_expr_raw(
             }
             if trailing_block.is_none()
                 && let Some(variant) = builtin_ctor_variant(pool, callee_id)
-                && arg_ids.len() == 1
             {
-                let value_id = lower_expr(type_check, pool, hir_pool, arg_ids[0])?;
-                let kind = HirExprKind::ResultCtor {
-                    variant,
-                    value: value_id,
-                };
-                let ty = expr_type_for_kind(type_check, hir_pool, &kind, fallback_ty);
-                return Ok(HirExpr { kind, ty, span });
+                if arg_ids.len() == 1 {
+                    let value_id = lower_expr(type_check, pool, hir_pool, arg_ids[0])?;
+                    let kind = HirExprKind::ResultCtor {
+                        variant,
+                        value: value_id,
+                    };
+                    let ty = expr_type_for_kind(type_check, hir_pool, &kind, fallback_ty);
+                    return Ok(HirExpr { kind, ty, span });
+                }
+                // A3.6: `Poll.Pending` — unit ctor; dummy value ignored by AMIR lower.
+                if arg_ids.is_empty()
+                    && matches!(variant, crate::hir::ResultCtorVariant::PollPending)
+                {
+                    let dummy = hir_pool.alloc_expr(HirExpr {
+                        kind: HirExprKind::Bool(false),
+                        ty: TypeInterner::preinterned_primitive(Primitive::Bool),
+                        span,
+                    });
+                    let kind = HirExprKind::ResultCtor {
+                        variant,
+                        value: dummy,
+                    };
+                    let ty = expr_type_for_kind(type_check, hir_pool, &kind, fallback_ty);
+                    return Ok(HirExpr { kind, ty, span });
+                }
             }
             // ToStr v0.1: `receiver.to_str()` → HirExprKind::ToStr (not a real method call).
             if trailing_block.is_none()
