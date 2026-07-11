@@ -1,0 +1,25 @@
+interface Display {
+    func fmt(shared self): str
+}
+
+struct Point {
+    x: int
+}
+
+func Point.fmt(shared self): str {
+    return "pt"
+}
+
+func show<T>(v: T): str where T: Display {
+    return v.fmt()
+}
+
+func show_bound<T: Display>(v: T): str {
+    return v.fmt()
+}
+
+func main(): int {
+    let a = show<Point>(Point { x: 1 })
+    let b = show_bound<Point>(Point { x: 2 })
+    return 0
+}

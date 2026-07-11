@@ -130,6 +130,19 @@ impl<'a> Resolver<'a> {
         self.resolve_attrs(scope, &decl.attrs);
         let interface_scope = self.symbols.new_scope(scope);
         self.define_generics(interface_scope, &decl.generic_params);
+        // TYP.2: `Self` is the implementing type in interface method signatures
+        // (`func fmt(shared self): str` types `self` as `Self`).
+        // Use a synthetic span so we do **not** overwrite `definitions[decl.span]`
+        // (that key already maps to the interface symbol itself).
+        if self.symbols.find_in_scope(interface_scope, "Self").is_none() {
+            let self_span = arandu_lexer::Span::new(decl.span.file_id, decl.span.start, decl.span.start);
+            self.define(
+                interface_scope,
+                "Self",
+                SymbolKind::TypeParam,
+                self_span,
+            );
+        }
         for where_item in &decl.where_clause {
             self.resolve_where_item(interface_scope, where_item);
         }

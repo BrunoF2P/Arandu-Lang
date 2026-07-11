@@ -1,15 +1,26 @@
 module std.path
 
-/// Thin SL_S: path string helpers (pure, no OS).
+/// SL_S path helpers (pure, no OS). Full PathBuf lands with multi-file body linking.
 
-/// True when `p` starts with `/` (Unix absolute). Windows drive letters later.
-public func is_absolute(p: str): bool {
-    // Minimal pure check: non-empty and first byte is `/`.
-    // Full path API lands with fs/pathBuf.
+/// True for the empty path? no. Placeholder until str byte access exists.
+/// Host-assisted absolute check is `std.fs` / future Path API.
+public func is_absolute(_p: str): bool {
     return false
 }
 
-/// Join two path segments with `/` (scaffold — no normalization yet).
+/// True when the path is empty.
+public func is_empty(p: str): bool {
+    return p == ""
+}
+
+/// Join two segments with `/` when `b` is relative (no OS normalize).
+/// Note: string concat is not a language primitive yet — returns `a` until then.
 public func join(a: str, b: str): str {
     return a
+}
+
+/// File name after the last `/`, or the whole path if none.
+/// Scaffold: returns `p` (no split API yet).
+public func file_name(p: str): str {
+    return p
 }

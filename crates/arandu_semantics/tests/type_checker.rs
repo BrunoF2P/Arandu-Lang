@@ -207,6 +207,52 @@ fn test_option_nil() {
 
 
 #[test]
+fn test_where_ok() {
+    let root = workspace_root();
+    let source = fs::read_to_string(root.join("tests/ui/type_checker/where_ok.aru")).unwrap();
+    let program = parse(&source).expect("parse");
+    let resolution = resolve_for_test(0, &program);
+    let result = type_check(resolution, &program);
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| !matches!(d.severity, arandu_semantics::Severity::Error)),
+        "expected no errors: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn test_structural_interface_no_impl_keyword() {
+    // TYP.1: satisfaction is structural (methods present) — no `impl Writer for T`.
+    let source = r#"
+interface Greeter {
+    func greet(): str
+}
+struct Person { n: int }
+func Person.greet(shared self): str { return "hi" }
+func call_it<T: Greeter>(t: T): str { return t.greet() }
+func main(): int {
+    let _ = call_it<Person>(Person { n: 1 })
+    return 0
+}
+"#;
+    let program = parse(source).expect("parse");
+    let resolution = resolve_for_test(0, &program);
+    let result = type_check(resolution, &program);
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| !matches!(d.severity, arandu_semantics::Severity::Error)),
+        "structural interface failed: {:?}",
+        result.diagnostics
+    );
+}
+
+
+#[test]
 fn test_result_not_handled() {
     assert_type_errors!(
         "

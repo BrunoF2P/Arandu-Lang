@@ -512,12 +512,21 @@ pub(crate) fn synth_method_call(
 
     let (params, ret, method_sym_recorded) = if let Some(method_sig) = resolved_method {
         if let ArType::Func(params, ret) = method_sig {
-            // Interface methods are stored **without** a receiver (`Func([size,align], R)`).
-            // Prepend the concrete receiver; do not drop params[0] as if it were `self`
-            // (that made `A.realloc` expect 3 args instead of 4 → Vec T012 cascade).
-            let mut new_params = Vec::with_capacity(params.len() + 1);
+            // Interface methods may declare an explicit `self`/`Self` receiver or
+            // only the free-style payload (`Allocator.alloc(size, align)`).
+            // Drop a leading `Self` formal if present, then always prepend the
+            // concrete receiver so call sites stay uniform (TYP.2).
+            let payload = if params
+                .first()
+                .is_some_and(|&p| is_self_type_formal(checker, p))
+            {
+                params[1..].to_vec()
+            } else {
+                params
+            };
+            let mut new_params = Vec::with_capacity(payload.len() + 1);
             new_params.push(actual_base_ty_id);
-            new_params.extend_from_slice(&params);
+            new_params.extend(payload);
             (new_params, ret, None)
         } else {
             return None;
@@ -772,4 +781,13 @@ fn instantiate_method_sig_for_receiver(
     let ret_inst = substitute_type(&ret_ty, &subst, &checker.type_info.type_interner);
     let new_ret = checker.intern(ret_inst);
     (new_params, new_ret)
+}
+
+/// True when a formal is the interface receiver type `Self` (or a ref to it).
+fn is_self_type_formal(checker: &TypeChecker<'_>, tid: TypeId) -> bool {
+    match checker.resolve(tid) {
+        ArType::Named(id, _) => checker.symbols.get(id).name == "Self",
+        ArType::Ref(inner) | ArType::RefMut(inner) => is_self_type_formal(checker, inner),
+        _ => false,
+    }
 }

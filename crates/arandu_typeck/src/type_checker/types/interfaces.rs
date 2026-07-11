@@ -4,7 +4,7 @@ use arandu_lexer::Span;
 use arandu_parser::{FuncSignature, GenericParam, TypeName, WhereItem};
 
 use super::unify;
-use super::{ArType, LowerCtx};
+use super::{ArType, LowerCtx, TypeId};
 use super::{GenericSubst, TypeInterner, build_subst, substitute_type};
 use crate::passes::type_checker::TypeChecker;
 use crate::{ScopeId, SymbolId, SymbolKind};
@@ -364,8 +364,15 @@ pub(crate) fn type_satisfies_interface(
         let Some(provided) = lookup_method_type(checker, &type_name, &method) else {
             return false;
         };
-        let provided = strip_receiver(provided);
-        if !method_types_compatible(&required_inst, &provided, &checker.type_info.type_interner) {
+        // Interface may list `self: Self`; impl methods always have a receiver.
+        // Compare payloads only (TYP.2).
+        let required_stripped = strip_interface_receiver(required_inst, checker);
+        let provided_stripped = strip_impl_receiver(provided, checker);
+        if !method_types_compatible(
+            &required_stripped,
+            &provided_stripped,
+            &checker.type_info.type_interner,
+        ) {
             return false;
         }
     }
@@ -418,8 +425,13 @@ fn missing_interface_methods(
             }
             continue;
         };
-        let provided = strip_receiver(provided);
-        if !method_types_compatible(&required_inst, &provided, &checker.type_info.type_interner) {
+        let required_stripped = strip_interface_receiver(required_inst, checker);
+        let provided_stripped = strip_impl_receiver(provided, checker);
+        if !method_types_compatible(
+            &required_stripped,
+            &provided_stripped,
+            &checker.type_info.type_interner,
+        ) {
             missing.push(format!("{method} (signature mismatch)"));
         }
     }
@@ -466,14 +478,41 @@ fn lookup_method_type(checker: &TypeChecker, type_name: &str, method: &str) -> O
     checker.decl_type(sym)
 }
 
-fn strip_receiver(ty: ArType) -> ArType {
-    if let ArType::Func(params, ret) = ty {
-        if !params.is_empty() {
-            return ArType::Func(params[1..].to_vec(), ret);
-        }
+/// Drop leading `Self` / `&Self` / `&mut Self` from an interface method formal.
+fn strip_interface_receiver(ty: ArType, checker: &TypeChecker<'_>) -> ArType {
+    let ArType::Func(params, ret) = ty else {
+        return ty;
+    };
+    if params.is_empty() {
         return ArType::Func(params, ret);
     }
-    ty
+    if is_self_type(checker, params[0]) {
+        ArType::Func(params[1..].to_vec(), ret)
+    } else {
+        ArType::Func(params, ret)
+    }
+}
+
+/// Drop the concrete method receiver (`T` / `&T` / `&mut T`) — always first formal.
+fn strip_impl_receiver(ty: ArType, checker: &TypeChecker<'_>) -> ArType {
+    let ArType::Func(params, ret) = ty else {
+        return ty;
+    };
+    if params.is_empty() {
+        return ArType::Func(params, ret);
+    }
+    // Always peel first: impl methods are `Type.m(self, …)`. Also peel Self
+    // if somehow present.
+    let _ = checker;
+    ArType::Func(params[1..].to_vec(), ret)
+}
+
+fn is_self_type(checker: &TypeChecker<'_>, tid: TypeId) -> bool {
+    match checker.resolve(tid) {
+        ArType::Named(id, _) => checker.symbols.get(id).name == "Self",
+        ArType::Ref(inner) | ArType::RefMut(inner) => is_self_type(checker, inner),
+        _ => false,
+    }
 }
 
 fn method_types_compatible(required: &ArType, provided: &ArType, interner: &TypeInterner) -> bool {

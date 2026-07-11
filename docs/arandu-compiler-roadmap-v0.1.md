@@ -116,7 +116,7 @@ Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
    │  · [x] auto-ref/auto-deref call args & method receivers (`T` ↔ `&T`/`&mut T`)
    │  · [x] lower materializa `Borrow`/`BorrowMut` quando formal é Ref/RefMut
    │  · [x] `ArgConsumeKind::is_exclusive` (mut self vs shared)
-   │  · [→] assinaturas de método ainda `self: T` + ownership (não `&T` plenas na surface)
+   │  · [x] assinaturas `shared`/`mut self` → formals `&T`/`&mut T` (typeck + call auto-ref)
    │  Backend honesty (W5):
    │  · [x] T033 barrando call indireto no typeck; JIT só rede de segurança
    │  · [x] `??` é CFG no AMIR; BinaryOp::NullCoalesce no JIT = ICE de pipeline
@@ -158,8 +158,8 @@ Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
    ├─ [x] T3.4   Stdlib migrada (core/alloc usam path tokens; residual aspas só onde External)
    ├─ [x] T3.5   Contrato parser: import_module + import_module_alias_path
    └─ [x] T3.6   LSP complete em path tokens `import std.▮` + members `alias.▮` (W4)
-[→] SL_S   Stdlib de Sistema (thin): `stdlib/std/{io,env,path,fs,process,time}.aru` + import rewrite; full OS API later
-[ ] SL_R   Async Runtime: arandu_std::runtime (scheduler cooperativo/work-stealing e reactor OS epoll/kqueue/io_uring)
+[→] SL_S   Stdlib de Sistema: `stdlib/std/*` + `runtime` scaffold; pure path helpers; OS/host link residual (multi-file bodies)
+[→] SL_R   Async Runtime: design lock docs/arandu-async-runtime-design-v0.1.md (Executor explícito, reactor, SL_R.1 supervisor); impl pending
 [ ] SL_T   Testing Harness: arandu_std::testing (test runner integrado e benchmark engine)
 
 Fase 4 — Expressividade de Linguagem e Tipagem (v0.35) · [NÃO INICIADA]
@@ -167,8 +167,8 @@ Fase 4 — Expressividade de Linguagem e Tipagem (v0.35) · [NÃO INICIADA]
 [x] SYN.2  Interpolação: `$name` + `${expr}` (lexer → StringInterp/ToStr; e2e CLI)
 [x] SYN.3  Opcionais: `nil` → Option.None (contexto); match Some/None no AMIR; `T?` permanece Nullable (§2.1)
 [x] SYN.4  Patterns: `_`, binds, ranges, or-patterns `p1|p2` (parse/typeck/AMIR)
-[ ] TYP.1  Interfaces Implícitas / Structural Typing (Go-style duck typing no Type Checker)
-[ ] TYP.2  Constraints de Generics (cláusula `where` e sintaxe `<T: Trait>`)
+[→] TYP.1  Structural interface satisfaction (method sig duck) — done; dyn/existential interface types later
+[x] TYP.2  Constraints: `<T: I>` + `where T: I`; Self em interface; check_instantiation T025; call via bound
 
 Fase 5 — Otimização Global, CodeGen & Ecossistema (v0.4+) · [NÃO INICIADA]
 [ ] LLVM   Backend LLVM (Release Optimizer, LTO, PGO profile-guided optimization pipeline)
