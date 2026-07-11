@@ -3,8 +3,10 @@
 // Lives in alloc (not core): free-list + dynamic slots are heap/arena tier.
 // See docs/arandu-genref-abi-rfc-v0.1.md for ABI and compiler contract.
 //
-// Status: API skeleton. Full Vec-backed tables and compiler GenRef lowering
-// land with F2.3.runtime; until then this documents the surface language types.
+// Status (F2 closed):
+//   · Compiler GenRef path: i64 host MVP (`gen_runtime` / `ar_gen_*`) — done.
+//   · This file: typed surface API (GenRef, GenArena<T,A>, insert/get/remove).
+//   · Full typed slot tables in-language / self-host: deferred (not F2 residual).
 
 module std.alloc.gen_arena
 
@@ -52,27 +54,23 @@ public func newIn<T, A: allocApi.Allocator>(allocator: A) : GenArena<T, A> {
 }
 
 /// Insert `value`; returns a GenRef valid until remove (or recycle of that index).
-/// Compiler: maps to GenInsert after escape promotion.
+/// Compiler path today: host `ar_gen_insert_i64` (int MVP). Typed body: self-host later.
 func GenArena.insert<T, A: allocApi.Allocator>(mut self, value: T) : GenRef {
-    // TODO(F2.3.runtime): free_list pop or push_back slot; set generation.
-    // Stub: invalid ref — must not be called until runtime lands.
+    // Stub surface — fail closed if called from user code before tables exist.
     return GenRef { index: 0 as u32, generation: 0 as u32 }
 }
 
 /// Drop ownership of the slot if `r.generation` still matches; else None.
-/// Compiler: maps to GenRemove / Destroy of promoted locals.
+/// Compiler path today: host `ar_gen_remove_i64` (int MVP).
 func GenArena.remove<T, A: allocApi.Allocator>(mut self, r: GenRef) : option.Option<T> {
-    // TODO(F2.3.runtime): generation check + free_list push + take value.
     return option.Option.None
 }
 
 /// Load payload; **aborts** (not UB) if generation mismatches.
-/// Compiler: maps to GenGet before Load/Field through a GenRef.
+/// Compiler path today: host `ar_gen_get_i64` (int MVP).
 func GenArena.get<T, A: allocApi.Allocator>(shared self, r: GenRef) : T {
-    // TODO(F2.3.runtime): real slot lookup.
     // Always treat stub as mismatch so accidental use fails closed.
     intrinsics.abort_generational_mismatch()
-    // unreachable
     return value_unreachable_after_abort<T>()
 }
 

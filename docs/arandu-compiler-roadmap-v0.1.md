@@ -45,7 +45,8 @@ Fase 1 — Estabilização Semântica (v0.1) · [CONCLUÍDA]
 [x] M1     Move checker básico (O001, O005, O007) com spans reais (BUG-01)
 [x] O1     Constant folding + DCE com bitset denso O(1) (SCALE-02)
 
-Fase 2 — A Construção da Infraestrutura & Execução (v0.2) · [EM ANDAMENTO]
+Fase 2 — A Construção da Infraestrutura & Execução (v0.2) · [FECHADA no checklist de infra]
+                  · Residual de produto em Fase 3 (F2 OSSA, A3 compiler model) tratado abaixo.
 [x] INF2.1 Refatoração para InternPool (AstPool & TypeInterner centralizado)
 [x] HIR Pool-first migration — structural HIR nodes (blocks, stmts, expr-blocks) stored in `HirPool` and referenced via `HirBlockId` (lowering, monomorphize, pretty-print, AMIR lowering and tests updated)
 [x] A5     Layout de Dados Orientado a Objetos/Registros (SoA, dense ID-based graphs no AMIR/CFG)
@@ -70,7 +71,7 @@ Fase 2 — A Construção da Infraestrutura & Execução (v0.2) · [EM ANDAMENTO
    │              · materializar base (`is_memory`) em place projetado para Stores sobreviverem ao prune
    │              · stack `&`/`&mut` local: F2.0–F2.3 (stack home + OSSA); heap/`&*p`/`&p.x`: path BC.4a
    │              · backend C: `format_place` com Deref lvalue
-   ├─ [x] BC.4b  Await no Cranelift JIT (A3.0 ready-only; full poll/suspend = A3.1+)
+   ├─ [x] BC.4b  Await no Cranelift JIT (A3.0–A3.6: layout disc/payload + block_on; scheduler = SL_R)
    └─ [x] FUZZ   Fuzzing Lexer/Parser SIMD (arandu_fuzz e cron jobs semanais de robustez)
 [x] C_FB   Backend C de portabilidade e bootstrapping
 [x] DX     Diagnostics & Tooling Infrastructure (DX1-DX3, DX4 CFG visualization; DX2 recovery anchors completed)
@@ -99,55 +100,37 @@ Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
    │  `Arc::make_mut` no lower HIR quando o interner precisa mutar.
    │  `check_bodies_only` usa `Arc::unwrap_or_clone` ao reentrar no checker.
 [ ] A2     Effect System (pure, readonly, noalloc, nothrow, nosuspend)
-[/] A3     Modelo Async Semântico Colorless (coroutine splitting, zero heap stack-first, OSSA checks)
-   ├─ [x] A3.0   Ready-only MVP: `async func → Coroutine[T]` sugar, `async {}` + `await`
-   │              · AMIR `CoroutineReady` + Unary Await (payload @ state+0)
-   │              · Cranelift/C: malloc state blob; await = load (sem runtime/scheduler)
-   ├─ [x] A3.1   Coroutine splitting em `await` (CFG fronteira)
-   │              · `AmirTerminator::Suspend { future, resume, args }` em `async func`
-   │              · lower: fim de BB + resume BB com `await` (reuso BlockId/CFG Fase 1)
-   │              · backends ready-only: Suspend = jump(resume); poll real = runtime
-   ├─ [x] A3.2   OSSA check borrow-across-suspend (temp liveness F2.2 → O010)
-   │              · `suspend_check::check_borrow_across_suspend`: Ref/RefMut live into resume
-   ├─ [x] A3.3   Stack-first task state (`CoroutineReady.stack`)
-   │              · `async {}` → `stack: true` (Cranelift stack slot)
-   │              · C multi-stmt: `__ar_co_N = val; t = &__ar_co_N` (sem dangling)
-   │              · `async func` return / `TempId(0)` → `stack: false` (heap)
-   │              · `coroutine_depth` enables Suspend split inside `async {}` too
-   ├─ [x] A3.4   Pin-free self-ref via LocalId (`RelativeBorrow` + Load rewrite)
-   │              · pass `pin_free::apply_pin_free_refs` antes do O010
-   │              · `*p` → `Load(sN)`; valor do ref = índice (não endereço absoluto)
-   │              · ref escapando como arg de call ainda O010
-   ├─ [x] A3.5   Captura densa de estado em `Suspend.args` (locals Available@frontier)
-   │              · `emit_suspend` força block params no resume + args explícitos
-   │              · struct de estado da tarefa = params da fronteira (design gold)
-   └─ [x] A3.6   Runtime poll / `Poll::Pending` (MVP block_on; full scheduler = SL_R)
-                  · state blob: disc@0 (0=Ready, 1=PendingOnce), payload@8
-                  · await → fast Ready load / `ar_co_block_on_i64` se disc≠0
-                  · host JIT: `poll_runtime` (poll / block_on / pending_once)
-                  · C: helpers espelhados no preamble; `stdlib/core/future.aru` (`Poll[T]`)
-                  · typeck: `ArType::Poll` + `Poll.Ready` / `Poll.Pending` builtins
+[x] A3     Modelo Async **no compilador** (colorless / corrotina) — FECHADO como marco de language
+   │  Fronteira honesta: **não** é async runtime. `await` = block_on; scheduler/Waker/I/O = **SL_R**.
+   ├─ [x] A3.0   `async func` / `async {}` → `Coroutine[T]`; `CoroutineReady`
+   ├─ [x] A3.1   `Suspend` CFG frontier + resume
+   ├─ [x] A3.2   borrow-across-await (O010 absolute; A3.4 rewrites local refs)
+   ├─ [x] A3.3   stack-first `CoroutineReady.stack` (C multi-stmt)
+   ├─ [x] A3.4   pin-free `RelativeBorrow` / Load rewrite
+   ├─ [x] A3.5   dense live capture em `Suspend.args`
+   ├─ [x] A3.6   poll layout + block_on + `Poll[T]` typeck
+   └─ [→] SL_R    Runtime async real (fila, Waker, I/O) — **próximo marco async**, não residual A3
 [ ] A4     Memory Layout Optimization Engine (field reordering, niche tags, SOO)
-[/] F2     OSSA borrow completo (borrow_shared, borrow_mut, end_borrow)
+[x] F2     OSSA borrow completo — FECHADO no escopo de linguagem v0.3 compiler
    ├─ [x] F2.0   Sintaxe de referências à pilha (& / &mut) no parser + type-checker
    ├─ [x] F2.1   Local Borrow Checking Incremental (Salsa `block_borrow_facts` / may-borrow dataflow A9)
    ├─ [x] F2.2   Janelas de Liveness de Empréstimos (loan window = live range da ref; `is_borrowed_at`)
-   ├─ [x] F2.3   Escape policy + O004/O010 + G2 promote (análise; sem GenRef nos backends ainda)
+   ├─ [x] F2.3   Escape policy + O004/O010 + G2 promote (análise + GenRef nos backends i64 MVP)
    │    ├─ [x] F2.3.1 Escape detection (return → O010; heap-store → O004 path)
    │    ├─ [x] F2.3.2 O004 nota informativa (Magia Inspecionável — nunca silencioso)
    │    └─ [x] F2.3.3 G2: `@no_fallback` / `--no-generational-fallback` promove O004→erro
    └─ [x] F2.3.runtime  GenRef MVP (i64 payload; promoção HeapStore para int)
         ├─ [x] Spec: `docs/arandu-genref-abi-rfc-v0.1.md`
         ├─ [x] `stdlib/core/intrinsics.aru` — `abort_generational_mismatch`
-        ├─ [x] `stdlib/alloc/gen_arena.aru` — API GenRef/GenArena (esqueleto)
+        ├─ [x] `stdlib/alloc/gen_arena.aru` — API GenRef/GenArena (surface tipada)
         ├─ [x] AMIR `GenInsert`/`GenGet`/`GenRemove` + `ArType::GenRef`
         ├─ [x] Host JIT `gen_runtime` + Cranelift (insert/get/remove; mismatch abort)
         ├─ [x] C backend helpers (`ar_gen_*_i64`)
         ├─ [x] `gen_promote`: rewrite Borrow→GenInsert/Load for HeapStore int locals
-        └─ [/] Gen arena tipada `T` genérica — API em `stdlib/alloc/gen_arena.aru`;
-                  host JIT permanece i64 MVP (`gen_runtime`); full `GenArena<T>` tables = self-host
+        └─ [→] `GenArena<T>` tables self-host / post-MVP — **não** bloqueia F2;
+                  API stdlib tipada existe; host permanece i64 até self-host
 [x] M2     Move checker avançado (O002, O003, O006) — `borrow_check` sobre F2.1/F2.2
-           └─ Dependência: fecha a garantia estática de double-free que hoje é mitigada apenas por poison-check (0xDE) em debug (ver BC.2/BC.3)
+           └─ Poison 0xDE em debug (BC.2/BC.3) permanece defesa extra, não substituto de M2
 [x] G2     fundido em F2.3.3 (promote O004; ver acima)
 [ ] T2     DX Enhancements: Default Generic Parameters & Scoped Enum Variant Sugar
    ├─ [ ] T2.1   Default Generic Parameters (e.g. struct Vec<T, A = GlobalAllocator> in parser, resolved and typechecker instantiation)

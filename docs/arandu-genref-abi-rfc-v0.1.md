@@ -1,20 +1,21 @@
 # RFC: GenRef ABI & AMIR propagation (F2.3.runtime)
 
-**Status:** Draft / design gate before Cranelift·C work  
+**Status:** Accepted / implemented (i64 host MVP)  
 **Depends on:** F2.3.1 escape analysis (done), F2.2 loan windows (done), G2 policy (done)  
 **Does not replace:** static OSSA for non-escaping refs  
+**Residual (not F2-blocking):** typed `GenArena<T>` slot tables in self-host; host remains i64.
 
 ---
 
 ## 1. Motivation
 
-F2.3 today **detects** escape and emits **O004** / **O010**. It does **not** yet
-insert a runtime fallback. The product differentiator requires a third path:
+F2.3 detects escape and emits **O004** / **O010**. The product path for compilable
+escape is GenRef + gen-arena check (implemented for **int** promotion + host arena):
 
 ```text
 live range closed in CFG  →  plain &T / &mut T (pointer-width)     [F2.2]
 return &local             →  O010 hard error                       [done]
-escape but compilable     →  GenRef + gen_arena check              [this RFC]
+escape but compilable     →  GenRef + gen_arena check (i64 MVP)    [done]
 @no_fallback / CLI flag   →  O004 Error (no GenRef emission)       [G2]
 ```
 
