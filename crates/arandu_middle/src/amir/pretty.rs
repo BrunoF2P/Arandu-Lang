@@ -144,17 +144,24 @@ impl AmirFunc {
 
 impl AmirPlace {
     pub fn pretty_print_to(&self, out: &mut String, symbols: &SymbolTable, pool: &AmirLiteralPool) {
-        out.push_str(&format!("s{}", self.local.0));
+        // Build path in a scratch buffer so Deref wrap never steals a caller prefix
+        // (e.g. `&` from Borrow pretty-print).
+        let mut path = format!("s{}", self.local.0);
         for proj in &self.projections {
             match proj {
+                AmirProjection::Deref => {
+                    // Wrap so `Deref` then `Field` prints as `(*sN).f`, not `*sN.f`.
+                    path = format!("(*{path})");
+                }
                 AmirProjection::Field(symbol) => {
-                    out.push_str(&format!(".{}", symbols.get(*symbol).name));
+                    path.push_str(&format!(".{}", symbols.get(*symbol).name));
                 }
                 AmirProjection::Index(op) => {
-                    out.push_str(&format!("[{}]", op.to_pretty_string(symbols, pool)));
+                    path.push_str(&format!("[{}]", op.to_pretty_string(symbols, pool)));
                 }
             }
         }
+        out.push_str(&path);
     }
 }
 

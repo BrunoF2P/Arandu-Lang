@@ -41,9 +41,15 @@ impl LowerCtx<'_> {
         match op {
             UnaryOp::Ref | UnaryOp::RefMut => {
                 let place = self.lower_expr_to_place(sub_expr, symbols)?;
-                // Scalars that are address-taken must live in memory (stack slots)
-                // so Cranelift can form a pointer (F2.0).
-                if place.projections.is_empty() {
+                // F2.0: address-taken *stack* scalars need a stack home (`is_memory`).
+                // BC.4a: a place that goes through `Deref` already has a materialised
+                // pointer in the local's SSA value — do NOT force a stack slot for it
+                // (stack_addr of the pointer cell ≠ the pointer itself).
+                let through_ptr = place
+                    .projections
+                    .iter()
+                    .any(|p| matches!(p, crate::amir::AmirProjection::Deref));
+                if place.projections.is_empty() && !through_ptr {
                     let idx = place.local.as_usize();
                     if idx < self.locals.len() {
                         self.locals[idx].is_memory = true;

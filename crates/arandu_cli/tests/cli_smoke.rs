@@ -1125,6 +1125,111 @@ func main(): int {
     );
 }
 
+/// BC.4a: reborrow through `Deref` place (`&*p`) — materialised pointer local, no stack_addr.
+#[test]
+fn run_bc4a_reborrow_deref_exits_42() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_bc4a_reborrow.aru");
+    fs::write(
+        &file,
+        r#"module tests.cli.bc4a_reborrow
+
+func main(): int {
+    let n = 42
+    let p = &n
+    let q = &*p
+    return *q
+}
+"#,
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+
+    let amir = run_cli(&["amir", &path]);
+    assert!(
+        amir.status.success(),
+        "amir stderr:\n{}",
+        String::from_utf8_lossy(&amir.stderr)
+    );
+    let amir_out = String::from_utf8_lossy(&amir.stdout);
+    assert!(
+        amir_out.contains("&(*") || amir_out.contains("Deref") || amir_out.contains("&(*s"),
+        "expected Deref place in AMIR Borrow, got:\n{amir_out}"
+    );
+
+    let output = run_cli(&["run", &path]);
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// BC.4a: borrow of field through materialised object pointer (`&p.x` on Named/heap).
+#[test]
+fn run_bc4a_field_borrow_exits_11() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_bc4a_field.aru");
+    fs::write(
+        &file,
+        r#"module tests.cli.bc4a_field
+
+struct Point {
+    x: int
+    y: int
+}
+
+func main(): int {
+    let p = Point { x: 11, y: 22 }
+    let r = &p.x
+    return *r
+}
+"#,
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+    let output = run_cli(&["run", &path]);
+    assert_eq!(
+        output.status.code(),
+        Some(11),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// BC.4a: reborrow passed to callee (pointer identity through Deref place).
+#[test]
+fn run_bc4a_reborrow_call_exits_33() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_bc4a_reborrow_call.aru");
+    fs::write(
+        &file,
+        r#"module tests.cli.bc4a_reborrow_call
+
+func read(p: &int): int {
+    return *p
+}
+
+func main(): int {
+    let n = 33
+    let p = &n
+    let q = &*p
+    return read(q)
+}
+"#,
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+    let output = run_cli(&["run", &path]);
+    assert_eq!(
+        output.status.code(),
+        Some(33),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 /// `shared self` does not move; receiver field usable after call.
 #[test]
 fn run_shared_self_reuse_exits_40() {

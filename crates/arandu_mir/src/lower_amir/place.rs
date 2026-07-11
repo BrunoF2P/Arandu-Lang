@@ -4,12 +4,28 @@ use crate::SymbolTable;
 use crate::amir::{AmirOperand, AmirPlace, AmirProjection, AmirRvalue, TempId};
 use crate::diagnostics::Diagnostic;
 use crate::hir::{HirExprId, HirExprKind};
+use crate::ops::UnaryOp;
 use crate::passes::type_checker::types::ArType;
 
 impl LowerCtx<'_> {
-    /// Lower an expression to an [`AmirPlace`] for Borrow/Load (F2.0).
+    /// Keep dummy `Store`s for `local` so projected places see a defined SSA value.
     ///
-    /// Gold path: locals and field chains. Other forms get a clear diagnostic.
+    /// `prune_dummy_loads_stores` drops plain stores to non-`is_memory` locals (Ref/Ptr
+    /// are scalar). A place with `Deref`/`Field` is addressed via that local's value in
+    /// codegen — without a surviving store, `use_var` is undef (SIGSEGV). Setting
+    /// `is_memory` is the same flag F2.0 already uses for address-taken homes; for
+    /// pointer-sized types it does **not** force a stack slot (`needs_scalar_stack_home`
+    /// is only true for primitive scalars).
+    fn mark_local_materialized(&mut self, local: crate::amir::LocalId) {
+        let idx = local.as_usize();
+        if idx < self.locals.len() {
+            self.locals[idx].is_memory = true;
+        }
+    }
+
+    /// Lower an expression to an [`AmirPlace`] for Borrow/Load (F2.0 + BC.4a).
+    ///
+    /// Gold path: locals, `*p` through ptr/ref, and field chains.
     pub(crate) fn lower_expr_to_place(
         &mut self,
         expr_id: HirExprId,
@@ -29,6 +45,28 @@ impl LowerCtx<'_> {
                     symbols.get(*symbol).name
                 )))
             }
+            // BC.4a: `*p` where `p` is a local holding a pointer — place through that pointer.
+            HirExprKind::Unary {
+                op: UnaryOp::Deref,
+                expr: inner,
+            } => {
+                let mut place = self.lower_expr_to_place(*inner, symbols)?;
+                let base_ty = self.resolve_ty(self.hir.pool.expr(*inner).ty);
+                if !matches!(
+                    base_ty,
+                    ArType::Ptr(_) | ArType::Ref(_) | ArType::RefMut(_) | ArType::Nullable(_)
+                ) {
+                    return Err(self.move_diag(
+                        "BC.4a: can only form a place through `ptr[T]`, `&T`, or `&mut T`",
+                    ));
+                }
+                place.projections.push(AmirProjection::Deref);
+                // Projected places address through the local's *value*. Dummy Stores to
+                // non-memory Ref/Ptr locals are pruned — keep this base materialised so
+                // Cranelift `use_var` sees a defined pointer (BC.4a).
+                self.mark_local_materialized(place.local);
+                Ok(place)
+            }
             HirExprKind::Field { base, field } | HirExprKind::SafeField { base, field } => {
                 let mut place = self.lower_expr_to_place(*base, symbols)?;
                 let base_ty = self.resolve_ty(self.hir.pool.expr(*base).ty);
@@ -41,9 +79,12 @@ impl LowerCtx<'_> {
                         ))
                     })?;
                 place.projections.push(AmirProjection::Field(field_sym));
+                self.mark_local_materialized(place.local);
                 Ok(place)
             }
-            _ => Err(self.move_diag("F2.0: can only borrow locals and field paths (`&x`, `&x.f`)")),
+            _ => Err(self.move_diag(
+                "can only borrow locals, `*p` through a pointer, and field paths (`&x`, `&*p`, `&x.f`)",
+            )),
         }
     }
 

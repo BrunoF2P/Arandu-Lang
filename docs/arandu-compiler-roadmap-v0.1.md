@@ -65,9 +65,11 @@ Fase 2 — A Construção da Infraestrutura & Execução (v0.2) · [EM ANDAMENTO
    ├─ [x] BC.1   Fat Pointer String JIT (tratar String como ptr + len na convenção de chamadas do Cranelift)
    ├─ [x] BC.2   Implementar EnumPayload & Discriminant no Cranelift JIT (Garantia estática contra double-free depende de M2; atualmente mitigado via poison-check em debug)
    ├─ [x] BC.3   Implementar IndexAccess & Array/Tuple no Cranelift JIT (Garantia estática contra double-free depende de M2; atualmente mitigado via poison-check em debug)
-   ├─ [ ] BC.4a  Borrow/BorrowMut no Cranelift JIT
-   │              · heap/`ptr`: implementável sem F2 (ponteiro já materializado)
-   │              · stack local `&`/`&mut`: depende de F2.0–F2.3
+   ├─ [x] BC.4a  Borrow/BorrowMut no Cranelift JIT
+   │              · `AmirProjection::Deref` + place addr via `use_var` (nunca `stack_addr` do slot do ponteiro)
+   │              · materializar base (`is_memory`) em place projetado para Stores sobreviverem ao prune
+   │              · stack `&`/`&mut` local: F2.0–F2.3 (stack home + OSSA); heap/`&*p`/`&p.x`: path BC.4a
+   │              · backend C: `format_place` com Deref lvalue
    ├─ [ ] BC.4b  Await no Cranelift JIT (depende inteiramente de A3 — independente de F2)
    └─ [x] FUZZ   Fuzzing Lexer/Parser SIMD (arandu_fuzz e cron jobs semanais de robustez)
 [x] C_FB   Backend C de portabilidade e bootstrapping

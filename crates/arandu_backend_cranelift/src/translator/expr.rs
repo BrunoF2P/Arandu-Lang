@@ -1027,7 +1027,14 @@ impl FunctionTranslator<'_, '_> {
                 let ty = self.local_ar_ty(place.local);
                 let local_is_memory = self.current_func.locals[place.local.as_usize()].is_memory;
                 let has_stack_home = self.local_stack_slots.contains_key(&place.local);
-                let is_memory_backed = has_stack_home
+                // BC.4a: Deref means base local already holds a materialised pointer
+                // (heap/`ptr`/`&T`); address = use_var, never stack_addr of the slot.
+                let through_ptr = place
+                    .projections
+                    .iter()
+                    .any(|p| matches!(p, arandu_semantics::amir::AmirProjection::Deref));
+                let is_memory_backed = through_ptr
+                    || has_stack_home
                     || local_is_memory
                     || !place.projections.is_empty()
                     || matches!(
@@ -1038,6 +1045,7 @@ impl FunctionTranslator<'_, '_> {
                             | ArType::Primitive(Primitive::Str)
                             | ArType::Ref(_)
                             | ArType::RefMut(_)
+                            | ArType::Ptr(_)
                     )
                     || matches!(
                         ty,

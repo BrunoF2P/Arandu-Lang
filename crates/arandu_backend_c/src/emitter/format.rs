@@ -143,14 +143,33 @@ impl<'a> CEmitter<'a> {
 
         for proj in &place.projections {
             match proj {
+                // BC.4a: place through pointer value — lvalue is `*path`.
+                AmirProjection::Deref => {
+                    current_ty = match &current_ty {
+                        ArType::Ptr(inner)
+                        | ArType::Ref(inner)
+                        | ArType::RefMut(inner)
+                        | ArType::Nullable(inner) => self.interner.resolve(*inner),
+                        other => other.clone(),
+                    };
+                    path = format!("(*{})", path);
+                }
                 AmirProjection::Field(field_symbol_id) => {
-                    let struct_id = match &current_ty {
+                    // After Deref, current_ty is the pointee; unwrap residual ptr-likes.
+                    let struct_ty = match &current_ty {
+                        ArType::Ptr(inner)
+                        | ArType::Ref(inner)
+                        | ArType::RefMut(inner)
+                        | ArType::Nullable(inner) => self.interner.resolve(*inner),
+                        other => other.clone(),
+                    };
+                    let struct_id = match &struct_ty {
                         ArType::Named(id, _) => *id,
                         _ => arandu_middle::SymbolId::DUMMY,
                     };
                     let layout =
                         self.layout
-                            .layout_of_type(&current_ty, self.interner, self.provider);
+                            .layout_of_type(&struct_ty, self.interner, self.provider);
                     let field_name = self
                         .symbols
                         .get(*field_symbol_id)
@@ -162,7 +181,7 @@ impl<'a> CEmitter<'a> {
                         Some(indices) => indices.get(field_name).copied().unwrap_or(0),
                         None => 0,
                     };
-                    let offset = layout.field_offsets[field_idx];
+                    let offset = layout.field_offsets.get(field_idx).copied().unwrap_or(0);
 
                     let field_ty = match self.provider.get_struct_fields(struct_id) {
                         Some(fields) => fields
@@ -173,20 +192,34 @@ impl<'a> CEmitter<'a> {
                         None => ArType::Error,
                     };
                     let field_c_ty = self.format_type(&field_ty);
-                    path = format!("*({}*)((uint8_t*)&{} + {})", field_c_ty, path, offset);
+                    // If path is already a pointer (heap/ptr local without Deref), GEP from
+                    // the pointer value; otherwise take address of the stack lvalue.
+                    if matches!(
+                        current_ty,
+                        ArType::Ptr(_) | ArType::Ref(_) | ArType::RefMut(_) | ArType::Nullable(_)
+                    ) {
+                        path = format!("*({}*)((uint8_t*){} + {})", field_c_ty, path, offset);
+                    } else {
+                        path = format!("*({}*)((uint8_t*)&{} + {})", field_c_ty, path, offset);
+                    }
                     current_ty = field_ty;
                 }
                 AmirProjection::Index(index_op) => {
                     let elem_ty = match &current_ty {
-                        ArType::Array(_, inner) | ArType::Slice(inner) | ArType::Ptr(inner) => {
-                            self.interner.resolve(*inner)
-                        }
+                        ArType::Array(_, inner)
+                        | ArType::Slice(inner)
+                        | ArType::Ptr(inner)
+                        | ArType::Ref(inner)
+                        | ArType::RefMut(inner) => self.interner.resolve(*inner),
                         _ => ArType::Error,
                     };
                     let elem_c_ty = self.format_type(&elem_ty);
                     let index_str = self.format_operand(index_op, func);
 
-                    if matches!(current_ty, ArType::Ptr(_)) {
+                    if matches!(
+                        current_ty,
+                        ArType::Ptr(_) | ArType::Ref(_) | ArType::RefMut(_)
+                    ) {
                         path = format!("(({}*){})[{}]", elem_c_ty, path, index_str);
                     } else if matches!(current_ty, ArType::Slice(_)) {
                         path = format!(

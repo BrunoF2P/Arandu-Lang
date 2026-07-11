@@ -15,6 +15,9 @@ pub struct AmirPlace {
 pub enum AmirProjection {
     Field(SymbolId),
     Index(AmirOperand),
+    /// One level of indirection: base local holds a pointer (BC.4a heap/`ptr`).
+    /// Address of place = value of local (+ later field/index offsets).
+    Deref,
 }
 
 #[derive(Debug, Clone)]
@@ -176,6 +179,18 @@ mod tests {
             AmirProjection::Index(_) => {}
             _ => panic!("expected Index"),
         }
+    }
+
+    #[test]
+    fn place_with_deref_projection() {
+        let mut projections = SmallVec::new();
+        projections.push(AmirProjection::Deref);
+        let p = AmirPlace {
+            local: LocalId::from_usize(3),
+            projections,
+        };
+        assert_eq!(p.projections.len(), 1);
+        assert!(matches!(p.projections[0], AmirProjection::Deref));
     }
 
     #[test]

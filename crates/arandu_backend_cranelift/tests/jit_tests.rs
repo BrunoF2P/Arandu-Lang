@@ -454,6 +454,51 @@ fn format_f64_v01_specials_and_integers() {
     assert!(format_f64_v01(1.5).starts_with("1.5"));
 }
 
+/// BC.4a: `&*p` reborrow through `AmirProjection::Deref` (use_var of pointer local).
+#[test]
+fn jit_bc4a_reborrow_deref() {
+    let src = r#"
+    func main(): int {
+        let n = 42
+        let p = &n
+        let q = &*p
+        return *q
+    }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    let backend = backend_for_test();
+    let module = backend.compile(&amir, &symbols, &type_info).unwrap();
+    let result: i32 = unsafe {
+        let f: unsafe fn() -> i32 = module.get_fn("main").unwrap();
+        f()
+    };
+    assert_eq!(result, 42);
+}
+
+/// BC.4a: field borrow of materialised object (`&p.x`).
+#[test]
+fn jit_bc4a_field_borrow() {
+    let src = r#"
+    struct Point {
+        x: int
+        y: int
+    }
+    func main(): int {
+        let p = Point { x: 11, y: 22 }
+        let r = &p.x
+        return *r
+    }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    let backend = backend_for_test();
+    let module = backend.compile(&amir, &symbols, &type_info).unwrap();
+    let result: i32 = unsafe {
+        let f: unsafe fn() -> i32 = module.get_fn("main").unwrap();
+        f()
+    };
+    assert_eq!(result, 11);
+}
+
 #[test]
 fn jit_struct_field_access() {
     let src = r#"
