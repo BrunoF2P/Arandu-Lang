@@ -165,10 +165,10 @@ Promotion is **compiler-driven** and **visible** (O004). No silent heap.
 - [x] `stdlib/alloc/gen_arena.aru` defines `GenRef` / `GenArena` API  
 - [x] AMIR + Cranelift + C: `GenInsert`/`GenGet`/`GenRemove` (i64 payload MVP)  
 - [x] Cranelift host arena + JIT test `jit_gen_insert_get_i64`  
-- [ ] Escape `HeapStore` path auto-promotes in lower (language-level)  
+- [x] Escape `HeapStore` path auto-promotes int locals (`gen_promote` after lower)  
+- [x] O004 still emitted by escape analysis whenever fallback path applies  
 - [ ] Gen arena for general `T` (not only i64)  
-- [ ] O004 still always emitted on automatic promotion  
-- [ ] Roadmap **F2.3.runtime** fully checked only after auto-promotion  
+- [x] Roadmap **F2.3.runtime** MVP checked (typed-T left open)  
 
 ---
 

@@ -107,15 +107,15 @@ Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
    │    ├─ [x] F2.3.1 Escape detection (return → O010; heap-store → O004 path)
    │    ├─ [x] F2.3.2 O004 nota informativa (Magia Inspecionável — nunca silencioso)
    │    └─ [x] F2.3.3 G2: `@no_fallback` / `--no-generational-fallback` promove O004→erro
-   └─ [~] F2.3.runtime  GenRef nos backends (MVP i64; promoção auto na linguagem ainda aberta)
+   └─ [x] F2.3.runtime  GenRef MVP (i64 payload; promoção HeapStore para int)
         ├─ [x] Spec: `docs/arandu-genref-abi-rfc-v0.1.md`
         ├─ [x] `stdlib/core/intrinsics.aru` — `abort_generational_mismatch`
         ├─ [x] `stdlib/alloc/gen_arena.aru` — API GenRef/GenArena (esqueleto)
         ├─ [x] AMIR `GenInsert`/`GenGet`/`GenRemove` + `ArType::GenRef`
         ├─ [x] Host JIT `gen_runtime` + Cranelift (insert/get/remove; mismatch abort)
         ├─ [x] C backend helpers (`ar_gen_*_i64`)
-        ├─ [ ] Promoção automática no lower a partir de escape `HeapStore`
-        └─ [ ] Gen arena tipada `T` (hoje payload i64 MVP)
+        ├─ [x] `gen_promote`: rewrite Borrow→GenInsert/Load for HeapStore int locals
+        └─ [ ] Gen arena tipada `T` genérica (hoje payload i64 MVP)
 [x] M2     Move checker avançado (O002, O003, O006) — `borrow_check` sobre F2.1/F2.2
            └─ Dependência: fecha a garantia estática de double-free que hoje é mitigada apenas por poison-check (0xDE) em debug (ver BC.2/BC.3)
 [x] G2     fundido em F2.3.3 (promote O004; ver acima)

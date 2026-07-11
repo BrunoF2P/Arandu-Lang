@@ -3,6 +3,7 @@ pub mod borrow_facts;
 pub(crate) mod dce;
 pub mod definite_init;
 pub mod escape_analysis;
+pub mod gen_promote;
 pub mod liveness;
 pub mod lower_amir;
 pub mod move_checker;

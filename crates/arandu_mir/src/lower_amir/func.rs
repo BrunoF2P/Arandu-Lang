@@ -158,14 +158,17 @@ pub(crate) fn lower_func(
     func_diagnostics.extend(crate::borrow_check::check_borrows(&amir_f, &tc.symbols));
 
     // F2.3 + G2: escape analysis (O010 / O004); `@no_fallback` promotes O004→error.
+    let escape_opts = crate::escape_analysis::EscapeCheckOptions {
+        no_fallback: f.no_fallback,
+    };
     func_diagnostics.extend(crate::escape_analysis::check_escapes(
         &amir_f,
         &tc.symbols,
         &tc.type_info.type_interner,
-        crate::escape_analysis::EscapeCheckOptions {
-            no_fallback: f.no_fallback,
-        },
+        escape_opts,
     ));
+    // F2.3.runtime: materialize GenInsert/GenGet for escaping int locals (MVP).
+    crate::gen_promote::apply_gen_promotion(&mut amir_f, &tc.type_info.type_interner, escape_opts);
 
     Ok(amir_f)
 }
