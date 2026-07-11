@@ -6,11 +6,13 @@
 
 mod call;
 mod compare;
+mod coroutine;
 mod expr;
 mod memory;
 mod operand;
 mod place;
 mod stmt;
+mod string;
 mod terminator;
 
 use arandu_base::span::Span;

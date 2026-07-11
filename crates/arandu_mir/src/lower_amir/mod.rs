@@ -18,6 +18,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 mod arg_modes;
 mod ctx;
+mod ssa;
 mod expr;
 mod func;
 mod match_lower;

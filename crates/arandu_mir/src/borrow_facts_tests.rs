@@ -1,0 +1,334 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
+use super::*;
+use crate::Span;
+use crate::amir::{
+    AmirBasicBlock, AmirFunc, AmirLocal, AmirOperand, AmirPlace, AmirRvalue, AmirStmt,
+    AmirStmtTable, AmirTemp, AmirTerminator, TempId,
+};
+use crate::cfg::compute_cfg_edges;
+use crate::layout::DenseRange;
+use crate::ops::UnaryOp;
+use crate::types::{ArType, Primitive, TypeInterner};
+use smallvec::smallvec;
+
+fn intern_ty(ty: ArType) -> crate::types::TypeId {
+    TypeInterner::new().intern(ty)
+}
+
+fn local(i: usize, ty: crate::types::TypeId) -> AmirLocal {
+    AmirLocal {
+        id: LocalId::from_usize(i),
+        ty,
+        is_memory: true,
+        symbol: None,
+        span: Span::new(0, 0, 0),
+        use_span: None,
+    }
+}
+
+fn temp(i: usize, ty: crate::types::TypeId) -> AmirTemp {
+    AmirTemp {
+        id: TempId::from_usize(i),
+        ty,
+        is_copy: true,
+        is_nullable: false,
+        span: Span::new(0, 0, 0),
+    }
+}
+
+fn place(l: usize) -> AmirPlace {
+    AmirPlace {
+        local: LocalId::from_usize(l),
+        projections: smallvec![],
+    }
+}
+
+/// `t0 = &s0` with no further use → loan dies; OUT not borrowed (F2.2).
+#[test]
+fn dead_ref_ends_loan_at_block_out() {
+    let int = intern_ty(ArType::Primitive(Primitive::Int));
+    let ref_int = intern_ty(ArType::Ref(int));
+    let mut stmts = AmirStmtTable::new();
+    stmts.push(AmirStmt::Assign {
+        lhs: TempId::from_usize(0),
+        rhs: AmirRvalue::Borrow(place(0)),
+    });
+    let block = AmirBasicBlock {
+        id: BlockId::from_usize(0),
+        statements: DenseRange::new(0, 1),
+        params: vec![],
+        terminator: AmirTerminator::Return,
+    };
+    let blocks = vec![block];
+    let cfg = compute_cfg_edges(&blocks);
+    let func = AmirFunc {
+        symbol: crate::SymbolId::new(0, 0),
+        return_type: int,
+        receiver: None,
+        params: vec![],
+        locals: vec![local(0, int)],
+        temps: vec![temp(0, ref_int)],
+        blocks,
+        stmts,
+        cfg,
+    };
+
+    let facts = analyze_borrow_facts(&func);
+    assert_eq!(facts.borrow_site_counts[0], 1);
+    assert_eq!(facts.loans.len(), 1);
+    // Dead ref: not live-out → place not borrowed at OUT.
+    assert!(!facts.block_out[0].maybe_borrowed(LocalId::from_usize(0)));
+    assert!(!facts.maybe_shared_at_entry(BlockId::from_usize(0), LocalId::from_usize(0)));
+}
+
+/// `t0 = &s0; t1 = *t0` → loan active while t0 live; ends after last use.
+#[test]
+fn live_ref_use_keeps_loan_through_use() {
+    let int = intern_ty(ArType::Primitive(Primitive::Int));
+    let ref_int = intern_ty(ArType::Ref(int));
+    let mut stmts = AmirStmtTable::new();
+    stmts.push(AmirStmt::Assign {
+        lhs: TempId::from_usize(0),
+        rhs: AmirRvalue::Borrow(place(0)),
+    });
+    stmts.push(AmirStmt::Assign {
+        lhs: TempId::from_usize(1),
+        rhs: AmirRvalue::Unary {
+            op: UnaryOp::Deref,
+            operand: AmirOperand::Copy(TempId::from_usize(0)),
+        },
+    });
+    let block = AmirBasicBlock {
+        id: BlockId::from_usize(0),
+        statements: DenseRange::new(0, 2),
+        params: vec![],
+        terminator: AmirTerminator::Return,
+    };
+    let blocks = vec![block];
+    let cfg = compute_cfg_edges(&blocks);
+    let func = AmirFunc {
+        symbol: crate::SymbolId::new(0, 0),
+        return_type: int,
+        receiver: None,
+        params: vec![],
+        locals: vec![local(0, int)],
+        temps: vec![temp(0, ref_int), temp(1, int)],
+        blocks,
+        stmts,
+        cfg,
+    };
+
+    let facts = analyze_borrow_facts(&func);
+    // After last use of t0, not live-out → OUT clean (debt paid).
+    assert!(!facts.block_out[0].maybe_borrowed(LocalId::from_usize(0)));
+    // Loan was opened.
+    assert_eq!(facts.loans.len(), 1);
+    assert!(facts.loans[0].holder_temps.contains(TempId::from_usize(0)));
+}
+
+/// Loan propagates across edge when holder is used in successor.
+#[test]
+fn borrow_propagates_to_successor_when_ref_live() {
+    let int = intern_ty(ArType::Primitive(Primitive::Int));
+    let ref_int = intern_ty(ArType::Ref(int));
+    let mut stmts = AmirStmtTable::new();
+    // bb0: t0 = &s0
+    stmts.push(AmirStmt::Assign {
+        lhs: TempId::from_usize(0),
+        rhs: AmirRvalue::Borrow(place(0)),
+    });
+    // bb1: t1 = *t0
+    stmts.push(AmirStmt::Assign {
+        lhs: TempId::from_usize(1),
+        rhs: AmirRvalue::Unary {
+            op: UnaryOp::Deref,
+            operand: AmirOperand::Copy(TempId::from_usize(0)),
+        },
+    });
+
+    let bb0 = AmirBasicBlock {
+        id: BlockId::from_usize(0),
+        statements: DenseRange::new(0, 1),
+        params: vec![],
+        terminator: AmirTerminator::Goto {
+            target: BlockId::from_usize(1),
+            args: vec![],
+        },
+    };
+    let bb1 = AmirBasicBlock {
+        id: BlockId::from_usize(1),
+        statements: DenseRange::new(1, 1),
+        params: vec![],
+        terminator: AmirTerminator::Return,
+    };
+    let blocks = vec![bb0, bb1];
+    let cfg = compute_cfg_edges(&blocks);
+    let func = AmirFunc {
+        symbol: crate::SymbolId::new(0, 0),
+        return_type: int,
+        receiver: None,
+        params: vec![],
+        locals: vec![local(0, int)],
+        temps: vec![temp(0, ref_int), temp(1, int)],
+        blocks,
+        stmts,
+        cfg,
+    };
+
+    let facts = analyze_borrow_facts(&func);
+    // t0 live across edge → bb0 OUT and bb1 IN have shared loan of s0.
+    assert!(facts.block_out[0].maybe_shared(LocalId::from_usize(0)));
+    assert!(facts.maybe_shared_at_entry(BlockId::from_usize(1), LocalId::from_usize(0)));
+    // After use in bb1, OUT clean.
+    assert!(!facts.block_out[1].maybe_borrowed(LocalId::from_usize(0)));
+}
+
+#[test]
+fn borrow_mut_marks_exclusive_while_live() {
+    let int = intern_ty(ArType::Primitive(Primitive::Int));
+    let mut stmts = AmirStmtTable::new();
+    stmts.push(AmirStmt::Assign {
+        lhs: TempId::from_usize(0),
+        rhs: AmirRvalue::BorrowMut(place(0)),
+    });
+    stmts.push(AmirStmt::Assign {
+        lhs: TempId::from_usize(1),
+        rhs: AmirRvalue::Unary {
+            op: UnaryOp::Deref,
+            operand: AmirOperand::Copy(TempId::from_usize(0)),
+        },
+    });
+    let block = AmirBasicBlock {
+        id: BlockId::from_usize(0),
+        statements: DenseRange::new(0, 2),
+        params: vec![],
+        terminator: AmirTerminator::Return,
+    };
+    let blocks = vec![block];
+    let cfg = compute_cfg_edges(&blocks);
+    let func = AmirFunc {
+        symbol: crate::SymbolId::new(0, 0),
+        return_type: int,
+        receiver: None,
+        params: vec![],
+        locals: vec![local(0, int)],
+        temps: vec![temp(0, intern_ty(ArType::RefMut(int))), temp(1, int)],
+        blocks,
+        stmts,
+        cfg,
+    };
+    let facts = analyze_borrow_facts(&func);
+    assert_eq!(facts.loans[0].kind, LoanKind::Exclusive);
+    assert!(!facts.block_out[0].maybe_borrowed(LocalId::from_usize(0)));
+}
+
+/// `let p = &n` via Store propagates holder to local.
+#[test]
+fn store_to_ref_local_propagates_holder() {
+    let int = intern_ty(ArType::Primitive(Primitive::Int));
+    let ref_int = intern_ty(ArType::Ref(int));
+    let mut stmts = AmirStmtTable::new();
+    // t0 = &s0
+    stmts.push(AmirStmt::Assign {
+        lhs: TempId::from_usize(0),
+        rhs: AmirRvalue::Borrow(place(0)),
+    });
+    // s1 = t0  (p = &n)
+    stmts.push(AmirStmt::Store {
+        lhs: place(1),
+        rhs: AmirOperand::Copy(TempId::from_usize(0)),
+    });
+    // t1 = load s1; use in next block
+    stmts.push(AmirStmt::Assign {
+        lhs: TempId::from_usize(1),
+        rhs: AmirRvalue::Load(place(1)),
+    });
+    stmts.push(AmirStmt::Assign {
+        lhs: TempId::from_usize(2),
+        rhs: AmirRvalue::Unary {
+            op: UnaryOp::Deref,
+            operand: AmirOperand::Copy(TempId::from_usize(1)),
+        },
+    });
+    let block = AmirBasicBlock {
+        id: BlockId::from_usize(0),
+        statements: DenseRange::new(0, 4),
+        params: vec![],
+        terminator: AmirTerminator::Return,
+    };
+    let blocks = vec![block];
+    let cfg = compute_cfg_edges(&blocks);
+    let func = AmirFunc {
+        symbol: crate::SymbolId::new(0, 0),
+        return_type: int,
+        receiver: None,
+        params: vec![],
+        locals: vec![local(0, int), local(1, ref_int)],
+        temps: vec![temp(0, ref_int), temp(1, ref_int), temp(2, int)],
+        blocks,
+        stmts,
+        cfg,
+    };
+    let facts = analyze_borrow_facts(&func);
+    assert!(
+        facts.loans[0]
+            .holder_locals
+            .contains(LocalId::from_usize(1)),
+        "ref local s1 should hold the loan"
+    );
+    assert!(!facts.block_out[0].maybe_borrowed(LocalId::from_usize(0)));
+}
+
+#[test]
+fn is_borrowed_at_entry_matches_block_in() {
+    let int = intern_ty(ArType::Primitive(Primitive::Int));
+    let ref_int = intern_ty(ArType::Ref(int));
+    let mut stmts = AmirStmtTable::new();
+    stmts.push(AmirStmt::Assign {
+        lhs: TempId::from_usize(0),
+        rhs: AmirRvalue::Borrow(place(0)),
+    });
+    stmts.push(AmirStmt::Assign {
+        lhs: TempId::from_usize(1),
+        rhs: AmirRvalue::Unary {
+            op: UnaryOp::Deref,
+            operand: AmirOperand::Copy(TempId::from_usize(0)),
+        },
+    });
+    let bb0 = AmirBasicBlock {
+        id: BlockId::from_usize(0),
+        statements: DenseRange::new(0, 1),
+        params: vec![],
+        terminator: AmirTerminator::Goto {
+            target: BlockId::from_usize(1),
+            args: vec![],
+        },
+    };
+    let bb1 = AmirBasicBlock {
+        id: BlockId::from_usize(1),
+        statements: DenseRange::new(1, 1),
+        params: vec![],
+        terminator: AmirTerminator::Return,
+    };
+    let blocks = vec![bb0, bb1];
+    let cfg = compute_cfg_edges(&blocks);
+    let func = AmirFunc {
+        symbol: crate::SymbolId::new(0, 0),
+        return_type: int,
+        receiver: None,
+        params: vec![],
+        locals: vec![local(0, int)],
+        temps: vec![temp(0, ref_int), temp(1, int)],
+        blocks,
+        stmts,
+        cfg,
+    };
+    let facts = analyze_borrow_facts(&func);
+    let pt = ProgramPoint {
+        block: BlockId::from_usize(1),
+        stmt_index: 0,
+    };
+    assert!(is_borrowed_at(&facts, LocalId::from_usize(0), pt));
+    assert!(facts.maybe_shared_at_entry(BlockId::from_usize(1), LocalId::from_usize(0)));
+}

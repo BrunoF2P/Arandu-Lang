@@ -8,16 +8,21 @@
 mod build;
 pub mod events;
 pub mod hand;
+mod highlight;
+mod incremental;
 mod kind;
 pub mod lower;
 
 pub use build::{
-    SyntaxTree, apply_text_edit, build_item_green, classify_item_kind, find_top_level_item_spans,
-    for_each_highlight_token, highlight_spans, lower_syntax_to_program,
-    lower_syntax_to_program_rd_only, lower_syntax_to_program_recovering,
+    SyntaxTree, build_item_green, classify_item_kind, find_top_level_item_spans,
+    lower_syntax_to_program, lower_syntax_to_program_rd_only, lower_syntax_to_program_recovering,
     lower_syntax_to_program_recovering_rd_only, map_token_kind, parse_syntax, parse_syntax_arc,
-    parse_syntax_with_item_spans, reparse_edit, reparse_subtree, single_contiguous_edit,
-    splice_tokens_for_item_edit, text_range,
+    parse_syntax_with_item_spans, text_range,
+};
+pub use highlight::{for_each_highlight_token, highlight_spans};
+pub use incremental::{
+    apply_text_edit, reparse_edit, reparse_subtree, single_contiguous_edit,
+    splice_tokens_for_item_edit,
 };
 pub use events::{ParseEvent, build_green_from_events, events_balanced};
 pub use kind::{AranduLanguage, SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};
