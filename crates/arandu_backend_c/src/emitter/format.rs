@@ -97,7 +97,11 @@ impl<'a> CEmitter<'a> {
             ArType::Primitive(Primitive::Str) => "ArStr".to_string(),
             ArType::Primitive(Primitive::Float) | ArType::FloatLiteral => "double".to_string(),
             ArType::Void => "void".to_string(),
-            ArType::Ptr(inner) => format!("{}*", self.format_type(&self.interner.resolve(*inner))),
+            ArType::Ptr(inner)
+            | ArType::Ref(inner)
+            | ArType::RefMut(inner) => {
+                format!("{}*", self.format_type(&self.interner.resolve(*inner)))
+            }
             ArType::GenRef => "int64_t".to_string(),
             ArType::Named(id, _) => sanitize_c_ident(&self.symbols.get(*id).name),
             ArType::Slice(inner) => {
@@ -131,6 +135,16 @@ impl<'a> CEmitter<'a> {
                     name.push('_');
                     name.push_str(&self.format_type(&self.interner.resolve(t)));
                 }
+                sanitize_c_ident(&name)
+            }
+            ArType::Func(params, ret) => {
+                let mut name = "ArFunc".to_string();
+                for &p in params {
+                    name.push('_');
+                    name.push_str(&self.format_type(&self.interner.resolve(p)));
+                }
+                name.push_str("_to_");
+                name.push_str(&self.format_type(&self.interner.resolve(*ret)));
                 sanitize_c_ident(&name)
             }
             _ => format!("ArType_{}", sanitize_c_ident(&format!("{:?}", ty))),

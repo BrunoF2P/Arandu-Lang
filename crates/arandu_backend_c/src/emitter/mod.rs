@@ -526,6 +526,11 @@ static int64_t ar_co_block_on_i64(uint8_t *state) {{
     }
 
     fn ensure_type_emitted(&mut self, ty: &ArType) {
+        if let ArType::Ptr(inner) | ArType::Ref(inner) | ArType::RefMut(inner) = ty {
+            let inner_ty = self.interner.resolve(*inner);
+            self.ensure_type_emitted(&inner_ty);
+            return;
+        }
         let name = self.format_type(ty);
         // Never redefine C/stdlib primitive types as blob structs (e.g. `double`).
         if self.emitted_types.contains(&name)
@@ -547,6 +552,30 @@ static int64_t ar_co_block_on_i64(uint8_t *state) {{
                     | "ArStr"
             )
         {
+            return;
+        }
+
+        if let ArType::Func(params, ret) = ty {
+            let ret_ty = self.interner.resolve(*ret);
+            self.ensure_type_emitted(&ret_ty);
+            let mut params_c_tys = Vec::new();
+            for &p in params {
+                let p_ty = self.interner.resolve(p);
+                self.ensure_type_emitted(&p_ty);
+                params_c_tys.push(self.format_type(&p_ty));
+            }
+            let ret_c_ty = self.format_type(&ret_ty);
+            let params_str = if params_c_tys.is_empty() {
+                "void".to_string()
+            } else {
+                params_c_tys.join(", ")
+            };
+            let _ = writeln!(
+                &mut self.output,
+                "typedef {} (*{})({});",
+                ret_c_ty, name, params_str
+            );
+            self.emitted_types.insert(name);
             return;
         }
 

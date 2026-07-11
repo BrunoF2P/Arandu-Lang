@@ -479,3 +479,17 @@ fn c_emit_extern_declaration_present() {
     );
 }
 
+#[test]
+fn parity_references_and_deref() {
+    let src = r#"
+    func takes_ref(p: &int): int {
+        return *p
+    }
+    func main(): int {
+        let x: int = 123
+        return takes_ref(x)
+    }
+    "#;
+    test_execution_parity("references_and_deref", src);
+}
+
