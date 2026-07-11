@@ -595,9 +595,10 @@ impl FunctionTranslator<'_, '_> {
                 self.translate_binary_op(*op, lhs, rhs, Some(left), Some(right))
             }
             AmirRvalue::Unary { op, operand } => {
-                // Deref loads through a pointer: operand is always pointer-width;
+                // Deref / Await load through a pointer: operand is always pointer-width;
                 // result width comes from the assign target (`expected_ty`).
-                if matches!(op, UnaryOp::Deref) {
+                // A3.0: ready-only coroutines store payload at offset 0 of the state blob.
+                if matches!(op, UnaryOp::Deref | UnaryOp::Await) {
                     let ptr = self.translate_operand(operand, Some(self.ptr_type));
                     let load_ty = expected_ty.unwrap_or(self.ptr_type);
                     return self.builder.ins().load(
@@ -1074,6 +1075,10 @@ impl FunctionTranslator<'_, '_> {
             }
             AmirRvalue::Len(op) => self.translate_len(op, expected_ty),
             AmirRvalue::Alloc(op) => self.translate_alloc(op),
+            // A3.0: ready coroutine = malloc(sizeof(T)); store payload; return state ptr.
+            AmirRvalue::CoroutineReady { value, payload_ty } => {
+                self.translate_coroutine_ready(value, *payload_ty)
+            }
             AmirRvalue::GenInsert { value } => self.translate_gen_call("ar_gen_insert_i64", value),
             AmirRvalue::GenGet { gen_ref } => self.translate_gen_call("ar_gen_get_i64", gen_ref),
             AmirRvalue::GenRemove { gen_ref } => {
@@ -1176,6 +1181,47 @@ impl FunctionTranslator<'_, '_> {
         self.builder.inst_results(call)[0]
     }
 
+    /// A3.0 ready-only: heap state blob with payload `T` at offset 0.
+    /// Later A3 splits replace this with a multi-field state machine (still pin-free indices).
+    fn translate_coroutine_ready(
+        &mut self,
+        value: &AmirOperand,
+        payload_ty: arandu_semantics::types::TypeId,
+    ) -> Value {
+        let payload_ar = self.type_info.resolve_type_id(payload_ty);
+        let pointer_width = self.ptr_type.bytes() as u64;
+        let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
+        let layout =
+            engine.layout_of_type(&payload_ar, &self.type_info.type_interner, self.type_info);
+        let size = layout.size.max(1) as i64;
+
+        let Some(malloc_id) = self.malloc_func_id() else {
+            return self.poison_i32();
+        };
+        let malloc_ref = self
+            .module
+            .declare_func_in_func(malloc_id, self.builder.func);
+        let size_val = self.builder.ins().iconst(self.ptr_type, size);
+        let call = self.builder.ins().call(malloc_ref, &[size_val]);
+        let ptr_val = self.builder.inst_results(call)[0];
+
+        let clif_ty = match crate::types::clif_type(&payload_ar, self.ptr_type) {
+            crate::types::ClifType::Concrete(t) => t,
+            crate::types::ClifType::Void => {
+                // Unit / void payload — empty ready state, no store.
+                return ptr_val;
+            }
+        };
+        let payload_val = self.translate_operand(value, Some(clif_ty));
+        self.builder.ins().store(
+            cranelift_codegen::ir::MemFlagsData::new(),
+            payload_val,
+            ptr_val,
+            0,
+        );
+        ptr_val
+    }
+
     fn cast_int_width(&mut self, val: Value, target: Type) -> Value {
         let src = self.builder.func.dfg.value_type(val);
         if src == target {
@@ -1210,9 +1256,9 @@ impl FunctionTranslator<'_, '_> {
             }
             UnaryOp::BitNot => self.builder.ins().bnot(val),
             UnaryOp::Await => {
-                self.record_error(
-                    arandu_semantics::DiagCode::U001FeatureNotSupported,
-                    "Await unary operator is not implemented in Cranelift JIT yet (requires Phase 3)",
+                // Handled in translate_rvalue (needs expected_ty for load width).
+                self.record_ice(
+                    "Unary Await must be lowered via rvalue path with expected_ty",
                     self.func_span(),
                 );
                 self.poison_i32()

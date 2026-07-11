@@ -26,6 +26,7 @@ pub fn for_each_rvalue_operand(rvalue: &AmirRvalue, mut f: impl FnMut(&AmirOpera
         | AmirRvalue::EnumPayload { value: op, .. }
         | AmirRvalue::FieldAccess { base: op, .. }
         | AmirRvalue::ToStr { value: op, .. }
+        | AmirRvalue::CoroutineReady { value: op, .. }
         | AmirRvalue::GenInsert { value: op }
         | AmirRvalue::GenGet { gen_ref: op }
         | AmirRvalue::GenRemove { gen_ref: op } => f(op),

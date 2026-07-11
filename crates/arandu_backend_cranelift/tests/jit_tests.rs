@@ -454,6 +454,46 @@ fn format_f64_v01_specials_and_integers() {
     assert!(format_f64_v01(1.5).starts_with("1.5"));
 }
 
+/// A3.0: async block + await (ready coroutine).
+#[test]
+fn jit_a3_async_block_await() {
+    let src = r#"
+    func main(): int {
+        let x = async { 42 }
+        return await x
+    }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    let backend = backend_for_test();
+    let module = backend.compile(&amir, &symbols, &type_info).unwrap();
+    let result: i32 = unsafe {
+        let f: unsafe fn() -> i32 = module.get_fn("main").unwrap();
+        f()
+    };
+    assert_eq!(result, 42);
+}
+
+/// A3.0: async func return sugar + await.
+#[test]
+fn jit_a3_async_func_await() {
+    let src = r#"
+    async func answer(): int {
+        return 7
+    }
+    func main(): int {
+        return await answer()
+    }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    let backend = backend_for_test();
+    let module = backend.compile(&amir, &symbols, &type_info).unwrap();
+    let result: i32 = unsafe {
+        let f: unsafe fn() -> i32 = module.get_fn("main").unwrap();
+        f()
+    };
+    assert_eq!(result, 7);
+}
+
 /// BC.4a: `&*p` reborrow through `AmirProjection::Deref` (use_var of pointer local).
 #[test]
 fn jit_bc4a_reborrow_deref() {

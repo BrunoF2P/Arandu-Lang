@@ -182,6 +182,8 @@ pub(crate) struct LowerCtx<'a> {
     /// Shared/mut/own modes for every callable (incl. mono specializations).
     arg_modes: &'a CalleeArgModes,
     func_return_type: crate::types::TypeId,
+    /// A3: function was declared `async` — returns wrap bare `T` as `Coroutine[T]`.
+    func_is_async: bool,
     locals: Vec<AmirLocal>,
     temps: Vec<AmirTemp>,
     blocks: Vec<AmirBasicBlock>,

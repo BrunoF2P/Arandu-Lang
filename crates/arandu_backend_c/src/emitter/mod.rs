@@ -562,7 +562,8 @@ static int64_t ar_gen_remove_i64(int64_t r) {{
                         | AmirRvalue::EnumPayload { value: op, .. }
                         | AmirRvalue::Len(op)
                         | AmirRvalue::Alloc(op)
-                        | AmirRvalue::ToStr { value: op, .. } => {
+                        | AmirRvalue::ToStr { value: op, .. }
+                        | AmirRvalue::CoroutineReady { value: op, .. } => {
                             if let AmirOperand::Copy(t) | AmirOperand::Move(t) = op {
                                 used_temps.insert(t.as_usize());
                             }

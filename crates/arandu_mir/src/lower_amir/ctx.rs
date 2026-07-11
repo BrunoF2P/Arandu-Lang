@@ -896,6 +896,9 @@ impl LowerCtx<'_> {
             AmirRvalue::Alloc(value) => {
                 *value = Self::resolve_operand(redirected_temps, *value);
             }
+            AmirRvalue::CoroutineReady { value, .. } => {
+                *value = Self::resolve_operand(redirected_temps, *value);
+            }
             AmirRvalue::Load(place) => {
                 Self::resolve_place(redirected_temps, place);
             }

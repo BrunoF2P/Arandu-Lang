@@ -1099,11 +1099,26 @@ impl LowerCtx<'_> {
                 "lambda/closure",
                 "v0.3 LAMBDA: closure lowering",
             )),
-            HirExprKind::AsyncBlock { .. } => Err(amir_unsupported(
-                expr.span,
-                "async block",
-                "v0.3 ASYNC: effect flags and async lowering",
-            )),
+            // A3.0: ready-only coroutine — evaluate block payload, wrap as Coroutine[T].
+            // Suspension splitting (multi-state machines) is later A3; no await inside
+            // the block still produces a valid stack/heap-ready coroutine value.
+            HirExprKind::AsyncBlock { block } => {
+                let dest = target.unwrap_or_else(|| self.new_temp_id(expr.ty));
+                let payload_ty = match self.resolve_ty(expr.ty) {
+                    ArType::Coroutine(inner) => inner,
+                    _ => expr.ty,
+                };
+                let payload_tmp = self.new_temp_id(payload_ty);
+                self.lower_block_as_expr(*block, Some(payload_tmp), symbols)?;
+                self.emit_assign_temp(
+                    dest,
+                    AmirRvalue::CoroutineReady {
+                        value: AmirOperand::Copy(payload_tmp),
+                        payload_ty,
+                    },
+                );
+                Ok(AmirOperand::Copy(dest))
+            }
             HirExprKind::UnsafeBlock { .. } => Err(amir_unsupported(
                 expr.span,
                 "unsafe block expression",

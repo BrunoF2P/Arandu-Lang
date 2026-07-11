@@ -22,6 +22,7 @@ pub(crate) fn lower_func(
         hir,
         arg_modes,
         func_return_type: f.return_type,
+        func_is_async: f.is_async,
         locals: Vec::new(),
         temps: Vec::new(),
         blocks: Vec::new(),

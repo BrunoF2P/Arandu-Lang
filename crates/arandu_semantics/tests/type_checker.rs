@@ -1101,6 +1101,28 @@ fn test_async_block_and_await_typecheck() {
     );
 }
 
+/// A3: `async func f(): T` is type-sugar for `func f(): Coroutine[T]`.
+#[test]
+fn test_async_func_return_is_coroutine() {
+    let source = "
+        async func answer(): int {
+            return 42
+        }
+        func main(): int {
+            let c: Coroutine<int> = answer()
+            return await c
+        }
+    ";
+    let program = parse(source).expect("Failed to parse");
+    let resolution = resolve_for_test(0, &program);
+    let result = type_check(resolution, &program);
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected no type errors, but got {:?}",
+        result.diagnostics
+    );
+}
+
 #[test]
 fn test_await_invalid_type() {
     let source = "

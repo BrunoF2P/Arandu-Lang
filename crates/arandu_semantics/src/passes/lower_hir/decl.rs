@@ -89,6 +89,7 @@ pub(crate) fn lower_decl(
                     type_check, pool, hir_pool, &d.body,
                 )?),
                 span: d.span,
+                is_async: d.is_async,
                 no_fallback,
             })))
         }

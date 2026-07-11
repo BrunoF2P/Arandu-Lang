@@ -70,7 +70,7 @@ Fase 2 — A Construção da Infraestrutura & Execução (v0.2) · [EM ANDAMENTO
    │              · materializar base (`is_memory`) em place projetado para Stores sobreviverem ao prune
    │              · stack `&`/`&mut` local: F2.0–F2.3 (stack home + OSSA); heap/`&*p`/`&p.x`: path BC.4a
    │              · backend C: `format_place` com Deref lvalue
-   ├─ [ ] BC.4b  Await no Cranelift JIT (depende inteiramente de A3 — independente de F2)
+   ├─ [x] BC.4b  Await no Cranelift JIT (A3.0 ready-only; full poll/suspend = A3.1+)
    └─ [x] FUZZ   Fuzzing Lexer/Parser SIMD (arandu_fuzz e cron jobs semanais de robustez)
 [x] C_FB   Backend C de portabilidade e bootstrapping
 [x] DX     Diagnostics & Tooling Infrastructure (DX1-DX3, DX4 CFG visualization; DX2 recovery anchors completed)
@@ -99,7 +99,15 @@ Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
    │  `Arc::make_mut` no lower HIR quando o interner precisa mutar.
    │  `check_bodies_only` usa `Arc::unwrap_or_clone` ao reentrar no checker.
 [ ] A2     Effect System (pure, readonly, noalloc, nothrow, nosuspend)
-[ ] A3     Modelo Async Semântico Colorless (coroutine splitting, zero heap stack-first, OSSA checks)
+[/] A3     Modelo Async Semântico Colorless (coroutine splitting, zero heap stack-first, OSSA checks)
+   ├─ [x] A3.0   Ready-only MVP: `async func → Coroutine[T]` sugar, `async {}` + `await`
+   │              · AMIR `CoroutineReady` + Unary Await (payload @ state+0)
+   │              · Cranelift/C: malloc state blob; await = load (sem runtime/scheduler)
+   │              · Sem suspension points reais ainda (splitting = A3.1)
+   ├─ [ ] A3.1   Coroutine splitting em `await` (CFG fronteira + estado = liveness F2.2)
+   ├─ [ ] A3.2   OSSA check borrow-across-suspend (extensão F2.1/F2.2/M2)
+   ├─ [ ] A3.3   Stack-first task state via F2.3 escape (heap só se escapar)
+   └─ [ ] A3.4   Pin-free self-ref via LocalId índices no estado
 [ ] A4     Memory Layout Optimization Engine (field reordering, niche tags, SOO)
 [ ] F2     OSSA borrow completo (borrow_shared, borrow_mut, end_borrow)
    ├─ [x] F2.0   Sintaxe de referências à pilha (& / &mut) no parser + type-checker

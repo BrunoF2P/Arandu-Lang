@@ -71,6 +71,13 @@ pub enum AmirRvalue {
     Borrow(AmirPlace),
     /// Create a mutable borrow (mutable reference) of a place.
     BorrowMut(AmirPlace),
+    /// A3.0: wrap a ready payload as `Coroutine[T]` (pointer to heap state / payload).
+    /// Full splitting + multi-state machines land in later A3; ready-only has state = payload.
+    CoroutineReady {
+        value: AmirOperand,
+        /// Payload type `T` inside `Coroutine[T]` (for layout / store width).
+        payload_ty: TypeId,
+    },
     /// F2.3.runtime: insert `value` into the process gen-arena; result is [`ArType::GenRef`].
     GenInsert {
         value: AmirOperand,

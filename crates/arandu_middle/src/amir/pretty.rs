@@ -319,6 +319,13 @@ impl AmirRvalue {
                 out.push_str("&mut ");
                 place.pretty_print_to(out, symbols, pool);
             }
+            AmirRvalue::CoroutineReady { value, payload_ty } => {
+                out.push_str(&format!(
+                    "coroutine_ready(ty#{}, {})",
+                    payload_ty.as_usize(),
+                    value.to_pretty_string(symbols, pool)
+                ));
+            }
             AmirRvalue::GenInsert { value } => {
                 out.push_str(&format!(
                     "gen_insert({})",

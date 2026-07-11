@@ -210,15 +210,25 @@ impl<'a> CEmitter<'a> {
                 let _ = write!(&mut self.output, "}}");
             }
             AmirRvalue::Unary { op, operand } => {
-                let op_str = match op {
-                    UnaryOp::Neg => "-",
-                    UnaryOp::Not => "!",
-                    UnaryOp::BitNot => "~",
-                    UnaryOp::Await => "",
-                    _ => "",
-                };
                 let op_val = self.format_operand(operand, func);
-                let _ = write!(&mut self.output, "{}{}", op_str, op_val);
+                match op {
+                    UnaryOp::Neg => {
+                        let _ = write!(&mut self.output, "-{}", op_val);
+                    }
+                    UnaryOp::Not => {
+                        let _ = write!(&mut self.output, "!{}", op_val);
+                    }
+                    UnaryOp::BitNot => {
+                        let _ = write!(&mut self.output, "~{}", op_val);
+                    }
+                    // A3.0: ready coroutine — payload at offset 0 of state blob.
+                    UnaryOp::Await => {
+                        let _ = write!(&mut self.output, "(*({expected_c_type}*)({op_val}))");
+                    }
+                    _ => {
+                        let _ = write!(&mut self.output, "{}", op_val);
+                    }
+                }
             }
             AmirRvalue::Load(place) => {
                 let place_str = self.format_place(place, func);
@@ -335,6 +345,22 @@ impl<'a> CEmitter<'a> {
                 // Byte-count allocation via libc malloc (RC-RVALUE-GAPS).
                 let size_str = self.format_operand(op, func);
                 let _ = write!(&mut self.output, "malloc((size_t)({}))", size_str);
+            }
+            // A3.0 ready-only: allocate state, store payload, yield pointer as Coroutine[T].
+            AmirRvalue::CoroutineReady { value, payload_ty } => {
+                let payload_ar = self.interner.resolve(*payload_ty);
+                let payload_c = self.format_type(&payload_ar);
+                let v = self.format_operand(value, func);
+                let size = self
+                    .layout
+                    .layout_of_type(&payload_ar, self.interner, self.provider)
+                    .size
+                    .max(1);
+                // Compound literal + compound expression: allocate, store, yield ptr.
+                let _ = write!(
+                    &mut self.output,
+                    "({{ {payload_c}* __ar_co = ({payload_c}*)malloc({size}); *__ar_co = ({payload_c})({v}); (void*)__ar_co; }})"
+                );
             }
             AmirRvalue::GenInsert { value } => {
                 let v = self.format_operand(value, func);

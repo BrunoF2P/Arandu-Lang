@@ -76,6 +76,9 @@ pub struct HirFunc {
     pub return_type: TypeId,
     pub body: Option<HirBlockId>,
     pub span: Span,
+    /// A3: `async func` — return type is `Coroutine[T]`; body returns bare `T` and
+    /// AMIR wraps with `CoroutineReady` (type sugar, not a separate colour world).
+    pub is_async: bool,
     /// G2 / F2.3.3: `@no_fallback` — promote generational-escape O004 notes to errors.
     /// Not a silent strict mode: only affects scopes that opt in.
     pub no_fallback: bool,

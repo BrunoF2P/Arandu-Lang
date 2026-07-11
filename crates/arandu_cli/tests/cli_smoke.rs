@@ -1125,6 +1125,78 @@ func main(): int {
     );
 }
 
+/// A3.0: ready-only `async { … }` + `await` via CoroutineReady state blob.
+#[test]
+fn run_a3_async_block_await_exits_42() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_a3_async_block.aru");
+    fs::write(
+        &file,
+        r#"module tests.cli.a3_async_block
+
+func main(): int {
+    let x = async { 42 }
+    return await x
+}
+"#,
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+    let amir = run_cli(&["amir", &path]);
+    assert!(
+        amir.status.success(),
+        "amir stderr:\n{}",
+        String::from_utf8_lossy(&amir.stderr)
+    );
+    let amir_out = String::from_utf8_lossy(&amir.stdout);
+    assert!(
+        amir_out.contains("coroutine_ready") || amir_out.contains("await"),
+        "expected coroutine_ready/await in AMIR, got:\n{amir_out}"
+    );
+    let output = run_cli(&["run", &path]);
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// A3.0: `async func f(): T` ≡ `func f(): Coroutine[T]` + await drive.
+#[test]
+fn run_a3_async_func_await_exits_42() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_a3_async_func.aru");
+    fs::write(
+        &file,
+        r#"module tests.cli.a3_async_func
+
+async func answer(): int {
+    return 42
+}
+
+func main(): int {
+    return await answer()
+}
+"#,
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+    let check = run_cli(&["check", &path]);
+    assert!(
+        check.status.success(),
+        "check stderr:\n{}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let output = run_cli(&["run", &path]);
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 /// BC.4a: reborrow through `Deref` place (`&*p`) — materialised pointer local, no stack_addr.
 #[test]
 fn run_bc4a_reborrow_deref_exits_42() {

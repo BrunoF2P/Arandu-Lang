@@ -158,13 +158,60 @@ impl LowerCtx<'_> {
             HirStmtKind::Return { values } => {
                 let values_slice = self.hir.pool.expr_list(*values);
                 if values_slice.len() == 1 {
-                    self.lower_expr(values_slice[0], Some(TempId(0)), symbols)?;
+                    // A3: async body returns bare `T`; wrap as `CoroutineReady` into `_0`.
+                    if self.func_is_async {
+                        if let ArType::Coroutine(payload_ty) =
+                            self.resolve_ty(self.func_return_type)
+                        {
+                            let inner = self.lower_expr(values_slice[0], None, symbols)?;
+                            self.emit_assign_temp(
+                                TempId(0),
+                                AmirRvalue::CoroutineReady {
+                                    value: inner,
+                                    payload_ty,
+                                },
+                            );
+                        } else {
+                            self.lower_expr(values_slice[0], Some(TempId(0)), symbols)?;
+                        }
+                    } else {
+                        self.lower_expr(values_slice[0], Some(TempId(0)), symbols)?;
+                    }
                 } else if values_slice.len() > 1 {
                     let mut ops = Vec::new();
                     for &v in values_slice {
                         ops.push(self.lower_expr(v, None, symbols)?);
                     }
-                    self.emit_assign_temp(TempId(0), AmirRvalue::Tuple { items: ops });
+                    if self.func_is_async {
+                        if let ArType::Coroutine(payload_ty) =
+                            self.resolve_ty(self.func_return_type)
+                        {
+                            let tup = self.new_temp_id(payload_ty);
+                            self.emit_assign_temp(tup, AmirRvalue::Tuple { items: ops });
+                            self.emit_assign_temp(
+                                TempId(0),
+                                AmirRvalue::CoroutineReady {
+                                    value: AmirOperand::Copy(tup),
+                                    payload_ty,
+                                },
+                            );
+                        } else {
+                            self.emit_assign_temp(TempId(0), AmirRvalue::Tuple { items: ops });
+                        }
+                    } else {
+                        self.emit_assign_temp(TempId(0), AmirRvalue::Tuple { items: ops });
+                    }
+                } else if self.func_is_async {
+                    // `return` with no value in async void → ready unit coroutine.
+                    if let ArType::Coroutine(payload_ty) = self.resolve_ty(self.func_return_type) {
+                        self.emit_assign_temp(
+                            TempId(0),
+                            AmirRvalue::CoroutineReady {
+                                value: AmirOperand::Constant(AmirConstant::Nil),
+                                payload_ty,
+                            },
+                        );
+                    }
                 }
 
                 let is_result =

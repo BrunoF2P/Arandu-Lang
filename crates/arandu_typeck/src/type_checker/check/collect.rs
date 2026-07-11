@@ -179,11 +179,17 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &P
         let decl = checker.pool.decl(*decl_id);
         match decl {
             TopLevelDecl::Func(func_decl) => {
-                let ret_ty = if let Some(result) = &func_decl.result {
+                let mut ret_ty = if let Some(result) = &func_decl.result {
                     checker.lower_result_type(result, checker.symbols.global_scope())
                 } else {
                     ArType::Void
                 };
+                // A3: `async func f(): T` ≡ `func f(): Coroutine[T]` (type sugar).
+                // Body still typechecks against bare `T` (see check_func_body).
+                if func_decl.is_async && !matches!(ret_ty, ArType::Coroutine(_)) {
+                    let inner = checker.intern(ret_ty);
+                    ret_ty = ArType::Coroutine(inner);
+                }
 
                 let mut param_types = Vec::new();
                 for param in &func_decl.params {
