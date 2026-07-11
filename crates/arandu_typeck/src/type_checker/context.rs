@@ -1,4 +1,5 @@
 use arandu_lexer::Span;
+use rustc_hash::FxHashMap;
 
 use crate::SymbolId;
 
@@ -11,10 +12,18 @@ use super::types::TypeId;
 /// Unlike the `SymbolTable` (which tracks names in scopes), `TyCtx` maps
 /// each `SymbolId` to its `TypeId`. It also tracks the expected return
 /// type of the current function and whether we're inside a loop.
+///
+/// ## Multi-file invariant
+///
+/// Bindings **must** key on the full [`SymbolId`] (`file_id` + `local_id`).
+/// Indexing only by `local_id` collides imported functions with locals that
+/// happen to share a dense index (e.g. `let p = f()` then `rt.spawn_i64(...)`
+/// saw the local's type as the callee). That is a multi-module root bug, not
+/// a surface symptom.
 #[derive(Debug)]
 pub struct TyCtx {
-    /// Map from `SymbolId` to its inferred/declared `TypeId`.
-    bindings: Vec<Option<TypeId>>,
+    /// Map from full `SymbolId` → inferred/declared `TypeId`.
+    bindings: FxHashMap<SymbolId, TypeId>,
 
     /// Stack of expected return types for nested functions/lambdas.
     return_stack: Vec<TypeId>,
@@ -39,7 +48,7 @@ impl TyCtx {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            bindings: Vec::new(),
+            bindings: FxHashMap::default(),
             return_stack: Vec::new(),
             return_decl_span_stack: Vec::new(),
             loop_depth: 0,
@@ -51,11 +60,7 @@ impl TyCtx {
 
     /// Record that `symbol` has type `ty`.
     pub fn bind(&mut self, symbol: SymbolId, ty: TypeId) {
-        let idx = symbol.local_id.0 as usize;
-        if idx >= self.bindings.len() {
-            self.bindings.resize(idx + 1, None);
-        }
-        self.bindings[idx] = Some(ty);
+        self.bindings.insert(symbol, ty);
     }
 
     /// Look up the type for a symbol.
@@ -63,11 +68,7 @@ impl TyCtx {
     /// Reports to the global perf counters when `-Zprofile-queries` is active.
     #[must_use]
     pub fn lookup(&self, symbol: SymbolId) -> Option<TypeId> {
-        let result = self
-            .bindings
-            .get(symbol.local_id.0 as usize)
-            .copied()
-            .flatten();
+        let result = self.bindings.get(&symbol).copied();
         if result.is_some() {
             arandu_base::perf::track_query_hit();
         } else {

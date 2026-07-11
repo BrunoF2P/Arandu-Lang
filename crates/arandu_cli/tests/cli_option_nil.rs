@@ -98,3 +98,46 @@ func main(): int {
         String::from_utf8_lossy(&check.stderr)
     );
 }
+
+/// Multi-file HIR linking: imported `std.path` bodies are codegen'd (not just signatures).
+#[test]
+fn run_std_path_is_empty_exits_0() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_sls_path_run.aru");
+    fs::write(
+        &file,
+        r#"
+module tests.cli.sls_path_run
+
+import std.path as path
+
+func main(): int {
+    let empty = path.is_empty("")
+    let nonempty = path.is_empty("/tmp")
+    if !empty {
+        return 1
+    }
+    if nonempty {
+        return 2
+    }
+    let _ = path.is_absolute("/tmp")
+    return 0
+}
+"#,
+    )
+    .expect("write");
+
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .expect("workspace root");
+    let path = file.to_string_lossy();
+    let run = run_cli_in(&root, &["run", &path]);
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "std.path run failed: stderr={}\nstdout={}",
+        String::from_utf8_lossy(&run.stderr),
+        String::from_utf8_lossy(&run.stdout)
+    );
+}

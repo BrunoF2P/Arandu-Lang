@@ -213,7 +213,15 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &P
                 for param in &func_decl.params {
                     let param_ty =
                         checker.lower_type_expr(param.ty, checker.symbols.global_scope());
-                    param_types.push(checker.intern(param_ty));
+                    // All params: `shared`/`mut` → `&T` / `&mut T` (not only `self`).
+                    // Free functions like `spawn_i64(shared ex: SyncExecutor, …)` must
+                    // reborrow, not move, so the executor can be reused.
+                    let bare = checker.intern(param_ty);
+                    param_types.push(apply_receiver_ownership(
+                        checker,
+                        bare,
+                        param.ownership,
+                    ));
                 }
 
                 let name_span = match func_decl.name {
@@ -228,7 +236,7 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &P
                     );
                     // Generic struct receivers: `self: List` → `List<T>` using the
                     // *struct*'s type parameters — never the method's own params.
-                    // Then wrap by ownership: `shared`/`mut` → `&T` / `&mut T`.
+                    // Ownership wrap already applied above for every param.
                     let mut struct_params_for_mono: Option<std::sync::Arc<Vec<crate::SymbolId>>> =
                         None;
                     if let arandu_parser::FuncName::Method { .. } = &func_decl.name
@@ -236,7 +244,12 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &P
                         && first_param.is_receiver
                         && let Some(first_ty_id) = param_types.first_mut()
                     {
-                        let lowered_first_ty = checker.resolve(*first_ty_id);
+                        // Peel ownership for receiver generic expand, then re-wrap.
+                        let bare_id = match checker.resolve(*first_ty_id) {
+                            ArType::Ref(inner) | ArType::RefMut(inner) => inner,
+                            _ => *first_ty_id,
+                        };
+                        let lowered_first_ty = checker.resolve(bare_id);
                         if let ArType::Named(struct_id, ref args) = lowered_first_ty
                             && args.is_empty()
                             && let Some(struct_params) =
@@ -249,14 +262,14 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &P
                                 new_args.push(checker.intern(arg_ty));
                             }
                             let new_first_ty = ArType::Named(struct_id, new_args);
-                            *first_ty_id = checker.intern(new_first_ty);
+                            let bare_inst = checker.intern(new_first_ty);
+                            *first_ty_id = apply_receiver_ownership(
+                                checker,
+                                bare_inst,
+                                first_param.ownership,
+                            );
                             struct_params_for_mono = Some(struct_params);
                         }
-                        *first_ty_id = apply_receiver_ownership(
-                            checker,
-                            *first_ty_id,
-                            first_param.ownership,
-                        );
                     }
                     // Mono key params = struct type params (if method) ++ method type params.
                     // Enables specializing `Box.get` when only the receiver carries `T`.

@@ -135,6 +135,31 @@ impl AranduJit {
             "ar_co_make_ready_i64",
             crate::poll_runtime::ar_co_make_ready_i64 as *const u8,
         );
+        // SL_R.0 cooperative runtime + SL_S path helpers
+        builder.symbol(
+            "ar_rt_spawn_i64",
+            crate::rt_runtime::ar_rt_spawn_i64 as *const u8,
+        );
+        builder.symbol(
+            "ar_rt_join_i64",
+            crate::rt_runtime::ar_rt_join_i64 as *const u8,
+        );
+        builder.symbol(
+            "ar_rt_block_on_i64",
+            crate::rt_runtime::ar_rt_block_on_i64 as *const u8,
+        );
+        builder.symbol(
+            "ar_rt_cancel_i64",
+            crate::rt_runtime::ar_rt_cancel_i64 as *const u8,
+        );
+        builder.symbol(
+            "ar_path_is_absolute",
+            crate::rt_runtime::ar_path_is_absolute as *const u8,
+        );
+        builder.symbol(
+            "ar_path_is_empty",
+            crate::rt_runtime::ar_path_is_empty as *const u8,
+        );
         let module = JITModule::new(builder);
 
         Ok(Self { module })
@@ -234,6 +259,102 @@ impl AranduJit {
             .declare_function("ar_co_poll_i64", Linkage::Import, &poll_sig)
             .map_err(|err| codegen_ice(format!("failed to declare ar_co_poll_i64: {err:?}")))?;
         func_ids.insert("ar_co_poll_i64".to_string(), poll_id);
+
+        // A3.6 / SL_R tests: make_ready(payload:i64) -> *u8
+        let mut make_ready_sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+        make_ready_sig
+            .params
+            .push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
+        make_ready_sig
+            .returns
+            .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+        let make_ready_id = self
+            .module
+            .declare_function("ar_co_make_ready_i64", Linkage::Import, &make_ready_sig)
+            .map_err(|err| {
+                codegen_ice(format!("failed to declare ar_co_make_ready_i64: {err:?}"))
+            })?;
+        func_ids.insert("ar_co_make_ready_i64".to_string(), make_ready_id);
+
+        // SL_R.0 + SL_S path host imports (also registered in JITBuilder::symbol).
+        let mut rt_block_sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+        rt_block_sig
+            .params
+            .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+        rt_block_sig
+            .returns
+            .push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+        for name in ["ar_rt_block_on_i64", "ar_co_block_on_i64"] {
+            if !func_ids.contains_key(name) {
+                let id = self
+                    .module
+                    .declare_function(name, Linkage::Import, &rt_block_sig)
+                    .map_err(|err| codegen_ice(format!("failed to declare {name}: {err:?}")))?;
+                func_ids.insert(name.to_string(), id);
+            }
+        }
+        let mut rt_spawn_sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+        rt_spawn_sig
+            .params
+            .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+        rt_spawn_sig
+            .returns
+            .push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+        {
+            let name = "ar_rt_spawn_i64";
+            let id = self
+                .module
+                .declare_function(name, Linkage::Import, &rt_spawn_sig)
+                .map_err(|err| codegen_ice(format!("failed to declare {name}: {err:?}")))?;
+            func_ids.insert(name.to_string(), id);
+        }
+        let mut rt_join_sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+        rt_join_sig.params.push(cranelift_codegen::ir::AbiParam::new(
+            cranelift_codegen::ir::types::I64,
+        ));
+        rt_join_sig
+            .returns
+            .push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+        {
+            let name = "ar_rt_join_i64";
+            let id = self
+                .module
+                .declare_function(name, Linkage::Import, &rt_join_sig)
+                .map_err(|err| codegen_ice(format!("failed to declare {name}: {err:?}")))?;
+            func_ids.insert(name.to_string(), id);
+        }
+        let mut rt_cancel_sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+        rt_cancel_sig
+            .params
+            .push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
+        let cancel_id = self
+            .module
+            .declare_function("ar_rt_cancel_i64", Linkage::Import, &rt_cancel_sig)
+            .map_err(|err| codegen_ice(format!("failed to declare ar_rt_cancel_i64: {err:?}")))?;
+        func_ids.insert("ar_rt_cancel_i64".to_string(), cancel_id);
+
+        let mut path_sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+        // fat str: ptr + i64 len
+        path_sig
+            .params
+            .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+        path_sig.params.push(cranelift_codegen::ir::AbiParam::new(
+            cranelift_codegen::ir::types::I64,
+        ));
+        path_sig
+            .returns
+            .push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I32));
+        for name in ["ar_path_is_absolute", "ar_path_is_empty"] {
+            let id = self
+                .module
+                .declare_function(name, Linkage::Import, &path_sig)
+                .map_err(|err| codegen_ice(format!("failed to declare {name}: {err:?}")))?;
+            func_ids.insert(name.to_string(), id);
+        }
 
         // Declare fmod as import
         let mut fmod_sig = cranelift_codegen::ir::Signature::new(default_call_conv);

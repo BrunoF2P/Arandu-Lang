@@ -12,7 +12,7 @@ pub mod info;
 pub mod synth;
 pub mod types;
 
-pub use info::{EnumPayloadShape, TypeInfo};
+pub use info::{EnumPayloadShape, TypeInfo, translate_type};
 
 use constraints::{Constraint, ConstraintOrigin};
 use context::TyCtx;

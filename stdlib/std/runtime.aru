@@ -1,29 +1,57 @@
 module std.runtime
 
-/// SL_R scaffold — async **runtime library** (not language semantics).
+/// SL_R.0 — cooperative async **library** runtime (explicit executor, no global).
 ///
-/// Layering (locked):
-/// - `std.core.future` / `Coroutine[T]` / `await` = **compiler** (A3). Zero OS.
-/// - `std.runtime` = optional executor + reactor. Import only if you need
-///   multi-task concurrency or async I/O.
+/// Design: docs/arandu-async-runtime-design-v0.1.md
+/// - `await` / `Coroutine[T]` = compiler (A3)
+/// - this module = optional multi-task drive (host i64 MVP)
 ///
-/// Design pillars (see docs/arandu-async-runtime-design-v0.1.md):
-/// 1. Effect-handler style: no global singleton scheduler; spawn takes an
-///    explicit Executor (like Vec's Allocator parameter).
-/// 2. One Reactor interface; epoll/kqueue/iocp/io_uring backends; prefer
-///    io_uring at **runtime** with epoll fallback (not a compile-time only pick).
-/// 3. Task isolation: abort is process-killing (no unwind). Production isolation
-///    is supervisor/worker processes (Erlang-style), not catch_unwind.
-///
-/// Until SL_R lands, `await` on a single coroutine is block_on (A3.6) with no
-/// import of this module.
+/// Host symbols (`ar_rt_*`) are linked by the Cranelift JIT. Bodies of wrappers
+/// are linked into the entry unit via multi-file HIR.
 
-// Placeholder types so `import std.runtime as rt` typechecks.
-public struct ExecutorHint {
-    /// Reserved for executor configuration bits.
+extern "C" {
+    func ar_rt_block_on_i64(state: ptr[u8]): int
+    func ar_rt_spawn_i64(state: ptr[u8]): int
+    func ar_rt_join_i64(handle: int): int
+    func ar_rt_cancel_i64(handle: int): void
+}
+
+/// Explicit executor value — never a process-wide singleton.
+public struct SyncExecutor {
     flags: int
 }
 
-public func noop_executor_hint(): ExecutorHint {
-    return ExecutorHint { flags: 0 }
+/// Construct a SyncExecutor (free function for reliable cross-module export).
+public func new_sync_executor(): SyncExecutor {
+    return SyncExecutor { flags: 0 }
+}
+
+/// Drive one coroutine state to Ready (i64 payload MVP).
+///
+/// `shared ex` keeps the executor reusable (explicit value, not moved away).
+public func block_on_i64(shared ex: SyncExecutor, state: ptr[u8]): int {
+    unsafe {
+        return ar_rt_block_on_i64(state)
+    }
+}
+
+/// Park a coroutine; returns an opaque handle for `join_i64`.
+public func spawn_i64(shared ex: SyncExecutor, state: ptr[u8]): int {
+    unsafe {
+        return ar_rt_spawn_i64(state)
+    }
+}
+
+/// Join a previously spawned handle (block until Ready).
+public func join_i64(shared ex: SyncExecutor, handle: int): int {
+    unsafe {
+        return ar_rt_join_i64(handle)
+    }
+}
+
+/// Drop a handle without reading its result.
+public func cancel_i64(shared ex: SyncExecutor, handle: int): void {
+    unsafe {
+        ar_rt_cancel_i64(handle)
+    }
 }

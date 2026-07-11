@@ -10,9 +10,12 @@ use arandu_parser::Program;
 
 mod decl;
 mod expr;
+mod link;
 mod pattern;
 mod place;
 mod stmt;
+
+pub use link::link_hir_module;
 
 /// Lowers a type-checked AST into a [`HirProgram`].
 ///

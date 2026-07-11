@@ -131,11 +131,9 @@ pub fn check_func_body(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
         }
 
         let mut param_ty_id = checker.intern(param_ty);
-        // Method receivers: `shared`/`mut self` bind as `&T` / `&mut T` so body
-        // field access and call-site auto-ref share the same formal type.
-        if param.is_receiver {
-            param_ty_id = apply_receiver_ownership(checker, param_ty_id, param.ownership);
-        }
+        // `shared`/`mut` formals (receivers and free-function params) bind as
+        // `&T` / `&mut T` so body field access and call-site auto-ref match.
+        param_ty_id = apply_receiver_ownership(checker, param_ty_id, param.ownership);
         let param_key = crate::NodeKey::from(param.span);
         if let Some(&symbol_id) = checker.resolved.definitions.get(&param_key) {
             checker.ctx.bind(symbol_id, param_ty_id);

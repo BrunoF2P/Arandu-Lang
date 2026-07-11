@@ -158,8 +158,8 @@ Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
    ├─ [x] T3.4   Stdlib migrada (core/alloc usam path tokens; residual aspas só onde External)
    ├─ [x] T3.5   Contrato parser: import_module + import_module_alias_path
    └─ [x] T3.6   LSP complete em path tokens `import std.▮` + members `alias.▮` (W4)
-[→] SL_S   Stdlib de Sistema: `stdlib/std/*` + `runtime` scaffold; pure path helpers; OS/host link residual (multi-file bodies)
-[→] SL_R   Async Runtime: design lock docs/arandu-async-runtime-design-v0.1.md (Executor explícito, reactor, SL_R.1 supervisor); impl pending
+[→] SL_S   Stdlib de Sistema: multi-file HIR link + `std.path` runnable; host path/rt helpers; more OS API later
+[→] SL_R   Async Runtime: design lock + SL_R.0 host (`ar_rt_spawn/join/block_on`) + `std.runtime` SyncExecutor wrappers; reactor/OS later
 [ ] SL_T   Testing Harness: arandu_std::testing (test runner integrado e benchmark engine)
 
 Fase 4 — Expressividade de Linguagem e Tipagem (v0.35) · [NÃO INICIADA]

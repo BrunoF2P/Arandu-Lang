@@ -1,6 +1,6 @@
 # Arandu — Async Runtime Design (SL_R) v0.1
 
-**Status:** design lock for SL_R; **not implemented**. Consumes A3 compiler semantics.
+**Status:** design lock + **SL_R.0 implemented** (host cooperative spawn/join/block_on i64 MVP + `std.runtime` wrappers). Reactor/OS and SL_R.1 supervisor still open. Consumes A3 compiler semantics.
 
 | Layer | Owns | Does not own |
 |-------|------|----------------|
@@ -46,7 +46,7 @@ Consequences:
 
 **Anti-pattern (forbidden):** `static RUNTIME: Tokio = …` assumed by every `spawn()`.
 
-`stdlib/std/runtime.aru` today only scaffolds types so imports typecheck; no spawn yet.
+`stdlib/std/runtime.aru` exposes `SyncExecutor` / `spawn_i64` / `join_i64` / `block_on_i64` over host `ar_rt_*` (no process-global language runtime).
 
 ---
 
@@ -96,17 +96,23 @@ Name: **SL_R.1 — supervised worker isolation** (design item under SL_R, not A3
 
 ---
 
-## 6. Honesty — what is not SL_R yet
+## 6. Honesty — what is SL_R.0 vs what remains
 
-- No real `spawn`, no thread pool, no epoll loop in-tree.
-- Multi-file **bodies** of imported std modules are not yet linked into JIT (signatures typecheck; pure path helpers need same-crate or body merge).
-- `std.core.future` only defines `Poll` today; Waker/Context land with SL_R.
+**Done (SL_R.0 MVP):**
+- Host `ar_rt_spawn_i64` / `join_i64` / `block_on_i64` / `cancel_i64` (cooperative, i64 payload).
+- `std.runtime`: `SyncExecutor`, `new_sync_executor`, free wrappers (explicit executor, no singleton).
+- Multi-file HIR link in `lower_amir` so imported module **bodies** (e.g. `std.path`, `std.runtime`) compile into the entry unit; import typeck uses `file_typeck_view` so dependency residuals do not poison entry diagnostics.
+
+**Not yet:**
+- Typed `spawn<E, T>(ex, Coroutine[T])` surface (still i64 host MVP).
+- Thread pool, epoll/io_uring reactor, Waker/Context.
+- `std.core.future` beyond `Poll`.
 
 ---
 
-## 7. Recommended implementation slices (when coding SL_R)
+## 7. Remaining implementation slices
 
-1. **SL_R.0** — `Executor` + `SyncExecutor` + `block_on(ex, coro)` multi-poll API in std (still no OS).
+1. **SL_R.0 done** — host + SyncExecutor + multi-file bodies linked.
 2. **SL_R.2** — Linux epoll reactor + async sleep/demo.
 3. **SL_R.3** — io_uring detect + fallback.
 4. **SL_R.1** — supervisor process model (can parallelize with 2/3 as ops design).

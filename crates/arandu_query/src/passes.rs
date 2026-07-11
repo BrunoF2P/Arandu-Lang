@@ -459,6 +459,110 @@ pub struct LowerAmirArtifacts {
     pub type_check: TypeCheckResult,
 }
 
+/// Collect transitive imports of `root`, lower each to HIR, and link into `hir`.
+///
+/// ## Why `file_typeck_view` (not `type_check`)
+///
+/// Salsa accumulators bubble: calling `type_check` on an import from inside
+/// `lower_amir(entry)` would re-accumulate the import's body diagnostics into
+/// `lower_amir::accumulated(entry)`, so `check` of a clean entry would fail on
+/// unrelated stdlib residuals (e.g. `std.alloc`). Body typeck for the link path
+/// must not accumulate — [`file_typeck_view`] returns the same `TypeCheckResult`
+/// without the DiagnosticsAccumulator side effect.
+///
+/// Skips cycles, missing modules (prelude-only), parse failures, and modules
+/// that cannot lower (`lower_to_hir` error). Import body errors stay on that
+/// module's own `type_check` query when the user checks that file directly.
+fn link_imported_hir_modules(
+    db: &dyn ArandCompilerDb,
+    root: SourceFile,
+    type_check_result: &mut TypeCheckResult,
+    hir: &mut arandu_semantics::hir::HirProgram,
+) {
+    let mut visited = std::collections::HashSet::new();
+    visited.insert(root.file_id(db));
+
+    fn walk(
+        db: &dyn ArandCompilerDb,
+        file: SourceFile,
+        visited: &mut std::collections::HashSet<u32>,
+        type_check_result: &mut TypeCheckResult,
+        hir: &mut arandu_semantics::hir::HirProgram,
+    ) {
+        let program_res = parse(db, file);
+        let Ok(program) = &*program_res else {
+            return;
+        };
+
+        for import in &program.imports {
+            let Some(path) = arandu_resolve::canonicalize_import_path(import) else {
+                continue;
+            };
+            let Some(imported_file) = db.as_source_db().resolve_module_path(&path) else {
+                // Prelude-only or missing file — nothing to lower.
+                continue;
+            };
+            let imported_id = imported_file.file_id(db);
+            if !visited.insert(imported_id) {
+                continue;
+            }
+
+            // Depth-first: link dependencies of the import first (post-order-ish).
+            walk(db, imported_file, visited, type_check_result, hir);
+
+            let imported_parse = parse(db, imported_file);
+            let Ok(imported_program) = &*imported_parse else {
+                continue;
+            };
+
+            // Full body typeck without accumulating diags into the entry pipeline.
+            let imported_tc_arc = file_typeck_view(db, imported_file);
+            // Skip modules with hard type errors — signatures already merged via
+            // module_signatures; codegen for those bodies is not required for
+            // entry check when the entry only references public signatures.
+            if imported_tc_arc
+                .diagnostics
+                .iter()
+                .any(|d| matches!(d.severity, arandu_middle::Severity::Error))
+            {
+                tracing::debug!(
+                    target: "arandu_query",
+                    %path,
+                    "skip HIR link for import (body typeck has errors)"
+                );
+                continue;
+            }
+            let mut imported_tc = (*imported_tc_arc).clone();
+
+            match arandu_semantics::lower_to_hir(&mut imported_tc, imported_program) {
+                Ok(temp_hir) => {
+                    tracing::debug!(
+                        target: "arandu_query",
+                        %path,
+                        decls = temp_hir.decls.len(),
+                        "linking imported HIR module"
+                    );
+                    arandu_semantics::link_hir_module(
+                        type_check_result,
+                        hir,
+                        &imported_tc,
+                        &temp_hir,
+                    );
+                }
+                Err(_) => {
+                    tracing::debug!(
+                        target: "arandu_query",
+                        %path,
+                        "skip HIR link for import (lower_to_hir failed)"
+                    );
+                }
+            }
+        }
+    }
+
+    walk(db, root, &mut visited, type_check_result, hir);
+}
+
 #[salsa::tracked]
 #[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
     query = "lower_amir",
@@ -501,6 +605,13 @@ pub fn lower_amir(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<LowerAmi
             }
         }
     };
+
+    // Multi-file HIR: lower imported modules and append their function bodies so
+    // monomorphize + codegen see real definitions (not just merged signatures).
+    {
+        arandu_base::time_pass!("link-hir-imports");
+        link_imported_hir_modules(db, file, &mut type_check_result, &mut hir);
+    }
 
     {
         arandu_base::time_pass!("monomorphize");

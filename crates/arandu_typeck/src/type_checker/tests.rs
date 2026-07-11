@@ -96,7 +96,7 @@ fn ty_ctx_exit_loop_does_not_underflow() {
 }
 
 #[test]
-fn ty_ctx_bind_resizes_vec() {
+fn ty_ctx_bind_sparse_local_id() {
     let mut ctx = TyCtx::new();
     let sym = SymbolId::new(0, 5);
     let i = new_interner();
@@ -104,6 +104,28 @@ fn ty_ctx_bind_resizes_vec() {
     ctx.bind(sym, tid);
     assert_eq!(ctx.lookup(sym), Some(tid));
     assert_eq!(ctx.lookup(SymbolId::new(0, 4)), None);
+}
+
+/// Root multi-file fix: same `local_id` in different files must not collide.
+#[test]
+fn ty_ctx_isolates_by_file_id() {
+    let mut ctx = TyCtx::new();
+    let i = new_interner();
+    let local_ty = i.intern(ArType::Ptr(i.intern(ArType::Primitive(Primitive::Byte))));
+    let imported_fn = i.intern(ArType::Func(
+        vec![i.intern(ArType::Primitive(Primitive::Int))],
+        i.intern(ArType::Primitive(Primitive::Int)),
+    ));
+    // Local binding and imported func share dense local_id=3, different file.
+    let local = SymbolId::new(0, 3);
+    let imported = SymbolId::new(7, 3);
+    ctx.bind(local, local_ty);
+    assert_eq!(ctx.lookup(local), Some(local_ty));
+    // Import must NOT see the local's type (old bug: index by local_id only).
+    assert_eq!(ctx.lookup(imported), None);
+    ctx.bind(imported, imported_fn);
+    assert_eq!(ctx.lookup(imported), Some(imported_fn));
+    assert_eq!(ctx.lookup(local), Some(local_ty));
 }
 
 // ── TypeInfo ──

@@ -28,7 +28,7 @@ pub struct HirProgram {
     pub pool: crate::hir::HirPool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum HirDecl {
     Const(HirConst),
     TypeAlias(HirTypeAlias),
@@ -54,7 +54,7 @@ impl HirDecl {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HirConst {
     pub symbol: SymbolId,
     pub ty: TypeId,
@@ -62,14 +62,14 @@ pub struct HirConst {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HirTypeAlias {
     pub symbol: SymbolId,
     pub target: TypeId,
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HirFunc {
     pub symbol: SymbolId,
     pub params: IndexRange,
@@ -100,7 +100,7 @@ pub struct HirParam {
     pub receiver_kind: Option<ReceiverKind>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HirStruct {
     pub symbol: SymbolId,
     pub fields: IndexRange,
@@ -114,7 +114,7 @@ pub struct HirStructField {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HirEnum {
     pub symbol: SymbolId,
     pub variants: IndexRange,
@@ -128,13 +128,13 @@ pub struct HirEnumVariant {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HirInterface {
     pub symbol: SymbolId,
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HirExtern {
     pub abi: String,
     pub members: IndexRange,

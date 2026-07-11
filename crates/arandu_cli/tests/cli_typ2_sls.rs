@@ -41,8 +41,8 @@ fn import_std_runtime_scaffold_checks() {
 module tests.cli.std_runtime
 import std.runtime as rt
 func main(): int {
-    let _ = rt.noop_executor_hint()
-    return 0
+    let ex = rt.new_sync_executor()
+    return ex.flags
 }
 "#,
     )
@@ -52,6 +52,109 @@ func main(): int {
     assert!(
         out.status.success(),
         "std.runtime: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn run_path_absolute_and_empty() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_path_abs.aru");
+    fs::write(
+        &file,
+        r#"
+module tests.cli.path_abs
+import std.path as path
+func main(): int {
+    if !path.is_empty("") {
+        return 1
+    }
+    if !path.is_absolute("/tmp") {
+        return 2
+    }
+    if path.is_absolute("rel") {
+        return 3
+    }
+    return 0
+}
+"#,
+    )
+    .unwrap();
+    let root = workspace_root();
+    let out = run_cli_in(&root, &["run", file.to_str().unwrap()]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "path abs: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn run_sync_executor_new() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_sync_ex.aru");
+    fs::write(
+        &file,
+        r#"
+module tests.cli.sync_ex
+import std.runtime as rt
+func main(): int {
+    let ex = rt.new_sync_executor()
+    return ex.flags
+}
+"#,
+    )
+    .unwrap();
+    let root = workspace_root();
+    let out = run_cli_in(&root, &["run", file.to_str().unwrap()]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "sync ex: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// SL_R.0 end-to-end: multi-file `std.runtime` bodies + host `ar_rt_spawn/join`
+/// driving a Ready coroutine blob (`ar_co_make_ready_i64`).
+///
+/// Uses statement-form `unsafe { … }` (AMIR supports that path; expr-form U001).
+#[test]
+fn run_sync_executor_spawn_join_ready() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_slr_spawn_join.aru");
+    fs::write(
+        &file,
+        r#"
+module tests.cli.slr_spawn_join
+import std.runtime as rt
+
+extern "C" {
+    func ar_co_make_ready_i64(payload: int): ptr[u8]
+}
+
+func make_ready(payload: int): ptr[u8] {
+    unsafe {
+        return ar_co_make_ready_i64(payload)
+    }
+}
+
+func main(): int {
+    let ex = rt.new_sync_executor()
+    let state = make_ready(42)
+    let h = rt.spawn_i64(ex, state)
+    return rt.join_i64(ex, h)
+}
+"#,
+    )
+    .unwrap();
+    let root = workspace_root();
+    let out = run_cli_in(&root, &["run", file.to_str().unwrap()]);
+    assert_eq!(
+        out.status.code(),
+        Some(42),
+        "slr spawn/join: {}",
         String::from_utf8_lossy(&out.stderr)
     );
 }

@@ -67,7 +67,11 @@ impl TypeInfo {
     }
 }
 
-pub(crate) fn translate_type(ty: &ArType, from: &TypeInterner, to: &mut TypeInterner) -> ArType {
+/// Re-intern `ty` from `from` into `to`, recursively translating nested TypeIds.
+///
+/// Used when merging type info across files / HIR module linking so TypeIds from
+/// one interner become valid in another.
+pub fn translate_type(ty: &ArType, from: &TypeInterner, to: &mut TypeInterner) -> ArType {
     match ty {
         ArType::Primitive(p) => ArType::Primitive(*p),
         ArType::Named(id, args) => {

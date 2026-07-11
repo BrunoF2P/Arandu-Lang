@@ -31,5 +31,5 @@ pub use arandu_typeck::{
     check_func_body_only, check_item_body_only, check_non_func_bodies_only, check_signatures,
     check_signatures_only, free_func_symbols, item_source_span, primary_def_key, type_check,
 };
-pub use passes::lower_hir::lower_to_hir;
+pub use passes::lower_hir::{link_hir_module, lower_to_hir};
 pub use passes::monomorphize::monomorphize_program;
