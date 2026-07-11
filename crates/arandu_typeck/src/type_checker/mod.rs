@@ -248,7 +248,8 @@ impl<'a> TypeChecker<'a> {
             &mut self.type_info.type_interner,
         );
         // T2.1: `Vec<int>` expands to `Vec<int, GlobalAllocator>` when A has a default.
-        types::expand_named_with_defaults(self, ty)
+        let ty = types::expand_named_with_defaults(self, ty);
+        types::expand_aliases(self, ty)
     }
 
     pub fn lower_result_type(
@@ -268,7 +269,8 @@ impl<'a> TypeChecker<'a> {
             &mut self.type_info.type_interner,
         );
         // T2.1: expand trailing defaults on Named return types (`Vec<T>` → `Vec<T, Adef>`).
-        types::expand_named_with_defaults(self, ty)
+        let ty = types::expand_named_with_defaults(self, ty);
+        types::expand_aliases(self, ty)
     }
 
     pub fn lower_named_type(
@@ -286,7 +288,8 @@ impl<'a> TypeChecker<'a> {
         };
         let ty =
             types::lower_named_type(span, name, args, &ctx, &mut self.type_info.type_interner);
-        types::expand_named_with_defaults(self, ty)
+        let ty = types::expand_named_with_defaults(self, ty);
+        types::expand_aliases(self, ty)
     }
 
     /// Scope used when lowering type expressions in the current context.

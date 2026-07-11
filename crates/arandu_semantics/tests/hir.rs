@@ -569,3 +569,40 @@ fn test_hir_golden_files() {
         arandu_test_support::assert_golden_text("hir", name, "hir", &pretty);
     }
 }
+
+#[test]
+fn test_type_aliases() {
+    lower(
+        r#"
+        struct Box {
+            val: int
+        }
+        type MyBox = Box
+        type NestedBox = MyBox
+
+        func takes_box(b: Box): int {
+            return b.val
+        }
+
+        func main(): int {
+            let x: MyBox = Box { val: 42 }
+            let y: NestedBox = x
+            return takes_box(y)
+        }
+        "#,
+    );
+}
+
+#[test]
+fn test_cyclic_type_alias_safety() {
+    let src = r#"
+        type X = Y
+        type Y = X
+        func main() {}
+    "#;
+    let program = arandu_parser::parse(src).expect("parse failed");
+    let resolution = resolve_for_test(0, &program);
+    let tc = type_check(resolution, &program);
+    // Since X = Y = X is cyclic, it should result in a compiler error or poison, but not crash!
+    assert!(!tc.diagnostics.is_empty() || tc.type_info.expr_types.iter().all(|s| s.is_none()));
+}

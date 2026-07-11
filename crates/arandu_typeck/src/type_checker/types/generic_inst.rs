@@ -329,3 +329,124 @@ fn resolve_generic_callee_symbol(
         _ => None,
     }
 }
+
+#[must_use]
+pub fn expand_aliases(checker: &mut TypeChecker<'_>, ty: ArType) -> ArType {
+    expand_aliases_rec(checker, ty, 0)
+}
+
+fn expand_aliases_rec(checker: &mut TypeChecker<'_>, ty: ArType, depth: usize) -> ArType {
+    if depth > 64 {
+        return ArType::Error;
+    }
+    match ty {
+        ArType::Named(symbol_id, args) => {
+            let is_alias = if let Some(sym) = checker.symbols.try_get(symbol_id) {
+                sym.kind == arandu_middle::SymbolKind::TypeAlias
+            } else {
+                false
+            };
+            if is_alias {
+                if let Some(target_tid) = checker.decl_type_id(symbol_id) {
+                    let target_ty = checker.resolve(target_tid);
+                    let params = checker.type_info.generic_params.get(&symbol_id);
+                    let target_expanded = if let Some(params) = params {
+                        let subst = arandu_middle::types::build_subst_ids(params, &args, &checker.type_info.type_interner);
+                        arandu_middle::types::substitute_type(&target_ty, &subst, &checker.type_info.type_interner)
+                    } else {
+                        target_ty
+                    };
+                    expand_aliases_rec(checker, target_expanded, depth + 1)
+                } else {
+                    ArType::Error
+                }
+            } else {
+                let mut expanded_args = Vec::new();
+                for &arg in &args {
+                    let arg_ty = checker.resolve(arg);
+                    let expanded_arg = expand_aliases_rec(checker, arg_ty, depth + 1);
+                    expanded_args.push(checker.intern(expanded_arg));
+                }
+                ArType::Named(symbol_id, expanded_args)
+            }
+        }
+        ArType::Nullable(inner) => {
+            let inner_ty = checker.resolve(inner);
+            let expanded = expand_aliases_rec(checker, inner_ty, depth + 1);
+            ArType::Nullable(checker.intern(expanded))
+        }
+        ArType::Option(inner) => {
+            let inner_ty = checker.resolve(inner);
+            let expanded = expand_aliases_rec(checker, inner_ty, depth + 1);
+            ArType::Option(checker.intern(expanded))
+        }
+        ArType::Coroutine(inner) => {
+            let inner_ty = checker.resolve(inner);
+            let expanded = expand_aliases_rec(checker, inner_ty, depth + 1);
+            ArType::Coroutine(checker.intern(expanded))
+        }
+        ArType::Poll(inner) => {
+            let inner_ty = checker.resolve(inner);
+            let expanded = expand_aliases_rec(checker, inner_ty, depth + 1);
+            ArType::Poll(checker.intern(expanded))
+        }
+        ArType::Range(inner) => {
+            let inner_ty = checker.resolve(inner);
+            let expanded = expand_aliases_rec(checker, inner_ty, depth + 1);
+            ArType::Range(checker.intern(expanded))
+        }
+        ArType::Result(ok, err) => {
+            let ok_ty = checker.resolve(ok);
+            let err_ty = checker.resolve(err);
+            let ok_expanded = expand_aliases_rec(checker, ok_ty, depth + 1);
+            let err_expanded = expand_aliases_rec(checker, err_ty, depth + 1);
+            ArType::Result(checker.intern(ok_expanded), checker.intern(err_expanded))
+        }
+        ArType::Slice(inner) => {
+            let inner_ty = checker.resolve(inner);
+            let expanded = expand_aliases_rec(checker, inner_ty, depth + 1);
+            ArType::Slice(checker.intern(expanded))
+        }
+        ArType::Array(len, inner) => {
+            let inner_ty = checker.resolve(inner);
+            let expanded = expand_aliases_rec(checker, inner_ty, depth + 1);
+            ArType::Array(len, checker.intern(expanded))
+        }
+        ArType::Ptr(inner) => {
+            let inner_ty = checker.resolve(inner);
+            let expanded = expand_aliases_rec(checker, inner_ty, depth + 1);
+            ArType::Ptr(checker.intern(expanded))
+        }
+        ArType::Ref(inner) => {
+            let inner_ty = checker.resolve(inner);
+            let expanded = expand_aliases_rec(checker, inner_ty, depth + 1);
+            ArType::Ref(checker.intern(expanded))
+        }
+        ArType::RefMut(inner) => {
+            let inner_ty = checker.resolve(inner);
+            let expanded = expand_aliases_rec(checker, inner_ty, depth + 1);
+            ArType::RefMut(checker.intern(expanded))
+        }
+        ArType::Tuple(tys) => {
+            let mut expanded_tys = Vec::new();
+            for &t in &tys {
+                let t_ty = checker.resolve(t);
+                let expanded_t = expand_aliases_rec(checker, t_ty, depth + 1);
+                expanded_tys.push(checker.intern(expanded_t));
+            }
+            ArType::Tuple(expanded_tys)
+        }
+        ArType::Func(params, ret) => {
+            let mut expanded_params = Vec::new();
+            for &p in &params {
+                let p_ty = checker.resolve(p);
+                let expanded_p = expand_aliases_rec(checker, p_ty, depth + 1);
+                expanded_params.push(checker.intern(expanded_p));
+            }
+            let ret_ty = checker.resolve(ret);
+            let expanded_ret = expand_aliases_rec(checker, ret_ty, depth + 1);
+            ArType::Func(expanded_params, checker.intern(expanded_ret))
+        }
+        other => other,
+    }
+}

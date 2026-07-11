@@ -290,11 +290,9 @@ fn promote_escaped_coroutines(func: &mut AmirFunc) {
                                     }
                                 }
                             }
-                            AmirRvalue::FieldAccess { base, .. } => {
-                                if let AmirOperand::Copy(src) | AmirOperand::Move(src) = base {
-                                    if let Some(src_origins) = temp_origins.get(src) {
-                                        origins.extend(src_origins);
-                                    }
+                            AmirRvalue::FieldAccess { base: AmirOperand::Copy(src) | AmirOperand::Move(src), .. } => {
+                                if let Some(src_origins) = temp_origins.get(src) {
+                                    origins.extend(src_origins);
                                 }
                             }
                             AmirRvalue::StructLiteral { fields, .. } => {
@@ -327,11 +325,9 @@ fn promote_escaped_coroutines(func: &mut AmirFunc) {
                                     }
                                 }
                             }
-                            AmirRvalue::EnumConstruct { payload, .. } => {
-                                if let Some(AmirOperand::Copy(src) | AmirOperand::Move(src)) = payload {
-                                    if let Some(src_origins) = temp_origins.get(src) {
-                                        origins.extend(src_origins);
-                                    }
+                            AmirRvalue::EnumConstruct { payload: Some(AmirOperand::Copy(src) | AmirOperand::Move(src)), .. } => {
+                                if let Some(src_origins) = temp_origins.get(src) {
+                                    origins.extend(src_origins);
                                 }
                             }
                             AmirRvalue::Load(place) => {
@@ -351,21 +347,19 @@ fn promote_escaped_coroutines(func: &mut AmirFunc) {
                             }
                         }
                     }
-                    AmirStmt::Store { lhs, rhs } => {
-                        if let AmirOperand::Copy(src) | AmirOperand::Move(src) = rhs {
-                            if let Some(src_origins) = temp_origins.get(src) {
-                                let entry = local_origins.entry(lhs.local).or_default();
-                                let old_len = entry.len();
-                                entry.extend(src_origins);
-                                if entry.len() > old_len {
-                                    changed = true;
-                                }
+                    AmirStmt::Store { lhs, rhs: AmirOperand::Copy(src) | AmirOperand::Move(src) } => {
+                        if let Some(src_origins) = temp_origins.get(src) {
+                            let entry = local_origins.entry(lhs.local).or_default();
+                            let old_len = entry.len();
+                            entry.extend(src_origins);
+                            if entry.len() > old_len {
+                                changed = true;
+                            }
 
-                                if !lhs.projections.is_empty() {
-                                    for &origin in src_origins {
-                                        if escaped_origins.insert(origin) {
-                                            changed = true;
-                                        }
+                            if !lhs.projections.is_empty() {
+                                for &origin in src_origins {
+                                    if escaped_origins.insert(origin) {
+                                        changed = true;
                                     }
                                 }
                             }
