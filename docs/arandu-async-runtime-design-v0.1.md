@@ -51,13 +51,12 @@ ABI: `Coroutine[T]` is a state-blob pointer; `job as ptr[u8]` is the host bridge
 
 ---
 
-## Honesty / residual
+## Honesty
 
 | Item | Status |
 |------|--------|
-| Multi-file `spawn_int` / `join_int` | Done |
-| Same-module generic + explicit `join_g<int>` mono | Done |
-| Inferred `join(h)` mono across modules without type args | Partial (typeck OK; mono collect residual) |
-| Async socket + Waker registration in reactor | Scaffold (blocking TCP + waker flags) |
-| Full Future trait on Coroutine | Open |
-| io_uring for all I/O ops | Sleep path only; detect reports 2 |
+| Multi-file inferred `rt.spawn` / `rt.join` | Done (namespace generic infer + HIR specialized types) |
+| Same-module inferred `join_g` mono | Done |
+| TCP nonblocking + `tcp_wait` / `tcp_wait_wake` | Done |
+| io_uring read/write when backend=2 | Done (`tcp_read_async` / `tcp_write_async`) |
+| Full Future trait on Coroutine | Open (Waker/Context handles exist) |

@@ -159,6 +159,93 @@ func main(): int {
     );
 }
 
+/// Multi-file inferred generic `rt.spawn` / `rt.join` (no explicit type args).
+#[test]
+fn run_import_inferred_spawn_join() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_import_infer_spawn.aru");
+    fs::write(
+        &file,
+        r#"
+module tests.cli.import_infer_spawn
+import std.runtime as rt
+
+async func answer(): int {
+    return 42
+}
+
+func main(): int {
+    let ex = rt.new_sync_executor()
+    let h = rt.spawn(ex, answer())
+    return rt.join(ex, h)
+}
+"#,
+    )
+    .unwrap();
+    let root = workspace_root();
+    let out = run_cli_in(&root, &["run", file.to_str().unwrap()]);
+    assert_eq!(
+        out.status.code(),
+        Some(42),
+        "import infer spawn: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// Same-module inferred join (no type args on join_g).
+#[test]
+fn run_local_inferred_join() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_local_infer_join.aru");
+    fs::write(
+        &file,
+        r#"
+module tests.cli.local_infer_join
+
+extern "C" {
+    func ar_rt_spawn_i64(state: ptr[u8]): int
+    func ar_rt_join_i64(handle: int): int
+}
+
+struct SyncExecutor { flags: int }
+struct TaskHandle { id: int }
+
+func spawn_g<T>(shared ex: SyncExecutor, job: Coroutine<T>): TaskHandle {
+    unsafe {
+        let id = ar_rt_spawn_i64(job as ptr[u8])
+        return TaskHandle { id: id }
+    }
+}
+
+func join_g<T>(shared ex: SyncExecutor, handle: TaskHandle): T {
+    unsafe {
+        let v = ar_rt_join_i64(handle.id)
+        return v as T
+    }
+}
+
+async func answer(): int {
+    return 42
+}
+
+func main(): int {
+    let ex = SyncExecutor { flags: 0 }
+    let h = spawn_g(ex, answer())
+    return join_g(ex, h)
+}
+"#,
+    )
+    .unwrap();
+    let root = workspace_root();
+    let out = run_cli_in(&root, &["run", file.to_str().unwrap()]);
+    assert_eq!(
+        out.status.code(),
+        Some(42),
+        "local infer join: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 /// Typed spawn/join over A3 `async func` → `Coroutine<int>`.
 #[test]
 fn run_typed_spawn_int_async_func() {
@@ -309,6 +396,66 @@ func main(): int {
         out.status.code(),
         Some(0),
         "backend: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn run_tcp_async_wait_wake() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_tcp_async.aru");
+    fs::write(
+        &file,
+        r#"
+module tests.cli.tcp_async
+import std.runtime as rt
+
+func main(): int {
+    let lis = rt.tcp_listen(18770)
+    if lis.id < 0 {
+        return 1
+    }
+    let client = rt.tcp_connect(18770)
+    if client.id < 0 {
+        return 2
+    }
+    let server = rt.tcp_accept(lis)
+    if server.id < 0 {
+        return 3
+    }
+    let nb = rt.tcp_set_nonblocking(server, 1)
+    if nb != 0 {
+        return 4
+    }
+    let w = rt.new_waker()
+    // Timeout with no data
+    let t0 = rt.tcp_wait_wake(server, rt.tcp_wait_read_flag(), 5, w)
+    if t0 != 0 {
+        return 5
+    }
+    // Write then wait
+    // Use write_async (io_uring when available)
+    // We cannot easily pass string buffers without alloc; skip payload e2e here.
+    // Wait writable on client should succeed.
+    let wr = rt.tcp_wait(client, rt.tcp_wait_write_flag(), 100)
+    if wr < 1 {
+        return 6
+    }
+    rt.destroy_waker(w)
+    rt.tcp_close_stream(client)
+    rt.tcp_close_stream(server)
+    rt.tcp_close_listener(lis)
+    return 0
+}
+"#,
+    )
+    .unwrap();
+    let root = workspace_root();
+    let out = run_cli_in(&root, &["run", file.to_str().unwrap()]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "tcp async: {}",
         String::from_utf8_lossy(&out.stderr)
     );
 }

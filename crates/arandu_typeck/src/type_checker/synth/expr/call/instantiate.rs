@@ -3,7 +3,7 @@ use crate::type_checker::types::{self, ArType};
 
 use arandu_middle::types::type_interner::TypeId;
 
-pub(super) fn infer_and_instantiate_func(
+pub(crate) fn infer_and_instantiate_func(
     checker: &mut TypeChecker<'_>,
     type_params: &[arandu_middle::SymbolId],
     formals: &[TypeId],
@@ -27,7 +27,7 @@ pub(super) fn infer_and_instantiate_func(
     }
     let mut concrete = Vec::with_capacity(type_params.len());
     for &p in type_params {
-        let tid = *bindings.get(&p)?;
+        let tid = bindings.get(&p).copied()?;
         if checker.resolve(tid).is_error() {
             return None;
         }
@@ -47,7 +47,7 @@ pub(super) fn infer_and_instantiate_func(
     Some((new_params, checker.intern(ret_inst)))
 }
 
-pub(super) fn bind_type_params(
+pub(crate) fn bind_type_params(
     checker: &TypeChecker<'_>,
     type_params: &[arandu_middle::SymbolId],
     formal: &ArType,

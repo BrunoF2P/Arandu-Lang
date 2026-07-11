@@ -81,12 +81,26 @@ fn expr_type_for_kind(
                 fallback
             }
         }
-        HirExprKind::Path { symbol } => type_check
-            .type_info
-            .decl_type_id(*symbol)
-            .filter(|&id| id != error_ty())
-            .unwrap_or(fallback),
+        // Prefer typeck's recorded type (`fallback`) over `decl_type`: for
+        // generic free funcs typeck specializes `join_g` → `Func(..., int)` on
+        // the Path expr; `decl_type` stays the template `Func(..., T)`. Using
+        // decl_type here made mono see identity `T` and skip specialization.
+        HirExprKind::Path { symbol } => {
+            if fallback != error_ty() {
+                return fallback;
+            }
+            type_check
+                .type_info
+                .decl_type_id(*symbol)
+                .filter(|&id| id != error_ty())
+                .unwrap_or(fallback)
+        }
         HirExprKind::Call { callee, .. } => {
+            // Prefer typeck call type (instantiated return) over deriving from
+            // a still-generic callee formal (`T`).
+            if fallback != error_ty() {
+                return fallback;
+            }
             let callee_expr = hir_pool.expr(*callee);
             let interner = &type_check.type_info.type_interner;
             if callee_expr.ty != error_ty() {

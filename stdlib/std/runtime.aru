@@ -34,7 +34,7 @@ extern "C" {
     func ar_rt_waker_destroy(id: int): void
 }
 
-// -- Host: TCP sockets -------------------------------------------------------
+// -- Host: TCP sockets (blocking + nonblocking wait + io_uring async) --------
 extern "C" {
     func ar_rt_tcp_listen(port: int): int
     func ar_rt_tcp_accept(listener: int): int
@@ -42,6 +42,11 @@ extern "C" {
     func ar_rt_tcp_read(sock: int, buf: ptr[u8], len: int): int
     func ar_rt_tcp_write(sock: int, buf: ptr[u8], len: int): int
     func ar_rt_tcp_close(sock: int): void
+    func ar_rt_tcp_set_nonblocking(sock: int, flag: int): int
+    func ar_rt_tcp_wait(sock: int, events: int, timeout_ms: int): int
+    func ar_rt_tcp_wait_wake(sock: int, events: int, timeout_ms: int, waker_id: int): int
+    func ar_rt_tcp_read_async(sock: int, buf: ptr[u8], len: int): int
+    func ar_rt_tcp_write_async(sock: int, buf: ptr[u8], len: int): int
 }
 
 // -- Host: SL_R.1 supervisor -------------------------------------------------
@@ -243,7 +248,7 @@ public func new_context(w: Waker): Context {
 }
 
 // ===========================================================================
-// TCP sockets (blocking host MVP)
+// TCP sockets (blocking + nonblocking poll + io_uring when available)
 // ===========================================================================
 
 public struct TcpListener {
@@ -252,6 +257,15 @@ public struct TcpListener {
 
 public struct TcpStream {
     id: int
+}
+
+/// Wait flags for `tcp_wait` / `tcp_wait_wake` (bit0=read, bit1=write).
+public func tcp_wait_read_flag(): int {
+    return 1
+}
+
+public func tcp_wait_write_flag(): int {
+    return 2
 }
 
 public func tcp_listen(port: int): TcpListener {
@@ -281,6 +295,40 @@ public func tcp_read(shared s: TcpStream, buf: ptr[u8], len: int): int {
 public func tcp_write(shared s: TcpStream, buf: ptr[u8], len: int): int {
     unsafe {
         return ar_rt_tcp_write(s.id, buf, len)
+    }
+}
+
+/// Prefer io_uring when `reactor_backend() == 2`, else blocking/host read.
+public func tcp_read_async(shared s: TcpStream, buf: ptr[u8], len: int): int {
+    unsafe {
+        return ar_rt_tcp_read_async(s.id, buf, len)
+    }
+}
+
+public func tcp_write_async(shared s: TcpStream, buf: ptr[u8], len: int): int {
+    unsafe {
+        return ar_rt_tcp_write_async(s.id, buf, len)
+    }
+}
+
+/// `flag != 0` → nonblocking (WouldBlock returns -2 from read/write).
+public func tcp_set_nonblocking(shared s: TcpStream, flag: int): int {
+    unsafe {
+        return ar_rt_tcp_set_nonblocking(s.id, flag)
+    }
+}
+
+/// Wait for readiness. Returns ready event bits, 0 timeout, -1 error.
+public func tcp_wait(shared s: TcpStream, events: int, timeout_ms: int): int {
+    unsafe {
+        return ar_rt_tcp_wait(s.id, events, timeout_ms)
+    }
+}
+
+/// Wait then wake `w` if ready (async + Waker bridge).
+public func tcp_wait_wake(shared s: TcpStream, events: int, timeout_ms: int, shared w: Waker): int {
+    unsafe {
+        return ar_rt_tcp_wait_wake(s.id, events, timeout_ms, w.id)
     }
 }
 

@@ -279,7 +279,40 @@ pub(super) fn synth_call_expr(
                     let arg_ids = checker.pool.expr_list(args_range).to_vec();
                     let ns_ty = checker.resolve(ns_ty_id);
                     if let ArType::Func(params, ret) = ns_ty {
-                        let params = params.clone();
+                        let mut params = params.clone();
+                        let mut ret = ret;
+                        // Multi-file generic free funcs (`rt.spawn(ex, job)`):
+                        // same inference as Path callees — instantiate T from
+                        // Coroutine[T] args / expected return before arg checks.
+                        if let Some(sym_id) =
+                            checker.symbols.lookup_module_member(
+                                match checker.pool.expr(base_id) {
+                                    ExprKind::Path { path } if path.len() == 1 => &path[0],
+                                    _ => "",
+                                },
+                                &field_str,
+                            )
+                            && let Some(gp) =
+                                checker.type_info.generic_params.get(&sym_id).cloned()
+                            && !gp.is_empty()
+                        {
+                            let arg_tys: Vec<TypeId> = arg_ids
+                                .iter()
+                                .copied()
+                                .map(|aid| synth_expr(checker, aid))
+                                .collect();
+                            if let Some((ip, ir)) = infer_and_instantiate_func(
+                                checker,
+                                &gp,
+                                &params,
+                                ret,
+                                &arg_tys,
+                                expected,
+                            ) {
+                                params = ip;
+                                ret = ir;
+                            }
+                        }
                         if params.len() != arg_ids.len() {
                             checker.diagnostics.push(
                                 crate::Diagnostic::error(
@@ -491,7 +524,8 @@ pub(super) fn synth_call_expr(
                             callee_func_sym = Some(sym_id);
                         }
                     }
-                    // `mem.sizeOf` / `io.println` after Generic unwrap: Field on a module path.
+                    // `mem.sizeOf` / `io.println` / `rt.spawn` after Generic unwrap:
+                    // Field on a module path.
                     ExprKind::Field { base, field } => {
                         if let ExprKind::Path { path } = checker.pool.expr(*base)
                             && path.len() == 1

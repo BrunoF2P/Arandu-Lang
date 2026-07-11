@@ -1,15 +1,21 @@
-//! SL_R — host TCP socket helpers (blocking I/O MVP + reactor-ready fds).
+//! SL_R — host TCP sockets (blocking + nonblocking + reactor wait + io_uring I/O).
 //!
-//! Full async socket state machines need Waker registration (SL_R.2/3).
-//! These hosts provide the OS surface std.runtime can wrap.
+//! - Blocking: [`ar_rt_tcp_read`] / [`ar_rt_tcp_write`] (default).
+//! - Async surface: [`ar_rt_tcp_set_nonblocking`] + [`ar_rt_tcp_wait`] (poll/epoll)
+//!   then read/write; optional waker via [`ar_rt_tcp_wait_wake`].
+//! - SL_R.3: when reactor backend is io_uring, read/write use io_uring submit.
 
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Mutex;
 use std::time::Duration;
 
+#[cfg(unix)]
+use std::os::fd::AsRawFd;
+
 struct SockSlot {
     kind: SockKind,
+    nonblocking: bool,
 }
 
 enum SockKind {
@@ -25,7 +31,10 @@ fn lock() -> std::sync::MutexGuard<'static, Vec<Option<SockSlot>>> {
 
 fn insert(kind: SockKind) -> i64 {
     let mut g = lock();
-    let slot = SockSlot { kind };
+    let slot = SockSlot {
+        kind,
+        nonblocking: false,
+    };
     if let Some(idx) = g.iter().position(|s| s.is_none()) {
         g[idx] = Some(slot);
         return idx as i64;
@@ -34,6 +43,18 @@ fn insert(kind: SockKind) -> i64 {
     g.push(Some(slot));
     id
 }
+
+#[cfg(unix)]
+fn raw_fd_of(kind: &SockKind) -> i32 {
+    match kind {
+        SockKind::Listener(l) => l.as_raw_fd(),
+        SockKind::Stream(s) => s.as_raw_fd(),
+    }
+}
+
+/// Events for [`ar_rt_tcp_wait`]: bit0 = readable, bit1 = writable.
+pub const WAIT_READ: i64 = 1;
+pub const WAIT_WRITE: i64 = 2;
 
 /// Listen on `127.0.0.1:port`. Returns handle >= 0 or -1.
 ///
@@ -118,6 +139,7 @@ pub unsafe extern "C" fn ar_rt_tcp_read(sock: i64, buf: *mut u8, len: i64) -> i6
     let slice = unsafe { std::slice::from_raw_parts_mut(buf, len as usize) };
     match s.read(slice) {
         Ok(n) => n as i64,
+        Err(e) if e.kind() == ErrorKind::WouldBlock => -2,
         Err(_) => -1,
     }
 }
@@ -144,6 +166,7 @@ pub unsafe extern "C" fn ar_rt_tcp_write(sock: i64, buf: *const u8, len: i64) ->
     let slice = unsafe { std::slice::from_raw_parts(buf, len as usize) };
     match s.write(slice) {
         Ok(n) => n as i64,
+        Err(e) if e.kind() == ErrorKind::WouldBlock => -2,
         Err(_) => -1,
     }
 }
@@ -163,6 +186,203 @@ pub unsafe extern "C" fn ar_rt_tcp_close(sock: i64) {
     }
 }
 
+/// Set nonblocking mode. `flag` != 0 → nonblocking.
+///
+/// # Safety
+/// Valid socket handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ar_rt_tcp_set_nonblocking(sock: i64, flag: i64) -> i64 {
+    if sock < 0 {
+        return -1;
+    }
+    let mut g = lock();
+    let Some(Some(slot)) = g.get_mut(sock as usize) else {
+        return -1;
+    };
+    let nb = flag != 0;
+    let ok = match &mut slot.kind {
+        SockKind::Listener(l) => l.set_nonblocking(nb).is_ok(),
+        SockKind::Stream(s) => s.set_nonblocking(nb).is_ok(),
+    };
+    if ok {
+        slot.nonblocking = nb;
+        0
+    } else {
+        -1
+    }
+}
+
+/// Wait until `events` (WAIT_READ/WAIT_WRITE) are ready, or timeout.
+/// Returns bitmask of ready events, 0 on timeout, -1 on error.
+///
+/// # Safety
+/// Valid socket handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ar_rt_tcp_wait(sock: i64, events: i64, timeout_ms: i64) -> i64 {
+    if sock < 0 || events == 0 {
+        return -1;
+    }
+    #[cfg(unix)]
+    {
+        let fd = {
+            let g = lock();
+            let Some(Some(slot)) = g.get(sock as usize) else {
+                return -1;
+            };
+            raw_fd_of(&slot.kind)
+        };
+        let mut pfd = libc::pollfd {
+            fd,
+            events: 0,
+            revents: 0,
+        };
+        if events & WAIT_READ != 0 {
+            pfd.events |= libc::POLLIN;
+        }
+        if events & WAIT_WRITE != 0 {
+            pfd.events |= libc::POLLOUT;
+        }
+        let rc = unsafe { libc::poll(&mut pfd, 1, timeout_ms as i32) };
+        if rc < 0 {
+            return -1;
+        }
+        if rc == 0 {
+            return 0;
+        }
+        let mut out = 0i64;
+        if pfd.revents & libc::POLLIN != 0 {
+            out |= WAIT_READ;
+        }
+        if pfd.revents & libc::POLLOUT != 0 {
+            out |= WAIT_WRITE;
+        }
+        // Errors report as readable so callers attempt read and see EOF/err.
+        if pfd.revents & (libc::POLLERR | libc::POLLHUP) != 0 {
+            out |= WAIT_READ;
+        }
+        out
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (sock, events, timeout_ms);
+        -1
+    }
+}
+
+/// Like [`ar_rt_tcp_wait`], then wakes `waker_id` if ready (see waker_runtime).
+///
+/// # Safety
+/// Valid sock + waker.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ar_rt_tcp_wait_wake(
+    sock: i64,
+    events: i64,
+    timeout_ms: i64,
+    waker_id: i64,
+) -> i64 {
+    let rc = unsafe { ar_rt_tcp_wait(sock, events, timeout_ms) };
+    if rc > 0 && waker_id >= 0 {
+        unsafe {
+            crate::waker_runtime::ar_rt_waker_wake(waker_id);
+        }
+    }
+    rc
+}
+
+/// Read using io_uring when backend prefers it; else falls back to [`ar_rt_tcp_read`].
+///
+/// # Safety
+/// Same as read.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ar_rt_tcp_read_async(sock: i64, buf: *mut u8, len: i64) -> i64 {
+    #[cfg(target_os = "linux")]
+    {
+        if unsafe { crate::reactor_runtime::ar_rt_reactor_backend() }
+            == crate::reactor_runtime::BACKEND_IO_URING
+            && let Some(n) = unsafe { read_io_uring(sock, buf, len) }
+        {
+            return n;
+        }
+    }
+    unsafe { ar_rt_tcp_read(sock, buf, len) }
+}
+
+/// Write using io_uring when available; else [`ar_rt_tcp_write`].
+///
+/// # Safety
+/// Same as write.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ar_rt_tcp_write_async(sock: i64, buf: *const u8, len: i64) -> i64 {
+    #[cfg(target_os = "linux")]
+    {
+        if unsafe { crate::reactor_runtime::ar_rt_reactor_backend() }
+            == crate::reactor_runtime::BACKEND_IO_URING
+            && let Some(n) = unsafe { write_io_uring(sock, buf, len) }
+        {
+            return n;
+        }
+    }
+    unsafe { ar_rt_tcp_write(sock, buf, len) }
+}
+
+#[cfg(target_os = "linux")]
+unsafe fn read_io_uring(sock: i64, buf: *mut u8, len: i64) -> Option<i64> {
+    use io_uring::{IoUring, opcode, types};
+    if sock < 0 || buf.is_null() || len <= 0 {
+        return Some(-1);
+    }
+    let fd = {
+        let g = lock();
+        let slot = g.get(sock as usize).and_then(|s| s.as_ref())?;
+        raw_fd_of(&slot.kind)
+    };
+    let mut ring = IoUring::new(8).ok()?;
+    let entry = opcode::Read::new(types::Fd(fd), buf, len as u32)
+        .build()
+        .user_data(1);
+    unsafe {
+        ring.submission().push(&entry).ok()?;
+    }
+    ring.submit_and_wait(1).ok()?;
+    let cqe = ring.completion().next()?;
+    let res = cqe.result();
+    if res < 0 {
+        // Fall back to std read on transient errors.
+        return None;
+    }
+    Some(res as i64)
+}
+
+#[cfg(target_os = "linux")]
+unsafe fn write_io_uring(sock: i64, buf: *const u8, len: i64) -> Option<i64> {
+    use io_uring::{IoUring, opcode, types};
+    if sock < 0 || buf.is_null() || len < 0 {
+        return Some(-1);
+    }
+    if len == 0 {
+        return Some(0);
+    }
+    let fd = {
+        let g = lock();
+        let slot = g.get(sock as usize).and_then(|s| s.as_ref())?;
+        raw_fd_of(&slot.kind)
+    };
+    let mut ring = IoUring::new(8).ok()?;
+    let entry = opcode::Write::new(types::Fd(fd), buf, len as u32)
+        .build()
+        .user_data(2);
+    unsafe {
+        ring.submission().push(&entry).ok()?;
+    }
+    ring.submit_and_wait(1).ok()?;
+    let cqe = ring.completion().next()?;
+    let res = cqe.result();
+    if res < 0 {
+        return None;
+    }
+    Some(res as i64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,14 +390,9 @@ mod tests {
     #[test]
     fn listen_connect_write_read() {
         unsafe {
-            let lis = ar_rt_tcp_listen(0); // port 0 may fail on some binds — use high port
-            // Prefer ephemeral: bind 0 doesn't work with our API; pick free port via OS.
-            // Use a fixed high port for the unit test.
             let port = 18765i64;
-            ar_rt_tcp_close(lis);
             let lis = ar_rt_tcp_listen(port);
             if lis < 0 {
-                // Port busy — skip soft
                 return;
             }
             let client = ar_rt_tcp_connect(port);
@@ -189,6 +404,52 @@ mod tests {
             let mut buf = [0u8; 8];
             assert_eq!(ar_rt_tcp_read(server, buf.as_mut_ptr(), 8), 2);
             assert_eq!(&buf[..2], b"hi");
+            ar_rt_tcp_close(client);
+            ar_rt_tcp_close(server);
+            ar_rt_tcp_close(lis);
+        }
+    }
+
+    #[test]
+    fn nonblocking_wait_read() {
+        unsafe {
+            let port = 18766i64;
+            let lis = ar_rt_tcp_listen(port);
+            if lis < 0 {
+                return;
+            }
+            let client = ar_rt_tcp_connect(port);
+            let server = ar_rt_tcp_accept(lis);
+            assert_eq!(ar_rt_tcp_set_nonblocking(server, 1), 0);
+            // No data yet — wait should timeout.
+            let t0 = ar_rt_tcp_wait(server, WAIT_READ, 10);
+            assert_eq!(t0, 0);
+            let msg = b"xy";
+            assert_eq!(ar_rt_tcp_write(client, msg.as_ptr(), 2), 2);
+            let ready = ar_rt_tcp_wait(server, WAIT_READ, 200);
+            assert!(ready & WAIT_READ != 0);
+            let mut buf = [0u8; 4];
+            assert_eq!(ar_rt_tcp_read(server, buf.as_mut_ptr(), 4), 2);
+            ar_rt_tcp_close(client);
+            ar_rt_tcp_close(server);
+            ar_rt_tcp_close(lis);
+        }
+    }
+
+    #[test]
+    fn async_read_write_path() {
+        unsafe {
+            let port = 18767i64;
+            let lis = ar_rt_tcp_listen(port);
+            if lis < 0 {
+                return;
+            }
+            let client = ar_rt_tcp_connect(port);
+            let server = ar_rt_tcp_accept(lis);
+            let msg = b"ok";
+            assert!(ar_rt_tcp_write_async(client, msg.as_ptr(), 2) >= 2);
+            let mut buf = [0u8; 4];
+            assert!(ar_rt_tcp_read_async(server, buf.as_mut_ptr(), 4) >= 2);
             ar_rt_tcp_close(client);
             ar_rt_tcp_close(server);
             ar_rt_tcp_close(lis);

@@ -227,6 +227,26 @@ impl AranduJit {
             "ar_rt_tcp_close",
             crate::socket_runtime::ar_rt_tcp_close as *const u8,
         );
+        builder.symbol(
+            "ar_rt_tcp_set_nonblocking",
+            crate::socket_runtime::ar_rt_tcp_set_nonblocking as *const u8,
+        );
+        builder.symbol(
+            "ar_rt_tcp_wait",
+            crate::socket_runtime::ar_rt_tcp_wait as *const u8,
+        );
+        builder.symbol(
+            "ar_rt_tcp_wait_wake",
+            crate::socket_runtime::ar_rt_tcp_wait_wake as *const u8,
+        );
+        builder.symbol(
+            "ar_rt_tcp_read_async",
+            crate::socket_runtime::ar_rt_tcp_read_async as *const u8,
+        );
+        builder.symbol(
+            "ar_rt_tcp_write_async",
+            crate::socket_runtime::ar_rt_tcp_write_async as *const u8,
+        );
         // SL_R.1 supervisor
         builder.symbol(
             "ar_rt_supervisor_create",
@@ -598,13 +618,73 @@ impl AranduJit {
                 .push(cranelift_codegen::ir::AbiParam::new(
                     cranelift_codegen::ir::types::I64,
                 ));
-            for name in ["ar_rt_tcp_read", "ar_rt_tcp_write"] {
+            for name in [
+                "ar_rt_tcp_read",
+                "ar_rt_tcp_write",
+                "ar_rt_tcp_read_async",
+                "ar_rt_tcp_write_async",
+            ] {
                 let id = self
                     .module
                     .declare_function(name, Linkage::Import, &sig)
                     .map_err(|err| codegen_ice(format!("failed to declare {name}: {err:?}")))?;
                 func_ids.insert(name.to_string(), id);
             }
+        }
+        // set_nonblocking / wait: (sock, events|flag [, timeout]) 
+        {
+            let mut two = cranelift_codegen::ir::Signature::new(default_call_conv);
+            two.params
+                .push(cranelift_codegen::ir::AbiParam::new(
+                    cranelift_codegen::ir::types::I64,
+                ));
+            two.params
+                .push(cranelift_codegen::ir::AbiParam::new(
+                    cranelift_codegen::ir::types::I64,
+                ));
+            two.returns
+                .push(cranelift_codegen::ir::AbiParam::new(
+                    cranelift_codegen::ir::types::I64,
+                ));
+            let id = self
+                .module
+                .declare_function("ar_rt_tcp_set_nonblocking", Linkage::Import, &two)
+                .map_err(|err| {
+                    codegen_ice(format!("failed to declare ar_rt_tcp_set_nonblocking: {err:?}"))
+                })?;
+            func_ids.insert("ar_rt_tcp_set_nonblocking".to_string(), id);
+
+            let mut three = cranelift_codegen::ir::Signature::new(default_call_conv);
+            for _ in 0..3 {
+                three.params.push(cranelift_codegen::ir::AbiParam::new(
+                    cranelift_codegen::ir::types::I64,
+                ));
+            }
+            three.returns.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
+            let id = self
+                .module
+                .declare_function("ar_rt_tcp_wait", Linkage::Import, &three)
+                .map_err(|err| codegen_ice(format!("failed to declare ar_rt_tcp_wait: {err:?}")))?;
+            func_ids.insert("ar_rt_tcp_wait".to_string(), id);
+
+            let mut four = cranelift_codegen::ir::Signature::new(default_call_conv);
+            for _ in 0..4 {
+                four.params.push(cranelift_codegen::ir::AbiParam::new(
+                    cranelift_codegen::ir::types::I64,
+                ));
+            }
+            four.returns.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
+            let id = self
+                .module
+                .declare_function("ar_rt_tcp_wait_wake", Linkage::Import, &four)
+                .map_err(|err| {
+                    codegen_ice(format!("failed to declare ar_rt_tcp_wait_wake: {err:?}"))
+                })?;
+            func_ids.insert("ar_rt_tcp_wait_wake".to_string(), id);
         }
         // supervisor_spawn: (sup, path_ptr, path_len, max_restarts) -> i64
         {

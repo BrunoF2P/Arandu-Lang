@@ -142,3 +142,71 @@ fn test_cross_file_collision_during_circular_import_is_still_deterministic() {
         panic!("Expected a cycle error or unresolved type, got no diagnostics");
     }
 }
+
+
+
+
+#[test]
+fn test_import_generic_spawn_infer_from_coroutine() {
+    let mut db = arandu_query::DatabaseImpl::default();
+    let src = r#"
+        module tests.import_spawn_infer
+        import std.runtime as rt
+        async func answer(): int { return 42 }
+        func main(): int {
+            let ex = rt.new_sync_executor()
+            let h = rt.spawn(ex, answer())
+            return rt.join(ex, h)
+        }
+    "#;
+    let file = db.new_file("tests_import_spawn_infer.aru".to_string(), src.to_string());
+    let tc = arandu_query::passes::type_check(&db, file);
+    let errs: Vec<_> = tc
+        .diagnostics
+        .iter()
+        .filter(|d| matches!(d.severity, arandu_middle::Severity::Error))
+        .map(|d| d.message.clone())
+        .collect();
+    assert!(errs.is_empty(), "import spawn infer failed: {errs:?}");
+}
+
+#[test]
+fn test_local_generic_spawn_infer_still_ok() {
+    let mut db = arandu_query::DatabaseImpl::default();
+    let src = r#"
+        module tests.local_spawn_infer
+        extern "C" {
+            func ar_rt_spawn_i64(state: ptr[u8]): int
+            func ar_rt_join_i64(handle: int): int
+        }
+        struct SyncExecutor { flags: int }
+        struct TaskHandle { id: int }
+        func spawn_g<T>(shared ex: SyncExecutor, job: Coroutine<T>): TaskHandle {
+            unsafe {
+                let id = ar_rt_spawn_i64(job as ptr[u8])
+                return TaskHandle { id: id }
+            }
+        }
+        func join_g<T>(shared ex: SyncExecutor, handle: TaskHandle): T {
+            unsafe {
+                let v = ar_rt_join_i64(handle.id)
+                return v as T
+            }
+        }
+        async func answer(): int { return 42 }
+        func main(): int {
+            let ex = SyncExecutor { flags: 0 }
+            let h = spawn_g(ex, answer())
+            return join_g(ex, h)
+        }
+    "#;
+    let file = db.new_file("tests_local_spawn_infer.aru".to_string(), src.to_string());
+    let tc = arandu_query::passes::type_check(&db, file);
+    let errs: Vec<_> = tc
+        .diagnostics
+        .iter()
+        .filter(|d| matches!(d.severity, arandu_middle::Severity::Error))
+        .map(|d| d.message.clone())
+        .collect();
+    assert!(errs.is_empty(), "local spawn infer failed: {errs:?}");
+}
