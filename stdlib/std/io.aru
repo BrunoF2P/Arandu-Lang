@@ -1,0 +1,12 @@
+module std.io
+
+/// Thin SL_S: OS I/O surface (scaffold).
+/// Prelude `io.println` remains for v0.1 demos; this module is the long-term home
+/// for stream I/O once host ABI is wired.
+
+extern "C" {
+    /// Write UTF-8 bytes to stdout (no trailing newline).
+    func write(buf: str): void
+    /// Write UTF-8 bytes to stderr (no trailing newline).
+    func eprint(buf: str): void
+}

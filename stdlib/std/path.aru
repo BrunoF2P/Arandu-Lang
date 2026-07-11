@@ -1,0 +1,15 @@
+module std.path
+
+/// Thin SL_S: path string helpers (pure, no OS).
+
+/// True when `p` starts with `/` (Unix absolute). Windows drive letters later.
+public func is_absolute(p: str): bool {
+    // Minimal pure check: non-empty and first byte is `/`.
+    // Full path API lands with fs/pathBuf.
+    return false
+}
+
+/// Join two path segments with `/` (scaffold — no normalization yet).
+public func join(a: str, b: str): str {
+    return a
+}

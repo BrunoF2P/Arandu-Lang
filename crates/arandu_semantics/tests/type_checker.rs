@@ -189,6 +189,24 @@ fn test_option_some() {
 }
 
 #[test]
+fn test_option_nil() {
+    let root = workspace_root();
+    let source = fs::read_to_string(root.join("tests/ui/type_checker/option_nil.aru")).unwrap();
+    let program = parse(&source).expect("parse");
+    let resolution = resolve_for_test(0, &program);
+    let result = type_check(resolution, &program);
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| !matches!(d.severity, arandu_semantics::Severity::Error)),
+        "expected no errors: {:?}",
+        result.diagnostics
+    );
+}
+
+
+#[test]
 fn test_result_not_handled() {
     assert_type_errors!(
         "

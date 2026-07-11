@@ -46,7 +46,7 @@ fn synth_expr_inner(
         return synth_variant_sugar(checker, expr, name, *args, expected, span);
     }
 
-    if let Some(id) = synth_literal_expr(checker, expr, &kind, span) {
+    if let Some(id) = synth_literal_expr(checker, expr, &kind, span, expected) {
         return id;
     }
     if let Some(id) = synth_call_expr(checker, expr, &kind, span) {

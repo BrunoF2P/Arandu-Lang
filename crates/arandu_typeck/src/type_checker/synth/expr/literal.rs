@@ -68,6 +68,7 @@ pub(super) fn synth_literal_expr(
     _expr: ExprId,
     kind: &ExprKind,
     span: Span,
+    expected: Option<TypeId>,
 ) -> Option<TypeId> {
     match kind {
         ExprKind::Int { .. } => Some(checker.intern(ArType::IntLiteral)),
@@ -107,16 +108,23 @@ pub(super) fn synth_literal_expr(
             Some(str_ty)
         }
         ExprKind::Nil => {
-            if let Some(ret_id) = checker.ctx.current_return() {
-                // If it is nil, it can fallback to return type or nullable/option
-                let ret = checker.resolve(ret_id);
-                if types::is_err_type(&ret, &checker.type_info.type_interner) {
+            // SYN.3: `nil` as Option.None / Nullable empty when context is known.
+            // Prefer expected type (assignment, arg, return via synth_expr_expected),
+            // then the current function return type.
+            let context_id = expected.or_else(|| checker.ctx.current_return());
+            if let Some(ctx_id) = context_id {
+                let ctx = checker.resolve(ctx_id);
+                if types::is_err_type(&ctx, &checker.type_info.type_interner) {
                     let err_id = checker.intern(ArType::Error);
                     Some(checker.intern(ArType::Nullable(err_id)))
-                } else if types::is_tryable_type(&ret, &checker.type_info.type_interner) {
-                    Some(ret_id)
+                } else if types::is_tryable_type(&ctx, &checker.type_info.type_interner)
+                    || matches!(ctx, ArType::Option(_) | ArType::Nullable(_))
+                {
+                    // Option / Result / Nullable / tryable → nil fills the context type
+                    // (AMIR lowers Option-typed nil to EnumConstruct None).
+                    Some(ctx_id)
                 } else {
-                    Some(checker.intern(ArType::Nullable(ret_id)))
+                    Some(checker.intern(ArType::Nullable(ctx_id)))
                 }
             } else {
                 let err_id = checker.intern(ArType::Error);

@@ -625,8 +625,9 @@ pub(crate) fn synth_method_call(
     }
 
     for (i, arg_id) in arg_ids.iter().copied().enumerate() {
-        let arg_ty_id = synth_expr(checker, arg_id);
-        if let Some(&expected_id) = explicit_params.get(i) {
+        let expected_id = explicit_params.get(i).copied();
+        let arg_ty_id = super::expr::synth_expr_expected(checker, arg_id, expected_id);
+        if let Some(expected_id) = expected_id {
             super::expr::check_call_arg(
                 checker,
                 expected_id,

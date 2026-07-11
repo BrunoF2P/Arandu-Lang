@@ -1,0 +1,12 @@
+func none_int(): Option<int> {
+    return nil
+}
+
+func main(): int {
+    let x: Option<int> = nil
+    let n = match x {
+        Some(v) => v
+        None => 0
+    }
+    return n
+}

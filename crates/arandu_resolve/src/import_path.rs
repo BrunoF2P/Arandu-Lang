@@ -11,6 +11,7 @@ use arandu_parser::ImportDecl;
 /// - `import foo.bar` → `foo/bar.aru`
 /// - `import std.core.mem as mem` (path form) → `stdlib/core/mem.aru`
 /// - `import "std.core.mem" as mem` → `stdlib/core/mem.aru`
+/// - `import std.io as io` / `import "std.io" as io` → `stdlib/std/io.aru` (SL_S)
 /// - `import "other/path.aru" as x` → `other/path.aru` (opaque external key)
 ///
 /// Prelude modules (`io`, `err`) still produce keys like `io.aru`; callers may
@@ -24,6 +25,9 @@ pub fn canonicalize_import_path(import: &ImportDecl) -> Option<String> {
                 Some(format!("stdlib/core/{stripped}.aru"))
             } else if let Some(stripped) = path_str.strip_prefix("std/alloc/") {
                 Some(format!("stdlib/alloc/{stripped}.aru"))
+            } else if let Some(stripped) = path_str.strip_prefix("std/") {
+                // SL_S thin: `import std.io as io` → `stdlib/std/io.aru`
+                Some(format!("stdlib/std/{stripped}.aru"))
             } else {
                 Some(format!("{path_str}.aru"))
             }
@@ -33,6 +37,9 @@ pub fn canonicalize_import_path(import: &ImportDecl) -> Option<String> {
                 Some(format!("stdlib/core/{stripped}.aru"))
             } else if let Some(stripped) = source.strip_prefix("std.alloc.") {
                 Some(format!("stdlib/alloc/{stripped}.aru"))
+            } else if let Some(stripped) = source.strip_prefix("std.") {
+                // SL_S: `import "std.io" as io` → `stdlib/std/io.aru`
+                Some(format!("stdlib/std/{}.aru", stripped.replace('.', "/")))
             } else {
                 // Opaque external / project path as registered in the DB.
                 Some(source.to_string())
@@ -93,6 +100,32 @@ mod tests {
         assert_eq!(
             canonicalize_import_path(&import).as_deref(),
             Some("stdlib/core/option.aru")
+        );
+    }
+
+    #[test]
+    fn module_alias_std_io_sls() {
+        let import = ImportDecl::ModuleAlias {
+            span: span(),
+            path: vec![SmolStr::new("std"), SmolStr::new("io")].into(),
+            alias: SmolStr::new("io"),
+        };
+        assert_eq!(
+            canonicalize_import_path(&import).as_deref(),
+            Some("stdlib/std/io.aru")
+        );
+    }
+
+    #[test]
+    fn external_std_io_sls() {
+        let import = ImportDecl::ExternalAlias {
+            span: span(),
+            source: SmolStr::new("std.io"),
+            alias: SmolStr::new("io"),
+        };
+        assert_eq!(
+            canonicalize_import_path(&import).as_deref(),
+            Some("stdlib/std/io.aru")
         );
     }
 

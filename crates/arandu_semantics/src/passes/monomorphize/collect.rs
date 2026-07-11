@@ -373,7 +373,7 @@ fn method_symbol_from_field(
 /// - free calls `f(x)` where type args are inferred from argument types (`id(41)`)
 ///
 /// Returns `None` when the callee is not generic or type args cannot be recovered.
-pub(super) fn instantiation_key_for_call(
+pub(in crate::passes::monomorphize) fn instantiation_key_for_call(
     hir: &HirProgram,
     tc: &TypeCheckResult,
     callee_id: HirExprId,

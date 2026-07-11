@@ -1,103 +1,26 @@
+//! Call expression synthesis (callee resolution, free/method/generic calls).
+
+mod arg;
+mod instantiate;
+
+pub(crate) use arg::check_call_arg;
+use instantiate::infer_and_instantiate_func;
+
 use arandu_lexer::Span;
 use arandu_parser::CatchHandler;
 use arandu_parser::ast_pool::{ExprId, ExprKind};
 
-use super::synth_expr;
+use super::{synth_expr, synth_expr_expected};
 use crate::type_checker::TypeChecker;
 use crate::type_checker::constraints::ConstraintOrigin;
 use crate::type_checker::synth::{
     resolve_field, resolve_index, resolve_namespace_field, resolve_namespace_member_type,
     synth_method_call, synth_option_ctor, synth_poll_ctor, synth_result_ctor,
 };
-use crate::type_checker::types::{self, ArType, Primitive};
+use crate::type_checker::types::{self, ArType};
 
 use arandu_middle::types::type_interner::TypeId;
 
-/// Check a call argument against its formal parameter.
-///
-/// When the formal type is `str` and the argument is ToStr-v0.1-formatable,
-/// accept without a constraint (AMIR lower inserts `ToStr`). When formal is
-/// `str` and the argument is not formatable, emit T034. Otherwise fall back
-/// to the usual CallArg constraint.
-pub(crate) fn check_call_arg(
-    checker: &mut TypeChecker<'_>,
-    param_id: TypeId,
-    arg_ty_id: TypeId,
-    call_span: Span,
-    param_span: Span,
-    arg_span: Span,
-    arg_index: usize,
-) {
-    if checker.unify_ids(param_id, arg_ty_id) {
-        let arg_ty = checker.resolve(arg_ty_id);
-        let param_ty = checker.resolve(param_id);
-        if !arg_ty.is_literal()
-            && arg_ty != param_ty
-            && param_ty.is_numeric()
-            && arg_ty.is_numeric()
-        {
-            checker.add_constraint(
-                param_id,
-                arg_ty_id,
-                ConstraintOrigin::ImplicitWidening {
-                    source_span: arg_span,
-                    target_span: call_span,
-                },
-            );
-        }
-        return;
-    }
-
-    let param_ty = checker.resolve(param_id);
-    let arg_ty = checker.resolve(arg_ty_id);
-
-    // W3.3 auto-ref: formal `&T` / `&mut T`, actual `T` → accept (lower inserts Borrow).
-    if let ArType::Ref(inner) | ArType::RefMut(inner) = param_ty
-        && checker.unify_ids(inner, arg_ty_id)
-    {
-        return;
-    }
-    // Auto-deref: formal `T`, actual `&T` / `&mut T`.
-    if let ArType::Ref(inner) | ArType::RefMut(inner) = arg_ty
-        && checker.unify_ids(param_id, inner)
-    {
-        return;
-    }
-
-    if matches!(param_ty, ArType::Primitive(Primitive::Str)) {
-        if arg_ty.is_error() || arg_ty.is_to_str_v01() {
-            // ToStr v0.1: lower will insert AmirRvalue::ToStr.
-            return;
-        }
-        let interner = &checker.type_info.type_interner;
-        let found = arg_ty.display(&checker.symbols, interner);
-        checker.diagnostics.push(
-            crate::Diagnostic::error(
-                crate::DiagCode::T034CannotFormat,
-                format!("cannot format value of type `{found}` as `str`"),
-                arg_span,
-            )
-            .with_note(
-                "only bool, integers, floats, char, and str are supported in v0.1".to_string(),
-            )
-            .with_label(param_span, "parameter expects `str`"),
-        );
-        return;
-    }
-
-    checker.add_constraint(
-        param_id,
-        arg_ty_id,
-        ConstraintOrigin::CallArg {
-            call_span,
-            param_span,
-            arg_span,
-            arg_index,
-        },
-    );
-}
-
-#[tracing::instrument(level = "trace", target = "arandu_typeck", skip(checker, expr))]
 pub(super) fn synth_call_expr(
     checker: &mut TypeChecker<'_>,
     expr: ExprId,
@@ -372,8 +295,10 @@ pub(super) fn synth_call_expr(
                             );
                         }
                         for (i, arg_id) in arg_ids.iter().copied().enumerate() {
-                            let arg_ty_id = synth_expr(checker, arg_id);
-                            if let Some(&param_id) = params.get(i) {
+                            let param_id = params.get(i).copied();
+                            let arg_ty_id =
+                                synth_expr_expected(checker, arg_id, param_id);
+                            if let Some(param_id) = param_id {
                                 check_call_arg(
                                     checker,
                                     param_id,
@@ -476,8 +401,10 @@ pub(super) fn synth_call_expr(
                                 checker.diagnostics.push(diag);
                             }
                             for (i, arg_id) in arg_ids.iter().copied().enumerate() {
-                                let arg_ty_id = synth_expr(checker, arg_id);
-                                if let Some(&expected_id) = explicit_params.get(i) {
+                                let expected_id = explicit_params.get(i).copied();
+                                let arg_ty_id =
+                                    synth_expr_expected(checker, arg_id, expected_id);
+                                if let Some(expected_id) = expected_id {
                                     check_call_arg(
                                         checker,
                                         expected_id,
@@ -636,11 +563,12 @@ pub(super) fn synth_call_expr(
                     checker.diagnostics.push(diag);
                 }
                 for (i, arg_id) in arg_ids.iter().copied().enumerate() {
-                    let arg_ty_id = synth_expr(checker, arg_id);
-                    if i < params.len() {
+                    let formal = params.get(i).copied();
+                    let arg_ty_id = synth_expr_expected(checker, arg_id, formal);
+                    if let Some(param_id) = formal {
                         check_call_arg(
                             checker,
-                            params[i],
+                            param_id,
                             arg_ty_id,
                             span,
                             checker.pool.expr_span(callee_id),
@@ -751,105 +679,5 @@ pub(super) fn synth_call_expr(
             )
         }
         _ => None,
-    }
-}
-
-/// Infer type-parameter bindings from formal vs actual arg types, then substitute
-/// the function signature. Used for bare `id(x)` calls without explicit `<T>`.
-fn infer_and_instantiate_func(
-    checker: &mut TypeChecker<'_>,
-    type_params: &[arandu_middle::SymbolId],
-    formals: &[TypeId],
-    ret: TypeId,
-    arg_tys: &[TypeId],
-) -> Option<(Vec<TypeId>, TypeId)> {
-    if formals.len() != arg_tys.len() {
-        return None;
-    }
-    let mut bindings: rustc_hash::FxHashMap<arandu_middle::SymbolId, TypeId> =
-        rustc_hash::FxHashMap::default();
-    for (&formal_id, &arg_id) in formals.iter().zip(arg_tys.iter()) {
-        let formal = checker.resolve(formal_id);
-        bind_type_params(checker, type_params, &formal, arg_id, &mut bindings);
-    }
-    let mut concrete = Vec::with_capacity(type_params.len());
-    for &p in type_params {
-        let tid = *bindings.get(&p)?;
-        if checker.resolve(tid).is_error() {
-            return None;
-        }
-        concrete.push(checker.resolve(tid));
-    }
-    let subst = types::build_subst(type_params, &concrete);
-    let new_params: Vec<TypeId> = formals
-        .iter()
-        .map(|&fid| {
-            let ty = checker.resolve(fid);
-            let inst = types::substitute_type(&ty, &subst, &checker.type_info.type_interner);
-            checker.intern(inst)
-        })
-        .collect();
-    let ret_ty = checker.resolve(ret);
-    let ret_inst = types::substitute_type(&ret_ty, &subst, &checker.type_info.type_interner);
-    Some((new_params, checker.intern(ret_inst)))
-}
-
-fn bind_type_params(
-    checker: &TypeChecker<'_>,
-    type_params: &[arandu_middle::SymbolId],
-    formal: &ArType,
-    actual_id: TypeId,
-    bindings: &mut rustc_hash::FxHashMap<arandu_middle::SymbolId, TypeId>,
-) {
-    let interner = &checker.type_info.type_interner;
-    match formal {
-        ArType::Named(id, args) if args.is_empty() && type_params.contains(id) => {
-            bindings.entry(*id).or_insert(actual_id);
-        }
-        ArType::Named(_, args) => {
-            if let ArType::Named(_, act_args) = interner.resolve(actual_id)
-                && args.len() == act_args.len()
-            {
-                for (&fa, &aa) in args.iter().zip(act_args.iter()) {
-                    bind_type_params(checker, type_params, &interner.resolve(fa), aa, bindings);
-                }
-            }
-        }
-        ArType::Ptr(inner)
-        | ArType::Nullable(inner)
-        | ArType::Slice(inner)
-        | ArType::Option(inner)
-        | ArType::Array(_, inner) => {
-            let act_inner = match interner.resolve(actual_id) {
-                ArType::Ptr(i)
-                | ArType::Nullable(i)
-                | ArType::Slice(i)
-                | ArType::Option(i)
-                | ArType::Array(_, i) => Some(i),
-                _ => None,
-            };
-            if let Some(ai) = act_inner {
-                bind_type_params(
-                    checker,
-                    type_params,
-                    &interner.resolve(*inner),
-                    ai,
-                    bindings,
-                );
-            }
-        }
-        ArType::Result(ok, err) => {
-            if let ArType::Result(aok, aerr) = interner.resolve(actual_id) {
-                bind_type_params(checker, type_params, &interner.resolve(*ok), aok, bindings);
-                bind_type_params(
-                    checker,
-                    type_params,
-                    &interner.resolve(*err),
-                    aerr,
-                    bindings,
-                );
-            }
-        }
-        _ => {}
     }
 }

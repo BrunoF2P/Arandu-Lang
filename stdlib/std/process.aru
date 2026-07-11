@@ -1,0 +1,8 @@
+module std.process
+
+/// Thin SL_S: process control (scaffold).
+
+extern "C" {
+    /// Terminate the process with the given status code.
+    func exit(code: int): void
+}

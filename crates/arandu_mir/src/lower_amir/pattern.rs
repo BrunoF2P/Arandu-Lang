@@ -17,6 +17,16 @@ pub(crate) struct EnumPatternInput<'a> {
     payload: &'a [crate::hir::HirPatternId],
     symbols: &'a SymbolTable,
 }
+
+struct BuiltinResultPatternInput<'a> {
+    scrutinee: AmirOperand,
+    variant: &'a str,
+    payload: &'a [crate::hir::HirPatternId],
+    ok: crate::types::TypeId,
+    err: crate::types::TypeId,
+    span: Span,
+    symbols: &'a SymbolTable,
+}
 impl LowerCtx<'_> {
     pub(crate) fn lower_enum_pattern(
         &mut self,
@@ -175,6 +185,162 @@ impl LowerCtx<'_> {
                 self.lower_pattern_match(scrutinee, pat, symbols)
             }
         }
+    }
+
+    /// SYN.3: `Some(v)` / `None` against `Option<T>` (tags: None=0, Some=1).
+    fn lower_option_type_tuple_pattern(
+        &mut self,
+        scrutinee: AmirOperand,
+        variant: &str,
+        payload: &[crate::hir::HirPatternId],
+        inner: crate::types::TypeId,
+        span: Span,
+        symbols: &SymbolTable,
+    ) -> Result<AmirOperand, Diagnostic> {
+        let (want_tag, expect_payload) = match variant {
+            "None" => (0usize, false),
+            "Some" => (1usize, true),
+            _ => {
+                return Err(Diagnostic::error(
+                    DiagCode::T018UndefinedField,
+                    format!("variant '{variant}' is not defined on Option"),
+                    span,
+                ));
+            }
+        };
+        if expect_payload {
+            if payload.len() != 1 {
+                return Err(Diagnostic::error(
+                    DiagCode::T012WrongArgCount,
+                    format!(
+                        "variant 'Some' expects 1 payload item, found {}",
+                        payload.len()
+                    ),
+                    span,
+                ));
+            }
+        } else if !payload.is_empty() {
+            return Err(Diagnostic::error(
+                DiagCode::T012WrongArgCount,
+                format!(
+                    "variant 'None' expects 0 payload items, found {}",
+                    payload.len()
+                ),
+                span,
+            ));
+        }
+
+        let tmp_tag = self.new_temp(ArType::Primitive(Primitive::Int));
+        self.emit_assign_temp(tmp_tag, AmirRvalue::Discriminant { value: scrutinee });
+        let tag_op = AmirOperand::Constant(self.intern_literal_int(want_tag.to_string()));
+        let tag_matches = self.new_temp(ArType::Primitive(Primitive::Bool));
+        self.emit_assign_temp(
+            tag_matches,
+            AmirRvalue::Binary {
+                op: BinaryOp::Equal,
+                left: AmirOperand::Copy(tmp_tag),
+                right: tag_op,
+            },
+        );
+
+        if !expect_payload {
+            return Ok(AmirOperand::Copy(tag_matches));
+        }
+
+        let payload_tmp = self.new_temp_id(inner);
+        // Result/Option layout: field 0 = discriminant, field 1 = payload.
+        self.emit_assign_temp(
+            payload_tmp,
+            AmirRvalue::FieldAccess {
+                base: scrutinee,
+                field: 1,
+            },
+        );
+        let pat = self.hir.pool.pattern(payload[0]);
+        let item_matches =
+            self.lower_pattern_match(AmirOperand::Copy(payload_tmp), pat, symbols)?;
+        let and_dest = self.new_temp(ArType::Primitive(Primitive::Bool));
+        self.emit_assign_temp(
+            and_dest,
+            AmirRvalue::Binary {
+                op: BinaryOp::And,
+                left: AmirOperand::Copy(tag_matches),
+                right: item_matches,
+            },
+        );
+        Ok(AmirOperand::Copy(and_dest))
+    }
+
+    /// `Ok(v)` / `Err(e)` against builtin `Result<T, E>` (tags: Ok=0, Err=1).
+    fn lower_result_type_tuple_pattern(
+        &mut self,
+        input: BuiltinResultPatternInput<'_>,
+    ) -> Result<AmirOperand, Diagnostic> {
+        let BuiltinResultPatternInput {
+            scrutinee,
+            variant,
+            payload,
+            ok,
+            err,
+            span,
+            symbols,
+        } = input;
+        let (want_tag, payload_ty) = match variant {
+            "Ok" => (0usize, ok),
+            "Err" => (1usize, err),
+            _ => {
+                return Err(Diagnostic::error(
+                    DiagCode::T018UndefinedField,
+                    format!("variant '{variant}' is not defined on Result"),
+                    span,
+                ));
+            }
+        };
+        if payload.len() != 1 {
+            return Err(Diagnostic::error(
+                DiagCode::T012WrongArgCount,
+                format!(
+                    "variant '{variant}' expects 1 payload item, found {}",
+                    payload.len()
+                ),
+                span,
+            ));
+        }
+
+        let tmp_tag = self.new_temp(ArType::Primitive(Primitive::Int));
+        self.emit_assign_temp(tmp_tag, AmirRvalue::Discriminant { value: scrutinee });
+        let tag_op = AmirOperand::Constant(self.intern_literal_int(want_tag.to_string()));
+        let tag_matches = self.new_temp(ArType::Primitive(Primitive::Bool));
+        self.emit_assign_temp(
+            tag_matches,
+            AmirRvalue::Binary {
+                op: BinaryOp::Equal,
+                left: AmirOperand::Copy(tmp_tag),
+                right: tag_op,
+            },
+        );
+
+        let payload_tmp = self.new_temp_id(payload_ty);
+        self.emit_assign_temp(
+            payload_tmp,
+            AmirRvalue::FieldAccess {
+                base: scrutinee,
+                field: 1,
+            },
+        );
+        let pat = self.hir.pool.pattern(payload[0]);
+        let item_matches =
+            self.lower_pattern_match(AmirOperand::Copy(payload_tmp), pat, symbols)?;
+        let and_dest = self.new_temp(ArType::Primitive(Primitive::Bool));
+        self.emit_assign_temp(
+            and_dest,
+            AmirRvalue::Binary {
+                op: BinaryOp::And,
+                left: AmirOperand::Copy(tag_matches),
+                right: item_matches,
+            },
+        );
+        Ok(AmirOperand::Copy(and_dest))
     }
 
     pub(crate) fn lower_pattern_match(
@@ -354,24 +520,46 @@ impl LowerCtx<'_> {
                 payload,
             } => {
                 let scrutinee_ty = self.operand_type(&scrutinee);
-                let ArType::Named(type_symbol, _) = scrutinee_ty else {
-                    return Err(Diagnostic::error(
-                        DiagCode::T002IncompatibleAssignment,
-                        "cannot match type tuple pattern against non-enum type".to_string(),
-                        *span,
-                    ));
-                };
-
                 let payload_ids = self.hir.pool.pattern_list(*payload);
-                self.lower_enum_pattern(EnumPatternInput {
-                    scrutinee,
-                    span: *span,
-                    type_symbol,
-                    variant: name.as_str(),
-                    variant_symbol: None,
-                    payload: payload_ids,
-                    symbols,
-                })
+                // SYN.3: builtin `Option` / `Result` are not `Named` enums — match by tag.
+                match scrutinee_ty {
+                    ArType::Option(inner) => self.lower_option_type_tuple_pattern(
+                        scrutinee,
+                        name.as_str(),
+                        payload_ids,
+                        inner,
+                        *span,
+                        symbols,
+                    ),
+                    ArType::Result(ok, err) => {
+                        self.lower_result_type_tuple_pattern(BuiltinResultPatternInput {
+                            scrutinee,
+                            variant: name.as_str(),
+                            payload: payload_ids,
+                            ok,
+                            err,
+                            span: *span,
+                            symbols,
+                        })
+                    }
+                    ArType::Named(type_symbol, _) => self.lower_enum_pattern(EnumPatternInput {
+                        scrutinee,
+                        span: *span,
+                        type_symbol,
+                        variant: name.as_str(),
+                        variant_symbol: None,
+                        payload: payload_ids,
+                        symbols,
+                    }),
+                    other => Err(Diagnostic::error(
+                        DiagCode::T002IncompatibleAssignment,
+                        format!(
+                            "cannot match type tuple pattern against non-enum type `{}`",
+                            other.display(symbols, &self.tc.type_info.type_interner)
+                        ),
+                        *span,
+                    )),
+                }
             }
             HirPattern::Range {
                 span: _,

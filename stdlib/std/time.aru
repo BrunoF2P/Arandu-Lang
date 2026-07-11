@@ -1,0 +1,8 @@
+module std.time
+
+/// Thin SL_S: clocks (scaffold).
+
+extern "C" {
+    /// Monotonic time in nanoseconds since an arbitrary epoch.
+    func monotonic_ns(): int
+}

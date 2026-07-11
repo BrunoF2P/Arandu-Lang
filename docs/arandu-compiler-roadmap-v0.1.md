@@ -158,14 +158,14 @@ Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
    ├─ [x] T3.4   Stdlib migrada (core/alloc usam path tokens; residual aspas só onde External)
    ├─ [x] T3.5   Contrato parser: import_module + import_module_alias_path
    └─ [x] T3.6   LSP complete em path tokens `import std.▮` + members `alias.▮` (W4)
-[ ] SL_S   Stdlib de Sistema: arandu_std (io, fs, process, env, path, time, random, sync, thread, ffi)
+[→] SL_S   Stdlib de Sistema (thin): `stdlib/std/{io,env,path,fs,process,time}.aru` + import rewrite; full OS API later
 [ ] SL_R   Async Runtime: arandu_std::runtime (scheduler cooperativo/work-stealing e reactor OS epoll/kqueue/io_uring)
 [ ] SL_T   Testing Harness: arandu_std::testing (test runner integrado e benchmark engine)
 
 Fase 4 — Expressividade de Linguagem e Tipagem (v0.35) · [NÃO INICIADA]
 [ ] SYN.1  Retorno implícito na última expressão de bloco (parser: parse_block)
 [ ] SYN.2  Interpolação de String ($name e ${expr}) no Lexer
-[ ] SYN.3  Açúcar Sintático para Opcionais (T? mapeando para Option<T> e nil para .None)
+[x] SYN.3  Opcionais: `nil` → Option.None (contexto); match Some/None no AMIR; `T?` permanece Nullable (§2.1)
 [ ] SYN.4  Pattern Matching Avançado (wildcards, bindings e ranges)
 [ ] TYP.1  Interfaces Implícitas / Structural Typing (Go-style duck typing no Type Checker)
 [ ] TYP.2  Constraints de Generics (cláusula `where` e sintaxe `<T: Trait>`)

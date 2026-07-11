@@ -1,0 +1,8 @@
+module std.fs
+
+/// Thin SL_S: filesystem (scaffold — declarations only).
+
+extern "C" {
+    /// Returns true if `path` exists (host ABI TBD).
+    func exists(path: str): bool
+}

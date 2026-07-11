@@ -41,7 +41,8 @@ pub enum ArType {
     /// `Result<T, E>` — canonical success/error type
     Result(TypeId, TypeId),
 
-    /// `Option<T>` — optional value (`T?` is `Nullable`, not `Option`)
+    /// `Option<T>` — algebraic optional. SYN.3: `nil` fills this type as `.None`.
+    /// `T?` remains [`ArType::Nullable`] (safe-nav / heap handle; see strategic plan §2.1).
     Option(TypeId),
 
     /// `Coroutine[T]` — coroutine machine state type returning T
