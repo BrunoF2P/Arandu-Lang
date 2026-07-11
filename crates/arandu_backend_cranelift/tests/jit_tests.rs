@@ -454,6 +454,40 @@ fn format_f64_v01_specials_and_integers() {
     assert!(format_f64_v01(1.5).starts_with("1.5"));
 }
 
+/// A3.3: async block → stack-ready coroutine + await.
+#[test]
+fn jit_a3_3_stack_async_block() {
+    let src = r#"
+    func main(): int {
+        let x = async { 42 }
+        return await x
+    }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    let has_stack = amir.funcs.iter().any(|f| {
+        f.blocks.iter().any(|b| {
+            for stmt in f.block_stmts(b.id) {
+                if let arandu_semantics::amir::AmirStmt::Assign {
+                    rhs: arandu_semantics::amir::AmirRvalue::CoroutineReady { stack: true, .. },
+                    ..
+                } = stmt
+                {
+                    return true;
+                }
+            }
+            false
+        })
+    });
+    assert!(has_stack, "expected CoroutineReady {{ stack: true }}");
+    let backend = backend_for_test();
+    let module = backend.compile(&amir, &symbols, &type_info).unwrap();
+    let result: i32 = unsafe {
+        let f: unsafe fn() -> i32 = module.get_fn("main").unwrap();
+        f()
+    };
+    assert_eq!(result, 42);
+}
+
 /// A3.1: suspend split inside async func (ready-only drive still returns 11).
 #[test]
 fn jit_a3_1_suspend_split() {

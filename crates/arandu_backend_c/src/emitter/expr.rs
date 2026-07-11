@@ -346,8 +346,16 @@ impl<'a> CEmitter<'a> {
                 let size_str = self.format_operand(op, func);
                 let _ = write!(&mut self.output, "malloc((size_t)({}))", size_str);
             }
-            // A3.0 ready-only: allocate state, store payload, yield pointer as Coroutine[T].
-            AmirRvalue::CoroutineReady { value, payload_ty } => {
+            // A3.0/A3.3 ready-only: state blob, payload at +0.
+            // Cranelift honours `stack` with a real stack slot. In C we cannot
+            // safely take the address of a statement-expression local and store
+            // it (storage ends with the expression) — always malloc here; true
+            // C stack placement needs multi-stmt emission (later).
+            AmirRvalue::CoroutineReady {
+                value,
+                payload_ty,
+                stack: _,
+            } => {
                 let payload_ar = self.interner.resolve(*payload_ty);
                 let payload_c = self.format_type(&payload_ar);
                 let v = self.format_operand(value, func);
@@ -356,7 +364,6 @@ impl<'a> CEmitter<'a> {
                     .layout_of_type(&payload_ar, self.interner, self.provider)
                     .size
                     .max(1);
-                // Compound literal + compound expression: allocate, store, yield ptr.
                 let _ = write!(
                     &mut self.output,
                     "({{ {payload_c}* __ar_co = ({payload_c}*)malloc({size}); *__ar_co = ({payload_c})({v}); (void*)__ar_co; }})"

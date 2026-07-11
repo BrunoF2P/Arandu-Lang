@@ -169,6 +169,8 @@ impl LowerCtx<'_> {
                                 AmirRvalue::CoroutineReady {
                                     value: inner,
                                     payload_ty,
+                                    // A3.3: returned coroutine must outlive this frame → heap.
+                                    stack: false,
                                 },
                             );
                         } else {
@@ -193,6 +195,7 @@ impl LowerCtx<'_> {
                                 AmirRvalue::CoroutineReady {
                                     value: AmirOperand::Copy(tup),
                                     payload_ty,
+                                    stack: false,
                                 },
                             );
                         } else {
@@ -209,6 +212,7 @@ impl LowerCtx<'_> {
                             AmirRvalue::CoroutineReady {
                                 value: AmirOperand::Constant(AmirConstant::Nil),
                                 payload_ty,
+                                stack: false,
                             },
                         );
                     }

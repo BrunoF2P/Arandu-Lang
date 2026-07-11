@@ -110,7 +110,10 @@ Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
    │              · args = live state (build_target_args); captura liveness densa = polish
    ├─ [x] A3.2   OSSA check borrow-across-suspend (temp liveness F2.2 → O010)
    │              · `suspend_check::check_borrow_across_suspend`: Ref/RefMut live into resume
-   ├─ [ ] A3.3   Stack-first task state via F2.3 escape (heap só se escapar)
+   ├─ [x] A3.3   Stack-first task state (`CoroutineReady.stack`)
+   │              · `async {}` → `stack: true` (Cranelift stack slot; C still malloc until multi-stmt)
+   │              · `async func` return / `TempId(0)` → `stack: false` (heap; outlives frame)
+   │              · `coroutine_depth` enables Suspend split inside `async {}` too
    └─ [ ] A3.4   Pin-free self-ref via LocalId índices no estado
 [ ] A4     Memory Layout Optimization Engine (field reordering, niche tags, SOO)
 [ ] F2     OSSA borrow completo (borrow_shared, borrow_mut, end_borrow)

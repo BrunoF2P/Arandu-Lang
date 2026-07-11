@@ -319,9 +319,14 @@ impl AmirRvalue {
                 out.push_str("&mut ");
                 place.pretty_print_to(out, symbols, pool);
             }
-            AmirRvalue::CoroutineReady { value, payload_ty } => {
+            AmirRvalue::CoroutineReady {
+                value,
+                payload_ty,
+                stack,
+            } => {
+                let kind = if *stack { "stack" } else { "heap" };
                 out.push_str(&format!(
-                    "coroutine_ready(ty#{}, {})",
+                    "coroutine_ready.{kind}(ty#{}, {})",
                     payload_ty.as_usize(),
                     value.to_pretty_string(symbols, pool)
                 ));

@@ -1075,10 +1075,12 @@ impl FunctionTranslator<'_, '_> {
             }
             AmirRvalue::Len(op) => self.translate_len(op, expected_ty),
             AmirRvalue::Alloc(op) => self.translate_alloc(op),
-            // A3.0: ready coroutine = malloc(sizeof(T)); store payload; return state ptr.
-            AmirRvalue::CoroutineReady { value, payload_ty } => {
-                self.translate_coroutine_ready(value, *payload_ty)
-            }
+            // A3.0/A3.3: ready coroutine state = payload at +0 (stack or heap).
+            AmirRvalue::CoroutineReady {
+                value,
+                payload_ty,
+                stack,
+            } => self.translate_coroutine_ready(value, *payload_ty, *stack),
             AmirRvalue::GenInsert { value } => self.translate_gen_call("ar_gen_insert_i64", value),
             AmirRvalue::GenGet { gen_ref } => self.translate_gen_call("ar_gen_get_i64", gen_ref),
             AmirRvalue::GenRemove { gen_ref } => {
@@ -1181,29 +1183,45 @@ impl FunctionTranslator<'_, '_> {
         self.builder.inst_results(call)[0]
     }
 
-    /// A3.0 ready-only: heap state blob with payload `T` at offset 0.
-    /// Later A3 splits replace this with a multi-field state machine (still pin-free indices).
+    /// A3.0/A3.3 ready-only: state blob with payload `T` at offset 0.
+    /// `stack == true` → stack slot (zero-heap); else `malloc` (escaping / returned).
     fn translate_coroutine_ready(
         &mut self,
         value: &AmirOperand,
         payload_ty: arandu_semantics::types::TypeId,
+        stack: bool,
     ) -> Value {
         let payload_ar = self.type_info.resolve_type_id(payload_ty);
         let pointer_width = self.ptr_type.bytes() as u64;
         let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
         let layout =
             engine.layout_of_type(&payload_ar, &self.type_info.type_interner, self.type_info);
-        let size = layout.size.max(1) as i64;
+        let size = layout.size.max(1);
+        let align = layout.align.max(1);
+        let align_shift = align.trailing_zeros() as u8;
 
-        let Some(malloc_id) = self.malloc_func_id() else {
-            return self.poison_i32();
+        let ptr_val = if stack {
+            // A3.3 stack-first: task state lives in the creator's frame.
+            let slot = self
+                .builder
+                .create_sized_stack_slot(cranelift_codegen::ir::StackSlotData {
+                    kind: cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+                    size: size as u32,
+                    align_shift,
+                    key: None,
+                });
+            self.builder.ins().stack_addr(self.ptr_type, slot, 0)
+        } else {
+            let Some(malloc_id) = self.malloc_func_id() else {
+                return self.poison_i32();
+            };
+            let malloc_ref = self
+                .module
+                .declare_func_in_func(malloc_id, self.builder.func);
+            let size_val = self.builder.ins().iconst(self.ptr_type, size as i64);
+            let call = self.builder.ins().call(malloc_ref, &[size_val]);
+            self.builder.inst_results(call)[0]
         };
-        let malloc_ref = self
-            .module
-            .declare_func_in_func(malloc_id, self.builder.func);
-        let size_val = self.builder.ins().iconst(self.ptr_type, size);
-        let call = self.builder.ins().call(malloc_ref, &[size_val]);
-        let ptr_val = self.builder.inst_results(call)[0];
 
         let clif_ty = match crate::types::clif_type(&payload_ar, self.ptr_type) {
             crate::types::ClifType::Concrete(t) => t,

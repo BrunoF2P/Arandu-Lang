@@ -104,9 +104,10 @@ impl LowerCtx<'_> {
                     Ok(AmirOperand::Copy(dest))
                 }
             }
-            // A3.1: inside `async func`, `await` is a CFG suspension frontier.
-            // Outside async (sync drive-to-completion), keep A3.0 unary await.
-            UnaryOp::Await if self.func_is_async => {
+            // A3.1: inside `async func` or `async { … }`, `await` is a CFG suspension
+            // frontier. Sync drive-to-completion (await in non-coroutine context) stays
+            // a plain unary await without Suspend.
+            UnaryOp::Await if self.func_is_async || self.coroutine_depth > 0 => {
                 let future_op = self.lower_expr(sub_expr, None, symbols)?;
                 let resume = self.new_block();
                 self.emit_suspend(future_op, resume)?;

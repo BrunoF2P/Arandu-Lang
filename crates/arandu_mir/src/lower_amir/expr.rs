@@ -1099,9 +1099,8 @@ impl LowerCtx<'_> {
                 "lambda/closure",
                 "v0.3 LAMBDA: closure lowering",
             )),
-            // A3.0: ready-only coroutine — evaluate block payload, wrap as Coroutine[T].
-            // Suspension splitting (multi-state machines) is later A3; no await inside
-            // the block still produces a valid stack/heap-ready coroutine value.
+            // A3.0/A3.1/A3.3: evaluate block as coroutine body (Suspend on nested await),
+            // wrap payload as Coroutine[T]. Stack-first when not the function return slot.
             HirExprKind::AsyncBlock { block } => {
                 let dest = target.unwrap_or_else(|| self.new_temp_id(expr.ty));
                 let payload_ty = match self.resolve_ty(expr.ty) {
@@ -1109,12 +1108,19 @@ impl LowerCtx<'_> {
                     _ => expr.ty,
                 };
                 let payload_tmp = self.new_temp_id(payload_ty);
-                self.lower_block_as_expr(*block, Some(payload_tmp), symbols)?;
+                self.coroutine_depth = self.coroutine_depth.saturating_add(1);
+                let lower_res = self.lower_block_as_expr(*block, Some(payload_tmp), symbols);
+                self.coroutine_depth = self.coroutine_depth.saturating_sub(1);
+                lower_res?;
+                // A3.3: stack state unless this is the return register of a coroutine-
+                // returning function (must outlive the callee).
+                let stack = dest != TempId(0);
                 self.emit_assign_temp(
                     dest,
                     AmirRvalue::CoroutineReady {
                         value: AmirOperand::Copy(payload_tmp),
                         payload_ty,
+                        stack,
                     },
                 );
                 Ok(AmirOperand::Copy(dest))

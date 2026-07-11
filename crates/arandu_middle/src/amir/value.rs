@@ -71,12 +71,17 @@ pub enum AmirRvalue {
     Borrow(AmirPlace),
     /// Create a mutable borrow (mutable reference) of a place.
     BorrowMut(AmirPlace),
-    /// A3.0: wrap a ready payload as `Coroutine[T]` (pointer to heap state / payload).
-    /// Full splitting + multi-state machines land in later A3; ready-only has state = payload.
+    /// A3.0/A3.3: wrap a ready payload as `Coroutine[T]` (pointer to state / payload).
+    /// Full multi-state machines land in later A3; ready-only has state = payload at +0.
     CoroutineReady {
         value: AmirOperand,
         /// Payload type `T` inside `Coroutine[T]` (for layout / store width).
         payload_ty: TypeId,
+        /// A3.3: when true, backends place state on the **stack** (no malloc).
+        /// Set for non-escaping `async {}` values; `async func` returns use `false`
+        /// (state must outlive the callee frame). Escape of a stack coroutine is
+        /// rewritten to heap or rejected by analysis.
+        stack: bool,
     },
     /// F2.3.runtime: insert `value` into the process gen-arena; result is [`ArType::GenRef`].
     GenInsert {

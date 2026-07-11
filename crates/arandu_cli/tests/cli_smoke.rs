@@ -1125,6 +1125,88 @@ func main(): int {
     );
 }
 
+/// A3.1/A3.3: `await` inside `async { }` also Suspend-splits; ready state is stack.
+#[test]
+fn run_a3_async_block_suspend_stack_exits_11() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_a33_block_suspend.aru");
+    fs::write(
+        &file,
+        r#"module tests.cli.a33_block_suspend
+
+async func tick(): int {
+    return 1
+}
+
+func main(): int {
+    let c = async {
+        let a = 10
+        let b = await tick()
+        a + b
+    }
+    return await c
+}
+"#,
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+    let amir = run_cli(&["amir", &path]);
+    assert!(
+        amir.status.success(),
+        "amir stderr:\n{}",
+        String::from_utf8_lossy(&amir.stderr)
+    );
+    let amir_out = String::from_utf8_lossy(&amir.stdout);
+    assert!(
+        amir_out.contains("suspend"),
+        "expected suspend inside async block lower, got:\n{amir_out}"
+    );
+    assert!(
+        amir_out.contains("coroutine_ready.stack"),
+        "expected stack-first CoroutineReady for async block, got:\n{amir_out}"
+    );
+    let output = run_cli(&["run", &path]);
+    assert_eq!(
+        output.status.code(),
+        Some(11),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// A3.3: plain `async { 42 }` materialises as `coroutine_ready.stack`.
+#[test]
+fn run_a3_3_stack_ready_exits_42() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_a33_stack.aru");
+    fs::write(
+        &file,
+        r#"module tests.cli.a33_stack
+
+func main(): int {
+    let x = async { 42 }
+    return await x
+}
+"#,
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+    let amir = run_cli(&["amir", &path]);
+    assert!(amir.status.success());
+    let amir_out = String::from_utf8_lossy(&amir.stdout);
+    assert!(
+        amir_out.contains("coroutine_ready.stack"),
+        "expected stack ready, got:\n{amir_out}"
+    );
+    let output = run_cli(&["run", &path]);
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 /// A3.1: `await` inside `async func` splits CFG with `suspend → resume`.
 #[test]
 fn run_a3_1_suspend_split_exits_11() {

@@ -184,6 +184,9 @@ pub(crate) struct LowerCtx<'a> {
     func_return_type: crate::types::TypeId,
     /// A3: function was declared `async` — returns wrap bare `T` as `Coroutine[T]`.
     func_is_async: bool,
+    /// A3: nesting depth of `async { … }` bodies being lowered (enables Suspend split
+    /// inside blocks even when the enclosing function is sync).
+    coroutine_depth: u32,
     locals: Vec<AmirLocal>,
     temps: Vec<AmirTemp>,
     blocks: Vec<AmirBasicBlock>,
