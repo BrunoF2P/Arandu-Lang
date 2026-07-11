@@ -265,10 +265,33 @@ impl LowerCtx<'_> {
                     }
                     self.add_predecessor(curr, otherwise.0);
                 }
+                // A3.1: suspend edge → resume block (same pred tracking as Goto).
+                AmirTerminator::Suspend { resume, .. } => {
+                    self.add_predecessor(curr, *resume);
+                }
                 _ => {}
             }
             self.blocks[curr.as_usize()].terminator = term;
         }
+    }
+
+    /// A3.1: end the current block at an `await` frontier and continue in a fresh resume BB.
+    ///
+    /// `future` is the coroutine being driven; `args` are live state carried as resume
+    /// block params (empty for now — SSA `current_def` still flows via incomplete phis;
+    /// explicit capture from liveness is A3.1 hardening). Returns the resume block id.
+    pub(crate) fn emit_suspend(
+        &mut self,
+        future: AmirOperand,
+        resume: BlockId,
+    ) -> Result<(), Diagnostic> {
+        let args = self.build_target_args(resume);
+        self.set_terminator(AmirTerminator::Suspend {
+            future,
+            resume,
+            args,
+        });
+        Ok(())
     }
 
     pub(crate) fn set_bool_branch(
@@ -972,6 +995,16 @@ impl LowerCtx<'_> {
                     *arg = Self::resolve_operand(redirected_temps, *arg);
                 }
             }
+            AmirTerminator::Suspend {
+                future,
+                resume: _,
+                args,
+            } => {
+                *future = Self::resolve_operand(redirected_temps, *future);
+                for arg in args {
+                    *arg = Self::resolve_operand(redirected_temps, *arg);
+                }
+            }
             AmirTerminator::Branch {
                 condition,
                 if_true: _,
@@ -1014,7 +1047,12 @@ impl LowerCtx<'_> {
     ) -> Option<AmirOperand> {
         let term = &self.blocks[pred.as_usize()].terminator;
         match term {
-            AmirTerminator::Goto { target, args } => {
+            AmirTerminator::Goto { target, args }
+            | AmirTerminator::Suspend {
+                resume: target,
+                args,
+                ..
+            } => {
                 if *target == target_block {
                     args.get(param_idx).cloned()
                 } else {
@@ -1060,6 +1098,9 @@ impl LowerCtx<'_> {
             AmirTerminator::Goto { target, args } if *target == target_block => {
                 args.push(val);
             }
+            AmirTerminator::Suspend { resume, args, .. } if *resume == target_block => {
+                args.push(val);
+            }
             AmirTerminator::Branch {
                 if_true,
                 true_args,
@@ -1099,6 +1140,9 @@ impl LowerCtx<'_> {
         let term = &mut self.blocks[pred.as_usize()].terminator;
         match term {
             AmirTerminator::Goto { target, args } if *target == target_block => {
+                *args = keep_indices.iter().map(|&i| args[i]).collect();
+            }
+            AmirTerminator::Suspend { resume, args, .. } if *resume == target_block => {
                 *args = keep_indices.iter().map(|&i| args[i]).collect();
             }
             AmirTerminator::Branch {

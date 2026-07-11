@@ -319,6 +319,9 @@ fn collect_loans(func: &AmirFunc) -> (Vec<Loan>, Vec<u32>) {
                 AmirTerminator::Goto { target, args } => {
                     propagate_terminator_args(func, *target, args, &mut loans, &mut changed);
                 }
+                AmirTerminator::Suspend { resume, args, .. } => {
+                    propagate_terminator_args(func, *resume, args, &mut loans, &mut changed);
+                }
                 AmirTerminator::Branch {
                     if_true,
                     true_args,

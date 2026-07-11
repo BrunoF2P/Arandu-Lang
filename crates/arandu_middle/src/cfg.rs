@@ -114,6 +114,11 @@ fn terminator_successors(term: &AmirTerminator) -> smallvec::SmallVec<[BlockId; 
             out.push(otherwise.0);
             out
         }
+        AmirTerminator::Suspend { resume, .. } => {
+            let mut s = smallvec::SmallVec::new();
+            s.push(*resume);
+            s
+        }
     }
 }
 

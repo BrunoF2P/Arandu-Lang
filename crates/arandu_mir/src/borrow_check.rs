@@ -316,6 +316,21 @@ fn check_terminator_moves(
                 check_operand_move(a, point, live, facts, temp_origins, func, symbols, diags);
             }
         }
+        AmirTerminator::Suspend { future, args, .. } => {
+            check_operand_move(
+                future,
+                point,
+                live,
+                facts,
+                temp_origins,
+                func,
+                symbols,
+                diags,
+            );
+            for a in args {
+                check_operand_move(a, point, live, facts, temp_origins, func, symbols, diags);
+            }
+        }
         AmirTerminator::Return | AmirTerminator::Unreachable => {}
     }
 }

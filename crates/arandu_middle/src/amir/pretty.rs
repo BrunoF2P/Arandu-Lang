@@ -475,6 +475,18 @@ impl AmirTerminator {
                     format_args(&otherwise.1, symbols, pool)
                 ));
             }
+            AmirTerminator::Suspend {
+                future,
+                resume,
+                args,
+            } => {
+                out.push_str(&format!(
+                    "suspend {} → bb{}{}",
+                    future.to_pretty_string(symbols, pool),
+                    resume.0,
+                    format_args(args, symbols, pool)
+                ));
+            }
             AmirTerminator::Unreachable => {
                 out.push_str("unreachable");
             }

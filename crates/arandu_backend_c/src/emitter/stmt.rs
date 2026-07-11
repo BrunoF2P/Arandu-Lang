@@ -66,6 +66,15 @@ impl<'a> CEmitter<'a> {
                 self.emit_block_arguments(*target, args, func, "    ");
                 let _ = writeln!(&mut self.output, "    goto bb{};", target.as_usize());
             }
+            // A3.1 ready-only: suspend = jump to resume (await load is in resume BB).
+            AmirTerminator::Suspend {
+                future: _,
+                resume,
+                args,
+            } => {
+                self.emit_block_arguments(*resume, args, func, "    ");
+                let _ = writeln!(&mut self.output, "    goto bb{};", resume.as_usize());
+            }
             AmirTerminator::Branch {
                 condition,
                 if_true,

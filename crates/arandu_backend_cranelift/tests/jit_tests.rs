@@ -454,6 +454,43 @@ fn format_f64_v01_specials_and_integers() {
     assert!(format_f64_v01(1.5).starts_with("1.5"));
 }
 
+/// A3.1: suspend split inside async func (ready-only drive still returns 11).
+#[test]
+fn jit_a3_1_suspend_split() {
+    let src = r#"
+    async func inner(): int {
+        return 1
+    }
+    async func outer(): int {
+        let a = 10
+        let b = await inner()
+        return a + b
+    }
+    func main(): int {
+        return await outer()
+    }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    assert!(
+        amir.funcs.iter().any(|f| {
+            f.blocks.iter().any(|b| {
+                matches!(
+                    b.terminator,
+                    arandu_semantics::amir::AmirTerminator::Suspend { .. }
+                )
+            })
+        }),
+        "expected Suspend terminator in outer"
+    );
+    let backend = backend_for_test();
+    let module = backend.compile(&amir, &symbols, &type_info).unwrap();
+    let result: i32 = unsafe {
+        let f: unsafe fn() -> i32 = module.get_fn("main").unwrap();
+        f()
+    };
+    assert_eq!(result, 11);
+}
+
 /// A3.0: async block + await (ready coroutine).
 #[test]
 fn jit_a3_async_block_await() {

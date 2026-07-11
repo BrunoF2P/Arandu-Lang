@@ -317,6 +317,12 @@ fn apply_block(
                 consume_operand(arg, func, temp_origins, state, &mut diagnostics, false);
             }
         }
+        AmirTerminator::Suspend { future, args, .. } => {
+            check_operand_read(future, func, temp_origins, state, &mut diagnostics);
+            for arg in args {
+                consume_operand(arg, func, temp_origins, state, &mut diagnostics, false);
+            }
+        }
         AmirTerminator::Return | AmirTerminator::Unreachable => {}
     }
 }
@@ -544,6 +550,7 @@ fn successors(term: &AmirTerminator) -> Vec<crate::amir::BlockId> {
     match term {
         AmirTerminator::Return | AmirTerminator::Unreachable => Vec::new(),
         AmirTerminator::Goto { target, .. } => vec![*target],
+        AmirTerminator::Suspend { resume, .. } => vec![*resume],
         AmirTerminator::Branch {
             if_true, if_false, ..
         } => vec![*if_true, *if_false],

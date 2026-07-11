@@ -138,6 +138,29 @@ impl FunctionTranslator<'_, '_> {
                 }
                 switch.emit(&mut self.builder, disc_val, otherwise_block);
             }
+            // A3.1 ready-only: suspension is a pure CFG edge — await load happens
+            // in the resume block's Unary Await. Jump with live state args.
+            AmirTerminator::Suspend {
+                future: _,
+                resume,
+                args,
+            } => {
+                let target_block = &self.current_func.blocks[resume.as_usize()];
+                let mut clif_args = Vec::new();
+                for (j, arg) in args.iter().enumerate() {
+                    let param_ty = self.resolve_ty(target_block.params[j].ty);
+                    if matches!(&param_ty, ArType::Primitive(Primitive::Str)) {
+                        let (ptr_val, len_val) = self.translate_str_operand(arg);
+                        clif_args.push(BlockArg::Value(ptr_val));
+                        clif_args.push(BlockArg::Value(len_val));
+                    } else if let ClifType::Concrete(ty) = clif_type(&param_ty, self.ptr_type) {
+                        let val = self.translate_operand(arg, Some(ty));
+                        clif_args.push(BlockArg::Value(val));
+                    }
+                }
+                let clif_target = self.block_map[resume];
+                self.builder.ins().jump(clif_target, &clif_args);
+            }
             AmirTerminator::Unreachable => {
                 self.builder.ins().trap(TrapCode::unwrap_user(1));
             }

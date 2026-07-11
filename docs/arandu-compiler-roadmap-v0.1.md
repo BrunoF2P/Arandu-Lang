@@ -103,9 +103,13 @@ Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
    ├─ [x] A3.0   Ready-only MVP: `async func → Coroutine[T]` sugar, `async {}` + `await`
    │              · AMIR `CoroutineReady` + Unary Await (payload @ state+0)
    │              · Cranelift/C: malloc state blob; await = load (sem runtime/scheduler)
-   │              · Sem suspension points reais ainda (splitting = A3.1)
-   ├─ [ ] A3.1   Coroutine splitting em `await` (CFG fronteira + estado = liveness F2.2)
-   ├─ [ ] A3.2   OSSA check borrow-across-suspend (extensão F2.1/F2.2/M2)
+   ├─ [x] A3.1   Coroutine splitting em `await` (CFG fronteira)
+   │              · `AmirTerminator::Suspend { future, resume, args }` em `async func`
+   │              · lower: fim de BB + resume BB com `await` (reuso BlockId/CFG Fase 1)
+   │              · backends ready-only: Suspend = jump(resume); poll real = runtime
+   │              · args = live state (build_target_args); captura liveness densa = polish
+   ├─ [x] A3.2   OSSA check borrow-across-suspend (temp liveness F2.2 → O010)
+   │              · `suspend_check::check_borrow_across_suspend`: Ref/RefMut live into resume
    ├─ [ ] A3.3   Stack-first task state via F2.3 escape (heap só se escapar)
    └─ [ ] A3.4   Pin-free self-ref via LocalId índices no estado
 [ ] A4     Memory Layout Optimization Engine (field reordering, niche tags, SOO)

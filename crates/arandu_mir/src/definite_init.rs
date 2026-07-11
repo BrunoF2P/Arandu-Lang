@@ -163,6 +163,9 @@ fn compute_init_in(func: &AmirFunc) -> Option<Vec<BitSet<LocalId>>> {
                 AmirTerminator::Goto { target, .. } => {
                     worklist.push_back(*target);
                 }
+                AmirTerminator::Suspend { resume, .. } => {
+                    worklist.push_back(*resume);
+                }
                 AmirTerminator::Branch {
                     if_true, if_false, ..
                 } => {

@@ -39,6 +39,8 @@ pub fn terminator_targets(term: &AmirTerminator) -> SmallVec<[BlockId; 2]> {
             blocks.push(otherwise.0);
             blocks
         }
+        // A3.1: suspend is a single CFG edge to the resume block.
+        AmirTerminator::Suspend { resume, .. } => smallvec![*resume],
     }
 }
 

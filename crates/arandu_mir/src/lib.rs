@@ -10,11 +10,13 @@ pub mod move_checker;
 pub mod optimize;
 pub(crate) mod sccp;
 pub(crate) mod simplify_cfg;
+pub mod suspend_check;
 
 pub use borrow_check::check_borrows;
 pub use lower_amir::lower_to_amir;
 pub use move_checker::check_moves;
 pub use optimize::optimize_amir;
+pub use suspend_check::check_borrow_across_suspend;
 
 pub use arandu_middle::{
     BitMatrix, BitSet, CodeReplacement, DiagCode, Diagnostic, DocCommentMap, Label,

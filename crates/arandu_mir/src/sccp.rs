@@ -277,6 +277,9 @@ fn propagate_branches(
         AmirTerminator::Goto { target, .. } => {
             changed |= set_reachable(*target, reachable);
         }
+        AmirTerminator::Suspend { resume, .. } => {
+            changed |= set_reachable(*resume, reachable);
+        }
         AmirTerminator::SwitchInt {
             discriminant,
             targets,

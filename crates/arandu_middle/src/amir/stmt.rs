@@ -228,5 +228,23 @@ pub enum AmirTerminator {
         targets: Vec<(i128, BlockId, Vec<AmirOperand>)>,
         otherwise: (BlockId, Vec<AmirOperand>),
     },
+    /// A3.1: suspension frontier at `await` inside an async function body.
+    ///
+    /// Ends the current basic block; control resumes at `resume` after the
+    /// awaited coroutine yields a value. Live locals that must survive the
+    /// suspension are passed as `args` (same convention as [`Goto`]) — the
+    /// coroutine state at this frontier is exactly those args (block params
+    /// of `resume`), derived from what the lowerer / liveness marks live.
+    ///
+    /// Ready-only backends (A3.0) lower this as: drive `future` to completion,
+    /// then `jump resume(args)`. Real poll/Pending is A3.1+runtime.
+    Suspend {
+        /// Coroutine / future being awaited.
+        future: AmirOperand,
+        /// Block that continues after the await (receives live state as params).
+        resume: BlockId,
+        /// Live state carried across the suspension (→ resume block params).
+        args: Vec<AmirOperand>,
+    },
     Unreachable,
 }

@@ -104,6 +104,24 @@ impl LowerCtx<'_> {
                     Ok(AmirOperand::Copy(dest))
                 }
             }
+            // A3.1: inside `async func`, `await` is a CFG suspension frontier.
+            // Outside async (sync drive-to-completion), keep A3.0 unary await.
+            UnaryOp::Await if self.func_is_async => {
+                let future_op = self.lower_expr(sub_expr, None, symbols)?;
+                let resume = self.new_block();
+                self.emit_suspend(future_op, resume)?;
+                // Continue after the frontier; future still dominates resume (temps).
+                self.current_block = Some(resume);
+                let dest = target.unwrap_or_else(|| self.new_temp_id(expr_ty));
+                self.emit_assign_temp(
+                    dest,
+                    AmirRvalue::Unary {
+                        op: UnaryOp::Await,
+                        operand: future_op,
+                    },
+                );
+                Ok(AmirOperand::Copy(dest))
+            }
             _ => {
                 let sub_op = self.lower_expr(sub_expr, None, symbols)?;
                 let dest = target.unwrap_or_else(|| self.new_temp_id(expr_ty));

@@ -129,6 +129,7 @@ fn is_valid_terminator(term: &AmirTerminator) -> bool {
             | AmirTerminator::Goto { .. }
             | AmirTerminator::Branch { .. }
             | AmirTerminator::SwitchInt { .. }
+            | AmirTerminator::Suspend { .. }
             | AmirTerminator::Unreachable
     )
 }
@@ -147,5 +148,6 @@ fn terminator_targets(term: &AmirTerminator) -> Vec<BlockId> {
             v.push(otherwise.0);
             v
         }
+        AmirTerminator::Suspend { resume, .. } => vec![*resume],
     }
 }

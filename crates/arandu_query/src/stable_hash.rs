@@ -194,6 +194,7 @@ impl StableHash for arandu_middle::amir::AmirFunc {
                 arandu_middle::amir::AmirTerminator::Goto { .. } => 2,
                 arandu_middle::amir::AmirTerminator::Branch { .. } => 3,
                 arandu_middle::amir::AmirTerminator::SwitchInt { .. } => 4,
+                arandu_middle::amir::AmirTerminator::Suspend { .. } => 5,
             }]);
         }
         // Hash stmt kinds in order (cheap structural body fingerprint).

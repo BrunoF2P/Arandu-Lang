@@ -697,6 +697,16 @@ static int64_t ar_gen_remove_i64(int64_t r) {{
                         }
                     }
                 }
+                AmirTerminator::Suspend { future, args, .. } => {
+                    if let AmirOperand::Copy(t) | AmirOperand::Move(t) = future {
+                        used_temps.insert(t.as_usize());
+                    }
+                    for arg in args {
+                        if let AmirOperand::Copy(t) | AmirOperand::Move(t) = arg {
+                            used_temps.insert(t.as_usize());
+                        }
+                    }
+                }
                 AmirTerminator::Branch {
                     condition,
                     true_args,
@@ -776,6 +786,9 @@ static int64_t ar_gen_remove_i64(int64_t r) {{
             match &block.terminator {
                 AmirTerminator::Goto { target, .. } => {
                     jump_targets.insert(target.as_usize());
+                }
+                AmirTerminator::Suspend { resume, .. } => {
+                    jump_targets.insert(resume.as_usize());
                 }
                 AmirTerminator::Branch {
                     if_true, if_false, ..

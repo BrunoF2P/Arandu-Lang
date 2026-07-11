@@ -261,6 +261,12 @@ fn collect_terminator_temp_uses(
                 mark_temp_use(a, defined, uses, block);
             }
         }
+        AmirTerminator::Suspend { future, args, .. } => {
+            mark_temp_use(future, defined, uses, block);
+            for a in args {
+                mark_temp_use(a, defined, uses, block);
+            }
+        }
         AmirTerminator::Return | AmirTerminator::Unreachable => {}
     }
 }
@@ -332,6 +338,12 @@ fn collect_terminator_uses(
         }
         AmirTerminator::SwitchInt { discriminant, .. } => {
             collect_operand_uses(discriminant, defined, uses, block);
+        }
+        AmirTerminator::Suspend { future, args, .. } => {
+            collect_operand_uses(future, defined, uses, block);
+            for a in args {
+                collect_operand_uses(a, defined, uses, block);
+            }
         }
         AmirTerminator::Return | AmirTerminator::Goto { .. } | AmirTerminator::Unreachable => {}
     }

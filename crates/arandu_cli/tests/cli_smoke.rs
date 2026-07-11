@@ -1125,6 +1125,92 @@ func main(): int {
     );
 }
 
+/// A3.1: `await` inside `async func` splits CFG with `suspend → resume`.
+#[test]
+fn run_a3_1_suspend_split_exits_11() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_a31_suspend.aru");
+    fs::write(
+        &file,
+        r#"module tests.cli.a31_suspend
+
+async func inner(): int {
+    return 1
+}
+
+async func outer(): int {
+    let a = 10
+    let b = await inner()
+    return a + b
+}
+
+func main(): int {
+    return await outer()
+}
+"#,
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+    let amir = run_cli(&["amir", &path]);
+    assert!(
+        amir.status.success(),
+        "amir stderr:\n{}",
+        String::from_utf8_lossy(&amir.stderr)
+    );
+    let amir_out = String::from_utf8_lossy(&amir.stdout);
+    assert!(
+        amir_out.contains("suspend") && amir_out.contains("bb1"),
+        "expected suspend frontier in AMIR, got:\n{amir_out}"
+    );
+    let output = run_cli(&["run", &path]);
+    assert_eq!(
+        output.status.code(),
+        Some(11),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// A3.2: `&local` live across `await` → O010 (borrow across suspension).
+#[test]
+fn check_a3_2_borrow_across_await_o010() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_a32_borrow.aru");
+    fs::write(
+        &file,
+        r#"module tests.cli.a32_borrow
+
+async func tick(): int {
+    return 1
+}
+
+async func bad(): int {
+    let n = 5
+    let p = &n
+    let x = await tick()
+    return *p + x
+}
+
+func main(): int {
+    return await bad()
+}
+"#,
+    )
+    .expect("fixture");
+    let path = file.to_string_lossy();
+    let output = run_cli(&["check", &path]);
+    assert!(
+        !output.status.success(),
+        "expected O010, stdout:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let err = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        err.contains("O010") || err.contains("await") || err.contains("suspension"),
+        "expected O010 borrow-across-await, got:\n{err}"
+    );
+}
+
 /// A3.0: ready-only `async { … }` + `await` via CoroutineReady state blob.
 #[test]
 fn run_a3_async_block_await_exits_42() {
