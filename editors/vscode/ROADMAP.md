@@ -67,3 +67,15 @@ Ferramentas de engenharia avançadas e visualizações de estado:
 - [ ] **Fix-it Lens (Mentor Idiomático)**: Sugestões interativas de otimização de tempo de vida e alocação de recursos.
 - [ ] **Timeline de Corrotinas**: Mapeamento estruturado do estado de suspensão e variáveis capturadas de threads/tasks assíncronas.
 - [ ] **Overlay de Consultas Salsa**: Mostrar a árvore de avaliação incremental Salsa e caminhos de invalidação de cache.
+
+---
+
+## 🌟 Evolução do Ecossistema Integrado (Propostas de Ferramental)
+
+Estas propostas integram a IDE diretamente a novas ferramentas do compilador que facilitam o desenvolvimento e a exploração do ecossistema Arandu:
+
+- [ ] **Console REPL Integrado (Terminal Arandu)**: Suporte para abrir uma sessão REPL interativa (`arandu repl`) diretamente no painel de terminal integrado do VS Code, permitindo rodar e inspecionar expressões dinamicamente com JIT.
+- [ ] **Visualizador de Documentação Nativo (Live Docs)**: Integração com `arandu doc` para servir páginas de documentação de código do workspace de forma local e automática, exibindo visualizações rápidas de docs ao lado do código.
+- [ ] **FFI Bindgen Wizard**: Assistente de interface gráfica ou comandos para acionar `arandu bindgen` no workspace, gerando declarações C/Arandu de forma automatizada ao importar arquivos `.h`.
+- [ ] **Gerenciador de Dependências Visual (Package Explorer)**: Interface gráfica no painel lateral do VS Code para inspecionar dependências declaradas em `arandu.toml`, buscar pacotes online e gerenciar atualizações via `arandu pkg`.
+- [ ] **Linter de Alocação e Performance (Memory Diagnostics)**: Integração com as análises do `arandu clippy` para exibir avisos no editor sobre alocações de escape sub-otimizadas ou escapes redundantes para a heap.

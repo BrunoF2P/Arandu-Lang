@@ -866,6 +866,37 @@ O Arandu garante a reprodutibilidade de compilação byte a byte (byte-by-byte b
 
 ---
 
+## 🌟 Ecossistema Avançado & Ferramental (Propostas de Evolução)
+
+Estas propostas descrevem ferramentas auxiliares e subsistemas externos projetados para expandir o ecossistema do Arandu para além do compilador core.
+
+### E1 — REPL Interativo (`arandu repl`)
+Um interpretador de linha de comando interativo impulsionado pelo backend Cranelift JIT.
+* **Mecanismo**: Lê expressões e declarações do terminal, executa a verificação de tipos e compilação incremental de forma JIT na memória de processo, e executa a máquina de estado imediatamente para exibir o resultado avaliado.
+* **Objetivo**: Facilitar prototipagem rápida, aprendizado e testes exploratórios de código sem necessidade de criar arquivos `.aru` no disco.
+
+### E2 — Gerador de Documentação Integrado (`arandu doc`)
+Gerador estático de documentação de código.
+* **Mecanismo**: Extrai as strings estruturadas capturadas nos comentários de documentação do Rowan (`pending_docs`) e as compila em um site HTML estático com estilização moderna, navegação e caixa de busca integrada baseada em WebAssembly/JSON.
+* **Objetivo**: Garantir que projetos e bibliotecas tenham documentação de qualidade gerada sem dependências de ferramentas externas.
+
+### E3 — FFI Bindgen Automatizado (`arandu bindgen`)
+Gerador de bindings bidirecionais C/Arandu.
+* **Mecanismo**: Lê arquivos de cabeçalho C (`.h`) e emite stubs correspondentes de funções e structs `extern "C"` Arandu. Também suporta o fluxo reverso (gerar arquivos `.h` correspondentes para interfaces Arandu públicas compiladas como bibliotecas estáticas ou dinâmicas).
+* **Objetivo**: Facilitar a integração com APIs de sistema legadas e bibliotecas nativas C sem o risco de erros manuais de layout de struct ou alinhamento de ponteiros.
+
+### E4 — Gerenciador de Pacotes Integrado (`arandu pkg`)
+Orquestrador de dependências simples embutido na CLI do Arandu.
+* **Mecanismo**: Gerencia um manifesto `arandu.toml` e gera um arquivo de trava `arandu.lock`. Realiza download de dependências (resolução simples de branches/tags do Git) e alimenta os caminhos de importação da query Salsa automaticamente.
+* **Objetivo**: Prover um ecossistema pronto para compartilhamento de código de forma modular ("batteries-included") sem necessidade de caminhos relativos complexos.
+
+### E5 — Linter de Alocação e Escape (`arandu clippy`)
+Analisador estático avançado de uso de memória e desempenho.
+* **Mecanismo**: Analisa a árvore OSSA e o fluxo de posse no CFG para detectar padrões de ineficiência, como alocações em laços que causam escape redundante para a heap (`O004`), e sugere refatorações de tempo de vida ou reutilização de buffers.
+* **Objetivo**: Ajudar os programadores a manterem o código no caminho de performance ideal.
+
+---
+
 ## 12. Histórico de Revisões
 
 | Data | Autor / Agente | Mudança Realizada |
@@ -876,6 +907,7 @@ O Arandu garante a reprodutibilidade de compilação byte a byte (byte-by-byte b
 | 2026-05 | Antigravity | **Execution Architecture (A5–A11)**: Inclusão formal dos subsistemas de Data-Oriented Layout (SoA, pointer compression), CPU-Oriented Execution Model (branchless, table-driven), Portable SIMD (SSE2/AVX2/NEON), Parallel Task Scheduler (work-stealing DAG), Cache-Aware Optimization Pipeline (RPO, arena recycling), Dense Bitset Engine, Token & String Storage Engine, Register Allocation Strategy e Hot/Cold Path Separation. |
 | 2026-05 | Antigravity | **Semantics, DX & Tooling**: Inclusão formal das especificações de Semântica e Sintaxe da Linguagem (closures, async canônico), Filosofia de Runtime, ABI/Layout Stability, Abort/Panic Model, Fase DX (Rich Diagnostics Engine, Recovery, JSON output), Fase PERF (Compiler instrumentation), Hot/Cold separation e Stable Serialization. |
 | 2026-07 | Antigravity | **Auditoria de Honestidade A10/A11/VM**: Removidos `vm.rs`, `arena.rs`, `stable_id.rs` e `string_pool.rs` (~1.080 LOC, 16 blocos `unsafe`) — código morto nunca integrado ao compilador. A10 corrigido para `[~]` parcial: IDs inteiros estáveis em uso, Generational IDs aguardam LSP (Fase 3) com `slotmap`. VM Reservation substituída por plano `bumpalo` para arenas de scratch nos passes de otimização. A11 permanece `[x]` via `smol_str`. |
+| 2026-07 | Antigravity | **Evolução do Ecossistema (E1–E5)**: Documentadas as propostas de evolução de ferramentas integradas (REPL, Gerador de Docs, FFI Bindgen, Package Manager e Linter de Alocação). |
 
 ---
 
