@@ -286,8 +286,7 @@ impl<'a> TypeChecker<'a> {
             scope,
             resolved: &self.resolved,
         };
-        let ty =
-            types::lower_named_type(span, name, args, &ctx, &mut self.type_info.type_interner);
+        let ty = types::lower_named_type(span, name, args, &ctx, &mut self.type_info.type_interner);
         let ty = types::expand_named_with_defaults(self, ty);
         types::expand_aliases(self, ty)
     }
@@ -385,7 +384,6 @@ impl TypeChecker<'_> {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests;

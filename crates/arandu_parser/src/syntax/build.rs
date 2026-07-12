@@ -156,6 +156,19 @@ pub fn parse_syntax_arc(text: Arc<str>) -> SyntaxTree {
             build_green(text.as_ref(), &tokens, &spans)
         });
 
+    #[cfg(debug_assertions)]
+    {
+        if diags.is_empty() && parser.diagnostics.is_empty() {
+            let root = SyntaxNode::new_root(green.clone());
+            let tree_text = root.text().to_string();
+            debug_assert_eq!(
+                tree_text,
+                text.as_ref(),
+                "CST is not lossless: the reconstructed CST tree diverged from the original source text without syntax errors. Likely a leak or duplication of parser events!"
+            );
+        }
+    }
+
     SyntaxTree {
         green,
         text,
@@ -230,8 +243,6 @@ pub fn lower_syntax_to_program_recovering_rd_only(
         lex_diags_as_parse(tree, file_id),
     )
 }
-
-
 
 fn build_green(source: &str, tokens: &[Token], item_spans: &[(u32, u32)]) -> GreenNode {
     let mut builder = GreenNodeBuilder::new();
@@ -747,8 +758,6 @@ fn is_keyword_kind(kind: TokenKind) -> bool {
             | TokenKind::KwLet
     )
 }
-
-
 
 #[must_use]
 pub fn text_range(start: u32, end: u32) -> TextRange {

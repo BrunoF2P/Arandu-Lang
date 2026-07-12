@@ -82,8 +82,6 @@ impl LowerCtx<'_> {
         Ok(AmirOperand::Copy(dest))
     }
 
-
-
     pub(crate) fn lower_expr(
         &mut self,
         expr_id: HirExprId,

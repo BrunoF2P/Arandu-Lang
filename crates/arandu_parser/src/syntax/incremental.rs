@@ -1,7 +1,7 @@
+use super::build::{SyntaxTree, build_item_green, parse_syntax};
 use super::kind::{SyntaxKind, SyntaxNode};
-use super::build::{SyntaxTree, parse_syntax, build_item_green};
 use arandu_lexer::{Token, TokenKind, lex_recovering};
-use rowan::{NodeOrToken};
+use rowan::NodeOrToken;
 use std::sync::Arc;
 
 /// Single contiguous edit from `old` → `new` (LCP + LCS suffix), if any.

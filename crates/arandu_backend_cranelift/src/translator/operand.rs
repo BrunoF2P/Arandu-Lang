@@ -18,10 +18,7 @@ impl FunctionTranslator<'_, '_> {
                     (ptr_val, len_val)
                 } else if let Some(&var) = self.temp_map.get(temp_id) {
                     let ptr_val = self.builder.use_var(var);
-                    let len_val = self
-                        .builder
-                        .ins()
-                        .iconst(self.ptr_type, 0);
+                    let len_val = self.builder.ins().iconst(self.ptr_type, 0);
                     (ptr_val, len_val)
                 } else {
                     self.record_ice(
@@ -35,10 +32,7 @@ impl FunctionTranslator<'_, '_> {
                 // Empty string / null fat pointer (used when zeroing the Ok binding
                 // on a Result.Err path of `let ok, err = …`).
                 let ptr_val = self.builder.ins().iconst(self.ptr_type, 0);
-                let len_val = self
-                    .builder
-                    .ins()
-                    .iconst(self.ptr_type, 0);
+                let len_val = self.builder.ins().iconst(self.ptr_type, 0);
                 (ptr_val, len_val)
             }
             AmirOperand::Constant(AmirConstant::Pool(lit_id)) => {
@@ -69,10 +63,7 @@ impl FunctionTranslator<'_, '_> {
                         .builder
                         .ins()
                         .symbol_value(self.ptr_type, local_data_ref);
-                    let len_val = self
-                        .builder
-                        .ins()
-                        .iconst(self.ptr_type, s.len() as i64);
+                    let len_val = self.builder.ins().iconst(self.ptr_type, s.len() as i64);
                     (ptr_val, len_val)
                 } else {
                     self.record_ice("expected string literal in pool", self.func_span());

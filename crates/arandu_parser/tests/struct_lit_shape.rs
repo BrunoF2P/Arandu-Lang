@@ -59,9 +59,7 @@ fn shapes() {
 
 #[test]
 fn variant_sugar_shape() {
-    let tree = parse_syntax_arc(Arc::from(
-        "func f(): Option<int> {\n    return .None\n}",
-    ));
+    let tree = parse_syntax_arc(Arc::from("func f(): Option<int> {\n    return .None\n}"));
     let prog = lower_syntax_to_program(&tree, 0).expect("parse");
     use arandu_parser::TopLevelDecl;
     let mut found = false;

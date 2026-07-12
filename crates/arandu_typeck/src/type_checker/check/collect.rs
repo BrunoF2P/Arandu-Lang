@@ -217,11 +217,7 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &P
                     // Free functions like `spawn_i64(shared ex: SyncExecutor, …)` must
                     // reborrow, not move, so the executor can be reused.
                     let bare = checker.intern(param_ty);
-                    param_types.push(apply_receiver_ownership(
-                        checker,
-                        bare,
-                        param.ownership,
-                    ));
+                    param_types.push(apply_receiver_ownership(checker, bare, param.ownership));
                 }
 
                 let name_span = match func_decl.name {
@@ -263,11 +259,8 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &P
                             }
                             let new_first_ty = ArType::Named(struct_id, new_args);
                             let bare_inst = checker.intern(new_first_ty);
-                            *first_ty_id = apply_receiver_ownership(
-                                checker,
-                                bare_inst,
-                                first_param.ownership,
-                            );
+                            *first_ty_id =
+                                apply_receiver_ownership(checker, bare_inst, first_param.ownership);
                             struct_params_for_mono = Some(struct_params);
                         }
                     }

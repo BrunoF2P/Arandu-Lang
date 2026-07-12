@@ -6,9 +6,9 @@ use arandu_diagnostics::Diagnostic;
 use arandu_lexer::Span;
 use arandu_middle::hir::{
     HirBindingItem, HirBlock, HirBlockId, HirCatchHandler, HirCondition, HirExpr, HirExprId,
-    HirExprKind, HirForBinding, HirForClause, HirLambdaBody,
-    HirLambdaParam, HirMatchArm, HirMatchArmBody, HirPattern, HirPlace,
-    HirPlaceSuffix, HirProgram, HirSimpleStmt, HirStmt, HirStmtKind, HirStringPart,
+    HirExprKind, HirForBinding, HirForClause, HirLambdaBody, HirLambdaParam, HirMatchArm,
+    HirMatchArmBody, HirPattern, HirPlace, HirPlaceSuffix, HirProgram, HirSimpleStmt, HirStmt,
+    HirStmtKind, HirStringPart,
 };
 use arandu_middle::symbol_table::{SymbolId, SymbolKind};
 use arandu_middle::types::{GenericSubst, substitute_type_id};
@@ -472,7 +472,7 @@ pub(super) fn clone_pattern(
                 span: *span,
                 alts: hir.pool.alloc_pattern_list(&new_p),
             }
-        },
+        }
     })
 }
 
@@ -812,7 +812,12 @@ pub(super) fn clone_catch_handler(
     })
 }
 
-pub(super) fn fresh_symbol(tc: &mut TypeCheckResult, name: &str, kind: SymbolKind, span: Span) -> SymbolId {
+pub(super) fn fresh_symbol(
+    tc: &mut TypeCheckResult,
+    name: &str,
+    kind: SymbolKind,
+    span: Span,
+) -> SymbolId {
     let mut candidate = name.to_string();
     let mut n = 0u32;
     let scope = tc.symbols.global_scope();
@@ -826,4 +831,3 @@ pub(super) fn fresh_symbol(tc: &mut TypeCheckResult, name: &str, kind: SymbolKin
         }
     }
 }
-

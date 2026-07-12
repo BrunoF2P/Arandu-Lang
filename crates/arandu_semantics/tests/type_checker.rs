@@ -205,7 +205,6 @@ fn test_option_nil() {
     );
 }
 
-
 #[test]
 fn test_where_ok() {
     let root = workspace_root();
@@ -250,7 +249,6 @@ func main(): int {
         result.diagnostics
     );
 }
-
 
 #[test]
 fn test_result_not_handled() {

@@ -1,11 +1,11 @@
 //! Server state: AnalysisHost + DocumentStore + VFS + URI maps.
 
+use crate::uri_util::{parse_uri, path_from_uri, uri_from_path};
 use crate::vfs::Vfs;
 use arandu_middle::resolved::NodeKey;
 use arandu_query::db::SourceFile;
 use arandu_query::{AnalysisHost, AnalysisRevision, AnalysisSnapshot, DocumentId, DocumentStore};
 use arandu_semantics::TypeCheckResult;
-use crate::uri_util::{parse_uri, path_from_uri, uri_from_path};
 use lsp_types::Uri;
 use rustc_hash::FxHashMap;
 use std::path::PathBuf;

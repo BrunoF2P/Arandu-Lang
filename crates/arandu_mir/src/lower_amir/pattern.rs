@@ -618,11 +618,8 @@ impl LowerCtx<'_> {
                     symbols,
                 )?;
                 for &aid in &alt_ids[1..] {
-                    let next = self.lower_pattern_match(
-                        scrutinee,
-                        self.hir.pool.pattern(aid),
-                        symbols,
-                    )?;
+                    let next =
+                        self.lower_pattern_match(scrutinee, self.hir.pool.pattern(aid), symbols)?;
                     let or_dest = self.new_temp(ArType::Primitive(Primitive::Bool));
                     self.emit_assign_temp(
                         or_dest,

@@ -24,13 +24,16 @@ pub fn try_hand_lower_top_level(
 ) -> Option<TopLevelDecl> {
     match item.kind() {
         SyntaxKind::FUNC_ITEM => {
-            super::func::try_hand_lower_func_item(pool, source, tokens, item, file_id).map(TopLevelDecl::Func)
+            super::func::try_hand_lower_func_item(pool, source, tokens, item, file_id)
+                .map(TopLevelDecl::Func)
         }
         SyntaxKind::STRUCT_ITEM => {
-            super::adt::try_hand_lower_struct(pool, source, tokens, item, file_id).map(TopLevelDecl::Struct)
+            super::adt::try_hand_lower_struct(pool, source, tokens, item, file_id)
+                .map(TopLevelDecl::Struct)
         }
         SyntaxKind::ENUM_ITEM => {
-            super::adt::try_hand_lower_enum(pool, source, tokens, item, file_id).map(TopLevelDecl::Enum)
+            super::adt::try_hand_lower_enum(pool, source, tokens, item, file_id)
+                .map(TopLevelDecl::Enum)
         }
         SyntaxKind::CONST_ITEM => {
             try_hand_lower_const(pool, source, tokens, item, file_id).map(TopLevelDecl::Const)
@@ -94,7 +97,10 @@ pub(super) fn skip_leading_doc_comments(cur: &mut Cursor<'_>) {
 }
 
 /// `@name` or `@name(...)` — args must be hand-lowerable exprs.
-pub(super) fn parse_attributes(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<Vec<Attribute>> {
+pub(super) fn parse_attributes(
+    ctx: &mut HandCtx<'_>,
+    cur: &mut Cursor<'_>,
+) -> Option<Vec<Attribute>> {
     let mut attrs = Vec::new();
     while cur.peek_kind() == Some(TokenKind::At) {
         let at = cur.bump()?;
@@ -239,8 +245,6 @@ pub(super) fn parse_where_clause(
     }
     Some(items)
 }
-
-
 
 /// `module a.b.c`
 #[must_use]
@@ -516,8 +520,6 @@ fn try_hand_lower_type_alias(
     })
 }
 
-
-
 fn try_hand_lower_interface(
     pool: &mut AstPool,
     source: &str,
@@ -567,8 +569,6 @@ fn try_hand_lower_interface(
         members,
     })
 }
-
-
 
 fn try_hand_lower_extern(
     pool: &mut AstPool,

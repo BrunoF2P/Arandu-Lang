@@ -1,0 +1,7 @@
+.vscode/**
+.vscodeignore
+tsconfig.json
+src/**
+node_modules/**
+out/extension.js.map
+build.sh

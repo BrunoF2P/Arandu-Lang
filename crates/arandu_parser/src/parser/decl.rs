@@ -778,6 +778,7 @@ impl<'a> Parser<'a> {
             self.current().kind,
             TokenKind::IdentType | TokenKind::IdentValue
         ) {
+            let checkpoint = self.checkpoint();
             if let Ok(receiver) = self.parse_type_name()
                 && self.eat_name("DOT")
             {
@@ -788,7 +789,7 @@ impl<'a> Parser<'a> {
                     name,
                 });
             }
-            self.pos = start;
+            checkpoint.rollback(self);
         }
 
         let name = self.expect_ident_value()?;

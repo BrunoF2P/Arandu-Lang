@@ -206,12 +206,20 @@ pub unsafe extern "C" fn ar_rt_reactor_arm_timer_ms(id: ReactorId, ms: i64) -> i
     {
         if let Some(old) = slot.timer_fd.take() {
             unsafe {
-                let _ = libc::epoll_ctl(slot.epoll_fd, libc::EPOLL_CTL_DEL, old, std::ptr::null_mut());
+                let _ = libc::epoll_ctl(
+                    slot.epoll_fd,
+                    libc::EPOLL_CTL_DEL,
+                    old,
+                    std::ptr::null_mut(),
+                );
                 let _ = libc::close(old);
             }
         }
         let tfd = unsafe {
-            libc::timerfd_create(libc::CLOCK_MONOTONIC, libc::TFD_CLOEXEC | libc::TFD_NONBLOCK)
+            libc::timerfd_create(
+                libc::CLOCK_MONOTONIC,
+                libc::TFD_CLOEXEC | libc::TFD_NONBLOCK,
+            )
         };
         if tfd < 0 {
             return -1;
@@ -307,12 +315,7 @@ pub unsafe extern "C" fn ar_rt_reactor_poll_ms(id: ReactorId, timeout_ms: i64) -
             timeout_ms.min(i32::MAX as i64) as i32
         };
         let n = unsafe {
-            libc::epoll_wait(
-                epfd,
-                events.as_mut_ptr(),
-                events.len() as i32,
-                timeout_arg,
-            )
+            libc::epoll_wait(epfd, events.as_mut_ptr(), events.len() as i32, timeout_arg)
         };
         if n < 0 {
             return -1;
@@ -433,11 +436,14 @@ pub unsafe extern "C" fn ar_rt_reactor_register_socket(
             return -1;
         };
 
-        slot.sockets.insert(fd as i64, RegisteredSocket {
-            fd,
-            events,
-            waker_id,
-        });
+        slot.sockets.insert(
+            fd as i64,
+            RegisteredSocket {
+                fd,
+                events,
+                waker_id,
+            },
+        );
 
         let mut ev: libc::epoll_event = unsafe { std::mem::zeroed() };
         if events & crate::socket_runtime::WAIT_READ != 0 {

@@ -137,8 +137,6 @@ pub fn parse(
     file = ?file.file_id(db),
 ))]
 pub fn resolve(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<ResolutionResult> {
-
-
     let program_res = parse(db, file);
     let locals_arc = local_symbols(db, file);
 
@@ -412,11 +410,7 @@ pub fn file_typeck_view(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<Ty
     // Residual for decls without primary keys (normally empty).
     let residual = arandu_semantics::check_non_func_bodies_only(&signatures, program);
     if !residual.diagnostics.is_empty()
-        || residual
-            .type_info
-            .expr_types
-            .iter()
-            .any(|s| s.is_some())
+        || residual.type_info.expr_types.iter().any(|s| s.is_some())
         || !residual.type_info.decl_types.is_empty()
     {
         Arc::make_mut(&mut merged_info).merge_from(residual.type_info.as_ref());

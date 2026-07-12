@@ -119,8 +119,7 @@ fn named_import_of_private_is_error() {
     assert!(
         tc.diagnostics
             .iter()
-            .any(|d| d.message.contains("not found or not public")
-                || d.message.contains("hidden")),
+            .any(|d| d.message.contains("not found or not public") || d.message.contains("hidden")),
         "named import of private must diagnose, got: {:?}",
         tc.diagnostics
     );

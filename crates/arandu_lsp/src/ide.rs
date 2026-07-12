@@ -202,7 +202,19 @@ const IMPORT_ROOTS: &[&str] = &["std", "io", "err"];
 /// Segments under `std.` that exist in the tree.
 const STD_CHILDREN: &[(&str, &[&str])] = &[
     ("std", &["core", "alloc"]),
-    ("std.core", &["mem", "option", "result", "prelude", "intrinsics", "future", "ptr", "pointer"]),
+    (
+        "std.core",
+        &[
+            "mem",
+            "option",
+            "result",
+            "prelude",
+            "intrinsics",
+            "future",
+            "ptr",
+            "pointer",
+        ],
+    ),
     ("std.alloc", &["vec", "allocator_api", "gen_arena"]),
 ];
 
@@ -330,9 +342,10 @@ fn module_member_completions(
                 SymbolKind::Func | SymbolKind::AssociatedFunc | SymbolKind::ExternFunc => {
                     CompletionItemKind::FUNCTION
                 }
-                SymbolKind::Struct | SymbolKind::Enum | SymbolKind::Interface | SymbolKind::TypeAlias => {
-                    CompletionItemKind::STRUCT
-                }
+                SymbolKind::Struct
+                | SymbolKind::Enum
+                | SymbolKind::Interface
+                | SymbolKind::TypeAlias => CompletionItemKind::STRUCT,
                 SymbolKind::Const => CompletionItemKind::CONSTANT,
                 _ => CompletionItemKind::TEXT,
             })
@@ -767,7 +780,9 @@ mod tests {
             },
         );
         assert!(
-            items.iter().any(|i| i.label == "core" || i.label == "alloc"),
+            items
+                .iter()
+                .any(|i| i.label == "core" || i.label == "alloc"),
             "expected std.core/alloc path segments, got {:?}",
             items.iter().map(|i| &i.label).collect::<Vec<_>>()
         );
@@ -798,6 +813,58 @@ mod tests {
     }
 
     #[test]
+    fn test_semantic_tokens_exact_deltas() {
+        let mut host = AnalysisHost::new();
+        let filepath = "/home/bruno/Documentos/Desenvolvimento/Arandu Lang/stdlib/std/runtime.aru";
+        let content = std::fs::read_to_string(filepath).expect("read runtime.aru");
+        let file = host.new_file(filepath.into(), content.clone());
+        let snap = host.snapshot();
+
+        use arandu_middle::db::SourceDatabase;
+        let relative_file = snap.db.resolve_module_path("stdlib/std/runtime.aru");
+        if let Some(f) = relative_file {
+            let compiler_text = f.text(&snap.db);
+            println!("Resolved std/runtime.aru path: {:?}", f.path(&snap.db));
+            println!(
+                "Resolved std/runtime.aru text length: {:?}",
+                compiler_text.len()
+            );
+            println!("Disk text length: {:?}", content.len());
+            if compiler_text.as_ref() != content {
+                println!("WARNING: Compiler text and Disk text are DIFFERENT!");
+            } else {
+                println!("SUCCESS: Compiler text and Disk text are identical!");
+            }
+        }
+
+        let tokens = semantic_tokens(&snap, file);
+
+        // We will reconstruct the absolute character offsets from the deltas
+        let mut current_line = 0u32;
+
+        let hls = arandu_query::file_highlights(&snap.db, file);
+        assert_eq!(tokens.data.len(), hls.len());
+
+        for (i, tok) in tokens.data.iter().enumerate() {
+            if tok.delta_line > 0 {
+                current_line += tok.delta_line;
+            }
+
+            let hl = hls[i];
+            assert!(hl.end <= content.len() as u32);
+            let substring = &content[hl.start as usize..hl.end as usize];
+
+            // Verify that the token length matches the highlight span length
+            assert_eq!(tok.length, hl.end - hl.start);
+
+            // Specific check for tcp_listen declaration in stdlib
+            if current_line == 277 && substring == "tcp_listen" {
+                assert_eq!(tok.token_type, 1); // FUNCTION
+            }
+        }
+    }
+
+    #[test]
     fn document_symbols_does_not_panic() {
         let mut host = AnalysisHost::new();
         let file = host.new_file("h.aru".into(), "func main(): int { return 1 }\n".into());
@@ -805,6 +872,5 @@ mod tests {
         let text = file.text(&snap.db);
         let uri = crate::uri_util::parse_uri("file:///h.aru").expect("uri");
         let _syms = document_symbols(&snap, file, &text, &uri);
-        // Table population depends on resolve+typeck paths; smoke only.
     }
 }

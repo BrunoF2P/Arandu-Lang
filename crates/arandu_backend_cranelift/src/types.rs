@@ -149,4 +149,3 @@ mod tests {
         assert_eq!(clif_tys, vec![ptr_type_32, ptr_type_32]);
     }
 }
-

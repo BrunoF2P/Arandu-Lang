@@ -176,10 +176,7 @@ impl ArType {
                 // Multi-module: type args may reference SymbolIds from imported files
                 // that are not always present in the *local* SymbolTable. Never ICE in
                 // diagnostic display (W2 residual: ICE on missing symbol while printing).
-                let name = symbols
-                    .try_get(*id)
-                    .map(|s| s.name.as_str())
-                    .unwrap_or("?");
+                let name = symbols.try_get(*id).map(|s| s.name.as_str()).unwrap_or("?");
                 if args.is_empty() {
                     name.to_string()
                 } else {

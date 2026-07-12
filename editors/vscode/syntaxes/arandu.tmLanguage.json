@@ -1,0 +1,184 @@
+{
+    "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+    "name": "Arandu",
+    "patterns": [
+        {
+            "include": "#comments"
+        },
+        {
+            "include": "#strings"
+        },
+        {
+            "include": "#keywords"
+        },
+        {
+            "include": "#types"
+        },
+        {
+            "include": "#constants"
+        },
+        {
+            "include": "#numbers"
+        },
+        {
+            "include": "#decorators"
+        },
+        {
+            "include": "#identifiers"
+        }
+    ],
+    "repository": {
+        "comments": {
+            "patterns": [
+                {
+                    "name": "comment.block.documentation.arandu",
+                    "begin": "///",
+                    "end": "$"
+                },
+                {
+                    "name": "comment.line.double-slash.arandu",
+                    "begin": "//",
+                    "end": "$"
+                },
+                {
+                    "name": "comment.block.arandu",
+                    "begin": "/\\*",
+                    "end": "\\*/"
+                }
+            ]
+        },
+        "strings": {
+            "patterns": [
+                {
+                    "name": "string.quoted.other.raw.arandu",
+                    "begin": "r\"\"\"",
+                    "end": "\"\"\""
+                },
+                {
+                    "name": "string.quoted.other.raw.single.arandu",
+                    "begin": "r\"",
+                    "end": "\""
+                },
+                {
+                    "name": "string.quoted.double.arandu",
+                    "begin": "\"",
+                    "end": "\"",
+                    "patterns": [
+                        {
+                            "name": "constant.character.escape.arandu",
+                            "match": "\\\\."
+                        },
+                        {
+                            "name": "meta.interpolation.arandu",
+                            "begin": "\\$\\{",
+                            "end": "\\}",
+                            "beginCaptures": {
+                                "0": { "name": "punctuation.definition.template-expression.begin.arandu" }
+                            },
+                            "endCaptures": {
+                                "0": { "name": "punctuation.definition.template-expression.end.arandu" }
+                            },
+                            "patterns": [
+                                {
+                                    "include": "$self"
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "name": "string.quoted.single.arandu",
+                    "begin": "'",
+                    "end": "'",
+                    "patterns": [
+                        {
+                            "name": "constant.character.escape.arandu",
+                            "match": "\\\\."
+                        }
+                    ]
+                }
+            ]
+        },
+        "keywords": {
+            "patterns": [
+                {
+                    "name": "keyword.control.arandu",
+                    "match": "\\b(if|else|for|in|while|match|return|break|continue|defer|errdefer|catch|is|where)\\b"
+                },
+                {
+                    "name": "keyword.declaration.arandu",
+                    "match": "\\b(func|async|await|struct|enum|interface|const|type|module|import|from|as|public|extern|unsafe|let|mut|set|own|shared)\\b"
+                }
+            ]
+        },
+        "types": {
+            "patterns": [
+                {
+                    "name": "support.type.primitive.arandu",
+                    "match": "\\b(int|uint|float|i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|bool|byte|char|str|any|err)\\b"
+                },
+                {
+                    "name": "entity.name.type.arandu",
+                    "match": "\\b[A-Z][a-zA-Z0-9_]*\\b"
+                }
+            ]
+        },
+        "constants": {
+            "patterns": [
+                {
+                    "name": "constant.language.arandu",
+                    "match": "\\b(true|false|nil)\\b"
+                },
+                {
+                    "name": "variable.language.self.arandu",
+                    "match": "\\bself\\b"
+                }
+            ]
+        },
+        "numbers": {
+            "patterns": [
+                {
+                    "name": "constant.numeric.hex.arandu",
+                    "match": "\\b0x[0-9a-fA-F_]+\\b"
+                },
+                {
+                    "name": "constant.numeric.bin.arandu",
+                    "match": "\\b0b[01_]+\\b"
+                },
+                {
+                    "name": "constant.numeric.oct.arandu",
+                    "match": "\\b0o[0-7_]+\\b"
+                },
+                {
+                    "name": "constant.numeric.float.arandu",
+                    "match": "\\b[0-9_]+\\.[0-9_]+([eE][+-]?[0-9_]+)?\\b"
+                },
+                {
+                    "name": "constant.numeric.dec.arandu",
+                    "match": "\\b[0-9_]+\\b"
+                }
+            ]
+        },
+        "decorators": {
+            "patterns": [
+                {
+                    "name": "meta.annotation.arandu",
+                    "match": "@[a-zA-Z_][a-zA-Z0-9_]*"
+                }
+            ]
+        },
+        "identifiers": {
+            "patterns": [
+                {
+                    "name": "entity.name.function.arandu",
+                    "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*(?=\\s*\\()"
+                },
+                {
+                    "name": "variable.other.arandu",
+                    "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b"
+                }
+            ]
+        }
+    },
+    "scopeName": "source.arandu"
+}

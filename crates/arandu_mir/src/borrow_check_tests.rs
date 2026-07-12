@@ -2,9 +2,7 @@
 
 use super::*;
 use crate::SymbolId;
-use crate::amir::{
-    AmirBasicBlock, AmirLocal, AmirPlace, AmirStmtTable, AmirTemp, AmirTerminator,
-};
+use crate::amir::{AmirBasicBlock, AmirLocal, AmirPlace, AmirStmtTable, AmirTemp, AmirTerminator};
 use crate::cfg::compute_cfg_edges;
 use crate::layout::DenseRange;
 use crate::ops::UnaryOp;

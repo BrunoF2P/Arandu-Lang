@@ -23,10 +23,7 @@ impl StructLayoutProvider for MockProvider {
     fn get_struct_fields(&self, _struct_id: SymbolId) -> Option<&FxHashMap<String, TypeId>> {
         None
     }
-    fn get_struct_field_indices(
-        &self,
-        _struct_id: SymbolId,
-    ) -> Option<&FxHashMap<String, usize>> {
+    fn get_struct_field_indices(&self, _struct_id: SymbolId) -> Option<&FxHashMap<String, usize>> {
         None
     }
     fn get_generic_params(&self, _struct_id: SymbolId) -> Option<&[SymbolId]> {
@@ -101,10 +98,7 @@ impl StructLayoutProvider for StructMockProvider {
     fn get_struct_fields(&self, struct_id: SymbolId) -> Option<&FxHashMap<String, TypeId>> {
         self.fields.get(&struct_id)
     }
-    fn get_struct_field_indices(
-        &self,
-        struct_id: SymbolId,
-    ) -> Option<&FxHashMap<String, usize>> {
+    fn get_struct_field_indices(&self, struct_id: SymbolId) -> Option<&FxHashMap<String, usize>> {
         self.field_indices.get(&struct_id)
     }
     fn get_generic_params(&self, struct_id: SymbolId) -> Option<&[SymbolId]> {

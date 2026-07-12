@@ -1,0 +1,36 @@
+# Arandu Language Support
+
+This extension adds support for the **Arandu** programming language to VS Code.
+
+## Features
+
+- **Syntax Highlighting**: Basic offline highlighting via TextMate grammar and full, precise syntax coloring via LSP Semantic Tokens.
+- **Auto-completion**: Smart suggestions for language keywords, module paths, and symbols.
+- **Signature Help**: Inline parameter help for functions and methods.
+- **Go to Definition**: Quickly navigate to the definition of types, functions, and variables.
+- **Diagnostics**: Real-time error and warning reporting directly in the editor.
+- **Document Formatting**: Automatic code formatting based on the official language style.
+
+## Requirements
+
+This extension requires the `arandu-lsp` language server binary to be compiled on your system.
+To compile it from the root of the repository:
+```bash
+cargo build -p arandu_lsp
+```
+
+## Running & Developing Locally
+
+To load and run this extension locally for testing or development:
+1. Open the `editors/vscode` directory in VS Code.
+2. Run `npm install` and `npm run compile` to build the TypeScript code (or use the helper script `./build.sh`).
+3. Press `F5` (or go to **Run and Debug** -> select **Launch Extension**). This opens a new "Extension Development Host" VS Code window.
+4. In the new window, open any folder containing Arandu files (e.g., `examples/stable/syntax`).
+5. Open any `.aru` file. The extension will automatically locate the compiled `arandu-lsp` binary from your `target/debug/` directory and activate.
+
+## Configuration
+
+You can customize the extension via your VS Code Settings:
+
+* `arandu.server.path`: Absolute path to the `arandu-lsp` executable. If null, the extension will automatically look up the binary under your workspace's `target/debug/arandu-lsp` or under the global `PATH`.
+* `arandu.trace.server`: Log detail level for tracing communication between VS Code and the server (`off`, `messages`, or `verbose`).

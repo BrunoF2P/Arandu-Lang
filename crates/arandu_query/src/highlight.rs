@@ -149,12 +149,13 @@ pub fn compute_highlights(
     ];
     let mut out: Vec<HlToken> = Vec::with_capacity(64);
     arandu_parser::for_each_highlight_token(tree, |tok, class| {
-        let Some(lex) = lexical_kind(class) else {
-            return;
-        };
         let r = tok.text_range();
         let start = u32::from(r.start());
         let end = u32::from(r.end());
+
+        let Some(lex) = lexical_kind(class) else {
+            return;
+        };
         if end <= start {
             return;
         }

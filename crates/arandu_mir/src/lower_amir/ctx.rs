@@ -1,8 +1,8 @@
 use super::{DeferKind, LowerCtx, MoveState};
 use crate::amir::program::extend_block_range;
 use crate::amir::{
-    AmirBasicBlock, AmirConstant, AmirLocal, AmirOperand, AmirPlace, AmirRvalue,
-    AmirStmt, AmirTemp, AmirTerminator, BlockId, LocalId, TempId,
+    AmirBasicBlock, AmirConstant, AmirLocal, AmirOperand, AmirPlace, AmirRvalue, AmirStmt,
+    AmirTemp, AmirTerminator, BlockId, LocalId, TempId,
 };
 use crate::diagnostics::Diagnostic;
 use crate::hir::HirBlock;

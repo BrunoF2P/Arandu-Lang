@@ -100,8 +100,5 @@ fn sugar_wrong_variant_for_option() {
         .to_string(),
     );
     let tc = type_check(&db, f);
-    assert!(
-        !tc.diagnostics.is_empty(),
-        ".Ok is not valid for Option"
-    );
+    assert!(!tc.diagnostics.is_empty(), ".Ok is not valid for Option");
 }

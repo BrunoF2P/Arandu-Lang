@@ -1,15 +1,13 @@
 use super::cursor::{Cursor, HandCtx, tokens_in_range};
 use super::decl::{
-    parse_attributes, parse_visibility, parse_generic_params, parse_where_clause,
+    parse_attributes, parse_generic_params, parse_visibility, parse_where_clause,
     skip_leading_doc_comments,
 };
 use super::stmt::try_hand_lower_block;
 use super::ty::{parse_result_type, parse_type};
 use crate::ast::ast_pool::AstPool;
 use crate::syntax::kind::{SyntaxKind, SyntaxNode};
-use crate::{
-    FuncDecl, FuncName, FuncSignature, Ownership, Param, TypeName,
-};
+use crate::{FuncDecl, FuncName, FuncSignature, Ownership, Param, TypeName};
 use arandu_lexer::{Span, Token, TokenKind};
 use smallvec::smallvec;
 use smol_str::SmolStr;
@@ -231,7 +229,10 @@ pub(super) fn parse_params(
     Some(params)
 }
 
-pub(super) fn parse_func_signature(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<FuncSignature> {
+pub(super) fn parse_func_signature(
+    ctx: &mut HandCtx<'_>,
+    cur: &mut Cursor<'_>,
+) -> Option<FuncSignature> {
     let attrs = parse_attributes(ctx, cur)?;
     let start = cur.peek()?.start;
     cur.expect(TokenKind::KwFunc)?;

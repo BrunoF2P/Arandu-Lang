@@ -405,7 +405,9 @@ impl AranduJit {
             .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
         rt_block_sig
             .returns
-            .push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            .push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
         for name in ["ar_rt_block_on_i64", "ar_co_block_on_i64"] {
             if !func_ids.contains_key(name) {
                 let id = self
@@ -421,7 +423,9 @@ impl AranduJit {
             .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
         rt_spawn_sig
             .returns
-            .push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            .push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
         {
             let name = "ar_rt_spawn_i64";
             let id = self
@@ -431,12 +435,16 @@ impl AranduJit {
             func_ids.insert(name.to_string(), id);
         }
         let mut rt_join_sig = cranelift_codegen::ir::Signature::new(default_call_conv);
-        rt_join_sig.params.push(cranelift_codegen::ir::AbiParam::new(
-            cranelift_codegen::ir::types::I64,
-        ));
+        rt_join_sig
+            .params
+            .push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
         rt_join_sig
             .returns
-            .push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+            .push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
         {
             let name = "ar_rt_join_i64";
             let id = self
@@ -465,9 +473,9 @@ impl AranduJit {
         path_sig.params.push(cranelift_codegen::ir::AbiParam::new(
             cranelift_codegen::ir::types::I64,
         ));
-        path_sig
-            .returns
-            .push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I32));
+        path_sig.returns.push(cranelift_codegen::ir::AbiParam::new(
+            cranelift_codegen::ir::types::I32,
+        ));
         for name in ["ar_path_is_absolute", "ar_path_is_empty"] {
             let id = self
                 .module
@@ -565,10 +573,9 @@ impl AranduJit {
         // 0-arg -> i64
         {
             let mut sig = cranelift_codegen::ir::Signature::new(default_call_conv);
-            sig.returns
-                .push(cranelift_codegen::ir::AbiParam::new(
-                    cranelift_codegen::ir::types::I64,
-                ));
+            sig.returns.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
             for name in [
                 "ar_rt_reactor_backend",
                 "ar_rt_waker_create",
@@ -586,11 +593,9 @@ impl AranduJit {
         // 1-arg i64 -> void / i64
         {
             let mut void_sig = cranelift_codegen::ir::Signature::new(default_call_conv);
-            void_sig
-                .params
-                .push(cranelift_codegen::ir::AbiParam::new(
-                    cranelift_codegen::ir::types::I64,
-                ));
+            void_sig.params.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
             for name in [
                 "ar_rt_waker_wake",
                 "ar_rt_waker_destroy",
@@ -604,21 +609,13 @@ impl AranduJit {
                 func_ids.insert(name.to_string(), id);
             }
             let mut ret_sig = cranelift_codegen::ir::Signature::new(default_call_conv);
-            ret_sig
-                .params
-                .push(cranelift_codegen::ir::AbiParam::new(
-                    cranelift_codegen::ir::types::I64,
-                ));
-            ret_sig
-                .returns
-                .push(cranelift_codegen::ir::AbiParam::new(
-                    cranelift_codegen::ir::types::I64,
-                ));
-            for name in [
-                "ar_rt_tcp_listen",
-                "ar_rt_tcp_accept",
-                "ar_rt_tcp_connect",
-            ] {
+            ret_sig.params.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
+            ret_sig.returns.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
+            for name in ["ar_rt_tcp_listen", "ar_rt_tcp_accept", "ar_rt_tcp_connect"] {
                 let id = self
                     .module
                     .declare_function(name, Linkage::Import, &ret_sig)
@@ -629,20 +626,17 @@ impl AranduJit {
         // tcp_read/write: (sock, ptr, len) -> i64
         {
             let mut sig = cranelift_codegen::ir::Signature::new(default_call_conv);
-            sig.params
-                .push(cranelift_codegen::ir::AbiParam::new(
-                    cranelift_codegen::ir::types::I64,
-                ));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
             sig.params
                 .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
-            sig.params
-                .push(cranelift_codegen::ir::AbiParam::new(
-                    cranelift_codegen::ir::types::I64,
-                ));
-            sig.returns
-                .push(cranelift_codegen::ir::AbiParam::new(
-                    cranelift_codegen::ir::types::I64,
-                ));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
+            sig.returns.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
             for name in [
                 "ar_rt_tcp_read",
                 "ar_rt_tcp_write",
@@ -656,26 +650,25 @@ impl AranduJit {
                 func_ids.insert(name.to_string(), id);
             }
         }
-        // set_nonblocking / wait: (sock, events|flag [, timeout]) 
+        // set_nonblocking / wait: (sock, events|flag [, timeout])
         {
             let mut two = cranelift_codegen::ir::Signature::new(default_call_conv);
-            two.params
-                .push(cranelift_codegen::ir::AbiParam::new(
-                    cranelift_codegen::ir::types::I64,
-                ));
-            two.params
-                .push(cranelift_codegen::ir::AbiParam::new(
-                    cranelift_codegen::ir::types::I64,
-                ));
-            two.returns
-                .push(cranelift_codegen::ir::AbiParam::new(
-                    cranelift_codegen::ir::types::I64,
-                ));
+            two.params.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
+            two.params.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
+            two.returns.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
             let id = self
                 .module
                 .declare_function("ar_rt_tcp_set_nonblocking", Linkage::Import, &two)
                 .map_err(|err| {
-                    codegen_ice(format!("failed to declare ar_rt_tcp_set_nonblocking: {err:?}"))
+                    codegen_ice(format!(
+                        "failed to declare ar_rt_tcp_set_nonblocking: {err:?}"
+                    ))
                 })?;
             func_ids.insert("ar_rt_tcp_set_nonblocking".to_string(), id);
 
@@ -717,24 +710,20 @@ impl AranduJit {
             for _ in 0..4 {
                 // params: i64, ptr, i64, i64 — first and last are i64; path is fat
             }
-            sig.params
-                .push(cranelift_codegen::ir::AbiParam::new(
-                    cranelift_codegen::ir::types::I64,
-                ));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
             sig.params
                 .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
-            sig.params
-                .push(cranelift_codegen::ir::AbiParam::new(
-                    cranelift_codegen::ir::types::I64,
-                ));
-            sig.params
-                .push(cranelift_codegen::ir::AbiParam::new(
-                    cranelift_codegen::ir::types::I64,
-                ));
-            sig.returns
-                .push(cranelift_codegen::ir::AbiParam::new(
-                    cranelift_codegen::ir::types::I64,
-                ));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
+            sig.params.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
+            sig.returns.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
             for name in ["ar_rt_supervisor_spawn", "ar_rt_supervisor_spawn_str"] {
                 let id = self
                     .module

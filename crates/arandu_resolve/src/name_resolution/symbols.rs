@@ -167,10 +167,7 @@ impl<'a> Resolver<'a> {
                 return None;
             }
         }
-        match self
-            .symbols
-            .define_vis(scope, name, kind, span, is_public)
-        {
+        match self.symbols.define_vis(scope, name, kind, span, is_public) {
             Ok(symbol) => {
                 self.resolved.define(span, symbol);
                 Some(symbol)

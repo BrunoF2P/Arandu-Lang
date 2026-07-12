@@ -407,34 +407,36 @@ impl<'a> Parser<'a> {
                     .alloc_expr(ExprKind::InterpolatedString { parts: range }, span))
             }
             TokenKind::LParen => {
-                let start_pos = self.pos;
                 let mut is_lambda = false;
-                if self.eat_name("LPAREN") {
-                    let mut params_ok = true;
-                    if !self.at_kind_name("RPAREN") {
-                        loop {
-                            if !matches!(self.current().kind, TokenKind::IdentValue) {
-                                params_ok = false;
-                                break;
-                            }
-                            self.advance();
-                            if self.can_start_type() && self.parse_type().is_err() {
-                                params_ok = false;
-                                break;
-                            }
-                            if !self.eat_name("COMMA") {
-                                break;
-                            }
-                            if self.at_kind_name("RPAREN") {
-                                break;
+                {
+                    let checkpoint = self.checkpoint();
+                    if self.eat_name("LPAREN") {
+                        let mut params_ok = true;
+                        if !self.at_kind_name("RPAREN") {
+                            loop {
+                                if !matches!(self.current().kind, TokenKind::IdentValue) {
+                                    params_ok = false;
+                                    break;
+                                }
+                                self.advance();
+                                if self.can_start_type() && self.parse_type().is_err() {
+                                    params_ok = false;
+                                    break;
+                                }
+                                if !self.eat_name("COMMA") {
+                                    break;
+                                }
+                                if self.at_kind_name("RPAREN") {
+                                    break;
+                                }
                             }
                         }
+                        if params_ok && self.eat_name("RPAREN") && self.at_kind_name("FAT_ARROW") {
+                            is_lambda = true;
+                        }
                     }
-                    if params_ok && self.eat_name("RPAREN") && self.at_kind_name("FAT_ARROW") {
-                        is_lambda = true;
-                    }
+                    checkpoint.rollback(self);
                 }
-                self.pos = start_pos;
 
                 if is_lambda {
                     self.parse_lambda()

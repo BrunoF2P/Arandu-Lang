@@ -646,8 +646,7 @@ fn resolve_namespace_member_not_namespace() {
     let mut pool = new_pool();
     let expr = pool.alloc_expr(arandu_parser::ExprKind::Nil, dummy_span());
     let mut r = make_resolver(&pool);
-    let found =
-        r.resolve_namespace_member(ScopeId(0), "nonexistent", "foo", expr, dummy_span());
+    let found = r.resolve_namespace_member(ScopeId(0), "nonexistent", "foo", expr, dummy_span());
     assert!(!found);
 }
 

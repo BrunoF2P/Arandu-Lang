@@ -383,7 +383,9 @@ impl FunctionTranslator<'_, '_> {
         let mut offset_ptr = self.builder.ins().iconst(self.ptr_type, 0);
         for &(src_ptr, src_len) in &part_vals {
             let dest = self.builder.ins().iadd(buf, offset_ptr);
-            self.builder.ins().call(memcpy_ref, &[dest, src_ptr, src_len]);
+            self.builder
+                .ins()
+                .call(memcpy_ref, &[dest, src_ptr, src_len]);
             offset_ptr = self.builder.ins().iadd(offset_ptr, src_len);
         }
 

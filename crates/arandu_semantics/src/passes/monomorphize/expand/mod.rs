@@ -261,4 +261,3 @@ impl CloneShallow for HirFunc {
         }
     }
 }
-

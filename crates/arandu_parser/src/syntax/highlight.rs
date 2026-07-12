@@ -1,5 +1,5 @@
-use super::kind::SyntaxToken;
 use super::build::SyntaxTree;
+use super::kind::SyntaxToken;
 use rowan::NodeOrToken;
 
 /// Highlight spans for LSP semantic tokens: `(start, end, class)`.

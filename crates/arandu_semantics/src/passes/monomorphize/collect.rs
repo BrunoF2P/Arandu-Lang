@@ -236,12 +236,7 @@ impl InstantiationAnalyzer<'_> {
                 // Pass the call's result type so `join<T>(h)` can recover `T`
                 // from the expected/inferred return type on the Call expr.
                 if let Some(key) = instantiation_key_for_call(
-                    self.hir,
-                    self.tc,
-                    *callee,
-                    *args,
-                    expr.ty,
-                    expr.span,
+                    self.hir, self.tc, *callee, *args, expr.ty, expr.span,
                 ) && let Some(callee_node) = self.insert_key(key, expr.span)
                     && let Some(caller_node) = current
                 {
@@ -537,13 +532,7 @@ fn infer_free_func_type_args(
     // Call expression result type (e.g. `return join(h)` expects int).
     {
         let ret_formal = interner.resolve(ret);
-        collect_param_bindings(
-            interner,
-            params,
-            &ret_formal,
-            call_result_ty,
-            &mut bindings,
-        );
+        collect_param_bindings(interner, params, &ret_formal, call_result_ty, &mut bindings);
     }
 
     let mut out = Vec::with_capacity(params.len());

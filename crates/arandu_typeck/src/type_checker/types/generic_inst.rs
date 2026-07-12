@@ -80,10 +80,7 @@ pub fn expand_named_with_defaults(checker: &mut TypeChecker<'_>, ty: ArType) -> 
     if expanded.len() == provided.len() {
         return ty;
     }
-    let arg_ids: Vec<TypeId> = expanded
-        .into_iter()
-        .map(|t| checker.intern(t))
-        .collect();
+    let arg_ids: Vec<TypeId> = expanded.into_iter().map(|t| checker.intern(t)).collect();
     ArType::Named(*id, arg_ids)
 }
 
@@ -351,8 +348,16 @@ fn expand_aliases_rec(checker: &mut TypeChecker<'_>, ty: ArType, depth: usize) -
                     let target_ty = checker.resolve(target_tid);
                     let params = checker.type_info.generic_params.get(&symbol_id);
                     let target_expanded = if let Some(params) = params {
-                        let subst = arandu_middle::types::build_subst_ids(params, &args, &checker.type_info.type_interner);
-                        arandu_middle::types::substitute_type(&target_ty, &subst, &checker.type_info.type_interner)
+                        let subst = arandu_middle::types::build_subst_ids(
+                            params,
+                            &args,
+                            &checker.type_info.type_interner,
+                        );
+                        arandu_middle::types::substitute_type(
+                            &target_ty,
+                            &subst,
+                            &checker.type_info.type_interner,
+                        )
                     } else {
                         target_ty
                     };

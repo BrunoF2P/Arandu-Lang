@@ -492,4 +492,3 @@ fn parity_references_and_deref() {
     "#;
     test_execution_parity("references_and_deref", src);
 }
-

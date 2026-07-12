@@ -1,10 +1,10 @@
 use super::LowerCtx;
+use crate::SymbolTable;
 use crate::amir::{AmirConstant, AmirOperand, AmirRvalue, AmirTerminator, TempId};
 use crate::diagnostics::{DiagCode, Diagnostic};
+use crate::hir::{HirExpr, HirExprId, HirExprKind, ResultCtorVariant};
 use crate::ops::BinaryOp;
 use crate::passes::type_checker::types::{ArType, Primitive, result_ok_err_id};
-use crate::SymbolTable;
-use crate::hir::{HirExpr, HirExprId, HirExprKind, ResultCtorVariant};
 
 impl LowerCtx<'_> {
     pub(crate) fn expr_is_nil(expr: &HirExpr) -> bool {
@@ -18,7 +18,8 @@ impl LowerCtx<'_> {
                 ..
             } => true,
             HirExprKind::ResultCtor {
-                variant: ResultCtorVariant::Ok
+                variant:
+                    ResultCtorVariant::Ok
                     | ResultCtorVariant::Some
                     | ResultCtorVariant::None
                     | ResultCtorVariant::PollReady

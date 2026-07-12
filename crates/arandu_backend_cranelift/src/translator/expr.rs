@@ -7,8 +7,6 @@ use cranelift_module::Module;
 use super::FunctionTranslator;
 
 impl FunctionTranslator<'_, '_> {
-
-
     /// Box a scalar into a heap cell for `T?` (null-or-pointer ABI).
     fn box_nullable_scalar(&mut self, val: Value, inner: &ArType) -> Value {
         let Some(malloc_id) = self.malloc_func_id() else {
@@ -771,8 +769,6 @@ impl FunctionTranslator<'_, '_> {
         let call = self.builder.ins().call(malloc_ref, &[size_val]);
         self.builder.inst_results(call)[0]
     }
-
-
 
     fn cast_int_width(&mut self, val: Value, target: Type) -> Value {
         let src = self.builder.func.dfg.value_type(val);

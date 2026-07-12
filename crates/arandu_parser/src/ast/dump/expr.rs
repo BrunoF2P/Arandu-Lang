@@ -30,11 +30,7 @@ pub(super) fn dump_expr(pool: &AstPool, expr: ExprId) -> String {
                     .map(|id| dump_expr(pool, *id))
                     .collect::<Vec<_>>()
                     .join(", ");
-                format!(
-                    "VariantSugar {}(.{}({args_str}))",
-                    dump_span(span),
-                    name
-                )
+                format!("VariantSugar {}(.{}({args_str}))", dump_span(span), name)
             }
         }
         ExprKind::Generic { callee, args } => {

@@ -220,9 +220,7 @@ pub(crate) fn lower_expr_raw(
             }
         }
         ExprKind::TypePath {
-            type_name,
-            member,
-            ..
+            type_name, member, ..
         } => {
             // Builtin unit ctors as bare TypePath (not Call): `Option.None`, `Poll.Pending`.
             let base = type_name.path.last().map_or("", |s| s.as_str());

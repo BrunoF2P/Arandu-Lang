@@ -284,16 +284,14 @@ pub(super) fn synth_call_expr(
                         // Multi-file generic free funcs (`rt.spawn(ex, job)`):
                         // same inference as Path callees — instantiate T from
                         // Coroutine[T] args / expected return before arg checks.
-                        if let Some(sym_id) =
-                            checker.symbols.lookup_module_member(
-                                match checker.pool.expr(base_id) {
-                                    ExprKind::Path { path } if path.len() == 1 => &path[0],
-                                    _ => "",
-                                },
-                                &field_str,
-                            )
-                            && let Some(gp) =
-                                checker.type_info.generic_params.get(&sym_id).cloned()
+                        if let Some(sym_id) = checker.symbols.lookup_module_member(
+                            match checker.pool.expr(base_id) {
+                                ExprKind::Path { path } if path.len() == 1 => &path[0],
+                                _ => "",
+                            },
+                            &field_str,
+                        ) && let Some(gp) =
+                            checker.type_info.generic_params.get(&sym_id).cloned()
                             && !gp.is_empty()
                         {
                             let arg_tys: Vec<TypeId> = arg_ids
@@ -302,12 +300,7 @@ pub(super) fn synth_call_expr(
                                 .map(|aid| synth_expr(checker, aid))
                                 .collect();
                             if let Some((ip, ir)) = infer_and_instantiate_func(
-                                checker,
-                                &gp,
-                                &params,
-                                ret,
-                                &arg_tys,
-                                expected,
+                                checker, &gp, &params, ret, &arg_tys, expected,
                             ) {
                                 params = ip;
                                 ret = ir;
@@ -330,8 +323,7 @@ pub(super) fn synth_call_expr(
                         }
                         for (i, arg_id) in arg_ids.iter().copied().enumerate() {
                             let param_id = params.get(i).copied();
-                            let arg_ty_id =
-                                synth_expr_expected(checker, arg_id, param_id);
+                            let arg_ty_id = synth_expr_expected(checker, arg_id, param_id);
                             if let Some(param_id) = param_id {
                                 check_call_arg(
                                     checker,
@@ -436,8 +428,7 @@ pub(super) fn synth_call_expr(
                             }
                             for (i, arg_id) in arg_ids.iter().copied().enumerate() {
                                 let expected_id = explicit_params.get(i).copied();
-                                let arg_ty_id =
-                                    synth_expr_expected(checker, arg_id, expected_id);
+                                let arg_ty_id = synth_expr_expected(checker, arg_id, expected_id);
                                 if let Some(expected_id) = expected_id {
                                     check_call_arg(
                                         checker,
@@ -560,14 +551,9 @@ pub(super) fn synth_call_expr(
                         .copied()
                         .map(|aid| synth_expr(checker, aid))
                         .collect();
-                    if let Some((ip, ir)) = infer_and_instantiate_func(
-                        checker,
-                        &gp,
-                        &params,
-                        ret,
-                        &arg_tys,
-                        expected,
-                    ) {
+                    if let Some((ip, ir)) =
+                        infer_and_instantiate_func(checker, &gp, &params, ret, &arg_tys, expected)
+                    {
                         params = ip;
                         ret = ir;
                         let inst_func = checker.intern(ArType::Func(params.clone(), ret));

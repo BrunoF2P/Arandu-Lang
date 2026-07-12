@@ -15,8 +15,8 @@ use literal::synth_literal_expr;
 
 pub(crate) use call::check_call_arg;
 
-use arandu_middle::types::type_interner::TypeId;
 use super::ctor::synth_variant_sugar;
+use arandu_middle::types::type_interner::TypeId;
 
 #[tracing::instrument(level = "trace", target = "arandu_typeck", skip(checker))]
 pub fn synth_expr(checker: &mut TypeChecker<'_>, expr: ExprId) -> TypeId {

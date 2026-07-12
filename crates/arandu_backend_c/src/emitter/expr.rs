@@ -52,7 +52,9 @@ impl<'a> CEmitter<'a> {
                         BinaryOp::ShiftLeft => "<<",
                         BinaryOp::ShiftRight => ">>",
                         BinaryOp::NullCoalesce => {
-                            panic!("internal: NullCoalesce must be CFG-lowered before codegen (not a BinaryOp)");
+                            panic!(
+                                "internal: NullCoalesce must be CFG-lowered before codegen (not a BinaryOp)"
+                            );
                         }
                         BinaryOp::RangeExclusive | BinaryOp::RangeInclusive => unreachable!(),
                         _ => unreachable!(),

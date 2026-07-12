@@ -25,14 +25,9 @@ pub fn uri_from_path(path: &Path) -> Option<Uri> {
     let mut out = String::from("file://");
     for &b in s.as_bytes() {
         match b {
-            b'A'..=b'Z'
-            | b'a'..=b'z'
-            | b'0'..=b'9'
-            | b'/'
-            | b'.'
-            | b'_'
-            | b'-'
-            | b'~' => out.push(b as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'/' | b'.' | b'_' | b'-' | b'~' => {
+                out.push(b as char)
+            }
             _ => {
                 use std::fmt::Write;
                 let _ = write!(out, "%{b:02X}");
@@ -47,9 +42,7 @@ pub fn uri_from_path(path: &Path) -> Option<Uri> {
 pub fn path_from_uri(uri: &Uri) -> PathBuf {
     let s = uri.as_str();
     if let Some(rest) = s.strip_prefix("file://") {
-        let rest = rest
-            .strip_prefix("localhost")
-            .unwrap_or(rest);
+        let rest = rest.strip_prefix("localhost").unwrap_or(rest);
         PathBuf::from(percent_decode(rest))
     } else if let Some(rest) = s.strip_prefix("file:") {
         PathBuf::from(percent_decode(rest))

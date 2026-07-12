@@ -272,9 +272,7 @@ pub(crate) fn synth_variant_sugar(
         },
         ArType::Named(enum_id, _) => {
             let enum_name = checker.symbols.get(enum_id).name.clone();
-            let Some(variant_sym) = checker
-                .symbols
-                .lookup_associated_member(&enum_name, name)
+            let Some(variant_sym) = checker.symbols.lookup_associated_member(&enum_name, name)
             else {
                 checker.diagnostics.push(crate::Diagnostic::error(
                     crate::DiagCode::T018UndefinedField,

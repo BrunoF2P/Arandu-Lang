@@ -127,6 +127,7 @@ impl<'a> Parser<'a> {
         &mut self,
     ) -> Option<Result<crate::ast_pool::StmtId, ParseError>> {
         let start = self.mark();
+        let checkpoint = self.checkpoint();
         // Optional `set` keyword (EBNF mutation form). Both
         // `set x = 1` and `x = 1` lower to the same `Stmt::Set`.
         let _explicit_set = self.eat_name("KW_SET");
@@ -138,7 +139,7 @@ impl<'a> Parser<'a> {
                     match self.parse_place() {
                         Ok(p) => places.push(p),
                         Err(_) => {
-                            self.pos = start;
+                            checkpoint.rollback(self);
                             return None;
                         }
                     }
@@ -147,7 +148,9 @@ impl<'a> Parser<'a> {
                     Ok(op) => {
                         let value = match self.parse_expr(0) {
                             Ok(val) => val,
-                            Err(e) => return Some(Err(e)),
+                            Err(e) => {
+                                return Some(Err(e));
+                            }
                         };
                         if let Err(e) = self.expect_semicolon() {
                             return Some(Err(e));
@@ -160,13 +163,13 @@ impl<'a> Parser<'a> {
                         })))
                     }
                     Err(_) => {
-                        self.pos = start;
+                        checkpoint.rollback(self);
                         None
                     }
                 }
             }
             Err(_) => {
-                self.pos = start;
+                checkpoint.rollback(self);
                 None
             }
         }
@@ -401,6 +404,7 @@ impl<'a> Parser<'a> {
 
     pub(super) fn try_parse_simple_assignment(&mut self) -> Option<Result<SimpleStmt, ParseError>> {
         let start = self.mark();
+        let checkpoint = self.checkpoint();
         let _explicit_set = self.eat_name("KW_SET");
         let mut places = Vec::new();
         match self.parse_place() {
@@ -410,7 +414,7 @@ impl<'a> Parser<'a> {
                     match self.parse_place() {
                         Ok(p) => places.push(p),
                         Err(_) => {
-                            self.pos = start;
+                            checkpoint.rollback(self);
                             return None;
                         }
                     }
@@ -419,7 +423,9 @@ impl<'a> Parser<'a> {
                     Ok(op) => {
                         let value = match self.parse_expr(0) {
                             Ok(val) => val,
-                            Err(e) => return Some(Err(e)),
+                            Err(e) => {
+                                return Some(Err(e));
+                            }
                         };
                         Some(Ok(SimpleStmt::Set {
                             span: self.span_from_mark(start),
@@ -429,13 +435,13 @@ impl<'a> Parser<'a> {
                         }))
                     }
                     Err(_) => {
-                        self.pos = start;
+                        checkpoint.rollback(self);
                         None
                     }
                 }
             }
             Err(_) => {
-                self.pos = start;
+                checkpoint.rollback(self);
                 None
             }
         }

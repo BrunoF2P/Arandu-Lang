@@ -91,12 +91,9 @@ pub(crate) fn lower_func(
     // not invent a `Nil` store into a `void` return temp (breaks C backend).
     let last_is_expr = {
         let stmts = hir.pool.stmt_list(hir.pool.block(body).statements);
-        stmts.last().is_some_and(|&sid| {
-            matches!(
-                hir.pool.stmt(sid).kind,
-                crate::hir::HirStmtKind::Expr(_)
-            )
-        })
+        stmts
+            .last()
+            .is_some_and(|&sid| matches!(hir.pool.stmt(sid).kind, crate::hir::HirStmtKind::Expr(_)))
     };
     if last_is_expr {
         // Async bodies return bare `T` in source; wrap as `CoroutineReady` (A3).
@@ -216,12 +213,16 @@ pub(crate) fn lower_func(
 }
 
 fn promote_escaped_coroutines(func: &mut AmirFunc) {
-    use crate::amir::{AmirStmt, AmirRvalue};
+    use crate::amir::{AmirRvalue, AmirStmt};
     let mut stack_coro_origins = FxHashMap::default();
     for block in &func.blocks {
         for instr_id in func.block_stmt_ids(block.id) {
             let stmt = &func.stmts.payloads[instr_id];
-            if let AmirStmt::Assign { lhs, rhs: AmirRvalue::CoroutineReady { stack: true, .. } } = stmt {
+            if let AmirStmt::Assign {
+                lhs,
+                rhs: AmirRvalue::CoroutineReady { stack: true, .. },
+            } = stmt
+            {
                 let lhs_val = TempId::from_usize(lhs.as_usize());
                 stack_coro_origins.insert(lhs_val, instr_id);
             }
@@ -233,7 +234,8 @@ fn promote_escaped_coroutines(func: &mut AmirFunc) {
     }
 
     let mut temp_origins: FxHashMap<TempId, FxHashSet<TempId>> = FxHashMap::default();
-    let mut local_origins: FxHashMap<crate::amir::LocalId, FxHashSet<TempId>> = FxHashMap::default();
+    let mut local_origins: FxHashMap<crate::amir::LocalId, FxHashSet<TempId>> =
+        FxHashMap::default();
     for t in stack_coro_origins.keys() {
         let t_val = TempId::from_usize(t.as_usize());
         let mut s = FxHashSet::default();
@@ -254,7 +256,7 @@ fn promote_escaped_coroutines(func: &mut AmirFunc) {
                     AmirStmt::Assign { lhs, rhs } => {
                         let lhs_val = TempId::from_usize(lhs.as_usize());
                         let mut origins: FxHashSet<TempId> = FxHashSet::default();
-                        
+
                         match rhs {
                             AmirRvalue::Use(op)
                             | AmirRvalue::Discriminant { value: op }
@@ -269,9 +271,13 @@ fn promote_escaped_coroutines(func: &mut AmirFunc) {
                                     }
                                 }
                             }
-                            AmirRvalue::Unary { op: unary_op, operand } => {
+                            AmirRvalue::Unary {
+                                op: unary_op,
+                                operand,
+                            } => {
                                 if !matches!(unary_op, crate::ops::UnaryOp::Await) {
-                                    if let AmirOperand::Copy(src) | AmirOperand::Move(src) = operand {
+                                    if let AmirOperand::Copy(src) | AmirOperand::Move(src) = operand
+                                    {
                                         if let Some(src_origins) = temp_origins.get(src) {
                                             origins.extend(src_origins);
                                         }
@@ -290,7 +296,10 @@ fn promote_escaped_coroutines(func: &mut AmirFunc) {
                                     }
                                 }
                             }
-                            AmirRvalue::FieldAccess { base: AmirOperand::Copy(src) | AmirOperand::Move(src), .. } => {
+                            AmirRvalue::FieldAccess {
+                                base: AmirOperand::Copy(src) | AmirOperand::Move(src),
+                                ..
+                            } => {
                                 if let Some(src_origins) = temp_origins.get(src) {
                                     origins.extend(src_origins);
                                 }
@@ -325,7 +334,10 @@ fn promote_escaped_coroutines(func: &mut AmirFunc) {
                                     }
                                 }
                             }
-                            AmirRvalue::EnumConstruct { payload: Some(AmirOperand::Copy(src) | AmirOperand::Move(src)), .. } => {
+                            AmirRvalue::EnumConstruct {
+                                payload: Some(AmirOperand::Copy(src) | AmirOperand::Move(src)),
+                                ..
+                            } => {
                                 if let Some(src_origins) = temp_origins.get(src) {
                                     origins.extend(src_origins);
                                 }
@@ -347,7 +359,10 @@ fn promote_escaped_coroutines(func: &mut AmirFunc) {
                             }
                         }
                     }
-                    AmirStmt::Store { lhs, rhs: AmirOperand::Copy(src) | AmirOperand::Move(src) } => {
+                    AmirStmt::Store {
+                        lhs,
+                        rhs: AmirOperand::Copy(src) | AmirOperand::Move(src),
+                    } => {
                         if let Some(src_origins) = temp_origins.get(src) {
                             let entry = local_origins.entry(lhs.local).or_default();
                             let old_len = entry.len();
@@ -447,7 +462,11 @@ fn promote_escaped_coroutines(func: &mut AmirFunc) {
                         }
                     }
                 }
-                AmirTerminator::SwitchInt { discriminant: _, targets, otherwise } => {
+                AmirTerminator::SwitchInt {
+                    discriminant: _,
+                    targets,
+                    otherwise,
+                } => {
                     for (_, target, args) in targets {
                         let target_block = &func.blocks[target.as_usize()];
                         for (idx, arg) in args.iter().enumerate() {
@@ -488,7 +507,11 @@ fn promote_escaped_coroutines(func: &mut AmirFunc) {
 
     for origin in escaped_origins {
         if let Some(&instr_id) = stack_coro_origins.get(&origin) {
-            if let AmirStmt::Assign { rhs: AmirRvalue::CoroutineReady { stack, .. }, .. } = &mut func.stmts.payloads[instr_id] {
+            if let AmirStmt::Assign {
+                rhs: AmirRvalue::CoroutineReady { stack, .. },
+                ..
+            } = &mut func.stmts.payloads[instr_id]
+            {
                 *stack = false;
             }
         }

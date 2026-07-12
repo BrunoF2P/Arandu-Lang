@@ -19,12 +19,12 @@ pub use build::{
     lower_syntax_to_program_recovering_rd_only, map_token_kind, parse_syntax, parse_syntax_arc,
     parse_syntax_with_item_spans, text_range,
 };
+pub use events::{ParseEvent, build_green_from_events, events_balanced};
 pub use highlight::{for_each_highlight_token, highlight_spans};
 pub use incremental::{
     apply_text_edit, reparse_edit, reparse_subtree, single_contiguous_edit,
     splice_tokens_for_item_edit,
 };
-pub use events::{ParseEvent, build_green_from_events, events_balanced};
 pub use kind::{AranduLanguage, SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};
 pub use lower::{
     GreenStructure, block_stmt_count, first_func_item, func_body_block, inspect_green_structure,

@@ -8,3 +8,8 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+# VS Code Extension
+editors/vscode/out/
+editors/vscode/node_modules/
+editors/vscode/*.vsix

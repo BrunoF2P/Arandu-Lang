@@ -616,8 +616,7 @@ fn literal_pair_int_literal_with_concrete() {
 
 #[test]
 fn literal_pair_float_literal_with_concrete() {
-    let result =
-        resolve_literal_pair(&ArType::FloatLiteral, &ArType::Primitive(Primitive::F64));
+    let result = resolve_literal_pair(&ArType::FloatLiteral, &ArType::Primitive(Primitive::F64));
     assert_eq!(result, ArType::Primitive(Primitive::F64));
 }
 

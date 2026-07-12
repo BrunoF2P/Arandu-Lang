@@ -203,8 +203,7 @@ fn collect_decl_constraints(
                 scope,
                 resolved: &checker.resolved,
             };
-            let def_ty =
-                lower_type_expr_ctx(def_ty_id, &ctx, &mut checker.type_info.type_interner);
+            let def_ty = lower_type_expr_ctx(def_ty_id, &ctx, &mut checker.type_info.type_interner);
             let tid = checker.type_info.type_interner.intern(def_ty);
             checker.type_info.generic_defaults.insert(param_sym, tid);
         }

@@ -177,6 +177,11 @@ impl<'a> Parser<'a> {
     }
 
     #[inline]
+    pub(crate) fn checkpoint(&self) -> Checkpoint {
+        Checkpoint::new(self)
+    }
+
+    #[inline]
     pub(crate) fn start_node(&mut self, kind: crate::syntax::SyntaxKind) {
         if let Some(ev) = &mut self.events {
             ev.push(crate::syntax::events::ParseEvent::Start(kind));
@@ -797,5 +802,36 @@ pub(super) fn span_between(start: Span, end: Span) -> Span {
         file_id: start.file_id,
         start: start.start,
         end: end.end,
+    }
+}
+
+pub(crate) struct Checkpoint {
+    pos: usize,
+    events_len: usize,
+    diagnostics_len: usize,
+    pending_docs_len: usize,
+}
+
+impl Checkpoint {
+    pub(crate) fn new(parser: &Parser<'_>) -> Self {
+        let pos = parser.pos;
+        let events_len = parser.events.as_ref().map_or(0, |evs| evs.len());
+        let diagnostics_len = parser.diagnostics.len();
+        let pending_docs_len = parser.pending_docs.len();
+        Self {
+            pos,
+            events_len,
+            diagnostics_len,
+            pending_docs_len,
+        }
+    }
+
+    pub(crate) fn rollback(self, parser: &mut Parser<'_>) {
+        parser.pos = self.pos;
+        if let Some(evs) = &mut parser.events {
+            evs.truncate(self.events_len);
+        }
+        parser.diagnostics.truncate(self.diagnostics_len);
+        parser.pending_docs.truncate(self.pending_docs_len);
     }
 }

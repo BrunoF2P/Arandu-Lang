@@ -18,7 +18,6 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 mod arg_modes;
 mod ctx;
-mod ssa;
 mod expr;
 mod flow;
 mod func;
@@ -26,6 +25,7 @@ mod match_lower;
 mod ops;
 mod pattern;
 mod place;
+mod ssa;
 mod stmt;
 
 pub(crate) use arg_modes::CalleeArgModes;
@@ -88,7 +88,10 @@ pub fn lower_to_amir(
             {
                 let ty = tc.type_info.type_interner.resolve(ty_id);
                 if let arandu_middle::types::ArType::Func(params, ret) = ty {
-                    let param_types: Vec<_> = params.iter().map(|&p| tc.type_info.type_interner.resolve(p)).collect();
+                    let param_types: Vec<_> = params
+                        .iter()
+                        .map(|&p| tc.type_info.type_interner.resolve(p))
+                        .collect();
                     let ret_type = tc.type_info.type_interner.resolve(ret);
                     extern_funcs.insert(sym.id, (param_types, ret_type));
                 }

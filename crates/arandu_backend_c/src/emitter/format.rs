@@ -97,9 +97,7 @@ impl<'a> CEmitter<'a> {
             ArType::Primitive(Primitive::Str) => "ArStr".to_string(),
             ArType::Primitive(Primitive::Float) | ArType::FloatLiteral => "double".to_string(),
             ArType::Void => "void".to_string(),
-            ArType::Ptr(inner)
-            | ArType::Ref(inner)
-            | ArType::RefMut(inner) => {
+            ArType::Ptr(inner) | ArType::Ref(inner) | ArType::RefMut(inner) => {
                 format!("{}*", self.format_type(&self.interner.resolve(*inner)))
             }
             ArType::GenRef => "int64_t".to_string(),

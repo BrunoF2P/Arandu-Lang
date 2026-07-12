@@ -1,14 +1,12 @@
 use super::cursor::{Cursor, HandCtx};
 use super::decl::{
-    parse_attributes, parse_visibility, parse_generic_params, parse_where_clause,
-    skip_leading_doc_comments, item_tokens, token_bounds_span,
+    item_tokens, parse_attributes, parse_generic_params, parse_visibility, parse_where_clause,
+    skip_leading_doc_comments, token_bounds_span,
 };
 use super::ty::parse_type;
 use crate::ast::ast_pool::AstPool;
-use crate::syntax::kind::{SyntaxNode};
-use crate::{
-    StructDecl, EnumDecl, EnumVariant, EnumPayload, FieldDecl,
-};
+use crate::syntax::kind::SyntaxNode;
+use crate::{EnumDecl, EnumPayload, EnumVariant, FieldDecl, StructDecl};
 use arandu_lexer::{Span, Token, TokenKind};
 use smol_str::SmolStr;
 
@@ -147,7 +145,10 @@ pub(super) fn try_hand_lower_enum(
     })
 }
 
-pub(super) fn parse_enum_variant(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<EnumVariant> {
+pub(super) fn parse_enum_variant(
+    ctx: &mut HandCtx<'_>,
+    cur: &mut Cursor<'_>,
+) -> Option<EnumVariant> {
     let attrs = parse_attributes(ctx, cur)?;
     let name_tok = cur
         .peek()

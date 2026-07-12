@@ -167,6 +167,50 @@
 				"$rustc"
 			],
 			"group": "test"
+		},
+		{
+			"label": "build-arandu-lsp",
+			"type": "shell",
+			"command": "cargo",
+			"args": [
+				"build",
+				"-p",
+				"arandu_lsp"
+			],
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "build-vscode-extension",
+			"type": "shell",
+			"command": "./editors/vscode/build.sh",
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "compile-vscode-extension",
+			"type": "shell",
+			"command": "npm run compile",
+			"options": {
+				"cwd": "${workspaceFolder}/editors/vscode"
+			},
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "build-all-ide",
+			"dependsOn": [
+				"build-arandu-lsp",
+				"build-vscode-extension"
+			],
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			}
 		}
 	]
 }

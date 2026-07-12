@@ -103,8 +103,7 @@ fn test_early_cutoff_on_function_body_change() {
     assert!(tc1.diagnostics.is_empty());
 
     // 2. Change the body of mod_b but keep the signature the same
-    let mod_b_text_new =
-        "public func add(a: int, b: int): int {\n let c = a\n return c + b\n }";
+    let mod_b_text_new = "public func add(a: int, b: int): int {\n let c = a\n return c + b\n }";
     mod_b
         .set_text(&mut db)
         .to(std::sync::Arc::from(mod_b_text_new));
@@ -142,9 +141,6 @@ fn test_cross_file_collision_during_circular_import_is_still_deterministic() {
         panic!("Expected a cycle error or unresolved type, got no diagnostics");
     }
 }
-
-
-
 
 #[test]
 fn test_import_generic_spawn_infer_from_coroutine() {

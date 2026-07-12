@@ -141,12 +141,22 @@ pub fn link_hir_module(
     // --- list storages (values with nested ids / types) ---
     for p in &src.pool.params {
         let mut p = p.clone();
-        p.ty = map_type(p.ty, from, &mut dest_tc.type_info_mut().type_interner, &mut ty_cache);
+        p.ty = map_type(
+            p.ty,
+            from,
+            &mut dest_tc.type_info_mut().type_interner,
+            &mut ty_cache,
+        );
         dest.pool.params.push(p);
     }
     for f in &src.pool.struct_fields {
         let mut f = f.clone();
-        f.ty = map_type(f.ty, from, &mut dest_tc.type_info_mut().type_interner, &mut ty_cache);
+        f.ty = map_type(
+            f.ty,
+            from,
+            &mut dest_tc.type_info_mut().type_interner,
+            &mut ty_cache,
+        );
         dest.pool.struct_fields.push(f);
     }
     for v in &src.pool.enum_variants {
@@ -172,7 +182,12 @@ pub fn link_hir_module(
     }
     for b in &src.pool.bindings {
         let mut b = b.clone();
-        b.ty = map_type(b.ty, from, &mut dest_tc.type_info_mut().type_interner, &mut ty_cache);
+        b.ty = map_type(
+            b.ty,
+            from,
+            &mut dest_tc.type_info_mut().type_interner,
+            &mut ty_cache,
+        );
         dest.pool.bindings.push(b);
     }
     for place in &src.pool.places {
@@ -182,7 +197,12 @@ pub fn link_hir_module(
     }
     for b in &src.pool.for_bindings {
         let mut b = b.clone();
-        b.ty = map_type(b.ty, from, &mut dest_tc.type_info_mut().type_interner, &mut ty_cache);
+        b.ty = map_type(
+            b.ty,
+            from,
+            &mut dest_tc.type_info_mut().type_interner,
+            &mut ty_cache,
+        );
         dest.pool.for_bindings.push(b);
     }
     for arm in &src.pool.match_arms {
@@ -197,7 +217,12 @@ pub fn link_hir_module(
     }
     for lp in &src.pool.lambda_params {
         let mut lp = lp.clone();
-        lp.ty = map_type(lp.ty, from, &mut dest_tc.type_info_mut().type_interner, &mut ty_cache);
+        lp.ty = map_type(
+            lp.ty,
+            from,
+            &mut dest_tc.type_info_mut().type_interner,
+            &mut ty_cache,
+        );
         dest.pool.lambda_params.push(lp);
     }
 
@@ -287,11 +312,21 @@ fn remap_place(
     for suffix in &mut place.suffixes {
         match suffix {
             HirPlaceSuffix::Field { ty, .. } => {
-                *ty = map_type(*ty, from, &mut dest_tc.type_info_mut().type_interner, ty_cache);
+                *ty = map_type(
+                    *ty,
+                    from,
+                    &mut dest_tc.type_info_mut().type_interner,
+                    ty_cache,
+                );
             }
             HirPlaceSuffix::Index { expr, ty, .. } => {
                 *expr = offs.expr_id(*expr);
-                *ty = map_type(*ty, from, &mut dest_tc.type_info_mut().type_interner, ty_cache);
+                *ty = map_type(
+                    *ty,
+                    from,
+                    &mut dest_tc.type_info_mut().type_interner,
+                    ty_cache,
+                );
             }
         }
     }
@@ -448,7 +483,10 @@ fn remap_expr(
             value: offs.expr_id(*value),
             arms: offs.range(*arms, offs.match_arms),
         },
-        HirExprKind::Catch { expr: inner, handler } => HirExprKind::Catch {
+        HirExprKind::Catch {
+            expr: inner,
+            handler,
+        } => HirExprKind::Catch {
             expr: offs.expr_id(*inner),
             handler: match handler {
                 HirCatchHandler::Expr(e) => HirCatchHandler::Expr(offs.expr_id(*e)),
@@ -722,4 +760,3 @@ fn remap_decl(
         }
     }
 }
-

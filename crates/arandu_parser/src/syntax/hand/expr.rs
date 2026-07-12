@@ -369,7 +369,10 @@ fn is_type_like_name(name: &str) -> bool {
 }
 
 /// Collect `Path` / `a.b.Type` Field chains into type path segments.
-fn type_path_segments_from_expr(ctx: &HandCtx<'_>, expr: ExprId) -> Option<smallvec::SmallVec<[SmolStr; 3]>> {
+fn type_path_segments_from_expr(
+    ctx: &HandCtx<'_>,
+    expr: ExprId,
+) -> Option<smallvec::SmallVec<[SmolStr; 3]>> {
     match ctx.pool.expr(expr) {
         ExprKind::Path { path } if path.len() == 1 && is_type_like_name(&path[0]) => {
             Some(path.clone())
@@ -400,7 +403,11 @@ fn type_path_segments_from_expr_module(
 }
 
 /// After a type-shaped path, `{` starts a struct lit if empty or `ident:`.
-fn looks_like_struct_lit_after_type_path(ctx: &HandCtx<'_>, cur: &Cursor<'_>, left: ExprId) -> bool {
+fn looks_like_struct_lit_after_type_path(
+    ctx: &HandCtx<'_>,
+    cur: &Cursor<'_>,
+    left: ExprId,
+) -> bool {
     if type_path_segments_from_expr(ctx, left).is_none() {
         return false;
     }
@@ -412,8 +419,7 @@ fn looks_like_struct_lit_after_type_path(ctx: &HandCtx<'_>, cur: &Cursor<'_>, le
         Some(TokenKind::RBrace) => true, // `Type {}`
         Some(TokenKind::IdentValue | TokenKind::IdentType) => {
             // `Type { field: ... }`
-            cur.peek_at(2)
-                .is_some_and(|t| t.kind == TokenKind::Colon)
+            cur.peek_at(2).is_some_and(|t| t.kind == TokenKind::Colon)
         }
         _ => false,
     }
@@ -587,10 +593,10 @@ fn parse_primary(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<ExprId> 
             } else {
                 ctx.pool.alloc_expr_list(&[])
             };
-            Some(ctx.pool.alloc_expr(
-                ExprKind::VariantSugar { name, args },
-                ctx.span(start, end),
-            ))
+            Some(
+                ctx.pool
+                    .alloc_expr(ExprKind::VariantSugar { name, args }, ctx.span(start, end)),
+            )
         }
         TokenKind::IdentType => parse_type_led(ctx, cur, start),
         // type token as type-led (int is TypeInt etc.)

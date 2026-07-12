@@ -1,0 +1,113 @@
+{
+    "name": "arandu-lang",
+    "displayName": "Arandu Language Support",
+    "description": "VS Code support for the Arandu Programming Language",
+    "version": "0.1.0",
+    "publisher": "arandu",
+    "engines": {
+        "vscode": "^1.85.0"
+    },
+    "categories": [
+        "Programming Languages",
+        "Linters",
+        "Formatters"
+    ],
+    "main": "./out/extension.js",
+    "activationEvents": [
+        "onLanguage:arandu"
+    ],
+    "contributes": {
+        "languages": [
+            {
+                "id": "arandu",
+                "aliases": [
+                    "Arandu",
+                    "arandu"
+                ],
+                "extensions": [
+                    ".aru"
+                ],
+                "configuration": "./language-configuration.json"
+            }
+        ],
+        "grammars": [
+            {
+                "language": "arandu",
+                "scopeName": "source.arandu",
+                "path": "./syntaxes/arandu.tmLanguage.json"
+            }
+        ],
+        "configuration": {
+            "type": "object",
+            "title": "Arandu",
+            "properties": {
+                "arandu.server.path": {
+                    "type": [
+                        "string",
+                        "null"
+                    ],
+                    "default": null,
+                    "description": "Absolute path to the arandu-lsp executable. If null, the extension will attempt to find it in the PATH or the workspace target/ directory."
+                },
+                "arandu.trace.server": {
+                    "type": "string",
+                    "scope": "window",
+                    "enum": [
+                        "off",
+                        "messages",
+                        "verbose"
+                    ],
+                    "default": "off",
+                    "description": "Log level (trace) for the Arandu Language Server."
+                }
+            }
+        },
+        "commands": [
+            {
+                "command": "arandu.restartServer",
+                "title": "Arandu: Restart Language Server"
+            },
+            {
+                "command": "arandu.showServerLogs",
+                "title": "Arandu: Show Language Server Logs"
+            }
+        ],
+        "semanticTokenScopes": [
+            {
+                "language": "arandu",
+                "scopes": {
+                    "keyword": ["keyword.control.arandu"],
+                    "function": ["entity.name.function.arandu"],
+                    "variable": ["variable.other.arandu"],
+                    "parameter": ["variable.parameter.arandu"],
+                    "type": ["entity.name.type.arandu"],
+                    "struct": ["entity.name.type.struct.arandu"],
+                    "enum": ["entity.name.type.enum.arandu"],
+                    "interface": ["entity.name.type.interface.arandu"],
+                    "namespace": ["entity.name.type.module.arandu"],
+                    "number": ["constant.numeric.arandu"],
+                    "string": ["string.quoted.double.arandu"],
+                    "comment": ["comment.line.double-slash.arandu"],
+                    "operator": ["keyword.operator.arandu"],
+                    "property": ["variable.other.property.arandu"],
+                    "enumMember": ["constant.other.enum-member.arandu"]
+                }
+            }
+        ]
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run compile",
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./",
+        "pretest": "npm run compile",
+        "lint": "echo 'No lint script configured'"
+    },
+    "dependencies": {
+        "vscode-languageclient": "^10.1.0"
+    },
+    "devDependencies": {
+        "@types/node": "^20.14.9",
+        "@types/vscode": "^1.85.0",
+        "typescript": "^5.5.4"
+    }
+}

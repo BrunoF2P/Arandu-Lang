@@ -4,8 +4,7 @@
 
 use arandu_middle::hir::{
     HirBlockId, HirCatchHandler, HirCondition, HirExpr, HirExprId, HirExprKind, HirForClause,
-    HirLambdaBody, HirMatchArmBody, HirPlaceSuffix, HirProgram, HirStmtKind,
-    HirStringPart,
+    HirLambdaBody, HirMatchArmBody, HirPlaceSuffix, HirProgram, HirStmtKind, HirStringPart,
 };
 use arandu_middle::symbol_table::SymbolId;
 use arandu_middle::types::ArType;
