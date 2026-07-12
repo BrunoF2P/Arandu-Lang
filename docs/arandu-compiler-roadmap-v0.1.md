@@ -184,6 +184,13 @@ Fase 6 — Bootstrap & Auto-Hospedagem (v1.0) · [NÃO INICIADA]
 [ ] HOST   Self-Hosting: compilador Arandu compilando a si mesmo de forma convergente (3-passos)
 [ ] BOOT   Remoção total de dependências do compilador Rust para build releases
 [ ] MS     Completa compilação paralela usando o runtime nativo de concorrência com compilação < 3 segundos
+
+Fase E — Ferramentas Integradas e Ecossistema (Evoluções Fora do Core) · [NÃO INICIADA]
+[ ] E1     REPL Interativo (`arandu repl` com compilação JIT incremental em memória via Cranelift)
+[ ] E2     Gerador de Documentação Integrado (`arandu doc` extraindo Rowan pending_docs para HTML estático)
+[ ] E3     FFI Bindgen Automatizado (`arandu bindgen` bidirecional C/Arandu para stubs extern)
+[ ] E4     Gerenciador de Pacotes Integrado (`arandu pkg` com manifesto arandu.toml e resolvedor Git)
+[ ] E5     Linter de Alocação e Escape (`arandu clippy` baseado no fluxo OSSA para performance)
 ```
 
 ---
