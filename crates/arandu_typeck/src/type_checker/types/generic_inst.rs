@@ -312,14 +312,13 @@ fn resolve_generic_callee_symbol(
                 },
                 _ => None,
             };
-            if let Some(struct_id) = struct_id {
-                if let Some(sym) = checker
+            if let Some(struct_id) = struct_id
+                && let Some(sym) = checker
                     .symbols
                     .lookup_associated_member(struct_id, field)
                 {
                     return Some(sym);
                 }
-            }
             checker.resolved.expr_symbol(callee)
         }
         _ => None,

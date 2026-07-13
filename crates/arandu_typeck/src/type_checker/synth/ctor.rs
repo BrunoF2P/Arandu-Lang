@@ -300,8 +300,8 @@ pub(crate) fn synth_variant_sugar(
                 let res = if let Some(ArType::Func(params, ret)) = checker.decl_type(variant_sym) {
                     let mut inst_params = params.clone();
                     let mut inst_ret = ret;
-                    if !expected_args.is_empty() {
-                        if let Some(gp) = checker.type_info.generic_params.get(&enum_id) {
+                    if !expected_args.is_empty()
+                        && let Some(gp) = checker.type_info.generic_params.get(&enum_id) {
                             let interner = &checker.type_info.type_interner;
                             let has_params = params.iter().any(|&p| contains_generic_params(&interner.resolve(p), gp, interner))
                                 || contains_generic_params(&interner.resolve(ret), gp, interner);
@@ -325,7 +325,6 @@ pub(crate) fn synth_variant_sugar(
                                 }
                             }
                         }
-                    }
                     (inst_params, inst_ret)
                 } else {
                     (Vec::new(), checker.intern(ArType::Error))

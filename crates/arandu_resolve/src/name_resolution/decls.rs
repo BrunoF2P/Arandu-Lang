@@ -287,20 +287,16 @@ impl<'a> Resolver<'a> {
         let global = self.symbols.global_scope();
         for decl_id in &program.decls {
             let decl = self.pool.decl(*decl_id);
-            if let arandu_parser::TopLevelDecl::Func(decl) = decl {
-                if let arandu_parser::FuncName::Method { ref receiver, ref name, ref span } = decl.name {
-                    if self.resolve_type_name(global, receiver) {
-                        if let Some(struct_sym) = self.resolved.type_refs.get(&receiver.span.into()).copied() {
-                            if let Some(method_sym) = self.resolved.definitions.get(&(*span).into()).copied() {
+            if let arandu_parser::TopLevelDecl::Func(decl) = decl
+                && let arandu_parser::FuncName::Method { ref receiver, ref name, ref span } = decl.name
+                    && self.resolve_type_name(global, receiver)
+                        && let Some(struct_sym) = self.resolved.type_refs.get(&receiver.span.into()).copied()
+                            && let Some(method_sym) = self.resolved.definitions.get(&(*span).into()).copied() {
                                 self.symbols.associated_members
                                     .entry(struct_sym)
                                     .or_default()
                                     .insert(name.clone(), method_sym);
                             }
-                        }
-                    }
-                }
-            }
         }
     }
 }

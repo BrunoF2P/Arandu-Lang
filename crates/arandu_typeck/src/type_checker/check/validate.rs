@@ -458,8 +458,8 @@ fn validate_type_expr_constraints(
             }
             // Now, lower this specific named type:
             let ty = checker.lower_type_expr(type_expr_id, scope);
-            if let ArType::Named(struct_or_enum_id, arg_ids) = ty {
-                if let Some(params) = checker.type_info.generic_params.get(&struct_or_enum_id).cloned() {
+            if let ArType::Named(struct_or_enum_id, arg_ids) = ty
+                && let Some(params) = checker.type_info.generic_params.get(&struct_or_enum_id).cloned() {
                     let arg_tys: Vec<ArType> = arg_ids.iter().map(|&id| checker.resolve(id)).collect();
                     crate::type_checker::types::interfaces::check_instantiation_constraints(
                         checker,
@@ -469,7 +469,6 @@ fn validate_type_expr_constraints(
                         *span,
                     );
                 }
-            }
         }
         TypeExpr::Primitive { .. } => {}
         TypeExpr::Nullable { inner, .. }

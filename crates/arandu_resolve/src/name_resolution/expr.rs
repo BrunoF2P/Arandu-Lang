@@ -58,8 +58,8 @@ impl<'a> Resolver<'a> {
                             span,
                         );
                         // Suggest close matches from the members of that type.
-                        if let Some(id) = type_sym {
-                            if let Some(methods) = self.symbols.associated_members.get(&id) {
+                        if let Some(id) = type_sym
+                            && let Some(methods) = self.symbols.associated_members.get(&id) {
                                 let max_distance = if member.len() <= 4 { 2 } else { 3 };
                                 let best_match = methods
                                     .keys()
@@ -78,7 +78,6 @@ impl<'a> Resolver<'a> {
                                     diag = diag.with_hint(format!("did you mean '{suggestion}'?"));
                                 }
                             }
-                        }
                         self.diagnostics.push(diag);
                     }
                 }
