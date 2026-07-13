@@ -132,8 +132,7 @@ pub(crate) fn resolve_field(
         if let Some(field_ty) = field_from_struct {
             field_ty
         } else {
-            let struct_name = &checker.symbols.get(struct_id).name;
-            if let Some(method_sym) = checker.symbols.lookup_associated_member(struct_name, field)
+            if let Some(method_sym) = checker.symbols.lookup_associated_member(struct_id, field)
                 && let Some(ArType::Func(params, ret)) = checker.decl_type(method_sym)
             {
                 ArType::Func(params, ret)

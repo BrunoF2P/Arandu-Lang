@@ -313,10 +313,9 @@ fn resolve_generic_callee_symbol(
                 _ => None,
             };
             if let Some(struct_id) = struct_id {
-                let struct_name = checker.symbols.get(struct_id).name.clone();
                 if let Some(sym) = checker
                     .symbols
-                    .lookup_associated_member(&struct_name, field)
+                    .lookup_associated_member(struct_id, field)
                 {
                     return Some(sym);
                 }

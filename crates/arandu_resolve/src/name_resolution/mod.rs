@@ -161,20 +161,23 @@ pub fn resolve_imports_and_bodies(
                             if matches!(kind, arandu_middle::SymbolKind::AssociatedFunc)
                                 && let Some((ty, method)) = name.rsplit_once('.')
                             {
-                                resolver
-                                    .symbols
-                                    .associated_members
-                                    .entry(smol_str::SmolStr::new(ty))
-                                    .or_default()
-                                    .insert(smol_str::SmolStr::new(method), id);
-                                // Import is "used" when it supplies methods for
-                                // builtin types (`Result.expectOrAbort`) even if
-                                // the alias name never appears in source.
-                                if resolver.symbols.lookup_type(global, ty).is_some()
-                                    && let Some(alias_sym) =
+                                // Resolve the receiver type's SymbolId so we can key
+                                // associated_members by identity rather than string.
+                                if let Some(type_sym) = resolver.symbols.lookup_type(global, ty) {
+                                    resolver
+                                        .symbols
+                                        .associated_members
+                                        .entry(type_sym)
+                                        .or_default()
+                                        .insert(smol_str::SmolStr::new(method), id);
+                                    // Import is "used" when it supplies methods for
+                                    // builtin types (`Result.expectOrAbort`) even if
+                                    // the alias name never appears in source.
+                                    if let Some(alias_sym) =
                                         resolver.symbols.lookup_module(global, alias.as_str())
-                                {
-                                    resolver.used_symbols.insert(alias_sym);
+                                    {
+                                        resolver.used_symbols.insert(alias_sym);
+                                    }
                                 }
                             }
                         }

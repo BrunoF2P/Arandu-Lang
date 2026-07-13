@@ -118,15 +118,14 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
 
                         // Also register the *associated-member* SymbolId that the resolver
                         // creates for qualified uses like `Color.Red`.
-                        // `define_associated_member` stores that symbol under name
-                        // `"{EnumName}.{VariantName}"` and the resolver records it as the
-                        // expr-ref for any `TypePath { Color, Red }` node.
+                        // `define_associated_member` stores that symbol under the enum's
+                        // SymbolId and the resolver records it as the expr-ref for any
+                        // `TypePath { Color, Red }` node.
                         // Without this second registration a direct
                         // `enum_variant_tags.get(color_red_sym)` silently misses.
-                        let enum_name = &checker.symbols.get(enum_symbol_id).name.clone();
                         if let Some(assoc_id) = checker
                             .symbols
-                            .lookup_associated_member(enum_name, &variant.name)
+                            .lookup_associated_member(enum_symbol_id, &variant.name)
                             && assoc_id != variant_symbol_id
                         {
                             checker

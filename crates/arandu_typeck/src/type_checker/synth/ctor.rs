@@ -1,4 +1,5 @@
 use arandu_lexer::Span;
+use arandu_middle::SymbolId;
 use arandu_parser::TypeName;
 use arandu_parser::ast_pool::{AstPool, ExprId, ExprKind, IndexRange};
 
@@ -278,11 +279,11 @@ pub(crate) fn synth_variant_sugar(
         },
         ArType::Named(enum_id, _) => {
             let enum_name = checker.symbols.get(enum_id).name.clone();
-            let Some(variant_sym) = checker.symbols.lookup_associated_member(&enum_name, name)
+            let Some(variant_sym) = checker.symbols.lookup_associated_member(enum_id, name)
             else {
                 checker.diagnostics.push(crate::Diagnostic::error(
                     crate::DiagCode::T018UndefinedField,
-                    format!("`.{name}` is not a variant of `{enum_name}`"),
+                    format!("`{name}` is not a variant of `{enum_name}`"),
                     span,
                 ));
                 return checker.intern(ArType::Error);
@@ -474,10 +475,11 @@ pub(crate) fn synth_method_call(
     let base_resolved = checker.resolve(actual_base_ty_id);
 
     // Built-in `Result` / `Option` methods (`expectOrAbort`) live under the type
-    // name string, while the receiver is `ArType::Result` / `Option` (not Named).
-    let builtin_name: Option<&str> = match &base_resolved {
-        ArType::Result(_, _) => Some("Result"),
-        ArType::Option(_) => Some("Option"),
+    // symbol in `associated_members`. Resolve their SymbolId from the prelude.
+    let global_scope = checker.symbols.global_scope();
+    let builtin_id: Option<SymbolId> = match &base_resolved {
+        ArType::Result(_, _) => checker.symbols.lookup_type(global_scope, "Result"),
+        ArType::Option(_) => checker.symbols.lookup_type(global_scope, "Option"),
         _ => None,
     };
 
@@ -490,17 +492,15 @@ pub(crate) fn synth_method_call(
         _ => None,
     };
 
-    let struct_name = if let Some(id) = struct_id {
-        checker.symbols.get(id).name.clone()
-    } else if let Some(n) = builtin_name {
-        n.into()
-    } else {
+    // Effective parent SymbolId for the method lookup.
+    let effective_id = struct_id.or(builtin_id);
+    let Some(effective_id) = effective_id else {
         return None;
     };
 
     let method_sym = checker
         .symbols
-        .lookup_associated_member(&struct_name, method);
+        .lookup_associated_member(effective_id, method);
 
     let mut resolved_method = None;
     if method_sym.is_none()
@@ -626,6 +626,7 @@ pub(crate) fn synth_method_call(
     let explicit_params = &params[1..];
     let arg_ids = checker.pool.expr_list(args).to_vec();
     if explicit_params.len() != arg_ids.len() {
+        let struct_name = checker.symbols.get(effective_id).name.clone();
         let diag = crate::Diagnostic::error(
             crate::DiagCode::T012WrongArgCount,
             format!(

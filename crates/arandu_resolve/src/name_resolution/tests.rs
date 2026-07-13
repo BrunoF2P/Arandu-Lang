@@ -429,7 +429,9 @@ fn collect_top_level_method() {
         body: dummy_block(),
     });
     r.collect_top_level(ScopeId(0), &decl);
-    let sym = r.symbols.lookup_associated_member("Foo", "bar");
+    let foo_sym = r.symbols.lookup_type(ScopeId(0), "Foo");
+    assert!(foo_sym.is_some());
+    let sym = r.symbols.lookup_associated_member(foo_sym.unwrap(), "bar");
     assert!(sym.is_some());
 }
 
@@ -478,10 +480,11 @@ fn collect_top_level_enum_with_variants() {
     r.collect_top_level(ScopeId(0), &decl);
     let sym = r.symbols.lookup_type(ScopeId(0), "Color");
     assert!(sym.is_some());
-    assert!(r.symbols.lookup_associated_member("Color", "Red").is_some());
+    let color_sym = r.symbols.lookup_type(ScopeId(0), "Color").unwrap();
+    assert!(r.symbols.lookup_associated_member(color_sym, "Red").is_some());
     assert!(
         r.symbols
-            .lookup_associated_member("Color", "Blue")
+            .lookup_associated_member(color_sym, "Blue")
             .is_some()
     );
 }

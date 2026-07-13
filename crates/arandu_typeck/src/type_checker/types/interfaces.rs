@@ -347,7 +347,7 @@ pub(crate) fn type_satisfies_interface(
     let Some(iface) = checker.type_info.interfaces.get(&iface_sym) else {
         return false;
     };
-    let Some(type_name) = concrete_type_name(checker, concrete) else {
+    let Some(type_id) = concrete_type_id(concrete) else {
         return false;
     };
 
@@ -360,7 +360,7 @@ pub(crate) fn type_satisfies_interface(
         let required = checker.resolve(required_id);
         let required_inst =
             substitute_type(&required, &iface_subst, &checker.type_info.type_interner);
-        let Some(provided) = lookup_method_type(checker, &type_name, &method) else {
+        let Some(provided) = lookup_method_type(checker, type_id, &method) else {
             return false;
         };
         // Interface may list `self: Self`; impl methods always have a receiver.
@@ -387,7 +387,7 @@ fn missing_interface_methods(
     let Some(iface) = checker.type_info.interfaces.get(&iface_sym) else {
         return vec!["<interface not collected>".to_string()];
     };
-    let Some(type_name) = concrete_type_name(checker, concrete) else {
+    let Some(type_id) = concrete_type_id(concrete) else {
         return vec!["<non-nominal type>".to_string()];
     };
 
@@ -399,9 +399,9 @@ fn missing_interface_methods(
         let required = checker.resolve(required_id);
         let required_inst =
             substitute_type(&required, &iface_subst, &checker.type_info.type_interner);
-        let Some(provided) = lookup_method_type(checker, &type_name, &method) else {
+        let Some(provided) = lookup_method_type(checker, type_id, &method) else {
             let mut similar = Vec::new();
-            if let Some(methods) = checker.symbols.associated_members.get(type_name.as_str()) {
+            if let Some(methods) = checker.symbols.associated_members.get(&type_id) {
                 let max_distance = if method.len() <= 4 { 2 } else { 3 };
                 for prov_name in methods.keys() {
                     let dist = if prov_name.to_lowercase() == method.to_lowercase() {
@@ -437,9 +437,9 @@ fn missing_interface_methods(
     missing
 }
 
-fn concrete_type_name(checker: &TypeChecker, ty: &ArType) -> Option<String> {
+fn concrete_type_id(ty: &ArType) -> Option<SymbolId> {
     match ty {
-        ArType::Named(id, _) => Some(checker.symbols.get(*id).name.to_string()),
+        ArType::Named(id, _) => Some(*id),
         _ => None,
     }
 }
@@ -470,10 +470,10 @@ fn interface_subst_for_concrete(
     GenericSubst::default()
 }
 
-fn lookup_method_type(checker: &TypeChecker, type_name: &str, method: &str) -> Option<ArType> {
+fn lookup_method_type(checker: &TypeChecker, type_id: SymbolId, method: &str) -> Option<ArType> {
     let sym = checker
         .symbols
-        .lookup_associated_member(type_name, method)?;
+        .lookup_associated_member(type_id, method)?;
     checker.decl_type(sym)
 }
 
@@ -619,7 +619,7 @@ mod tests {
 
         let mut associated = rustc_hash::FxHashMap::default();
         associated.insert("read".into(), method_sym_id);
-        symbols.associated_members.insert("MyStruct".into(), associated);
+        symbols.associated_members.insert(struct_sym_id, associated);
 
         let resolved = ResolvedNames::default();
         let mut checker = TypeChecker::new(symbols, resolved, Vec::new(), &pool);

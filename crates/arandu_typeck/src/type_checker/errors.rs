@@ -313,8 +313,7 @@ pub fn constraint_to_diagnostic(
                 }
 
                 // Add associated methods as candidates
-                let struct_name = &symbols.get(struct_id).name;
-                if let Some(methods) = symbols.associated_members.get(struct_name) {
+                if let Some(methods) = symbols.associated_members.get(&struct_id) {
                     for m_name in methods.keys() {
                         candidates.push(Candidate {
                             name: m_name.to_string(),

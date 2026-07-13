@@ -47,9 +47,18 @@ impl<'a> Resolver<'a> {
         let func_scope = self.symbols.new_scope(scope);
         // Methods on generic types must see the receiver type's type params
         // (`func Box.get(): T` needs `T` from `struct Box<T>`).
-        if let FuncName::Method { receiver, .. } = &decl.name {
+        if let FuncName::Method { receiver, name, span } = &decl.name {
             self.import_receiver_type_params(func_scope, receiver);
-            self.resolve_type_name(func_scope, receiver);
+            if self.resolve_type_name(func_scope, receiver) {
+                if let Some(struct_sym) = self.resolved.type_refs.get(&receiver.span.into()).copied() {
+                    if let Some(method_sym) = self.resolved.definitions.get(&(*span).into()).copied() {
+                        self.symbols.associated_members
+                            .entry(struct_sym)
+                            .or_default()
+                            .insert(name.clone(), method_sym);
+                    }
+                }
+            }
         }
         self.define_generics(func_scope, &decl.generic_params);
         for where_item in &decl.where_clause {

@@ -284,10 +284,9 @@ pub(super) fn try_rewrite_generic_call<'bump>(
                     let Some(struct_id) = struct_id else {
                         return;
                     };
-                    let struct_name = tc.symbols.get(struct_id).name.as_str();
                     let Some(sym) = tc
                         .symbols
-                        .lookup_associated_member(struct_name, field.as_str())
+                        .lookup_associated_member(struct_id, field.as_str())
                     else {
                         return;
                     };

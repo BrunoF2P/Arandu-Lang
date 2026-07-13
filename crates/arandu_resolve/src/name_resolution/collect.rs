@@ -93,10 +93,13 @@ impl<'a> Resolver<'a> {
                     receiver,
                     name,
                 } => {
-                    let receiver = receiver.path.join(".");
-                    match self.symbols.define_associated_member_vis(
-                        &receiver,
-                        name,
+                    let receiver_str = receiver.path.join(".");
+                    let method_name = format!("{receiver_str}.{name}");
+                    let global = self.symbols.global_scope();
+                    match self.symbols.define_vis(
+                        global,
+                        &method_name,
+                        SymbolKind::AssociatedFunc,
                         *span,
                         is_public(decl.visibility),
                     ) {
@@ -107,7 +110,7 @@ impl<'a> Resolver<'a> {
                                 Diagnostic::error(
                                     DiagCode::N003RedefinedName,
                                     format!(
-                                        "associated function '{receiver}.{name}' is already declared"
+                                        "associated function '{receiver_str}.{name}' is already declared"
                                     ),
                                     *span,
                                 )
@@ -128,16 +131,17 @@ impl<'a> Resolver<'a> {
             }
             TopLevelDecl::Enum(decl) => {
                 let pub_ = is_public(decl.visibility);
-                self.define_vis(scope, &decl.name, SymbolKind::Enum, decl.span, pub_);
-                // Variants inherit the enum's export visibility (public enum → public ctors).
-                for variant in &decl.variants {
-                    if let Ok(symbol) = self.symbols.define_associated_member_vis(
-                        &decl.name,
-                        &variant.name,
-                        variant.span,
-                        pub_,
-                    ) {
-                        self.resolved.define(variant.span, symbol);
+                if let Some(enum_sym) = self.define_vis(scope, &decl.name, SymbolKind::Enum, decl.span, pub_) {
+                    // Variants inherit the enum's export visibility (public enum → public ctors).
+                    for variant in &decl.variants {
+                        if let Ok(symbol) = self.symbols.define_associated_member_vis(
+                            enum_sym,
+                            &variant.name,
+                            variant.span,
+                            pub_,
+                        ) {
+                            self.resolved.define(variant.span, symbol);
+                        }
                     }
                 }
             }

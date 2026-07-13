@@ -53,19 +53,18 @@ fn pattern_to_variant_symbol_id(
     enum_id: crate::SymbolId,
     pat: PatternId,
 ) -> Option<crate::SymbolId> {
-    let enum_name = &checker.symbols.get(enum_id).name;
     match checker.pool.pattern(pat) {
         // `Variant` or `EnumName.Variant`
         Pattern::Enum { variant, .. } => {
             let short = variant
                 .rsplit_once('.')
                 .map_or(variant.as_str(), |(_, s)| s);
-            checker.symbols.lookup_associated_member(enum_name, short)
+            checker.symbols.lookup_associated_member(enum_id, short)
         }
         // `EnumName.Variant(...)` style
         Pattern::TypeTuple { name, .. } => {
             let short = name.rsplit_once('.').map_or(name.as_str(), |(_, s)| s);
-            checker.symbols.lookup_associated_member(enum_name, short)
+            checker.symbols.lookup_associated_member(enum_id, short)
         }
         _ => None,
     }

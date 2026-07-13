@@ -458,10 +458,9 @@ pub(super) fn synth_call_expr(
                                 _ => None,
                             };
                             if let Some(struct_id) = struct_id {
-                                let struct_name = checker.symbols.get(struct_id).name.clone();
                                 if let Some(sym) = checker
                                     .symbols
-                                    .lookup_associated_member(&struct_name, &field_name)
+                                    .lookup_associated_member(struct_id, &field_name)
                                 {
                                     checker.resolved.value_ref(field_span, sym);
                                 }

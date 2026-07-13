@@ -75,11 +75,12 @@ mod tests {
     #[test]
     fn associated_members_basic() {
         let mut table = SymbolTable::new(0);
+        let struct_id = table.define(ScopeId(0), "MyStruct", SymbolKind::Struct, S).unwrap();
         let id = table
-            .define_associated_member("MyStruct", "method", S)
+            .define_associated_member(struct_id, "method", S)
             .unwrap();
         assert_eq!(
-            table.lookup_associated_member("MyStruct", "method"),
+            table.lookup_associated_member(struct_id, "method"),
             Some(id)
         );
     }
@@ -252,7 +253,7 @@ pub struct SymbolTable {
     symbols: Vec<Symbol>,
     pub imported_symbols: FxHashMap<SymbolId, Symbol>,
     pub module_members: FxHashMap<SmolStr, FxHashMap<SmolStr, SymbolId>>,
-    pub associated_members: FxHashMap<SmolStr, FxHashMap<SmolStr, SymbolId>>,
+    pub associated_members: FxHashMap<SymbolId, FxHashMap<SmolStr, SymbolId>>,
     /// Type-parameter symbols for named types (`struct` / `enum` / …), in declaration order.
     /// Used so methods on `Box<T>` can import `T` into their type scope.
     pub type_params: FxHashMap<SymbolId, smallvec::SmallVec<[SymbolId; 4]>>,
@@ -626,22 +627,23 @@ impl SymbolTable {
     /// Returns `Err(existing_symbol_id)` if the member is already defined on the type.
     pub fn define_associated_member(
         &mut self,
-        ty: &str,
+        parent_id: SymbolId,
         member: &str,
         span: Span,
     ) -> Result<SymbolId, SymbolId> {
-        self.define_associated_member_vis(ty, member, span, false)
+        self.define_associated_member_vis(parent_id, member, span, false)
     }
 
     /// Associated method / enum variant with explicit export visibility.
     pub fn define_associated_member_vis(
         &mut self,
-        ty: &str,
+        parent_id: SymbolId,
         member: &str,
         span: Span,
         is_public: bool,
     ) -> Result<SymbolId, SymbolId> {
-        let base_ty = ty.split('.').next_back().unwrap_or(ty);
+        let parent_name = self.get(parent_id).name.clone();
+        let base_ty = parent_name.split('.').next_back().unwrap_or(&parent_name);
         let id = self.define_vis(
             self.global_scope(),
             &format!("{base_ty}.{member}"),
@@ -650,17 +652,16 @@ impl SymbolTable {
             is_public,
         )?;
         self.associated_members
-            .entry(base_ty.into())
+            .entry(parent_id)
             .or_default()
             .insert(member.into(), id);
         Ok(id)
     }
 
     #[must_use]
-    pub fn lookup_associated_member(&self, ty: &str, member: &str) -> Option<SymbolId> {
-        let base_ty = ty.split('.').next_back().unwrap_or(ty);
+    pub fn lookup_associated_member(&self, parent_id: SymbolId, member: &str) -> Option<SymbolId> {
         self.associated_members
-            .get(base_ty)
+            .get(&parent_id)
             .and_then(|m| m.get(member))
             .copied()
     }

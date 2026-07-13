@@ -372,8 +372,7 @@ fn method_symbol_from_field(
         },
         _ => None,
     }?;
-    let struct_name = tc.symbols.get(struct_id).name.as_str();
-    tc.symbols.lookup_associated_member(struct_name, field)
+    tc.symbols.lookup_associated_member(struct_id, field)
 }
 
 /// Build an instantiation key for a call that is not wrapped in `Generic`.

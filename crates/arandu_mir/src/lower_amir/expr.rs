@@ -48,8 +48,7 @@ fn resolve_method_target(
         _ => None,
     }?;
 
-    let struct_name = symbols.get(struct_id).name.clone();
-    symbols.lookup_associated_member(&struct_name, field)
+    symbols.lookup_associated_member(struct_id, field)
 }
 
 impl LowerCtx<'_> {
