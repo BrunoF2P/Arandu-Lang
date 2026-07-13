@@ -314,8 +314,8 @@ fn check_return_stmt(
     };
     let val_ty = checker.resolve(val_ty_id);
 
-    if !checker.unify_return_type(&current_ret, &val_ty) {
-        checker.add_constraint(
+    if !checker.is_assignable_return_type(&current_ret, &val_ty) {
+        checker.add_subtype_constraint(
             current_ret,
             val_ty,
             ConstraintOrigin::ReturnType {
@@ -579,8 +579,12 @@ fn apply_assignment_constraints(
                 target_span: lhs_span,
             },
         );
-    } else if !super::super::types::unify(expected, actual, &checker.type_info.type_interner) {
-        checker.add_constraint(
+    } else if !super::super::types::is_assignable(
+        actual,
+        expected,
+        &checker.type_info.type_interner,
+    ) {
+        checker.add_subtype_constraint(
             expected.clone(),
             actual.clone(),
             ConstraintOrigin::Assignment { lhs_span, rhs_span },
@@ -595,8 +599,8 @@ fn apply_set_constraints(
     place_span: arandu_base::Span,
     value_span: arandu_base::Span,
 ) {
-    if !checker.unify_ids(expected_id, actual_id) {
-        checker.add_constraint(
+    if !checker.is_assignable(actual_id, expected_id) {
+        checker.add_subtype_constraint(
             expected_id,
             actual_id,
             ConstraintOrigin::SetTarget {

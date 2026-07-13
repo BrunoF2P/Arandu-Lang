@@ -34,9 +34,26 @@ pub fn position_to_offset(index: &LineIndex, pos: Position, text: &str) -> u32 {
             end -= 1;
         }
     }
-    let col = pos.character;
-    let off = line_start.saturating_add(col);
-    off.min(end).min(len)
+
+    let mut byte_offset = line_start as usize;
+    let mut chars = text[line_start as usize..end as usize].chars();
+    let mut utf16_count = 0;
+    let target_utf16 = pos.character as usize;
+
+    while utf16_count < target_utf16 {
+        if let Some(ch) = chars.next() {
+            let ch_utf16 = ch.len_utf16();
+            if utf16_count + ch_utf16 > target_utf16 {
+                break;
+            }
+            utf16_count += ch_utf16;
+            byte_offset += ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+
+    (byte_offset as u32).min(end).min(len)
 }
 
 /// Convert a compiler [`Span`] (byte offsets) to an LSP [`Range`].

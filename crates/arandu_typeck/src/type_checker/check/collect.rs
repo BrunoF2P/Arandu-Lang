@@ -110,14 +110,19 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
                     {
                         // Build constructor signature type for the variant
                         let mut enum_args = Vec::new();
-                        let gp = checker.type_info.generic_params.get(&enum_symbol_id).cloned();
+                        let gp = checker
+                            .type_info
+                            .generic_params
+                            .get(&enum_symbol_id)
+                            .cloned();
                         if let Some(gp) = gp {
                             for &p_sym in gp.iter() {
                                 let arg_ty = super::super::ArType::Named(p_sym, vec![]);
                                 enum_args.push(checker.intern(arg_ty));
                             }
                         }
-                        let ret_ty_id = checker.intern(super::super::ArType::Named(enum_symbol_id, enum_args));
+                        let ret_ty_id =
+                            checker.intern(super::super::ArType::Named(enum_symbol_id, enum_args));
                         let variant_ty = match &shape {
                             super::super::EnumPayloadShape::Tuple(tids) => {
                                 super::super::ArType::Func(tids.clone(), ret_ty_id)

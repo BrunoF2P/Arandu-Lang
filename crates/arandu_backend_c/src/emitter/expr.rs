@@ -23,10 +23,7 @@ impl<'a> CEmitter<'a> {
                     let right_str = self.format_operand(right, func);
                     let _ = write!(
                         &mut self.output,
-                        "({{ void** __r = (void**)malloc(sizeof(void*) * 2); \
-                         __r[0] = (void*)(intptr_t)({}); \
-                         __r[1] = (void*)(intptr_t)({}); \
-                         __r; }})",
+                        "ar_make_range((intptr_t)({}), (intptr_t)({}))",
                         left_str, right_str
                     );
                 } else {
@@ -256,21 +253,18 @@ impl<'a> CEmitter<'a> {
                     // Load/store the **expected payload C type** (not i64 cast). Casting
                     // block_on_i64 → float/ptr was the root of nonsensical C for non-int.
                     UnaryOp::Await => {
+                        let is_float = expected_c_type == "double" || expected_c_type == "float";
+                        let is_ptr = expected_c_type.ends_with('*') || expected_c_type == "void*";
+                        let helper = if is_float {
+                            "ar_co_await_f64"
+                        } else if is_ptr {
+                            "ar_co_await_ptr"
+                        } else {
+                            "ar_co_await_i64"
+                        };
                         let _ = write!(
                             &mut self.output,
-                            "({{ uint8_t* __ar_aw = (uint8_t*)({op_val}); \
-                             {expected_c_type} __ar_av; \
-                             for (;;) {{ \
-                               uint32_t __ar_d = *(uint32_t*)__ar_aw; \
-                               if (__ar_d == 0) {{ \
-                                 __ar_av = *({expected_c_type}*)(__ar_aw + 8); \
-                                 break; \
-                               }} \
-                               if (__ar_d == 1) {{ *(uint32_t*)__ar_aw = 0; continue; }} \
-                               __ar_av = *({expected_c_type}*)(__ar_aw + 8); \
-                               break; \
-                             }} \
-                             __ar_av; }})"
+                            "({expected_c_type}){helper}((uint8_t*)({op_val}))"
                         );
                     }
                     UnaryOp::Deref => {
@@ -422,10 +416,7 @@ impl<'a> CEmitter<'a> {
                 let size = 8 + payload_size;
                 let _ = write!(
                     &mut self.output,
-                    "({{ uint8_t* __ar_co = (uint8_t*)malloc({size}); \
-                     *(uint32_t*)__ar_co = 0; \
-                     *({payload_c}*)(__ar_co + 8) = ({payload_c})({v}); \
-                     (void*)__ar_co; }})"
+                    "ar_co_make_ready_heap({size}, &({payload_c}){{{v}}}, sizeof({payload_c}))"
                 );
             }
             AmirRvalue::CoroutineReady { stack: true, .. } => {

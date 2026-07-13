@@ -1,7 +1,7 @@
 use arandu_parser::ast_pool::{AstPool, ExprId, ExprKind, TypeExprId};
 use arandu_parser::{
-    Block, CatchHandler, Condition, DeferBody, ForClause, LambdaBody, MatchArmBody, ResultType,
-    SimpleStmt, Stmt, TopLevelDecl, TypeExpr, Program,
+    Block, CatchHandler, Condition, DeferBody, ForClause, LambdaBody, MatchArmBody, Program,
+    ResultType, SimpleStmt, Stmt, TopLevelDecl, TypeExpr,
 };
 
 use super::super::TypeChecker;
@@ -397,6 +397,36 @@ fn validate_decl_type_constraints(checker: &mut TypeChecker<'_>, decl: &TopLevel
     let global = checker.symbols.global_scope();
     match decl {
         TopLevelDecl::Struct(d) => {
+            let struct_key = crate::NodeKey::from(d.span);
+            if let Some(struct_id) = checker.resolved.definitions.get(&struct_key).copied() {
+                let mut visited = rustc_hash::FxHashSet::default();
+                let mut has_infinite_cycle = false;
+                if let Some(fields) = checker.type_info.struct_fields.get(&struct_id).cloned() {
+                    for &field_tid in fields.values() {
+                        let field_ty = checker.resolve(field_tid);
+                        if type_contains_named_without_indirection(
+                            &field_ty,
+                            struct_id,
+                            &checker.type_info.type_interner,
+                            &checker.type_info,
+                            &mut visited,
+                        ) {
+                            has_infinite_cycle = true;
+                            break;
+                        }
+                    }
+                }
+                if has_infinite_cycle {
+                    checker.diagnostics.push(crate::Diagnostic::error(
+                        crate::DiagCode::T029RecursiveStructInfiniteSize,
+                        format!(
+                            "struct '{}' has recursive/infinite size without indirection",
+                            d.name
+                        ),
+                        d.span,
+                    ));
+                }
+            }
             for field in &d.fields {
                 validate_type_expr_constraints(checker, field.ty, global);
             }
@@ -459,16 +489,21 @@ fn validate_type_expr_constraints(
             // Now, lower this specific named type:
             let ty = checker.lower_type_expr(type_expr_id, scope);
             if let ArType::Named(struct_or_enum_id, arg_ids) = ty
-                && let Some(params) = checker.type_info.generic_params.get(&struct_or_enum_id).cloned() {
-                    let arg_tys: Vec<ArType> = arg_ids.iter().map(|&id| checker.resolve(id)).collect();
-                    crate::type_checker::types::interfaces::check_instantiation_constraints(
-                        checker,
-                        struct_or_enum_id,
-                        &params,
-                        &arg_tys,
-                        *span,
-                    );
-                }
+                && let Some(params) = checker
+                    .type_info
+                    .generic_params
+                    .get(&struct_or_enum_id)
+                    .cloned()
+            {
+                let arg_tys: Vec<ArType> = arg_ids.iter().map(|&id| checker.resolve(id)).collect();
+                crate::type_checker::types::interfaces::check_instantiation_constraints(
+                    checker,
+                    struct_or_enum_id,
+                    &params,
+                    &arg_tys,
+                    *span,
+                );
+            }
         }
         TypeExpr::Primitive { .. } => {}
         TypeExpr::Nullable { inner, .. }
@@ -500,3 +535,70 @@ fn validate_type_expr_constraints(
     }
 }
 
+fn type_contains_named_without_indirection(
+    ty: &ArType,
+    target_id: crate::SymbolId,
+    interner: &crate::type_checker::types::TypeInterner,
+    provider: &dyn arandu_middle::layout::StructLayoutProvider,
+    visited: &mut rustc_hash::FxHashSet<crate::SymbolId>,
+) -> bool {
+    match ty {
+        ArType::Named(id, _) => {
+            if *id == target_id {
+                return true;
+            }
+            if visited.insert(*id) {
+                if let Some(fields) = provider.get_struct_fields(*id) {
+                    for &field_tid in fields.values() {
+                        let field_ty = interner.resolve(field_tid);
+                        if type_contains_named_without_indirection(
+                            &field_ty, target_id, interner, provider, visited,
+                        ) {
+                            return true;
+                        }
+                    }
+                }
+                visited.remove(id);
+            }
+            false
+        }
+        ArType::Tuple(tys) => {
+            for &tid in tys {
+                let inner = interner.resolve(tid);
+                if type_contains_named_without_indirection(
+                    &inner, target_id, interner, provider, visited,
+                ) {
+                    return true;
+                }
+            }
+            false
+        }
+        ArType::Array(_, inner) => {
+            let inner_ty = interner.resolve(*inner);
+            type_contains_named_without_indirection(
+                &inner_ty, target_id, interner, provider, visited,
+            )
+        }
+        ArType::Result(ok, err) => {
+            let ok_ty = interner.resolve(*ok);
+            let err_ty = interner.resolve(*err);
+            type_contains_named_without_indirection(&ok_ty, target_id, interner, provider, visited)
+                || type_contains_named_without_indirection(
+                    &err_ty, target_id, interner, provider, visited,
+                )
+        }
+        ArType::Option(inner) | ArType::Poll(inner) => {
+            let inner_ty = interner.resolve(*inner);
+            type_contains_named_without_indirection(
+                &inner_ty, target_id, interner, provider, visited,
+            )
+        }
+        ArType::Range(inner) => {
+            let inner_ty = interner.resolve(*inner);
+            type_contains_named_without_indirection(
+                &inner_ty, target_id, interner, provider, visited,
+            )
+        }
+        _ => false,
+    }
+}

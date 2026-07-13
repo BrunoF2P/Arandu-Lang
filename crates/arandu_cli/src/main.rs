@@ -5,7 +5,16 @@ use std::{
     process,
 };
 
-fn print_diagnostics_and_exit(diagnostics: impl IntoIterator<Item = arandu_middle::Diagnostic>, filepath: &str) -> ! {
+fn clean_exit(code: i32) -> ! {
+    arandu_base::print_perf_summary();
+    arandu_base::finalize_self_profile();
+    process::exit(code);
+}
+
+fn print_diagnostics_and_exit(
+    diagnostics: impl IntoIterator<Item = arandu_middle::Diagnostic>,
+    filepath: &str,
+) -> ! {
     let source = if !filepath.is_empty() {
         fs::read_to_string(filepath).unwrap_or_default()
     } else {
@@ -19,7 +28,7 @@ fn print_diagnostics_and_exit(diagnostics: impl IntoIterator<Item = arandu_middl
         eprintln!("{:?}", report);
     }
 
-    process::exit(1);
+    clean_exit(1);
 }
 
 fn print_parse_error_and_exit(err: &arandu_parser::ParseError, filepath: &str) -> ! {
@@ -34,7 +43,7 @@ fn validate_hir_and_monomorphize(
 ) {
     if let Err(err) = hir.validate_invariants(&hir.pool, &type_check.symbols) {
         eprintln!("HIR invariant violation: {err}");
-        process::exit(1);
+        clean_exit(1);
     }
 
     if let Err(diags) =
@@ -339,7 +348,7 @@ fn main() {
                 Ok(output) => println!("{output}"),
                 Err(err) => {
                     eprintln!("{err}");
-                    process::exit(1);
+                    clean_exit(1);
                 }
             },
 
@@ -347,7 +356,7 @@ fn main() {
                 Ok(output) => println!("{output}"),
                 Err(err) => {
                     eprintln!("{err}");
-                    process::exit(1);
+                    clean_exit(1);
                 }
             },
 
@@ -439,7 +448,9 @@ fn main() {
                         arandu_base::time_pass!("codegen-init");
                         match arandu_backend_cranelift::CraneliftBackend::try_new() {
                             Ok(backend) => backend,
-                            Err(diag) => print_diagnostics_and_exit(std::iter::once(diag), &filepath),
+                            Err(diag) => {
+                                print_diagnostics_and_exit(std::iter::once(diag), &filepath)
+                            }
                         }
                     };
                     arandu_base::time_pass!("codegen-translate");
@@ -471,7 +482,7 @@ fn main() {
                     .any(|f| type_check.symbols.get(f.symbol).name.as_str() == "main");
                 if !has_main {
                     eprintln!("Error: 'main' function not found in compiled program");
-                    process::exit(1);
+                    clean_exit(1);
                 }
 
                 unsafe {
@@ -479,16 +490,16 @@ fn main() {
                         if let Some(main_fn) = CompiledCode::get_fn::<unsafe fn()>(&output, "main")
                         {
                             main_fn();
-                            process::exit(0);
+                            clean_exit(0);
                         }
                     } else if let Some(main_fn) =
                         CompiledCode::get_fn::<unsafe fn() -> i32>(&output, "main")
                     {
                         let code = main_fn();
-                        process::exit(code);
+                        clean_exit(code);
                     }
                     eprintln!("Error: 'main' function not found in compiled program");
-                    process::exit(1);
+                    clean_exit(1);
                 }
             }
             "emit-c" => {

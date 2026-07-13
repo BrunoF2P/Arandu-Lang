@@ -19,9 +19,17 @@ pub mod format;
 pub mod stmt;
 
 pub(super) fn sanitize_c_ident(name: &str) -> String {
-    name.chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-        .collect()
+    let mut out = String::with_capacity(name.len() + 4);
+    for c in name.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+        } else if c == '.' {
+            out.push_str("__");
+        } else {
+            out.push('_');
+        }
+    }
+    out
 }
 
 /// Emits a full C translation unit from an [`AmirProgram`].
@@ -151,9 +159,9 @@ impl<'a> CEmitter<'a> {
         false
     }
 
-    /// Emit `io_println` matching sanitize_c_ident("io.println").
+    /// Emit `io__println` matching sanitize_c_ident("io.println").
     fn emit_prelude_println(&mut self) {
-        let _ = writeln!(&mut self.output, "static void io_println(ArStr s) {{");
+        let _ = writeln!(&mut self.output, "static void io__println(ArStr s) {{");
         let _ = writeln!(
             &mut self.output,
             "    if (s.len > 0 && s.ptr) {{ fwrite(s.ptr, 1, (size_t)s.len, stdout); }}"
@@ -265,6 +273,53 @@ static int64_t ar_co_block_on_i64(uint8_t *state) {{
     for (;;) {{
         if (ar_co_poll_i64(state, &out) == 0) return out;
     }}
+}}
+
+/* Standard C99 Range and Coroutine helper functions */
+static inline void** ar_make_range(intptr_t left, intptr_t right) {{
+    void** r = (void**)malloc(sizeof(void*) * 2);
+    if (!r) abort();
+    r[0] = (void*)left;
+    r[1] = (void*)right;
+    return r;
+}}
+
+static inline void* ar_co_make_ready_heap(size_t size, void* val_ptr, size_t val_size) {{
+    uint8_t* co = (uint8_t*)malloc(size);
+    if (!co) abort();
+    *(uint32_t*)co = 0;
+    *(uint32_t*)(co + 4) = 0x4152434f;
+    if (val_size > 0 && val_ptr) {{
+        memcpy(co + 8, val_ptr, val_size);
+    }}
+    return (void*)co;
+}}
+
+static inline int64_t ar_co_await_i64(uint8_t* aw) {{
+    for (;;) {{
+        uint32_t d = *(uint32_t*)aw;
+        if (d == 0) return *(int64_t*)(aw + 8);
+        if (d == 1) {{ *(uint32_t*)aw = 0; continue; }}
+        return *(int64_t*)(aw + 8);
+    }}
+}}
+
+static inline double ar_co_await_f64(uint8_t* aw) {{
+    for (;;) {{
+        uint32_t d = *(uint32_t*)aw;
+        if (d == 0) return *(double*)(aw + 8);
+        if (d == 1) {{ *(uint32_t*)aw = 0; continue; }}
+        return *(double*)(aw + 8);
+    }}
+}}
+
+static inline void* ar_co_await_ptr(uint8_t* aw) {{
+    for (;;) {{
+        uint32_t d = *(uint32_t*)aw;
+        if (d == 0) return *(void**)(aw + 8);
+        if (d == 1) {{ *(uint32_t*)aw = 0; continue; }}
+        return *(void**)(aw + 8);
+    }}
 }}"#
         );
     }
@@ -273,8 +328,8 @@ static int64_t ar_co_block_on_i64(uint8_t *state) {{
         let _ = writeln!(&mut self.output, "#include <stdint.h>");
         let _ = writeln!(&mut self.output, "#include <stdbool.h>");
         let _ = writeln!(&mut self.output, "#include <stdlib.h>");
+        let _ = writeln!(&mut self.output, "#include <string.h>");
         if needs_str {
-            let _ = writeln!(&mut self.output, "#include <string.h>");
             let _ = writeln!(&mut self.output, "#include <stdarg.h>");
             let _ = writeln!(&mut self.output, "#include <stdio.h>");
             let _ = writeln!(&mut self.output, "#include <math.h>");

@@ -12,6 +12,7 @@ use super::types::ArType;
 pub struct Constraint {
     pub expected: ArType,
     pub found: ArType,
+    pub is_subtype: bool,
     pub origin: ConstraintOrigin,
 }
 

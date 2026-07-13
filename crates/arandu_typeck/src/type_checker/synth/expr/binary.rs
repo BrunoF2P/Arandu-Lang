@@ -346,6 +346,32 @@ pub(super) fn synth_binary_unary_expr(
                     let inner_id = checker.intern(inner_ty);
                     Some(checker.intern(ArType::Range(inner_id)))
                 }
+                BinaryOp::And | BinaryOp::Or => {
+                    let bool_id = checker.intern(ArType::Primitive(Primitive::Bool));
+                    if !checker.unify_ids(left_ty_id, bool_id) {
+                        checker.add_constraint(
+                            bool_id,
+                            left_ty_id,
+                            ConstraintOrigin::BinaryOp {
+                                op_span: span,
+                                left_span: checker.pool.expr_span(left_id),
+                                right_span: checker.pool.expr_span(right_id),
+                            },
+                        );
+                    }
+                    if !checker.unify_ids(right_ty_id, bool_id) {
+                        checker.add_constraint(
+                            bool_id,
+                            right_ty_id,
+                            ConstraintOrigin::BinaryOp {
+                                op_span: span,
+                                left_span: checker.pool.expr_span(left_id),
+                                right_span: checker.pool.expr_span(right_id),
+                            },
+                        );
+                    }
+                    Some(bool_id)
+                }
                 _ => Some(checker.intern(ArType::Error)),
             }
         }

@@ -492,3 +492,23 @@ fn parity_references_and_deref() {
     "#;
     test_execution_parity("references_and_deref", src);
 }
+
+#[test]
+fn parity_mixed_alignment_packing() {
+    let src = r#"
+    struct MixedLayout {
+        a: byte
+        b: int
+        c: bool
+        d: int
+    }
+    func main(): int {
+        let m = MixedLayout { a: 42 as byte, b: 999999, c: true, d: 123456 }
+        if (m.a as int) == 42 && m.b == 999999 && m.c && m.d == 123456 {
+            return 0
+        }
+        return 1
+    }
+    "#;
+    test_execution_parity("mixed_alignment_packing", src);
+}

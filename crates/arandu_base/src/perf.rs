@@ -457,14 +457,11 @@ mod tests {
         assert!(!DEBUG_PARSER.load(Ordering::Relaxed));
         assert!(!DEBUG_TYPECK.load(Ordering::Relaxed));
 
-        init_z_flags(&[
-            "debug-parser".to_string(),
-            "-Zdebug-typeck".to_string(),
-        ]);
+        init_z_flags(&["debug-parser".to_string(), "-Zdebug-typeck".to_string()]);
 
         assert!(DEBUG_PARSER.load(Ordering::Relaxed));
         assert!(DEBUG_TYPECK.load(Ordering::Relaxed));
-        
+
         reset_flags();
     }
 }

@@ -67,13 +67,13 @@ mod tests {
     #[test]
     fn test_source_registry_operations() {
         let mut registry = SourceRegistry::new();
-        
+
         assert_eq!(registry.get_id_by_path("file1.aru"), None);
         assert!(registry.get_file(0).is_none());
 
         let id1 = registry.register("file1.aru", "fn main() {}");
         assert_eq!(registry.get_id_by_path("file1.aru"), Some(id1));
-        
+
         let file1 = registry.get_file(id1).expect("file should be registered");
         assert_eq!(&*file1.path, "file1.aru");
         assert_eq!(&*file1.source, "fn main() {}");

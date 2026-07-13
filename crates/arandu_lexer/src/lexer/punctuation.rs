@@ -1,13 +1,9 @@
 use crate::TokenKind;
 
-use super::ident::{is_ident_continue, keyword_kind};
+use super::ident::{is_ident_continue, is_ident_start, keyword_kind};
 
 pub(super) fn peek_kind_from(rest: &str) -> TokenKind {
-    if rest
-        .as_bytes()
-        .first()
-        .is_some_and(|&b| b == b'_' || b.is_ascii_alphabetic())
-    {
+    if rest.chars().next().is_some_and(is_ident_start) {
         let end = rest
             .char_indices()
             .find_map(|(index, ch)| (!is_ident_continue(ch)).then_some(index))

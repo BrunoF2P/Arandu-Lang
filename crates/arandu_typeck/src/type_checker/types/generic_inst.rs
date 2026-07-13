@@ -313,12 +313,10 @@ fn resolve_generic_callee_symbol(
                 _ => None,
             };
             if let Some(struct_id) = struct_id
-                && let Some(sym) = checker
-                    .symbols
-                    .lookup_associated_member(struct_id, field)
-                {
-                    return Some(sym);
-                }
+                && let Some(sym) = checker.symbols.lookup_associated_member(struct_id, field)
+            {
+                return Some(sym);
+            }
             checker.resolved.expr_symbol(callee)
         }
         _ => None,
@@ -457,12 +455,12 @@ fn expand_aliases_rec(checker: &mut TypeChecker<'_>, ty: ArType, depth: usize) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arandu_parser::GenericParam;
     use crate::type_checker::ResolvedNames;
     use crate::type_checker::types::Primitive;
-    use arandu_middle::symbol_table::SymbolTable;
-    use arandu_parser::ast_pool::AstPool;
     use arandu_lexer::Span;
+    use arandu_middle::symbol_table::SymbolTable;
+    use arandu_parser::GenericParam;
+    use arandu_parser::ast_pool::AstPool;
 
     #[test]
     fn test_extract_generic_param_symbols() {
@@ -502,7 +500,7 @@ mod tests {
     fn test_struct_fields_instantiated() {
         let pool = AstPool::default();
         let mut symbols = SymbolTable::new(0);
-        
+
         let struct_id = SymbolId::new(1, 0);
         let struct_sym = arandu_middle::symbol_table::Symbol {
             id: struct_id,
@@ -518,12 +516,18 @@ mod tests {
         let mut checker = TypeChecker::new(symbols, resolved, Vec::new(), &pool);
 
         let param_sym = SymbolId::new(1, 1);
-        checker.type_info.generic_params.insert(struct_id, Arc::new(vec![param_sym]));
+        checker
+            .type_info
+            .generic_params
+            .insert(struct_id, Arc::new(vec![param_sym]));
 
         let param_type_id = checker.intern(ArType::Named(param_sym, Vec::new()));
         let mut fields_map = rustc_hash::FxHashMap::default();
         fields_map.insert("x".to_string(), param_type_id);
-        checker.type_info.struct_fields.insert(struct_id, Arc::new(fields_map));
+        checker
+            .type_info
+            .struct_fields
+            .insert(struct_id, Arc::new(fields_map));
 
         let int_type = ArType::Primitive(Primitive::Int);
         let fields = struct_fields_instantiated(&mut checker, struct_id, &[int_type]).unwrap();

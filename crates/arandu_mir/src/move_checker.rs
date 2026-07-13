@@ -216,10 +216,8 @@ fn temp_origins<'bump>(
     func: &AmirFunc,
     bump: &'bump bumpalo::Bump,
 ) -> bumpalo::collections::Vec<'bump, Option<LocalId>> {
-    let mut origins = bumpalo::collections::Vec::from_iter_in(
-        std::iter::repeat_n(None, func.temps.len()),
-        bump,
-    );
+    let mut origins =
+        bumpalo::collections::Vec::from_iter_in(std::iter::repeat_n(None, func.temps.len()), bump);
     for (i, &param_temp) in func.params.iter().enumerate() {
         origins[param_temp.as_usize()] = Some(LocalId::from_usize(i));
     }

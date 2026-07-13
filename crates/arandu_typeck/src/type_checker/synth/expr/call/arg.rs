@@ -21,7 +21,7 @@ pub(crate) fn check_call_arg(
     arg_span: Span,
     arg_index: usize,
 ) {
-    if checker.unify_ids(param_id, arg_ty_id) {
+    if checker.is_assignable(arg_ty_id, param_id) {
         let arg_ty = checker.resolve(arg_ty_id);
         let param_ty = checker.resolve(param_id);
         if !arg_ty.is_literal()
@@ -46,13 +46,13 @@ pub(crate) fn check_call_arg(
 
     // W3.3 auto-ref: formal `&T` / `&mut T`, actual `T` → accept (lower inserts Borrow).
     if let ArType::Ref(inner) | ArType::RefMut(inner) = param_ty
-        && checker.unify_ids(inner, arg_ty_id)
+        && checker.is_assignable(arg_ty_id, inner)
     {
         return;
     }
     // Auto-deref: formal `T`, actual `&T` / `&mut T`.
     if let ArType::Ref(inner) | ArType::RefMut(inner) = arg_ty
-        && checker.unify_ids(param_id, inner)
+        && checker.is_assignable(inner, param_id)
     {
         return;
     }
@@ -78,7 +78,7 @@ pub(crate) fn check_call_arg(
         return;
     }
 
-    checker.add_constraint(
+    checker.add_subtype_constraint(
         param_id,
         arg_ty_id,
         ConstraintOrigin::CallArg {

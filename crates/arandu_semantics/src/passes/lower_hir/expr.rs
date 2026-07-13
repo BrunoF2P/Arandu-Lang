@@ -217,7 +217,10 @@ pub(crate) fn lower_expr_raw(
                     for arg_id in arg_ids {
                         lowered_args.push(lower_expr(type_check, pool, hir_pool, arg_id)?);
                     }
-                    let callee_ty = type_check.type_info.decl_type_id(member_symbol).unwrap_or(fallback_ty);
+                    let callee_ty = type_check
+                        .type_info
+                        .decl_type_id(member_symbol)
+                        .unwrap_or(fallback_ty);
                     let callee = hir_pool.alloc_expr(HirExpr {
                         kind: path_kind,
                         ty: callee_ty,

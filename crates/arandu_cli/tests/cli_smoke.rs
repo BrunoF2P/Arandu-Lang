@@ -478,7 +478,7 @@ func main(): int {
     );
     let c = String::from_utf8_lossy(&output.stdout);
     assert!(c.contains("ar_i64_to_str"), "missing ToStr helper:\n{c}");
-    assert!(c.contains("io_println"), "missing io_println stub:\n{c}");
+    assert!(c.contains("io__println"), "missing io__println stub:\n{c}");
     assert!(c.contains("int main("), "missing main:\n{c}");
 }
 

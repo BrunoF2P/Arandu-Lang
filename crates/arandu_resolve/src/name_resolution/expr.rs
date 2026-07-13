@@ -42,13 +42,9 @@ impl<'a> Resolver<'a> {
                     let ty = type_name.path.join(".");
                     // Prefer SymbolId-keyed lookup (Sprint 3); fall back to name for
                     // types that were not in scope (import path not yet resolved).
-                    let type_sym = self
-                        .resolved
-                        .type_refs
-                        .get(&type_name.span.into())
-                        .copied();
-                    let symbol = type_sym
-                        .and_then(|id| self.symbols.lookup_associated_member(id, member));
+                    let type_sym = self.resolved.type_refs.get(&type_name.span.into()).copied();
+                    let symbol =
+                        type_sym.and_then(|id| self.symbols.lookup_associated_member(id, member));
                     if let Some(symbol) = symbol {
                         self.record_expr_ref(expr, symbol);
                     } else {
@@ -59,25 +55,26 @@ impl<'a> Resolver<'a> {
                         );
                         // Suggest close matches from the members of that type.
                         if let Some(id) = type_sym
-                            && let Some(methods) = self.symbols.associated_members.get(&id) {
-                                let max_distance = if member.len() <= 4 { 2 } else { 3 };
-                                let best_match = methods
-                                    .keys()
-                                    .map(|name| {
-                                        let dist = if name.to_lowercase() == member.to_lowercase() {
-                                            0
-                                        } else {
-                                            strsim::levenshtein(member, name)
-                                        };
-                                        (name, dist)
-                                    })
-                                    .filter(|(_, dist)| *dist <= max_distance)
-                                    .min_by_key(|(_, dist)| *dist)
-                                    .map(|(name, _)| name.clone());
-                                if let Some(suggestion) = best_match {
-                                    diag = diag.with_hint(format!("did you mean '{suggestion}'?"));
-                                }
+                            && let Some(methods) = self.symbols.associated_members.get(&id)
+                        {
+                            let max_distance = if member.len() <= 4 { 2 } else { 3 };
+                            let best_match = methods
+                                .keys()
+                                .map(|name| {
+                                    let dist = if name.to_lowercase() == member.to_lowercase() {
+                                        0
+                                    } else {
+                                        strsim::levenshtein(member, name)
+                                    };
+                                    (name, dist)
+                                })
+                                .filter(|(_, dist)| *dist <= max_distance)
+                                .min_by_key(|(_, dist)| *dist)
+                                .map(|(name, _)| name.clone());
+                            if let Some(suggestion) = best_match {
+                                diag = diag.with_hint(format!("did you mean '{suggestion}'?"));
                             }
+                        }
                         self.diagnostics.push(diag);
                     }
                 }

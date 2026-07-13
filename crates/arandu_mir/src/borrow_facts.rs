@@ -18,7 +18,10 @@
 //! Escape via return/heap/closure (statically unbounded window) is F2.3.
 //! Diagnostics O002/O003/O006 are M2 and call [`is_borrowed_at`].
 
+use std::collections::VecDeque;
+
 use crate::BitSet;
+use crate::amir::reachability::terminator_targets;
 use crate::amir::{
     AmirFunc, AmirOperand, AmirRvalue, AmirStmt, AmirTerminator, BlockId, LocalId, TempId,
 };
@@ -285,91 +288,107 @@ fn collect_loans(func: &AmirFunc) -> (Vec<Loan>, Vec<u32>) {
     }
 
     // Propagate holders: copies of the reference value alias the same loan.
-    let mut changed = true;
+    let mut worklist = VecDeque::new();
+    let num_blocks = func.blocks.len();
+    let mut in_worklist = vec![false; num_blocks];
+    for block in &func.blocks {
+        worklist.push_back(block.id);
+        in_worklist[block.id.as_usize()] = true;
+    }
+
     let mut guard = 0;
-    while changed {
-        changed = false;
+    while let Some(block_id) = worklist.pop_front() {
+        let index = block_id.as_usize();
+        in_worklist[index] = false;
         guard += 1;
-        assert!(guard < 10_000, "loan holder propagation failed to converge");
-        for block in &func.blocks {
-            for stmt in func.block_stmts(block.id) {
-                match stmt {
-                    AmirStmt::Assign { lhs, rhs } => match rhs {
-                        AmirRvalue::Use(op) => {
-                            if let Some(src) = operand_temp(op) {
-                                for loan in &mut loans {
-                                    if loan.holder_temps.contains(src)
-                                        && loan.holder_temps.insert(*lhs)
-                                    {
-                                        changed = true;
-                                    }
-                                }
-                            }
-                        }
-                        AmirRvalue::Load(place) if place.projections.is_empty() => {
+        assert!(
+            guard < 100_000,
+            "loan holder propagation failed to converge"
+        );
+
+        let block = &func.blocks[index];
+        let mut changed = false;
+
+        for stmt in func.block_stmts(block.id) {
+            match stmt {
+                AmirStmt::Assign { lhs, rhs } => match rhs {
+                    AmirRvalue::Use(op) => {
+                        if let Some(src) = operand_temp(op) {
                             for loan in &mut loans {
-                                if loan.holder_locals.contains(place.local)
-                                    && loan.holder_temps.insert(*lhs)
+                                if loan.holder_temps.contains(src) && loan.holder_temps.insert(*lhs)
                                 {
                                     changed = true;
                                 }
                             }
                         }
-                        _ => {}
-                    },
-                    AmirStmt::Store { lhs, rhs } if lhs.projections.is_empty() => {
-                        if let Some(src) = operand_temp(rhs) {
-                            for loan in &mut loans {
-                                if loan.holder_temps.contains(src)
-                                    && loan.holder_locals.insert(lhs.local)
-                                {
-                                    changed = true;
-                                }
+                    }
+                    AmirRvalue::Load(place) if place.projections.is_empty() => {
+                        for loan in &mut loans {
+                            if loan.holder_locals.contains(place.local)
+                                && loan.holder_temps.insert(*lhs)
+                            {
+                                changed = true;
                             }
                         }
                     }
                     _ => {}
-                }
-            }
-            // Terminator args → successor block params (phi-like).
-            match &block.terminator {
-                AmirTerminator::Goto { target, args } => {
-                    propagate_terminator_args(func, *target, args, &mut loans, &mut changed);
-                }
-                AmirTerminator::Suspend { resume, args, .. } => {
-                    propagate_terminator_args(func, *resume, args, &mut loans, &mut changed);
-                }
-                AmirTerminator::Branch {
-                    if_true,
-                    true_args,
-                    if_false,
-                    false_args,
-                    ..
-                } => {
-                    propagate_terminator_args(func, *if_true, true_args, &mut loans, &mut changed);
-                    propagate_terminator_args(
-                        func,
-                        *if_false,
-                        false_args,
-                        &mut loans,
-                        &mut changed,
-                    );
-                }
-                AmirTerminator::SwitchInt {
-                    targets, otherwise, ..
-                } => {
-                    for (_, tgt, args) in targets {
-                        propagate_terminator_args(func, *tgt, args, &mut loans, &mut changed);
+                },
+                AmirStmt::Store { lhs, rhs } if lhs.projections.is_empty() => {
+                    if let Some(src) = operand_temp(rhs) {
+                        for loan in &mut loans {
+                            if loan.holder_temps.contains(src)
+                                && loan.holder_locals.insert(lhs.local)
+                            {
+                                changed = true;
+                            }
+                        }
                     }
-                    propagate_terminator_args(
-                        func,
-                        otherwise.0,
-                        &otherwise.1,
-                        &mut loans,
-                        &mut changed,
-                    );
                 }
-                AmirTerminator::Return | AmirTerminator::Unreachable => {}
+                _ => {}
+            }
+        }
+        // Terminator args → successor block params (phi-like).
+        match &block.terminator {
+            AmirTerminator::Goto { target, args } => {
+                propagate_terminator_args(func, *target, args, &mut loans, &mut changed);
+            }
+            AmirTerminator::Suspend { resume, args, .. } => {
+                propagate_terminator_args(func, *resume, args, &mut loans, &mut changed);
+            }
+            AmirTerminator::Branch {
+                if_true,
+                true_args,
+                if_false,
+                false_args,
+                ..
+            } => {
+                propagate_terminator_args(func, *if_true, true_args, &mut loans, &mut changed);
+                propagate_terminator_args(func, *if_false, false_args, &mut loans, &mut changed);
+            }
+            AmirTerminator::SwitchInt {
+                targets, otherwise, ..
+            } => {
+                for (_, tgt, args) in targets {
+                    propagate_terminator_args(func, *tgt, args, &mut loans, &mut changed);
+                }
+                propagate_terminator_args(
+                    func,
+                    otherwise.0,
+                    &otherwise.1,
+                    &mut loans,
+                    &mut changed,
+                );
+            }
+            AmirTerminator::Return | AmirTerminator::Unreachable => {}
+        }
+
+        if changed {
+            for successor in terminator_targets(&block.terminator) {
+                let succ_index = successor.as_usize();
+                if !in_worklist[succ_index] {
+                    worklist.push_back(successor);
+                    in_worklist[succ_index] = true;
+                }
             }
         }
     }

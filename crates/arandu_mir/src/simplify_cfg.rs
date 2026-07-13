@@ -214,10 +214,8 @@ fn remove_unreachable_blocks(func: &mut AmirFunc, bump: &bumpalo::Bump) -> bool 
         return false;
     }
 
-    let mut reachable = bumpalo::collections::Vec::from_iter_in(
-        std::iter::repeat_n(false, n),
-        bump,
-    );
+    let mut reachable =
+        bumpalo::collections::Vec::from_iter_in(std::iter::repeat_n(false, n), bump);
     let mut queue = VecDeque::new();
     reachable[0] = true;
     queue.push_back(BlockId::from_usize(0));
@@ -241,10 +239,8 @@ fn remove_unreachable_blocks(func: &mut AmirFunc, bump: &bumpalo::Bump) -> bool 
         return false;
     }
 
-    let mut old_to_new = bumpalo::collections::Vec::from_iter_in(
-        std::iter::repeat_n(None, n),
-        bump,
-    );
+    let mut old_to_new =
+        bumpalo::collections::Vec::from_iter_in(std::iter::repeat_n(None, n), bump);
     let mut new_idx = 0usize;
     for old in 0..n {
         if reachable[old] {

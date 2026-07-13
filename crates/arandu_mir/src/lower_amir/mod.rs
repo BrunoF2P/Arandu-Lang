@@ -239,12 +239,15 @@ pub(crate) enum MoveState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::amir::{AmirFunc, AmirLocal, AmirBasicBlock, AmirTerminator, AmirStmt, AmirPlace, AmirOperand, AmirRvalue, LocalId, TempId, BlockId, AmirStmtTable, InstrId};
+    use crate::amir::{
+        AmirBasicBlock, AmirFunc, AmirLocal, AmirOperand, AmirPlace, AmirRvalue, AmirStmt,
+        AmirStmtTable, AmirTerminator, BlockId, InstrId, LocalId, TempId,
+    };
     use crate::cfg::ControlFlowGraph;
-    use crate::{SymbolId, Span};
-    use crate::types::TypeId;
-    use smallvec::SmallVec;
     use crate::layout::DenseRange;
+    use crate::types::TypeId;
+    use crate::{Span, SymbolId};
+    use smallvec::SmallVec;
 
     #[test]
     fn test_prune_dummy_loads_stores() {
@@ -329,8 +332,16 @@ mod tests {
         let new_block = &func.blocks[0];
         assert_eq!(new_block.statements.len, 2);
 
-        let new_stmt_0 = func.stmts.get(InstrId::from_usize(new_block.statements.start as usize)).unwrap();
-        let new_stmt_1 = func.stmts.get(InstrId::from_usize((new_block.statements.start + 1) as usize)).unwrap();
+        let new_stmt_0 = func
+            .stmts
+            .get(InstrId::from_usize(new_block.statements.start as usize))
+            .unwrap();
+        let new_stmt_1 = func
+            .stmts
+            .get(InstrId::from_usize(
+                (new_block.statements.start + 1) as usize,
+            ))
+            .unwrap();
 
         if let AmirStmt::Store { lhs, .. } = new_stmt_0 {
             assert_eq!(lhs.local.as_usize(), 1);
@@ -338,7 +349,11 @@ mod tests {
             panic!("Expected Store statement, got {:?}", new_stmt_0);
         }
 
-        if let AmirStmt::Assign { rhs: AmirRvalue::Load(place), .. } = new_stmt_1 {
+        if let AmirStmt::Assign {
+            rhs: AmirRvalue::Load(place),
+            ..
+        } = new_stmt_1
+        {
             assert_eq!(place.local.as_usize(), 1);
         } else {
             panic!("Expected Assign/Load statement, got {:?}", new_stmt_1);

@@ -9,12 +9,11 @@ pub fn mangle_symbol(
     symbols: &SymbolTable,
 ) -> String {
     let name = &symbols.get(key.symbol).name;
-    let mut mangled = format!("_A${name}$I");
+    let mut mangled = format!("_A${name}$I_");
     for (i, &tid) in key.type_args.iter().enumerate() {
         if i > 0 {
-            mangled.push('_');
+            mangled.push_str("_T_");
         }
-        mangled.push('_');
         mangle_type_into(&mut mangled, &interner.resolve(tid), symbols, interner);
     }
     mangled.push_str("_$E");
@@ -25,11 +24,11 @@ pub fn mangle_symbol(
 pub fn demangle_symbol(mangled: &str) -> Option<String> {
     let inner = mangled.strip_prefix("_A$")?.strip_suffix("$E")?;
     let (name, rest) = inner.split_once("$I")?;
-    let types_part = rest.trim_matches('_');
+    let types_part = rest.strip_prefix("_")?.strip_suffix("_")?;
     if types_part.is_empty() {
         Some(name.to_string())
     } else {
-        let types: Vec<&str> = types_part.split('_').filter(|s| !s.is_empty()).collect();
+        let types: Vec<&str> = types_part.split("_T_").collect();
         Some(format!("{}<{}>", name, types.join(", ")))
     }
 }

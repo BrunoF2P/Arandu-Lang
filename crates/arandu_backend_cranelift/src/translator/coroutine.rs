@@ -53,6 +53,15 @@ impl FunctionTranslator<'_, '_> {
             .ins()
             .store(cranelift_codegen::ir::MemFlagsData::new(), zero, ptr_val, 0);
 
+        // magic = CO_MAGIC (0x4152434f) at offset 4
+        let magic = self.builder.ins().iconst(I32, 0x4152434f);
+        self.builder.ins().store(
+            cranelift_codegen::ir::MemFlagsData::new(),
+            magic,
+            ptr_val,
+            4,
+        );
+
         let clif_ty = match crate::types::clif_type(&payload_ar, self.ptr_type) {
             crate::types::ClifType::Concrete(t) => t,
             crate::types::ClifType::Void => {

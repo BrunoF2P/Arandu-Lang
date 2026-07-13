@@ -20,11 +20,12 @@ const DISC_READY: u32 = 0;
 const DISC_PENDING_ONCE: u32 = 1;
 const HEADER: usize = 8;
 const PAYLOAD_OFF: usize = 8;
+const CO_MAGIC: u32 = 0x4152434f; // "ARCO"
 
 #[repr(C)]
 struct CoHeader {
     disc: u32,
-    _pad: u32,
+    magic: u32,
 }
 
 /// Allocate Ready state with i64 payload (tests / helpers).
@@ -41,7 +42,7 @@ pub unsafe extern "C" fn ar_co_make_ready_i64(payload: i64) -> *mut u8 {
     unsafe {
         (p as *mut CoHeader).write(CoHeader {
             disc: DISC_READY,
-            _pad: 0,
+            magic: CO_MAGIC,
         });
         (p.add(PAYLOAD_OFF) as *mut i64).write(payload);
     }
@@ -62,7 +63,7 @@ pub unsafe extern "C" fn ar_co_pending_once_i64(payload: i64) -> *mut u8 {
     unsafe {
         (p as *mut CoHeader).write(CoHeader {
             disc: DISC_PENDING_ONCE,
-            _pad: 0,
+            magic: CO_MAGIC,
         });
         (p.add(PAYLOAD_OFF) as *mut i64).write(payload);
     }
@@ -79,6 +80,9 @@ pub unsafe extern "C" fn ar_co_poll_i64(state: *mut u8, out: *mut i64) -> i32 {
         std::process::abort();
     }
     let header = unsafe { &mut *(state as *mut CoHeader) };
+    if header.magic != CO_MAGIC {
+        std::process::abort();
+    }
     match header.disc {
         DISC_READY => {
             let v = unsafe { (state.add(PAYLOAD_OFF) as *const i64).read() };
@@ -128,6 +132,10 @@ pub unsafe extern "C" fn ar_co_block_on_i64(state: *mut u8) -> i64 {
 pub unsafe extern "C" fn ar_co_free(state: *mut u8) {
     if state.is_null() {
         return;
+    }
+    let header = unsafe { &*(state as *const CoHeader) };
+    if header.magic != CO_MAGIC {
+        std::process::abort();
     }
     let layout = Layout::from_size_align(HEADER + 8, 8).expect("layout");
     unsafe {

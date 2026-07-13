@@ -1069,7 +1069,6 @@ fn test_type_decl_generic_constraint_violation() {
     );
 }
 
-
 #[test]
 fn golden_interface_not_satisfied() {
     assert_diagnostic_golden("interface_not_satisfied");
@@ -1317,6 +1316,46 @@ fn test_dot_variant_sugar_shadowing() {
         func main() {
             let x: MeuTipo = .Ok(42)
             let y: Result<int, str> = .Ok(100)
+        }
+    ";
+    assert_type_errors!(source, []);
+}
+
+#[test]
+fn test_recursive_struct_infinite_size() {
+    let source = "
+        struct InfiniteNode {
+            val: int
+            next: InfiniteNode
+        }
+        func main() {}
+    ";
+    assert_type_errors!(source, [T029RecursiveStructInfiniteSize]);
+}
+
+#[test]
+fn test_recursive_struct_nullable_ok() {
+    let source = "
+        struct Node {
+            val: int
+            next: Node?
+        }
+        func main() {}
+    ";
+    assert_type_errors!(source, []);
+}
+
+#[test]
+fn test_mixed_layout_typecheck() {
+    let source = "
+        struct MixedLayout {
+            a: byte
+            b: int
+            c: bool
+            d: i32
+        }
+        func main() {
+            let m = MixedLayout { a: 42 as byte, b: 999999, c: true, d: 123456 as i32 }
         }
     ";
     assert_type_errors!(source, []);

@@ -314,11 +314,18 @@ pub unsafe extern "C" fn ar_rt_reactor_poll_ms(id: ReactorId, timeout_ms: i64) -
         } else {
             timeout_ms.min(i32::MAX as i64) as i32
         };
-        let n = unsafe {
-            libc::epoll_wait(epfd, events.as_mut_ptr(), events.len() as i32, timeout_arg)
-        };
-        if n < 0 {
-            return -1;
+        let mut n;
+        loop {
+            n = unsafe {
+                libc::epoll_wait(epfd, events.as_mut_ptr(), events.len() as i32, timeout_arg)
+            };
+            if n >= 0 {
+                break;
+            }
+            let err = std::io::Error::last_os_error().raw_os_error();
+            if err != Some(libc::EINTR) {
+                return -1;
+            }
         }
         if n == 0 {
             return 0;

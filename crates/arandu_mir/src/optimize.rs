@@ -27,7 +27,15 @@ pub fn optimize_amir(program: &mut AmirProgram) {
 /// when no pass reports any change.
 pub fn optimize_amir_func(func: &mut AmirFunc, literal_pool: &mut AmirLiteralPool) {
     let mut bump = bumpalo::Bump::new();
+    let mut iterations = 0;
     loop {
+        iterations += 1;
+        if iterations > 100 {
+            tracing::warn!(
+                "Optimization loop reached iteration limit (100) and aborted to prevent hang."
+            );
+            break;
+        }
         let mut changed = false;
         changed |= sccp(func, literal_pool, &bump);
         changed |= mark_sweep_dce(func);

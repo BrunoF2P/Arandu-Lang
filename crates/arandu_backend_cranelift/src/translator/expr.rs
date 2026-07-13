@@ -275,7 +275,17 @@ impl FunctionTranslator<'_, '_> {
                             offset + pointer_width as i32,
                         );
                     } else {
-                        let val = self.translate_operand(op, None);
+                        let field_defs = self.type_info.struct_fields.get(struct_symbol);
+                        let field_ty = field_defs
+                            .and_then(|m| m.get(name.as_str()).copied())
+                            .map(|tid| self.type_info.type_interner.resolve(tid))
+                            .unwrap_or(ArType::Error);
+                        let expected_field_ty =
+                            match crate::types::clif_type(&field_ty, self.ptr_type) {
+                                crate::types::ClifType::Concrete(ty) => Some(ty),
+                                crate::types::ClifType::Void => None,
+                            };
+                        let val = self.translate_operand(op, expected_field_ty);
                         self.builder.ins().store(
                             cranelift_codegen::ir::MemFlagsData::new(),
                             val,
@@ -322,7 +332,19 @@ impl FunctionTranslator<'_, '_> {
                             offset + pointer_width as i32,
                         );
                     } else {
-                        let val = self.translate_operand(op, None);
+                        let elem_ty = match &tuple_ty {
+                            ArType::Tuple(tids) => tids
+                                .get(i)
+                                .map(|&tid| self.type_info.type_interner.resolve(tid))
+                                .unwrap_or(ArType::Error),
+                            _ => ArType::Error,
+                        };
+                        let expected_elem_ty =
+                            match crate::types::clif_type(&elem_ty, self.ptr_type) {
+                                crate::types::ClifType::Concrete(ty) => Some(ty),
+                                crate::types::ClifType::Void => None,
+                            };
+                        let val = self.translate_operand(op, expected_elem_ty);
                         self.builder.ins().store(
                             cranelift_codegen::ir::MemFlagsData::new(),
                             val,
@@ -380,7 +402,12 @@ impl FunctionTranslator<'_, '_> {
                             offset + pointer_width as i32,
                         );
                     } else {
-                        let val = self.translate_operand(op, None);
+                        let expected_item_ty =
+                            match crate::types::clif_type(&item_ar_ty, self.ptr_type) {
+                                crate::types::ClifType::Concrete(ty) => Some(ty),
+                                crate::types::ClifType::Void => None,
+                            };
+                        let val = self.translate_operand(op, expected_item_ty);
                         self.builder.ins().store(
                             cranelift_codegen::ir::MemFlagsData::new(),
                             val,

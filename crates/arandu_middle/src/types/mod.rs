@@ -15,4 +15,6 @@ pub use result_option::{
 };
 pub use subst::{GenericSubst, build_subst, build_subst_ids, substitute_type, substitute_type_id};
 pub use type_interner::{InternerGeneration, TypeId, TypeInterner};
-pub use unify::{resolve_literal_pair, unify, unify_return_type};
+pub use unify::{
+    is_assignable, is_assignable_return_type, resolve_literal_pair, unify, unify_return_type,
+};

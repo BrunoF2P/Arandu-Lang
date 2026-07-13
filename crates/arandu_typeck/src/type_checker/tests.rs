@@ -417,6 +417,7 @@ fn merge_from_empty_does_nothing() {
 fn constraint_assignment() {
     let i = new_interner();
     let constraint = Constraint {
+        is_subtype: false,
         expected: ArType::Primitive(Primitive::Int),
         found: ArType::Primitive(Primitive::Str),
         origin: ConstraintOrigin::Assignment {
@@ -436,6 +437,7 @@ fn constraint_assignment() {
 #[test]
 fn constraint_call_arg() {
     let constraint = Constraint {
+        is_subtype: false,
         expected: ArType::Primitive(Primitive::Int),
         found: ArType::Primitive(Primitive::Bool),
         origin: ConstraintOrigin::CallArg {
@@ -454,6 +456,7 @@ fn constraint_call_arg() {
 #[test]
 fn constraint_return_type() {
     let constraint = Constraint {
+        is_subtype: false,
         expected: ArType::Void,
         found: ArType::Primitive(Primitive::Int),
         origin: ConstraintOrigin::ReturnType {
@@ -469,6 +472,7 @@ fn constraint_return_type() {
 #[test]
 fn constraint_if_branches() {
     let constraint = Constraint {
+        is_subtype: false,
         expected: ArType::Primitive(Primitive::Int),
         found: ArType::Primitive(Primitive::Str),
         origin: ConstraintOrigin::IfBranches {
@@ -483,6 +487,7 @@ fn constraint_if_branches() {
 #[test]
 fn constraint_match_arms() {
     let constraint = Constraint {
+        is_subtype: false,
         expected: ArType::Primitive(Primitive::Int),
         found: ArType::Primitive(Primitive::Bool),
         origin: ConstraintOrigin::MatchArms {
@@ -499,6 +504,7 @@ fn constraint_match_arms() {
 #[test]
 fn constraint_binary_op() {
     let constraint = Constraint {
+        is_subtype: false,
         expected: ArType::Primitive(Primitive::Int),
         found: ArType::Primitive(Primitive::Str),
         origin: ConstraintOrigin::BinaryOp {
@@ -520,6 +526,7 @@ fn constraint_binary_op() {
 #[test]
 fn constraint_unary_op() {
     let constraint = Constraint {
+        is_subtype: false,
         expected: ArType::Primitive(Primitive::Bool),
         found: ArType::Primitive(Primitive::Int),
         origin: ConstraintOrigin::UnaryOp {
@@ -534,6 +541,7 @@ fn constraint_unary_op() {
 #[test]
 fn constraint_condition() {
     let constraint = Constraint {
+        is_subtype: false,
         expected: ArType::Primitive(Primitive::Bool),
         found: ArType::Primitive(Primitive::Int),
         origin: ConstraintOrigin::Condition { span: dummy_span() },
@@ -546,6 +554,7 @@ fn constraint_condition() {
 #[test]
 fn constraint_field_init() {
     let constraint = Constraint {
+        is_subtype: false,
         expected: ArType::Primitive(Primitive::Int),
         found: ArType::Primitive(Primitive::Str),
         origin: ConstraintOrigin::FieldInit {
@@ -563,6 +572,7 @@ fn constraint_field_init() {
 #[test]
 fn constraint_set_target() {
     let constraint = Constraint {
+        is_subtype: false,
         expected: ArType::Primitive(Primitive::Int),
         found: ArType::Primitive(Primitive::Bool),
         origin: ConstraintOrigin::SetTarget {
@@ -577,6 +587,7 @@ fn constraint_set_target() {
 #[test]
 fn constraint_cast_expr() {
     let constraint = Constraint {
+        is_subtype: false,
         expected: ArType::Primitive(Primitive::Int),
         found: ArType::Primitive(Primitive::Str),
         origin: ConstraintOrigin::CastExpr {
@@ -591,6 +602,7 @@ fn constraint_cast_expr() {
 #[test]
 fn constraint_implicit_widening() {
     let constraint = Constraint {
+        is_subtype: false,
         expected: ArType::Primitive(Primitive::Float),
         found: ArType::Primitive(Primitive::Int),
         origin: ConstraintOrigin::ImplicitWidening {
@@ -606,6 +618,7 @@ fn constraint_implicit_widening() {
 #[test]
 fn constraint_try_invalid() {
     let constraint = Constraint {
+        is_subtype: false,
         expected: ArType::Primitive(Primitive::Int),
         found: ArType::Primitive(Primitive::Str),
         origin: ConstraintOrigin::TryInvalid { span: dummy_span() },
@@ -617,6 +630,7 @@ fn constraint_try_invalid() {
 #[test]
 fn constraint_await_invalid() {
     let constraint = Constraint {
+        is_subtype: false,
         expected: ArType::Primitive(Primitive::Int),
         found: ArType::Primitive(Primitive::Str),
         origin: ConstraintOrigin::AwaitInvalid { span: dummy_span() },
@@ -628,6 +642,7 @@ fn constraint_await_invalid() {
 #[test]
 fn constraint_invalid_index_base_error() {
     let constraint = Constraint {
+        is_subtype: false,
         expected: ArType::Primitive(Primitive::Int),
         found: ArType::Primitive(Primitive::Str),
         origin: ConstraintOrigin::InvalidIndex {
@@ -644,6 +659,7 @@ fn constraint_invalid_index_base_error() {
 #[test]
 fn constraint_invalid_index_type() {
     let constraint = Constraint {
+        is_subtype: false,
         expected: ArType::Primitive(Primitive::Int),
         found: ArType::Primitive(Primitive::Str),
         origin: ConstraintOrigin::InvalidIndex {
@@ -664,6 +680,7 @@ fn constraint_undefined_field() {
         .define(ScopeId(0), "MyStruct", SymbolKind::Struct, dummy_span())
         .unwrap();
     let constraint = Constraint {
+        is_subtype: false,
         expected: ArType::Named(sym, vec![]),
         found: ArType::Void,
         origin: ConstraintOrigin::UndefinedField {
@@ -680,6 +697,7 @@ fn constraint_undefined_field() {
 #[test]
 fn constraint_array_literal() {
     let constraint = Constraint {
+        is_subtype: false,
         expected: ArType::Primitive(Primitive::Int),
         found: ArType::Primitive(Primitive::Str),
         origin: ConstraintOrigin::ArrayLiteral {
@@ -696,6 +714,7 @@ fn constraint_array_literal() {
 #[test]
 fn constraint_null_coalesce() {
     let constraint = Constraint {
+        is_subtype: false,
         expected: ArType::Primitive(Primitive::Int),
         found: ArType::Primitive(Primitive::Bool),
         origin: ConstraintOrigin::NullCoalesce {
@@ -711,6 +730,7 @@ fn constraint_null_coalesce() {
 #[test]
 fn constraint_catch_handler() {
     let constraint = Constraint {
+        is_subtype: false,
         expected: ArType::Primitive(Primitive::Int),
         found: ArType::Primitive(Primitive::Str),
         origin: ConstraintOrigin::CatchHandler {

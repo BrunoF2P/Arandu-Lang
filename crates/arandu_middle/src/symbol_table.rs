@@ -75,7 +75,9 @@ mod tests {
     #[test]
     fn associated_members_basic() {
         let mut table = SymbolTable::new(0);
-        let struct_id = table.define(ScopeId(0), "MyStruct", SymbolKind::Struct, S).unwrap();
+        let struct_id = table
+            .define(ScopeId(0), "MyStruct", SymbolKind::Struct, S)
+            .unwrap();
         let id = table
             .define_associated_member(struct_id, "method", S)
             .unwrap();

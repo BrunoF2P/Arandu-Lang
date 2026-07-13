@@ -24,7 +24,11 @@ pub(crate) fn synth_result_ctor(
     let (type_name, member) = type_path_member(checker.pool, callee)?;
     let global_scope = checker.symbols.global_scope();
     let result_sym = checker.symbols.lookup_type(global_scope, "Result")?;
-    let resolved_sym = checker.resolved.type_refs.get(&type_name.span.into()).copied()?;
+    let resolved_sym = checker
+        .resolved
+        .type_refs
+        .get(&type_name.span.into())
+        .copied()?;
     if resolved_sym != result_sym {
         return None;
     }
@@ -75,7 +79,11 @@ pub(crate) fn synth_option_ctor(
     let (type_name, member) = type_path_member(checker.pool, callee)?;
     let global_scope = checker.symbols.global_scope();
     let option_sym = checker.symbols.lookup_type(global_scope, "Option")?;
-    let resolved_sym = checker.resolved.type_refs.get(&type_name.span.into()).copied()?;
+    let resolved_sym = checker
+        .resolved
+        .type_refs
+        .get(&type_name.span.into())
+        .copied()?;
     if resolved_sym != option_sym {
         return None;
     }
@@ -279,8 +287,7 @@ pub(crate) fn synth_variant_sugar(
         },
         ArType::Named(enum_id, ref expected_args) => {
             let enum_name = checker.symbols.get(enum_id).name.clone();
-            let Some(variant_sym) = checker.symbols.lookup_associated_member(enum_id, name)
-            else {
+            let Some(variant_sym) = checker.symbols.lookup_associated_member(enum_id, name) else {
                 checker.diagnostics.push(crate::Diagnostic::error(
                     crate::DiagCode::T018UndefinedField,
                     format!("`{name}` is not a variant of `{enum_name}`"),
@@ -294,42 +301,59 @@ pub(crate) fn synth_variant_sugar(
 
             // Get variant constructor signature with expected generic parameters substituted.
             let cache_key = (variant_sym, expected_args.clone());
-            let (params, ret) = if let Some(cached) = checker.type_info.variant_instantiations.get(&cache_key) {
+            let (params, ret) = if let Some(cached) =
+                checker.type_info.variant_instantiations.get(&cache_key)
+            {
                 cached.clone()
             } else {
                 let res = if let Some(ArType::Func(params, ret)) = checker.decl_type(variant_sym) {
                     let mut inst_params = params.clone();
                     let mut inst_ret = ret;
                     if !expected_args.is_empty()
-                        && let Some(gp) = checker.type_info.generic_params.get(&enum_id) {
-                            let interner = &checker.type_info.type_interner;
-                            let has_params = params.iter().any(|&p| contains_generic_params(&interner.resolve(p), gp, interner))
-                                || contains_generic_params(&interner.resolve(ret), gp, interner);
-                            if has_params {
-                                use crate::type_checker::types::{build_subst, substitute_type};
-                                let concrete_args: Vec<ArType> = expected_args.iter().map(|&a| checker.resolve(a)).collect();
-                                let n = gp.len().min(concrete_args.len());
-                                if n > 0 {
-                                    let subst = build_subst(&gp[..n], &concrete_args[..n]);
-                                    inst_params = params
-                                        .iter()
-                                        .map(|&p| {
-                                            let ty = checker.resolve(p);
-                                            let inst = substitute_type(&ty, &subst, &checker.type_info.type_interner);
-                                            checker.intern(inst)
-                                        })
-                                        .collect();
-                                    let ret_ty = checker.resolve(ret);
-                                    let ret_inst = substitute_type(&ret_ty, &subst, &checker.type_info.type_interner);
-                                    inst_ret = checker.intern(ret_inst);
-                                }
+                        && let Some(gp) = checker.type_info.generic_params.get(&enum_id)
+                    {
+                        let interner = &checker.type_info.type_interner;
+                        let has_params = params
+                            .iter()
+                            .any(|&p| contains_generic_params(&interner.resolve(p), gp, interner))
+                            || contains_generic_params(&interner.resolve(ret), gp, interner);
+                        if has_params {
+                            use crate::type_checker::types::{build_subst, substitute_type};
+                            let concrete_args: Vec<ArType> =
+                                expected_args.iter().map(|&a| checker.resolve(a)).collect();
+                            let n = gp.len().min(concrete_args.len());
+                            if n > 0 {
+                                let subst = build_subst(&gp[..n], &concrete_args[..n]);
+                                inst_params = params
+                                    .iter()
+                                    .map(|&p| {
+                                        let ty = checker.resolve(p);
+                                        let inst = substitute_type(
+                                            &ty,
+                                            &subst,
+                                            &checker.type_info.type_interner,
+                                        );
+                                        checker.intern(inst)
+                                    })
+                                    .collect();
+                                let ret_ty = checker.resolve(ret);
+                                let ret_inst = substitute_type(
+                                    &ret_ty,
+                                    &subst,
+                                    &checker.type_info.type_interner,
+                                );
+                                inst_ret = checker.intern(ret_inst);
                             }
                         }
+                    }
                     (inst_params, inst_ret)
                 } else {
                     (Vec::new(), checker.intern(ArType::Error))
                 };
-                checker.type_info.variant_instantiations.insert(cache_key, res.clone());
+                checker
+                    .type_info
+                    .variant_instantiations
+                    .insert(cache_key, res.clone());
                 res
             };
 
@@ -398,7 +422,11 @@ pub(crate) fn synth_poll_ctor(
     let (type_name, member) = type_path_member(checker.pool, callee)?;
     let global_scope = checker.symbols.global_scope();
     let poll_sym = checker.symbols.lookup_type(global_scope, "Poll")?;
-    let resolved_sym = checker.resolved.type_refs.get(&type_name.span.into()).copied()?;
+    let resolved_sym = checker
+        .resolved
+        .type_refs
+        .get(&type_name.span.into())
+        .copied()?;
     if resolved_sym != poll_sym {
         return None;
     }
@@ -791,9 +819,10 @@ fn instantiate_method_sig_for_receiver(
         }
     }
     let (recv_args_ids, recv_args) = match checker.resolve(base_id) {
-        ArType::Named(id, args) if id == struct_id => {
-            (args.clone(), args.iter().map(|&a| checker.resolve(a)).collect::<Vec<_>>())
-        }
+        ArType::Named(id, args) if id == struct_id => (
+            args.clone(),
+            args.iter().map(|&a| checker.resolve(a)).collect::<Vec<_>>(),
+        ),
         _ => return (params, ret),
     };
     if recv_args.is_empty() {
@@ -834,7 +863,10 @@ fn instantiate_method_sig_for_receiver(
     let ret_inst = substitute_type(&ret_ty, &subst, &checker.type_info.type_interner);
     let new_ret = checker.intern(ret_inst);
     let res = (new_params, new_ret);
-    checker.type_info.variant_instantiations.insert(cache_key, res.clone());
+    checker
+        .type_info
+        .variant_instantiations
+        .insert(cache_key, res.clone());
     res
 }
 
@@ -858,12 +890,13 @@ fn contains_generic_params(
             if gp.contains(id) {
                 return true;
             }
-            args.iter().any(|&a| {
-                contains_generic_params(&interner.resolve(a), gp, interner)
-            })
+            args.iter()
+                .any(|&a| contains_generic_params(&interner.resolve(a), gp, interner))
         }
         ArType::Func(params, ret) => {
-            params.iter().any(|&p| contains_generic_params(&interner.resolve(p), gp, interner))
+            params
+                .iter()
+                .any(|&p| contains_generic_params(&interner.resolve(p), gp, interner))
                 || contains_generic_params(&interner.resolve(*ret), gp, interner)
         }
         ArType::Nullable(inner)
@@ -882,9 +915,9 @@ fn contains_generic_params(
             contains_generic_params(&interner.resolve(*ok), gp, interner)
                 || contains_generic_params(&interner.resolve(*err), gp, interner)
         }
-        ArType::Tuple(tys) => {
-            tys.iter().any(|&t| contains_generic_params(&interner.resolve(t), gp, interner))
-        }
+        ArType::Tuple(tys) => tys
+            .iter()
+            .any(|&t| contains_generic_params(&interner.resolve(t), gp, interner)),
         _ => false,
     }
 }

@@ -1,0 +1,8 @@
+func modify(x: &mut int) {
+}
+
+func main() {
+    let a: int = 5
+    let ref_a: &int = &a
+    modify(ref_a)
+}

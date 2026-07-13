@@ -93,6 +93,10 @@ fn reindent_item(item_src: &str) -> String {
         .collect();
     let mut out = String::with_capacity(item_src.len() + 16);
     let mut depth: i32 = 0;
+    let mut in_string = false;
+    let mut in_char = false;
+    let mut escaped = false;
+
     for (li, line) in lines.iter().enumerate() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -101,19 +105,60 @@ fn reindent_item(item_src: &str) -> String {
             }
             continue;
         }
+
         // Decrease depth for lines that start with `}` before indenting.
-        let leading_closes = trimmed.chars().take_while(|c| *c == '}').count() as i32;
+        let mut leading_closes = 0;
+        if !in_string && !in_char {
+            for c in trimmed.chars() {
+                if c == '}' {
+                    leading_closes += 1;
+                } else if c.is_whitespace() {
+                    continue;
+                } else {
+                    break;
+                }
+            }
+        }
+
         let indent_depth = (depth - leading_closes).max(0) as usize;
         for _ in 0..indent_depth {
             out.push_str("    ");
         }
         out.push_str(trimmed);
         out.push('\n');
-        // Update depth from full line braces (strings ignored — good enough for formatter v0.2).
-        for ch in trimmed.chars() {
+
+        // Update depth from full line braces, ignoring strings, characters, and comments.
+        let mut chars = trimmed.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if !in_string && !in_char && ch == '/' && chars.peek() == Some(&'/') {
+                break;
+            }
             match ch {
-                '{' => depth += 1,
-                '}' => depth = depth.saturating_sub(1),
+                '\\' => {
+                    if in_string || in_char {
+                        escaped = true;
+                    }
+                }
+                '"' => {
+                    if !in_char {
+                        in_string = !in_string;
+                    }
+                }
+                '\'' => {
+                    if !in_string {
+                        in_char = !in_char;
+                    }
+                }
+                '{' if !in_string && !in_char => {
+                    depth += 1;
+                }
+                '}' if !in_string && !in_char => {
+                    depth = depth.saturating_sub(1);
+                }
                 _ => {}
             }
         }

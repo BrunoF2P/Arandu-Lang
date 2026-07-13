@@ -89,7 +89,10 @@ impl<'a> Resolver<'a> {
             ));
             return false;
         }
-        if self.symbols.lookup_type(self.symbols.global_scope(), root).is_some()
+        if self
+            .symbols
+            .lookup_type(self.symbols.global_scope(), root)
+            .is_some()
             || matches!(root.as_str(), "void" | "Err")
         {
             return true;

@@ -4,6 +4,8 @@
 //! - [`analyze_temp_liveness`]: SSA temps — **F2.2** reuses this so a loan's
 //!   window equals the live range of the reference value that holds it.
 
+use std::collections::VecDeque;
+
 use crate::amir::reachability::terminator_targets;
 use crate::amir::{
     AmirFunc, AmirOperand, AmirPlace, AmirProjection, AmirRvalue, AmirStmt, AmirTerminator,
@@ -72,43 +74,55 @@ pub fn analyze_local_liveness(func: &AmirFunc) -> LocalLiveness {
 
     let mut live_in = vec![BitSet::<LocalId>::with_capacity(num_locals); num_blocks];
     let mut live_out = vec![BitSet::<LocalId>::with_capacity(num_locals); num_blocks];
-    let mut changed = true;
 
     let rpo = crate::amir::reverse_post_order(func);
+
+    let mut in_worklist = vec![false; num_blocks];
+    let mut worklist = VecDeque::new();
+    for &block_id in rpo.iter().rev() {
+        worklist.push_back(block_id);
+        in_worklist[block_id.as_usize()] = true;
+    }
 
     let mut new_out = BitSet::<LocalId>::with_capacity(num_locals);
     let mut new_in = BitSet::<LocalId>::with_capacity(num_locals);
 
-    // Bound iterations: monotone lattice converges in ≤ |blocks| in theory;
-    // hard cap guards host freeze if CFG metadata is corrupt.
-    let max_iters = (num_blocks.saturating_mul(2)).max(8);
-    let mut iters = 0usize;
-    while changed && iters < max_iters {
-        iters += 1;
-        changed = false;
-        for &block_id in rpo.iter().rev() {
-            let block = &func.blocks[block_id.as_usize()];
+    let max_iterations = num_blocks * num_locals + 1000;
+    let mut iterations = 0;
 
-            new_out.clear();
-            for successor in terminator_targets(&block.terminator) {
-                new_out.union_with(&live_in[successor.as_usize()]);
-            }
+    while let Some(block_id) = worklist.pop_front() {
+        iterations += 1;
+        let index = block_id.as_usize();
+        in_worklist[index] = false;
 
-            new_in.clone_from(&new_out);
-            new_in.difference_with(&block_defs.row_set(block_id));
-            new_in.union_with(&block_uses.row_set(block_id));
+        assert!(
+            iterations <= max_iterations,
+            "liveness analysis failed to converge within theoretical limit: {iterations} > {max_iterations}"
+        );
 
-            let index = block_id.as_usize();
-            if new_in != live_in[index] || new_out != live_out[index] {
-                live_in[index].clone_from(&new_in);
-                live_out[index].clone_from(&new_out);
-                changed = true;
+        let block = &func.blocks[index];
+
+        new_out.clear();
+        for successor in terminator_targets(&block.terminator) {
+            new_out.union_with(&live_in[successor.as_usize()]);
+        }
+
+        new_in.clone_from(&new_out);
+        new_in.difference_with(&block_defs.row_set(block_id));
+        new_in.union_with(&block_uses.row_set(block_id));
+
+        if new_in != live_in[index] || new_out != live_out[index] {
+            live_in[index].clone_from(&new_in);
+            live_out[index].clone_from(&new_out);
+
+            for &pred in func.predecessors(block_id) {
+                let pred_index = pred.as_usize();
+                if !in_worklist[pred_index] {
+                    worklist.push_back(pred);
+                    in_worklist[pred_index] = true;
+                }
             }
         }
-    }
-
-    if changed {
-        arandu_middle::ice::bug("Liveness analysis failed to converge within iteration limit");
     }
 
     LocalLiveness { live_in, live_out }
@@ -138,36 +152,55 @@ pub fn analyze_temp_liveness(func: &AmirFunc) -> TempLiveness {
 
     let mut live_in = vec![BitSet::<TempId>::with_capacity(num_temps); num_blocks];
     let mut live_out = vec![BitSet::<TempId>::with_capacity(num_temps); num_blocks];
-    let mut changed = true;
+
     let rpo = crate::amir::reverse_post_order(func);
+
+    let mut in_worklist = vec![false; num_blocks];
+    let mut worklist = VecDeque::new();
+    for &block_id in rpo.iter().rev() {
+        worklist.push_back(block_id);
+        in_worklist[block_id.as_usize()] = true;
+    }
+
     let mut new_out = BitSet::<TempId>::with_capacity(num_temps);
     let mut new_in = BitSet::<TempId>::with_capacity(num_temps);
 
-    let max_iters = (num_blocks.saturating_mul(2)).max(8);
-    let mut iters = 0usize;
-    while changed && iters < max_iters {
-        iters += 1;
-        changed = false;
-        for &block_id in rpo.iter().rev() {
-            let block = &func.blocks[block_id.as_usize()];
-            new_out.clear();
-            for successor in terminator_targets(&block.terminator) {
-                new_out.union_with(&live_in[successor.as_usize()]);
-            }
-            new_in.clone_from(&new_out);
-            new_in.difference_with(&block_defs.row_set(block_id));
-            new_in.union_with(&block_uses.row_set(block_id));
-            let index = block_id.as_usize();
-            if new_in != live_in[index] || new_out != live_out[index] {
-                live_in[index].clone_from(&new_in);
-                live_out[index].clone_from(&new_out);
-                changed = true;
+    let max_iterations = num_blocks * num_temps + 1000;
+    let mut iterations = 0;
+
+    while let Some(block_id) = worklist.pop_front() {
+        iterations += 1;
+        let index = block_id.as_usize();
+        in_worklist[index] = false;
+
+        assert!(
+            iterations <= max_iterations,
+            "liveness analysis failed to converge within theoretical limit: {iterations} > {max_iterations}"
+        );
+
+        let block = &func.blocks[index];
+
+        new_out.clear();
+        for successor in terminator_targets(&block.terminator) {
+            new_out.union_with(&live_in[successor.as_usize()]);
+        }
+
+        new_in.clone_from(&new_out);
+        new_in.difference_with(&block_defs.row_set(block_id));
+        new_in.union_with(&block_uses.row_set(block_id));
+
+        if new_in != live_in[index] || new_out != live_out[index] {
+            live_in[index].clone_from(&new_in);
+            live_out[index].clone_from(&new_out);
+
+            for &pred in func.predecessors(block_id) {
+                let pred_index = pred.as_usize();
+                if !in_worklist[pred_index] {
+                    worklist.push_back(pred);
+                    in_worklist[pred_index] = true;
+                }
             }
         }
-    }
-
-    if changed {
-        arandu_middle::ice::bug("Liveness analysis failed to converge within iteration limit");
     }
 
     TempLiveness { live_in, live_out }

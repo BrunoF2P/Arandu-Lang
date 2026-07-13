@@ -251,11 +251,41 @@ pub fn reparse_subtree(
         .collect();
     let spliced = splice_tokens_for_item_edit(old.tokens(), old_s, old_e, delta, &item_tokens);
 
+    // Merge lexical diagnostics from other items (shift post-edit ones by delta)
+    let mut merged_diags = Vec::new();
+    for err in old.lex_diagnostics() {
+        if err.span.start < old_s {
+            merged_diags.push(*err);
+        } else if err.span.start >= old_e {
+            let mut new_err = *err;
+            if delta != 0 {
+                let new_start = (new_err.span.start as i64)
+                    .checked_add(delta)
+                    .unwrap_or(0)
+                    .max(0) as u32;
+                let new_end = (new_err.span.end as i64)
+                    .checked_add(delta)
+                    .unwrap_or(0)
+                    .max(0) as u32;
+                new_err.span.start = new_start;
+                new_err.span.end = new_end;
+            }
+            merged_diags.push(new_err);
+        }
+    }
+    for err in &item_diags {
+        let mut new_err = *err;
+        new_err.span.start = new_err.span.start.saturating_add(new_s);
+        new_err.span.end = new_err.span.end.saturating_add(new_s);
+        merged_diags.push(new_err);
+    }
+    merged_diags.sort_by_key(|e| e.span.start);
+
     let tree = SyntaxTree {
         green: new_green,
         text: Arc::from(new_source.as_str()),
         tokens: Arc::new(spliced),
-        lex_diagnostics: Arc::new(item_diags),
+        lex_diagnostics: Arc::new(merged_diags),
     };
     // If a local edit introduced/removed top-level items (rare), prefer full structure.
     if tree.items().len() != old_items.len() {

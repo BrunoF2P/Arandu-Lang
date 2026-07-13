@@ -307,14 +307,19 @@ fn nullable_different_inner() {
 fn nullable_unifies_with_inner_type() {
     let mut i = new_interner();
     let int_id = int_t(&mut i);
-    assert!(unify(
+    assert!(!unify(
         &ArType::Nullable(int_id),
         &ArType::Primitive(Primitive::Int),
         &i
     ));
-    assert!(unify(
+    assert!(is_assignable(
         &ArType::Primitive(Primitive::Int),
         &ArType::Nullable(int_id),
+        &i
+    ));
+    assert!(!is_assignable(
+        &ArType::Nullable(int_id),
+        &ArType::Primitive(Primitive::Int),
         &i
     ));
 }
@@ -396,9 +401,20 @@ fn ref_same_inner() {
 fn refmut_decays_to_ref() {
     let mut i = new_interner();
     let inner = int_t(&mut i);
-    // Exclusive may decay to shared (Rust rule).
-    assert!(unify(&ArType::Ref(inner), &ArType::RefMut(inner), &i));
-    assert!(unify(&ArType::RefMut(inner), &ArType::Ref(inner), &i));
+    // unify is strict: Ref and RefMut do not unify
+    assert!(!unify(&ArType::Ref(inner), &ArType::RefMut(inner), &i));
+    // RefMut (exclusive) is assignable to Ref (shared)
+    assert!(is_assignable(
+        &ArType::RefMut(inner),
+        &ArType::Ref(inner),
+        &i
+    ));
+    // Ref (shared) is not assignable to RefMut (exclusive)
+    assert!(!is_assignable(
+        &ArType::Ref(inner),
+        &ArType::RefMut(inner),
+        &i
+    ));
 }
 
 #[test]
@@ -538,9 +554,24 @@ fn nullablity_unwraps_once_only() {
     let mut i = new_interner();
     let int_id = int_t(&mut i);
     let null_int = ArType::Nullable(int_id);
-    assert!(unify(&null_int, &ArType::Primitive(Primitive::Int), &i));
-    // Nullable<Int> and plain Named do NOT unify
+    assert!(!unify(&null_int, &ArType::Primitive(Primitive::Int), &i));
+    assert!(is_assignable(
+        &ArType::Primitive(Primitive::Int),
+        &null_int,
+        &i
+    ));
+    assert!(!is_assignable(
+        &null_int,
+        &ArType::Primitive(Primitive::Int),
+        &i
+    ));
+    // Nullable<Int> and plain Named do NOT unify or assign
     assert!(!unify(
+        &null_int,
+        &ArType::Named(SymbolId::new(0, 1), vec![]),
+        &i
+    ));
+    assert!(!is_assignable(
         &null_int,
         &ArType::Named(SymbolId::new(0, 1), vec![]),
         &i

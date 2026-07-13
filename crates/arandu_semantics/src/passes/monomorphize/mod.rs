@@ -271,10 +271,18 @@ mod tests {
 
     #[test]
     fn test_demangle_roundtrip() {
-        let demangled = demangle_symbol("_A$identity$I__int_$E");
+        let demangled = demangle_symbol("_A$identity$I_int_$E");
         assert!(demangled.is_some());
         let s = demangled.unwrap();
-        assert!(s.contains("identity"), "got: {s}");
+        assert_eq!(s, "identity<int>");
+    }
+
+    #[test]
+    fn test_demangle_with_underscores() {
+        let demangled = demangle_symbol("_A$identity$I_my_struct_T_other_struct_$E");
+        assert!(demangled.is_some());
+        let s = demangled.unwrap();
+        assert_eq!(s, "identity<my_struct, other_struct>");
     }
 
     #[test]
@@ -347,15 +355,23 @@ func main() {
         let program = arandu_parser::parse(&src).expect("parse failed");
         let resolution = arandu_resolve::resolve_for_test(0, &program);
         let mut tc = crate::passes::type_checker::type_check(resolution, &program);
-        assert!(tc.diagnostics.is_empty(), "type check failed: {:?}", tc.diagnostics);
-        let hir = crate::passes::lower_hir::lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
+        assert!(
+            tc.diagnostics.is_empty(),
+            "type check failed: {:?}",
+            tc.diagnostics
+        );
+        let hir =
+            crate::passes::lower_hir::lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
 
         let bump = bumpalo::Bump::new();
         let graph = analyze_instantiations(&tc, &hir, &bump).expect("analysis failed");
         assert!(!graph.is_empty());
 
         let allocated_bytes = bump.allocated_bytes();
-        assert!(allocated_bytes > 0, "Expected bump arena to have allocated bytes, got 0");
+        assert!(
+            allocated_bytes > 0,
+            "Expected bump arena to have allocated bytes, got 0"
+        );
     }
 
     fn define_symbol(st: &mut SymbolTable, name: &str) -> SymbolId {

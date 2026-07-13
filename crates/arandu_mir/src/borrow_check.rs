@@ -168,7 +168,7 @@ fn check_stmt(
         AmirStmt::Store { lhs, rhs } => {
             if lhs.projections.is_empty() {
                 // Mutation of the place while borrowed.
-                if place_borrowed(lhs.local, live, facts) {
+                if place_borrowed(lhs.local, live, facts, block) {
                     diags.push((
                         block,
                         conflict_diag(
@@ -179,6 +179,7 @@ fn check_stmt(
                             live,
                             "mutable borrow conflict",
                             "cannot assign while value is borrowed",
+                            block,
                         ),
                     ));
                 }
@@ -204,8 +205,11 @@ fn check_stmt(
             check_operand_move(op, point, live, facts, temp_origins, func, symbols, diags);
         }
         AmirStmt::Destroy(place) => {
-            if place_borrowed(place.local, live, facts) {
-                diags.push((block, destroy_diag(place.local, func, symbols, facts, live)));
+            if place_borrowed(place.local, live, facts, block) {
+                diags.push((
+                    block,
+                    destroy_diag(place.local, func, symbols, facts, live, block),
+                ));
             }
         }
         AmirStmt::StorageLive(_) | AmirStmt::StorageDead(_) | AmirStmt::Nop => {}
@@ -222,8 +226,8 @@ fn check_new_loan(
     symbols: &SymbolTable,
     diags: &mut Vec<(BlockId, Diagnostic)>,
 ) {
-    let active_shared = active_kind(place, LoanKind::Shared, live, facts);
-    let active_excl = active_kind(place, LoanKind::Exclusive, live, facts);
+    let active_shared = active_kind(place, LoanKind::Shared, live, facts, point.block);
+    let active_excl = active_kind(place, LoanKind::Exclusive, live, facts, point.block);
 
     let conflict = match kind {
         // `&` conflicts only with active `&mut`
@@ -246,6 +250,7 @@ fn check_new_loan(
                     LoanKind::Shared => "cannot borrow as shared while exclusively borrowed",
                     LoanKind::Exclusive => "cannot borrow as mutable while already borrowed",
                 },
+                point.block,
             ),
         ));
     }
@@ -370,17 +375,22 @@ fn check_operand_move(
     let Some(local) = temp_origins.get(temp.as_usize()).copied().flatten() else {
         return;
     };
-    if place_borrowed(local, live, facts) {
+    if place_borrowed(local, live, facts, point.block) {
         diags.push((
             point.block,
-            move_while_borrowed_diag(local, func, symbols, facts, live),
+            move_while_borrowed_diag(local, func, symbols, facts, live, point.block),
         ));
     }
 }
 
-fn place_borrowed(local: LocalId, live: &BitSet<TempId>, facts: &FuncBorrowFacts) -> bool {
-    active_kind(local, LoanKind::Shared, live, facts)
-        || active_kind(local, LoanKind::Exclusive, live, facts)
+fn place_borrowed(
+    local: LocalId,
+    live: &BitSet<TempId>,
+    facts: &FuncBorrowFacts,
+    current_block: BlockId,
+) -> bool {
+    active_kind(local, LoanKind::Shared, live, facts, current_block)
+        || active_kind(local, LoanKind::Exclusive, live, facts, current_block)
 }
 
 fn active_kind(
@@ -388,53 +398,35 @@ fn active_kind(
     kind: LoanKind,
     live: &BitSet<TempId>,
     facts: &FuncBorrowFacts,
+    current_block: BlockId,
 ) -> bool {
     for loan in &facts.loans {
         if loan.place_local != local || loan.kind != kind {
             continue;
         }
-        if loan_holders_live(loan, live, facts) {
+        if loan_holders_live(loan, live, facts, current_block) {
             return true;
         }
     }
     false
 }
 
-fn loan_holders_live(loan: &Loan, live: &BitSet<TempId>, facts: &FuncBorrowFacts) -> bool {
+fn loan_holders_live(
+    loan: &Loan,
+    live: &BitSet<TempId>,
+    facts: &FuncBorrowFacts,
+    current_block: BlockId,
+) -> bool {
     for t in loan.holder_temps.iter() {
         if live.contains(t) {
             return true;
         }
     }
-    // Holder locals: use block-level local liveness as sound over-approx when
-    // the local holds the ref (let p = &x). If any holder local is live-in or
-    // live-out of any block, we still need point precision — use: if the local
-    // is a holder and appears as still relevant via temp path after Load, the
-    // temp is in `live`. For pure local holders without reload, treat as active
-    // when local is live-out of the loan origin block or any block (coarse).
-    // Prefer: holder local active if live-in ∪ live-out of current analysis is
-    // not available here; use facts.local_live over all blocks is too coarse.
-    //
-    // Practical: if any holder_local is non-empty and any corresponding Load
-    // temps are already in holder_temps (propagation), temp set is enough.
-    // Fallback: if holder_locals non-empty and no holder temp live, still
-    // consider active when any holder local is live-out of loan origin
-    // (reference stored and not yet dead).
     for l in loan.holder_locals.iter() {
-        if facts.local_live.live_out(loan.origin_block).contains(l)
-            || facts.local_live.live_in(loan.origin_block).contains(l)
+        if facts.local_live.live_in(current_block).contains(l)
+            || facts.local_live.live_out(current_block).contains(l)
         {
-            // Only if no holder temp is still tracked as the sole path — still
-            // over-approx when local dies mid-function after origin.
-            // Check all blocks' live-out for this local:
-            for bi in 0..facts.block_out.len() {
-                let bid = BlockId::from_usize(bi);
-                if facts.local_live.live_in(bid).contains(l)
-                    || facts.local_live.live_out(bid).contains(l)
-                {
-                    return true;
-                }
-            }
+            return true;
         }
     }
     false
@@ -515,23 +507,38 @@ fn mark_place_index_uses(place: &AmirPlace, live: &mut BitSet<TempId>) {
 /// Map each temp to a stack local origin when it is a Load of that local (move path).
 fn temp_origins_from_loads(func: &AmirFunc) -> Vec<Option<LocalId>> {
     let mut origins = vec![None; func.temps.len()];
-    for block in &func.blocks {
-        for stmt in func.block_stmts(block.id) {
-            if let AmirStmt::Assign {
-                lhs,
-                rhs: AmirRvalue::Load(place),
-            } = stmt
-                && place.projections.is_empty()
-            {
-                origins[lhs.as_usize()] = Some(place.local);
-            }
-            if let AmirStmt::Assign {
-                lhs,
-                rhs: AmirRvalue::Use(AmirOperand::Copy(t) | AmirOperand::Move(t)),
-            } = stmt
-                && origins[lhs.as_usize()].is_none()
-            {
-                origins[lhs.as_usize()] = origins[t.as_usize()];
+    let mut changed = true;
+    let mut iterations = 0;
+    while changed && iterations < 100 {
+        changed = false;
+        iterations += 1;
+        for block in &func.blocks {
+            for stmt in func.block_stmts(block.id) {
+                if let AmirStmt::Assign {
+                    lhs,
+                    rhs: AmirRvalue::Load(place),
+                } = stmt
+                    && place.projections.is_empty()
+                {
+                    let old = origins[lhs.as_usize()];
+                    let new = Some(place.local);
+                    if old != new {
+                        origins[lhs.as_usize()] = new;
+                        changed = true;
+                    }
+                }
+                if let AmirStmt::Assign {
+                    lhs,
+                    rhs: AmirRvalue::Use(AmirOperand::Copy(t) | AmirOperand::Move(t)),
+                } = stmt
+                {
+                    let old = origins[lhs.as_usize()];
+                    let new = origins[t.as_usize()];
+                    if old != new {
+                        origins[lhs.as_usize()] = new;
+                        changed = true;
+                    }
+                }
             }
         }
     }
@@ -575,12 +582,13 @@ fn first_loan_span(
     live: &BitSet<TempId>,
     func: &AmirFunc,
     symbols: &SymbolTable,
+    current_block: BlockId,
 ) -> Span {
     for loan in &facts.loans {
         if loan.place_local != local {
             continue;
         }
-        if !loan_holders_live(loan, live, facts) {
+        if !loan_holders_live(loan, live, facts, current_block) {
             continue;
         }
         // Prefer a holder temp span.
@@ -602,10 +610,11 @@ fn move_while_borrowed_diag(
     symbols: &SymbolTable,
     facts: &FuncBorrowFacts,
     live: &BitSet<TempId>,
+    current_block: BlockId,
 ) -> Diagnostic {
     let name = local_name(local, func, symbols);
     let span = local_span(local, func, symbols);
-    let origin = first_loan_span(local, facts, live, func, symbols);
+    let origin = first_loan_span(local, facts, live, func, symbols, current_block);
     Diagnostic::error(
         DiagCode::O002MoveWhileBorrowed,
         format!("cannot move '{name}' while borrowed"),
@@ -621,10 +630,11 @@ fn destroy_diag(
     symbols: &SymbolTable,
     facts: &FuncBorrowFacts,
     live: &BitSet<TempId>,
+    current_block: BlockId,
 ) -> Diagnostic {
     let name = local_name(local, func, symbols);
     let span = local_span(local, func, symbols);
-    let origin = first_loan_span(local, facts, live, func, symbols);
+    let origin = first_loan_span(local, facts, live, func, symbols, current_block);
     Diagnostic::error(
         DiagCode::O006DestroyWhileBorrowed,
         format!("cannot destroy '{name}' while borrowed"),
@@ -642,10 +652,11 @@ fn conflict_diag(
     live: &BitSet<TempId>,
     _prefix: &str,
     note: &str,
+    current_block: BlockId,
 ) -> Diagnostic {
     let name = local_name(local, func, symbols);
     let span = local_span(local, func, symbols);
-    let origin = first_loan_span(local, facts, live, func, symbols);
+    let origin = first_loan_span(local, facts, live, func, symbols, current_block);
     Diagnostic::error(
         DiagCode::O003MutableBorrowConflict,
         format!("mutable borrow conflict on '{name}'"),

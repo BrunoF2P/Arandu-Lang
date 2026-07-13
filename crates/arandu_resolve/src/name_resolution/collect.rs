@@ -105,8 +105,10 @@ impl<'a> Resolver<'a> {
                     ) {
                         Ok(symbol) => {
                             self.resolved.define(*span, symbol);
-                            if let Some(type_sym) = self.symbols.lookup_type(global, &receiver_str) {
-                                self.symbols.associated_members
+                            if let Some(type_sym) = self.symbols.lookup_type(global, &receiver_str)
+                            {
+                                self.symbols
+                                    .associated_members
                                     .entry(type_sym)
                                     .or_default()
                                     .insert(name.clone(), symbol);
@@ -139,7 +141,9 @@ impl<'a> Resolver<'a> {
             }
             TopLevelDecl::Enum(decl) => {
                 let pub_ = is_public(decl.visibility);
-                if let Some(enum_sym) = self.define_vis(scope, &decl.name, SymbolKind::Enum, decl.span, pub_) {
+                if let Some(enum_sym) =
+                    self.define_vis(scope, &decl.name, SymbolKind::Enum, decl.span, pub_)
+                {
                     // Variants inherit the enum's export visibility (public enum → public ctors).
                     for variant in &decl.variants {
                         if let Ok(symbol) = self.symbols.define_associated_member_vis(

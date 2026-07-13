@@ -471,9 +471,7 @@ fn interface_subst_for_concrete(
 }
 
 fn lookup_method_type(checker: &TypeChecker, type_id: SymbolId, method: &str) -> Option<ArType> {
-    let sym = checker
-        .symbols
-        .lookup_associated_member(type_id, method)?;
+    let sym = checker.symbols.lookup_associated_member(type_id, method)?;
     checker.decl_type(sym)
 }
 
@@ -542,19 +540,19 @@ mod tests {
     use super::*;
     use crate::type_checker::ResolvedNames;
     use crate::type_checker::types::Primitive;
-    use arandu_middle::symbol_table::{SymbolTable, Symbol};
-    use arandu_middle::{SymbolId, SymbolKind, ScopeId};
-    use arandu_parser::ast_pool::AstPool;
-    use arandu_parser::Program;
     use arandu_lexer::Span;
-    
+    use arandu_middle::symbol_table::{Symbol, SymbolTable};
+    use arandu_middle::{ScopeId, SymbolId, SymbolKind};
+    use arandu_parser::Program;
+    use arandu_parser::ast_pool::AstPool;
+
     #[test]
     fn test_collect_interfaces_and_constraints_empty() {
         let pool = AstPool::default();
         let symbols = SymbolTable::new(0);
         let resolved = ResolvedNames::default();
         let mut checker = TypeChecker::new(symbols, resolved, Vec::new(), &pool);
-        
+
         let program = Program {
             span: Span::new(0, 0, 0),
             module: None,
@@ -572,7 +570,7 @@ mod tests {
     fn test_type_satisfies_interface() {
         let pool = AstPool::default();
         let mut symbols = SymbolTable::new(0);
-        
+
         let iface_sym = SymbolId::new(1, 0);
         let iface_symbol = Symbol {
             id: iface_sym,
@@ -626,12 +624,21 @@ mod tests {
 
         let self_type_id = checker.intern(ArType::Named(struct_sym_id, Vec::new()));
         let self_interface_type_id = checker.intern(ArType::Named(self_sym_id, Vec::new()));
-        let req_method_type = ArType::Func(vec![self_interface_type_id], checker.intern(ArType::Primitive(Primitive::Int)));
-        let prov_method_type = ArType::Func(vec![self_type_id], checker.intern(ArType::Primitive(Primitive::Int)));
+        let req_method_type = ArType::Func(
+            vec![self_interface_type_id],
+            checker.intern(ArType::Primitive(Primitive::Int)),
+        );
+        let prov_method_type = ArType::Func(
+            vec![self_type_id],
+            checker.intern(ArType::Primitive(Primitive::Int)),
+        );
         let req_method_type_id = checker.intern(req_method_type);
         let prov_method_type_id = checker.intern(prov_method_type);
 
-        checker.type_info.decl_types.insert(method_sym_id, prov_method_type_id);
+        checker
+            .type_info
+            .decl_types
+            .insert(method_sym_id, prov_method_type_id);
 
         let iface_info = InterfaceInfo {
             methods: vec![("read".into(), req_method_type_id)],
@@ -639,11 +646,21 @@ mod tests {
         checker.type_info.interfaces.insert(iface_sym, iface_info);
 
         let concrete = ArType::Named(struct_sym_id, Vec::new());
-        assert!(type_satisfies_interface(&mut checker, &concrete, iface_sym, Span::new(0, 0, 0)));
+        assert!(type_satisfies_interface(
+            &mut checker,
+            &concrete,
+            iface_sym,
+            Span::new(0, 0, 0)
+        ));
 
         checker.symbols.associated_members.clear();
-        assert!(!type_satisfies_interface(&mut checker, &concrete, iface_sym, Span::new(0, 0, 0)));
-        
+        assert!(!type_satisfies_interface(
+            &mut checker,
+            &concrete,
+            iface_sym,
+            Span::new(0, 0, 0)
+        ));
+
         let missing = missing_interface_methods(&mut checker, &concrete, iface_sym);
         assert_eq!(missing, vec!["read".to_string()]);
     }

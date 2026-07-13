@@ -3,6 +3,16 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LineIndex {
     pub line_starts: Vec<u32>,
+    pub source: String,
+}
+
+impl Default for LineIndex {
+    fn default() -> Self {
+        Self {
+            line_starts: vec![0],
+            source: String::new(),
+        }
+    }
 }
 
 impl LineIndex {
@@ -15,7 +25,10 @@ impl LineIndex {
                 line_starts.push((offset + 1) as u32);
             }
         }
-        Self { line_starts }
+        Self {
+            line_starts,
+            source: source.to_string(),
+        }
     }
 
     /// Converts a byte offset into 1-based (line, column) numbers.
@@ -25,8 +38,22 @@ impl LineIndex {
             .line_starts
             .partition_point(|&s| s <= offset)
             .saturating_sub(1);
-        let col = offset - self.line_starts[line] + 1;
-        ((line + 1) as u32, col)
+        let line_start_byte = self.line_starts[line] as usize;
+        let original_offset = offset as usize;
+        let offset_byte = original_offset.min(self.source.len());
+
+        let mut col = 0;
+        if offset_byte > line_start_byte {
+            let line_slice = &self.source[line_start_byte..offset_byte];
+            for c in line_slice.chars() {
+                col += c.len_utf16();
+            }
+        }
+        if original_offset > offset_byte {
+            col += original_offset - offset_byte;
+        }
+
+        ((line + 1) as u32, (col + 1) as u32)
     }
 }
 
@@ -55,5 +82,21 @@ mod tests {
 
         // Out of bounds: should saturate/cap nicely
         assert_eq!(index.line_col(20), (3, 13));
+    }
+
+    #[test]
+    fn test_line_index_unicode() {
+        // "é" takes 2 bytes, Emoji "😀" takes 4 bytes (2 UTF-16 code units)
+        let source = "é\n😀\n";
+        let index = LineIndex::new(source);
+
+        // "é\n": "é" starts at byte offset 0, takes 2 bytes. "\n" at 2.
+        assert_eq!(index.line_col(0), (1, 1));
+        assert_eq!(index.line_col(2), (1, 2));
+
+        // "😀\n": "😀" starts at byte offset 3, takes 4 bytes. "\n" at 7.
+        assert_eq!(index.line_col(3), (2, 1));
+        // Byte offset 7 is "\n". Its column in UTF-16 from line start is 2 (since Emoji takes 2 UTF-16 code units).
+        assert_eq!(index.line_col(7), (2, 3));
     }
 }

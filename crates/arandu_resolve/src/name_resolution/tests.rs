@@ -481,7 +481,11 @@ fn collect_top_level_enum_with_variants() {
     let sym = r.symbols.lookup_type(ScopeId(0), "Color");
     assert!(sym.is_some());
     let color_sym = r.symbols.lookup_type(ScopeId(0), "Color").unwrap();
-    assert!(r.symbols.lookup_associated_member(color_sym, "Red").is_some());
+    assert!(
+        r.symbols
+            .lookup_associated_member(color_sym, "Red")
+            .is_some()
+    );
     assert!(
         r.symbols
             .lookup_associated_member(color_sym, "Blue")

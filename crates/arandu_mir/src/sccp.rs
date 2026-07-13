@@ -55,10 +55,8 @@ fn raw_cfg_reachable<'bump>(
     bump: &'bump bumpalo::Bump,
 ) -> bumpalo::collections::Vec<'bump, bool> {
     let n = func.blocks.len();
-    let mut reachable = bumpalo::collections::Vec::from_iter_in(
-        std::iter::repeat_n(false, n),
-        bump,
-    );
+    let mut reachable =
+        bumpalo::collections::Vec::from_iter_in(std::iter::repeat_n(false, n), bump);
     if n == 0 {
         return reachable;
     }
@@ -95,10 +93,8 @@ fn analyse<'bump>(
         std::iter::repeat_n(LatticeVal::Undefined, n_temps),
         bump,
     );
-    let mut reachable = bumpalo::collections::Vec::from_iter_in(
-        std::iter::repeat_n(false, n_blocks),
-        bump,
-    );
+    let mut reachable =
+        bumpalo::collections::Vec::from_iter_in(std::iter::repeat_n(false, n_blocks), bump);
     reachable[0] = true;
 
     // RPO once – covers all statically reachable blocks.

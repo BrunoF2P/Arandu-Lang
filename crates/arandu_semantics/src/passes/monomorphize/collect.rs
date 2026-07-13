@@ -77,7 +77,11 @@ impl<'a, 'bump> InstantiationAnalyzer<'a, 'bump> {
         self.insert_key(InstantiationKey { symbol, type_args }, Span::new(0, 0, 0))
     }
 
-    fn insert_key(&mut self, key: InstantiationKey<'bump>, span: Span) -> Option<InstantiationNodeId> {
+    fn insert_key(
+        &mut self,
+        key: InstantiationKey<'bump>,
+        span: Span,
+    ) -> Option<InstantiationNodeId> {
         match self
             .graph
             .get_or_insert(&key, self.bump, self.interner, &self.tc.symbols)

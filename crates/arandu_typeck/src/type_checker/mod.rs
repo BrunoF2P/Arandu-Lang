@@ -336,6 +336,31 @@ impl TypeChecker<'_> {
         let constraint = Constraint {
             expected,
             found,
+            is_subtype: false,
+            origin,
+        };
+        let diag = errors::constraint_to_diagnostic(&constraint, &self.symbols, &self.type_info);
+        self.diagnostics.push(diag);
+    }
+
+    pub fn add_subtype_constraint(
+        &mut self,
+        expected: impl Into<ArTypeOrId>,
+        found: impl Into<ArTypeOrId>,
+        origin: ConstraintOrigin,
+    ) {
+        let expected = match expected.into() {
+            ArTypeOrId::Type(t) => t,
+            ArTypeOrId::Id(id) => self.resolve(id),
+        };
+        let found = match found.into() {
+            ArTypeOrId::Type(t) => t,
+            ArTypeOrId::Id(id) => self.resolve(id),
+        };
+        let constraint = Constraint {
+            expected,
+            found,
+            is_subtype: true,
             origin,
         };
         let diag = errors::constraint_to_diagnostic(&constraint, &self.symbols, &self.type_info);
@@ -372,6 +397,19 @@ impl TypeChecker<'_> {
         let a_ty = self.type_info.resolve_type_id(a);
         let b_ty = self.type_info.resolve_type_id(b);
         types::unify(&a_ty, &b_ty, &self.type_info.type_interner)
+    }
+
+    pub(crate) fn is_assignable(&self, actual: TypeId, expected: TypeId) -> bool {
+        if actual == expected {
+            return true;
+        }
+        let actual_ty = self.type_info.resolve_type_id(actual);
+        let expected_ty = self.type_info.resolve_type_id(expected);
+        types::is_assignable(&actual_ty, &expected_ty, &self.type_info.type_interner)
+    }
+
+    pub(crate) fn is_assignable_return_type(&self, expected: &ArType, actual: &ArType) -> bool {
+        types::is_assignable_return_type(expected, actual, &self.type_info.type_interner)
     }
 
     #[must_use]

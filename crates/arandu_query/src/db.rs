@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use crate::explain::RebuildLog;
 use salsa::Storage;
@@ -111,7 +111,7 @@ impl FileRegistry {
 #[salsa::db]
 pub struct DatabaseImpl {
     storage: Storage<Self>,
-    files: Arc<Mutex<FileRegistry>>,
+    files: Arc<RwLock<FileRegistry>>,
     /// Incremental CST reuse across `syntax_tree` queries (side cache; result still pure in text).
     cst_cache: Arc<Mutex<CstCache>>,
     /// Shared with the Salsa event callback when explain mode is on.
@@ -145,7 +145,7 @@ impl DatabaseImpl {
     pub fn new() -> Self {
         Self {
             storage: Storage::new(None),
-            files: Arc::new(Mutex::new(FileRegistry::default())),
+            files: Arc::new(RwLock::new(FileRegistry::default())),
             cst_cache: Arc::new(Mutex::new(CstCache::default())),
             rebuild_log: None,
         }
@@ -158,7 +158,7 @@ impl DatabaseImpl {
         let callback = RebuildLog::salsa_callback(Arc::clone(&log));
         let db = Self {
             storage: Storage::new(Some(callback)),
-            files: Arc::new(Mutex::new(FileRegistry::default())),
+            files: Arc::new(RwLock::new(FileRegistry::default())),
             cst_cache: Arc::new(Mutex::new(CstCache::default())),
             rebuild_log: Some(Arc::clone(&log)),
         };
@@ -171,7 +171,7 @@ impl DatabaseImpl {
     }
 
     pub fn new_file(&mut self, path: String, text: String) -> SourceFile {
-        let mut reg = self.files.lock().unwrap_or_else(|e| e.into_inner());
+        let mut reg = self.files.write().unwrap_or_else(|e| e.into_inner());
         let file_id = reg.next_id();
         let file = SourceFile::new(
             self,
@@ -184,7 +184,7 @@ impl DatabaseImpl {
     }
 
     pub fn register_source_file(&self, path: String, file: SourceFile) {
-        let mut reg = self.files.lock().unwrap_or_else(|e| e.into_inner());
+        let mut reg = self.files.write().unwrap_or_else(|e| e.into_inner());
         let file_id = file.file_id(self.as_source_db());
         reg.insert(path, file_id, file);
     }
@@ -192,7 +192,7 @@ impl DatabaseImpl {
     /// O(1) reverse lookup: compiler `FileId` → open/registered [`SourceFile`].
     #[must_use]
     pub fn source_file_by_id(&self, file_id: FileId) -> Option<SourceFile> {
-        let reg = self.files.lock().unwrap_or_else(|e| e.into_inner());
+        let reg = self.files.read().unwrap_or_else(|e| e.into_inner());
         reg.by_id.get(&file_id).copied()
     }
 
@@ -251,7 +251,7 @@ impl arandu_middle::db::SourceDatabase for DatabaseImpl {
     fn resolve_module_path(&self, path: &str) -> Option<SourceFile> {
         // Fast path: O(1) lookup by import path string.
         {
-            let reg = self.files.lock().unwrap_or_else(|e| e.into_inner());
+            let reg = self.files.read().unwrap_or_else(|e| e.into_inner());
             if let Some(file) = reg.by_path.get(path) {
                 return Some(*file);
             }
@@ -276,7 +276,7 @@ impl arandu_middle::db::SourceDatabase for DatabaseImpl {
         let found_path = found_path?;
         let text = std::fs::read_to_string(&found_path).ok()?;
 
-        let mut reg = self.files.lock().unwrap_or_else(|e| e.into_inner());
+        let mut reg = self.files.write().unwrap_or_else(|e| e.into_inner());
         // Double-check: another thread may have inserted it while we were reading.
         if let Some(file) = reg.by_path.get(path) {
             return Some(*file);
@@ -294,7 +294,7 @@ impl arandu_middle::db::SourceDatabase for DatabaseImpl {
 impl ArandCompilerDb for DatabaseImpl {
     /// O(1) lookup by FileId via the reverse index.
     fn source_text(&self, file: FileId) -> Arc<str> {
-        let reg = self.files.lock().unwrap_or_else(|e| e.into_inner());
+        let reg = self.files.read().unwrap_or_else(|e| e.into_inner());
         reg.by_id
             .get(&file)
             .map(|f| f.text(self.as_source_db()))
@@ -303,7 +303,7 @@ impl ArandCompilerDb for DatabaseImpl {
 
     /// O(1) lookup by FileId via the reverse index.
     fn file_path(&self, file: FileId) -> Arc<PathBuf> {
-        let reg = self.files.lock().unwrap_or_else(|e| e.into_inner());
+        let reg = self.files.read().unwrap_or_else(|e| e.into_inner());
         reg.by_id
             .get(&file)
             .map(|f| f.path(self.as_source_db()))

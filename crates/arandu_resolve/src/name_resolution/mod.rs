@@ -99,30 +99,56 @@ pub fn resolve_imports_and_bodies(
 
         resolver.collect_import(global, import);
 
-        // Builtin prelude (`import io`, `import err`): members already live in
+        // Builtin prelude (`import io`, `import err`, `from io import ...`): members already live in
         // the symbol table from `define_prelude`. Do not require on-disk files.
         // Prefer a real file if one is registered; otherwise short-circuit.
-        if let arandu_parser::ImportDecl::ModuleAlias { path, alias, .. } = import
-            && let Some(prelude_name) = prelude_module_from_path(path)
-        {
+        if let Some(prelude_name) = match import {
+            arandu_parser::ImportDecl::ModuleAlias { path, .. }
+            | arandu_parser::ImportDecl::Named { path, .. } => prelude_module_from_path(path),
+            _ => None,
+        } {
             let file_key = format!("{prelude_name}.aru");
             if db.resolve_module_path(&file_key).is_none() {
-                // Alias points at the prelude module key used by module_members.
-                if alias.as_str() != prelude_name {
-                    resolver
-                        .import_aliases
-                        .insert(alias.clone(), SmolStr::new(prelude_name));
-                    // Typeck looks up members by the in-scope name (`out.println`
-                    // after `import io as out`), so mirror the prelude members
-                    // under the alias key as well.
-                    if let Some(members) =
-                        resolver.symbols.module_members.get(prelude_name).cloned()
-                    {
-                        resolver
-                            .symbols
-                            .module_members
-                            .insert(alias.clone(), members);
+                // It is indeed a built-in prelude module import!
+                match import {
+                    arandu_parser::ImportDecl::ModuleAlias { alias, .. } => {
+                        if alias.as_str() != prelude_name {
+                            resolver
+                                .import_aliases
+                                .insert(alias.clone(), SmolStr::new(prelude_name));
+                            if let Some(members) =
+                                resolver.symbols.module_members.get(prelude_name).cloned()
+                            {
+                                resolver
+                                    .symbols
+                                    .module_members
+                                    .insert(alias.clone(), members);
+                            }
+                        }
                     }
+                    arandu_parser::ImportDecl::Named { items, .. } => {
+                        for item in items {
+                            let member_name = &item.name;
+                            if let Some(&id) = resolver
+                                .symbols
+                                .module_members
+                                .get(prelude_name)
+                                .and_then(|m| m.get(member_name))
+                            {
+                                let import_name = item.alias.as_ref().unwrap_or(&item.name).clone();
+                                let sym = arandu_middle::Symbol {
+                                    id,
+                                    name: import_name.clone(),
+                                    kind: arandu_middle::SymbolKind::NamespaceMember,
+                                    span: item.span,
+                                    scope: global,
+                                    is_public: true,
+                                };
+                                let _ = resolver.symbols.insert_imported(sym);
+                            }
+                        }
+                    }
+                    _ => {}
                 }
                 continue;
             }
@@ -142,16 +168,20 @@ pub fn resolve_imports_and_bodies(
                         // exports so that when we encounter an AssociatedFunc like
                         // "Widget.ok", we can resolve "Widget"'s SymbolId even before
                         // it appears in the global scope of the importing file.
-                        let exported_types: rustc_hash::FxHashMap<&str, arandu_middle::SymbolId> = exports
-                            .symbols
-                            .iter()
-                            .filter(|&(_, &(_, k))| {
-                                matches!(k, arandu_middle::SymbolKind::Struct
-                                    | arandu_middle::SymbolKind::Enum
-                                    | arandu_middle::SymbolKind::TypeAlias)
-                            })
-                            .map(|(n, &(id, _))| (n.as_str(), id))
-                            .collect();
+                        let exported_types: rustc_hash::FxHashMap<&str, arandu_middle::SymbolId> =
+                            exports
+                                .symbols
+                                .iter()
+                                .filter(|&(_, &(_, k))| {
+                                    matches!(
+                                        k,
+                                        arandu_middle::SymbolKind::Struct
+                                            | arandu_middle::SymbolKind::Enum
+                                            | arandu_middle::SymbolKind::TypeAlias
+                                    )
+                                })
+                                .map(|(n, &(id, _))| (n.as_str(), id))
+                                .collect();
                         for (name, &(id, kind)) in &exports.symbols {
                             let sym = arandu_middle::Symbol {
                                 id,
@@ -178,7 +208,9 @@ pub fn resolve_imports_and_bodies(
                                 // Try to resolve the receiver type's SymbolId from the
                                 // exported types in this module first (covers cross-module
                                 // methods), then fall back to the importing file's scope.
-                                let type_sym = exported_types.get(ty).copied()
+                                let type_sym = exported_types
+                                    .get(ty)
+                                    .copied()
                                     .or_else(|| resolver.symbols.lookup_type(global, ty));
                                 if let Some(type_sym) = type_sym {
                                     resolver
@@ -214,7 +246,9 @@ pub fn resolve_imports_and_bodies(
                                 };
                                 match resolver.symbols.insert_imported(sym) {
                                     Ok(Some(placeholder_id)) => {
-                                        if let Some(entry) = resolver.imported_symbols.remove(&placeholder_id) {
+                                        if let Some(entry) =
+                                            resolver.imported_symbols.remove(&placeholder_id)
+                                        {
                                             resolver.imported_symbols.insert(id, entry);
                                         }
                                     }

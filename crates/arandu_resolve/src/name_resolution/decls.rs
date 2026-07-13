@@ -288,15 +288,22 @@ impl<'a> Resolver<'a> {
         for decl_id in &program.decls {
             let decl = self.pool.decl(*decl_id);
             if let arandu_parser::TopLevelDecl::Func(decl) = decl
-                && let arandu_parser::FuncName::Method { ref receiver, ref name, ref span } = decl.name
-                    && self.resolve_type_name(global, receiver)
-                        && let Some(struct_sym) = self.resolved.type_refs.get(&receiver.span.into()).copied()
-                            && let Some(method_sym) = self.resolved.definitions.get(&(*span).into()).copied() {
-                                self.symbols.associated_members
-                                    .entry(struct_sym)
-                                    .or_default()
-                                    .insert(name.clone(), method_sym);
-                            }
+                && let arandu_parser::FuncName::Method {
+                    ref receiver,
+                    ref name,
+                    ref span,
+                } = decl.name
+                && self.resolve_type_name(global, receiver)
+                && let Some(struct_sym) =
+                    self.resolved.type_refs.get(&receiver.span.into()).copied()
+                && let Some(method_sym) = self.resolved.definitions.get(&(*span).into()).copied()
+            {
+                self.symbols
+                    .associated_members
+                    .entry(struct_sym)
+                    .or_default()
+                    .insert(name.clone(), method_sym);
+            }
         }
     }
 }
