@@ -170,7 +170,7 @@ pub fn resolve_imports_and_bodies(
                                 // Import is "used" when it supplies methods for
                                 // builtin types (`Result.expectOrAbort`) even if
                                 // the alias name never appears in source.
-                                if matches!(ty, "Result" | "Option")
+                                if resolver.symbols.lookup_type(global, ty).is_some()
                                     && let Some(alias_sym) =
                                         resolver.symbols.lookup_module(global, alias.as_str())
                                 {

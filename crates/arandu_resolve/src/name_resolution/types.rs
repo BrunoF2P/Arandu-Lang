@@ -89,10 +89,9 @@ impl<'a> Resolver<'a> {
             ));
             return false;
         }
-        if matches!(
-            root.as_str(),
-            "Coroutine" | "Poll" | "Option" | "Result" | "void" | "Err"
-        ) {
+        if self.symbols.lookup_type(self.symbols.global_scope(), root).is_some()
+            || matches!(root.as_str(), "void" | "Err")
+        {
             return true;
         }
         let mut diagnostic = Diagnostic::error(

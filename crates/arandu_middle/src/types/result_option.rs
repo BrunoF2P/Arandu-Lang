@@ -82,50 +82,54 @@ pub(crate) fn lower_builtin_generic(
     ctx: &LowerCtx<'_>,
     interner: &mut TypeInterner,
 ) -> Option<ArType> {
-    let base = type_name_base(name);
+    let resolved_sym = ctx.resolved.type_refs.get(&name.span.into()).copied()?;
+    let global = ctx.symbols.global_scope();
+
+    let result_sym = ctx.symbols.lookup_type(global, "Result");
+    let option_sym = ctx.symbols.lookup_type(global, "Option");
+    let coroutine_sym = ctx.symbols.lookup_type(global, "Coroutine");
+    let poll_sym = ctx.symbols.lookup_type(global, "Poll");
+
     let lowered: Vec<ArType> = args
         .iter()
         .map(|&a| super::lower::lower_type_expr_ctx(a, ctx, interner))
         .collect();
-    match (base, lowered.len()) {
-        ("Result", 2) => {
-            let mut it = lowered.into_iter();
-            if let (Some(ok), Some(err)) = (it.next(), it.next()) {
-                let ok_id = interner.intern(ok);
-                let err_id = interner.intern(err);
-                Some(ArType::Result(ok_id, err_id))
-            } else {
-                None
-            }
+
+    if Some(resolved_sym) == result_sym && lowered.len() == 2 {
+        let mut it = lowered.into_iter();
+        if let (Some(ok), Some(err)) = (it.next(), it.next()) {
+            let ok_id = interner.intern(ok);
+            let err_id = interner.intern(err);
+            Some(ArType::Result(ok_id, err_id))
+        } else {
+            None
         }
-        ("Option", 1) => {
-            let mut it = lowered.into_iter();
-            if let Some(inner) = it.next() {
-                let id = interner.intern(inner);
-                Some(ArType::Option(id))
-            } else {
-                None
-            }
+    } else if Some(resolved_sym) == option_sym && lowered.len() == 1 {
+        let mut it = lowered.into_iter();
+        if let Some(inner) = it.next() {
+            let id = interner.intern(inner);
+            Some(ArType::Option(id))
+        } else {
+            None
         }
-        ("Coroutine", 1) => {
-            let mut it = lowered.into_iter();
-            if let Some(inner) = it.next() {
-                let id = interner.intern(inner);
-                Some(ArType::Coroutine(id))
-            } else {
-                None
-            }
+    } else if Some(resolved_sym) == coroutine_sym && lowered.len() == 1 {
+        let mut it = lowered.into_iter();
+        if let Some(inner) = it.next() {
+            let id = interner.intern(inner);
+            Some(ArType::Coroutine(id))
+        } else {
+            None
         }
-        ("Poll", 1) => {
-            let mut it = lowered.into_iter();
-            if let Some(inner) = it.next() {
-                let id = interner.intern(inner);
-                Some(ArType::Poll(id))
-            } else {
-                None
-            }
+    } else if Some(resolved_sym) == poll_sym && lowered.len() == 1 {
+        let mut it = lowered.into_iter();
+        if let Some(inner) = it.next() {
+            let id = interner.intern(inner);
+            Some(ArType::Poll(id))
+        } else {
+            None
         }
-        _ => None,
+    } else {
+        None
     }
 }
 

@@ -21,7 +21,10 @@ pub(crate) fn synth_result_ctor(
     span: Span,
 ) -> Option<ArType> {
     let (type_name, member) = type_path_member(checker.pool, callee)?;
-    if super::super::types::type_name_base(type_name) != "Result" {
+    let global_scope = checker.symbols.global_scope();
+    let result_sym = checker.symbols.lookup_type(global_scope, "Result")?;
+    let resolved_sym = checker.resolved.type_refs.get(&type_name.span.into()).copied()?;
+    if resolved_sym != result_sym {
         return None;
     }
     let arg_ids = checker.pool.expr_list(args).to_vec();
@@ -69,7 +72,10 @@ pub(crate) fn synth_option_ctor(
     span: Span,
 ) -> Option<ArType> {
     let (type_name, member) = type_path_member(checker.pool, callee)?;
-    if super::super::types::type_name_base(type_name) != "Option" {
+    let global_scope = checker.symbols.global_scope();
+    let option_sym = checker.symbols.lookup_type(global_scope, "Option")?;
+    let resolved_sym = checker.resolved.type_refs.get(&type_name.span.into()).copied()?;
+    if resolved_sym != option_sym {
         return None;
     }
     let arg_ids = checker.pool.expr_list(args).to_vec();
@@ -347,7 +353,10 @@ pub(crate) fn synth_poll_ctor(
     span: Span,
 ) -> Option<ArType> {
     let (type_name, member) = type_path_member(checker.pool, callee)?;
-    if super::super::types::type_name_base(type_name) != "Poll" {
+    let global_scope = checker.symbols.global_scope();
+    let poll_sym = checker.symbols.lookup_type(global_scope, "Poll")?;
+    let resolved_sym = checker.resolved.type_refs.get(&type_name.span.into()).copied()?;
+    if resolved_sym != poll_sym {
         return None;
     }
     let arg_ids = checker.pool.expr_list(args).to_vec();

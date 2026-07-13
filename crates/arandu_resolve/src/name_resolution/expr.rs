@@ -28,6 +28,7 @@ impl<'a> Resolver<'a> {
                 }
             }
             ExprKind::TypePath { type_name, member } => {
+                let type_resolved = self.resolve_type_name(scope, type_name);
                 let base = type_name.path.last().map_or("", |s| s.as_str());
                 if matches!(
                     (base, member.as_str()),
@@ -37,7 +38,6 @@ impl<'a> Resolver<'a> {
                 ) {
                     return;
                 }
-                let type_resolved = self.resolve_type_name(scope, type_name);
                 if type_resolved {
                     let ty = type_name.path.join(".");
                     if let Some(symbol) = self.symbols.lookup_associated_member(&ty, member) {
