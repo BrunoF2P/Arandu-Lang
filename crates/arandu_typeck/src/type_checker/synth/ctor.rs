@@ -535,10 +535,7 @@ pub(crate) fn synth_method_call(
     };
 
     // Effective parent SymbolId for the method lookup.
-    let effective_id = struct_id.or(builtin_id);
-    let Some(effective_id) = effective_id else {
-        return None;
-    };
+    let effective_id = struct_id.or(builtin_id)?;
 
     let method_sym = checker
         .symbols
