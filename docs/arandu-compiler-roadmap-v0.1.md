@@ -112,6 +112,10 @@ Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
    ├─ [x] A3.6   poll layout + block_on + `Poll[T]` typeck
    └─ [→] SL_R    Runtime async real (fila, Waker, I/O) — **próximo marco async**, não residual A3
 [ ] A4     Memory Layout Optimization Engine (field reordering, niche tags, SOO)
+   ├─ [ ] A4.0   Struct Field Reordering (eliminação de padding)
+   ├─ [ ] A4.1   Niche Optimization (Option/Enum Packing) — REQUER F2.0 referências seguras
+   ├─ [ ] A4.2   Pointer Tagging (metadados nos bits menos significativos)
+   └─ [ ] A4.3   Small Object Optimization (SOO) para tipos <= 24 bytes
 [x] F2     OSSA borrow completo — FECHADO no escopo de linguagem v0.3 compiler
    │  Residuals W3 (parcialmente fechados):
    │  · [x] auto-ref/auto-deref call args & method receivers (`T` ↔ `&T`/`&mut T`)
