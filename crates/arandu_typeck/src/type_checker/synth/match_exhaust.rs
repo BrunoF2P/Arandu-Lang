@@ -31,36 +31,14 @@ fn enum_variant_symbol_ids(
     checker: &TypeChecker<'_>,
     enum_id: crate::SymbolId,
 ) -> FxHashSet<crate::SymbolId> {
-    let enum_name = checker.symbols.get(enum_id).name.clone();
-    // Walk the raw enum_variants map to find all variants for this enum.
-    // Deduplicate by short name so we get exactly one SymbolId per variant.
-    let mut seen_names: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
     let mut ids = FxHashSet::default();
     for (variant_id, (parent_enum, _)) in &checker.type_info.enum_variants {
         if *parent_enum != enum_id {
             continue;
         }
-        let full = checker.symbols.get(*variant_id).name.clone();
-        let short = full
-            .strip_prefix(&format!("{enum_name}."))
-            .unwrap_or(&full)
-            .to_string();
-        if seen_names.insert(short.clone()) {
-            let mut canonical_opt = None;
-            for (&var_id, &(parent_id, _)) in &checker.type_info.enum_variants {
-                if parent_id == enum_id {
-                    let var_name = &checker.symbols.get(var_id).name;
-                    if var_name == &short || var_name.ends_with(&format!(".{}", short)) {
-                        canonical_opt = Some(var_id);
-                        break;
-                    }
-                }
-            }
-            if let Some(canonical) = canonical_opt {
-                ids.insert(canonical);
-            } else {
-                ids.insert(*variant_id);
-            }
+        let sym = checker.symbols.get(*variant_id);
+        if sym.kind == arandu_middle::SymbolKind::AssociatedFunc {
+            ids.insert(*variant_id);
         }
     }
     ids
@@ -75,34 +53,19 @@ fn pattern_to_variant_symbol_id(
     enum_id: crate::SymbolId,
     pat: PatternId,
 ) -> Option<crate::SymbolId> {
+    let enum_name = &checker.symbols.get(enum_id).name;
     match checker.pool.pattern(pat) {
         // `Variant` or `EnumName.Variant`
         Pattern::Enum { variant, .. } => {
             let short = variant
                 .rsplit_once('.')
                 .map_or(variant.as_str(), |(_, s)| s);
-            for (&var_id, &(parent_id, _)) in &checker.type_info.enum_variants {
-                if parent_id == enum_id {
-                    let var_name = &checker.symbols.get(var_id).name;
-                    if var_name == short || var_name.ends_with(&format!(".{}", short)) {
-                        return Some(var_id);
-                    }
-                }
-            }
-            None
+            checker.symbols.lookup_associated_member(enum_name, short)
         }
         // `EnumName.Variant(...)` style
         Pattern::TypeTuple { name, .. } => {
             let short = name.rsplit_once('.').map_or(name.as_str(), |(_, s)| s);
-            for (&var_id, &(parent_id, _)) in &checker.type_info.enum_variants {
-                if parent_id == enum_id {
-                    let var_name = &checker.symbols.get(var_id).name;
-                    if var_name == short || var_name.ends_with(&format!(".{}", short)) {
-                        return Some(var_id);
-                    }
-                }
-            }
-            None
+            checker.symbols.lookup_associated_member(enum_name, short)
         }
         _ => None,
     }
@@ -147,15 +110,13 @@ pub fn check_match_exhaustiveness(
 
     // Compute missing variants. String names are only materialised here,
     // which is the cold (error) path.
-    let enum_name = checker.symbols.get(enum_id).name.clone();
+    let enum_name = &checker.symbols.get(enum_id).name;
+    let prefix = format!("{}.", enum_name);
     let mut missing: Vec<String> = all_variants
         .difference(&covered)
         .map(|&sym| {
-            let full = checker.symbols.get(sym).name.clone();
-            // Strip "EnumName." prefix to produce a short diagnostic name.
-            full.strip_prefix(&format!("{enum_name}."))
-                .unwrap_or(&full)
-                .to_string()
+            let full = &checker.symbols.get(sym).name;
+            full.strip_prefix(&prefix).unwrap_or(full).to_string()
         })
         .collect();
 
