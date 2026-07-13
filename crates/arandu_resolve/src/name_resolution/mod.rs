@@ -212,19 +212,27 @@ pub fn resolve_imports_and_bodies(
                                     scope: global,
                                     is_public: true, // only public symbols appear in exports
                                 };
-                                if let Err(existing) = resolver.symbols.insert_imported(sym) {
-                                    let existing_span = resolver.symbols.get(existing).span;
-                                    resolver.diagnostics.push(
-                                        arandu_middle::Diagnostic::error(
-                                            arandu_middle::DiagCode::N006ImportConflict,
-                                            format!(
-                                                "import `{}` conflicts with an existing declaration",
-                                                import_name
-                                            ),
-                                            item.span,
-                                        )
-                                        .with_label(existing_span, "already defined here"),
-                                    );
+                                match resolver.symbols.insert_imported(sym) {
+                                    Ok(Some(placeholder_id)) => {
+                                        if let Some(entry) = resolver.imported_symbols.remove(&placeholder_id) {
+                                            resolver.imported_symbols.insert(id, entry);
+                                        }
+                                    }
+                                    Ok(None) => {}
+                                    Err(existing) => {
+                                        let existing_span = resolver.symbols.get(existing).span;
+                                        resolver.diagnostics.push(
+                                            arandu_middle::Diagnostic::error(
+                                                arandu_middle::DiagCode::N006ImportConflict,
+                                                format!(
+                                                    "import `{}` conflicts with an existing declaration",
+                                                    import_name
+                                                ),
+                                                item.span,
+                                            )
+                                            .with_label(existing_span, "already defined here"),
+                                        );
+                                    }
                                 }
                             } else {
                                 // Missing or private: not in the export table.

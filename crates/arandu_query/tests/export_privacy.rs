@@ -146,3 +146,29 @@ fn private_associated_method_not_exported() {
         exports.symbols.keys().collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn named_import_of_public_works() {
+    let mut db = DatabaseImpl::default();
+    let _lib = db.new_file(
+        "lib.aru".to_string(),
+        r#"
+            public func public_fn(): int { return 42 }
+        "#
+        .to_string(),
+    );
+    let main = db.new_file(
+        "main.aru".to_string(),
+        r#"
+            from lib import { public_fn }
+            func main(): int { return public_fn() }
+        "#
+        .to_string(),
+    );
+    let tc = type_check(&db, main);
+    assert!(
+        tc.diagnostics.is_empty(),
+        "named import of public function should work without conflicts, got: {:?}",
+        tc.diagnostics
+    );
+}

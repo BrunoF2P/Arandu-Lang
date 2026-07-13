@@ -507,10 +507,20 @@ impl SymbolTable {
     ///
     /// # Errors
     /// Returns `Err(existing)` if a different symbol with the same name already exists in the global scope.
-    pub fn insert_imported(&mut self, symbol: Symbol) -> Result<(), SymbolId> {
+    pub fn insert_imported(&mut self, symbol: Symbol) -> Result<Option<SymbolId>, SymbolId> {
         if let Some(existing) = self.find_in_scope(self.global_scope_id, &symbol.name) {
+            let existing_kind = self.get(existing).kind;
+            if existing_kind == SymbolKind::ImportType || existing_kind == SymbolKind::ImportValue {
+                // Replace placeholder in scope.
+                let scope_syms = &mut self.scope_mut(self.global_scope_id).symbols;
+                if let Some(pos) = scope_syms.iter().position(|&x| x == existing) {
+                    scope_syms[pos] = symbol.id;
+                }
+                self.imported_symbols.insert(symbol.id, symbol);
+                return Ok(Some(existing));
+            }
             if existing == symbol.id {
-                return Ok(()); // exact same symbol already imported
+                return Ok(None); // exact same symbol already imported
             }
             return Err(existing);
         }
@@ -518,7 +528,7 @@ impl SymbolTable {
         let id = symbol.id;
         self.imported_symbols.insert(id, symbol);
         self.scope_mut(self.global_scope_id).symbols.push(id);
-        Ok(())
+        Ok(None)
     }
 
     /// Registers a symbol from another file so it can be looked up by ID,
