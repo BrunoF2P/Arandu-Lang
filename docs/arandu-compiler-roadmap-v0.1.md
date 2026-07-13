@@ -72,6 +72,7 @@ Fase 2 — A Construção da Infraestrutura & Execução (v0.2) · [FECHADA no c
    │              · stack `&`/`&mut` local: F2.0–F2.3 (stack home + OSSA); heap/`&*p`/`&p.x`: path BC.4a
    │              · backend C: `format_place` com Deref lvalue
    ├─ [x] BC.4b  Await no Cranelift JIT (A3.0–A3.6: layout disc/payload + block_on; scheduler = SL_R)
+   ├─ [ ] BC.5   ABI Multi-valorizada para Tipos Nomeados (structs/enums) no Cranelift (atualmente passados via ponteiro no JIT)
    └─ [x] FUZZ   Fuzzing Lexer/Parser SIMD (arandu_fuzz e cron jobs semanais de robustez)
 [x] C_FB   Backend C de portabilidade e bootstrapping
 [x] DX     Diagnostics & Tooling Infrastructure (DX1-DX3, DX4 CFG visualization; DX2 recovery anchors completed)

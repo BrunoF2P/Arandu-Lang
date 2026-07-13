@@ -491,7 +491,8 @@ impl<'a> Parser<'a> {
     ) -> Result<ExprId, ParseError> {
         let span_start = self.pool.expr_span(callee);
         let trailing_block = self.parse_block()?;
-        let block_id = self.pool.alloc_block(trailing_block.clone());
+        let block_span = trailing_block.span;
+        let block_id = self.pool.alloc_block(trailing_block);
         let range = self.pool.alloc_expr_list(&[]);
         Ok(self.pool.alloc_expr(
             ExprKind::Call {
@@ -499,7 +500,7 @@ impl<'a> Parser<'a> {
                 args: range,
                 trailing_block: Some(block_id),
             },
-            span_between(span_start, trailing_block.span),
+            span_between(span_start, block_span),
         ))
     }
 

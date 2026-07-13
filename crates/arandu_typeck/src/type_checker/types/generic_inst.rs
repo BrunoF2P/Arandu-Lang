@@ -455,3 +455,82 @@ fn expand_aliases_rec(checker: &mut TypeChecker<'_>, ty: ArType, depth: usize) -
         other => other,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arandu_parser::GenericParam;
+    use crate::type_checker::ResolvedNames;
+    use crate::type_checker::types::Primitive;
+    use arandu_middle::symbol_table::SymbolTable;
+    use arandu_parser::ast_pool::AstPool;
+    use arandu_lexer::Span;
+
+    #[test]
+    fn test_extract_generic_param_symbols() {
+        let pool = AstPool::default();
+        let symbols = SymbolTable::new(0);
+        let mut resolved = ResolvedNames::default();
+
+        let span1 = Span::new(10, 20, 0);
+        let span2 = Span::new(30, 40, 0);
+
+        let sym1 = SymbolId::new(0, 1);
+        let sym2 = SymbolId::new(0, 2);
+
+        resolved.define(span1, sym1);
+        resolved.define(span2, sym2);
+
+        let checker = TypeChecker::new(symbols, resolved, Vec::new(), &pool);
+
+        let param1 = GenericParam {
+            span: span1,
+            name: "T".into(),
+            constraints: smallvec::SmallVec::new(),
+            default: None,
+        };
+        let param2 = GenericParam {
+            span: span2,
+            name: "U".into(),
+            constraints: smallvec::SmallVec::new(),
+            default: None,
+        };
+
+        let result = extract_generic_param_symbols(&checker, &[param1, param2]);
+        assert_eq!(result, vec![sym1, sym2]);
+    }
+
+    #[test]
+    fn test_struct_fields_instantiated() {
+        let pool = AstPool::default();
+        let mut symbols = SymbolTable::new(0);
+        
+        let struct_id = SymbolId::new(1, 0);
+        let struct_sym = arandu_middle::symbol_table::Symbol {
+            id: struct_id,
+            name: "MyStruct".into(),
+            kind: arandu_middle::SymbolKind::Struct,
+            span: Span::new(0, 0, 0),
+            scope: arandu_middle::ScopeId(0),
+            is_public: true,
+        };
+        symbols.register_imported_symbol(struct_sym);
+
+        let resolved = ResolvedNames::default();
+        let mut checker = TypeChecker::new(symbols, resolved, Vec::new(), &pool);
+
+        let param_sym = SymbolId::new(1, 1);
+        checker.type_info.generic_params.insert(struct_id, Arc::new(vec![param_sym]));
+
+        let param_type_id = checker.intern(ArType::Named(param_sym, Vec::new()));
+        let mut fields_map = rustc_hash::FxHashMap::default();
+        fields_map.insert("x".to_string(), param_type_id);
+        checker.type_info.struct_fields.insert(struct_id, Arc::new(fields_map));
+
+        let int_type = ArType::Primitive(Primitive::Int);
+        let fields = struct_fields_instantiated(&mut checker, struct_id, &[int_type]).unwrap();
+
+        let field_x_ty = fields.get("x").unwrap();
+        assert_eq!(field_x_ty, &ArType::Primitive(Primitive::Int));
+    }
+}

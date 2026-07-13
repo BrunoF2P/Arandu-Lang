@@ -419,3 +419,52 @@ pub fn print_perf_summary() {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::Ordering;
+
+    fn reset_flags() {
+        TIME_PASSES.store(false, Ordering::Relaxed);
+        PROFILE_QUERIES.store(false, Ordering::Relaxed);
+        PRINT_ALLOC_STATS.store(false, Ordering::Relaxed);
+        DUMP_MIR.store(false, Ordering::Relaxed);
+        DEBUG_PARSER.store(false, Ordering::Relaxed);
+        DEBUG_TYPECK.store(false, Ordering::Relaxed);
+        DEBUG_OSSA.store(false, Ordering::Relaxed);
+        DEBUG_LAYOUT.store(false, Ordering::Relaxed);
+        DEBUG_BACKEND.store(false, Ordering::Relaxed);
+        DEBUG_ALL.store(false, Ordering::Relaxed);
+        EXPLAIN_REBUILD.store(false, Ordering::Relaxed);
+        NO_GENERATIONAL_FALLBACK.store(false, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn test_init_z_flags() {
+        reset_flags();
+
+        init_z_flags(&[
+            "-Ztime-passes".to_string(),
+            "print-alloc-stats".to_string(),
+            "-Zexplain-rebuild".to_string(),
+        ]);
+
+        assert!(TIME_PASSES.load(Ordering::Relaxed));
+        assert!(PRINT_ALLOC_STATS.load(Ordering::Relaxed));
+        assert!(EXPLAIN_REBUILD.load(Ordering::Relaxed));
+
+        assert!(!DEBUG_PARSER.load(Ordering::Relaxed));
+        assert!(!DEBUG_TYPECK.load(Ordering::Relaxed));
+
+        init_z_flags(&[
+            "debug-parser".to_string(),
+            "-Zdebug-typeck".to_string(),
+        ]);
+
+        assert!(DEBUG_PARSER.load(Ordering::Relaxed));
+        assert!(DEBUG_TYPECK.load(Ordering::Relaxed));
+        
+        reset_flags();
+    }
+}

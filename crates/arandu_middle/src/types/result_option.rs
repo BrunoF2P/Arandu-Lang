@@ -89,21 +89,41 @@ pub(crate) fn lower_builtin_generic(
         .collect();
     match (base, lowered.len()) {
         ("Result", 2) => {
-            let ok_id = interner.intern(lowered[0].clone());
-            let err_id = interner.intern(lowered[1].clone());
-            Some(ArType::Result(ok_id, err_id))
+            let mut it = lowered.into_iter();
+            if let (Some(ok), Some(err)) = (it.next(), it.next()) {
+                let ok_id = interner.intern(ok);
+                let err_id = interner.intern(err);
+                Some(ArType::Result(ok_id, err_id))
+            } else {
+                None
+            }
         }
         ("Option", 1) => {
-            let id = interner.intern(lowered[0].clone());
-            Some(ArType::Option(id))
+            let mut it = lowered.into_iter();
+            if let Some(inner) = it.next() {
+                let id = interner.intern(inner);
+                Some(ArType::Option(id))
+            } else {
+                None
+            }
         }
         ("Coroutine", 1) => {
-            let id = interner.intern(lowered[0].clone());
-            Some(ArType::Coroutine(id))
+            let mut it = lowered.into_iter();
+            if let Some(inner) = it.next() {
+                let id = interner.intern(inner);
+                Some(ArType::Coroutine(id))
+            } else {
+                None
+            }
         }
         ("Poll", 1) => {
-            let id = interner.intern(lowered[0].clone());
-            Some(ArType::Poll(id))
+            let mut it = lowered.into_iter();
+            if let Some(inner) = it.next() {
+                let id = interner.intern(inner);
+                Some(ArType::Poll(id))
+            } else {
+                None
+            }
         }
         _ => None,
     }

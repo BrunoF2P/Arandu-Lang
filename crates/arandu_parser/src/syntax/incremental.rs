@@ -72,7 +72,8 @@ pub fn reparse_edit(
     _item_spans: &[(u32, u32)],
 ) -> (String, SyntaxTree) {
     let new_source = apply_text_edit(old_source, start, end, replacement);
-    (new_source.clone(), parse_syntax(&new_source))
+    let tree = parse_syntax(&new_source);
+    (new_source, tree)
 }
 
 /// Splice tokens for an edited ITEM: re-lex only the item slice; shift siblings.
@@ -180,23 +181,28 @@ pub fn reparse_subtree(
     let new_source = apply_text_edit(old.text(), edit_start, edit_end, replacement);
     let delta = replacement.len() as i64 - (edit_end.saturating_sub(edit_start) as i64);
 
+    let fallback = |new_source: String| {
+        let tree = parse_syntax(&new_source);
+        (new_source, tree)
+    };
+
     let old_items = old.items();
     let Some(idx) = old.item_index_at(edit_start) else {
-        return (new_source.clone(), parse_syntax(&new_source));
+        return fallback(new_source);
     };
     let old_range = old_items[idx].text_range();
     let old_s = u32::from(old_range.start());
     let old_e = u32::from(old_range.end());
     if edit_start < old_s || edit_end > old_e {
-        return (new_source.clone(), parse_syntax(&new_source));
+        return fallback(new_source);
     }
 
     let new_s = old_s;
     let Some(new_e) = (old_e as i64).checked_add(delta) else {
-        return (new_source.clone(), parse_syntax(&new_source));
+        return fallback(new_source);
     };
     if new_e < new_s as i64 || new_e as usize > new_source.len() {
-        return (new_source.clone(), parse_syntax(&new_source));
+        return fallback(new_source);
     }
     let new_e = new_e as u32;
 
@@ -218,7 +224,7 @@ pub fn reparse_subtree(
         }
     }
     let Some(child_index) = child_index else {
-        return (new_source.clone(), parse_syntax(&new_source));
+        return fallback(new_source);
     };
 
     // Re-lex + rebuild structured green for ONLY the edited item slice.
@@ -229,7 +235,7 @@ pub fn reparse_subtree(
     let new_green = root_green.replace_child(child_index, NodeOrToken::Node(new_item));
     let patched_root = SyntaxNode::new_root(new_green.clone());
     if patched_root.text().to_string() != new_source {
-        return (new_source.clone(), parse_syntax(&new_source));
+        return fallback(new_source);
     }
 
     // Splice tokens: re-lex only the edited item; keep prefix ASI with content_s.
@@ -253,7 +259,7 @@ pub fn reparse_subtree(
     };
     // If a local edit introduced/removed top-level items (rare), prefer full structure.
     if tree.items().len() != old_items.len() {
-        return (new_source.clone(), parse_syntax(&new_source));
+        return fallback(new_source);
     }
 
     (new_source, tree)

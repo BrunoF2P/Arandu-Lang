@@ -46,8 +46,6 @@ pub(crate) fn lower_block(
     Ok(hir_pool.alloc_block(hir))
 }
 
-// (removed unused pool-allocation wrapper helpers)
-
 fn stmt_span(pool: &AstPool, stmt: StmtId) -> Span {
     match pool.stmt(stmt) {
         Stmt::VarDecl { span, .. }

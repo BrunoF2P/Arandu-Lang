@@ -235,3 +235,113 @@ pub(crate) enum MoveState {
     Available,
     Moved,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::amir::{AmirFunc, AmirLocal, AmirBasicBlock, AmirTerminator, AmirStmt, AmirPlace, AmirOperand, AmirRvalue, LocalId, TempId, BlockId, AmirStmtTable, InstrId};
+    use crate::cfg::ControlFlowGraph;
+    use crate::{SymbolId, Span};
+    use crate::types::TypeId;
+    use smallvec::SmallVec;
+    use crate::layout::DenseRange;
+
+    #[test]
+    fn test_prune_dummy_loads_stores() {
+        let span = Span::new(0, 0, 0);
+
+        let local_non_mem = AmirLocal {
+            id: LocalId::from_usize(0),
+            ty: TypeId::from_usize(0),
+            is_memory: false,
+            symbol: None,
+            span,
+            use_span: None,
+        };
+
+        let local_mem = AmirLocal {
+            id: LocalId::from_usize(1),
+            ty: TypeId::from_usize(1),
+            is_memory: true,
+            symbol: None,
+            span,
+            use_span: None,
+        };
+
+        let mut stmts = AmirStmtTable::new();
+        // 0: Store to non-memory local with empty projections (redundant) -> PRUNE
+        let _ = stmts.push(AmirStmt::Store {
+            lhs: AmirPlace {
+                local: LocalId::from_usize(0),
+                projections: SmallVec::new(),
+            },
+            rhs: AmirOperand::Copy(TempId::from_usize(0)),
+        });
+
+        // 1: Store to memory local with empty projections (needed) -> KEEP
+        let _ = stmts.push(AmirStmt::Store {
+            lhs: AmirPlace {
+                local: LocalId::from_usize(1),
+                projections: SmallVec::new(),
+            },
+            rhs: AmirOperand::Copy(TempId::from_usize(0)),
+        });
+
+        // 2: Load from non-memory local with empty projections (redundant) -> PRUNE
+        let _ = stmts.push(AmirStmt::Assign {
+            lhs: TempId::from_usize(0),
+            rhs: AmirRvalue::Load(AmirPlace {
+                local: LocalId::from_usize(0),
+                projections: SmallVec::new(),
+            }),
+        });
+
+        // 3: Load from memory local with empty projections (needed) -> KEEP
+        let _ = stmts.push(AmirStmt::Assign {
+            lhs: TempId::from_usize(1),
+            rhs: AmirRvalue::Load(AmirPlace {
+                local: LocalId::from_usize(1),
+                projections: SmallVec::new(),
+            }),
+        });
+
+        let block = AmirBasicBlock {
+            id: BlockId::from_usize(0),
+            params: Vec::new(),
+            statements: DenseRange::new(0, 4),
+            terminator: AmirTerminator::Return,
+        };
+
+        let mut func = AmirFunc {
+            symbol: SymbolId::new(0, 0),
+            return_type: TypeId::from_usize(0),
+            receiver: None,
+            params: Vec::new(),
+            locals: vec![local_non_mem, local_mem],
+            temps: Vec::new(),
+            blocks: vec![block],
+            stmts,
+            cfg: ControlFlowGraph::default(),
+        };
+
+        prune_dummy_loads_stores(&mut func);
+
+        let new_block = &func.blocks[0];
+        assert_eq!(new_block.statements.len, 2);
+
+        let new_stmt_0 = func.stmts.get(InstrId::from_usize(new_block.statements.start as usize)).unwrap();
+        let new_stmt_1 = func.stmts.get(InstrId::from_usize((new_block.statements.start + 1) as usize)).unwrap();
+
+        if let AmirStmt::Store { lhs, .. } = new_stmt_0 {
+            assert_eq!(lhs.local.as_usize(), 1);
+        } else {
+            panic!("Expected Store statement, got {:?}", new_stmt_0);
+        }
+
+        if let AmirStmt::Assign { rhs: AmirRvalue::Load(place), .. } = new_stmt_1 {
+            assert_eq!(place.local.as_usize(), 1);
+        } else {
+            panic!("Expected Assign/Load statement, got {:?}", new_stmt_1);
+        }
+    }
+}

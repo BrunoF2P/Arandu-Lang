@@ -59,3 +59,34 @@ impl SourceRegistry {
         self.path_to_id.get(path).copied()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_source_registry_operations() {
+        let mut registry = SourceRegistry::new();
+        
+        assert_eq!(registry.get_id_by_path("file1.aru"), None);
+        assert!(registry.get_file(0).is_none());
+
+        let id1 = registry.register("file1.aru", "fn main() {}");
+        assert_eq!(registry.get_id_by_path("file1.aru"), Some(id1));
+        
+        let file1 = registry.get_file(id1).expect("file should be registered");
+        assert_eq!(&*file1.path, "file1.aru");
+        assert_eq!(&*file1.source, "fn main() {}");
+
+        let id1_again = registry.register("file1.aru", "ignored");
+        assert_eq!(id1, id1_again);
+
+        let id2 = registry.register("file2.aru", "const X = 42;");
+        assert_ne!(id1, id2);
+        assert_eq!(registry.get_id_by_path("file2.aru"), Some(id2));
+
+        let file2 = registry.get_file(id2).expect("file should be registered");
+        assert_eq!(&*file2.path, "file2.aru");
+        assert_eq!(&*file2.source, "const X = 42;");
+    }
+}

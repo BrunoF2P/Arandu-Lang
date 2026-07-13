@@ -111,3 +111,55 @@ pub fn any_execute(log: &RebuildLog) -> bool {
         .iter()
         .any(|e| matches!(e, RebuildEvent::Execute { .. }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rebuild_log_operations() {
+        let log = RebuildLog::new();
+        assert!(log.snapshot().is_empty());
+        assert!(!any_execute(&log));
+
+        log.push(RebuildEvent::Validate { key: "query_a".to_string() });
+        assert_eq!(log.snapshot().len(), 1);
+        assert!(!any_execute(&log));
+
+        log.push(RebuildEvent::Execute { key: "query_b".to_string() });
+        assert_eq!(log.snapshot().len(), 2);
+        assert!(any_execute(&log));
+
+        log.clear();
+        assert!(log.snapshot().is_empty());
+        assert!(!any_execute(&log));
+    }
+
+    #[test]
+    fn test_rebuild_log_format_chain() {
+        let log = RebuildLog::new();
+        log.push(RebuildEvent::Execute { key: "query_a".to_string() });
+        log.push(RebuildEvent::Validate { key: "query_b".to_string() });
+        log.push(RebuildEvent::Execute { key: "query_c".to_string() });
+
+        let chain_non_verbose = log.format_chain(false);
+        assert!(chain_non_verbose.contains("rebuild chain: 2 execute, 1 validate"));
+        assert!(chain_non_verbose.contains("→ execute query_a"));
+        assert!(chain_non_verbose.contains("→ execute query_c"));
+        assert!(!chain_non_verbose.contains("validate query_b"));
+
+        let chain_verbose = log.format_chain(true);
+        assert!(chain_verbose.contains("rebuild chain: 2 execute, 1 validate"));
+        assert!(chain_verbose.contains("→ execute query_a"));
+        assert!(chain_verbose.contains("· validate query_b"));
+        assert!(chain_verbose.contains("→ execute query_c"));
+    }
+
+    #[test]
+    fn test_rebuild_event_display() {
+        let exec = RebuildEvent::Execute { key: "test_exec".to_string() };
+        let val = RebuildEvent::Validate { key: "test_val".to_string() };
+        assert_eq!(format!("{exec}"), "execute test_exec");
+        assert_eq!(format!("{val}"), "validate test_val");
+    }
+}

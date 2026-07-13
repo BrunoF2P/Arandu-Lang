@@ -5,7 +5,7 @@ use std::{
     process,
 };
 
-fn print_diagnostics_and_exit(diagnostics: &[arandu_middle::Diagnostic], filepath: &str) -> ! {
+fn print_diagnostics_and_exit(diagnostics: impl IntoIterator<Item = arandu_middle::Diagnostic>, filepath: &str) -> ! {
     let source = if !filepath.is_empty() {
         fs::read_to_string(filepath).unwrap_or_default()
     } else {
@@ -15,7 +15,7 @@ fn print_diagnostics_and_exit(diagnostics: &[arandu_middle::Diagnostic], filepat
     let named_source = miette::NamedSource::new(filepath, source);
 
     for diagnostic in diagnostics {
-        let report = miette::Report::new(diagnostic.clone()).with_source_code(named_source.clone());
+        let report = miette::Report::new(diagnostic).with_source_code(named_source.clone());
         eprintln!("{:?}", report);
     }
 
@@ -24,7 +24,7 @@ fn print_diagnostics_and_exit(diagnostics: &[arandu_middle::Diagnostic], filepat
 
 fn print_parse_error_and_exit(err: &arandu_parser::ParseError, filepath: &str) -> ! {
     let diag = arandu_middle::Diagnostic::from(err.clone());
-    print_diagnostics_and_exit(&[diag], filepath);
+    print_diagnostics_and_exit(std::iter::once(diag), filepath);
 }
 
 fn validate_hir_and_monomorphize(
@@ -40,7 +40,7 @@ fn validate_hir_and_monomorphize(
     if let Err(diags) =
         arandu_semantics::passes::monomorphize::monomorphize_program(type_check, hir)
     {
-        print_diagnostics_and_exit(&diags, filepath);
+        print_diagnostics_and_exit(diags, filepath);
     }
 }
 
@@ -214,8 +214,8 @@ fn main() {
             "--no-generational-fallback" => {
                 z_flags.push("-Zno-generational-fallback".into());
             }
-            s if s.starts_with("-Z") => z_flags.push(arg.clone()),
-            s if s.starts_with("--layout=") => layout_flags.push(arg.clone()),
+            s if s.starts_with("-Z") => z_flags.push(arg),
+            s if s.starts_with("--layout=") => layout_flags.push(arg),
             _ => args.push(arg),
         }
     }
@@ -368,7 +368,7 @@ fn main() {
                     match arandu_semantics::lower_to_hir(&mut checked.type_check, &checked.program)
                     {
                         Ok(hir) => hir,
-                        Err(diags) => print_diagnostics_and_exit(&diags, &filepath),
+                        Err(diags) => print_diagnostics_and_exit(diags, &filepath),
                     }
                 };
                 validate_hir_and_monomorphize(&mut hir, &mut checked.type_check, &filepath);
@@ -439,7 +439,7 @@ fn main() {
                         arandu_base::time_pass!("codegen-init");
                         match arandu_backend_cranelift::CraneliftBackend::try_new() {
                             Ok(backend) => backend,
-                            Err(diag) => print_diagnostics_and_exit(&[diag], &filepath),
+                            Err(diag) => print_diagnostics_and_exit(std::iter::once(diag), &filepath),
                         }
                     };
                     arandu_base::time_pass!("codegen-translate");
@@ -450,7 +450,7 @@ fn main() {
                         type_check.type_info.as_ref(),
                     ) {
                         Ok(out) => out,
-                        Err(diag) => print_diagnostics_and_exit(&[diag], &filepath),
+                        Err(diag) => print_diagnostics_and_exit(std::iter::once(diag), &filepath),
                     }
                 };
                 tracing::info!("Machine code generated (Cranelift JIT backend)");

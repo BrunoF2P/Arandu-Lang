@@ -678,8 +678,6 @@ pub(crate) fn lower_expr_raw(
     Ok(HirExpr { kind, ty, span })
 }
 
-// (removed unused pool-allocation wrapper helper)
-
 /// Lower expression and allocate into a `HirPool`, returning a `HirExprId`.
 pub(crate) fn lower_expr(
     type_check: &mut TypeCheckResult,

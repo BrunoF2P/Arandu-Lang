@@ -563,14 +563,14 @@ fn lower_simple(ctx: &mut HandCtx<'_>, toks: &[&Token]) -> Option<SimpleStmt> {
             span,
             bindings,
             value,
-        } = ctx.pool.stmt(id).clone()
+        } = ctx.pool.stmt(id)
         else {
             return None;
         };
         return Some(SimpleStmt::VarDecl {
-            span,
-            bindings,
-            value,
+            span: *span,
+            bindings: bindings.clone(),
+            value: *value,
         });
     }
     let explicit_set = matches!(cur.peek_kind(), Some(TokenKind::KwSet));
@@ -581,13 +581,13 @@ fn lower_simple(ctx: &mut HandCtx<'_>, toks: &[&Token]) -> Option<SimpleStmt> {
             places,
             op,
             value,
-        } = ctx.pool.stmt(id).clone()
+        } = ctx.pool.stmt(id)
     {
         return Some(SimpleStmt::Set {
-            span,
-            places,
-            op,
-            value,
+            span: *span,
+            places: places.clone(),
+            op: op.clone(),
+            value: *value,
         });
     }
     let mut cur = Cursor::new(toks);
