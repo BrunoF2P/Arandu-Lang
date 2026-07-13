@@ -268,6 +268,8 @@ pub fn resolve_imports_and_bodies(
         }
     }
 
+    resolver.resolve_method_receivers(program);
+
     for decl_id in &program.decls {
         let decl = resolver.pool.decl(*decl_id);
         resolver.resolve_top_level(global, decl);

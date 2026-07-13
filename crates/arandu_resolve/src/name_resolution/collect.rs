@@ -103,7 +103,15 @@ impl<'a> Resolver<'a> {
                         *span,
                         is_public(decl.visibility),
                     ) {
-                        Ok(symbol) => self.resolved.define(*span, symbol),
+                        Ok(symbol) => {
+                            self.resolved.define(*span, symbol);
+                            if let Some(type_sym) = self.symbols.lookup_type(global, &receiver_str) {
+                                self.symbols.associated_members
+                                    .entry(type_sym)
+                                    .or_default()
+                                    .insert(name.clone(), symbol);
+                            }
+                        }
                         Err(previous) => {
                             let previous_symbol = self.symbols.get(previous);
                             self.diagnostics.push(

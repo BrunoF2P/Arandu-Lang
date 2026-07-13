@@ -47,18 +47,9 @@ impl<'a> Resolver<'a> {
         let func_scope = self.symbols.new_scope(scope);
         // Methods on generic types must see the receiver type's type params
         // (`func Box.get(): T` needs `T` from `struct Box<T>`).
-        if let FuncName::Method { receiver, name, span } = &decl.name {
+        if let FuncName::Method { receiver, .. } = &decl.name {
             self.import_receiver_type_params(func_scope, receiver);
-            if self.resolve_type_name(func_scope, receiver) {
-                if let Some(struct_sym) = self.resolved.type_refs.get(&receiver.span.into()).copied() {
-                    if let Some(method_sym) = self.resolved.definitions.get(&(*span).into()).copied() {
-                        self.symbols.associated_members
-                            .entry(struct_sym)
-                            .or_default()
-                            .insert(name.clone(), method_sym);
-                    }
-                }
-            }
+            self.resolve_type_name(func_scope, receiver);
         }
         self.define_generics(func_scope, &decl.generic_params);
         for where_item in &decl.where_clause {
@@ -288,6 +279,27 @@ impl<'a> Resolver<'a> {
         for attr in attrs {
             for arg in &attr.args {
                 self.resolve_expr(scope, *arg);
+            }
+        }
+    }
+
+    pub(crate) fn resolve_method_receivers(&mut self, program: &arandu_parser::Program) {
+        let global = self.symbols.global_scope();
+        for decl_id in &program.decls {
+            let decl = self.pool.decl(*decl_id);
+            if let arandu_parser::TopLevelDecl::Func(decl) = decl {
+                if let arandu_parser::FuncName::Method { ref receiver, ref name, ref span } = decl.name {
+                    if self.resolve_type_name(global, receiver) {
+                        if let Some(struct_sym) = self.resolved.type_refs.get(&receiver.span.into()).copied() {
+                            if let Some(method_sym) = self.resolved.definitions.get(&(*span).into()).copied() {
+                                self.symbols.associated_members
+                                    .entry(struct_sym)
+                                    .or_default()
+                                    .insert(name.clone(), method_sym);
+                            }
+                        }
+                    }
+                }
             }
         }
     }
