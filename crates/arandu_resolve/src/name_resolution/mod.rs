@@ -138,6 +138,20 @@ pub fn resolve_imports_and_bodies(
                     arandu_parser::ImportDecl::ModuleAlias { alias, .. }
                     | arandu_parser::ImportDecl::ExternalAlias { alias, .. } => {
                         let module_name = alias.clone();
+                        // Pre-build a name→SymbolId index of types in this module's
+                        // exports so that when we encounter an AssociatedFunc like
+                        // "Widget.ok", we can resolve "Widget"'s SymbolId even before
+                        // it appears in the global scope of the importing file.
+                        let exported_types: rustc_hash::FxHashMap<&str, arandu_middle::SymbolId> = exports
+                            .symbols
+                            .iter()
+                            .filter(|&(_, &(_, k))| {
+                                matches!(k, arandu_middle::SymbolKind::Struct
+                                    | arandu_middle::SymbolKind::Enum
+                                    | arandu_middle::SymbolKind::TypeAlias)
+                            })
+                            .map(|(n, &(id, _))| (n.as_str(), id))
+                            .collect();
                         for (name, &(id, kind)) in &exports.symbols {
                             let sym = arandu_middle::Symbol {
                                 id,
@@ -156,14 +170,17 @@ pub fn resolve_imports_and_bodies(
                                 .insert(name.clone().into(), id);
                             // Root of T025 across modules: associated methods are
                             // exported as `"Type.method"` but interface satisfaction
-                            // looks up `associated_members[Type][method]`. Rebuild
-                            // that index on import so GlobalAllocator.alloc is found.
+                            // looks up `associated_members[TypeId][method]`. Rebuild
+                            // that index on import.
                             if matches!(kind, arandu_middle::SymbolKind::AssociatedFunc)
                                 && let Some((ty, method)) = name.rsplit_once('.')
                             {
-                                // Resolve the receiver type's SymbolId so we can key
-                                // associated_members by identity rather than string.
-                                if let Some(type_sym) = resolver.symbols.lookup_type(global, ty) {
+                                // Try to resolve the receiver type's SymbolId from the
+                                // exported types in this module first (covers cross-module
+                                // methods), then fall back to the importing file's scope.
+                                let type_sym = exported_types.get(ty).copied()
+                                    .or_else(|| resolver.symbols.lookup_type(global, ty));
+                                if let Some(type_sym) = type_sym {
                                     resolver
                                         .symbols
                                         .associated_members
