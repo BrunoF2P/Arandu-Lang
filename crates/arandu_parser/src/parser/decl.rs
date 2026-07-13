@@ -550,7 +550,7 @@ impl<'a> Parser<'a> {
             span: arandu_lexer::Span::new(0, 0, 0),
             path: {
                 let mut path = SmallVec::new();
-                path.push(name.clone());
+                path.push(SmolStr::new_static("Self"));
                 path
             },
         };

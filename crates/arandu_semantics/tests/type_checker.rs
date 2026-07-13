@@ -227,7 +227,7 @@ fn test_structural_interface_no_impl_keyword() {
     // TYP.1: satisfaction is structural (methods present) — no `impl Writer for T`.
     let source = r#"
 interface Greeter {
-    func greet(): str
+    func greet(shared self): str
 }
 struct Person { n: int }
 func Person.greet(shared self): str { return "hi" }
