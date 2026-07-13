@@ -17,6 +17,7 @@ pub fn check_signatures(checker: &mut TypeChecker<'_>, program: &Program) {
     collect_signature_types(checker, program);
 
     duplicate_module_member_info(checker, program);
+    super::validate::validate_type_constraints_in_program(checker, program);
 }
 
 #[tracing::instrument(level = "trace", target = "arandu_typeck", skip(checker, program))]

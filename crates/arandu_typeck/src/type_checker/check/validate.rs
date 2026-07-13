@@ -1,10 +1,11 @@
 use arandu_parser::ast_pool::{AstPool, ExprId, ExprKind, TypeExprId};
 use arandu_parser::{
     Block, CatchHandler, Condition, DeferBody, ForClause, LambdaBody, MatchArmBody, ResultType,
-    SimpleStmt, Stmt, TopLevelDecl, TypeExpr,
+    SimpleStmt, Stmt, TopLevelDecl, TypeExpr, Program,
 };
 
 use super::super::TypeChecker;
+use super::super::types::ArType;
 use arandu_lexer::Span;
 
 const ANY_ERROR_MESSAGE: &str =
@@ -381,3 +382,122 @@ pub(crate) fn validate_top_level_any(checker: &mut TypeChecker<'_>, decl: &TopLe
         _ => {}
     }
 }
+
+pub(crate) fn validate_type_constraints_in_program(
+    checker: &mut TypeChecker<'_>,
+    program: &Program,
+) {
+    for decl_id in &program.decls {
+        let decl = checker.pool.decl(*decl_id);
+        validate_decl_type_constraints(checker, decl);
+    }
+}
+
+fn validate_decl_type_constraints(checker: &mut TypeChecker<'_>, decl: &TopLevelDecl) {
+    let global = checker.symbols.global_scope();
+    match decl {
+        TopLevelDecl::Struct(d) => {
+            for field in &d.fields {
+                validate_type_expr_constraints(checker, field.ty, global);
+            }
+        }
+        TopLevelDecl::TypeAlias(d) => {
+            validate_type_expr_constraints(checker, d.ty, global);
+        }
+        TopLevelDecl::Func(d) => {
+            for param in &d.params {
+                validate_type_expr_constraints(checker, param.ty, global);
+            }
+            if let Some(result) = &d.result {
+                match result {
+                    ResultType::Single { ty, .. } => {
+                        validate_type_expr_constraints(checker, *ty, global);
+                    }
+                    ResultType::Multi { types, .. } => {
+                        for &ty in checker.pool.type_expr_list(*types) {
+                            validate_type_expr_constraints(checker, ty, global);
+                        }
+                    }
+                }
+            }
+        }
+        TopLevelDecl::Extern(d) => {
+            for member in &d.members {
+                for param in &member.params {
+                    validate_type_expr_constraints(checker, param.ty, global);
+                }
+                if let Some(result) = &member.result {
+                    match result {
+                        ResultType::Single { ty, .. } => {
+                            validate_type_expr_constraints(checker, *ty, global);
+                        }
+                        ResultType::Multi { types, .. } => {
+                            for &ty in checker.pool.type_expr_list(*types) {
+                                validate_type_expr_constraints(checker, ty, global);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn validate_type_expr_constraints(
+    checker: &mut TypeChecker<'_>,
+    type_expr_id: TypeExprId,
+    scope: crate::ScopeId,
+) {
+    let expr = checker.pool.type_expr(type_expr_id);
+    match expr {
+        TypeExpr::Named { args, span, .. } => {
+            // First, validate recursively for the arguments:
+            for &arg in checker.pool.type_expr_list(*args) {
+                validate_type_expr_constraints(checker, arg, scope);
+            }
+            // Now, lower this specific named type:
+            let ty = checker.lower_type_expr(type_expr_id, scope);
+            if let ArType::Named(struct_or_enum_id, arg_ids) = ty {
+                if let Some(params) = checker.type_info.generic_params.get(&struct_or_enum_id).cloned() {
+                    let arg_tys: Vec<ArType> = arg_ids.iter().map(|&id| checker.resolve(id)).collect();
+                    crate::type_checker::types::interfaces::check_instantiation_constraints(
+                        checker,
+                        struct_or_enum_id,
+                        &params,
+                        &arg_tys,
+                        *span,
+                    );
+                }
+            }
+        }
+        TypeExpr::Primitive { .. } => {}
+        TypeExpr::Nullable { inner, .. }
+        | TypeExpr::Pointer { inner, .. }
+        | TypeExpr::Ref { inner, .. }
+        | TypeExpr::RefMut { inner, .. }
+        | TypeExpr::Slice { inner, .. }
+        | TypeExpr::Array { elem: inner, .. }
+        | TypeExpr::Group { inner, .. } => {
+            validate_type_expr_constraints(checker, *inner, scope);
+        }
+        TypeExpr::Func { params, result, .. } => {
+            for &param in checker.pool.type_expr_list(*params) {
+                validate_type_expr_constraints(checker, param, scope);
+            }
+            if let Some(res) = result {
+                match res {
+                    ResultType::Single { ty, .. } => {
+                        validate_type_expr_constraints(checker, *ty, scope);
+                    }
+                    ResultType::Multi { types, .. } => {
+                        for &ty in checker.pool.type_expr_list(*types) {
+                            validate_type_expr_constraints(checker, ty, scope);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+

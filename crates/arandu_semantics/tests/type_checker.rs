@@ -1048,6 +1048,29 @@ fn test_struct_generic_param_constraint() {
 }
 
 #[test]
+fn test_type_decl_generic_constraint_violation() {
+    assert_type_errors!(
+        "
+        interface Show {
+            func show(): void
+        }
+        struct Box<T: Show> {
+            value: T
+        }
+        struct Silent {
+            n: int
+        }
+        struct Container {
+            b: Box<Silent>
+        }
+        func main() {}
+        ",
+        [T025InterfaceNotSatisfied]
+    );
+}
+
+
+#[test]
 fn golden_interface_not_satisfied() {
     assert_diagnostic_golden("interface_not_satisfied");
 }
