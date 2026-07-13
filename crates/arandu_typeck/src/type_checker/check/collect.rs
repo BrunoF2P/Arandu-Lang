@@ -108,6 +108,27 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
                     if let Some(variant_symbol_id) =
                         checker.resolved.definitions.get(&variant_key).copied()
                     {
+                        // Build constructor signature type for the variant
+                        let mut enum_args = Vec::new();
+                        let gp = checker.type_info.generic_params.get(&enum_symbol_id).cloned();
+                        if let Some(gp) = gp {
+                            for &p_sym in gp.iter() {
+                                let arg_ty = super::super::ArType::Named(p_sym, vec![]);
+                                enum_args.push(checker.intern(arg_ty));
+                            }
+                        }
+                        let ret_ty_id = checker.intern(super::super::ArType::Named(enum_symbol_id, enum_args));
+                        let variant_ty = match &shape {
+                            super::super::EnumPayloadShape::Tuple(tids) => {
+                                super::super::ArType::Func(tids.clone(), ret_ty_id)
+                            }
+                            super::super::EnumPayloadShape::Unit => {
+                                super::super::ArType::Named(enum_symbol_id, vec![])
+                            }
+                        };
+                        let variant_ty_id = checker.intern(variant_ty);
+                        checker.record_decl_type(variant_symbol_id, variant_ty_id);
+
                         checker
                             .type_info
                             .enum_variants
@@ -128,6 +149,7 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
                             .lookup_associated_member(enum_symbol_id, &variant.name)
                             && assoc_id != variant_symbol_id
                         {
+                            checker.record_decl_type(assoc_id, variant_ty_id);
                             checker
                                 .type_info
                                 .enum_variants

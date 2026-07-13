@@ -277,7 +277,7 @@ pub(crate) fn synth_variant_sugar(
                 checker.intern(ArType::Error)
             }
         },
-        ArType::Named(enum_id, _) => {
+        ArType::Named(enum_id, ref expected_args) => {
             let enum_name = checker.symbols.get(enum_id).name.clone();
             let Some(variant_sym) = checker.symbols.lookup_associated_member(enum_id, name)
             else {
@@ -291,8 +291,39 @@ pub(crate) fn synth_variant_sugar(
             // Record resolution for HIR (same as TypePath member).
             checker.resolved.value_ref(span, variant_sym);
             checker.resolved.expr_ref(expr, variant_sym);
+
+            // Get variant constructor signature with expected generic parameters substituted.
+            let (params, ret) = if let Some(ArType::Func(params, ret)) = checker.decl_type(variant_sym) {
+                let mut inst_params = params.clone();
+                let mut inst_ret = ret;
+                if !expected_args.is_empty() {
+                    use crate::type_checker::types::{build_subst, substitute_type};
+                    if let Some(gp) = checker.type_info.generic_params.get(&enum_id) {
+                        let concrete_args: Vec<ArType> = expected_args.iter().map(|&a| checker.resolve(a)).collect();
+                        let n = gp.len().min(concrete_args.len());
+                        if n > 0 {
+                            let subst = build_subst(&gp[..n], &concrete_args[..n]);
+                            inst_params = params
+                                .iter()
+                                .map(|&p| {
+                                    let ty = checker.resolve(p);
+                                    let inst = substitute_type(&ty, &subst, &checker.type_info.type_interner);
+                                    checker.intern(inst)
+                                })
+                                .collect();
+                            let ret_ty = checker.resolve(ret);
+                            let ret_inst = substitute_type(&ret_ty, &subst, &checker.type_info.type_interner);
+                            inst_ret = checker.intern(ret_inst);
+                        }
+                    }
+                }
+                (inst_params, inst_ret)
+            } else {
+                (Vec::new(), checker.intern(ArType::Error))
+            };
+
             // Type args of payload: use variant decl type if Func-like, else unit.
-            if let Some(ArType::Func(params, ret)) = checker.decl_type(variant_sym) {
+            if let Some(ArType::Func(_, _)) = checker.decl_type(variant_sym) {
                 if params.len() != arg_ids.len() {
                     checker.diagnostics.push(crate::Diagnostic::error(
                         crate::DiagCode::T012WrongArgCount,

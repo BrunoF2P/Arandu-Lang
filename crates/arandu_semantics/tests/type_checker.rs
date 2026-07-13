@@ -1219,3 +1219,82 @@ fn test_await_invalid_type() {
     ";
     assert_type_errors!(source, [T032AwaitInvalid]);
 }
+
+#[test]
+fn test_variant_sugar_user_enum_simple() {
+    let source = "
+        enum Color {
+            Red,
+            Green,
+            Blue,
+        }
+        func id(c: Color): Color {
+            return c
+        }
+        func main() {
+            let val: Color = .Red
+            let got = id(.Green)
+        }
+    ";
+    assert_type_errors!(source, []);
+}
+
+#[test]
+fn test_variant_sugar_user_enum_with_payload() {
+    let source = "
+        enum Payload {
+            Val(int),
+            Empty,
+        }
+        func id(p: Payload): Payload {
+            return p
+        }
+        func main() {
+            let val: Payload = .Val(42)
+            let got = id(.Empty)
+        }
+    ";
+    assert_type_errors!(source, []);
+}
+
+#[test]
+fn test_variant_sugar_user_enum_generic() {
+    let source = "
+        enum MyGeneric<T> {
+            Data(T),
+            None,
+        }
+        func main() {
+            let val: MyGeneric<int> = .Data(42)
+            let got: MyGeneric<int> = .None
+        }
+    ";
+    assert_type_errors!(source, []);
+
+    // Error case: type mismatch
+    let err_source = "
+        enum MyGeneric<T> {
+            Data(T),
+            None,
+        }
+        func main() {
+            let val: MyGeneric<int> = .Data(\"hello\")
+        }
+    ";
+    assert_type_errors!(err_source, [T003IncompatibleCallArg]);
+}
+
+#[test]
+fn test_dot_variant_sugar_shadowing() {
+    let source = "
+        enum MeuTipo {
+            Ok(int),
+            Err,
+        }
+        func main() {
+            let x: MeuTipo = .Ok(42)
+            let y: Result<int, str> = .Ok(100)
+        }
+    ";
+    assert_type_errors!(source, []);
+}

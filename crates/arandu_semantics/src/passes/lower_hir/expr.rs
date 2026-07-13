@@ -196,7 +196,6 @@ pub(crate) fn lower_expr_raw(
                 .copied()
                 .or_else(|| type_check.resolved.expr_symbol(expr))
             {
-                // User enum: TypePath (payload args lowered only for builtins above).
                 let type_symbol = match type_check.type_info.expr_type(expr) {
                     Some(ArType::Named(id, _)) => id,
                     _ => {
@@ -207,9 +206,29 @@ pub(crate) fn lower_expr_raw(
                         ));
                     }
                 };
-                HirExprKind::TypePath {
+                let path_kind = HirExprKind::TypePath {
                     type_symbol,
                     member_symbol,
+                };
+                if arg_ids.is_empty() {
+                    path_kind
+                } else {
+                    let mut lowered_args = Vec::with_capacity(arg_ids.len());
+                    for arg_id in arg_ids {
+                        lowered_args.push(lower_expr(type_check, pool, hir_pool, arg_id)?);
+                    }
+                    let callee_ty = type_check.type_info.decl_type_id(member_symbol).unwrap_or(fallback_ty);
+                    let callee = hir_pool.alloc_expr(HirExpr {
+                        kind: path_kind,
+                        ty: callee_ty,
+                        span,
+                    });
+                    let args_range = hir_pool.alloc_expr_list(&lowered_args);
+                    HirExprKind::Call {
+                        callee,
+                        args: args_range,
+                        trailing_block: None,
+                    }
                 }
             } else {
                 return Err(Diagnostic::error(
