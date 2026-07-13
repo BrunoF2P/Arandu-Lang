@@ -104,7 +104,8 @@ impl MoveState {
 /// Count of locals that are `Moved` or `MaybeMoved` at each block entry.
 #[must_use]
 pub fn moved_in_counts(func: &AmirFunc) -> Vec<u32> {
-    let Some(block_in) = compute_move_in(func) else {
+    let bump = bumpalo::Bump::new();
+    let Some(block_in) = compute_move_in(func, &bump) else {
         return vec![0; func.blocks.len()];
     };
     block_in
@@ -126,11 +127,12 @@ pub fn check_moves_by_block(
     func: &AmirFunc,
     symbols: &SymbolTable,
 ) -> Vec<(crate::amir::BlockId, Diagnostic)> {
-    let Some(block_in) = compute_move_in(func) else {
+    let bump = bumpalo::Bump::new();
+    let Some(block_in) = compute_move_in(func, &bump) else {
         return Vec::new();
     };
 
-    let temp_origins = temp_origins(func);
+    let temp_origins = temp_origins(func, &bump);
     let mut diagnostics = Vec::new();
     let mut block_in = block_in;
     for block in &func.blocks {
@@ -148,7 +150,10 @@ pub fn check_moves_by_block(
     diagnostics
 }
 
-fn compute_move_in(func: &AmirFunc) -> Option<Vec<MoveState>> {
+fn compute_move_in<'bump>(
+    func: &AmirFunc,
+    bump: &'bump bumpalo::Bump,
+) -> Option<bumpalo::collections::Vec<'bump, MoveState>> {
     let num_locals = func.locals.len();
     let num_blocks = func.blocks.len();
 
@@ -156,9 +161,13 @@ fn compute_move_in(func: &AmirFunc) -> Option<Vec<MoveState>> {
         return None;
     }
 
-    let temp_origins = temp_origins(func);
-    let mut block_in = vec![MoveState::new(num_locals); num_blocks];
-    let mut block_out = vec![MoveState::new(num_locals); num_blocks];
+    let temp_origins = temp_origins(func, bump);
+    let mut block_in = bumpalo::collections::Vec::with_capacity_in(num_blocks, bump);
+    let mut block_out = bumpalo::collections::Vec::with_capacity_in(num_blocks, bump);
+    for _ in 0..num_blocks {
+        block_in.push(MoveState::new(num_locals));
+        block_out.push(MoveState::new(num_locals));
+    }
     let mut worklist = VecDeque::new();
 
     for block in &func.blocks {
@@ -203,8 +212,14 @@ fn compute_move_in(func: &AmirFunc) -> Option<Vec<MoveState>> {
     Some(block_in)
 }
 
-fn temp_origins(func: &AmirFunc) -> Vec<Option<LocalId>> {
-    let mut origins = vec![None; func.temps.len()];
+fn temp_origins<'bump>(
+    func: &AmirFunc,
+    bump: &'bump bumpalo::Bump,
+) -> bumpalo::collections::Vec<'bump, Option<LocalId>> {
+    let mut origins = bumpalo::collections::Vec::from_iter_in(
+        std::iter::repeat_n(None, func.temps.len()),
+        bump,
+    );
     for (i, &param_temp) in func.params.iter().enumerate() {
         origins[param_temp.as_usize()] = Some(LocalId::from_usize(i));
     }

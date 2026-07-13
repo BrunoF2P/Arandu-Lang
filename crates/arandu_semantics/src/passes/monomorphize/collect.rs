@@ -5,21 +5,23 @@ use arandu_middle::hir::{
     HirProgram, HirSimpleStmt, HirStmt, HirStmtKind,
 };
 use arandu_middle::symbol_table::SymbolId;
-use arandu_middle::types::{ArType, TypeInterner};
+use arandu_middle::types::{ArType, TypeId, TypeInterner};
 use arandu_typeck::TypeCheckResult;
 
 use super::graph::{InstantiationGraph, InstantiationKey, InstantiationNodeId, MonoError};
 
 #[tracing::instrument(level = "trace", target = "arandu_typeck", skip(tc, hir))]
-pub fn analyze_instantiations(
+pub fn analyze_instantiations<'bump>(
     tc: &TypeCheckResult,
     hir: &HirProgram,
-) -> Result<InstantiationGraph, Vec<Diagnostic>> {
+    bump: &'bump bumpalo::Bump,
+) -> Result<InstantiationGraph<'bump>, Vec<Diagnostic>> {
     let mut analyzer = InstantiationAnalyzer {
         tc,
         hir,
         interner: &tc.type_info.type_interner,
-        graph: InstantiationGraph::new(),
+        bump,
+        graph: InstantiationGraph::new(bump),
         diagnostics: Vec::new(),
     };
 
@@ -36,7 +38,7 @@ pub fn analyze_instantiations(
     if let Some(cycle) = analyzer.graph.find_cycle() {
         let names: Vec<String> = cycle
             .iter()
-            .map(|node| analyzer.graph.get_node(*node).mangled_name.clone())
+            .map(|node| analyzer.graph.get_node(*node).mangled_name.to_string())
             .collect();
         analyzer.diagnostics.push(Diagnostic::error(
             DiagCode::G001GenericInstantiationCycle,
@@ -55,28 +57,30 @@ pub fn analyze_instantiations(
     }
 }
 
-struct InstantiationAnalyzer<'a> {
+struct InstantiationAnalyzer<'a, 'bump> {
     tc: &'a TypeCheckResult,
     hir: &'a HirProgram,
     interner: &'a TypeInterner,
-    graph: InstantiationGraph,
+    bump: &'bump bumpalo::Bump,
+    graph: InstantiationGraph<'bump>,
     diagnostics: Vec<Diagnostic>,
 }
 
-impl InstantiationAnalyzer<'_> {
+impl<'a, 'bump> InstantiationAnalyzer<'a, 'bump> {
     fn current_generic_node(&mut self, symbol: SymbolId) -> Option<InstantiationNodeId> {
         let params = self.tc.type_info.generic_params.get(&symbol)?;
-        let type_args = params
+        let type_args_vec: Vec<TypeId> = params
             .iter()
             .map(|param| self.interner.intern(ArType::Named(*param, Vec::new())))
             .collect();
+        let type_args = self.bump.alloc_slice_copy(&type_args_vec);
         self.insert_key(InstantiationKey { symbol, type_args }, Span::new(0, 0, 0))
     }
 
-    fn insert_key(&mut self, key: InstantiationKey, span: Span) -> Option<InstantiationNodeId> {
+    fn insert_key(&mut self, key: InstantiationKey<'bump>, span: Span) -> Option<InstantiationNodeId> {
         match self
             .graph
-            .get_or_insert(&key, self.interner, &self.tc.symbols)
+            .get_or_insert(&key, self.bump, self.interner, &self.tc.symbols)
         {
             Ok(node) => Some(node),
             Err(MonoError::RecursionLimitExceeded { symbol, limit }) => {
@@ -199,7 +203,7 @@ impl InstantiationAnalyzer<'_> {
                 self.visit_expr(*callee, current);
                 if let Some(symbol) = generic_callee_symbol(*callee, self.hir, self.tc) {
                     // HIR generic args are already interned TypeIds.
-                    let type_args = args.clone();
+                    let type_args = self.bump.alloc_slice_copy(args);
                     let key = InstantiationKey { symbol, type_args };
                     if let Some(callee_node) = self.insert_key(key, expr.span)
                         && let Some(caller_node) = current
@@ -235,12 +239,16 @@ impl InstantiationAnalyzer<'_> {
                 // argument types (no `Generic` node): still need mono keys.
                 // Pass the call's result type so `join<T>(h)` can recover `T`
                 // from the expected/inferred return type on the Call expr.
-                if let Some(key) = instantiation_key_for_call(
+                if let Some((symbol, type_args_vec)) = instantiation_key_for_call(
                     self.hir, self.tc, *callee, *args, expr.ty, expr.span,
-                ) && let Some(callee_node) = self.insert_key(key, expr.span)
-                    && let Some(caller_node) = current
-                {
-                    self.graph.add_edge(caller_node, callee_node);
+                ) {
+                    let type_args = self.bump.alloc_slice_copy(&type_args_vec);
+                    let key = InstantiationKey { symbol, type_args };
+                    if let Some(callee_node) = self.insert_key(key, expr.span)
+                        && let Some(caller_node) = current
+                    {
+                        self.graph.add_edge(caller_node, callee_node);
+                    }
                 }
             }
             HirExprKind::ResultCtor { value, .. } => self.visit_expr(*value, current),
@@ -382,7 +390,7 @@ pub(in crate::passes::monomorphize) fn instantiation_key_for_call(
     args: arandu_middle::hir::IndexRange,
     call_result_ty: arandu_middle::types::TypeId,
     _span: arandu_lexer::Span,
-) -> Option<InstantiationKey> {
+) -> Option<(SymbolId, Vec<TypeId>)> {
     let pool = &hir.pool;
     let callee = pool.expr(callee_id);
 
@@ -463,7 +471,7 @@ pub(in crate::passes::monomorphize) fn instantiation_key_for_call(
     if is_identity_args(tc, symbol, &type_args) {
         return None;
     }
-    Some(InstantiationKey { symbol, type_args })
+    Some((symbol, type_args))
 }
 
 fn is_identity_args(

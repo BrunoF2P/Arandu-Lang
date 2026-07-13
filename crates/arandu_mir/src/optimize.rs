@@ -26,19 +26,26 @@ pub fn optimize_amir(program: &mut AmirProgram) {
 /// Simplification. Each iteration feeds the next; the loop terminates
 /// when no pass reports any change.
 pub fn optimize_amir_func(func: &mut AmirFunc, literal_pool: &mut AmirLiteralPool) {
+    let mut bump = bumpalo::Bump::new();
     loop {
         let mut changed = false;
-        changed |= sccp(func, literal_pool);
+        changed |= sccp(func, literal_pool, &bump);
         changed |= mark_sweep_dce(func);
-        changed |= simplify_cfg(func);
+        changed |= simplify_cfg(func, &bump);
         if !changed {
             break;
         }
+        bump.reset();
     }
 }
 
 #[cfg(test)]
 mod tests {
+
+    fn sccp(func: &mut AmirFunc, pool: &mut AmirLiteralPool) -> bool {
+        let bump = bumpalo::Bump::new();
+        super::sccp(func, pool, &bump)
+    }
 
     fn intern_ty(ty: crate::types::ArType) -> crate::types::TypeId {
         // Fresh interner per call is OK in unit tests (pre-interns primitives).

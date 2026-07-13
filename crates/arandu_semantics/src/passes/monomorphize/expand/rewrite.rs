@@ -15,36 +15,38 @@ use super::super::graph::InstantiationKey;
 
 // ── Call-site rewrite ───────────────────────────────────────────────────────
 
-pub(super) fn rewrite_block_calls(
+pub(super) fn rewrite_block_calls<'bump>(
     hir: &mut HirProgram,
     block_id: HirBlockId,
-    specialized: &FxHashMap<InstantiationKey, SymbolId>,
+    specialized: &FxHashMap<InstantiationKey<'bump>, SymbolId>,
     tc: &TypeCheckResult,
+    bump: &'bump bumpalo::Bump,
 ) {
     let stmt_ids: Vec<_> = hir
         .pool
         .stmt_list(hir.pool.block(block_id).statements)
         .to_vec();
     for sid in stmt_ids {
-        rewrite_stmt_calls(hir, sid, specialized, tc);
+        rewrite_stmt_calls(hir, sid, specialized, tc, bump);
     }
 }
 
-pub(super) fn rewrite_stmt_calls(
+pub(super) fn rewrite_stmt_calls<'bump>(
     hir: &mut HirProgram,
     stmt_id: arandu_middle::hir::HirStmtId,
-    specialized: &FxHashMap<InstantiationKey, SymbolId>,
+    specialized: &FxHashMap<InstantiationKey<'bump>, SymbolId>,
     tc: &TypeCheckResult,
+    bump: &'bump bumpalo::Bump,
 ) {
     let kind = hir.pool.stmt(stmt_id).kind.clone();
     match kind {
         HirStmtKind::VarDecl { value, .. }
         | HirStmtKind::Expr(value)
         | HirStmtKind::Free(value) => {
-            rewrite_expr_calls(hir, value, specialized, tc);
+            rewrite_expr_calls(hir, value, specialized, tc, bump);
         }
         HirStmtKind::Set { places, value, .. } => {
-            rewrite_expr_calls(hir, value, specialized, tc);
+            rewrite_expr_calls(hir, value, specialized, tc, bump);
             let index_exprs: Vec<_> = hir
                 .pool
                 .places_list(places)
@@ -56,13 +58,13 @@ pub(super) fn rewrite_stmt_calls(
                 })
                 .collect();
             for e in index_exprs {
-                rewrite_expr_calls(hir, e, specialized, tc);
+                rewrite_expr_calls(hir, e, specialized, tc, bump);
             }
         }
         HirStmtKind::Return { values } => {
             let es: Vec<_> = hir.pool.expr_list(values).to_vec();
             for e in es {
-                rewrite_expr_calls(hir, e, specialized, tc);
+                rewrite_expr_calls(hir, e, specialized, tc, bump);
             }
         }
         HirStmtKind::If {
@@ -70,20 +72,20 @@ pub(super) fn rewrite_stmt_calls(
             then_block,
             else_block,
         } => {
-            rewrite_condition_calls(hir, &condition, specialized, tc);
-            rewrite_block_calls(hir, then_block, specialized, tc);
+            rewrite_condition_calls(hir, &condition, specialized, tc, bump);
+            rewrite_block_calls(hir, then_block, specialized, tc, bump);
             if let Some(eb) = else_block {
-                rewrite_block_calls(hir, eb, specialized, tc);
+                rewrite_block_calls(hir, eb, specialized, tc, bump);
             }
         }
         HirStmtKind::While { condition, body } => {
-            rewrite_condition_calls(hir, &condition, specialized, tc);
-            rewrite_block_calls(hir, body, specialized, tc);
+            rewrite_condition_calls(hir, &condition, specialized, tc, bump);
+            rewrite_block_calls(hir, body, specialized, tc, bump);
         }
         HirStmtKind::For { clause, body } => {
             match clause {
                 HirForClause::In { iterable, .. } => {
-                    rewrite_expr_calls(hir, iterable, specialized, tc);
+                    rewrite_expr_calls(hir, iterable, specialized, tc, bump);
                 }
                 HirForClause::CStyle {
                     condition,
@@ -92,49 +94,51 @@ pub(super) fn rewrite_stmt_calls(
                     ..
                 } => {
                     if let Some(c) = condition {
-                        rewrite_expr_calls(hir, c, specialized, tc);
+                        rewrite_expr_calls(hir, c, specialized, tc, bump);
                     }
                 }
             }
-            rewrite_block_calls(hir, body, specialized, tc);
+            rewrite_block_calls(hir, body, specialized, tc, bump);
         }
         HirStmtKind::Match { value, arms } => {
-            rewrite_expr_calls(hir, value, specialized, tc);
+            rewrite_expr_calls(hir, value, specialized, tc, bump);
             let arms_snap: Vec<_> = hir.pool.match_arms_list(arms).to_vec();
             for arm in arms_snap {
                 if let Some(g) = arm.guard {
-                    rewrite_expr_calls(hir, g, specialized, tc);
+                    rewrite_expr_calls(hir, g, specialized, tc, bump);
                 }
                 match arm.body {
-                    HirMatchArmBody::Expr(e) => rewrite_expr_calls(hir, e, specialized, tc),
-                    HirMatchArmBody::Block(b) => rewrite_block_calls(hir, b, specialized, tc),
+                    HirMatchArmBody::Expr(e) => rewrite_expr_calls(hir, e, specialized, tc, bump),
+                    HirMatchArmBody::Block(b) => rewrite_block_calls(hir, b, specialized, tc, bump),
                 }
             }
         }
         HirStmtKind::Defer(b) | HirStmtKind::ErrDefer(b) | HirStmtKind::Unsafe(b) => {
-            rewrite_block_calls(hir, b, specialized, tc);
+            rewrite_block_calls(hir, b, specialized, tc, bump);
         }
         HirStmtKind::Break | HirStmtKind::Continue | HirStmtKind::Error => {}
     }
 }
 
-pub(super) fn rewrite_condition_calls(
+pub(super) fn rewrite_condition_calls<'bump>(
     hir: &mut HirProgram,
     cond: &HirCondition,
-    specialized: &FxHashMap<InstantiationKey, SymbolId>,
+    specialized: &FxHashMap<InstantiationKey<'bump>, SymbolId>,
     tc: &TypeCheckResult,
+    bump: &'bump bumpalo::Bump,
 ) {
     match cond {
-        HirCondition::Expr(e) => rewrite_expr_calls(hir, *e, specialized, tc),
-        HirCondition::Is { expr, .. } => rewrite_expr_calls(hir, *expr, specialized, tc),
+        HirCondition::Expr(e) => rewrite_expr_calls(hir, *e, specialized, tc, bump),
+        HirCondition::Is { expr, .. } => rewrite_expr_calls(hir, *expr, specialized, tc, bump),
     }
 }
 
-pub(super) fn rewrite_expr_calls(
+pub(super) fn rewrite_expr_calls<'bump>(
     hir: &mut HirProgram,
     expr_id: HirExprId,
-    specialized: &FxHashMap<InstantiationKey, SymbolId>,
+    specialized: &FxHashMap<InstantiationKey<'bump>, SymbolId>,
     tc: &TypeCheckResult,
+    bump: &'bump bumpalo::Bump,
 ) {
     // First recurse into children, then rewrite this node if it is Call(Generic(...)).
     let kind = hir.pool.expr(expr_id).kind.clone();
@@ -148,7 +152,7 @@ pub(super) fn rewrite_expr_calls(
         | HirExprKind::Unary { expr: callee, .. }
         | HirExprKind::ToStr { value: callee }
         | HirExprKind::ResultCtor { value: callee, .. } => {
-            rewrite_expr_calls(hir, *callee, specialized, tc);
+            rewrite_expr_calls(hir, *callee, specialized, tc, bump);
         }
         HirExprKind::Index { base, index }
         | HirExprKind::SafeIndex { base, index }
@@ -161,24 +165,24 @@ pub(super) fn rewrite_expr_calls(
             left: base,
             right: index,
         } => {
-            rewrite_expr_calls(hir, *base, specialized, tc);
-            rewrite_expr_calls(hir, *index, specialized, tc);
+            rewrite_expr_calls(hir, *base, specialized, tc, bump);
+            rewrite_expr_calls(hir, *index, specialized, tc, bump);
         }
         HirExprKind::Call {
             callee,
             args,
             trailing_block,
         } => {
-            rewrite_expr_calls(hir, *callee, specialized, tc);
+            rewrite_expr_calls(hir, *callee, specialized, tc, bump);
             let args_snap: Vec<_> = hir.pool.expr_list(*args).to_vec();
             for a in args_snap {
-                rewrite_expr_calls(hir, a, specialized, tc);
+                rewrite_expr_calls(hir, a, specialized, tc, bump);
             }
             if let Some(b) = trailing_block {
-                rewrite_block_calls(hir, *b, specialized, tc);
+                rewrite_block_calls(hir, *b, specialized, tc, bump);
             }
             // Rewrite Call(Generic(...), …) or Call(Field/Path template, …) → Path(spec).
-            try_rewrite_generic_call(hir, expr_id, *callee, *args, specialized, tc);
+            try_rewrite_generic_call(hir, expr_id, *callee, *args, specialized, tc, bump);
         }
         HirExprKind::StructLiteral { fields, .. } => {
             let vals: Vec<_> = hir
@@ -188,13 +192,13 @@ pub(super) fn rewrite_expr_calls(
                 .map(|f| f.value)
                 .collect();
             for e in vals {
-                rewrite_expr_calls(hir, e, specialized, tc);
+                rewrite_expr_calls(hir, e, specialized, tc, bump);
             }
         }
         HirExprKind::Array { items } => {
             let es: Vec<_> = hir.pool.expr_list(*items).to_vec();
             for e in es {
-                rewrite_expr_calls(hir, e, specialized, tc);
+                rewrite_expr_calls(hir, e, specialized, tc, bump);
             }
         }
         HirExprKind::If {
@@ -202,43 +206,43 @@ pub(super) fn rewrite_expr_calls(
             then_block,
             else_block,
         } => {
-            rewrite_condition_calls(hir, condition, specialized, tc);
-            rewrite_block_calls(hir, *then_block, specialized, tc);
-            rewrite_block_calls(hir, *else_block, specialized, tc);
+            rewrite_condition_calls(hir, condition, specialized, tc, bump);
+            rewrite_block_calls(hir, *then_block, specialized, tc, bump);
+            rewrite_block_calls(hir, *else_block, specialized, tc, bump);
         }
         HirExprKind::Match { value, arms } => {
-            rewrite_expr_calls(hir, *value, specialized, tc);
+            rewrite_expr_calls(hir, *value, specialized, tc, bump);
             let arms_snap: Vec<_> = hir.pool.match_arms_list(*arms).to_vec();
             for arm in arms_snap {
                 if let Some(g) = arm.guard {
-                    rewrite_expr_calls(hir, g, specialized, tc);
+                    rewrite_expr_calls(hir, g, specialized, tc, bump);
                 }
                 match arm.body {
-                    HirMatchArmBody::Expr(e) => rewrite_expr_calls(hir, e, specialized, tc),
-                    HirMatchArmBody::Block(b) => rewrite_block_calls(hir, b, specialized, tc),
+                    HirMatchArmBody::Expr(e) => rewrite_expr_calls(hir, e, specialized, tc, bump),
+                    HirMatchArmBody::Block(b) => rewrite_block_calls(hir, b, specialized, tc, bump),
                 }
             }
         }
         HirExprKind::Catch { expr, handler } => {
-            rewrite_expr_calls(hir, *expr, specialized, tc);
+            rewrite_expr_calls(hir, *expr, specialized, tc, bump);
             match handler {
-                HirCatchHandler::Expr(e) => rewrite_expr_calls(hir, *e, specialized, tc),
+                HirCatchHandler::Expr(e) => rewrite_expr_calls(hir, *e, specialized, tc, bump),
                 HirCatchHandler::Block { block, .. } => {
-                    rewrite_block_calls(hir, *block, specialized, tc)
+                    rewrite_block_calls(hir, *block, specialized, tc, bump)
                 }
             }
         }
         HirExprKind::Lambda { body, .. } => match body {
-            HirLambdaBody::Expr(e) => rewrite_expr_calls(hir, *e, specialized, tc),
-            HirLambdaBody::Block(b) => rewrite_block_calls(hir, *b, specialized, tc),
+            HirLambdaBody::Expr(e) => rewrite_expr_calls(hir, *e, specialized, tc, bump),
+            HirLambdaBody::Block(b) => rewrite_block_calls(hir, *b, specialized, tc, bump),
         },
         HirExprKind::AsyncBlock { block } | HirExprKind::UnsafeBlock { block } => {
-            rewrite_block_calls(hir, *block, specialized, tc);
+            rewrite_block_calls(hir, *block, specialized, tc, bump);
         }
         HirExprKind::StringInterp { parts } => {
             for p in parts {
                 if let HirStringPart::Expr(e) = p {
-                    rewrite_expr_calls(hir, *e, specialized, tc);
+                    rewrite_expr_calls(hir, *e, specialized, tc, bump);
                 }
             }
         }
@@ -246,18 +250,19 @@ pub(super) fn rewrite_expr_calls(
     }
 }
 
-pub(super) fn try_rewrite_generic_call(
+pub(super) fn try_rewrite_generic_call<'bump>(
     hir: &mut HirProgram,
     call_expr_id: HirExprId,
     callee_id: HirExprId,
     args: arandu_middle::hir::IndexRange,
-    specialized: &FxHashMap<InstantiationKey, SymbolId>,
+    specialized: &FxHashMap<InstantiationKey<'bump>, SymbolId>,
     tc: &TypeCheckResult,
+    bump: &'bump bumpalo::Bump,
 ) {
     let key = match hir.pool.expr(callee_id).kind.clone() {
         HirExprKind::Generic {
             callee: inner_callee,
-            args: type_args,
+            args: type_args_vec,
         } => {
             let symbol = match &hir.pool.expr(inner_callee).kind {
                 HirExprKind::Path { symbol } => *symbol,
@@ -290,12 +295,13 @@ pub(super) fn try_rewrite_generic_call(
                 }
                 _ => return,
             };
+            let type_args = bump.alloc_slice_copy(&type_args_vec);
             InstantiationKey { symbol, type_args }
         }
         // Receiver-driven method mono or free-func inferred mono (no Generic node).
         _ => {
             let call_ty = hir.pool.expr(call_expr_id).ty;
-            let Some(key) = super::super::collect::instantiation_key_for_call(
+            let Some((symbol, type_args_vec)) = super::super::collect::instantiation_key_for_call(
                 hir,
                 tc,
                 callee_id,
@@ -305,7 +311,8 @@ pub(super) fn try_rewrite_generic_call(
             ) else {
                 return;
             };
-            key
+            let type_args = bump.alloc_slice_copy(&type_args_vec);
+            InstantiationKey { symbol, type_args }
         }
     };
     let Some(&spec_sym) = specialized.get(&key) else {

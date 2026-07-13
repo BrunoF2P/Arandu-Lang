@@ -163,6 +163,7 @@ dependencies = [
  "arandu_lexer",
  "arandu_middle",
  "arandu_typeck",
+ "bumpalo",
  "rustc-hash 2.1.3",
  "smallvec",
  "smol_str",
@@ -230,6 +231,7 @@ dependencies = [
  "arandu_resolve",
  "arandu_test_support",
  "arandu_typeck",
+ "bumpalo",
  "rustc-hash 2.1.3",
  "tracing",
 ]

@@ -11,7 +11,7 @@ use std::collections::VecDeque;
 /// change); threading and merging update the CFG incrementally.
 ///
 /// Returns `true` if any change was made.
-pub fn simplify_cfg(func: &mut AmirFunc) -> bool {
+pub fn simplify_cfg(func: &mut AmirFunc, bump: &bumpalo::Bump) -> bool {
     // Recompute CFG from scratch to catch any terminator changes made by
     // prior passes (SCCP, DCE) — those passes do not update the CFG.
     func.cfg = compute_cfg_edges(&func.blocks);
@@ -44,7 +44,7 @@ pub fn simplify_cfg(func: &mut AmirFunc) -> bool {
 
             let mut block_changed = false;
             block_changed |= thread_block(func, bid);
-            block_changed |= merge_block_candidate(func, bid);
+            block_changed |= merge_block_candidate(func, bid, bump);
 
             if block_changed {
                 local = true;
@@ -58,7 +58,7 @@ pub fn simplify_cfg(func: &mut AmirFunc) -> bool {
         }
 
         // Phase 2 — unreachable removal (full CFG recompute, indices shift).
-        local |= remove_unreachable_blocks(func);
+        local |= remove_unreachable_blocks(func, bump);
 
         changed |= local;
         if !local {
@@ -121,7 +121,7 @@ fn resolve_goto_chain(func: &AmirFunc, mut block: BlockId) -> BlockId {
 
 /// If `bid` has exactly one successor `succ` and `succ` has exactly one
 /// predecessor `bid`, merge them.
-fn merge_block_candidate(func: &mut AmirFunc, bid: BlockId) -> bool {
+fn merge_block_candidate(func: &mut AmirFunc, bid: BlockId, bump: &bumpalo::Bump) -> bool {
     let succs = func.successors(bid);
     if succs.len() != 1 {
         return false;
@@ -134,21 +134,24 @@ fn merge_block_candidate(func: &mut AmirFunc, bid: BlockId) -> bool {
         return false;
     }
 
-    merge_two_blocks(func, bid, succ);
+    merge_two_blocks(func, bid, succ, bump);
     true
 }
 
-fn merge_two_blocks(func: &mut AmirFunc, into: BlockId, from: BlockId) {
+fn merge_two_blocks(func: &mut AmirFunc, into: BlockId, from: BlockId, bump: &bumpalo::Bump) {
     // Snapshot per-block stmt order before taking ownership of the table.
-    let block_stmt_ids: Vec<Vec<crate::amir::InstrId>> = (0..func.blocks.len())
-        .map(|bi| func.block_stmt_ids(BlockId::from_usize(bi)).collect())
-        .collect();
+    let mut block_stmt_ids = bumpalo::collections::Vec::with_capacity_in(func.blocks.len(), bump);
+    for bi in 0..func.blocks.len() {
+        let mut ids = bumpalo::collections::Vec::new_in(bump);
+        ids.extend(func.block_stmt_ids(BlockId::from_usize(bi)));
+        block_stmt_ids.push(ids);
+    }
 
     let old = std::mem::replace(&mut func.stmts, AmirStmtTable::new());
-    let mut slots: Vec<Option<crate::amir::AmirStmt>> =
-        old.payloads.raw.into_iter().map(Some).collect();
+    let mut slots = bumpalo::collections::Vec::with_capacity_in(old.payloads.raw.len(), bump);
+    slots.extend(old.payloads.raw.into_iter().map(Some));
     let mut new_stmts = AmirStmtTable::new();
-    let mut new_ranges: Vec<DenseRange> = Vec::with_capacity(func.blocks.len());
+    let mut new_ranges = bumpalo::collections::Vec::with_capacity_in(func.blocks.len(), bump);
 
     for bi in 0..func.blocks.len() {
         let bid = BlockId::from_usize(bi);
@@ -205,13 +208,16 @@ fn merge_two_blocks(func: &mut AmirFunc, into: BlockId, from: BlockId) {
 // Unreachable block removal
 // ---------------------------------------------------------------------------
 
-fn remove_unreachable_blocks(func: &mut AmirFunc) -> bool {
+fn remove_unreachable_blocks(func: &mut AmirFunc, bump: &bumpalo::Bump) -> bool {
     let n = func.blocks.len();
     if n == 0 {
         return false;
     }
 
-    let mut reachable = vec![false; n];
+    let mut reachable = bumpalo::collections::Vec::from_iter_in(
+        std::iter::repeat_n(false, n),
+        bump,
+    );
     let mut queue = VecDeque::new();
     reachable[0] = true;
     queue.push_back(BlockId::from_usize(0));
@@ -235,7 +241,10 @@ fn remove_unreachable_blocks(func: &mut AmirFunc) -> bool {
         return false;
     }
 
-    let mut old_to_new: Vec<Option<BlockId>> = vec![None; n];
+    let mut old_to_new = bumpalo::collections::Vec::from_iter_in(
+        std::iter::repeat_n(None, n),
+        bump,
+    );
     let mut new_idx = 0usize;
     for old in 0..n {
         if reachable[old] {
@@ -245,9 +254,12 @@ fn remove_unreachable_blocks(func: &mut AmirFunc) -> bool {
     }
 
     // Snapshot stmt ids before taking ownership of the table / remapping blocks.
-    let block_stmt_ids: Vec<Vec<crate::amir::InstrId>> = (0..n)
-        .map(|old| func.block_stmt_ids(BlockId::from_usize(old)).collect())
-        .collect();
+    let mut block_stmt_ids = bumpalo::collections::Vec::with_capacity_in(n, bump);
+    for old in 0..n {
+        let mut ids = bumpalo::collections::Vec::new_in(bump);
+        ids.extend(func.block_stmt_ids(BlockId::from_usize(old)));
+        block_stmt_ids.push(ids);
+    }
 
     let mut new_blocks: Vec<AmirBasicBlock> = Vec::with_capacity(reachable_count);
     for old in 0..n {
@@ -271,10 +283,10 @@ fn remove_unreachable_blocks(func: &mut AmirFunc) -> bool {
     }
 
     let old_stmts = std::mem::replace(&mut func.stmts, AmirStmtTable::new());
-    let mut slots: Vec<Option<crate::amir::AmirStmt>> =
-        old_stmts.payloads.raw.into_iter().map(Some).collect();
+    let mut slots = bumpalo::collections::Vec::with_capacity_in(old_stmts.payloads.raw.len(), bump);
+    slots.extend(old_stmts.payloads.raw.into_iter().map(Some));
     let mut new_stmts = AmirStmtTable::new();
-    let mut new_ranges: Vec<DenseRange> = Vec::with_capacity(reachable_count);
+    let mut new_ranges = bumpalo::collections::Vec::with_capacity_in(reachable_count, bump);
 
     for (old, &reached) in reachable.iter().enumerate() {
         if !reached {
@@ -449,7 +461,8 @@ mod tests {
         );
         func.cfg = compute_cfg_edges(&func.blocks);
 
-        assert!(simplify_cfg(&mut func));
+        let bump = bumpalo::Bump::new();
+        assert!(simplify_cfg(&mut func, &bump));
         // After threading (bb0→bb1→bb2 become bb0→bb2) then merging
         // (bb0 + bb2) and unreachable removal: only 1 block remains.
         assert_eq!(func.blocks.len(), 1);
@@ -464,7 +477,8 @@ mod tests {
         let mut st = AmirStmtTable::new();
         let mut func = make_func(vec![block(0, vec![], &mut st)], st);
         func.cfg = compute_cfg_edges(&func.blocks);
-        assert!(!simplify_cfg(&mut func));
+        let bump = bumpalo::Bump::new();
+        assert!(!simplify_cfg(&mut func, &bump));
     }
 
     // ── Merge blocks ──
@@ -509,7 +523,8 @@ mod tests {
         );
         func.cfg = compute_cfg_edges(&func.blocks);
 
-        assert!(simplify_cfg(&mut func));
+        let bump = bumpalo::Bump::new();
+        assert!(simplify_cfg(&mut func, &bump));
 
         let b0 = func.block(bbid(0));
         assert_eq!(b0.statements.len, 2);
@@ -532,7 +547,8 @@ mod tests {
         func.blocks[0].terminator = AmirTerminator::Return;
         func.cfg = compute_cfg_edges(&func.blocks);
 
-        assert!(simplify_cfg(&mut func));
+        let bump = bumpalo::Bump::new();
+        assert!(simplify_cfg(&mut func, &bump));
         assert_eq!(func.blocks.len(), 1);
     }
 
@@ -557,7 +573,8 @@ mod tests {
         );
         func.cfg = compute_cfg_edges(&func.blocks);
 
-        assert!(simplify_cfg(&mut func));
+        let bump = bumpalo::Bump::new();
+        assert!(simplify_cfg(&mut func, &bump));
         // bb0 merges with bb1 (single-pred+single-succ), then unreachable
         // sweep removes bb2.  Only bb0 survives with bb1's Return.
         assert_eq!(func.blocks.len(), 1);
@@ -572,7 +589,8 @@ mod tests {
         let mut st = AmirStmtTable::new();
         let mut func = make_func(vec![block(0, vec![], &mut st)], st);
         func.cfg = compute_cfg_edges(&func.blocks);
-        assert!(!simplify_cfg(&mut func));
+        let bump = bumpalo::Bump::new();
+        assert!(!simplify_cfg(&mut func, &bump));
     }
 
     // ── simplify_cfg integration ──
@@ -606,7 +624,8 @@ mod tests {
         );
         func.cfg = compute_cfg_edges(&func.blocks);
 
-        assert!(simplify_cfg(&mut func));
+        let bump = bumpalo::Bump::new();
+        assert!(simplify_cfg(&mut func, &bump));
         assert_eq!(func.blocks.len(), 1);
     }
 }

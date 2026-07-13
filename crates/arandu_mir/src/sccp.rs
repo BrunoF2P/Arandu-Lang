@@ -1,5 +1,5 @@
 use crate::amir::{
-    AmirConstant, AmirFunc, AmirOperand, AmirRvalue, AmirStmt, AmirTerminator, BlockId, InstrId,
+    AmirConstant, AmirFunc, AmirOperand, AmirRvalue, AmirStmt, AmirTerminator, BlockId,
 };
 use crate::literal_pool::{AmirLiteralEntry, AmirLiteralPool};
 use crate::ops::{BinaryOp, UnaryOp};
@@ -18,7 +18,7 @@ enum LatticeVal {
 /// by jointly modeling value constness and CFG reachability in a single
 /// fixpoint iteration.  This subsumes intra-block constant folding and
 /// adds cross-block propagation + branch pruning.
-pub(super) fn sccp(func: &mut AmirFunc, pool: &mut AmirLiteralPool) -> bool {
+pub(super) fn sccp(func: &mut AmirFunc, pool: &mut AmirLiteralPool, bump: &bumpalo::Bump) -> bool {
     let n_temps = func.temps.len();
     let n_blocks = func.blocks.len();
     if n_temps == 0 || n_blocks == 0 {
@@ -26,17 +26,17 @@ pub(super) fn sccp(func: &mut AmirFunc, pool: &mut AmirLiteralPool) -> bool {
     }
 
     // Phase 1 – analyse lattice + reachability to fixpoint
-    let (lattice, sccp_reachable) = analyse(func, pool);
+    let (lattice, sccp_reachable) = analyse(func, pool, bump);
 
     // Phase 2 – apply results to the function
-    let changed = apply(func, pool, &lattice);
+    let changed = apply(func, pool, &lattice, bump);
 
     // If SCCP proved a block dead that is statically reachable from the CFG,
     // the outer pipeline needs to re-run SimplifyCFG even if apply found
     // nothing to rewrite (e.g. the terminator was already a Goto from a
     // prior call).
     if !changed {
-        let static_reachable = raw_cfg_reachable(func);
+        let static_reachable = raw_cfg_reachable(func, bump);
         for i in 0..n_blocks {
             if static_reachable[i] && !sccp_reachable[i] {
                 return true;
@@ -50,9 +50,15 @@ pub(super) fn sccp(func: &mut AmirFunc, pool: &mut AmirLiteralPool) -> bool {
 /// BFS from entry block following `func.cfg` successor edges (ignoring
 /// condition values).  Every block that has at least one predecessor in
 /// the static CFG is considered statically reachable.
-fn raw_cfg_reachable(func: &AmirFunc) -> Vec<bool> {
+fn raw_cfg_reachable<'bump>(
+    func: &AmirFunc,
+    bump: &'bump bumpalo::Bump,
+) -> bumpalo::collections::Vec<'bump, bool> {
     let n = func.blocks.len();
-    let mut reachable = vec![false; n];
+    let mut reachable = bumpalo::collections::Vec::from_iter_in(
+        std::iter::repeat_n(false, n),
+        bump,
+    );
     if n == 0 {
         return reachable;
     }
@@ -75,11 +81,24 @@ fn raw_cfg_reachable(func: &AmirFunc) -> Vec<bool> {
 // Analysis
 // ---------------------------------------------------------------------------
 
-fn analyse(func: &AmirFunc, pool: &mut AmirLiteralPool) -> (Vec<LatticeVal>, Vec<bool>) {
+fn analyse<'bump>(
+    func: &AmirFunc,
+    pool: &mut AmirLiteralPool,
+    bump: &'bump bumpalo::Bump,
+) -> (
+    bumpalo::collections::Vec<'bump, LatticeVal>,
+    bumpalo::collections::Vec<'bump, bool>,
+) {
     let n_temps = func.temps.len();
     let n_blocks = func.blocks.len();
-    let mut lattice = vec![LatticeVal::Undefined; n_temps];
-    let mut reachable = vec![false; n_blocks];
+    let mut lattice = bumpalo::collections::Vec::from_iter_in(
+        std::iter::repeat_n(LatticeVal::Undefined, n_temps),
+        bump,
+    );
+    let mut reachable = bumpalo::collections::Vec::from_iter_in(
+        std::iter::repeat_n(false, n_blocks),
+        bump,
+    );
     reachable[0] = true;
 
     // RPO once – covers all statically reachable blocks.
@@ -137,13 +156,19 @@ fn analyse(func: &AmirFunc, pool: &mut AmirLiteralPool) -> (Vec<LatticeVal>, Vec
 // Transformation
 // ---------------------------------------------------------------------------
 
-fn apply(func: &mut AmirFunc, pool: &mut AmirLiteralPool, lattice: &[LatticeVal]) -> bool {
+fn apply(
+    func: &mut AmirFunc,
+    pool: &mut AmirLiteralPool,
+    lattice: &[LatticeVal],
+    bump: &bumpalo::Bump,
+) -> bool {
     let mut changed = false;
     for bi in 0..func.blocks.len() {
         let bid = BlockId::from_usize(bi);
 
         // Fold every assign whose lhs is a proven constant.
-        let stmt_ids: Vec<InstrId> = func.block_stmt_ids(bid).collect();
+        let mut stmt_ids = bumpalo::collections::Vec::new_in(bump);
+        stmt_ids.extend(func.block_stmt_ids(bid));
         for stmt_id in stmt_ids {
             let stmt = func.stmt_mut(stmt_id);
             if let AmirStmt::Assign { lhs, rhs } = stmt

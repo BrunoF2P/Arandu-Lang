@@ -24,8 +24,15 @@ pub fn monomorphize_program(
     tc: &mut TypeCheckResult,
     hir: &mut HirProgram,
 ) -> Result<usize, Vec<Diagnostic>> {
-    let graph = analyze_instantiations(tc, hir)?;
-    expand_specializations(tc, hir, &graph)
+    let bump = bumpalo::Bump::new();
+    let graph = analyze_instantiations(tc, hir, &bump)?;
+    let result = expand_specializations(tc, hir, &graph, &bump);
+
+    if arandu_base::perf::PRINT_ALLOC_STATS.load(std::sync::atomic::Ordering::Relaxed) {
+        arandu_base::perf::track_alloc(bump.allocated_bytes());
+    }
+
+    result
 }
 
 #[cfg(test)]
@@ -39,30 +46,21 @@ mod tests {
         (SymbolTable::new(0), TypeInterner::new())
     }
 
-    fn define_symbol(st: &mut SymbolTable, name: &str) -> SymbolId {
-        st.define(
-            st.global_scope(),
-            name,
-            SymbolKind::Func,
-            Span::new(0, 0, 0),
-        )
-        .unwrap()
-    }
-
     #[test]
     fn test_graph_deduplication() {
         let (mut st, interner) = setup();
         let sym = define_symbol(&mut st, "identity");
         let int_id = interner.intern(ArType::Primitive(Primitive::Int));
 
-        let mut graph = InstantiationGraph::new();
+        let bump = bumpalo::Bump::new();
+        let mut graph = InstantiationGraph::new(&bump);
         let key = InstantiationKey {
             symbol: sym,
-            type_args: vec![int_id],
+            type_args: bump.alloc_slice_copy(&[int_id]),
         };
 
-        let id1 = graph.get_or_insert(&key, &interner, &st).unwrap();
-        let id2 = graph.get_or_insert(&key, &interner, &st).unwrap();
+        let id1 = graph.get_or_insert(&key, &bump, &interner, &st).unwrap();
+        let id2 = graph.get_or_insert(&key, &bump, &interner, &st).unwrap();
         assert_eq!(id1, id2);
         assert!(!graph.is_empty());
     }
@@ -74,13 +72,15 @@ mod tests {
         let int_id = interner.intern(ArType::Primitive(Primitive::Int));
         let str_id = interner.intern(ArType::Primitive(Primitive::Str));
 
-        let mut graph = InstantiationGraph::new();
+        let bump = bumpalo::Bump::new();
+        let mut graph = InstantiationGraph::new(&bump);
         let id1 = graph
             .get_or_insert(
                 &InstantiationKey {
                     symbol: sym,
-                    type_args: vec![int_id],
+                    type_args: bump.alloc_slice_copy(&[int_id]),
                 },
+                &bump,
                 &interner,
                 &st,
             )
@@ -89,8 +89,9 @@ mod tests {
             .get_or_insert(
                 &InstantiationKey {
                     symbol: sym,
-                    type_args: vec![str_id],
+                    type_args: bump.alloc_slice_copy(&[str_id]),
                 },
+                &bump,
                 &interner,
                 &st,
             )
@@ -104,7 +105,8 @@ mod tests {
         let (mut st, interner) = setup();
         let sym = define_symbol(&mut st, "recursive");
 
-        let mut graph = InstantiationGraph::with_recursion_limit(3);
+        let bump = bumpalo::Bump::new();
+        let mut graph = InstantiationGraph::with_recursion_limit(&bump, 3);
         let int_id = interner.intern(ArType::Primitive(Primitive::Int));
         for i in 0..3 {
             let tid = interner.intern(ArType::Array(i, int_id));
@@ -112,8 +114,9 @@ mod tests {
                 .get_or_insert(
                     &InstantiationKey {
                         symbol: sym,
-                        type_args: vec![tid],
+                        type_args: bump.alloc_slice_copy(&[tid]),
                     },
+                    &bump,
                     &interner,
                     &st,
                 )
@@ -125,8 +128,9 @@ mod tests {
         let result = graph.get_or_insert(
             &InstantiationKey {
                 symbol: sym,
-                type_args: vec![tid],
+                type_args: bump.alloc_slice_copy(&[tid]),
             },
+            &bump,
             &interner,
             &st,
         );
@@ -146,13 +150,15 @@ mod tests {
         let sym_b = define_symbol(&mut st, "funcB");
         let tid = interner.intern(ArType::Primitive(Primitive::Int));
 
-        let mut graph = InstantiationGraph::new();
+        let bump = bumpalo::Bump::new();
+        let mut graph = InstantiationGraph::new(&bump);
         let id_a = graph
             .get_or_insert(
                 &InstantiationKey {
                     symbol: sym_a,
-                    type_args: vec![tid],
+                    type_args: bump.alloc_slice_copy(&[tid]),
                 },
+                &bump,
                 &interner,
                 &st,
             )
@@ -161,8 +167,9 @@ mod tests {
             .get_or_insert(
                 &InstantiationKey {
                     symbol: sym_b,
-                    type_args: vec![tid],
+                    type_args: bump.alloc_slice_copy(&[tid]),
                 },
+                &bump,
                 &interner,
                 &st,
             )
@@ -183,13 +190,15 @@ mod tests {
         let sym_c = define_symbol(&mut st, "funcC");
         let tid = interner.intern(ArType::Primitive(Primitive::Int));
 
-        let mut graph = InstantiationGraph::new();
+        let bump = bumpalo::Bump::new();
+        let mut graph = InstantiationGraph::new(&bump);
         let id_a = graph
             .get_or_insert(
                 &InstantiationKey {
                     symbol: sym_a,
-                    type_args: vec![tid],
+                    type_args: bump.alloc_slice_copy(&[tid]),
                 },
+                &bump,
                 &interner,
                 &st,
             )
@@ -198,8 +207,9 @@ mod tests {
             .get_or_insert(
                 &InstantiationKey {
                     symbol: sym_b,
-                    type_args: vec![tid],
+                    type_args: bump.alloc_slice_copy(&[tid]),
                 },
+                &bump,
                 &interner,
                 &st,
             )
@@ -208,8 +218,9 @@ mod tests {
             .get_or_insert(
                 &InstantiationKey {
                     symbol: sym_c,
-                    type_args: vec![tid],
+                    type_args: bump.alloc_slice_copy(&[tid]),
                 },
+                &bump,
                 &interner,
                 &st,
             )
@@ -228,9 +239,10 @@ mod tests {
         let sym = define_symbol(&mut st, "identity");
         let tid = interner.intern(ArType::Primitive(Primitive::Int));
 
+        let bump = bumpalo::Bump::new();
         let key = InstantiationKey {
             symbol: sym,
-            type_args: vec![tid],
+            type_args: bump.alloc_slice_copy(&[tid]),
         };
 
         let mangled = mangle_symbol(&key, &interner, &st);
@@ -246,9 +258,10 @@ mod tests {
         let int_id = interner.intern(ArType::Primitive(Primitive::Int));
         let str_id = interner.intern(ArType::Primitive(Primitive::Str));
 
+        let bump = bumpalo::Bump::new();
         let key = InstantiationKey {
             symbol: sym,
-            type_args: vec![int_id, str_id],
+            type_args: bump.alloc_slice_copy(&[int_id, str_id]),
         };
 
         let mangled = mangle_symbol(&key, &interner, &st);
@@ -271,13 +284,14 @@ mod tests {
         let int_id = interner.intern(ArType::Primitive(Primitive::Int));
         let bool_id = interner.intern(ArType::Primitive(Primitive::Bool));
 
+        let bump = bumpalo::Bump::new();
         let key_int = InstantiationKey {
             symbol: sym,
-            type_args: vec![int_id],
+            type_args: bump.alloc_slice_copy(&[int_id]),
         };
         let key_bool = InstantiationKey {
             symbol: sym,
-            type_args: vec![bool_id],
+            type_args: bump.alloc_slice_copy(&[bool_id]),
         };
 
         let mangled_int = mangle_symbol(&key_int, &interner, &st);
@@ -307,7 +321,8 @@ func main() {
         let hir =
             crate::passes::lower_hir::lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
 
-        let graph = analyze_instantiations(&tc, &hir).expect("analysis failed");
+        let bump = bumpalo::Bump::new();
+        let graph = analyze_instantiations(&tc, &hir, &bump).expect("analysis failed");
 
         assert!(!graph.is_empty());
         assert!(
@@ -315,5 +330,41 @@ func main() {
                 .iter()
                 .any(|node| node.mangled_name.contains("identity"))
         );
+    }
+
+    #[test]
+    fn test_deep_generic_recursion_and_arena_performance() {
+        let mut src = String::new();
+        src.push_str("func f0() {\n    f1<int>(42)\n}\n");
+        for i in 1..10 {
+            src.push_str(&format!(
+                "func f{i}<T>(val: T) {{\n    f{}<T>(val)\n}}\n",
+                i + 1
+            ));
+        }
+        src.push_str("func f10<T>(val: T) {\n}\n");
+
+        let program = arandu_parser::parse(&src).expect("parse failed");
+        let resolution = arandu_resolve::resolve_for_test(0, &program);
+        let mut tc = crate::passes::type_checker::type_check(resolution, &program);
+        assert!(tc.diagnostics.is_empty(), "type check failed: {:?}", tc.diagnostics);
+        let hir = crate::passes::lower_hir::lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
+
+        let bump = bumpalo::Bump::new();
+        let graph = analyze_instantiations(&tc, &hir, &bump).expect("analysis failed");
+        assert!(!graph.is_empty());
+
+        let allocated_bytes = bump.allocated_bytes();
+        assert!(allocated_bytes > 0, "Expected bump arena to have allocated bytes, got 0");
+    }
+
+    fn define_symbol(st: &mut SymbolTable, name: &str) -> SymbolId {
+        st.define(
+            st.global_scope(),
+            name,
+            SymbolKind::Func,
+            Span::new(0, 0, 0),
+        )
+        .unwrap()
     }
 }

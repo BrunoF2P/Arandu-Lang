@@ -5,18 +5,18 @@ use rustc_hash::FxHashMap;
 
 newtype_index!(InstantiationNodeId);
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct InstantiationKey {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct InstantiationKey<'bump> {
     pub symbol: SymbolId,
-    pub type_args: Vec<TypeId>,
+    pub type_args: &'bump [TypeId],
 }
 
 #[derive(Debug, Clone)]
-pub struct InstantiationNode {
+pub struct InstantiationNode<'bump> {
     pub id: InstantiationNodeId,
-    pub key: InstantiationKey,
-    pub mangled_name: String,
-    pub callees: Vec<InstantiationNodeId>,
+    pub key: InstantiationKey<'bump>,
+    pub mangled_name: &'bump str,
+    pub callees: bumpalo::collections::Vec<'bump, InstantiationNodeId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,18 +25,18 @@ pub enum MonoError {
 }
 
 #[derive(Debug)]
-pub struct InstantiationGraph {
-    nodes: Vec<InstantiationNode>,
-    index: FxHashMap<InstantiationKey, InstantiationNodeId>,
+pub struct InstantiationGraph<'bump> {
+    nodes: bumpalo::collections::Vec<'bump, InstantiationNode<'bump>>,
+    index: FxHashMap<InstantiationKey<'bump>, InstantiationNodeId>,
     instantiation_counts: FxHashMap<SymbolId, usize>,
     recursion_limit: usize,
 }
 
-impl InstantiationGraph {
+impl<'bump> InstantiationGraph<'bump> {
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(bump: &'bump bumpalo::Bump) -> Self {
         Self {
-            nodes: Vec::new(),
+            nodes: bumpalo::collections::Vec::new_in(bump),
             index: FxHashMap::default(),
             instantiation_counts: FxHashMap::default(),
             recursion_limit: 64,
@@ -44,9 +44,9 @@ impl InstantiationGraph {
     }
 
     #[must_use]
-    pub fn with_recursion_limit(limit: usize) -> Self {
+    pub fn with_recursion_limit(bump: &'bump bumpalo::Bump, limit: usize) -> Self {
         Self {
-            nodes: Vec::new(),
+            nodes: bumpalo::collections::Vec::new_in(bump),
             index: FxHashMap::default(),
             instantiation_counts: FxHashMap::default(),
             recursion_limit: limit,
@@ -55,7 +55,8 @@ impl InstantiationGraph {
 
     pub fn get_or_insert(
         &mut self,
-        key: &InstantiationKey,
+        key: &InstantiationKey<'bump>,
+        bump: &'bump bumpalo::Bump,
         interner: &TypeInterner,
         symbols: &SymbolTable,
     ) -> Result<InstantiationNodeId, MonoError> {
@@ -76,14 +77,15 @@ impl InstantiationGraph {
         }
 
         let mangled = super::demangle::mangle_symbol(key, interner, symbols);
+        let mangled_bump = bump.alloc_str(&mangled);
         let id = InstantiationNodeId::from_usize(self.nodes.len());
         self.nodes.push(InstantiationNode {
             id,
-            key: key.clone(),
-            mangled_name: mangled,
-            callees: Vec::new(),
+            key: *key,
+            mangled_name: mangled_bump,
+            callees: bumpalo::collections::Vec::new_in(bump),
         });
-        self.index.insert(key.clone(), id);
+        self.index.insert(*key, id);
         *self.instantiation_counts.entry(key.symbol).or_insert(0) += 1;
         Ok(id)
     }
@@ -93,12 +95,12 @@ impl InstantiationGraph {
     }
 
     #[must_use]
-    pub fn get_node(&self, id: InstantiationNodeId) -> &InstantiationNode {
+    pub fn get_node(&self, id: InstantiationNodeId) -> &InstantiationNode<'bump> {
         &self.nodes[id.as_usize()]
     }
 
     #[must_use]
-    pub fn lookup(&self, key: &InstantiationKey) -> Option<InstantiationNodeId> {
+    pub fn lookup(&self, key: &InstantiationKey<'bump>) -> Option<InstantiationNodeId> {
         self.index.get(key).copied()
     }
 
@@ -112,7 +114,7 @@ impl InstantiationGraph {
         self.nodes.is_empty()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &InstantiationNode> {
+    pub fn iter(&self) -> impl Iterator<Item = &InstantiationNode<'bump>> {
         self.nodes.iter()
     }
 
@@ -165,11 +167,5 @@ impl InstantiationGraph {
         path.pop();
         on_stack[idx] = false;
         None
-    }
-}
-
-impl Default for InstantiationGraph {
-    fn default() -> Self {
-        Self::new()
     }
 }

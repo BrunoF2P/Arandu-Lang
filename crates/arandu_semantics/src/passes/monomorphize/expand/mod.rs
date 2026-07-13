@@ -31,10 +31,11 @@ use rewrite::rewrite_block_calls;
 ///
 /// Returns the number of specialized functions appended to `hir`.
 #[tracing::instrument(level = "debug", target = "arandu_semantics::mono", skip_all)]
-pub fn expand_specializations(
+pub fn expand_specializations<'bump>(
     tc: &mut TypeCheckResult,
     hir: &mut HirProgram,
-    graph: &InstantiationGraph,
+    graph: &InstantiationGraph<'bump>,
+    bump: &'bump bumpalo::Bump,
 ) -> Result<usize, Vec<Diagnostic>> {
     let mut diagnostics = Vec::new();
 
@@ -50,12 +51,12 @@ pub fn expand_specializations(
     }
 
     // Concrete keys only (skip identity template nodes).
-    let concrete: Vec<InstantiationKey> = graph
+    let concrete: Vec<InstantiationKey<'bump>> = graph
         .iter()
-        .map(|n| n.key.clone())
+        .map(|n| n.key)
         .filter(|key| {
             template_funcs.contains_key(&key.symbol)
-                && !is_identity_instantiation(tc, key.symbol, &key.type_args)
+                && !is_identity_instantiation(tc, key.symbol, key.type_args)
         })
         .collect();
 
@@ -65,7 +66,7 @@ pub fn expand_specializations(
     }
 
     // key → specialized function symbol
-    let mut specialized: FxHashMap<InstantiationKey, SymbolId> = FxHashMap::default();
+    let mut specialized: FxHashMap<InstantiationKey<'bump>, SymbolId> = FxHashMap::default();
     let mut created = 0usize;
 
     for key in &concrete {
@@ -74,7 +75,7 @@ pub fn expand_specializations(
         }
         match specialize_free_func(tc, hir, key, &template_funcs) {
             Ok(sym) => {
-                specialized.insert(key.clone(), sym);
+                specialized.insert(*key, sym);
                 created += 1;
             }
             Err(d) => diagnostics.push(d),
@@ -93,7 +94,7 @@ pub fn expand_specializations(
             _ => None,
         };
         if let Some(body) = body {
-            rewrite_block_calls(hir, body, &specialized, tc);
+            rewrite_block_calls(hir, body, &specialized, tc, bump);
         }
     }
 
@@ -119,7 +120,7 @@ fn is_identity_instantiation(tc: &TypeCheckResult, symbol: SymbolId, type_args: 
 fn specialize_free_func(
     tc: &mut TypeCheckResult,
     hir: &mut HirProgram,
-    key: &InstantiationKey,
+    key: &InstantiationKey<'_>,
     template_funcs: &FxHashMap<SymbolId, usize>,
 ) -> Result<SymbolId, Diagnostic> {
     let &decl_idx = template_funcs.get(&key.symbol).ok_or_else(|| {
@@ -189,7 +190,7 @@ fn specialize_free_func(
         })?;
 
     // Subst and specialized return type
-    let subst = build_subst_ids(&params_list, &key.type_args, &tc.type_info.type_interner);
+    let subst = build_subst_ids(&params_list, key.type_args, &tc.type_info.type_interner);
     let ret_ty = substitute_type_id(template.return_type, &subst, &tc.type_info.type_interner);
 
     // Register specialized function type Func(params, ret) for decl_type lookup

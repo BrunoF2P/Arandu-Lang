@@ -16,6 +16,7 @@ rustc-hash = { workspace = true }
 smallvec = { workspace = true }
 smol_str.workspace = true
 tracing.workspace = true
+bumpalo = { workspace = true, features = ["collections"] }
 
 [lib]
 path = "src/lib.rs"

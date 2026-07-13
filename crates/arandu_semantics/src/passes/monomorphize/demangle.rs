@@ -4,7 +4,7 @@ use arandu_middle::types::{ArType, TypeInterner};
 use super::graph::InstantiationKey;
 
 pub fn mangle_symbol(
-    key: &InstantiationKey,
+    key: &InstantiationKey<'_>,
     interner: &TypeInterner,
     symbols: &SymbolTable,
 ) -> String {
