@@ -36,6 +36,8 @@ pub struct TypeInfo {
     pub param_constraints: FxHashMap<SymbolId, Arc<Vec<SymbolId>>>,
     /// Interface symbol → method signatures (nominal, Go-style structural check).
     pub(crate) interfaces: FxHashMap<SymbolId, types::InterfaceInfo>,
+    /// Cache of instantiated variant/method signatures to avoid redundant substitution.
+    pub variant_instantiations: FxHashMap<(SymbolId, Vec<TypeId>), (Vec<TypeId>, TypeId)>,
 }
 
 impl TypeInfo {
@@ -59,6 +61,7 @@ impl TypeInfo {
             generic_defaults: FxHashMap::default(),
             param_constraints: FxHashMap::default(),
             interfaces: FxHashMap::default(),
+            variant_instantiations: FxHashMap::default(),
         }
     }
 
