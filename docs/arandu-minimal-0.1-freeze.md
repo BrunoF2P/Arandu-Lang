@@ -129,8 +129,8 @@ Coroutines are language. Multi-task needs **explicit** `SyncExecutor`. Payload h
 | ID | Issue | Severity for Minimal | Suggested fix |
 |----|--------|----------------------|---------------|
 | S1 | `std.core.ptr` broken twin | was high | [x] fixed as compat shim → `ptrOffset` |
-| S2 | `path.is_absolute` is whitelist heuristic (`/`, `/tmp`) not real path | medium | host `ar_path_*` wrapper **or** document as limited; add e2e |
-| S3 | `path.join` / `file_name` stubs return input | low for Minimal | mark experimental or stub-doc |
+| S2 | `path.is_absolute` host-backed | was medium | [x] `ar_path_is_absolute` + m10 gold |
+| S3 | `path.join` / `file_name` stubs return input | low for Minimal | documented stub; `PROMOTE-L4` |
 | S4 | alloc body typeck noise if linked as dependency | medium | keep entry-only check policy; don’t put Vec in default template until clean |
 | S5 | runtime i64 payload honesty | low if documented | doc in install + Minimal async § |
 | S6 | prelude vs `std.io` dual story | low | Minimal uses prelude `io` only |
@@ -323,6 +323,153 @@ func main(): int {
 
 ---
 
-## 13. One-line summary
+## 13. Why limits exist & why OUT is “experimental”
 
-**Minimal 0.1 = language + async coroutine + SyncExecutor spawn/join + thin core/prelude + honest experimental fence — then install and project CLI; site last.**
+This section is the **product rationale**. Use it when promoting items later or answering “why isn’t X in Minimal?”.
+
+### 13.1 Two lists (do not conflate)
+
+| List | Meaning |
+|------|---------|
+| **IN (Minimal)** | Install + tutorial + default template **promise** this works. Guarded by gold suite / CI. |
+| **OUT experimental** | Code **may** live in-tree and have tests, but must **not** appear in `arandu new` defaults, install docs, or public “stable” claims. |
+
+Without this fence, a bug in TCP/reactor/alloc becomes “Arandu is broken” on day one of the site.
+
+This is the same idea as **stable vs nightly** in other languages — here named **Minimal 0.1 IN** vs **experimental**.
+
+### 13.2 Why not delete experimental code?
+
+| Delete | Keep experimental |
+|--------|-------------------|
+| Loses work and tests | Keeps evolving in-repo |
+| Reimplement later | Install/docs simply **ignore** |
+| Falsely implies “does not exist” | Honest: “exists, no product guarantee” |
+
+**Rule:** experimental may ship in the git tree and even in release tarballs for power users; **templates and Minimal docs never depend on it.**
+
+### 13.3 Rationale for each major limit (track + promote later)
+
+#### L1 — Free generics yes; method call through `T: I` not in gold
+
+| | |
+|--|--|
+| **Symptom** | `func f<T: I>(shared x: T) { x.m() }` → **T033** (indirect / non-direct call) |
+| **Root** | Typeck understands bounds; mono/codegen does not yet materialize stable **direct** method dispatch via type params |
+| **Minimal policy** | Gold shows free-function mono (`identity<T>`). Bounds in typeck OK; method-via-param **OUT of gold** |
+| **Promote when** | Direct call / mono path for interface methods through type params is green + gold example |
+| **Track ID** | `PROMOTE-L1` |
+
+#### L2 — Multi-file “real package” not in Minimal
+
+| | |
+|--|--|
+| **Symptom** | `import my_app.util as u` from `src/util.aru` does not resolve like Cargo |
+| **Root** | `canonicalize_import_path` only rewrites **stdlib** (`std.core.*` → `stdlib/core/…`, `std.*` → `stdlib/std/…`). No `Arandu.toml` package graph yet |
+| **Minimal policy** | Gold multi-file = import **stdlib** modules (path, runtime). Local multi-module apps = **P2 installer** |
+| **Promote when** | Package CLI resolves package-local modules + gold `m08`-style under `src/` |
+| **Track ID** | `PROMOTE-L2` |
+
+#### L3 — Async language + SyncExecutor IN; reactor/TCP/Waker/supervisor experimental
+
+| Layer | Minimal? | Why |
+|-------|----------|-----|
+| A3 `async` / `await` / `Coroutine` | **IN** | Compiler contract; e2e gold |
+| `SyncExecutor` + spawn/join/block_on | **IN** | Explicit executor; multi-file tested |
+| EpollReactor / io_uring / sleep | experimental | Host MVP; OS-specific; API still moving |
+| TCP + wait/wake + async I/O | experimental | Ports, nonblocking, not needed for hello |
+| Waker / Context handles | experimental | Useful for later Future; not required for Minimal promise |
+| Supervisor processes | experimental | Ops isolation model; not install-critical |
+| `Future.poll` trait on Coroutine | **not done** | Needs richer interface/Self story |
+
+**Async Minimal promise (install):** coroutines are language; multi-task needs **explicit** executor; host payload is **i64-shaped**; **no** global runtime.
+
+**Promote when:** each surface has gold e2e + stable API note in this doc; then move row from §3.4 → §3.3.
+
+| Track ID | Item |
+|----------|------|
+| `PROMOTE-L3a` | Reactor (sleep/poll) → optional Minimal “async-io” profile |
+| `PROMOTE-L3b` | TCP wait/read/write |
+| `PROMOTE-L3c` | Waker integrated with spawn |
+| `PROMOTE-L3d` | Supervisor |
+| `PROMOTE-L3e` | Future trait |
+
+#### L4 — `path.join` / `file_name` stubs
+
+| | |
+|--|--|
+| **Root** | No first-class stable str concat / split in the language yet |
+| **Policy** | `is_empty` + host `is_absolute` **IN optional**; join/file_name documented **stub** |
+| **Promote when** | str ops exist + real join/file_name e2e |
+| **Track ID** | `PROMOTE-L4` |
+
+#### L5 — `std.env` / `fs` / `process` / `time` / module `std.io`
+
+| | |
+|--|--|
+| **Root** | Declarations or scaffold; host incomplete or no Minimal e2e |
+| **Policy** | Experimental banners in source. Prelude **`import io`** remains **IN** (println wired) |
+| **Promote when** | Host symbols + gold + not required by default template |
+| **Track ID** | `PROMOTE-L5-*` (env, fs, process, time, std.io) |
+
+#### L6 — Vec / allocator_api / GenArena experimental for install
+
+| | |
+|--|--|
+| **Root** | API exists; alloc **body** typeck can noise if linked as default deps; GenArena typed tables still host i64 MVP |
+| **Policy** | Do not put Vec in default `arandu new` template until path is check-clean end-to-end. GenArena advanced/experimental |
+| **Promote when** | `cli_vec_defaults` + alloc module self-check clean; optional `vec-hello` gold |
+| **Track ID** | `PROMOTE-L6` |
+
+#### L7 — Language OUT by design or later phase
+
+| Item | Why OUT | Promote track |
+|------|---------|----------------|
+| `unsafe` **expression** (`let x = unsafe { … }`) | AMIR U001; stmt form works | `PROMOTE-L7-unsafe-expr` |
+| Indirect calls / fn pointers | T033 intentional until call story complete | `PROMOTE-L7-indirect` |
+| `dyn` / existential interfaces | TYP.1 residual | `PROMOTE-L7-dyn` |
+| Effects (A2) | not started | roadmap |
+| User `Display` / custom to_str | ToStr v0.1 scalars only | `PROMOTE-L7-display` |
+| LLVM / product AOT | post-install | roadmap Fase 5 |
+| Package registry | post-Minimal | after P2 |
+| Self-host | Fase 6 | roadmap |
+
+#### L8 — JIT as `run` runtime
+
+| | |
+|--|--|
+| **Policy** | Minimal install may ship **JIT runner** + later `build` via emit-c+cc |
+| **Not a bug** | Cranelift host is dev/debug backend by design |
+| **Promote** | Native object / LLVM when product needs it |
+
+### 13.4 Promotion checklist (do this when moving experimental → IN)
+
+For each `PROMOTE-*` item:
+
+1. [ ] Root cause fixed (not a workaround only)  
+2. [ ] Gold example under `examples/minimal/` (or new profile e.g. `examples/minimal-io/`)  
+3. [ ] `cli_minimal_gold` (or dedicated CI job) green  
+4. [ ] Move row in §3 (OUT → IN) and update §4 std inventory  
+5. [ ] Remove or narrow “experimental” banner in source  
+6. [ ] Installer / template: only if default template needs it  
+7. [ ] Decision log entry (§11)  
+
+### 13.5 Order suggested for later (after installer)
+
+```text
+P2 installer/CLI  →  PROMOTE-L2 package multi-file
+                  →  PROMOTE-L6 Vec (if template needs collections)
+                  →  PROMOTE-L4 path join
+                  →  PROMOTE-L5 process/time/env as needed
+                  →  PROMOTE-L3a/b async-io profile (optional second template)
+                  →  L1 / L7 language deep features
+                  →  site/playground on Minimal (+ optional profiles)
+```
+
+Do **not** expand Minimal by dumping all experimental into IN at once.
+
+---
+
+## 14. One-line summary
+
+**Minimal 0.1 = language + async coroutine + SyncExecutor spawn/join + thin core/prelude + honest experimental fence — then install and project CLI; site last. Limits are product promises, not abandoned code; promote via §13.4.**
