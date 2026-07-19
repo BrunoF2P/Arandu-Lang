@@ -1,0 +1,19 @@
+module examples.minimal.m10_path_empty
+
+import std.path as path
+
+func main(): int {
+    if !path.is_empty("") {
+        return 1
+    }
+    if path.is_empty("x") {
+        return 2
+    }
+    if !path.is_absolute("/tmp") {
+        return 3
+    }
+    if path.is_absolute("rel") {
+        return 4
+    }
+    return 0
+}

@@ -1,10 +1,17 @@
 module std.runtime
 
-/// SL_R — cooperative async **library** runtime (explicit executor / reactor / supervisor).
+/// SL_R — cooperative async **library** runtime.
 ///
 /// Design: docs/arandu-async-runtime-design-v0.1.md
 /// - `await` / `Coroutine[T]` = compiler (A3)
 /// - this module = multi-task drive + OS reactor + process isolation (optional)
+///
+/// ## Arandu Minimal 0.1 — **IN** surface
+/// `SyncExecutor`, `TaskHandle`, `new_sync_executor`, `spawn`/`join`/`block_on`
+/// (and `*_int` / `*_i64` helpers).
+///
+/// ## Experimental (shipped, not install-guaranteed)
+/// Reactor, TCP, Waker, Supervisor — see section banners below.
 ///
 /// Host symbols (`ar_rt_*`) are linked by the Cranelift JIT.
 
@@ -163,7 +170,7 @@ public func cancel_int(shared ex: SyncExecutor, handle: TaskHandle): void {
 }
 
 // ===========================================================================
-// SL_R.2/3 — EpollReactor + backend select
+// EXPERIMENTAL (not Minimal 0.1 install) — SL_R.2/3 EpollReactor
 // ===========================================================================
 
 public struct EpollReactor {
@@ -214,7 +221,7 @@ public func reactor_register_socket(shared r: EpollReactor, shared s: TcpStream,
 }
 
 // ===========================================================================
-// Waker / Context (explicit handles)
+// EXPERIMENTAL (not Minimal 0.1) — Waker / Context
 // ===========================================================================
 
 public struct Waker {
@@ -255,7 +262,7 @@ public func new_context(w: Waker): Context {
 }
 
 // ===========================================================================
-// TCP sockets (blocking + nonblocking poll + io_uring when available)
+// EXPERIMENTAL (not Minimal 0.1) — TCP sockets
 // ===========================================================================
 
 public struct TcpListener {
@@ -352,7 +359,7 @@ public func tcp_close_stream(shared s: TcpStream): void {
 }
 
 // ===========================================================================
-// SL_R.1 — process supervisor
+// EXPERIMENTAL (not Minimal 0.1) — SL_R.1 process supervisor
 // ===========================================================================
 
 public struct Supervisor {

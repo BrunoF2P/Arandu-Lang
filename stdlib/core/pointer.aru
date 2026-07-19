@@ -1,7 +1,12 @@
+// arandu_core::pointer — Minimal 0.1 **canonical** pointer helpers.
+//
+// Layer: thin wrappers over `std.core.mem` intrinsics (no heap).
+
 module std.core.pointer
 
 import std.core.mem as mem
 
-func offset<T>(p: ptr[T], count: i32): ptr[T] {
+/// Pointer arithmetic: advance `p` by `count` elements of `T`.
+public func offset<T>(p: ptr[T], count: i32): ptr[T] {
     return mem.ptrOffset<T>(p, count)
 }

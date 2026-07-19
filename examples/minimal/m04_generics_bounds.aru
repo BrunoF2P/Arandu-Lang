@@ -1,0 +1,16 @@
+module examples.minimal.m04_generics_bounds
+
+// Free-function generics (monomorphized). Interface method dispatch through
+// type params is experimental (T033) — covered in post-Minimal.
+
+func identity<T>(x: T): T {
+    return x
+}
+
+func add_ten(n: int): int {
+    return identity(n) + 10
+}
+
+func main(): int {
+    return add_ten(0)
+}

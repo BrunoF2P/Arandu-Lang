@@ -1,0 +1,8 @@
+module examples.minimal.m01_hello
+
+import io
+
+func main(): int {
+    io.println("hello, minimal")
+    return 0
+}

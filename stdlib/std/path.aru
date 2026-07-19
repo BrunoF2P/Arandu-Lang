@@ -1,27 +1,19 @@
 module std.path
 
-/// SL_S path helpers. Function **bodies** are linked into the entry HIR unit
-/// (`link_hir_module` in lower_amir) so `import std.path` is runnable, not
-/// signatures-only.
+/// Minimal 0.1 — **IN optional** path helpers (honest limits).
+///
+/// | Function     | Status |
+/// |--------------|--------|
+/// | `is_empty`   | pure, complete |
+/// | `is_absolute`| host-backed (Unix `/` prefix) |
+/// | `join`       | **stub** — returns `a` until str concat exists |
+/// | `file_name`  | **stub** — returns `p` until split exists |
+///
+/// Bodies link into the entry unit via multi-file HIR.
 
-/// True when `p` starts with `/` (Unix absolute).
-/// Uses first-byte host helper when multi-file extern import is wired; pure
-/// fallback returns false until str indexing exists in the language.
-public func is_absolute(p: str): bool {
-    // Pure portable fallback (no extern/unsafe in this module).
-    // Empty path is never absolute.
-    if p == "" {
-        return false
-    }
-    // Without char/index ops, absolute detection for arbitrary paths is host-only.
-    // Known absolute forms used in tests/docs:
-    if p == "/" {
-        return true
-    }
-    if p == "/tmp" {
-        return true
-    }
-    return false
+// Host: fat-str ABI (ptr + len) — same as other std path helpers in the JIT.
+extern "C" {
+    func ar_path_is_absolute(p: str): int
 }
 
 /// True when the path has zero length.
@@ -29,12 +21,26 @@ public func is_empty(p: str): bool {
     return p == ""
 }
 
-/// Join two segments (returns `a` until language str concat exists).
+/// True when `p` is absolute on Unix (leading `/`). Empty is never absolute.
+public func is_absolute(p: str): bool {
+    if p == "" {
+        return false
+    }
+    unsafe {
+        return ar_path_is_absolute(p) != 0
+    }
+}
+
+/// Join two segments.
+///
+/// **Stub (not Minimal-complete):** returns `a` until language string concat exists.
 public func join(a: str, b: str): str {
     return a
 }
 
-/// File name scaffold (returns `p` until split exists).
+/// File name component.
+///
+/// **Stub (not Minimal-complete):** returns `p` until path split exists.
 public func file_name(p: str): str {
     return p
 }

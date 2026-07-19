@@ -119,12 +119,12 @@ pub unsafe extern "C" fn ar_rt_cancel_i64(handle: i64) {
 /// # Safety
 /// `ptr`/`len` fat string from Arandu JIT.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ar_path_is_absolute(ptr: *const u8, len: i64) -> i32 {
+pub unsafe extern "C" fn ar_path_is_absolute(ptr: *const u8, len: i64) -> i64 {
     if len <= 0 || ptr.is_null() {
         return 0;
     }
     let s = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
-    i32::from(s[0] == b'/')
+    i64::from(s[0] == b'/')
 }
 
 /// Path empty check.
@@ -132,8 +132,8 @@ pub unsafe extern "C" fn ar_path_is_absolute(ptr: *const u8, len: i64) -> i32 {
 /// # Safety
 /// Fat string ABI.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ar_path_is_empty(_ptr: *const u8, len: i64) -> i32 {
-    i32::from(len <= 0)
+pub unsafe extern "C" fn ar_path_is_empty(_ptr: *const u8, len: i64) -> i64 {
+    i64::from(len <= 0)
 }
 
 #[cfg(test)]

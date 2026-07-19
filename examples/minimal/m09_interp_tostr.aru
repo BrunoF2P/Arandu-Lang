@@ -1,0 +1,9 @@
+module examples.minimal.m09_interp_tostr
+
+import io
+
+func main(): int {
+    let n = 3
+    io.println("n=${n}")
+    return 0
+}

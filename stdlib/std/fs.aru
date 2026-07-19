@@ -1,5 +1,6 @@
 module std.fs
 
+/// **Experimental — not Arandu Minimal 0.1.**
 /// Thin SL_S: filesystem (scaffold — declarations only).
 
 extern "C" {

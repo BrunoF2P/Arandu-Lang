@@ -1,4 +1,8 @@
-// arandu_core::future — Poll / Future / Waker surface for A3 + SL_R.
+// arandu_core::future — Poll surface for A3 + Minimal 0.1.
+//
+// Minimal 0.1 **IN**: `Poll<T>` only.
+// Experimental: Waker/Context live in `std.runtime` (not this module).
+// Full `Future.poll` trait: post-Minimal.
 
 module std.core.future
 
@@ -7,9 +11,3 @@ public enum Poll<T> {
     Ready(T)
     Pending
 }
-
-// Waker / Context live in `std.runtime` as concrete handles (explicit, no
-// global). Libraries that only need Poll stay free of the runtime import.
-// Full `Future.poll(self, ctx: Context): Poll[T]` trait lands when interface
-// methods support generic Self receivers end-to-end; today SyncExecutor drives
-// Coroutine state blobs via host poll/block_on.

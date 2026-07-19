@@ -9,6 +9,8 @@ Arandu is an experimental Brazilian systems programming language focused on memo
 
 **Solidification gate (S5) closed** — foundation (DoD AMIR `TypeId`, spans, `DataLayout`, host C↔Cranelift parity, unified imports) is stable enough to resume language-level Fase 3 work. Details: [docs/arandu-solidification-matrix-v0.1.md](docs/arandu-solidification-matrix-v0.1.md).
 
+**Product freeze (in progress):** [Arandu Minimal 0.1](docs/arandu-minimal-0.1-freeze.md) — stable installable surface before installer / project CLI / site.
+
 Implemented:
 
 - Rust workspace.

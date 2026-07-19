@@ -1,0 +1,28 @@
+module examples.minimal.m02_structs_enums
+
+struct Point {
+    x: int
+    y: int
+}
+
+enum Color {
+    Red
+    Green
+    Blue
+}
+
+func main(): int {
+    let p = Point { x: 1, y: 2 }
+    let c = Color.Green
+    match c {
+        Color.Red => {
+            return 1
+        }
+        Color.Green => {
+            return p.x + p.y
+        }
+        Color.Blue => {
+            return 0
+        }
+    }
+}

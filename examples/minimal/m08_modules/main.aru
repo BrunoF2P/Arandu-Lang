@@ -1,0 +1,16 @@
+module examples.minimal.m08_main
+
+// Multi-file import of stdlib modules (package-local multi-file lands with
+// project CLI / Arandu.toml — not Minimal 0.1 install path).
+// This gold proves HIR body link across modules.
+
+import std.path as path
+import std.runtime as rt
+
+func main(): int {
+    if !path.is_empty("") {
+        return 1
+    }
+    let ex = rt.new_sync_executor()
+    return ex.flags + 9
+}

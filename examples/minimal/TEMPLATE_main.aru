@@ -1,0 +1,10 @@
+// Default project template for Arandu Minimal 0.1 (installer / `arandu new`).
+// Only IN surface — no experimental runtime/OS modules.
+module my_app
+
+import io
+
+func main(): int {
+    io.println("hello, arandu")
+    return 0
+}

@@ -1,0 +1,15 @@
+module examples.minimal.m05_borrow_shared
+
+struct Counter {
+    n: int
+}
+
+func Counter.get(shared self): int {
+    return self.n
+}
+
+func main(): int {
+    let c = Counter { n: 5 }
+    // Direct method call (receiver auto-ref for shared self).
+    return c.get()
+}

@@ -1,12 +1,8 @@
-// arandu_alloc::gen_arena — generational slots (F2.3.runtime prerequisite).
+// arandu_alloc::gen_arena — generational slots (F2.3.runtime).
 //
-// Lives in alloc (not core): free-list + dynamic slots are heap/arena tier.
-// See docs/arandu-genref-abi-rfc-v0.1.md for ABI and compiler contract.
-//
-// Status (F2 closed):
-//   · Compiler GenRef path: i64 host MVP (`gen_runtime` / `ar_gen_*`) — done.
-//   · This file: typed surface API (GenRef, GenArena<T,A>, insert/get/remove).
-//   · Full typed slot tables in-language / self-host: deferred (not F2 residual).
+// **Experimental for Arandu Minimal 0.1 install** — not used by default templates.
+// Compiler GenRef path: i64 host MVP (`ar_gen_*`). Typed self-host tables: later.
+// See docs/arandu-genref-abi-rfc-v0.1.md.
 
 module std.alloc.gen_arena
 

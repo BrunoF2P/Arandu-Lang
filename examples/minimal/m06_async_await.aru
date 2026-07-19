@@ -1,0 +1,9 @@
+module examples.minimal.m06_async_await
+
+async func answer(): int {
+    return 42
+}
+
+func main(): int {
+    return await answer()
+}

@@ -1,5 +1,6 @@
 module std.time
 
+/// **Experimental — not Arandu Minimal 0.1.**
 /// Thin SL_S: clocks (scaffold).
 
 extern "C" {

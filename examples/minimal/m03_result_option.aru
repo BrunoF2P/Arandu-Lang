@@ -1,0 +1,10 @@
+module examples.minimal.m03_result_option
+
+func ok_seven(): Result<int, Err> {
+    return .Ok(7)
+}
+
+func main(): int {
+    let v = ok_seven()?
+    return v
+}

@@ -474,7 +474,7 @@ impl AranduJit {
             cranelift_codegen::ir::types::I64,
         ));
         path_sig.returns.push(cranelift_codegen::ir::AbiParam::new(
-            cranelift_codegen::ir::types::I32,
+            cranelift_codegen::ir::types::I64,
         ));
         for name in ["ar_path_is_absolute", "ar_path_is_empty"] {
             let id = self
