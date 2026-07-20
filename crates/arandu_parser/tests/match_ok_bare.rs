@@ -1,8 +1,8 @@
 //! Bare Ok/Some patterns in match arms.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use arandu_parser::syntax::{lower_syntax_to_program_rd_only, parse_syntax};
 use arandu_parser::parse;
+use arandu_parser::syntax::{lower_syntax_to_program_rd_only, parse_syntax};
 
 const SRC_CALL: &str = r#"
 module t

@@ -271,9 +271,7 @@ pub(super) fn try_rewrite_generic_call<'bump>(
                     // Peel & / &mut / ptr (shared self receivers).
                     for _ in 0..4 {
                         actual = match actual {
-                            ArType::Ref(inner)
-                            | ArType::RefMut(inner)
-                            | ArType::Ptr(inner) => {
+                            ArType::Ref(inner) | ArType::RefMut(inner) | ArType::Ptr(inner) => {
                                 tc.type_info.type_interner.resolve(inner)
                             }
                             other => other,
@@ -302,9 +300,7 @@ pub(super) fn try_rewrite_generic_call<'bump>(
                     let Some(type_id) = type_id else {
                         return;
                     };
-                    let Some(sym) = tc
-                        .symbols
-                        .lookup_associated_member(type_id, field.as_str())
+                    let Some(sym) = tc.symbols.lookup_associated_member(type_id, field.as_str())
                     else {
                         return;
                     };

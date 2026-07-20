@@ -114,8 +114,7 @@ impl TypeInfo {
         }
         self.type_interner.with_type(id, |ty| match ty {
             ArType::Primitive(p) => {
-                p.is_numeric()
-                    || matches!(p, Primitive::Bool | Primitive::Char | Primitive::Byte)
+                p.is_numeric() || matches!(p, Primitive::Bool | Primitive::Char | Primitive::Byte)
             }
             ArType::IntLiteral | ArType::FloatLiteral | ArType::GenRef => true,
             ArType::Named(sym, args) => self.is_named_struct_pod_copy(*sym, args, visiting),
@@ -156,7 +155,9 @@ impl TypeInfo {
         let params = self.generic_params.get(&sym);
         let use_subst = params.is_some_and(|p| !p.is_empty()) && !args.is_empty();
         if use_subst {
-            let params = params.expect("checked is_some");
+            let Some(params) = params else {
+                return false;
+            };
             if params.len() != args.len() {
                 return false;
             }

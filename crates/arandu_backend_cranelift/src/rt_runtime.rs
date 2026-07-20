@@ -352,8 +352,14 @@ mod tests {
             let c = ar_str_concat(b"ab".as_ptr(), 2, b"cd".as_ptr(), 2);
             let cs = std::slice::from_raw_parts(c.ptr, c.len as usize);
             assert_eq!(cs, b"abcd");
-            assert_eq!(ar_str_starts_with(b"hello".as_ptr(), 5, b"he".as_ptr(), 2), 1);
-            assert_eq!(ar_str_starts_with(b"hello".as_ptr(), 5, b"x".as_ptr(), 1), 0);
+            assert_eq!(
+                ar_str_starts_with(b"hello".as_ptr(), 5, b"he".as_ptr(), 2),
+                1
+            );
+            assert_eq!(
+                ar_str_starts_with(b"hello".as_ptr(), 5, b"x".as_ptr(), 1),
+                0
+            );
             assert_eq!(ar_str_ends_with(b"hello".as_ptr(), 5, b"lo".as_ptr(), 2), 1);
             let tail = ar_str_split_last(b"a/b/c".as_ptr(), 5, b"/".as_ptr(), 1);
             let ts = std::slice::from_raw_parts(tail.ptr, tail.len as usize);

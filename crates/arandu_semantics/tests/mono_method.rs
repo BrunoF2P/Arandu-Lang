@@ -239,7 +239,9 @@ func main(): int {
         .map(|f| tc.symbols.get(f.symbol).name.clone())
         .collect();
     assert!(
-        names.iter().any(|s| s.contains("push_t") && s.contains("int")),
+        names
+            .iter()
+            .any(|s| s.contains("push_t") && s.contains("int")),
         "missing push_t<int> in {names:?}"
     );
     assert!(

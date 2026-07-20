@@ -160,10 +160,7 @@ impl AranduJit {
             "ar_path_is_empty",
             crate::rt_runtime::ar_path_is_empty as *const u8,
         );
-        builder.symbol(
-            "ar_path_join",
-            crate::rt_runtime::ar_path_join as *const u8,
-        );
+        builder.symbol("ar_path_join", crate::rt_runtime::ar_path_join as *const u8);
         builder.symbol(
             "ar_path_file_name",
             crate::rt_runtime::ar_path_file_name as *const u8,

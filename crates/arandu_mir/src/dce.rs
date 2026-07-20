@@ -66,11 +66,7 @@ pub fn mark_sweep_dce(func: &mut AmirFunc) -> bool {
                     }
                 }
                 AmirStmt::Store {
-                    lhs:
-                        crate::amir::AmirPlace {
-                            local,
-                            projections,
-                        },
+                    lhs: crate::amir::AmirPlace { local, projections },
                     ..
                 } if local.as_usize() == 0 && projections.is_empty() => {
                     let idx = stmt_id.as_usize();

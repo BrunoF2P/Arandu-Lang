@@ -251,9 +251,7 @@ fn meet_block_params(
         saw_pred = true;
         let Some(args) = jump_args_to(&func.block(pred).terminator, bid) else {
             // Edge without args while params exist — treat all as Overdefined.
-            for a in &mut acc {
-                *a = LatticeVal::Overdefined;
-            }
+            acc.fill(LatticeVal::Overdefined);
             continue;
         };
         for i in 0..n_params {
@@ -301,9 +299,7 @@ fn meet_block_params(
 fn jump_args_to(term: &AmirTerminator, target: BlockId) -> Option<&[AmirOperand]> {
     match term {
         AmirTerminator::Goto { target: t, args } if *t == target => Some(args.as_slice()),
-        AmirTerminator::Suspend {
-            resume, args, ..
-        } if *resume == target => Some(args.as_slice()),
+        AmirTerminator::Suspend { resume, args, .. } if *resume == target => Some(args.as_slice()),
         AmirTerminator::Branch {
             if_true,
             true_args,

@@ -376,12 +376,8 @@ fn method_symbol_from_field(
         },
         // Builtin Result/Option methods (`expectOrAbort`) are associated to the
         // prelude type symbols after import re-index (not ArType::Named).
-        ArType::Result(_, _) => tc
-            .symbols
-            .lookup_type(tc.symbols.global_scope(), "Result"),
-        ArType::Option(_) => tc
-            .symbols
-            .lookup_type(tc.symbols.global_scope(), "Option"),
+        ArType::Result(_, _) => tc.symbols.lookup_type(tc.symbols.global_scope(), "Result"),
+        ArType::Option(_) => tc.symbols.lookup_type(tc.symbols.global_scope(), "Option"),
         _ => None,
     }?;
     tc.symbols.lookup_associated_member(type_id, field)

@@ -186,9 +186,7 @@ fn type_info_pod_struct_is_copy_vec_like_is_not() {
     gen_fields.insert("index".into(), u32_ty);
     gen_fields.insert("generation".into(), u32_ty);
     info.struct_fields.insert(gen_sym, Arc::new(gen_fields));
-    let gen_tid = info
-        .type_interner
-        .intern(ArType::Named(gen_sym, vec![]));
+    let gen_tid = info.type_interner.intern(ArType::Named(gen_sym, vec![]));
     assert!(
         info.is_copy(gen_tid),
         "POD handle struct should be auto-copy"
@@ -200,9 +198,7 @@ fn type_info_pod_struct_is_copy_vec_like_is_not() {
     vec_fields.insert("data".into(), ptr_ty);
     vec_fields.insert("len".into(), u64_ty);
     info.struct_fields.insert(vec_sym, Arc::new(vec_fields));
-    let vec_tid = info
-        .type_interner
-        .intern(ArType::Named(vec_sym, vec![]));
+    let vec_tid = info.type_interner.intern(ArType::Named(vec_sym, vec![]));
     assert!(
         !info.is_copy(vec_tid),
         "struct with ptr field must not be auto-copy"
@@ -212,9 +208,7 @@ fn type_info_pod_struct_is_copy_vec_like_is_not() {
     let unit_sym = SymbolId::new(0, 12);
     info.struct_fields
         .insert(unit_sym, Arc::new(FxHashMap::default()));
-    let unit_tid = info
-        .type_interner
-        .intern(ArType::Named(unit_sym, vec![]));
+    let unit_tid = info.type_interner.intern(ArType::Named(unit_sym, vec![]));
     assert!(info.is_copy(unit_tid), "empty struct is POD copy");
 
     // Bare ptr remains copy (cheap handle)

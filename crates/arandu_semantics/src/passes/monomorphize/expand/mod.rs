@@ -107,8 +107,7 @@ pub fn expand_specializations<'bump>(
                 created += 1;
                 // Nested callees only become concrete after this clone+subst.
                 discover_nested_keys(hir, body_id, tc, bump, &template_funcs, |nested| {
-                    if !specialized.contains_key(&nested)
-                        && !worklist.iter().any(|k| k == &nested)
+                    if !specialized.contains_key(&nested) && !worklist.iter().any(|k| k == &nested)
                     {
                         worklist.push_back(nested);
                     }
@@ -296,12 +295,7 @@ fn discover_nested_keys<'bump>(
                     }
                 } else if let Some((symbol, type_args_vec)) =
                     super::collect::instantiation_key_for_call(
-                        hir,
-                        tc,
-                        *callee,
-                        *args,
-                        expr.ty,
-                        expr.span,
+                        hir, tc, *callee, *args, expr.ty, expr.span,
                     )
                 {
                     maybe_enqueue(tc, bump, template_funcs, symbol, &type_args_vec, enqueue);
@@ -502,25 +496,26 @@ fn specialize_free_func(
 
     let global = tc.symbols.global_scope();
     // Idempotent: same mangling may appear via dual keys (rare); reuse symbol.
-    let new_func_sym = match tc
-        .symbols_mut()
-        .define(global, &mangled, SymbolKind::Func, template.span)
-    {
-        Ok(s) => s,
-        Err(existing) => {
-            // Same mangling already specialized (dual keys / re-entry). Reuse
-            // the existing specialized body for nested discovery — not the template.
-            for &decl_id in &hir.decls {
-                if let HirDecl::Func(f) = hir.pool.decl(decl_id)
-                    && f.symbol == existing
-                    && let Some(b) = f.body
-                {
-                    return Ok((existing, b));
+    let new_func_sym =
+        match tc
+            .symbols_mut()
+            .define(global, &mangled, SymbolKind::Func, template.span)
+        {
+            Ok(s) => s,
+            Err(existing) => {
+                // Same mangling already specialized (dual keys / re-entry). Reuse
+                // the existing specialized body for nested discovery — not the template.
+                for &decl_id in &hir.decls {
+                    if let HirDecl::Func(f) = hir.pool.decl(decl_id)
+                        && f.symbol == existing
+                        && let Some(b) = f.body
+                    {
+                        return Ok((existing, b));
+                    }
                 }
+                return Ok((existing, body_id));
             }
-            return Ok((existing, body_id));
-        }
-    };
+        };
 
     // Subst and specialized return type
     let subst = build_subst_ids(&params_list, key.type_args, &tc.type_info.type_interner);
