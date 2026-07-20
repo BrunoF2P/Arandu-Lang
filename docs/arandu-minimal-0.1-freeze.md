@@ -323,6 +323,7 @@ func main(): int {
 | 2026-07-19 | PROMOTE-L2: dual ModuleRoots + DirectoryListing VFS; package `import my_app.util` |
 | 2026-07-19 | Watch mode: shared `DebouncedMap`/`EditVfs` with LSP; `arandu watch` + notify-debouncer-full |
 | 2026-07-20 | Workspace crate / installer / extension version set to **0.0.1** (honest pre-0.1; first installable profile will be 0.1.0) |
+| 2026-07-20 | DiagCode ↔ docs/errors via xtask (single source); CI jobs split; install-smoke matrix ubuntu+macos early |
 
 ---
 

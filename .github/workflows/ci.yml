@@ -28,7 +28,18 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  # DiagCode enum ↔ docs/errors/*.md (single source of truth; not build.rs list).
+  diag-docs:
+    name: Diag docs (DiagCode bijection)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: check-diag-docs
+        run: bash scripts/check-diag-docs.sh
 
   test:
     name: Test
@@ -37,16 +48,41 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Run tests with diagnostic doc validation
+      - name: cargo test --workspace
         run: cargo test --workspace
-        env:
-          ARANDU_VALIDATE_DOCS: "1"
 
-  # Isolated install smoke: no ARANDU_STDLIB, no monorepo on PATH, symlink PATH.
-  # Proves Camada D (current_exe canonicalize → share/arandu/stdlib).
-  install-smoke:
-    name: Install smoke (isolated)
+  # RFC A1: diagnostic/test output independent of harness parallelism.
+  diag-determinism:
+    name: Diag determinism (test-threads 1 vs N)
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: typeck lib 1 vs 8 threads
+        run: bash scripts/check-diag-determinism.sh arandu_typeck 8
+      - name: semantics type_checker tests 1 vs 8 threads
+        run: |
+          set -euo pipefail
+          # Integration tests that emit type diagnostics
+          TMP=$(mktemp -d)
+          cargo test -p arandu_semantics --test type_checker -- --test-threads=1 --quiet >"$TMP/a" 2>&1
+          cargo test -p arandu_semantics --test type_checker -- --test-threads=8 --quiet >"$TMP/b" 2>&1
+          # Both must succeed; full byte identity of cargo output is too noisy —
+          # require identical "test result" summary lines after normalize.
+          norm() { grep -E '^(test result:|error)' "$1" | sort || true; }
+          diff -u <(norm "$TMP/a") <(norm "$TMP/b")
+          echo "semantics type_checker: ok (threads 1 vs 8)"
+
+  # Camada D: current_exe/symlink resolution differs Linux vs macOS — run early,
+  # not only at release day.
+  install-smoke:
+    name: Install smoke (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -66,7 +102,6 @@ jobs:
           PREFIX="$PREFIX" bash scripts/install-from-tarball.sh "$TAR"
           env -u ARANDU_STDLIB PATH="$PREFIX/bin:/usr/bin:/bin" \
             bash -c 'cd /tmp && exec "$0" doctor' "$PREFIX/bin/arandu"
-          # Corrupt checksum must fail closed.
           echo deadbeef > "${TAR}.blake3"
           if PREFIX=$(mktemp -d) bash scripts/install-from-tarball.sh "$TAR"; then
             echo "expected blake3 mismatch to abort" >&2

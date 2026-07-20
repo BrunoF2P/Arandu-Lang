@@ -1,0 +1,15 @@
+[package]
+name = "xtask"
+version = "0.0.1"
+edition = "2021"
+publish = false
+license.workspace = true
+authors.workspace = true
+description = "Repo automation: diag docs, CI helpers (not shipped to users)"
+
+[[bin]]
+name = "xtask"
+path = "src/main.rs"
+
+[dependencies]
+arandu_diagnostics = { path = "../crates/arandu_diagnostics" }

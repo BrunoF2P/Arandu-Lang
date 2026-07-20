@@ -111,7 +111,12 @@ impl From<&str> for Hint {
 /// | `W`    | Warnings / linting |
 /// | `U`    | Unimplemented / future features |
 /// | `ICE`  | Internal compiler error |
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// **Single source of truth** for which codes exist: this enum (plus
+/// [`DiagCode::as_str`] / [`DiagCode::ALL`]). Doc validation (xtask
+/// `check-diag-docs`) compares `docs/errors/{code}.md` against `ALL` —
+/// never a hand-maintained parallel list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DiagCode {
     // ── Lexical Analysis (LX) ──
     LX001UnterminatedString,
@@ -228,6 +233,125 @@ pub enum DiagCode {
 }
 
 impl DiagCode {
+    /// Every variant of this enum, in declaration order.
+    ///
+    /// Adding a new `DiagCode` without updating this array is a compile error
+    /// if you also extend the exhaustiveness helper in tests — prefer updating
+    /// `ALL` in the same edit as the new variant (and `as_str`).
+    pub const ALL: &'static [DiagCode] = &{
+        use DiagCode::*;
+        [
+            LX001UnterminatedString,
+            LX002InvalidUnicodeChar,
+            LX003InvalidNumericLiteral,
+            P001UnexpectedToken,
+            P002UnclosedBlock,
+            P003InvalidAssignmentOperator,
+            P004ExpectedIdentifier,
+            P005ExpectedExpression,
+            P006MalformedAttribute,
+            M001UnresolvedImport,
+            M002UndefinedNamespaceMember,
+            M003NamespaceUsedAsValue,
+            N001UndefinedValue,
+            N002UndefinedType,
+            N003RedefinedName,
+            N004TypeUsedAsValue,
+            N005ValueUsedAsType,
+            N006ImportConflict,
+            N007UndefinedAssignmentTarget,
+            N010UndefinedAssociatedFunction,
+            N011BreakContinueOutsideLoop,
+            T001CannotInferType,
+            T002IncompatibleAssignment,
+            T003IncompatibleCallArg,
+            T004IncompatibleReturnType,
+            T005OperatorNotApplicable,
+            T006NotNullable,
+            T007IfBranchMismatch,
+            T008MatchArmMismatch,
+            T009ConditionNotBool,
+            T010InvalidCast,
+            T011GenericConstraintNotSatisfied,
+            T012WrongArgCount,
+            T013UnknownNamedArg,
+            T014InvalidVariadicType,
+            T015ImplicitWidening,
+            T016TryInvalid,
+            T017InvalidIndex,
+            T018UndefinedField,
+            T021MethodSelfRequired,
+            T024NonExhaustiveMatch,
+            T025InterfaceNotSatisfied,
+            T026CannotAssignImmutable,
+            T027MissingStructFields,
+            T028DuplicateFieldInit,
+            T029RecursiveStructInfiniteSize,
+            T030DuplicateFieldDecl,
+            T031Reserved,
+            T032AwaitInvalid,
+            T033IndirectCallNotSupported,
+            T034CannotFormat,
+            L001LoweringUnresolvedSymbol,
+            G001GenericInstantiationCycle,
+            G002GenericInstantiationLimit,
+            O001UseAfterMove,
+            O002MoveWhileBorrowed,
+            O003MutableBorrowConflict,
+            O004GenerationalFallback,
+            O005DoubleFree,
+            O006DestroyWhileBorrowed,
+            O007InconsistentMoveBetweenBranches,
+            O008UseBeforeInit,
+            O009LifetimeMismatch,
+            O010EscapeOfBorrowedValue,
+            O011FreeRequiresPtr,
+            O012AllocRequiresUnsafe,
+            O013ExternRequiresUnsafe,
+            O014FreeRequiresUnsafe,
+            W001VariableAssignedNotUsed,
+            W002DeadCode,
+            W003UnreachableCode,
+            W004VariableShadowing,
+            W005UnnecessaryMutability,
+            W006UnhandledResult,
+            W007UnusedImport,
+            U001FeatureNotSupported,
+            ICELX001,
+            ICEP001,
+            ICEN001,
+            ICET001,
+            ICEO001,
+            ICEL001,
+            ICEGEN001,
+            ICEGEN002,
+        ]
+    };
+
+    /// User-facing codes that require `docs/errors/{as_str()}.md`.
+    ///
+    /// ICE codes are internal and are documented elsewhere (if at all).
+    #[must_use]
+    pub fn requires_error_doc(self) -> bool {
+        !matches!(
+            self,
+            DiagCode::ICELX001
+                | DiagCode::ICEP001
+                | DiagCode::ICEN001
+                | DiagCode::ICET001
+                | DiagCode::ICEO001
+                | DiagCode::ICEL001
+                | DiagCode::ICEGEN001
+                | DiagCode::ICEGEN002
+        )
+    }
+
+    /// File stem for `docs/errors/{stem}.md` (same as [`Self::as_str`] for user codes).
+    #[must_use]
+    pub fn doc_stem(self) -> &'static str {
+        self.as_str()
+    }
+
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
@@ -322,6 +446,71 @@ impl DiagCode {
 impl fmt::Display for DiagCode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+/// Compare `DiagCode::ALL` (user-facing) against `docs/errors/*.md`.
+///
+/// Returns `(missing_docs, orphaned_docs)`. Empty both means bijection holds.
+pub fn diag_doc_diff(docs_dir: &std::path::Path) -> (Vec<&'static str>, Vec<String>) {
+    use std::collections::BTreeSet;
+
+    let declared: BTreeSet<&'static str> = DiagCode::ALL
+        .iter()
+        .copied()
+        .filter(|c| c.requires_error_doc())
+        .map(DiagCode::doc_stem)
+        .collect();
+
+    let mut documented = BTreeSet::new();
+    if docs_dir.is_dir()
+        && let Ok(entries) = std::fs::read_dir(docs_dir)
+    {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("md")
+                && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+            {
+                documented.insert(stem.to_string());
+            }
+        }
+    }
+
+    let missing: Vec<&'static str> = declared
+        .iter()
+        .filter(|c| !documented.contains(**c))
+        .copied()
+        .collect();
+    let orphaned: Vec<String> = documented
+        .into_iter()
+        .filter(|d| !declared.contains(d.as_str()))
+        .collect();
+    (missing, orphaned)
+}
+
+#[cfg(test)]
+mod diag_doc_tests {
+    use super::*;
+
+    #[test]
+    fn all_variants_have_as_str() {
+        // Smoke: ALL entries are distinct codes.
+        let mut set = std::collections::BTreeSet::new();
+        for c in DiagCode::ALL {
+            assert!(set.insert(c.as_str()), "duplicate as_str: {}", c.as_str());
+        }
+        assert_eq!(set.len(), DiagCode::ALL.len());
+    }
+
+    #[test]
+    fn error_docs_match_diag_code_enum() {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let docs = std::path::Path::new(manifest_dir).join("../../docs/errors");
+        let (missing, orphaned) = diag_doc_diff(&docs);
+        assert!(
+            missing.is_empty() && orphaned.is_empty(),
+            "DiagCode ↔ docs/errors mismatch.\n  missing docs: {missing:?}\n  orphaned docs: {orphaned:?}\n  run: cargo run -p xtask -- check-diag-docs"
+        );
     }
 }
 

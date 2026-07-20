@@ -17,6 +17,7 @@ members = [
     "crates/arandu_query",
     "crates/arandu_lsp",
     "crates/arandu_fmt",
+    "xtask",
 ]
 resolver = "3"
 
