@@ -64,13 +64,31 @@ jobs:
       - name: semantics type_checker tests 1 vs 8 threads
         run: |
           set -euo pipefail
-          # Integration tests that emit type diagnostics
+          # Integration tests that emit type diagnostics.
+          # Normalize like scripts/check-diag-determinism.sh: strip ANSI
+          # (CARGO_TERM_COLOR=always) and collapse "finished in Xs" timing noise.
           TMP=$(mktemp -d)
+          trap 'rm -rf "$TMP"' EXIT
+          set +e
           cargo test -p arandu_semantics --test type_checker -- --test-threads=1 --quiet >"$TMP/a" 2>&1
+          EC1=$?
           cargo test -p arandu_semantics --test type_checker -- --test-threads=8 --quiet >"$TMP/b" 2>&1
-          # Both must succeed; full byte identity of cargo output is too noisy —
-          # require identical "test result" summary lines after normalize.
-          norm() { grep -E '^(test result:|error)' "$1" | sort || true; }
+          ECN=$?
+          set -e
+          if [[ "$EC1" -ne 0 || "$ECN" -ne 0 ]]; then
+            echo "error: type_checker failed (threads=1 exit=$EC1, threads=8 exit=$ECN)" >&2
+            tail -40 "$TMP/a" >&2 || true
+            tail -40 "$TMP/b" >&2 || true
+            exit 1
+          fi
+          norm() {
+            sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g' "$1" \
+              | grep -E '^(test result:|error\[|error:)' \
+              | sed -E \
+                -e 's/test result: ok\..*/test result: ok./' \
+                -e 's/test result: FAILED\..*/test result: FAILED./' \
+              | sort -u
+          }
           diff -u <(norm "$TMP/a") <(norm "$TMP/b")
           echo "semantics type_checker: ok (threads 1 vs 8)"
 

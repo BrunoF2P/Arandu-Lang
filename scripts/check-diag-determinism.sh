@@ -14,14 +14,15 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 normalize() {
-  # Drop cargo progress / timing noise that differs across runs (cache, order).
-  # Keep pass/fail summary only — both runs must succeed with same suite outcome.
-  grep -E '^(test result:|error\[|error:)' \
+  # Drop cargo progress / timing / ANSI noise that differs across runs.
+  # CARGO_TERM_COLOR=always (CI) injects CSI sequences around "ok"/"FAILED".
+  # Collapse suite summaries to fixed tokens so "finished in Xs" never diffs.
+  sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g' \
+    | grep -E '^(test result:|error\[|error:)' \
     | sed -E \
-      -e 's/[0-9]+\.[0-9]+s//g' \
-      -e 's/test result: ok\. [0-9]+ passed.*/test result: ok./' \
-      -e 's/test result: FAILED\. .*/test result: FAILED./' \
-    | sort
+      -e 's/test result: ok\..*/test result: ok./' \
+      -e 's/test result: FAILED\..*/test result: FAILED./' \
+    | sort -u
 }
 
 echo "==> determinism: cargo test -p ${PKG} --lib -- --test-threads=1"

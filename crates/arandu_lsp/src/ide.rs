@@ -814,34 +814,24 @@ mod tests {
 
     #[test]
     fn test_semantic_tokens_exact_deltas() {
-        let mut host = AnalysisHost::new();
-        let filepath = "/home/bruno/Documentos/Desenvolvimento/Arandu Lang/stdlib/std/runtime.aru";
-        let content = std::fs::read_to_string(filepath).expect("read runtime.aru");
-        let file = host.new_file(filepath.into(), content.clone());
-        let snap = host.snapshot();
+        // Resolve via CARGO_MANIFEST_DIR so CI/macOS/other checkouts work
+        // (never hard-code a developer machine path).
+        let filepath = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../stdlib/std/runtime.aru")
+            .canonicalize()
+            .expect("resolve stdlib/std/runtime.aru from workspace");
+        let content = std::fs::read_to_string(&filepath).expect("read runtime.aru");
+        let path_key = filepath.to_string_lossy().into_owned();
 
-        use arandu_middle::db::SourceDatabase;
-        let relative_file = snap.db.resolve_module_path("stdlib/std/runtime.aru");
-        if let Some(f) = relative_file {
-            let compiler_text = f.text(&snap.db);
-            println!("Resolved std/runtime.aru path: {:?}", f.path(&snap.db));
-            println!(
-                "Resolved std/runtime.aru text length: {:?}",
-                compiler_text.len()
-            );
-            println!("Disk text length: {:?}", content.len());
-            if compiler_text.as_ref() != content {
-                println!("WARNING: Compiler text and Disk text are DIFFERENT!");
-            } else {
-                println!("SUCCESS: Compiler text and Disk text are identical!");
-            }
-        }
+        let mut host = AnalysisHost::new();
+        let file = host.new_file(path_key, content.clone());
+        let snap = host.snapshot();
 
         let tokens = semantic_tokens(&snap, file);
 
-        // We will reconstruct the absolute character offsets from the deltas
+        // Reconstruct absolute character offsets from LSP deltas and verify
+        // they match the highlight spans from the query layer.
         let mut current_line = 0u32;
-
         let hls = arandu_query::file_highlights(&snap.db, file);
         assert_eq!(tokens.data.len(), hls.len());
 
@@ -854,11 +844,12 @@ mod tests {
             assert!(hl.end <= content.len() as u32);
             let substring = &content[hl.start as usize..hl.end as usize];
 
-            // Verify that the token length matches the highlight span length
+            // Token length must match the highlight span length.
             assert_eq!(tok.length, hl.end - hl.start);
 
-            // Specific check for tcp_listen declaration in stdlib
-            if current_line == 277 && substring == "tcp_listen" {
+            // Spot-check: `tcp_listen` public decl in stdlib is a FUNCTION token.
+            // Line is 0-based (LSP semantic tokens); file line 285 → index 284.
+            if substring == "tcp_listen" && current_line == 284 {
                 assert_eq!(tok.token_type, 1); // FUNCTION
             }
         }
