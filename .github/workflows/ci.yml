@@ -54,21 +54,21 @@ jobs:
       - name: Smoke versioned install + PATH symlink doctor
         run: |
           unset ARANDU_STDLIB
-          ./scripts/smoke-install.sh
+          bash scripts/smoke-install.sh
       - name: Package tarball + BLAKE3 + reinstall from archive
         run: |
           set -euo pipefail
           unset ARANDU_STDLIB
-          ./scripts/package-release.sh
+          bash scripts/package-release.sh
           TAR=$(ls dist/arandu-*.tar.gz | head -1)
           test -f "${TAR}.blake3"
           PREFIX=$(mktemp -d)
-          PREFIX="$PREFIX" ./scripts/install-from-tarball.sh "$TAR"
+          PREFIX="$PREFIX" bash scripts/install-from-tarball.sh "$TAR"
           env -u ARANDU_STDLIB PATH="$PREFIX/bin:/usr/bin:/bin" \
             bash -c 'cd /tmp && exec "$0" doctor' "$PREFIX/bin/arandu"
           # Corrupt checksum must fail closed.
           echo deadbeef > "${TAR}.blake3"
-          if PREFIX=$(mktemp -d) ./scripts/install-from-tarball.sh "$TAR"; then
+          if PREFIX=$(mktemp -d) bash scripts/install-from-tarball.sh "$TAR"; then
             echo "expected blake3 mismatch to abort" >&2
             exit 1
           fi
