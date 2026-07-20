@@ -8,7 +8,8 @@ use arandu_parser::ImportDecl;
 /// Canonical on-disk / registry key for an import, if any.
 ///
 /// Returns keys understood by [`arandu_middle::db::SourceDatabase::resolve_module_path`]:
-/// - `import foo.bar` → `foo/bar.aru`
+/// - `import foo.bar` → `foo/bar.aru` (package-local when `foo` is `Arandu.toml` name)
+/// - `import my_app.util` → `my_app/util.aru` (PROMOTE-L2 dual root)
 /// - `import std.core.mem as mem` (path form) → `stdlib/core/mem.aru`
 /// - `import "std.core.mem" as mem` → `stdlib/core/mem.aru`
 /// - `import std.io as io` / `import "std.io" as io` → `stdlib/std/io.aru` (SL_S)
@@ -16,6 +17,9 @@ use arandu_parser::ImportDecl;
 ///
 /// Prelude modules (`io`, `err`) still produce keys like `io.aru`; callers may
 /// short-circuit when the file is missing and the module is a builtin prelude.
+///
+/// Package vs stdlib is **not** chosen here — only the key shape. Dual-root
+/// mapping lives in `DatabaseImpl::resolve_module_path` + `ModuleRoots`.
 #[must_use]
 pub fn canonicalize_import_path(import: &ImportDecl) -> Option<String> {
     match import {
@@ -139,6 +143,19 @@ mod tests {
         assert_eq!(
             canonicalize_import_path(&import).as_deref(),
             Some("vendor/lib.aru")
+        );
+    }
+
+    #[test]
+    fn package_local_my_app_util_key() {
+        let import = ImportDecl::ModuleAlias {
+            span: span(),
+            path: vec![SmolStr::new("my_app"), SmolStr::new("util")].into(),
+            alias: SmolStr::new("util"),
+        };
+        assert_eq!(
+            canonicalize_import_path(&import).as_deref(),
+            Some("my_app/util.aru")
         );
     }
 }

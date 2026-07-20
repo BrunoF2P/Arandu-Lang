@@ -175,6 +175,21 @@ impl<'a> Resolver<'a> {
             Err(previous) => {
                 let previous_symbol = self.symbols.get(previous);
                 if kind == SymbolKind::Module && previous_symbol.kind == SymbolKind::Module {
+                    // Two `import … as alias` bindings to the same name (e.g. stdlib +
+                    // package-local) must not silently merge — emit N006 (PROMOTE-L2).
+                    // Non-import redefines of the same module symbol still share id.
+                    if self.imported_symbols.contains_key(&previous) {
+                        let previous_span = previous_symbol.span;
+                        self.diagnostics.push(
+                            Diagnostic::error(
+                                DiagCode::N006ImportConflict,
+                                format!("import `{name}` conflicts with an existing declaration"),
+                                span,
+                            )
+                            .with_label(previous_span, "already defined here"),
+                        );
+                        return None;
+                    }
                     self.resolved.define(span, previous);
                     return Some(previous);
                 }

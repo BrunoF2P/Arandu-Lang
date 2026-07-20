@@ -402,3 +402,23 @@ fn test_all_stdlib_files_parse_cleanly() {
         "One or more stdlib files had syntax/parsing errors"
     );
 }
+
+/// Gold bar (P2 Camada B): the `arandu new` default template must parse cleanly
+/// under the same CI radar as stdlib — first-run experience cannot be the place
+/// users discover syntax breakage.
+#[test]
+fn test_new_project_template_parses_cleanly() {
+    let template = workspace_root().join("examples/minimal/TEMPLATE_main.aru");
+    let source = std::fs::read_to_string(&template).unwrap_or_else(|err| {
+        panic!(
+            "failed to read project template {}: {err}",
+            template.display()
+        )
+    });
+    arandu_parser::parse(&source).unwrap_or_else(|err| {
+        panic!(
+            "arandu new template failed to parse ({}): {err:?}",
+            template.display()
+        )
+    });
+}

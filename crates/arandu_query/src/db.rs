@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
 use crate::explain::RebuildLog;
+use crate::manifest::ProjectManifest;
+use crate::vfs::ModuleRoots;
 use salsa::Storage;
 
 pub type FileId = u32;
@@ -85,10 +87,22 @@ pub use arandu_middle::db::SourceFile;
 ///
 /// Before this change both `source_text` and `file_path` performed an O(N)
 /// linear scan over `by_path.values()` to find a file by its numeric ID.
-#[derive(Default, Clone)]
+#[derive(Clone)]
 struct FileRegistry {
     by_path: HashMap<String, SourceFile>,
     by_id: HashMap<FileId, SourceFile>,
+    /// Monotonic id allocator (must not reuse after unregister — Salsa keeps old inputs).
+    next_id: FileId,
+}
+
+impl Default for FileRegistry {
+    fn default() -> Self {
+        Self {
+            by_path: HashMap::new(),
+            by_id: HashMap::new(),
+            next_id: 100,
+        }
+    }
 }
 
 impl FileRegistry {
@@ -99,8 +113,16 @@ impl FileRegistry {
     }
 
     /// Next available FileId (starts at 100 to avoid collisions with test stubs).
-    fn next_id(&self) -> FileId {
-        self.by_path.len() as FileId + 100
+    fn next_id(&mut self) -> FileId {
+        let id = self.next_id;
+        self.next_id = self.next_id.saturating_add(1);
+        id
+    }
+
+    fn remove_path(&mut self, path: &str) -> Option<SourceFile> {
+        let file = self.by_path.remove(path)?;
+        // by_id cleaned by caller once file_id is known (needs Database).
+        Some(file)
     }
 }
 
@@ -116,6 +138,14 @@ pub struct DatabaseImpl {
     cst_cache: Arc<Mutex<CstCache>>,
     /// Shared with the Salsa event callback when explain mode is on.
     rebuild_log: Option<Arc<RebuildLog>>,
+    /// Resolved stdlib root (`stdlib/std/…` import prefix maps under this dir).
+    /// Set via [`Self::set_stdlib_root`]; when `None`, import resolution falls
+    /// back to walk-from-cwd (legacy monorepo) — prefer setting it always in CLI.
+    stdlib_root: Arc<RwLock<Option<PathBuf>>>,
+    /// Optional project manifest Salsa input (day-1 registration for invalidation).
+    project_manifest: Arc<RwLock<Option<ProjectManifest>>>,
+    /// Dual roots: package (`Arandu.toml`) + stdlib. Same `resolve_module_path`.
+    module_roots: Arc<RwLock<Option<ModuleRoots>>>,
 }
 
 // Manual Clone: Storage is cloneable; share Arc file registry + log + CST cache.
@@ -126,6 +156,9 @@ impl Clone for DatabaseImpl {
             files: Arc::clone(&self.files),
             cst_cache: Arc::clone(&self.cst_cache),
             rebuild_log: self.rebuild_log.clone(),
+            stdlib_root: Arc::clone(&self.stdlib_root),
+            project_manifest: Arc::clone(&self.project_manifest),
+            module_roots: Arc::clone(&self.module_roots),
         }
     }
 }
@@ -148,6 +181,9 @@ impl DatabaseImpl {
             files: Arc::new(RwLock::new(FileRegistry::default())),
             cst_cache: Arc::new(Mutex::new(CstCache::default())),
             rebuild_log: None,
+            stdlib_root: Arc::new(RwLock::new(None)),
+            project_manifest: Arc::new(RwLock::new(None)),
+            module_roots: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -161,6 +197,9 @@ impl DatabaseImpl {
             files: Arc::new(RwLock::new(FileRegistry::default())),
             cst_cache: Arc::new(Mutex::new(CstCache::default())),
             rebuild_log: Some(Arc::clone(&log)),
+            stdlib_root: Arc::new(RwLock::new(None)),
+            project_manifest: Arc::new(RwLock::new(None)),
+            module_roots: Arc::new(RwLock::new(None)),
         };
         (db, log)
     }
@@ -170,7 +209,55 @@ impl DatabaseImpl {
         self.rebuild_log.as_ref()
     }
 
+    /// Pin the stdlib root used by [`arandu_middle::db::SourceDatabase::resolve_module_path`].
+    pub fn set_stdlib_root(&self, root: PathBuf) {
+        let mut g = self.stdlib_root.write().unwrap_or_else(|e| e.into_inner());
+        *g = Some(root);
+    }
+
+    #[must_use]
+    pub fn stdlib_root(&self) -> Option<PathBuf> {
+        self.stdlib_root
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// Store the project manifest Salsa input (invalidation key for package mode).
+    pub fn set_project_manifest(&self, manifest: ProjectManifest) {
+        let mut g = self
+            .project_manifest
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
+        *g = Some(manifest);
+    }
+
+    #[must_use]
+    pub fn project_manifest(&self) -> Option<ProjectManifest> {
+        *self
+            .project_manifest
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Register dual module roots (package + stdlib) for [`Self::resolve_module_path`].
+    pub fn set_module_roots(&self, roots: ModuleRoots) {
+        let mut g = self.module_roots.write().unwrap_or_else(|e| e.into_inner());
+        *g = Some(roots);
+        // Keep flat stdlib_root in sync when roots carry one.
+        if let Some(std) = roots.stdlib_root(self) {
+            self.set_stdlib_root((*std).clone());
+        }
+    }
+
+    #[must_use]
+    pub fn module_roots(&self) -> Option<ModuleRoots> {
+        *self.module_roots.read().unwrap_or_else(|e| e.into_inner())
+    }
+
     pub fn new_file(&mut self, path: String, text: String) -> SourceFile {
+        // Drop previous registration first (separate lock scope — avoid deadlock).
+        self.unregister_source_file(&path);
         let mut reg = self.files.write().unwrap_or_else(|e| e.into_inner());
         let file_id = reg.next_id();
         let file = SourceFile::new(
@@ -186,7 +273,36 @@ impl DatabaseImpl {
     pub fn register_source_file(&self, path: String, file: SourceFile) {
         let mut reg = self.files.write().unwrap_or_else(|e| e.into_inner());
         let file_id = file.file_id(self.as_source_db());
+        if file_id >= reg.next_id {
+            reg.next_id = file_id.saturating_add(1);
+        }
         reg.insert(path, file_id, file);
+    }
+
+    /// Drop a registry key so `resolve_module_path` no longer returns a stale file.
+    ///
+    /// Used by watch mode when an `.aru` is deleted. Does **not** swallow the
+    /// broken import — dependents re-resolve and emit M001.
+    pub fn unregister_source_file(&self, path: &str) {
+        let mut reg = self.files.write().unwrap_or_else(|e| e.into_inner());
+        if let Some(file) = reg.remove_path(path) {
+            let fid = file.file_id(self.as_source_db());
+            reg.by_id.remove(&fid);
+        }
+    }
+
+    /// True if `path` is currently registered as a SourceFile key.
+    #[must_use]
+    pub fn is_registered(&self, path: &str) -> bool {
+        let reg = self.files.read().unwrap_or_else(|e| e.into_inner());
+        reg.by_path.contains_key(path)
+    }
+
+    /// Lookup registered SourceFile by import/registry key.
+    #[must_use]
+    pub fn source_file_by_path(&self, path: &str) -> Option<SourceFile> {
+        let reg = self.files.read().unwrap_or_else(|e| e.into_inner());
+        reg.by_path.get(path).copied()
     }
 
     /// O(1) reverse lookup: compiler `FileId` → open/registered [`SourceFile`].
@@ -249,7 +365,7 @@ impl arandu_middle::db::SourceDatabase for DatabaseImpl {
     }
 
     fn resolve_module_path(&self, path: &str) -> Option<SourceFile> {
-        // Fast path: O(1) lookup by import path string.
+        // Fast path: O(1) lookup by import path string (registry key).
         {
             let reg = self.files.read().unwrap_or_else(|e| e.into_inner());
             if let Some(file) = reg.by_path.get(path) {
@@ -257,19 +373,47 @@ impl arandu_middle::db::SourceDatabase for DatabaseImpl {
             }
         }
 
-        // Uncached: walk up the directory tree until we find the file.
-        let mut current = std::env::current_dir().ok()?;
         let mut found_path = None;
-        loop {
-            let candidate = current.join(path);
-            if candidate.exists() {
-                found_path = Some(candidate);
-                break;
+
+        // PROMOTE-L2: dual roots via ModuleRoots (package listing + stdlib).
+        // Same function for stdlib and package-local — not a second resolver.
+        if let Some(roots) = self.module_roots() {
+            if let Some(mapped) = crate::vfs::map_import_key(self, roots, path) {
+                found_path = Some(mapped);
             }
-            if let Some(parent) = current.parent() {
-                current = parent.to_path_buf();
-            } else {
-                break;
+        }
+
+        // Stdlib without ModuleRoots (doctor / single-file CLI with set_stdlib_root only).
+        if found_path.is_none() && (path.starts_with("stdlib/") || path.starts_with("stdlib\\")) {
+            if let Some(root) = self.stdlib_root() {
+                let candidate = crate::stdlib::import_path_on_disk(&root, path);
+                if candidate.is_file() {
+                    found_path = Some(candidate);
+                }
+            }
+        }
+
+        // Legacy monorepo / pre-registered relative keys: walk parents of cwd.
+        // Skipped for package-qualified keys when ModuleRoots already answered None
+        // (avoid picking a stale cwd tree over an authoritative package listing miss).
+        if found_path.is_none() {
+            let skip_cwd = self.module_roots().is_some()
+                && !path.starts_with("stdlib/")
+                && !path.starts_with("stdlib\\");
+            if !skip_cwd {
+                let mut current = std::env::current_dir().ok()?;
+                loop {
+                    let candidate = current.join(path);
+                    if candidate.is_file() {
+                        found_path = Some(candidate);
+                        break;
+                    }
+                    if let Some(parent) = current.parent() {
+                        current = parent.to_path_buf();
+                    } else {
+                        break;
+                    }
+                }
             }
         }
 

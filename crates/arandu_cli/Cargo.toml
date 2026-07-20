@@ -1,6 +1,6 @@
 [package]
 name = "arandu_cli"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2024"
 license.workspace = true
 authors.workspace = true
@@ -20,8 +20,11 @@ arandu_fmt = { path = "../arandu_fmt" }
 arandu_middle = { path = "../arandu_middle" }
 arandu_base = { path = "../arandu_base" }
 tracing.workspace = true
+blake3 = { workspace = true }
 rayon = "1.12.0"
 miette = { workspace = true }
 thiserror = { workspace = true }
 petgraph = { workspace = true }
+notify = "6.1"
+notify-debouncer-full = "0.3"
 

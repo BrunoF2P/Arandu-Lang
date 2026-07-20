@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0
+## 0.0.1
 
 - Initial release of the Arandu VS Code language client.
 - Integrated out-of-the-box support for `arandu-lsp`.

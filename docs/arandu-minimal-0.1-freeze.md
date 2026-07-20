@@ -1,8 +1,8 @@
 # Arandu Minimal 0.1 — Freeze & Tracking
 
-**Status:** **P0 implemented** (gold suite green) — ready for installer design  
-**Date:** 2026-07-11 (updated)  
-**Goal:** define a **stable, installable language surface** before installer / project CLI.  
+**Status:** **P0 + P2 project CLI gold** — installer packaging remains (tarball/prefix layout)  
+**Date:** 2026-07-11 (updated 2026-07-19)  
+**Goal:** define a **stable, installable language surface** before public site.  
 **Out of scope for this freeze:** beautiful marketing site (last), LLVM, self-host, package registry.
 
 ---
@@ -11,8 +11,8 @@
 
 After Minimal 0.1 is **green**:
 
-1. Ship **installer** (binaries + stdlib path)  
-2. Ship **project CLI** (`new` / `build` / `run` / `check` / `fmt`)  
+1. Ship **installer packaging** (prefix layout: `bin/` + `share/arandu/stdlib`) — resolution cascade already implemented  
+2. ~~Ship **project CLI**~~ — **[x]** `new` / `build` / `run` / `check` / `doctor` / `fmt` (see §14)  
 3. Only then: public site + playground on this profile  
 
 Anything not in **IN** is either **OUT (experimental)** or **BLOCKER** until fixed.
@@ -114,7 +114,7 @@ Coroutines are language. Multi-task needs **explicit** `SyncExecutor`. Payload h
 
 | Module | Reality | Freeze action |
 |--------|---------|---------------|
-| `std.path` | pure helpers (`is_empty`, limited `is_absolute`) | **IN optional**: only functions that pass e2e; document limits |
+| `std.path` | `is_empty` + host `is_absolute`; join/file_name stubs | **IN optional**; stubs → `PROMOTE-L4` |
 | `std.env` | extern decls only | OUT Minimal (or signatures-only experimental) |
 | `std.fs` | exists() scaffold | OUT |
 | `std.io` module | write/eprint scaffold (prelude io is separate) | OUT until host wired |
@@ -205,12 +205,13 @@ Ordered for closing **origin** issues before install.
 
 ### P2 — post-freeze (installer phase)
 
-| # | Task |
-|---|------|
-| P2.1 | `Arandu.toml` schema |
-| P2.2 | `arandu new` / package `check`/`run` |
-| P2.3 | Release installer (std path env `ARANDU_STDLIB` or embed) |
-| P2.4 | Beautiful site + playground on Minimal |
+| # | Task | Status |
+|---|------|--------|
+| P2.1 | `Arandu.toml` schema + Salsa `ProjectManifest` input (BLAKE3 hash in key) | [x] |
+| P2.2 | `arandu new` / package `check`/`run`/`build` | [x] |
+| P2.3 | Stdlib cascade (`--stdlib-path` > `ARANDU_STDLIB` > `current_exe` **canonicalize**) + `doctor` | [x] |
+| P2.4 | Beautiful site + playground on Minimal | pending |
+| P2.5 | Versioned atomic install + tarball BLAKE3 + isolated smoke CI | [x] scripts + `install-smoke` job |
 
 ### P3 — post-Minimal language (roadmap)
 
@@ -224,18 +225,19 @@ Ordered for closing **origin** issues before install.
 
 Create these files (names fixed for tracking):
 
-| File | Covers |
-|------|--------|
-| `m01_hello.aru` | println, main |
-| `m02_structs_enums.aru` | types, match |
-| `m03_result_option.aru` | Result/Option + sugar |
-| `m04_generics_bounds.aru` | `<T: I>` / where |
-| `m05_borrow_shared.aru` | shared/mut self, auto-ref |
-| `m06_async_await.aru` | async func + await |
-| `m07_async_spawn_join.aru` | import std.runtime, spawn/join infer |
-| `m08_modules/` | multi-file local import |
-| `m09_interp_tostr.aru` | string interp |
-| `m10_path_empty.aru` | optional path thin |
+| File | Exit | Covers |
+|------|------|--------|
+| `m01_hello.aru` | 0 | println, main |
+| `m02_structs_enums.aru` | 3 | types, match |
+| `m03_result_option.aru` | 7 | Result + `?` |
+| `m04_generics_bounds.aru` | 10 | free-function generics (not method-via-T; see L1) |
+| `m05_borrow_shared.aru` | 5 | shared self method |
+| `m06_async_await.aru` | 42 | async func + await |
+| `m07_async_spawn_join.aru` | 42 | std.runtime spawn/join |
+| `m08_modules/main.aru` | 9 | multi-file via **stdlib** (not package-local; see L2) |
+| `m09_interp_tostr.aru` | 0 | string interp |
+| `m10_path_empty.aru` | 0 | path thin IN |
+| `TEMPLATE_main.aru` | 0 | default installer template |
 
 **Command contract:**
 
@@ -248,11 +250,11 @@ Status: **[x] suite lives in `examples/minimal/`** — guarded by `cli_minimal_g
 
 ---
 
-## 9. Default project template (draft for installer)
+## 9. Default project template (`arandu_cli new`)
 
 ```text
 my_app/
-  Arandu.toml          # name = "my_app", version = "0.1.0", entry = "src/main.aru"
+  Arandu.toml          # name = "my_app", version = "0.0.1", entry = "src/main.aru"
   src/
     main.aru
 ```
@@ -261,6 +263,8 @@ my_app/
 // src/main.aru — Minimal 0.1 template (IN surface only)
 module my_app
 
+import io
+
 func main(): int {
     io.println("hello, arandu")
     return 0
@@ -268,6 +272,8 @@ func main(): int {
 ```
 
 **Do not** import experimental runtime/tcp/supervisor in the default template.
+
+**CI:** `examples/minimal/TEMPLATE_main.aru` is covered by `test_new_project_template_parses_cleanly` (same pipeline as stdlib parse cleanliness).
 
 Optional second template later: `async-hello` with `std.runtime` spawn/join.
 
@@ -311,15 +317,22 @@ func main(): int {
 | 2026-07-11 | Site after installer + project CLI |
 | 2026-07-11 | Experimental runtime may stay in tree; templates/docs ignore it |
 | 2026-07-11 | Installer blocked on P0 + gold suite green |
+| 2026-07-11 | P0 implemented; D6 unblocked for installer |
+| 2026-07-11 | §13 rationale + `PROMOTE-*` tracks documented for post-install work |
+| 2026-07-19 | P2 gold bars: manifest Salsa input, stdlib `current_exe` cascade, `doctor`, template in parse CI, run `[cached]`/`[rebuilt]` |
+| 2026-07-19 | PROMOTE-L2: dual ModuleRoots + DirectoryListing VFS; package `import my_app.util` |
+| 2026-07-19 | Watch mode: shared `DebouncedMap`/`EditVfs` with LSP; `arandu watch` + notify-debouncer-full |
+| 2026-07-20 | Workspace crate / installer / extension version set to **0.0.1** (honest pre-0.1; first installable profile will be 0.1.0) |
 
 ---
 
 ## 12. How to use this doc
 
-1. Work **only** P0/P1 until D2–D5 green.  
-2. Check boxes in §2 and §7 as items land.  
-3. Do **not** start installer until D6.  
-4. Roadmap long-form remains `arandu-compiler-roadmap-v0.1.md`; this file is the **product freeze**.
+1. **Installer packaging (next):** P2.5 — prefix layout matching §14 cascade; site still last.  
+2. **Promoting features later:** follow §13.4 checklist and `PROMOTE-*` IDs.  
+3. **Do not** expand Minimal by dumping all experimental into IN at once (§13.5 order).  
+4. Roadmap long-form: `arandu-compiler-roadmap-v0.1.md`. This file = **product freeze + promotion backlog**.  
+5. Gold suite: `examples/minimal/` + `cli_minimal_gold` + `cli_project_gold`.
 
 ---
 
@@ -360,15 +373,15 @@ This is the same idea as **stable vs nightly** in other languages — here named
 | **Promote when** | Direct call / mono path for interface methods through type params is green + gold example |
 | **Track ID** | `PROMOTE-L1` |
 
-#### L2 — Multi-file “real package” not in Minimal
+#### L2 — Multi-file package modules — **PROMOTED (2026-07-19)**
 
 | | |
 |--|--|
-| **Symptom** | `import my_app.util as u` from `src/util.aru` does not resolve like Cargo |
-| **Root** | `canonicalize_import_path` only rewrites **stdlib** (`std.core.*` → `stdlib/core/…`, `std.*` → `stdlib/std/…`). No `Arandu.toml` package graph yet |
-| **Minimal policy** | Gold multi-file = import **stdlib** modules (path, runtime). Local multi-module apps = **P2 installer** |
-| **Promote when** | Package CLI resolves package-local modules + gold `m08`-style under `src/` |
-| **Track ID** | `PROMOTE-L2` |
+| **Symptom (was)** | `import my_app.util as u` from `src/util.aru` did not resolve like Cargo |
+| **Root fix** | Same `resolve_module_path`: dual [`ModuleRoots`](../crates/arandu_query/src/vfs.rs) (package listing + stdlib). Keys still from `canonicalize_import_path` (`my_app/util.aru` / `stdlib/…`) |
+| **Policy now** | Package mode registers `DirectoryListing` for entry dir; existence is Salsa input (not bare `fs::exists`). Reserved package names (`std`, `io`, …) rejected at manifest parse. N006 on alias clash local↔stdlib. Cycles reuse `cycle_recover` |
+| **Gold** | `package_modules_l2` + `cli_project_gold::package_local_multi_file_check_and_run` |
+| **Track ID** | `PROMOTE-L2` **[x]** |
 
 #### L3 — Async language + SyncExecutor IN; reactor/TCP/Waker/supervisor experimental
 
@@ -473,3 +486,21 @@ Do **not** expand Minimal by dumping all experimental into IN at once.
 ## 14. One-line summary
 
 **Minimal 0.1 = language + async coroutine + SyncExecutor spawn/join + thin core/prelude + honest experimental fence — then install and project CLI; site last. Limits are product promises, not abandoned code; promote via §13.4.**
+
+---
+
+## 15. Project CLI gold (P2 summary)
+
+Implemented in-tree (see also `docs/arandu-project-cli-gold-v0.1.md`):
+
+| Gold | Mechanism |
+|------|-----------|
+| Stdlib never cwd | `resolve_stdlib_root`: flag → `ARANDU_STDLIB` → `current_exe` install layout / walk |
+| `arandu doctor` | Flutter-style categories; binary, stdlib, manifest, Cranelift `try_new` |
+| Manifest Salsa input | `ProjectManifest` + BLAKE3 `content_hash` + `manifest_fingerprint` |
+| Template in parse CI | `TEMPLATE_main.aru` + `test_new_project_template_parses_cleanly` |
+| Run status line | DX.5 `RebuildLog::status_line` → `[cached]` / `[rebuilt: N queries]` |
+| Backend flags | `build` = Cranelift; `build --release` = LLVM reserved (exit 2 until ready) |
+
+**Next:** P2.5 packaging script that installs into `$PREFIX/{bin,share/arandu/stdlib}`; then site.
+

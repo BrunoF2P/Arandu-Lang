@@ -9,7 +9,7 @@ Arandu is an experimental Brazilian systems programming language focused on memo
 
 **Solidification gate (S5) closed** — foundation (DoD AMIR `TypeId`, spans, `DataLayout`, host C↔Cranelift parity, unified imports) is stable enough to resume language-level Fase 3 work. Details: [docs/arandu-solidification-matrix-v0.1.md](docs/arandu-solidification-matrix-v0.1.md).
 
-**Product freeze (in progress):** [Arandu Minimal 0.1](docs/arandu-minimal-0.1-freeze.md) — stable installable surface before installer / project CLI / site.
+**Product freeze:** [Arandu Minimal 0.1](docs/arandu-minimal-0.1-freeze.md) — language surface green; **project CLI gold** (`new` / `check` / `run` / `build` / `doctor`, stdlib via `current_exe`) in [docs/arandu-project-cli-gold-v0.1.md](docs/arandu-project-cli-gold-v0.1.md). Packaging tarball + site still next.
 
 Implemented:
 
@@ -41,9 +41,10 @@ Implemented:
   - Prelude stays `(str) -> void` for `io.println`; host/C provide a debug `println` stub.
   - Formatted buffers use `malloc` (process-lifetime leak OK for debug; free/ownership later).
   - User `Display` / custom formatting for structs is later.
-- **Salsa query DB** (`arandu_query`) — incremental `parse` → `resolve` → `type_check` → `lower_amir`; DX.5 `-Zexplain-rebuild`.
+- **Salsa query DB** (`arandu_query`) — incremental `parse` → `resolve` → `type_check` → `lower_amir`; DX.5 `-Zexplain-rebuild` / run `[cached]`/`[rebuilt]`.
 - **LSP gold** (`arandu-lsp`) — diagnostics, goto/hover/complete/signatureHelp/refs/rename/symbols, **type-aware semantic tokens**, **format**, **code actions** (quickfix `;`).  
 - **CST-first** (rowan): `syntax_tree` → lower AST; reparse de subtree por ITEM; crate `arandu_fmt` + CLI `fmt`.
+- **Project CLI (P2 gold)** — `arandu_cli new|doctor|check|run|build`; `Arandu.toml` as Salsa input; stdlib cascade (`--stdlib-path` > `ARANDU_STDLIB` > relative to binary).
 
 Not implemented yet:
 

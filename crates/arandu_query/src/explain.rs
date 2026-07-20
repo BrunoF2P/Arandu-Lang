@@ -112,6 +112,26 @@ pub fn any_execute(log: &RebuildLog) -> bool {
         .any(|e| matches!(e, RebuildEvent::Execute { .. }))
 }
 
+impl RebuildLog {
+    /// One-line status for `arandu run` / `build` (DX.5 surface).
+    ///
+    /// - `[cached]` — no query bodies ran (full memo hit window)
+    /// - `[rebuilt: N queries]` — N `WillExecute` events in this window
+    #[must_use]
+    pub fn status_line(&self) -> String {
+        let events = self.snapshot();
+        let n_exec = events
+            .iter()
+            .filter(|e| matches!(e, RebuildEvent::Execute { .. }))
+            .count();
+        if n_exec == 0 {
+            "[cached]".to_string()
+        } else {
+            format!("[rebuilt: {n_exec} queries]")
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

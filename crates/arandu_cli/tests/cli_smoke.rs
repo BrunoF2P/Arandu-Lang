@@ -14,7 +14,11 @@ fn invalid_usage_exits_with_code_2() {
     let output = run_cli(&[]);
 
     assert_eq!(output.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("usage: arandu_cli"));
+    let err = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        err.contains("usage:") && err.contains("arandu_cli"),
+        "expected usage help, got: {err}"
+    );
 }
 
 #[test]

@@ -1,15 +1,19 @@
+# Build
 target/
-/analise-erros
+dist/
+
 # OS files
 .DS_Store
 Thumbs.db
-
-# Editor state
+*~
 *.swp
 *.swo
-*~
 
+# Editor state
 # VS Code Extension
-editors/vscode/out/
 editors/vscode/node_modules/
+editors/vscode/out/
 editors/vscode/*.vsix
+
+# Local analysis dumps
+/analise-erros

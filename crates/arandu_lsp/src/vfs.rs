@@ -1,114 +1,15 @@
-//! Virtual file system layer: pending edits + debounce before Salsa commit.
+//! Re-export shared text-edit VFS from `arandu_query`.
 //!
-//! `didChange` accumulates here; the main loop flushes after
-//! [`DEFAULT_DEBOUNCE`] of quiet time (or on explicit flush / didSave).
+//! Debounce lives in one place so CLI watch and LSP cannot drift.
 
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
-
-/// Quiet period before committing pending text to the Salsa DB.
-pub const DEFAULT_DEBOUNCE: Duration = Duration::from_millis(100);
-
-/// Pending full-document texts keyed by URI string.
-#[derive(Debug, Default)]
-pub struct Vfs {
-    pending: HashMap<String, PendingEdit>,
-    debounce: Duration,
-}
-
-#[derive(Debug, Clone)]
-struct PendingEdit {
-    text: String,
-    /// Last change time; flush when `now >= changed_at + debounce`.
-    changed_at: Instant,
-}
-
-impl Vfs {
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            pending: HashMap::new(),
-            debounce: DEFAULT_DEBOUNCE,
-        }
-    }
-
-    #[must_use]
-    #[allow(dead_code)] // used by ServerState tests + unit tests
-    pub fn with_debounce(debounce: Duration) -> Self {
-        Self {
-            pending: HashMap::new(),
-            debounce,
-        }
-    }
-
-    /// Queue a full-document replace (LSP `TextDocumentSyncKind::FULL`).
-    pub fn push_full_text(&mut self, uri: String, text: String) {
-        self.pending.insert(
-            uri,
-            PendingEdit {
-                text,
-                changed_at: Instant::now(),
-            },
-        );
-    }
-
-    /// Whether any file is waiting to be committed.
-    #[must_use]
-    #[allow(dead_code)] // unit tests
-    pub fn has_pending(&self) -> bool {
-        !self.pending.is_empty()
-    }
-
-    /// Time until the next pending edit becomes due, if any.
-    #[must_use]
-    pub fn next_deadline(&self) -> Option<Duration> {
-        let now = Instant::now();
-        self.pending
-            .values()
-            .map(|p| {
-                let due = p.changed_at + self.debounce;
-                if due <= now {
-                    Duration::ZERO
-                } else {
-                    due.saturating_duration_since(now)
-                }
-            })
-            .min()
-    }
-
-    /// Drain edits whose debounce window has elapsed.
-    pub fn take_due(&mut self) -> Vec<(String, String)> {
-        let now = Instant::now();
-        let mut due = Vec::new();
-        let mut keep = HashMap::new();
-        for (uri, edit) in self.pending.drain() {
-            if edit.changed_at + self.debounce <= now {
-                due.push((uri, edit.text));
-            } else {
-                keep.insert(uri, edit);
-            }
-        }
-        self.pending = keep;
-        due
-    }
-
-    /// Drain **all** pending edits immediately (didSave / shutdown / request flush).
-    pub fn take_all(&mut self) -> Vec<(String, String)> {
-        self.pending.drain().map(|(uri, e)| (uri, e.text)).collect()
-    }
-
-    /// Number of pending files (tests / diagnostics).
-    #[must_use]
-    #[allow(dead_code)]
-    pub fn pending_count(&self) -> usize {
-        self.pending.len()
-    }
-}
+pub use arandu_query::EditVfs as Vfs;
+// Debounce constant lives in arandu_query::DEFAULT_DEBOUNCE (shared with CLI watch).
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::thread;
+    use std::time::Duration;
 
     #[test]
     fn debounce_batches_multiple_pushes() {
