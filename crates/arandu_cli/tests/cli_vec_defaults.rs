@@ -1,4 +1,4 @@
-//! PROMOTE-L6: `Vec<T>` type surface + host-backed int run.
+//! PROMOTE-L6 complete: pure-buffer `Vec<T>` free-func API + gold runs.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::fs;
@@ -147,6 +147,40 @@ func main(): int {
         out.status.code(),
         Some(20),
         "vec grow past 8 failed: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// with_capacity / capacity / reserve / clear / is_empty (m15).
+#[test]
+fn run_m15_vec_capacity_api() {
+    let out = run_cli(&["run", "examples/minimal/m15_vec_capacity.aru"]);
+    assert_eq!(
+        out.status.code(),
+        Some(21),
+        "m15 capacity API failed: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn run_m15_vec_capacity_under_opt() {
+    let out = run_cli(&["run", "examples/minimal/m15_vec_capacity.aru", "--opt"]);
+    assert_eq!(
+        out.status.code(),
+        Some(21),
+        "m15 --opt failed (return-slot DCE?): stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn run_m13_under_opt() {
+    let out = run_cli(&["run", "examples/minimal/m13_vec.aru", "--opt"]);
+    assert_eq!(
+        out.status.code(),
+        Some(78),
+        "m13 --opt failed: stderr={}",
         String::from_utf8_lossy(&out.stderr)
     );
 }

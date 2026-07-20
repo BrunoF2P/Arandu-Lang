@@ -86,6 +86,7 @@ pub fn expand_specializations<'bump>(
         }
         if !template_funcs.contains_key(&key.symbol)
             || is_identity_instantiation(tc, key.symbol, key.type_args)
+            || !type_args_fully_concrete(tc, key.type_args)
         {
             continue;
         }
@@ -248,17 +249,9 @@ fn discover_nested_keys<'bump>(
         if !template_funcs.contains_key(&symbol) {
             return;
         }
-        if is_identity_instantiation(tc, symbol, type_args) {
-            return;
-        }
-        // Require fully concrete args (no leftover type params as Named(param)).
-        if type_args.iter().any(|&tid| {
-            matches!(
-                tc.type_info.type_interner.resolve(tid),
-                ArType::Named(id, ref a)
-                    if a.is_empty() && tc.type_info.generic_params.values().any(|ps| ps.contains(&id))
-            )
-        }) {
+        if is_identity_instantiation(tc, symbol, type_args)
+            || !type_args_fully_concrete(tc, type_args)
+        {
             return;
         }
         let type_args = bump.alloc_slice_copy(type_args);
@@ -431,6 +424,22 @@ fn is_identity_instantiation(tc: &TypeCheckResult, symbol: SymbolId, type_args: 
     })
 }
 
+/// True if `tid` is still a free type-parameter (not a concrete type).
+fn type_arg_still_param(tc: &TypeCheckResult, tid: TypeId) -> bool {
+    match tc.type_info.type_interner.resolve(tid) {
+        ArType::Named(id, ref args) if args.is_empty() => tc
+            .type_info
+            .generic_params
+            .values()
+            .any(|ps| ps.contains(&id)),
+        _ => false,
+    }
+}
+
+fn type_args_fully_concrete(tc: &TypeCheckResult, type_args: &[TypeId]) -> bool {
+    type_args.iter().all(|&tid| !type_arg_still_param(tc, tid))
+}
+
 fn specialize_free_func(
     tc: &mut TypeCheckResult,
     hir: &mut HirProgram,
@@ -492,16 +501,26 @@ fn specialize_free_func(
     let mangled = super::demangle::mangle_symbol(key, &tc.type_info.type_interner, &tc.symbols);
 
     let global = tc.symbols.global_scope();
-    let new_func_sym = tc
+    // Idempotent: same mangling may appear via dual keys (rare); reuse symbol.
+    let new_func_sym = match tc
         .symbols_mut()
         .define(global, &mangled, SymbolKind::Func, template.span)
-        .map_err(|_| {
-            Diagnostic::error(
-                DiagCode::G001GenericInstantiationCycle,
-                format!("monomorphize: duplicate specialized symbol `{mangled}`"),
-                template.span,
-            )
-        })?;
+    {
+        Ok(s) => s,
+        Err(existing) => {
+            // Same mangling already specialized (dual keys / re-entry). Reuse
+            // the existing specialized body for nested discovery — not the template.
+            for &decl_id in &hir.decls {
+                if let HirDecl::Func(f) = hir.pool.decl(decl_id)
+                    && f.symbol == existing
+                    && let Some(b) = f.body
+                {
+                    return Ok((existing, b));
+                }
+            }
+            return Ok((existing, body_id));
+        }
+    };
 
     // Subst and specialized return type
     let subst = build_subst_ids(&params_list, key.type_args, &tc.type_info.type_interner);

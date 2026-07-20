@@ -120,7 +120,7 @@ Coroutines are language. Multi-task needs **explicit** `SyncExecutor`. Payload h
 | `std.io` module | write/eprint scaffold (prelude io is separate) | OUT / experimental |
 | `std.process` | `exit` host-backed | **IN optional** thin |
 | `std.time` | `monotonic_ns` host-backed | **IN optional** thin |
-| `std.alloc.vec` | pure-buffer `Vec<T>` (generic free-func API) + raw alloc | **IN optional** (L6+L6.1 **[x]**); not in default template |
+| `std.alloc.vec` | pure-buffer `Vec<T>` free-func API (new/with_capacity/push/…/destroy) | **IN optional** — **PROMOTE-L6 closed**; not in default template |
 | `std.alloc.allocator_api` | GlobalAllocator + Bump; residual body diags | experimental for install |
 | `std.alloc.gen_arena` | typed API + i64 host MVP | experimental (GenRef path OK for advanced) |
 
@@ -239,8 +239,9 @@ Create these files (names fixed for tracking):
 | `m10_path_empty.aru` | 0 | path thin IN (`is_empty` / `is_absolute` / stubs) |
 | `m11_process_exit.aru` | 17 | `std.process.exit` host (P1.1) |
 | `m12_time_env.aru` | 0 | `std.time` + `std.env` hosts (P1.1) |
-| `m13_vec.aru` | 78 | `std.alloc.vec` pure-buffer + free-func mono (PROMOTE-L6/L6.1) |
+| `m13_vec.aru` | 78 | `std.alloc.vec` pure-buffer free-func API (PROMOTE-L6 complete) |
 | `m14_mem_intrinsics.aru` | 46 | mem sizeOf/ptrOffset/Read/Write (L6.1) |
+| `m15_vec_capacity.aru` | 21 | with_capacity / capacity / reserve / clear / is_empty |
 | `TEMPLATE_main.aru` | 0 | default installer template |
 
 **Command contract:**
@@ -331,6 +332,7 @@ func main(): int {
 | 2026-07-20 | **P1 quality:** wire `process`/`time`/`env` hosts; `Path::is_absolute`; experimental banners; CI `minimal-gold` |
 | 2026-07-20 | **PROMOTE-L6:** pure-buffer `std.alloc.vec` + free-func API, gold m13 exit 78 |
 | 2026-07-20 | **L6.1:** mem intrinsics; mut-ref stores; nested free-func mono worklist; generic `push<T>`; gold m13/m14 |
+| 2026-07-20 | **PROMOTE-L6 closed (Vec thin):** `with_capacity`/`capacity`/`is_empty`/`reserve`; m15 gold; nested mono + auto-ref infer; DCE multi-path return slot; C mem intrinsics; GenArena/allocator_api remain experimental |
 
 ---
 
@@ -433,16 +435,18 @@ This is the same idea as **stable vs nightly** in other languages — here named
 | **Promote when** | Host symbols + gold + not required by default template |
 | **Track ID** | `PROMOTE-L5-*` (env, fs, process, time, std.io) |
 
-#### L6 — Vec / allocator_api / GenArena — **PROMOTED (2026-07-20)** for Vec thin
+#### L6 — Vec / allocator_api / GenArena — **CLOSED for Vec thin (2026-07-20)**
 
 | | |
 |--|--|
-| **Root fix** | Pure-buffer path (`ar_vec_malloc/realloc/buf_free` + mem intrinsics); free-function generic API; nested mono worklist |
-| **Policy** | **IN optional** — not in default `arandu new` template. GenArena / allocator_api Bump still experimental. Host handle API (`ar_vec_new/push/…`) is **test/legacy only** |
-| **Gold** | `m13_vec.aru` exit 78; `cli_vec_defaults` check+run+module clean |
-| **L6.1** | **[x]** mem intrinsics + pure-buffer growth; mut-ref materialize; while SSA; nested free-func mono; generic `push<T>` |
-| **Residual** | Method-style `v.push` mono still OUT of gold; GenArena typed self-host later |
-| **Track ID** | `PROMOTE-L6` **[x]**; `PROMOTE-L6.1` **[x]** |
+| **Root fix** | Pure-buffer (`ar_vec_malloc/realloc/buf_free` + mem); generic free-func API; nested mono worklist; auto-ref type-param infer |
+| **Policy** | **`std.alloc.vec` IN optional** — not in default `arandu new`. **GenArena / allocator_api remain experimental** |
+| **Public API** | `new`, `with_capacity`, `push`, `pop`, `get`, `put`, `len`, `capacity`, `is_empty`, `reserve`, `clear`, `destroy` |
+| **Gold** | m13=78, m15=21; `cli_vec_defaults` + `--opt` paths; module check-clean |
+| **L6.1** | **[x]** mem intrinsics; mut-ref materialize; while SSA; DCE jump-args + multi-path `_0`; C mem emit |
+| **Checklist §13.4 (Vec)** | **[x]** root fixed · **[x]** gold · **[x]** CI gold · **[x]** IN optional inventory · **[x]** no experimental banner on vec · **[x]** not in default template · **[x]** decision log |
+| **Residual (not L6-Vec)** | Method-style `v.push`; GenArena typed; custom allocators |
+| **Track ID** | `PROMOTE-L6` **[x] closed**; `PROMOTE-L6.1` **[x]** |
 
 #### L7 — Language OUT by design or later phase
 

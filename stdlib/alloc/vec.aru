@@ -2,18 +2,23 @@ module std.alloc.vec
 
 /// Minimal 0.1 — **IN optional** growable array (`Vec<T>`).
 ///
-/// ## L6.1 pure buffer path
-/// Contiguous `ptr[T]` storage grown with host raw allocators
-/// (`ar_vec_malloc` / `ar_vec_realloc` / `ar_vec_buf_free`) and typed via
+/// # Design (PROMOTE-L6 complete for Vec thin)
+/// Contiguous pure-buffer storage: host raw allocators
+/// (`ar_vec_malloc` / `ar_vec_realloc` / `ar_vec_buf_free`) + typed access via
 /// mem intrinsics (`sizeOf` / `ptrOffset` / `ptrRead` / `ptrWrite`).
 ///
-/// Free-function API is **generic** (`push<T>`, …). Nested free-func mono
-/// (e.g. `push` → `ensure_capacity`) uses worklist specialization.
+/// **Free-function API** (product surface for Minimal; method-style `v.push`
+/// remains post-L6 / method mono). Nested free-func mono uses worklist
+/// specialization (`push` → `ensure_capacity`).
 ///
-/// Mut-ref field stores through free-func params require AMIR to keep the
-/// base pointer binding (`mark_local_materialized` / prune fix).
+/// Growth: geometric factor 2, minimum capacity 8 (classic dynamic-array
+/// amortised O(1) append; same family as Rust `Vec` / C++ `vector`).
 ///
-/// **Not** in default `arandu new` template.
+/// Mut-ref field stores through free-func params need AMIR
+/// `mark_local_materialized` (prune must keep the base bind).
+///
+/// **Not** in default `arandu new` template (optional import).
+/// GenArena / `allocator_api` stay **experimental** (separate promote tracks).
 
 import std.core.mem as mem
 
@@ -31,7 +36,7 @@ public struct Vec<T> {
     capacity: u64
 }
 
-/// Empty vector (no allocation until first `push`).
+/// Empty vector (no allocation until first `push` or `reserve` / `with_capacity`).
 public func new<T>(): Vec<T> {
     return Vec<T> {
         data: nil,
@@ -40,7 +45,14 @@ public func new<T>(): Vec<T> {
     }
 }
 
-/// Geometric growth (min capacity 8, factor 2) until `capacity >= minCap`.
+/// Empty vector with room for at least `cap` elements (may over-allocate).
+public func with_capacity<T>(cap: u64): Vec<T> {
+    let mut v = new<T>()
+    ensure_capacity<T>(v, cap)
+    return v
+}
+
+/// Ensure absolute capacity ≥ `minCap` (internal; used by push / with_capacity).
 func ensure_capacity<T>(mut v: Vec<T>, minCap: u64): void {
     if v.capacity >= minCap {
         return
@@ -64,6 +76,14 @@ func ensure_capacity<T>(mut v: Vec<T>, minCap: u64): void {
         v.data = p as ptr[T]
         v.capacity = newCap
     }
+}
+
+/// Reserve room for at least `additional` more elements beyond `len`.
+///
+/// Mirrors Rust `Vec::reserve`: ensures `capacity >= len + additional`.
+public func reserve<T>(mut v: Vec<T>, additional: u64): void {
+    let need = v.len + additional
+    ensure_capacity<T>(v, need)
 }
 
 /// Append `value` (amortized O(1)).
@@ -119,12 +139,22 @@ public func len<T>(shared v: Vec<T>): u64 {
     return v.len
 }
 
+/// Allocated capacity (element slots).
+public func capacity<T>(shared v: Vec<T>): u64 {
+    return v.capacity
+}
+
+/// `true` if `len == 0`.
+public func is_empty<T>(shared v: Vec<T>): bool {
+    return v.len == 0
+}
+
 /// Drop length to zero (capacity retained).
 public func clear<T>(mut v: Vec<T>): void {
     v.len = 0 as u64
 }
 
-/// Deallocate the buffer.
+/// Deallocate the buffer and reset to empty.
 ///
 /// Named `destroy` (not `free`) to avoid the reserved builtin `free`.
 public func destroy<T>(mut v: Vec<T>): void {

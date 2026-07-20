@@ -23,7 +23,9 @@ pub fn mark_sweep_dce(func: &mut AmirFunc) -> bool {
         return false;
     }
 
-    // --- def map: TempId → InstrId -----------------------------------------
+    // --- def map: TempId → InstrId (last def; used for use→def chain) ------
+    // NOTE: return slot `_0` is *not* SSA — many paths Assign to temp 0.
+    // `def_of[0]` alone is insufficient; we seed *all* defs of temp 0 below.
     let mut def_of = vec![None; n_temps];
     for bi in 0..func.blocks.len() {
         let bid = BlockId::from_usize(bi);
@@ -38,7 +40,7 @@ pub fn mark_sweep_dce(func: &mut AmirFunc) -> bool {
     //
     // Principle: the roots of a DCE mark-phase are everything observable from
     // outside the function:
-    //   - Return value (`_0` in AMIR convention)
+    //   - Return value (`_0` in AMIR convention) — **every** path's def
     //   - Side effects (Call, Store, Free, Destroy, Alloc, StorageLive/Dead)
     //   - Terminator operand uses (conditions + jump args → block params)
     //
@@ -49,11 +51,37 @@ pub fn mark_sweep_dce(func: &mut AmirFunc) -> bool {
     let mut live = vec![false; n_stmts];
     let mut queue: VecDeque<usize> = VecDeque::new();
 
-    // Seed: return register _0 is always live (AMIR convention).
-    if let Some(def) = def_of[0] {
-        let idx = def.as_usize();
-        live[idx] = true;
-        queue.push_back(idx);
+    // Seed: return register `_0` is live on *every* defining path (not SSA).
+    // Using only `def_of[0]` (last assign in block order) incorrectly DCE'd
+    // earlier `_0 = …` on other branches → bare `return` with undef exit code.
+    for bi in 0..func.blocks.len() {
+        let bid = BlockId::from_usize(bi);
+        for stmt_id in func.block_stmt_ids(bid) {
+            match func.stmt(stmt_id) {
+                AmirStmt::Assign { lhs, .. } if lhs.as_usize() == 0 => {
+                    let idx = stmt_id.as_usize();
+                    if !live[idx] {
+                        live[idx] = true;
+                        queue.push_back(idx);
+                    }
+                }
+                AmirStmt::Store {
+                    lhs:
+                        crate::amir::AmirPlace {
+                            local,
+                            projections,
+                        },
+                    ..
+                } if local.as_usize() == 0 && projections.is_empty() => {
+                    let idx = stmt_id.as_usize();
+                    if !live[idx] {
+                        live[idx] = true;
+                        queue.push_back(idx);
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     // Seeds: side-effecting stmts + terminator operand defs
@@ -384,6 +412,69 @@ mod tests {
         );
         assert!(!mark_sweep_dce(&mut f));
         assert_eq!(f.blocks[0].statements.len, 1);
+    }
+
+    /// Return slot `_0` is assigned on multiple paths (not SSA). All defs must
+    /// stay live — otherwise `--opt` drops `_0 = 1` on one branch.
+    #[test]
+    fn keeps_all_return_slot_defs_on_branches() {
+        let mut stmts = AmirStmtTable::new();
+        // bb0: branch
+        // bb1: t0 = true; return
+        // bb2: t0 = false; return
+        let a1 = stmts.push(AmirStmt::Assign {
+            lhs: TempId::from_usize(0),
+            rhs: AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Bool(true))),
+        });
+        let a2 = stmts.push(AmirStmt::Assign {
+            lhs: TempId::from_usize(0),
+            rhs: AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Bool(false))),
+        });
+        let mut r1 = DenseRange::empty();
+        let mut r2 = DenseRange::empty();
+        extend_block_range(&mut r1, a1);
+        extend_block_range(&mut r2, a2);
+        let blocks = vec![
+            AmirBasicBlock {
+                id: BlockId::from_usize(0),
+                statements: DenseRange::empty(),
+                params: Vec::new(),
+                terminator: AmirTerminator::Branch {
+                    condition: AmirOperand::Constant(AmirConstant::Bool(true)),
+                    if_true: BlockId::from_usize(1),
+                    true_args: Vec::new(),
+                    if_false: BlockId::from_usize(2),
+                    false_args: Vec::new(),
+                },
+            },
+            AmirBasicBlock {
+                id: BlockId::from_usize(1),
+                statements: r1,
+                params: Vec::new(),
+                terminator: AmirTerminator::Return,
+            },
+            AmirBasicBlock {
+                id: BlockId::from_usize(2),
+                statements: r2,
+                params: Vec::new(),
+                terminator: AmirTerminator::Return,
+            },
+        ];
+        let cfg = crate::cfg::compute_cfg_edges(&blocks);
+        let mut f = AmirFunc {
+            symbol: crate::SymbolId::new(0, 0),
+            return_type: intern_ty(ArType::Primitive(Primitive::Bool)),
+            receiver: None,
+            params: Vec::new(),
+            locals: Vec::new(),
+            temps: vec![bool_temp(0)],
+            blocks,
+            stmts,
+            cfg,
+        };
+        assert!(!mark_sweep_dce(&mut f));
+        assert_eq!(f.blocks[1].statements.len, 1);
+        assert_eq!(f.blocks[2].statements.len, 1);
     }
 
     /// Regression: values only used as `Goto` jump args must stay live.

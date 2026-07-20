@@ -1,11 +1,15 @@
 module examples.minimal.m13_vec
 
-// Minimal 0.1 — PROMOTE-L6: std.alloc.vec (host-backed int elements).
-// Free-function API: push/get/put/len/pop/destroy.
+// Minimal 0.1 — PROMOTE-L6 complete (Vec thin, pure-buffer).
+// Free-function API: new/with_capacity, push/get/put/pop, len/capacity/is_empty,
+// reserve, clear, destroy.
 import std.alloc.vec as vec
 
 func main(): int {
     let mut v = vec.new<int>()
+    if !vec.is_empty(v) {
+        return 90
+    }
     vec.push(v, 10)
     vec.push(v, 20)
     vec.push(v, 30)
