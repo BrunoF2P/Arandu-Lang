@@ -25,9 +25,9 @@ use tracing::{
     field::{Field, Visit},
     span::Attributes,
 };
-use tracing_subscriber::{EnvFilter, Registry, prelude::*};
 #[cfg(debug_assertions)]
 use tracing_subscriber::layer::{Context, Layer};
+use tracing_subscriber::{EnvFilter, Registry, prelude::*};
 
 // ── Static helpers (lazy-init via OnceLock) ───────────────────────────
 
