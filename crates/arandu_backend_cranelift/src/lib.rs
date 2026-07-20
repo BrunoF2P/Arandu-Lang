@@ -9,6 +9,7 @@
 pub mod abi;
 pub mod gen_runtime;
 pub mod jit;
+pub mod os_runtime;
 pub mod poll_runtime;
 pub mod reactor_runtime;
 pub mod rt_runtime;

@@ -68,6 +68,14 @@ const GOLD: &[Gold] = &[
         exit: 0,
     },
     Gold {
+        path: "examples/minimal/m11_process_exit.aru",
+        exit: 17,
+    },
+    Gold {
+        path: "examples/minimal/m12_time_env.aru",
+        exit: 0,
+    },
+    Gold {
         path: "examples/minimal/TEMPLATE_main.aru",
         exit: 0,
     },

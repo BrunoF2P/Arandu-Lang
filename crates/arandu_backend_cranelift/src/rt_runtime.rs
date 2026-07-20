@@ -114,7 +114,10 @@ pub unsafe extern "C" fn ar_rt_cancel_i64(handle: i64) {
     }
 }
 
-/// Path absolute check for SL_S (Unix `/` prefix; empty = false).
+/// Path absolute check for SL_S / Minimal path helpers.
+///
+/// Uses the host [`std::path::Path::is_absolute`] semantics (Unix `/…`, Windows
+/// drive/UNC). Empty and invalid UTF-8 are never absolute.
 ///
 /// # Safety
 /// `ptr`/`len` fat string from Arandu JIT.
@@ -124,7 +127,10 @@ pub unsafe extern "C" fn ar_path_is_absolute(ptr: *const u8, len: i64) -> i64 {
         return 0;
     }
     let s = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
-    i64::from(s[0] == b'/')
+    let Ok(text) = std::str::from_utf8(s) else {
+        return 0;
+    };
+    i64::from(std::path::Path::new(text).is_absolute())
 }
 
 /// Path empty check.
@@ -155,7 +161,10 @@ mod tests {
         unsafe {
             let p = b"/tmp";
             assert_eq!(ar_path_is_absolute(p.as_ptr(), 4), 1);
+            assert_eq!(ar_path_is_absolute(b"/".as_ptr(), 1), 1);
             assert_eq!(ar_path_is_absolute(b"rel".as_ptr(), 3), 0);
+            assert_eq!(ar_path_is_absolute(b"".as_ptr(), 0), 0);
+            assert_eq!(ar_path_is_absolute(b"./x".as_ptr(), 3), 0);
             assert_eq!(ar_path_is_empty(b"".as_ptr(), 0), 1);
         }
     }

@@ -1,0 +1,33 @@
+module examples.minimal.m12_time_env
+
+// Minimal 0.1 — std.time + std.env thin hosts.
+import std.time as time
+import std.env as env
+
+func main(): int {
+    // argv always includes program name
+    if env.args_len() < 1 {
+        return 1
+    }
+
+    // Presence (not non-empty): PATH is set on normal Unix/Windows runners.
+    if !env.var_is_set("PATH") {
+        return 2
+    }
+    // Synthetic name must not exist
+    if env.var_is_set("ARANDU_P1_ENV_MISSING_XYZ_9f3a") {
+        return 3
+    }
+
+    // Monotonic: non-negative and non-decreasing across two samples
+    let t0 = time.monotonic_ns()
+    let t1 = time.monotonic_ns()
+    if t0 < 0 {
+        return 4
+    }
+    if t1 < t0 {
+        return 5
+    }
+
+    return 0
+}

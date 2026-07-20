@@ -51,6 +51,17 @@ jobs:
       - name: cargo test --workspace
         run: cargo test --workspace
 
+  # P1.4: Arandu Minimal 0.1 gold suite only (examples/minimal/*).
+  minimal-gold:
+    name: Minimal gold (examples/minimal)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cli_minimal_gold
+        run: cargo test -p arandu_cli --test cli_minimal_gold -- --nocapture
+
   # RFC A1: diagnostic/test output independent of harness parallelism.
   diag-determinism:
     name: Diag determinism (test-threads 1 vs N)

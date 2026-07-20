@@ -160,6 +160,23 @@ impl AranduJit {
             "ar_path_is_empty",
             crate::rt_runtime::ar_path_is_empty as *const u8,
         );
+        // Minimal 0.1 optional OS surface (process / time / env)
+        builder.symbol(
+            "ar_process_exit",
+            crate::os_runtime::ar_process_exit as *const u8,
+        );
+        builder.symbol(
+            "ar_time_monotonic_ns",
+            crate::os_runtime::ar_time_monotonic_ns as *const u8,
+        );
+        builder.symbol(
+            "ar_env_args_len",
+            crate::os_runtime::ar_env_args_len as *const u8,
+        );
+        builder.symbol(
+            "ar_env_var_is_set",
+            crate::os_runtime::ar_env_var_is_set as *const u8,
+        );
         // SL_R.2 reactor (epoll + timerfd)
         builder.symbol(
             "ar_rt_reactor_create",
@@ -476,12 +493,45 @@ impl AranduJit {
         path_sig.returns.push(cranelift_codegen::ir::AbiParam::new(
             cranelift_codegen::ir::types::I64,
         ));
-        for name in ["ar_path_is_absolute", "ar_path_is_empty"] {
+        for name in [
+            "ar_path_is_absolute",
+            "ar_path_is_empty",
+            "ar_env_var_is_set",
+        ] {
             let id = self
                 .module
                 .declare_function(name, Linkage::Import, &path_sig)
                 .map_err(|err| codegen_ice(format!("failed to declare {name}: {err:?}")))?;
             func_ids.insert(name.to_string(), id);
+        }
+
+        // Minimal OS: exit(void), monotonic_ns/args_len (i64 -> / <-)
+        {
+            let mut exit_sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+            exit_sig.params.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
+            // No returns: noreturn host (process::exit).
+            let id = self
+                .module
+                .declare_function("ar_process_exit", Linkage::Import, &exit_sig)
+                .map_err(|err| {
+                    codegen_ice(format!("failed to declare ar_process_exit: {err:?}"))
+                })?;
+            func_ids.insert("ar_process_exit".to_string(), id);
+        }
+        {
+            let mut noarg_i64 = cranelift_codegen::ir::Signature::new(default_call_conv);
+            noarg_i64.returns.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
+            for name in ["ar_time_monotonic_ns", "ar_env_args_len"] {
+                let id = self
+                    .module
+                    .declare_function(name, Linkage::Import, &noarg_i64)
+                    .map_err(|err| codegen_ice(format!("failed to declare {name}: {err:?}")))?;
+                func_ids.insert(name.to_string(), id);
+            }
         }
 
         // SL_R.2 reactor host imports

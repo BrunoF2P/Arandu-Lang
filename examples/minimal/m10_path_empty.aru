@@ -1,19 +1,41 @@
 module examples.minimal.m10_path_empty
 
+// Minimal 0.1 — std.path IN optional (is_empty + is_absolute host).
 import std.path as path
 
 func main(): int {
+    // is_empty
     if !path.is_empty("") {
         return 1
     }
     if path.is_empty("x") {
         return 2
     }
+
+    // is_absolute — host Path semantics (Unix gold on Linux CI)
     if !path.is_absolute("/tmp") {
         return 3
     }
-    if path.is_absolute("rel") {
+    if !path.is_absolute("/") {
         return 4
     }
+    if path.is_absolute("rel") {
+        return 5
+    }
+    if path.is_absolute("./x") {
+        return 6
+    }
+    if path.is_absolute("") {
+        return 7
+    }
+
+    // stubs still typecheck and return documented values
+    if path.join("a", "b") != "a" {
+        return 8
+    }
+    if path.file_name("leaf") != "leaf" {
+        return 9
+    }
+
     return 0
 }

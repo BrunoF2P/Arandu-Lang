@@ -1,9 +1,25 @@
 module std.process
 
-/// **Experimental — not Arandu Minimal 0.1.**
-/// Thin SL_S: process control (scaffold).
+/// Minimal 0.1 — **IN optional** process control (thin).
+///
+/// | Function | Status |
+/// |----------|--------|
+/// | `exit`   | host-backed (`ar_process_exit` → process terminate) |
+///
+/// Semantics match Go `os.Exit` / Rust `std::process::exit`: the **whole process**
+/// ends (not only `main`'s return path). Prefer `return code` from `main` when
+/// you want the normal Arandu exit path.
+///
+/// Not in the default `arandu new` template.
 
+// Host: process terminate (noreturn).
 extern "C" {
-    /// Terminate the process with the given status code.
-    func exit(code: int): void
+    func ar_process_exit(code: int): void
+}
+
+/// Terminate the process with status `code` (OS may mask to 8 bits).
+public func exit(code: int): void {
+    unsafe {
+        ar_process_exit(code)
+    }
 }

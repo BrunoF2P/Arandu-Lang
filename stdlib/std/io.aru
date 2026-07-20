@@ -1,7 +1,8 @@
 module std.io
 
-/// **Experimental — not Arandu Minimal 0.1** (use prelude `import io` instead).
-/// Thin SL_S: OS I/O surface (scaffold).
+/// experimental — not Minimal 0.1 (use prelude `import io` instead).
+///
+/// Thin SL_S OS I/O surface scaffold. Minimal demos use prelude `io.println`.
 
 extern "C" {
     /// Write UTF-8 bytes to stdout (no trailing newline).

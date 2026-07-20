@@ -2,12 +2,15 @@ module std.path
 
 /// Minimal 0.1 — **IN optional** path helpers (honest limits).
 ///
-/// | Function     | Status |
-/// |--------------|--------|
-/// | `is_empty`   | pure, complete |
-/// | `is_absolute`| host-backed (Unix `/` prefix) |
-/// | `join`       | **stub** — returns `a` until str concat exists |
-/// | `file_name`  | **stub** — returns `p` until split exists |
+/// | Function      | Status |
+/// |---------------|--------|
+/// | `is_empty`    | pure, complete |
+/// | `is_absolute` | host-backed via `std::path::Path::is_absolute` |
+/// | `join`        | **stub** — returns `a` until str concat exists (`PROMOTE-L4`) |
+/// | `file_name`   | **stub** — returns `p` until split exists (`PROMOTE-L4`) |
+///
+/// Absolute rules follow the **host OS** (Unix: leading `/`; Windows: drive/UNC).
+/// Gold suite asserts Unix-style paths on Linux CI.
 ///
 /// Bodies link into the entry unit via multi-file HIR.
 
@@ -21,7 +24,7 @@ public func is_empty(p: str): bool {
     return p == ""
 }
 
-/// True when `p` is absolute on Unix (leading `/`). Empty is never absolute.
+/// True when `p` is absolute on the host OS. Empty is never absolute.
 public func is_absolute(p: str): bool {
     if p == "" {
         return false

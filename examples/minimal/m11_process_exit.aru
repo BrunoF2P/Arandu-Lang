@@ -1,0 +1,11 @@
+module examples.minimal.m11_process_exit
+
+// Minimal 0.1 — std.process.exit ends the process with the given status.
+// Expected CLI exit code: 17 (not via main return).
+import std.process as process
+
+func main(): int {
+    process.exit(17)
+    // Unreachable if host is wired correctly.
+    return 1
+}

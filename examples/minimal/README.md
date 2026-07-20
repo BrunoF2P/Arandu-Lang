@@ -28,6 +28,8 @@ arandu_cli run   <file>   # exit code documented in CLI tests
 | `m08_modules/main.aru` | 9 | multi-file via std (path+runtime) |
 | `m09_interp_tostr.aru` | 0 | string interpolation |
 | `m10_path_empty.aru` | 0 | std.path thin IN |
+| `m11_process_exit.aru` | 17 | std.process.exit host |
+| `m12_time_env.aru` | 0 | std.time + std.env hosts |
 
 ## Default template (installer)
 

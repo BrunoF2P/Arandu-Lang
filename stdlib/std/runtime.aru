@@ -8,10 +8,12 @@ module std.runtime
 ///
 /// ## Arandu Minimal 0.1 — **IN** surface
 /// `SyncExecutor`, `TaskHandle`, `new_sync_executor`, `spawn`/`join`/`block_on`
-/// (and `*_int` / `*_i64` helpers).
+/// (and `*_int` / `*_i64` helpers). Default templates may use only this surface.
 ///
-/// ## Experimental (shipped, not install-guaranteed)
-/// Reactor, TCP, Waker, Supervisor — see section banners below.
+/// ## Experimental — not Minimal 0.1
+/// Reactor, TCP, Waker, Supervisor ship in-tree and may appear in advanced tests,
+/// but are **not** install-guaranteed and must not be required by `arandu new`
+/// templates. See section banners below (`/// experimental — not Minimal 0.1`).
 ///
 /// Host symbols (`ar_rt_*`) are linked by the Cranelift JIT.
 
@@ -23,7 +25,7 @@ extern "C" {
     func ar_rt_cancel_i64(handle: int): void
 }
 
-// -- Host: reactor (epoll / io_uring) ----------------------------------------
+// -- Host: reactor (epoll / io_uring) — experimental — not Minimal 0.1 -------
 extern "C" {
     func ar_rt_reactor_create(): int
     func ar_rt_reactor_destroy(id: int): void
@@ -34,7 +36,7 @@ extern "C" {
     func ar_rt_reactor_register_socket(reactor_id: int, sock_id: int, events: int, waker_id: int): int
 }
 
-// -- Host: Waker -------------------------------------------------------------
+// -- Host: Waker — experimental — not Minimal 0.1 ----------------------------
 extern "C" {
     func ar_rt_waker_create(): int
     func ar_rt_waker_wake(id: int): void
@@ -42,7 +44,7 @@ extern "C" {
     func ar_rt_waker_destroy(id: int): void
 }
 
-// -- Host: TCP sockets (blocking + nonblocking wait + io_uring async) --------
+// -- Host: TCP — experimental — not Minimal 0.1 ------------------------------
 extern "C" {
     func ar_rt_tcp_listen(port: int): int
     func ar_rt_tcp_accept(listener: int): int
@@ -57,7 +59,7 @@ extern "C" {
     func ar_rt_tcp_write_async(sock: int, buf: ptr[u8], len: int): int
 }
 
-// -- Host: SL_R.1 supervisor -------------------------------------------------
+// -- Host: supervisor — experimental — not Minimal 0.1 -----------------------
 extern "C" {
     func ar_rt_supervisor_create(): int
     func ar_rt_supervisor_destroy(id: int): void
@@ -170,9 +172,10 @@ public func cancel_int(shared ex: SyncExecutor, handle: TaskHandle): void {
 }
 
 // ===========================================================================
-// EXPERIMENTAL (not Minimal 0.1 install) — SL_R.2/3 EpollReactor
+// experimental — not Minimal 0.1 — SL_R.2/3 EpollReactor
 // ===========================================================================
 
+/// experimental — not Minimal 0.1
 public struct EpollReactor {
     id: int
 }
@@ -221,13 +224,15 @@ public func reactor_register_socket(shared r: EpollReactor, shared s: TcpStream,
 }
 
 // ===========================================================================
-// EXPERIMENTAL (not Minimal 0.1) — Waker / Context
+// experimental — not Minimal 0.1 — Waker / Context
 // ===========================================================================
 
+/// experimental — not Minimal 0.1
 public struct Waker {
     id: int
 }
 
+/// experimental — not Minimal 0.1
 public struct Context {
     waker: Waker
 }
@@ -262,13 +267,15 @@ public func new_context(w: Waker): Context {
 }
 
 // ===========================================================================
-// EXPERIMENTAL (not Minimal 0.1) — TCP sockets
+// experimental — not Minimal 0.1 — TCP sockets
 // ===========================================================================
 
+/// experimental — not Minimal 0.1
 public struct TcpListener {
     id: int
 }
 
+/// experimental — not Minimal 0.1
 public struct TcpStream {
     id: int
 }
@@ -359,13 +366,15 @@ public func tcp_close_stream(shared s: TcpStream): void {
 }
 
 // ===========================================================================
-// EXPERIMENTAL (not Minimal 0.1) — SL_R.1 process supervisor
+// experimental — not Minimal 0.1 — SL_R.1 process supervisor
 // ===========================================================================
 
+/// experimental — not Minimal 0.1
 public struct Supervisor {
     id: int
 }
 
+/// experimental — not Minimal 0.1
 public struct WorkerHandle {
     id: int
 }

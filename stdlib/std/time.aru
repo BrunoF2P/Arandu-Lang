@@ -1,9 +1,25 @@
 module std.time
 
-/// **Experimental — not Arandu Minimal 0.1.**
-/// Thin SL_S: clocks (scaffold).
+/// Minimal 0.1 — **IN optional** clocks (thin).
+///
+/// | Function         | Status |
+/// |------------------|--------|
+/// | `monotonic_ns`   | host-backed steady clock (not wall time) |
+///
+/// Monotonic time is for measuring intervals (timeouts, benchmarks). It is **not**
+/// convertible to calendar date and may reset across reboots/process restarts.
+/// Aligns with Rust `Instant` / POSIX `CLOCK_MONOTONIC` intent.
+///
+/// Not in the default `arandu new` template.
 
 extern "C" {
-    /// Monotonic time in nanoseconds since an arbitrary epoch.
-    func monotonic_ns(): int
+    /// Nanoseconds since an arbitrary process-local epoch.
+    func ar_time_monotonic_ns(): int
+}
+
+/// Steady-clock nanoseconds (non-decreasing within a process).
+public func monotonic_ns(): int {
+    unsafe {
+        return ar_time_monotonic_ns()
+    }
 }

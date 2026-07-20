@@ -114,12 +114,12 @@ Coroutines are language. Multi-task needs **explicit** `SyncExecutor`. Payload h
 
 | Module | Reality | Freeze action |
 |--------|---------|---------------|
-| `std.path` | `is_empty` + host `is_absolute`; join/file_name stubs | **IN optional**; stubs → `PROMOTE-L4` |
-| `std.env` | extern decls only | OUT Minimal (or signatures-only experimental) |
-| `std.fs` | exists() scaffold | OUT |
-| `std.io` module | write/eprint scaffold (prelude io is separate) | OUT until host wired |
-| `std.process` | exit scaffold | OUT (or wire host + e2e) |
-| `std.time` | monotonic_ns scaffold | OUT until host + e2e |
+| `std.path` | `is_empty` + host `Path::is_absolute`; join/file_name stubs | **IN optional**; stubs → `PROMOTE-L4` |
+| `std.env` | `args_len` + `var_is_set` host (read-only) | **IN optional** thin; no setenv |
+| `std.fs` | exists() scaffold | OUT / experimental |
+| `std.io` module | write/eprint scaffold (prelude io is separate) | OUT / experimental |
+| `std.process` | `exit` host-backed | **IN optional** thin |
+| `std.time` | `monotonic_ns` host-backed | **IN optional** thin |
 | `std.alloc.vec` | full-ish API; typeck residuals in alloc bodies | **IN only if** `Vec` defaults path stays green (`cli_vec_defaults`); else signatures-only |
 | `std.alloc.allocator_api` | GlobalAllocator + Bump; residual body diags | experimental for install |
 | `std.alloc.gen_arena` | typed API + i64 host MVP | experimental (GenRef path OK for advanced) |
@@ -129,7 +129,7 @@ Coroutines are language. Multi-task needs **explicit** `SyncExecutor`. Payload h
 | ID | Issue | Severity for Minimal | Suggested fix |
 |----|--------|----------------------|---------------|
 | S1 | `std.core.ptr` broken twin | was high | [x] fixed as compat shim → `ptrOffset` |
-| S2 | `path.is_absolute` host-backed | was medium | [x] `ar_path_is_absolute` + m10 gold |
+| S2 | `path.is_absolute` host-backed | was medium | [x] `Path::is_absolute` + m10 gold (P1.2) |
 | S3 | `path.join` / `file_name` stubs return input | low for Minimal | documented stub; `PROMOTE-L4` |
 | S4 | alloc body typeck noise if linked as dependency | medium | keep entry-only check policy; don’t put Vec in default template until clean |
 | S5 | runtime i64 payload honesty | low if documented | doc in install + Minimal async § |
@@ -196,12 +196,12 @@ Ordered for closing **origin** issues before install.
 
 ### P1 — should close for quality (same freeze if cheap)
 
-| # | Task | Done when |
-|---|------|-----------|
-| P1.1 | Wire or explicitly exclude `std.process.exit` / `std.time` / `std.env` host | either e2e or OUT table final |
-| P1.2 | `path.is_absolute` host-backed or documented + test only documented cases | path e2e stable |
-| P1.3 | Mark experimental modules in source (`/// experimental — not Minimal 0.1`) | runtime reactor/tcp/supervisor headers |
-| P1.4 | CI job `minimal-gold` running only §8 | CI green |
+| # | Task | Done when | Status |
+|---|------|-----------|--------|
+| P1.1 | Wire or explicitly exclude `std.process.exit` / `std.time` / `std.env` host | either e2e or OUT table final | **[x]** hosts `ar_process_exit` / `ar_time_monotonic_ns` / `ar_env_*` + gold m11/m12 |
+| P1.2 | `path.is_absolute` host-backed or documented + test only documented cases | path e2e stable | **[x]** `Path::is_absolute` + expanded m10 |
+| P1.3 | Mark experimental modules in source (`/// experimental — not Minimal 0.1`) | runtime reactor/tcp/supervisor headers | **[x]** runtime sections + fs/io banners |
+| P1.4 | CI job `minimal-gold` running only §8 | CI green | **[x]** job `minimal-gold` → `cli_minimal_gold` |
 
 ### P2 — post-freeze (installer phase)
 
@@ -236,7 +236,9 @@ Create these files (names fixed for tracking):
 | `m07_async_spawn_join.aru` | 42 | std.runtime spawn/join |
 | `m08_modules/main.aru` | 9 | multi-file via **stdlib** (not package-local; see L2) |
 | `m09_interp_tostr.aru` | 0 | string interp |
-| `m10_path_empty.aru` | 0 | path thin IN |
+| `m10_path_empty.aru` | 0 | path thin IN (`is_empty` / `is_absolute` / stubs) |
+| `m11_process_exit.aru` | 17 | `std.process.exit` host (P1.1) |
+| `m12_time_env.aru` | 0 | `std.time` + `std.env` hosts (P1.1) |
 | `TEMPLATE_main.aru` | 0 | default installer template |
 
 **Command contract:**
@@ -324,6 +326,7 @@ func main(): int {
 | 2026-07-19 | Watch mode: shared `DebouncedMap`/`EditVfs` with LSP; `arandu watch` + notify-debouncer-full |
 | 2026-07-20 | Workspace crate / installer / extension version set to **0.0.1** (honest pre-0.1; first installable profile will be 0.1.0) |
 | 2026-07-20 | DiagCode ↔ docs/errors via xtask (single source); CI jobs split; install-smoke matrix ubuntu+macos early |
+| 2026-07-20 | **P1 quality:** wire `process`/`time`/`env` hosts; `Path::is_absolute`; experimental banners; CI `minimal-gold` |
 
 ---
 
