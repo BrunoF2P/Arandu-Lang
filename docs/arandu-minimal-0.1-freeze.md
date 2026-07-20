@@ -441,7 +441,7 @@ This is the same idea as **stable vs nightly** in other languages — here named
 | **Policy** | **IN optional** — not in default `arandu new` template. GenArena / allocator_api Bump still experimental |
 | **Gold** | `m13_vec.aru` exit 78; `cli_vec_defaults` check+run+module clean |
 | **L6.1** | **[x]** mem intrinsics + pure-buffer `Vec` growth; mut-ref field store fix (`mark_local_materialized` on projected stores) |
-| **Residual** | `while` that later loads fields of free-func `mut` params miscompiles (use if-chain growth); free-func generic mono still residual |
+| **Residual** | free-func generic mono still residual (cross-module). While + mut-ref back-edge / DCE jump-args fixed (AMIR SSA + shared terminator visitor) |
 | **Track ID** | `PROMOTE-L6` **[x]**; `PROMOTE-L6.1` **[x]** |
 
 #### L7 — Language OUT by design or later phase

@@ -1,9 +1,17 @@
-//! Shared AMIR rvalue/operand visitors (RC-ANALYSIS-LOAD).
+//! Shared AMIR operand visitors (RC-ANALYSIS-LOAD).
 //!
-//! All analyses (liveness, move, definite-init, DCE) and backends should walk
-//! operands through these helpers so new `AmirRvalue` variants cannot silently
-//! skip a pass.
+//! # Design (single source of truth)
+//! Analyses (liveness, move, DCE, …) and backends **must** walk operands through
+//! these helpers. Adding a new `AmirRvalue` / `AmirTerminator` field without
+//! updating the matching visitor is a compile-time gap only if you use an
+//! exhaustive `match` here — keep matches exhaustive (no `_ => {}` for new
+//! payload-bearing variants).
+//!
+//! Historical bugs this pattern prevents:
+//! - DCE ignoring `Goto.args` / `Suspend.args` → live values deleted, hang under `--opt`
+//! - Analyses that only walked branch conditions but not block-param jump args
 
+use super::stmt::AmirTerminator;
 use super::value::{AmirOperand, AmirPlace, AmirProjection, AmirRvalue};
 
 /// Invoke `f` for every operand nested in `place` projections (e.g. index).
@@ -11,6 +19,61 @@ pub fn for_each_place_operand(place: &AmirPlace, mut f: impl FnMut(&AmirOperand)
     for proj in &place.projections {
         if let AmirProjection::Index(op) = proj {
             f(op);
+        }
+    }
+}
+
+/// Invoke `f` for every operand **used** by a terminator.
+///
+/// Includes:
+/// - control conditions (`Branch.condition`, `SwitchInt.discriminant`, `Suspend.future`)
+/// - **all jump args** that feed successor block parameters (`Goto.args`,
+///   `Branch.true_args` / `false_args`, `SwitchInt` arm args, `Suspend.args`)
+///
+/// Omitting jump args is incorrect for SSA/block-param form: those values are
+/// live uses even when no statement in the block references them.
+pub fn for_each_terminator_operand(term: &AmirTerminator, mut f: impl FnMut(&AmirOperand)) {
+    match term {
+        AmirTerminator::Return | AmirTerminator::Unreachable => {}
+        AmirTerminator::Goto { args, .. } => {
+            for a in args {
+                f(a);
+            }
+        }
+        AmirTerminator::Branch {
+            condition,
+            true_args,
+            false_args,
+            ..
+        } => {
+            f(condition);
+            for a in true_args {
+                f(a);
+            }
+            for a in false_args {
+                f(a);
+            }
+        }
+        AmirTerminator::SwitchInt {
+            discriminant,
+            targets,
+            otherwise,
+        } => {
+            f(discriminant);
+            for (_, _, args) in targets {
+                for a in args {
+                    f(a);
+                }
+            }
+            for a in &otherwise.1 {
+                f(a);
+            }
+        }
+        AmirTerminator::Suspend { future, args, .. } => {
+            f(future);
+            for a in args {
+                f(a);
+            }
         }
     }
 }
@@ -112,5 +175,45 @@ mod tests {
         let mut n = 0;
         for_each_rvalue_operand(&rv, |_| n += 1);
         assert_eq!(n, 2);
+    }
+
+    #[test]
+    fn terminator_visits_goto_jump_args() {
+        use crate::amir::block::BlockId;
+        use crate::amir::stmt::AmirTerminator;
+        let term = AmirTerminator::Goto {
+            target: BlockId::from_usize(1),
+            args: vec![
+                AmirOperand::Copy(TempId::from_usize(4)),
+                AmirOperand::Copy(TempId::from_usize(7)),
+            ],
+        };
+        let mut temps = Vec::new();
+        for_each_terminator_operand(&term, |op| {
+            if let AmirOperand::Copy(t) = op {
+                temps.push(t.as_usize());
+            }
+        });
+        assert_eq!(temps, vec![4, 7]);
+    }
+
+    #[test]
+    fn terminator_visits_branch_condition_and_args() {
+        use crate::amir::block::BlockId;
+        use crate::amir::stmt::AmirTerminator;
+        let term = AmirTerminator::Branch {
+            condition: AmirOperand::Copy(TempId::from_usize(0)),
+            if_true: BlockId::from_usize(1),
+            true_args: vec![AmirOperand::Copy(TempId::from_usize(1))],
+            if_false: BlockId::from_usize(2),
+            false_args: vec![AmirOperand::Copy(TempId::from_usize(2))],
+        };
+        let mut temps = Vec::new();
+        for_each_terminator_operand(&term, |op| {
+            if let AmirOperand::Copy(t) = op {
+                temps.push(t.as_usize());
+            }
+        });
+        assert_eq!(temps, vec![0, 1, 2]);
     }
 }

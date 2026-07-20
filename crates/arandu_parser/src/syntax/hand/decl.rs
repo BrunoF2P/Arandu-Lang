@@ -545,6 +545,8 @@ fn try_hand_lower_interface(
     cur.bump();
     let generic_params = parse_generic_params(&mut ctx, &mut cur)?;
     let where_clause = parse_where_clause(&mut ctx, &mut cur)?;
+    // Same dual-path contract as RD `parse_interface_decl`: bare `self` means `Self`.
+    let self_receiver = super::func::synthetic_self_receiver(arandu_lexer::Span::new(0, 0, 0));
     cur.expect(TokenKind::LBrace)?;
     let mut members = Vec::new();
     while cur.peek_kind() != Some(TokenKind::RBrace) && !cur.at_end() {
@@ -552,7 +554,11 @@ fn try_hand_lower_interface(
         if cur.peek_kind() == Some(TokenKind::RBrace) {
             break;
         }
-        members.push(super::func::parse_func_signature(&mut ctx, &mut cur)?);
+        members.push(super::func::parse_func_signature_with_receiver(
+            &mut ctx,
+            &mut cur,
+            Some(&self_receiver),
+        )?);
         let _ = cur.eat(TokenKind::Semicolon);
     }
     cur.expect(TokenKind::RBrace)?;

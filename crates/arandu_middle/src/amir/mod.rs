@@ -17,4 +17,7 @@ pub use reachability::reachable_blocks_dense;
 pub use rpo::reverse_post_order;
 pub use stmt::{AmirStmt, AmirStmtKind, AmirStmtTable, AmirTerminator, InstrId};
 pub use value::{AmirConstant, AmirOperand, AmirPlace, AmirProjection, AmirRvalue};
-pub use visit::{for_each_place_operand, for_each_rvalue_operand, for_each_rvalue_place};
+pub use visit::{
+    for_each_place_operand, for_each_rvalue_operand, for_each_rvalue_place,
+    for_each_terminator_operand,
+};

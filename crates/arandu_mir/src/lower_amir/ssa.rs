@@ -728,6 +728,19 @@ impl LowerCtx<'_> {
     }
 
     pub(crate) fn build_target_args(&mut self, target: BlockId) -> Vec<AmirOperand> {
+        // Unsealed targets must not pre-fill jump args. Incomplete phis are
+        // resolved only in `seal_block` via `append_terminator_arg` (Braun et al.
+        // / cranelift-frontend: branch insts start with no jump args; the SSA
+        // builder fills them at seal). Pre-filling here and then appending again
+        // at seal duplicates operands on the while back-edge, e.g.
+        //   goto header(newCap, newCap)  // wrong
+        // instead of
+        //   goto header(newCap, v)       // correct multi-phi header
+        // Later loop-carried locals (only used after the loop) then append at
+        // the wrong index and corrupt mut-ref bases after the loop.
+        if !self.sealed_blocks.contains(&target) {
+            return Vec::new();
+        }
         let params = self.blocks[target.as_usize()].params.clone();
         let mut args = Vec::new();
         let Some(curr) = self.current_block else {

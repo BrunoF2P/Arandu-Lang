@@ -41,9 +41,6 @@ public func new<T>(): Vec<T> {
 }
 
 /// Geometric growth for `Vec<int>` (min capacity 8, factor 2).
-///
-/// Note: avoid `while` here — loop bodies that later load fields of a
-/// free-func `mut` param currently miscompile (back-edge + mut-ref residual).
 func ensure_capacity_int(mut v: Vec<int>, minCap: u64): void {
     if v.capacity >= minCap {
         return
@@ -51,12 +48,9 @@ func ensure_capacity_int(mut v: Vec<int>, minCap: u64): void {
     let mut newCap: u64 = v.capacity
     if newCap == 0 {
         newCap = 8 as u64
-    } else {
-        newCap = newCap * 2
     }
-    // Cap to at least minCap without a loop (handles large single pushes).
-    if newCap < minCap {
-        newCap = minCap
+    while newCap < minCap {
+        newCap = newCap * 2
     }
     let elem = mem.sizeOf<int>()
     let oldBytes = v.capacity * elem

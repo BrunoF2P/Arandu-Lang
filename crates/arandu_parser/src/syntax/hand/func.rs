@@ -229,9 +229,30 @@ pub(super) fn parse_params(
     Some(params)
 }
 
+/// Synthetic `Self` type for bare `self` in interface / method signatures.
+///
+/// Must stay aligned with RD `parser/decl.rs::parse_interface_decl` (single
+/// dual-path contract: hand and RD lower the same AST shape for `self`).
+pub(super) fn synthetic_self_receiver(span: Span) -> TypeName {
+    TypeName {
+        span,
+        path: smallvec![SmolStr::new_static("Self")],
+    }
+}
+
 pub(super) fn parse_func_signature(
     ctx: &mut HandCtx<'_>,
     cur: &mut Cursor<'_>,
+) -> Option<FuncSignature> {
+    parse_func_signature_with_receiver(ctx, cur, None)
+}
+
+/// Like [`parse_func_signature`], but `self` without `: Type` binds to `receiver`
+/// when provided (interface methods → `Self`, same as RD).
+pub(super) fn parse_func_signature_with_receiver(
+    ctx: &mut HandCtx<'_>,
+    cur: &mut Cursor<'_>,
+    method_receiver: Option<&TypeName>,
 ) -> Option<FuncSignature> {
     let attrs = parse_attributes(ctx, cur)?;
     let start = cur.peek()?.start;
@@ -240,7 +261,7 @@ pub(super) fn parse_func_signature(
     let name = SmolStr::new(ctx.text(name_tok)?);
     let generic_params = parse_generic_params(ctx, cur)?;
     cur.expect(TokenKind::LParen)?;
-    let params = parse_params(ctx, cur, None)?;
+    let params = parse_params(ctx, cur, method_receiver)?;
     cur.expect(TokenKind::RParen)?;
     let result = if cur.eat(TokenKind::Colon) {
         Some(parse_result_type(ctx, cur)?)

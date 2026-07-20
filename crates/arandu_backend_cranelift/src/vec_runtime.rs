@@ -1,16 +1,17 @@
-//! Host-backed growable `i64` vectors for Minimal `std.alloc.vec`.
+//! Host symbols for `std.alloc.vec` (two layers — do not conflate).
 //!
-//! ## Why host-backed (not pure Arandu mem intrinsics yet)
-//! - `mem.ptrOffset` / `sizeOf` lower as AMIR calls (`fn@ptrOffset`) that the JIT
-//!   must treat as intrinsics; partial support exists only for fully-qualified
-//!   `std.core.mem.ptr_read*` names.
-//! - Method monomorphization of imported templates still has residual gaps.
+//! ## Canonical path (L6.1 pure-buffer)
+//! Language code in `stdlib/alloc/vec.aru` uses only:
+//! - `ar_vec_malloc` / `ar_vec_realloc` / `ar_vec_buf_free` (raw bytes)
+//! - mem intrinsics (`sizeOf` / `ptrOffset` / `ptrRead` / `ptrWrite`) for typed access
 //!
-//! Pattern matches `gen_runtime` (GenArena i64 MVP): language surface in
-//! `stdlib/alloc/vec.aru`, storage and growth in this module.
+//! ## Legacy handle API (GenArena-style table)
+//! `ar_vec_new` / `ar_vec_push` / `ar_vec_get` / … remain registered for JIT
+//! unit tests and any residual host-table experiments. **They are not the
+//! stdlib surface.** Prefer pure-buffer when changing product behaviour.
 //!
-//! Elements are **i64 bit patterns** (Minimal gold uses `int`). Typed Drop /
-//! non-int payloads remain PROMOTE-L6.1 / self-host.
+//! Elements on the handle API are **i64 bit patterns**. Typed Drop / non-int
+//! payloads remain post-Minimal.
 //!
 //! # Safety
 //! All `pub unsafe extern "C"` entry points are ABI host functions invoked only

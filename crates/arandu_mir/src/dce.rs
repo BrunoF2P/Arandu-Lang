@@ -1,6 +1,6 @@
 use crate::amir::{
     AmirFunc, AmirOperand, AmirProjection, AmirRvalue, AmirStmt, AmirTerminator, BlockId, TempId,
-    for_each_rvalue_operand,
+    for_each_rvalue_operand, for_each_terminator_operand,
 };
 use crate::layout::DenseRange;
 use smallvec::SmallVec;
@@ -10,8 +10,8 @@ use std::collections::VecDeque;
 ///
 /// Phase 1 — Mark: seeds are side-effecting instructions (Call, Store, Free, Destroy,
 /// StorageLive/Dead, Alloc).  Transitively marks the defining instruction of every
-/// temp operand used by a live instruction.  Branch conditions and switch discriminants
-/// are also seeds.
+/// temp operand used by a live instruction.  **All** terminator operand uses are
+/// seeds (conditions **and** block-param jump args via [`for_each_terminator_operand`]).
 ///
 /// Phase 2 — Sweep: removes every unmarked statement by rebuilding the stmt table.
 ///
@@ -40,7 +40,7 @@ pub fn mark_sweep_dce(func: &mut AmirFunc) -> bool {
     // outside the function:
     //   - Return value (`_0` in AMIR convention)
     //   - Side effects (Call, Store, Free, Destroy, Alloc, StorageLive/Dead)
-    //   - Terminator operand uses (branch conditions, switch discriminants)
+    //   - Terminator operand uses (conditions + jump args → block params)
     //
     // Future roots to add when the language grows:
     //   - Mutable reference parameters (writes visible to caller)
@@ -154,11 +154,13 @@ fn has_side_effect(stmt: &AmirStmt) -> bool {
 }
 
 fn collect_terminator_temps(term: &AmirTerminator) -> SmallVec<[TempId; 4]> {
-    match term {
-        AmirTerminator::Branch { condition, .. } => collect_operand_temps(condition),
-        AmirTerminator::SwitchInt { discriminant, .. } => collect_operand_temps(discriminant),
-        _ => SmallVec::new(),
-    }
+    // Single source of truth: middle::amir::visit::for_each_terminator_operand.
+    // Must include Goto/Suspend/Branch jump args (SSA block-param edges).
+    let mut t = SmallVec::new();
+    for_each_terminator_operand(term, |op| {
+        t.extend(collect_operand_temps(op));
+    });
+    t
 }
 
 fn collect_stmt_temps(stmt: &AmirStmt) -> SmallVec<[TempId; 4]> {
@@ -380,6 +382,60 @@ mod tests {
             }],
             vec![],
         );
+        assert!(!mark_sweep_dce(&mut f));
+        assert_eq!(f.blocks[0].statements.len, 1);
+    }
+
+    /// Regression: values only used as `Goto` jump args must stay live.
+    /// Without this, `--opt` deletes the mul and leaves `goto header(undef)`.
+    #[test]
+    fn keeps_assign_only_used_as_goto_arg() {
+        let mut stmts = AmirStmtTable::new();
+        let mut range0 = DenseRange::empty();
+        let mut range1 = DenseRange::empty();
+        // bb0: t1 = use(true); goto bb1(t1)
+        let a0 = stmts.push(AmirStmt::Assign {
+            lhs: TempId::from_usize(1),
+            rhs: AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Bool(true))),
+        });
+        extend_block_range(&mut range0, a0);
+        // bb1: return (t0 always-live seed)
+        let a1 = stmts.push(AmirStmt::Assign {
+            lhs: TempId::from_usize(0),
+            rhs: AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Bool(false))),
+        });
+        extend_block_range(&mut range1, a1);
+
+        let blocks = vec![
+            AmirBasicBlock {
+                id: BlockId::from_usize(0),
+                statements: range0,
+                params: Vec::new(),
+                terminator: AmirTerminator::Goto {
+                    target: BlockId::from_usize(1),
+                    args: vec![AmirOperand::Copy(TempId::from_usize(1))],
+                },
+            },
+            AmirBasicBlock {
+                id: BlockId::from_usize(1),
+                statements: range1,
+                params: Vec::new(),
+                terminator: AmirTerminator::Return,
+            },
+        ];
+        let cfg = crate::cfg::compute_cfg_edges(&blocks);
+        let mut f = AmirFunc {
+            symbol: crate::SymbolId::new(0, 0),
+            return_type: intern_ty(ArType::Void),
+            receiver: None,
+            params: Vec::new(),
+            locals: Vec::new(),
+            temps: vec![bool_temp(0), bool_temp(1)],
+            blocks,
+            stmts,
+            cfg,
+        };
+        // t1 is only referenced from Goto.args — must not be removed.
         assert!(!mark_sweep_dce(&mut f));
         assert_eq!(f.blocks[0].statements.len, 1);
     }

@@ -10,6 +10,7 @@ use crate::amir::reachability::terminator_targets;
 use crate::amir::{
     AmirFunc, AmirOperand, AmirPlace, AmirProjection, AmirRvalue, AmirStmt, AmirTerminator,
     BlockId, LocalId, TempId, for_each_rvalue_operand, for_each_rvalue_place,
+    for_each_terminator_operand,
 };
 use crate::{BitMatrix, BitSet};
 
@@ -274,50 +275,8 @@ fn collect_terminator_temp_uses(
     uses: &mut BitMatrix<BlockId, TempId>,
     block: BlockId,
 ) {
-    match term {
-        AmirTerminator::Branch {
-            condition,
-            true_args,
-            false_args,
-            ..
-        } => {
-            mark_temp_use(condition, defined, uses, block);
-            for a in true_args {
-                mark_temp_use(a, defined, uses, block);
-            }
-            for a in false_args {
-                mark_temp_use(a, defined, uses, block);
-            }
-        }
-        AmirTerminator::SwitchInt {
-            discriminant,
-            targets,
-            otherwise,
-            ..
-        } => {
-            mark_temp_use(discriminant, defined, uses, block);
-            for (_, _, args) in targets {
-                for a in args {
-                    mark_temp_use(a, defined, uses, block);
-                }
-            }
-            for a in &otherwise.1 {
-                mark_temp_use(a, defined, uses, block);
-            }
-        }
-        AmirTerminator::Goto { args, .. } => {
-            for a in args {
-                mark_temp_use(a, defined, uses, block);
-            }
-        }
-        AmirTerminator::Suspend { future, args, .. } => {
-            mark_temp_use(future, defined, uses, block);
-            for a in args {
-                mark_temp_use(a, defined, uses, block);
-            }
-        }
-        AmirTerminator::Return | AmirTerminator::Unreachable => {}
-    }
+    // Shared visitor: conditions + all jump args (same contract as DCE).
+    for_each_terminator_operand(term, |op| mark_temp_use(op, defined, uses, block));
 }
 
 fn mark_temp_use(
