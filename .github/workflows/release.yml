@@ -43,11 +43,11 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+          # macos-latest is Apple Silicon (aarch64). macos-13 (Intel) was
+          # retired by GitHub Dec 2025 — jobs sit forever "Waiting for a runner".
+          # Intel Mac: install from source or cross-compile later; no hosted image.
           - os: macos-latest
             target: aarch64-apple-darwin
-          # Intel macOS for older Macs
-          - os: macos-13
-            target: x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

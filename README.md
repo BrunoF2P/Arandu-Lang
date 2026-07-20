@@ -77,7 +77,8 @@ Tagged releases (`vX.Y.Z`, matching `crates/arandu_cli` version) build host pack
 |-------|------|
 | `arandu-*-x86_64-unknown-linux-gnu.tar.gz` | Linux x86_64 |
 | `arandu-*-aarch64-apple-darwin.tar.gz` | macOS Apple Silicon |
-| `arandu-*-x86_64-apple-darwin.tar.gz` | macOS Intel |
+
+> **Note:** GitHub no longer hosts `macos-13` (Intel) runners. Intel Mac users should build from source (`./scripts/install-local.sh`) until we add cross-compile assets.
 
 Each archive has a `.blake3` sidecar. Install from a checkout (or copy `scripts/install-from-tarball.sh`):
 
