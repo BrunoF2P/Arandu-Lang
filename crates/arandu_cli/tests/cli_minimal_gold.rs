@@ -116,6 +116,14 @@ const GOLD: &[Gold] = &[
         exit: 42,
     },
     Gold {
+        path: "examples/minimal/m23_match_result.aru",
+        exit: 13,
+    },
+    Gold {
+        path: "examples/minimal/m24_expect_or_abort.aru",
+        exit: 13,
+    },
+    Gold {
         path: "examples/minimal/TEMPLATE_main.aru",
         exit: 0,
     },

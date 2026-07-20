@@ -224,8 +224,12 @@ fn parse_primary_post(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<Exp
                 let args_range = ctx.pool.alloc_expr_list(&args);
                 let left_span = ctx.pool.expr_span(left);
                 let mut end = close.start + close.len;
-                // trailing block call: f(args) { ... }
-                let trailing = if cur.peek_kind() == Some(TokenKind::LBrace) {
+                // Trailing-block call `f(args) { ... }` only via allows_trailing_block.
+                // Match scrutinees are sliced to exclude `{`, so this is mainly for
+                // full-expression hand lower; keep consistent with RD allow_block_calls.
+                let trailing = if cur.peek_kind() == Some(TokenKind::LBrace)
+                    && allows_trailing_block(ctx, left)
+                {
                     let block = parse_block_tokens(ctx, cur)?;
                     end = block.span.end;
                     Some(ctx.pool.alloc_block(block))

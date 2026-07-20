@@ -1,0 +1,12 @@
+module examples.minimal.m24_expect_or_abort
+
+// Minimal 0.1 — Result.expectOrAbort via import (method mono + shared-self match).
+// Requires `import std.core.result` so associated methods re-link onto builtin Result.
+import std.core.result as result
+
+func main(): int {
+    let ok = Result.Ok(5)
+    let a = ok.expectOrAbort("ok path")
+    // 5 + 8 = 13
+    return a + 8
+}

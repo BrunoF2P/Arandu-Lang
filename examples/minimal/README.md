@@ -40,6 +40,8 @@ arandu_cli run   <file>   # exit code documented in CLI tests
 | `m20_str.aru` | 0 | std.core.str concat/split_last |
 | `m21_result_custom_e.aru` | 7 | Result custom E |
 | `m22_iface_param.aru` | 42 | interface method via type param |
+| `m23_match_result.aru` | 13 | bare Ok/Err on call scrutinee (no trailing-block swallow) |
+| `m24_expect_or_abort.aru` | 13 | `Result.expectOrAbort` after `import std.core.result` |
 
 ## Default template (installer)
 

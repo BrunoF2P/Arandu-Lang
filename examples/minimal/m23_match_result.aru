@@ -1,0 +1,37 @@
+module examples.minimal.m23_match_result
+
+// Minimal 0.1 — bare Ok/Err patterns on match of a *call* scrutinee
+// (regression: finish_call used to swallow match `{` as trailing block).
+enum E {
+    A,
+    B,
+}
+
+func make_ok(): Result<int, E> {
+    return Result.Ok(11)
+}
+
+func make_err(): Result<int, E> {
+    return Result.Err(E.B)
+}
+
+func main(): int {
+    let a = match make_ok() {
+        Ok(x) => {
+            x
+        }
+        Err(_) => {
+            0
+        }
+    }
+    let b = match make_err() {
+        Ok(_) => {
+            0
+        }
+        Err(_) => {
+            2
+        }
+    }
+    // 11 + 2 = 13
+    return a + b
+}

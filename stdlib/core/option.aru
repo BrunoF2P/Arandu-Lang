@@ -1,7 +1,7 @@
 module std.core.option
 
 extern "C" {
-    func abort() : void;
+    func abort(): void
 }
 
 public enum Option<T> {
@@ -9,13 +9,16 @@ public enum Option<T> {
     None,
 }
 
-public func Option.expectOrAbort<T>(self, reason: str) : T {
+/// Unwrap Some or abort.
+public func Option.expectOrAbort<T>(shared self, reason: str): T {
     match self {
         Some(v) => {
-            return v;
+            return v
         }
         None => {
-            abort();
+            unsafe {
+                abort()
+            }
         }
     }
 }

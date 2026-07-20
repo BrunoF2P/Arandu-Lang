@@ -6,6 +6,19 @@ use super::super::types::{ArType, TypeId};
 use super::expr::synth_expr;
 
 pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty: TypeId) {
+    // Peel & / &mut / ptr so `match self` on `shared self: &Result<T,E>` sees Result.
+    let value_ty = {
+        let mut id = value_ty;
+        for _ in 0..4 {
+            match checker.resolve(id) {
+                ArType::Ref(inner) | ArType::RefMut(inner) | ArType::Ptr(inner) => {
+                    id = inner;
+                }
+                _ => break,
+            }
+        }
+        id
+    };
     let pat = checker.pool.pattern(pattern);
     match pat {
         Pattern::Wildcard { .. } => {}

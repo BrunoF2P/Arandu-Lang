@@ -32,16 +32,23 @@ fn resolve_method_target(
             | ArType::Ptr(inner) => interner.resolve(inner),
             other => other,
         };
-        if matches!(base_ty, ArType::Named(_, _)) {
+        if matches!(
+            base_ty,
+            ArType::Named(_, _) | ArType::Result(_, _) | ArType::Option(_)
+        ) {
             break;
         }
     }
-    let struct_id = match base_ty {
+    // Named receivers use their type SymbolId; builtin Result/Option methods
+    // live on the prelude type symbols (linked by import re-index).
+    let type_id = match base_ty {
         ArType::Named(id, _) => Some(id),
+        ArType::Result(_, _) => symbols.lookup_type(symbols.global_scope(), "Result"),
+        ArType::Option(_) => symbols.lookup_type(symbols.global_scope(), "Option"),
         _ => None,
     }?;
 
-    symbols.lookup_associated_member(struct_id, field)
+    symbols.lookup_associated_member(type_id, field)
 }
 
 impl LowerCtx<'_> {

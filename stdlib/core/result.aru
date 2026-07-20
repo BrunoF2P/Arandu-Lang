@@ -1,7 +1,7 @@
 module std.core.result
 
 extern "C" {
-    func abort() : void;
+    func abort(): void
 }
 
 public enum Result<T, E> {
@@ -9,13 +9,16 @@ public enum Result<T, E> {
     Err(E),
 }
 
-public func Result.expectOrAbort<T, E>(self, reason: str) : T {
+/// Unwrap Ok or abort. Method form for ergonomics (`r.expectOrAbort("msg")`).
+public func Result.expectOrAbort<T, E>(shared self, reason: str): T {
     match self {
         Ok(v) => {
-            return v;
+            return v
         }
         Err(_) => {
-            abort();
+            unsafe {
+                abort()
+            }
         }
     }
 }

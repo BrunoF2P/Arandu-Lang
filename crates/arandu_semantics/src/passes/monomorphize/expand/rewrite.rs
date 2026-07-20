@@ -264,24 +264,47 @@ pub(super) fn try_rewrite_generic_call<'bump>(
                 HirExprKind::TypePath { member_symbol, .. } => *member_symbol,
                 HirExprKind::Field { base, field } | HirExprKind::SafeField { base, field } => {
                     let base_ty = tc.type_info.type_interner.resolve(hir.pool.expr(*base).ty);
-                    let actual = match base_ty {
+                    let mut actual = match base_ty {
                         ArType::Nullable(inner) => tc.type_info.type_interner.resolve(inner),
                         other => other,
                     };
-                    let struct_id = match actual {
+                    // Peel & / &mut / ptr (shared self receivers).
+                    for _ in 0..4 {
+                        actual = match actual {
+                            ArType::Ref(inner)
+                            | ArType::RefMut(inner)
+                            | ArType::Ptr(inner) => {
+                                tc.type_info.type_interner.resolve(inner)
+                            }
+                            other => other,
+                        };
+                        if matches!(
+                            actual,
+                            ArType::Named(_, _) | ArType::Result(_, _) | ArType::Option(_)
+                        ) {
+                            break;
+                        }
+                    }
+                    let type_id = match actual {
                         ArType::Named(id, _) => Some(id),
                         ArType::Ptr(inner) => match tc.type_info.type_interner.resolve(inner) {
                             ArType::Named(id, _) => Some(id),
                             _ => None,
                         },
+                        ArType::Result(_, _) => {
+                            tc.symbols.lookup_type(tc.symbols.global_scope(), "Result")
+                        }
+                        ArType::Option(_) => {
+                            tc.symbols.lookup_type(tc.symbols.global_scope(), "Option")
+                        }
                         _ => None,
                     };
-                    let Some(struct_id) = struct_id else {
+                    let Some(type_id) = type_id else {
                         return;
                     };
                     let Some(sym) = tc
                         .symbols
-                        .lookup_associated_member(struct_id, field.as_str())
+                        .lookup_associated_member(type_id, field.as_str())
                     else {
                         return;
                     };

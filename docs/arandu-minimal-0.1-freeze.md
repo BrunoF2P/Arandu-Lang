@@ -250,6 +250,8 @@ Create these files (names fixed for tracking):
 | `m20_str.aru` | 0 | `std.core.str` concat/starts/ends/split_last |
 | `m21_result_custom_e.aru` | 7 | `Result.Ok/Err` with custom `E` (return context) |
 | `m22_iface_param.aru` | 42 | method via `T: Show` (PROMOTE-L1) |
+| `m23_match_result.aru` | 13 | bare `Ok`/`Err` on call scrutinee (`match f() { … }`) |
+| `m24_expect_or_abort.aru` | 13 | `Result.expectOrAbort` (import + method mono + shared-self match) |
 | `TEMPLATE_main.aru` | 0 | default installer template |
 
 **Command contract:**
@@ -346,6 +348,7 @@ func main(): int {
 | 2026-07-20 | **POD auto-copy:** `TypeInfo::is_copy` structural (named structs of scalars); GenRef/TaskHandle by value; gold m17=60; Vec-with-ptr not copy |
 | 2026-07-20 | **ABCD promote batch:** docs hygiene; allocator_api thin (m19=112); std.core.str (m20); Vec methods + method mono dedupe (m18=78) |
 | 2026-07-20 | **Residuals batch:** Result.Ok/Err bidirectional custom `E` (m21); peel Ref for `T: I` methods typeck+AMIR (m22/L1); allocator Result+align; installer scripts already P2.5 |
+| 2026-07-20 | **Residuals close:** finish_call trailing-block gated (`match f(){Ok…}`); pattern Ref peel typeck+AMIR (type-only peel for Discriminant ABI); import re-link builtin Result methods; Result/Option method mono; gold m23=13 m24=13; dyn Allocator + `ar_gen_*` escape remain L7/MVP residuals (honest) |
 
 ---
 
@@ -462,8 +465,8 @@ This is the same idea as **stable vs nightly** in other languages — here named
 | **Checklist §13.4 (Vec)** | **[x]** root fixed · **[x]** gold · **[x]** CI gold · **[x]** IN optional · **[x]** methods m18 · **[x]** not in default template |
 | **Checklist (GenArena thin)** | **[x]** pure-buffer · **[x]** recycle · **[x]** gold m16 · **[x]** POD GenRef |
 | **Checklist (allocator thin)** | **[x]** free-func · **[x]** gold m19 · **[x]** check-clean · **[x]** not default template |
-| **Residual** | dyn `Allocator` trait object; `ar_gen_*` AMIR escape promote only |
-| **Track ID** | `PROMOTE-L6` **[x]**; methods **[x]**; allocator thin **[x]**; Result custom E **[x]** |
+| **Residual** | **dyn `Allocator` trait object = L7 OUT** (not thin-close); **`ar_gen_*` i64 AMIR escape promote only** (stdlib GenArena free-func is the user path; host `ar_gen_*` stays for compiler escape promote MVP) |
+| **Track ID** | `PROMOTE-L6` **[x]**; methods **[x]**; allocator thin **[x]**; Result custom E **[x]**; bare Ok match **[x]**; expectOrAbort **[x]** |
 
 #### L7 — Language OUT by design or later phase
 

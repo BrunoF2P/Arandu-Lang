@@ -205,20 +205,26 @@ pub fn resolve_imports_and_bodies(
                             if matches!(kind, arandu_middle::SymbolKind::AssociatedFunc)
                                 && let Some((ty, method)) = name.rsplit_once('.')
                             {
-                                // Try to resolve the receiver type's SymbolId from the
-                                // exported types in this module first (covers cross-module
-                                // methods), then fall back to the importing file's scope.
-                                let type_sym = exported_types
-                                    .get(ty)
-                                    .copied()
-                                    .or_else(|| resolver.symbols.lookup_type(global, ty));
-                                if let Some(type_sym) = type_sym {
+                                // Register on the **local** type first when present
+                                // (builtin `Result`/`Option` use ArType::Result and
+                                // typeck looks up methods via the importing file's
+                                // `Result` symbol). Also register on the exported
+                                // type id for cross-module `Named` receivers
+                                // (`Widget.method` where Widget is only in the
+                                // exporting module).
+                                let local_ty = resolver.symbols.lookup_type(global, ty);
+                                let exported_ty = exported_types.get(ty).copied();
+                                let mut linked = false;
+                                for type_sym in [local_ty, exported_ty].into_iter().flatten() {
                                     resolver
                                         .symbols
                                         .associated_members
                                         .entry(type_sym)
                                         .or_default()
                                         .insert(smol_str::SmolStr::new(method), id);
+                                    linked = true;
+                                }
+                                if linked {
                                     // Import is "used" when it supplies methods for
                                     // builtin types (`Result.expectOrAbort`) even if
                                     // the alias name never appears in source.
@@ -266,6 +272,33 @@ pub fn resolve_imports_and_bodies(
                                             )
                                             .with_label(existing_span, "already defined here"),
                                         );
+                                    }
+                                }
+                                // Named import of `Result.expectOrAbort` must also
+                                // populate `associated_members` on the local builtin.
+                                if matches!(kind, arandu_middle::SymbolKind::AssociatedFunc)
+                                    && let Some((ty, method)) = item.name.rsplit_once('.')
+                                {
+                                    let local_ty = resolver.symbols.lookup_type(global, ty);
+                                    let exported_ty = exports
+                                        .symbols
+                                        .get(ty)
+                                        .filter(|&&(_, k)| {
+                                            matches!(
+                                                k,
+                                                arandu_middle::SymbolKind::Struct
+                                                    | arandu_middle::SymbolKind::Enum
+                                                    | arandu_middle::SymbolKind::TypeAlias
+                                            )
+                                        })
+                                        .map(|&(sid, _)| sid);
+                                    for type_sym in [local_ty, exported_ty].into_iter().flatten() {
+                                        resolver
+                                            .symbols
+                                            .associated_members
+                                            .entry(type_sym)
+                                            .or_default()
+                                            .insert(smol_str::SmolStr::new(method), id);
                                     }
                                 }
                             } else {

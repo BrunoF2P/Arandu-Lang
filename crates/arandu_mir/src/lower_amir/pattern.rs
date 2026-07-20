@@ -28,6 +28,25 @@ struct BuiltinResultPatternInput<'a> {
     symbols: &'a SymbolTable,
 }
 impl LowerCtx<'_> {
+    /// Peel `&` / `&mut` / `*` **types** on a match scrutinee so enum/Result/Option
+    /// patterns classify correctly for `shared self` methods.
+    ///
+    /// Keeps the operand as-is: Cranelift `Discriminant` / `FieldAccess` already
+    /// treat a Ref/Ptr-typed base as a pointer and load through it. Materializing
+    /// `*ref` into an aggregate temp breaks that ABI (JIT crash on enum match).
+    fn peel_ref_scrutinee_type(&self, scrutinee: AmirOperand) -> (AmirOperand, ArType) {
+        let mut ty = self.operand_type(&scrutinee);
+        for _ in 0..4 {
+            match ty {
+                ArType::Ref(inner) | ArType::RefMut(inner) | ArType::Ptr(inner) => {
+                    ty = self.resolve_ty(inner);
+                }
+                _ => break,
+            }
+        }
+        (scrutinee, ty)
+    }
+
     pub(crate) fn lower_enum_pattern(
         &mut self,
         input: EnumPatternInput<'_>,
@@ -519,7 +538,9 @@ impl LowerCtx<'_> {
                 name,
                 payload,
             } => {
-                let scrutinee_ty = self.operand_type(&scrutinee);
+                // Peel & / &mut / ptr **types** so `match self` on `shared self`
+                // sees Result/Option/Named (same family as typeck check_pattern).
+                let (scrutinee, scrutinee_ty) = self.peel_ref_scrutinee_type(scrutinee);
                 let payload_ids = self.hir.pool.pattern_list(*payload);
                 // SYN.3: builtin `Option` / `Result` are not `Named` enums — match by tag.
                 match scrutinee_ty {

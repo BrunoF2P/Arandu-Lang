@@ -464,7 +464,11 @@ impl<'a> Parser<'a> {
         self.expect_name("LPAREN")?;
         let args = self.parse_arguments()?;
         self.expect_name("RPAREN")?;
-        let trailing_block = if self.at_kind_name("LBRACE") {
+        // Trailing-block call `f(args) { ... }` only when allowed.
+        // Critical: `match f() { arms }` uses parse_expr_without_block_calls so the
+        // match's `{` must not be swallowed as a trailing block (else arms parse as
+        // statements → "expected type-qualified..." on `Some(x)` / `Ok(x)`).
+        let trailing_block = if self.allow_block_calls && self.at_kind_name("LBRACE") {
             let block = self.parse_block()?;
             Some(self.pool.alloc_block(block))
         } else {

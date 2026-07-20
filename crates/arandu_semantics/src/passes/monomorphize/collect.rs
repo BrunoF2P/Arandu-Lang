@@ -368,15 +368,23 @@ fn method_symbol_from_field(
 ) -> Option<SymbolId> {
     let base_ty = tc.type_info.type_interner.resolve(pool.expr(base).ty);
     let actual = peel_recv_base_ty(tc, base_ty);
-    let struct_id = match actual {
+    let type_id = match actual {
         ArType::Named(id, _) => Some(id),
         ArType::Ptr(inner) => match tc.type_info.type_interner.resolve(inner) {
             ArType::Named(id, _) => Some(id),
             _ => None,
         },
+        // Builtin Result/Option methods (`expectOrAbort`) are associated to the
+        // prelude type symbols after import re-index (not ArType::Named).
+        ArType::Result(_, _) => tc
+            .symbols
+            .lookup_type(tc.symbols.global_scope(), "Result"),
+        ArType::Option(_) => tc
+            .symbols
+            .lookup_type(tc.symbols.global_scope(), "Option"),
         _ => None,
     }?;
-    tc.symbols.lookup_associated_member(struct_id, field)
+    tc.symbols.lookup_associated_member(type_id, field)
 }
 
 /// Build an instantiation key for a call that is not wrapped in `Generic`.
@@ -409,7 +417,8 @@ pub(in crate::passes::monomorphize) fn instantiation_key_for_call(
             if params.is_empty() {
                 return None;
             }
-            // Type args from receiver `Named(S, [T1,…])` (struct params prefix).
+            // Type args from receiver `Named(S, [T1,…])` or builtin
+            // `Result<T,E>` / `Option<T>` (params prefix for method mono).
             // Peel Nullable / & / &mut so a ref-typed receiver still specializes.
             let base_ty = tc.type_info.type_interner.resolve(pool.expr(*base).ty);
             let actual = peel_recv_base_ty(tc, base_ty);
@@ -419,6 +428,8 @@ pub(in crate::passes::monomorphize) fn instantiation_key_for_call(
                     ArType::Named(_, args) => args.clone(),
                     _ => Vec::new(),
                 },
+                ArType::Result(ok, err) => vec![ok, err],
+                ArType::Option(inner) => vec![inner],
                 _ => Vec::new(),
             };
             if recv_args.is_empty() {
