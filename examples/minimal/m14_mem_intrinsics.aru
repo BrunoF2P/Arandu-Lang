@@ -1,0 +1,41 @@
+module examples.minimal.m14_mem_intrinsics
+
+// L6.1 — mem.sizeOf / alignOf fold + ptrOffset / ptrRead / ptrWrite in JIT.
+import std.core.mem as mem
+
+extern "C" {
+    func ar_vec_malloc(size: u64): ptr[u8]
+    func ar_vec_buf_free(p: ptr[u8], size: u64): void
+}
+
+func main(): int {
+    unsafe {
+        let elem = mem.sizeOf<int>()
+        let al = mem.alignOf<int>()
+        // size and align of int must be host pointer width (8 on 64-bit CI)
+        if elem != 8 {
+            return 1
+        }
+        if al != 8 {
+            return 2
+        }
+
+        let bytes = elem * 2
+        let raw = ar_vec_malloc(bytes)
+        let nullp: ptr[u8] = nil
+        if raw == nullp {
+            return 3
+        }
+
+        let base = raw as ptr[int]
+        let next = mem.ptrOffset<int>(base, 1 as i32)
+        mem.ptrWrite<int>(base, 10)
+        mem.ptrWrite<int>(next, 20)
+        let a = mem.ptrRead<int>(base)
+        let b = mem.ptrRead<int>(next)
+        ar_vec_buf_free(raw, bytes)
+
+        // 10 + 20 + 8 + 8 = 46
+        return a + b + (elem as int) + (al as int)
+    }
+}

@@ -193,6 +193,18 @@ impl AranduJit {
             "ar_vec_destroy",
             crate::vec_runtime::ar_vec_destroy as *const u8,
         );
+        builder.symbol(
+            "ar_vec_malloc",
+            crate::vec_runtime::ar_vec_malloc as *const u8,
+        );
+        builder.symbol(
+            "ar_vec_buf_free",
+            crate::vec_runtime::ar_vec_buf_free as *const u8,
+        );
+        builder.symbol(
+            "ar_vec_realloc",
+            crate::vec_runtime::ar_vec_realloc as *const u8,
+        );
         // SL_R.2 reactor (epoll + timerfd)
         builder.symbol(
             "ar_rt_reactor_create",
@@ -631,6 +643,61 @@ impl AranduJit {
                 .declare_function("ar_vec_pop", Linkage::Import, &one_ret)
                 .map_err(|err| codegen_ice(format!("failed to declare ar_vec_pop: {err:?}")))?;
             func_ids.insert("ar_vec_pop".to_string(), id);
+        }
+        // Raw buffer helpers for pure-Arandu Vec (L6.1)
+        {
+            let mut malloc_sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+            malloc_sig.params.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
+            malloc_sig
+                .returns
+                .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+            let id = self
+                .module
+                .declare_function("ar_vec_malloc", Linkage::Import, &malloc_sig)
+                .map_err(|err| codegen_ice(format!("failed to declare ar_vec_malloc: {err:?}")))?;
+            func_ids.insert("ar_vec_malloc".to_string(), id);
+        }
+        {
+            let mut free_sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+            free_sig
+                .params
+                .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+            free_sig.params.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
+            let id = self
+                .module
+                .declare_function("ar_vec_buf_free", Linkage::Import, &free_sig)
+                .map_err(|err| {
+                    codegen_ice(format!("failed to declare ar_vec_buf_free: {err:?}"))
+                })?;
+            func_ids.insert("ar_vec_buf_free".to_string(), id);
+        }
+        {
+            let mut realloc_sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+            realloc_sig
+                .params
+                .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+            realloc_sig
+                .params
+                .push(cranelift_codegen::ir::AbiParam::new(
+                    cranelift_codegen::ir::types::I64,
+                ));
+            realloc_sig
+                .params
+                .push(cranelift_codegen::ir::AbiParam::new(
+                    cranelift_codegen::ir::types::I64,
+                ));
+            realloc_sig
+                .returns
+                .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+            let id = self
+                .module
+                .declare_function("ar_vec_realloc", Linkage::Import, &realloc_sig)
+                .map_err(|err| codegen_ice(format!("failed to declare ar_vec_realloc: {err:?}")))?;
+            func_ids.insert("ar_vec_realloc".to_string(), id);
         }
 
         // SL_R.2 reactor host imports

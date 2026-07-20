@@ -140,6 +140,64 @@ pub unsafe extern "C" fn ar_vec_destroy(id: i64) {
     }
 }
 
+// ── Raw buffer helpers for pure-Arandu Vec growth (L6.1) ─────────────────
+
+/// Allocate `size` bytes (8-aligned). Null on OOM / invalid size.
+///
+/// # Safety
+/// JIT host only; free with [`ar_vec_buf_free`] using the same size.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ar_vec_malloc(size: i64) -> *mut u8 {
+    if size <= 0 {
+        return std::ptr::null_mut();
+    }
+    let layout = match std::alloc::Layout::from_size_align(size as usize, 8) {
+        Ok(l) => l,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    unsafe { std::alloc::alloc(layout) }
+}
+
+/// Free buffer from [`ar_vec_malloc`].
+///
+/// # Safety
+/// `p`/`size` must match a prior `ar_vec_malloc` pair (or `p` null).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ar_vec_buf_free(p: *mut u8, size: i64) {
+    if p.is_null() || size <= 0 {
+        return;
+    }
+    let layout = match std::alloc::Layout::from_size_align(size as usize, 8) {
+        Ok(l) => l,
+        Err(_) => return,
+    };
+    unsafe { std::alloc::dealloc(p, layout) }
+}
+
+/// Grow/shrink raw buffer; copies `min(old,new)` bytes.
+///
+/// # Safety
+/// Same as malloc/free pair.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ar_vec_realloc(p: *mut u8, old_size: i64, new_size: i64) -> *mut u8 {
+    if new_size <= 0 {
+        unsafe { ar_vec_buf_free(p, old_size) };
+        return std::ptr::null_mut();
+    }
+    let new_ptr = unsafe { ar_vec_malloc(new_size) };
+    if new_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    if !p.is_null() && old_size > 0 {
+        let n = std::cmp::min(old_size, new_size) as usize;
+        unsafe {
+            std::ptr::copy_nonoverlapping(p, new_ptr, n);
+            ar_vec_buf_free(p, old_size);
+        }
+    }
+    new_ptr
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

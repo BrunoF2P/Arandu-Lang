@@ -80,6 +80,10 @@ const GOLD: &[Gold] = &[
         exit: 78,
     },
     Gold {
+        path: "examples/minimal/m14_mem_intrinsics.aru",
+        exit: 46,
+    },
+    Gold {
         path: "examples/minimal/TEMPLATE_main.aru",
         exit: 0,
     },

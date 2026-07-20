@@ -2,15 +2,17 @@ module std.alloc.vec
 
 /// Minimal 0.1 — **IN optional** growable array (`Vec<T>`).
 ///
-/// ## Implementation (PROMOTE-L6)
-/// Host-backed i64 element storage (`ar_vec_*`), matching GenArena MVP.
-/// Operations are **free functions** taking `Vec<int>` so multi-file HIR link +
-/// monomorphization work (imported method templates still residual).
+/// ## Implementation
+/// - **L6:** host table of i64 elements (`ar_vec_new` / `push` / …) — stable
+///   multi-file path (free funcs on `Vec<int>`).
+/// - **L6.1:** mem intrinsics (`sizeOf`/`ptrOffset`/`ptrRead`/`ptrWrite`) land in
+///   the JIT so pure-buffer growth is possible once mut-ref field stores through
+///   free-function parameters are fixed (codegen residual).
 ///
 /// | API | Status |
 /// |-----|--------|
-/// | `Vec<T>` / `new<T>()` | type system + empty handle |
-/// | `push` / `pop` / `get` / `put` / `len` / `clear` / `destroy` | free funcs on `Vec<int>` |
+/// | `Vec<T>` / `new<T>()` | type surface + host handle |
+/// | free funcs on `Vec<int>` | push/pop/get/put/len/clear/destroy |
 ///
 /// **Not** in default `arandu new` template.
 
@@ -26,13 +28,12 @@ extern "C" {
     func ar_vec_destroy(id: int): void
 }
 
-/// Growable buffer handle. Element type `T` is tracked at the type level;
-/// Minimal host path implements `int` elements.
+/// Growable buffer handle. `T` is tracked at the type level; host stores `int`.
 public struct Vec<T> {
     id: int
 }
 
-/// Empty vector (no elements until `push`).
+/// Empty vector.
 public func new<T>(): Vec<T> {
     unsafe {
         return Vec<T> { id: ar_vec_new() }
@@ -91,10 +92,9 @@ public func clear(mut v: Vec<int>): void {
     }
 }
 
-/// Destroy host storage; handle is invalid afterwards.
+/// Destroy host storage.
 ///
-/// Named `destroy` (not `free`) to avoid clashing with the language reserved
-/// builtin `free` in the JIT symbol table.
+/// Named `destroy` (not `free`) to avoid the reserved builtin `free`.
 public func destroy(mut v: Vec<int>): void {
     unsafe {
         ar_vec_destroy(v.id)

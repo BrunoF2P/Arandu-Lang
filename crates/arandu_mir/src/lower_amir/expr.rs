@@ -337,7 +337,16 @@ impl LowerCtx<'_> {
                 Ok(op)
             }
 
-            HirExprKind::Generic { callee, .. } => self.lower_expr(*callee, target, symbols),
+            HirExprKind::Generic { callee, args } => {
+                // mem.sizeOf<T>() / mem.alignOf<T>() — fold to host layout constants so
+                // the JIT never needs a runtime `fn@sizeOf` symbol (L6.1 mem intrinsics).
+                if let Some(op) = self
+                    .try_lower_mem_size_align_intrinsic(*callee, args, expr.ty, target, symbols)?
+                {
+                    return Ok(op);
+                }
+                self.lower_expr(*callee, target, symbols)
+            }
             HirExprKind::Alloc { expr: inner } => {
                 let inner_op = self.lower_expr(*inner, None, symbols)?;
                 let dest = target.unwrap_or_else(|| self.new_temp_id(expr.ty));
@@ -368,6 +377,19 @@ impl LowerCtx<'_> {
             }
             HirExprKind::Call { callee, args, .. } => {
                 let callee_expr = self.hir.pool.expr(*callee);
+
+                // `mem.sizeOf<T>()` is Call(Generic(sizeOf, [T]), []) — fold before
+                // treating Generic as a callable value (L6.1).
+                if let HirExprKind::Generic {
+                    callee: g_cal,
+                    args: type_args,
+                } = &callee_expr.kind
+                    && let Some(op) = self.try_lower_mem_size_align_intrinsic(
+                        *g_cal, type_args, expr.ty, target, symbols,
+                    )?
+                {
+                    return Ok(op);
+                }
 
                 let mut is_enum_ctor = None;
                 match &callee_expr.kind {
@@ -907,5 +929,51 @@ impl LowerCtx<'_> {
                 Ok(AmirOperand::Copy(dest))
             }
         }
+    }
+
+    /// Fold `mem.sizeOf<T>()` / `mem.alignOf<T>()` (and bare `sizeOf`/`alignOf`)
+    /// to integer constants using [`LayoutEngine`] (host pointer width).
+    fn try_lower_mem_size_align_intrinsic(
+        &mut self,
+        callee: HirExprId,
+        type_args: &[crate::types::TypeId],
+        result_ty: crate::types::TypeId,
+        target: Option<TempId>,
+        symbols: &SymbolTable,
+    ) -> Result<Option<AmirOperand>, Diagnostic> {
+        if type_args.len() != 1 {
+            return Ok(None);
+        }
+        let callee_expr = self.hir.pool.expr(callee);
+        let name = match &callee_expr.kind {
+            HirExprKind::Path { symbol } => symbols.get(*symbol).name.as_str(),
+            HirExprKind::Field { field, .. } => field.as_str(),
+            HirExprKind::TypePath { member_symbol, .. } => {
+                symbols.get(*member_symbol).name.as_str()
+            }
+            _ => return Ok(None),
+        };
+        // Accept bare or qualified names after import rewrite.
+        let bare = name.rsplit('.').next().unwrap_or(name);
+        let is_size = bare == "sizeOf" || bare == "size_of";
+        let is_align = bare == "alignOf" || bare == "align_of";
+        if !is_size && !is_align {
+            return Ok(None);
+        }
+
+        let ty = self.resolve_ty(type_args[0]);
+        let pointer_width = std::mem::size_of::<usize>() as u64;
+        let engine = arandu_middle::layout::LayoutEngine::new(pointer_width);
+        let layout = engine.layout_of_type(
+            &ty,
+            &self.tc.type_info.type_interner,
+            self.tc.type_info.as_ref(),
+        );
+        let value = if is_size { layout.size } else { layout.align };
+
+        let lit = self.intern_literal_int(value.to_string());
+        let dest = target.unwrap_or_else(|| self.new_temp_id(result_ty));
+        self.emit_assign_temp(dest, AmirRvalue::Use(AmirOperand::Constant(lit)));
+        Ok(Some(AmirOperand::Copy(dest)))
     }
 }
