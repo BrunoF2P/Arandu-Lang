@@ -18,6 +18,11 @@ enum LatticeVal {
 /// by jointly modeling value constness and CFG reachability in a single
 /// fixpoint iteration.  This subsumes intra-block constant folding and
 /// adds cross-block propagation + branch pruning.
+///
+/// **Block params (SSA φ):** for each param temp, lattice is the meet of the
+/// corresponding jump-arg operands from **reachable** predecessors. Without
+/// this, loop headers and join blocks stay `Undefined` forever and never
+/// refine conditions on block-param values.
 pub(super) fn sccp(func: &mut AmirFunc, pool: &mut AmirLiteralPool, bump: &bumpalo::Bump) -> bool {
     let n_temps = func.temps.len();
     let n_blocks = func.blocks.len();
@@ -107,6 +112,9 @@ fn analyse<'bump>(
             if !reachable[bid.as_usize()] {
                 continue;
             }
+
+            // --- φ / block params from jump args of reachable preds ----------
+            changed |= meet_block_params(func, bid, &mut lattice, &reachable);
 
             // --- statements -------------------------------------------------
             for stmt_id in func.block_stmt_ids(bid) {
@@ -210,6 +218,122 @@ fn meet(a: LatticeVal, b: LatticeVal) -> LatticeVal {
         (Overdefined, _) | (_, Overdefined) => Overdefined,
         (Constant(a), Constant(b)) if a == b => Constant(a),
         (Constant(_), Constant(_)) => Overdefined,
+    }
+}
+
+/// Meet jump-arg values from reachable predecessors into each block param temp.
+///
+/// AMIR block params are SSA φ nodes: param `i` of `bid` is defined by the
+/// `i`-th argument on every edge into `bid`. Only **reachable** preds contribute
+/// (unreachable edges must not pollute the meet — same as classic SCCP).
+fn meet_block_params(
+    func: &AmirFunc,
+    bid: BlockId,
+    lattice: &mut [LatticeVal],
+    reachable: &[bool],
+) -> bool {
+    let params = &func.block(bid).params;
+    if params.is_empty() {
+        return false;
+    }
+
+    let mut changed = false;
+    let n_params = params.len();
+
+    // Accumulators: one meet per param index, only from reachable preds.
+    let mut acc: Vec<LatticeVal> = vec![LatticeVal::Undefined; n_params];
+    let mut saw_pred = false;
+
+    for &pred in func.predecessors(bid) {
+        if pred.as_usize() >= reachable.len() || !reachable[pred.as_usize()] {
+            continue;
+        }
+        saw_pred = true;
+        let Some(args) = jump_args_to(&func.block(pred).terminator, bid) else {
+            // Edge without args while params exist — treat all as Overdefined.
+            for a in &mut acc {
+                *a = LatticeVal::Overdefined;
+            }
+            continue;
+        };
+        for i in 0..n_params {
+            let arg_lat = if i < args.len() {
+                operand_lattice(&args[i], lattice)
+            } else {
+                LatticeVal::Overdefined
+            };
+            let param_temp = params[i].id;
+            let contrib = if temp_is_nullable(func, param_temp) {
+                match arg_lat {
+                    LatticeVal::Constant(AmirConstant::Nil) => {
+                        LatticeVal::Constant(AmirConstant::Nil)
+                    }
+                    LatticeVal::Undefined => LatticeVal::Undefined,
+                    _ => LatticeVal::Overdefined,
+                }
+            } else {
+                arg_lat
+            };
+            acc[i] = meet(acc[i], contrib);
+        }
+    }
+
+    if !saw_pred {
+        return false;
+    }
+
+    for (i, p) in params.iter().enumerate() {
+        let idx = p.id.as_usize();
+        if idx >= lattice.len() {
+            continue;
+        }
+        let old = lattice[idx];
+        let merged = meet(old, acc[i]);
+        if merged != old {
+            lattice[idx] = merged;
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// Jump arguments on `term` that feed `target`'s block params, if any.
+fn jump_args_to(term: &AmirTerminator, target: BlockId) -> Option<&[AmirOperand]> {
+    match term {
+        AmirTerminator::Goto { target: t, args } if *t == target => Some(args.as_slice()),
+        AmirTerminator::Suspend {
+            resume, args, ..
+        } if *resume == target => Some(args.as_slice()),
+        AmirTerminator::Branch {
+            if_true,
+            true_args,
+            if_false,
+            false_args,
+            ..
+        } => {
+            if *if_true == target {
+                Some(true_args.as_slice())
+            } else if *if_false == target {
+                Some(false_args.as_slice())
+            } else {
+                None
+            }
+        }
+        AmirTerminator::SwitchInt {
+            targets, otherwise, ..
+        } => {
+            for (_, dest, args) in targets {
+                if *dest == target {
+                    return Some(args.as_slice());
+                }
+            }
+            if otherwise.0 == target {
+                Some(otherwise.1.as_slice())
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }
 
@@ -489,4 +613,230 @@ fn int_const(val: i128, pool: &mut AmirLiteralPool) -> AmirConstant {
 
 fn checked_int(val: Option<i128>, pool: &mut AmirLiteralPool) -> Option<AmirConstant> {
     val.map(|v| int_const(v, pool))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::amir::program::extend_block_range;
+    use crate::amir::{
+        AmirBasicBlock, AmirLocal, AmirPlace, AmirStmt, AmirStmtTable, AmirTemp, BlockId,
+        BlockParam, LocalId, TempId,
+    };
+    use crate::cfg::compute_cfg_edges;
+    use crate::layout::DenseRange;
+    use crate::passes::type_checker::types::{ArType, Primitive};
+
+    fn intern_ty(ty: ArType) -> crate::types::TypeId {
+        crate::types::TypeInterner::new().intern(ty)
+    }
+
+    fn int_temp(id: usize) -> AmirTemp {
+        AmirTemp {
+            id: TempId::from_usize(id),
+            ty: intern_ty(ArType::Primitive(Primitive::Int)),
+            is_copy: true,
+            is_nullable: false,
+            span: arandu_lexer::Span::new(0, 0, 0),
+        }
+    }
+
+    fn bool_temp(id: usize) -> AmirTemp {
+        AmirTemp {
+            id: TempId::from_usize(id),
+            ty: intern_ty(ArType::Primitive(Primitive::Bool)),
+            is_copy: true,
+            is_nullable: false,
+            span: arandu_lexer::Span::new(0, 0, 0),
+        }
+    }
+
+    /// Join: both preds pass the same constant into a block param → param is constant.
+    #[test]
+    fn block_param_meet_same_constant_from_two_preds() {
+        let mut pool = AmirLiteralPool::default();
+        let five = AmirConstant::Pool(pool.intern_int("5"));
+
+        let mut stmts = AmirStmtTable::new();
+        // bb2: t2 = use(param t1)  — should fold to 5 after phi meet
+        let a = stmts.push(AmirStmt::Assign {
+            lhs: TempId::from_usize(2),
+            rhs: AmirRvalue::Use(AmirOperand::Copy(TempId::from_usize(1))),
+        });
+        let mut range2 = DenseRange::empty();
+        extend_block_range(&mut range2, a);
+
+        let int_ty = intern_ty(ArType::Primitive(Primitive::Int));
+        let blocks = vec![
+            AmirBasicBlock {
+                id: BlockId::from_usize(0),
+                statements: DenseRange::empty(),
+                params: Vec::new(),
+                terminator: AmirTerminator::Branch {
+                    condition: AmirOperand::Constant(AmirConstant::Bool(true)),
+                    if_true: BlockId::from_usize(1),
+                    true_args: Vec::new(),
+                    if_false: BlockId::from_usize(2),
+                    false_args: vec![AmirOperand::Constant(five)],
+                },
+            },
+            AmirBasicBlock {
+                id: BlockId::from_usize(1),
+                statements: DenseRange::empty(),
+                params: Vec::new(),
+                terminator: AmirTerminator::Goto {
+                    target: BlockId::from_usize(2),
+                    args: vec![AmirOperand::Constant(five)],
+                },
+            },
+            AmirBasicBlock {
+                id: BlockId::from_usize(2),
+                statements: range2,
+                params: vec![BlockParam {
+                    id: TempId::from_usize(1),
+                    local: LocalId::from_usize(0),
+                    ty: int_ty,
+                    from: None,
+                    moved: false,
+                }],
+                terminator: AmirTerminator::Return,
+            },
+        ];
+        let cfg = compute_cfg_edges(&blocks);
+        let mut func = AmirFunc {
+            symbol: crate::SymbolId::new(0, 0),
+            return_type: intern_ty(ArType::Void),
+            receiver: None,
+            params: Vec::new(),
+            locals: vec![AmirLocal {
+                id: LocalId::from_usize(0),
+                ty: int_ty,
+                is_memory: false,
+                symbol: None,
+                span: arandu_lexer::Span::new(0, 0, 0),
+                use_span: None,
+            }],
+            temps: vec![int_temp(0), int_temp(1), int_temp(2)],
+            blocks,
+            stmts,
+            cfg,
+        };
+
+        let bump = bumpalo::Bump::new();
+        assert!(sccp(&mut func, &mut pool, &bump));
+        let stmt = func.block_stmts(BlockId::from_usize(2)).next().unwrap();
+        match stmt {
+            AmirStmt::Assign {
+                rhs: AmirRvalue::Use(AmirOperand::Constant(c)),
+                ..
+            } => {
+                assert_eq!(const_as_i128(c, &pool), Some(5));
+            }
+            other => panic!("expected folded assign, got {other:?}"),
+        }
+    }
+
+    /// Different constants from two reachable preds → Overdefined (not a wrong fold).
+    #[test]
+    fn block_param_meet_different_constants_is_overdefined() {
+        let mut pool = AmirLiteralPool::default();
+        let one = AmirConstant::Pool(pool.intern_int("1"));
+        let two = AmirConstant::Pool(pool.intern_int("2"));
+        let int_ty = intern_ty(ArType::Primitive(Primitive::Int));
+
+        let mut stmts = AmirStmtTable::new();
+        let a = stmts.push(AmirStmt::Assign {
+            lhs: TempId::from_usize(2),
+            rhs: AmirRvalue::Use(AmirOperand::Copy(TempId::from_usize(1))),
+        });
+        let s = stmts.push(AmirStmt::Store {
+            lhs: AmirPlace {
+                local: LocalId::from_usize(0),
+                projections: smallvec::smallvec![],
+            },
+            rhs: AmirOperand::Copy(TempId::from_usize(2)),
+        });
+        let mut range_join = DenseRange::empty();
+        extend_block_range(&mut range_join, a);
+        extend_block_range(&mut range_join, s);
+
+        let blocks = vec![
+            AmirBasicBlock {
+                id: BlockId::from_usize(0),
+                statements: DenseRange::empty(),
+                params: Vec::new(),
+                terminator: AmirTerminator::Branch {
+                    // Undefined condition → both arms reachable
+                    condition: AmirOperand::Copy(TempId::from_usize(0)),
+                    if_true: BlockId::from_usize(1),
+                    true_args: Vec::new(),
+                    if_false: BlockId::from_usize(2),
+                    false_args: Vec::new(),
+                },
+            },
+            AmirBasicBlock {
+                id: BlockId::from_usize(1),
+                statements: DenseRange::empty(),
+                params: Vec::new(),
+                terminator: AmirTerminator::Goto {
+                    target: BlockId::from_usize(3),
+                    args: vec![AmirOperand::Constant(one)],
+                },
+            },
+            AmirBasicBlock {
+                id: BlockId::from_usize(2),
+                statements: DenseRange::empty(),
+                params: Vec::new(),
+                terminator: AmirTerminator::Goto {
+                    target: BlockId::from_usize(3),
+                    args: vec![AmirOperand::Constant(two)],
+                },
+            },
+            AmirBasicBlock {
+                id: BlockId::from_usize(3),
+                statements: range_join,
+                params: vec![BlockParam {
+                    id: TempId::from_usize(1),
+                    local: LocalId::from_usize(0),
+                    ty: int_ty,
+                    from: None,
+                    moved: false,
+                }],
+                terminator: AmirTerminator::Return,
+            },
+        ];
+        let cfg = compute_cfg_edges(&blocks);
+        let mut func = AmirFunc {
+            symbol: crate::SymbolId::new(0, 0),
+            return_type: intern_ty(ArType::Void),
+            receiver: None,
+            params: Vec::new(),
+            locals: vec![AmirLocal {
+                id: LocalId::from_usize(0),
+                ty: int_ty,
+                is_memory: false,
+                symbol: None,
+                span: arandu_lexer::Span::new(0, 0, 0),
+                use_span: None,
+            }],
+            temps: vec![bool_temp(0), int_temp(1), int_temp(2)],
+            blocks,
+            stmts,
+            cfg,
+        };
+        let bump = bumpalo::Bump::new();
+        let _ = sccp(&mut func, &mut pool, &bump);
+        let stmt = func.block_stmts(BlockId::from_usize(3)).next().unwrap();
+        match stmt {
+            AmirStmt::Assign {
+                rhs: AmirRvalue::Use(AmirOperand::Constant(_)),
+                ..
+            } => panic!("phi with disagreeing preds must not fold to a constant"),
+            AmirStmt::Assign {
+                rhs: AmirRvalue::Use(AmirOperand::Copy(t)),
+                ..
+            } => assert_eq!(t.as_usize(), 1),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
 }
