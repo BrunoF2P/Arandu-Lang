@@ -121,7 +121,22 @@ fn resolve_goto_chain(func: &AmirFunc, mut block: BlockId) -> BlockId {
 
 /// If `bid` has exactly one successor `succ` and `succ` has exactly one
 /// predecessor `bid`, merge them.
+///
+/// # Safety of merge (SSA / block-param form)
+/// Only pure fallthrough is legal:
+/// - `bid` must end in **`Goto` with empty args** (not `Suspend` / `Branch` /
+///   `SwitchInt`). Merging across `Suspend` deletes the await frontier and
+///   drops resume block params → ICE / wrong codegen under `--opt`.
+/// - `succ` must have **no block params**. Params require jump-arg materialization
+///   before merge; dropping them leaves undef uses of the param temps.
 fn merge_block_candidate(func: &mut AmirFunc, bid: BlockId, bump: &bumpalo::Bump) -> bool {
+    // Gate 1: only Goto(empty). Suspend/Branch/Switch are control edges, not
+    // fallthrough — same rule as LLVM merge of trivial blocks.
+    match &func.block(bid).terminator {
+        AmirTerminator::Goto { args, .. } if args.is_empty() => {}
+        _ => return false,
+    }
+
     let succs = func.successors(bid);
     if succs.len() != 1 {
         return false;
@@ -131,6 +146,11 @@ fn merge_block_candidate(func: &mut AmirFunc, bid: BlockId, bump: &bumpalo::Bump
         return false;
     }
     if func.predecessors(succ).len() != 1 || func.predecessors(succ)[0] != bid {
+        return false;
+    }
+
+    // Gate 2: successor phis/block-params cannot be dropped on the floor.
+    if !func.block(succ).params.is_empty() {
         return false;
     }
 
@@ -587,6 +607,96 @@ mod tests {
         func.cfg = compute_cfg_edges(&func.blocks);
         let bump = bumpalo::Bump::new();
         assert!(!simplify_cfg(&mut func, &bump));
+    }
+
+    /// Regression: never merge a `Suspend` block into its resume (single-edge
+    /// lookalike). That deleted the await frontier and resume params under `--opt`.
+    #[test]
+    fn does_not_merge_across_suspend() {
+        let st = AmirStmtTable::new();
+        let mut func = make_func(
+            vec![
+                AmirBasicBlock {
+                    id: bbid(0),
+                    statements: DenseRange::empty(),
+                    params: Vec::new(),
+                    terminator: AmirTerminator::Suspend {
+                        future: AmirOperand::Copy(TempId::from_usize(0)),
+                        resume: bbid(1),
+                        args: vec![AmirOperand::Copy(TempId::from_usize(1))],
+                    },
+                },
+                AmirBasicBlock {
+                    id: bbid(1),
+                    statements: DenseRange::empty(),
+                    params: vec![crate::amir::BlockParam {
+                        id: TempId::from_usize(2),
+                        local: LocalId::from_usize(0),
+                        ty: intern_ty(ArType::Primitive(Primitive::Int)),
+                        from: None,
+                        moved: false,
+                    }],
+                    terminator: AmirTerminator::Return,
+                },
+            ],
+            st,
+        );
+        func.temps = vec![int_temp(0), int_temp(1), int_temp(2)];
+        func.cfg = compute_cfg_edges(&func.blocks);
+
+        let bump = bumpalo::Bump::new();
+        // May still remove nothing / no change, but must keep Suspend + 2 blocks.
+        let _ = simplify_cfg(&mut func, &bump);
+        assert_eq!(func.blocks.len(), 2, "resume must not be merged away");
+        assert!(
+            matches!(
+                func.block(bbid(0)).terminator,
+                AmirTerminator::Suspend { .. }
+            ),
+            "Suspend frontier must survive simplify_cfg"
+        );
+        assert!(!func.block(bbid(1)).params.is_empty());
+    }
+
+    /// Goto with jump args into a param block is not fallthrough — refuse merge.
+    #[test]
+    fn does_not_merge_goto_with_args_into_param_block() {
+        let st = AmirStmtTable::new();
+        let mut func = make_func(
+            vec![
+                AmirBasicBlock {
+                    id: bbid(0),
+                    statements: DenseRange::empty(),
+                    params: Vec::new(),
+                    terminator: AmirTerminator::Goto {
+                        target: bbid(1),
+                        args: vec![AmirOperand::Copy(TempId::from_usize(0))],
+                    },
+                },
+                AmirBasicBlock {
+                    id: bbid(1),
+                    statements: DenseRange::empty(),
+                    params: vec![crate::amir::BlockParam {
+                        id: TempId::from_usize(1),
+                        local: LocalId::from_usize(0),
+                        ty: intern_ty(ArType::Primitive(Primitive::Int)),
+                        from: None,
+                        moved: false,
+                    }],
+                    terminator: AmirTerminator::Return,
+                },
+            ],
+            st,
+        );
+        func.temps = vec![int_temp(0), int_temp(1)];
+        func.cfg = compute_cfg_edges(&func.blocks);
+        let bump = bumpalo::Bump::new();
+        let _ = simplify_cfg(&mut func, &bump);
+        assert_eq!(func.blocks.len(), 2);
+        assert!(matches!(
+            func.block(bbid(0)).terminator,
+            AmirTerminator::Goto { .. }
+        ));
     }
 
     // ── simplify_cfg integration ──
