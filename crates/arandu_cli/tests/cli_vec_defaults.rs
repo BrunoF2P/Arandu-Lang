@@ -67,3 +67,86 @@ fn check_alloc_vec_module_clean() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+/// Regression: mut-ref field store must not SIGSEGV (param base Store kept).
+#[test]
+fn run_mut_ref_field_store_via_free_func() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_mut_ref_field.aru");
+    fs::write(
+        &file,
+        r#"
+module tests.cli.mut_ref_field
+
+struct S {
+    n: int
+}
+
+func set_n(mut s: S, v: int): void {
+    s.n = v
+}
+
+func main(): int {
+    let mut s = S { n: 0 }
+    set_n(s, 42)
+    return s.n
+}
+"#,
+    )
+    .expect("write");
+    let out = run_cli(&["run", &file.to_string_lossy()]);
+    assert_eq!(
+        out.status.code(),
+        Some(42),
+        "mut-ref field store failed: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// Pure-buffer growth past initial capacity (realloc path).
+#[test]
+fn run_vec_grow_past_8() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_vec_grow.aru");
+    fs::write(
+        &file,
+        r#"
+module tests.cli.vec_grow
+import std.alloc.vec as vec
+
+func main(): int {
+    let mut v = vec.new<int>()
+    vec.push(v, 1)
+    vec.push(v, 2)
+    vec.push(v, 3)
+    vec.push(v, 4)
+    vec.push(v, 5)
+    vec.push(v, 6)
+    vec.push(v, 7)
+    vec.push(v, 8)
+    vec.push(v, 9)
+    vec.push(v, 10)
+    let n = vec.len(v) as int
+    let last = vec.get(v, 9)
+    match last {
+        Some(x) => {
+            vec.destroy(v)
+            return n + x
+        }
+        None => {
+            vec.destroy(v)
+            return 1
+        }
+    }
+}
+"#,
+    )
+    .expect("write");
+    let out = run_cli(&["run", &file.to_string_lossy()]);
+    assert_eq!(
+        out.status.code(),
+        Some(20),
+        "vec grow past 8 failed: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}

@@ -2,101 +2,145 @@ module std.alloc.vec
 
 /// Minimal 0.1 — **IN optional** growable array (`Vec<T>`).
 ///
-/// ## Implementation
-/// - **L6:** host table of i64 elements (`ar_vec_new` / `push` / …) — stable
-///   multi-file path (free funcs on `Vec<int>`).
-/// - **L6.1:** mem intrinsics (`sizeOf`/`ptrOffset`/`ptrRead`/`ptrWrite`) land in
-///   the JIT so pure-buffer growth is possible once mut-ref field stores through
-///   free-function parameters are fixed (codegen residual).
+/// ## L6.1 pure buffer path
+/// Contiguous `ptr[T]` storage grown with host raw allocators
+/// (`ar_vec_malloc` / `ar_vec_realloc` / `ar_vec_buf_free`) and typed via
+/// mem intrinsics (`sizeOf` / `ptrOffset` / `ptrRead` / `ptrWrite`).
 ///
-/// | API | Status |
-/// |-----|--------|
-/// | `Vec<T>` / `new<T>()` | type surface + host handle |
-/// | free funcs on `Vec<int>` | push/pop/get/put/len/clear/destroy |
+/// Free-function API on `Vec<int>` (cross-module free-func generic mono is
+/// still residual). `Vec<T>` / `new<T>()` serve the type system.
+///
+/// Mut-ref field stores through free-func params require AMIR to keep the
+/// base pointer binding (`mark_local_materialized` / prune fix).
 ///
 /// **Not** in default `arandu new` template.
 
+import std.core.mem as mem
+
 extern "C" {
-    func ar_vec_new(): int
-    func ar_vec_push(id: int, value: int): void
-    func ar_vec_len(id: int): int
-    func ar_vec_has(id: int, index: int): int
-    func ar_vec_get(id: int, index: int): int
-    func ar_vec_put(id: int, index: int, value: int): int
-    func ar_vec_pop(id: int): int
-    func ar_vec_clear(id: int): void
-    func ar_vec_destroy(id: int): void
+    func ar_vec_malloc(size: u64): ptr[u8]
+    func ar_vec_buf_free(p: ptr[u8], size: u64): void
+    func ar_vec_realloc(p: ptr[u8], oldSize: u64, newSize: u64): ptr[u8]
+    func abort(): void
 }
 
-/// Growable buffer handle. `T` is tracked at the type level; host stores `int`.
+/// Growable contiguous buffer of `T`.
 public struct Vec<T> {
-    id: int
+    data: ptr[T]
+    len: u64
+    capacity: u64
 }
 
-/// Empty vector.
+/// Empty vector (no allocation until first `push`).
 public func new<T>(): Vec<T> {
-    unsafe {
-        return Vec<T> { id: ar_vec_new() }
+    return Vec<T> {
+        data: nil,
+        len: 0 as u64,
+        capacity: 0 as u64,
     }
 }
 
-/// Append `value`.
-public func push(mut v: Vec<int>, value: int): void {
-    unsafe {
-        ar_vec_push(v.id, value)
+/// Geometric growth for `Vec<int>` (min capacity 8, factor 2).
+///
+/// Note: avoid `while` here — loop bodies that later load fields of a
+/// free-func `mut` param currently miscompile (back-edge + mut-ref residual).
+func ensure_capacity_int(mut v: Vec<int>, minCap: u64): void {
+    if v.capacity >= minCap {
+        return
     }
+    let mut newCap: u64 = v.capacity
+    if newCap == 0 {
+        newCap = 8 as u64
+    } else {
+        newCap = newCap * 2
+    }
+    // Cap to at least minCap without a loop (handles large single pushes).
+    if newCap < minCap {
+        newCap = minCap
+    }
+    let elem = mem.sizeOf<int>()
+    let oldBytes = v.capacity * elem
+    let newBytes = newCap * elem
+    unsafe {
+        let nullp: ptr[u8] = nil
+        let p = ar_vec_realloc(v.data as ptr[u8], oldBytes, newBytes)
+        if p == nullp {
+            abort()
+        }
+        v.data = p as ptr[int]
+        v.capacity = newCap
+    }
+}
+
+/// Append `value` (amortized O(1)).
+public func push(mut v: Vec<int>, value: int): void {
+    let need = v.len + 1
+    if v.capacity < need {
+        ensure_capacity_int(v, need)
+    }
+    unsafe {
+        let dest = mem.ptrOffset<int>(v.data, v.len as i32)
+        mem.ptrWrite<int>(dest, value)
+    }
+    v.len = v.len + 1
 }
 
 /// Remove last element, or `None` if empty.
 public func pop(mut v: Vec<int>): Option<int> {
+    if v.len == 0 {
+        return Option.None
+    }
+    v.len = v.len - 1
     unsafe {
-        if ar_vec_len(v.id) <= 0 {
-            return Option.None
-        }
-        return Option.Some(ar_vec_pop(v.id))
+        let elemPtr = mem.ptrOffset<int>(v.data, v.len as i32)
+        return Option.Some(mem.ptrRead<int>(elemPtr))
     }
 }
 
 /// Element at `index`, or `None` if out of range.
 public func get(shared v: Vec<int>, index: u64): Option<int> {
+    if index >= v.len {
+        return Option.None
+    }
     unsafe {
-        if ar_vec_has(v.id, index as int) == 0 {
-            return Option.None
-        }
-        return Option.Some(ar_vec_get(v.id, index as int))
+        let elemPtr = mem.ptrOffset<int>(v.data, index as i32)
+        return Option.Some(mem.ptrRead<int>(elemPtr))
     }
 }
 
 /// Overwrite index; `false` if out of range.
 public func put(mut v: Vec<int>, index: u64, value: int): bool {
-    unsafe {
-        return ar_vec_put(v.id, index as int, value) != 0
+    if index >= v.len {
+        return false
     }
+    unsafe {
+        let elemPtr = mem.ptrOffset<int>(v.data, index as i32)
+        mem.ptrWrite<int>(elemPtr, value)
+    }
+    return true
 }
 
 /// Number of elements.
 public func len(shared v: Vec<int>): u64 {
-    unsafe {
-        let n = ar_vec_len(v.id)
-        if n < 0 {
-            return 0 as u64
-        }
-        return n as u64
-    }
+    return v.len
 }
 
-/// Drop length to zero.
+/// Drop length to zero (capacity retained).
 public func clear(mut v: Vec<int>): void {
-    unsafe {
-        ar_vec_clear(v.id)
-    }
+    v.len = 0 as u64
 }
 
-/// Destroy host storage.
+/// Deallocate the buffer.
 ///
 /// Named `destroy` (not `free`) to avoid the reserved builtin `free`.
 public func destroy(mut v: Vec<int>): void {
-    unsafe {
-        ar_vec_destroy(v.id)
+    if v.capacity > 0 {
+        let size = v.capacity * mem.sizeOf<int>()
+        unsafe {
+            ar_vec_buf_free(v.data as ptr[u8], size)
+        }
+        v.data = nil
+        v.capacity = 0 as u64
+        v.len = 0 as u64
     }
 }

@@ -668,6 +668,9 @@ impl LowerCtx<'_> {
                     })
                     .collect();
                 let projections = projections?;
+                if !projections.is_empty() {
+                    this.mark_local_materialized(local_id);
+                }
                 let temp = this.new_temp_id(place.ty);
                 this.emit_assign_temp(
                     temp,
@@ -726,6 +729,14 @@ impl LowerCtx<'_> {
             local: local_id,
             projections: projections?.into(),
         };
+
+        // Projected stores address through the local's SSA value (e.g. `s.n = v`
+        // where `s: &mut S`). That binding is a plain Store; if pruned as
+        // non-`is_memory`, codegen uses an undef/null base (SIGSEGV). Mark the
+        // local so prune keeps the param/init store (see `mark_local_materialized`).
+        if !amir_place.projections.is_empty() {
+            self.mark_local_materialized(local_id);
+        }
 
         if amir_place.projections.is_empty() {
             let final_val = if *op == SetOp::Assign {

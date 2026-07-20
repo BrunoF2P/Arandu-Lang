@@ -16,7 +16,7 @@ impl LowerCtx<'_> {
     /// `is_memory` is the same flag F2.0 already uses for address-taken homes; for
     /// pointer-sized types it does **not** force a stack slot (`needs_scalar_stack_home`
     /// is only true for primitive scalars).
-    fn mark_local_materialized(&mut self, local: crate::amir::LocalId) {
+    pub(crate) fn mark_local_materialized(&mut self, local: crate::amir::LocalId) {
         let idx = local.as_usize();
         if idx < self.locals.len() {
             self.locals[idx].is_memory = true;

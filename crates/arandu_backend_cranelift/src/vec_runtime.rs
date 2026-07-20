@@ -194,6 +194,9 @@ pub unsafe extern "C" fn ar_vec_realloc(p: *mut u8, old_size: i64, new_size: i64
             std::ptr::copy_nonoverlapping(p, new_ptr, n);
             ar_vec_buf_free(p, old_size);
         }
+    } else if p.is_null() && old_size > 0 {
+        // Caller capacity out of sync with data (mut writeback partial) — treat
+        // as fresh alloc without free/copy of a null base.
     }
     new_ptr
 }
