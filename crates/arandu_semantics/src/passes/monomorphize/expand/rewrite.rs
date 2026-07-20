@@ -87,12 +87,7 @@ pub(super) fn rewrite_stmt_calls<'bump>(
                 HirForClause::In { iterable, .. } => {
                     rewrite_expr_calls(hir, iterable, specialized, tc, bump);
                 }
-                HirForClause::CStyle {
-                    condition,
-                    init: _,
-                    step: _,
-                    ..
-                } => {
+                HirForClause::CStyle { condition, .. } => {
                     if let Some(c) = condition {
                         rewrite_expr_calls(hir, c, specialized, tc, bump);
                     }

@@ -650,7 +650,6 @@ pub(super) fn synth_call_expr(
                 CatchHandler::Block {
                     block,
                     span: h_span,
-                    error: _,
                     ..
                 } => {
                     // Bind `|e|` to the Result error type before type-checking the body.

@@ -453,12 +453,7 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                 }
             }
         }
-        Pattern::Range {
-            start,
-            end,
-            span: _,
-            ..
-        } => {
+        Pattern::Range { start, end, .. } => {
             let start_ty_id = synth_expr(checker, *start);
             let end_ty_id = synth_expr(checker, *end);
             if !checker.unify_ids(value_ty, start_ty_id) {
