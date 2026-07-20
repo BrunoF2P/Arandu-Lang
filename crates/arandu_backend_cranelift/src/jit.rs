@@ -177,6 +177,22 @@ impl AranduJit {
             "ar_env_var_is_set",
             crate::os_runtime::ar_env_var_is_set as *const u8,
         );
+        // Minimal Vec (host-backed i64 elements — std.alloc.vec)
+        builder.symbol("ar_vec_new", crate::vec_runtime::ar_vec_new as *const u8);
+        builder.symbol("ar_vec_push", crate::vec_runtime::ar_vec_push as *const u8);
+        builder.symbol("ar_vec_len", crate::vec_runtime::ar_vec_len as *const u8);
+        builder.symbol("ar_vec_has", crate::vec_runtime::ar_vec_has as *const u8);
+        builder.symbol("ar_vec_get", crate::vec_runtime::ar_vec_get as *const u8);
+        builder.symbol("ar_vec_put", crate::vec_runtime::ar_vec_put as *const u8);
+        builder.symbol("ar_vec_pop", crate::vec_runtime::ar_vec_pop as *const u8);
+        builder.symbol(
+            "ar_vec_clear",
+            crate::vec_runtime::ar_vec_clear as *const u8,
+        );
+        builder.symbol(
+            "ar_vec_destroy",
+            crate::vec_runtime::ar_vec_destroy as *const u8,
+        );
         // SL_R.2 reactor (epoll + timerfd)
         builder.symbol(
             "ar_rt_reactor_create",
@@ -532,6 +548,89 @@ impl AranduJit {
                     .map_err(|err| codegen_ice(format!("failed to declare {name}: {err:?}")))?;
                 func_ids.insert(name.to_string(), id);
             }
+        }
+
+        // Vec host: new() -> i64; free(id); clear(id); len/has/get/put/push/pop
+        {
+            let mut noarg_i64 = cranelift_codegen::ir::Signature::new(default_call_conv);
+            noarg_i64.returns.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
+            let id = self
+                .module
+                .declare_function("ar_vec_new", Linkage::Import, &noarg_i64)
+                .map_err(|err| codegen_ice(format!("failed to declare ar_vec_new: {err:?}")))?;
+            func_ids.insert("ar_vec_new".to_string(), id);
+        }
+        {
+            let mut one_i64 = cranelift_codegen::ir::Signature::new(default_call_conv);
+            one_i64.params.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
+            for name in ["ar_vec_destroy", "ar_vec_clear"] {
+                let id = self
+                    .module
+                    .declare_function(name, Linkage::Import, &one_i64)
+                    .map_err(|err| codegen_ice(format!("failed to declare {name}: {err:?}")))?;
+                func_ids.insert(name.to_string(), id);
+            }
+            let mut one_ret = one_i64.clone();
+            one_ret.returns.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
+            let id = self
+                .module
+                .declare_function("ar_vec_len", Linkage::Import, &one_ret)
+                .map_err(|err| codegen_ice(format!("failed to declare ar_vec_len: {err:?}")))?;
+            func_ids.insert("ar_vec_len".to_string(), id);
+        }
+        {
+            let mut two = cranelift_codegen::ir::Signature::new(default_call_conv);
+            two.params.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
+            two.params.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
+            // push(id, val) void
+            let id = self
+                .module
+                .declare_function("ar_vec_push", Linkage::Import, &two)
+                .map_err(|err| codegen_ice(format!("failed to declare ar_vec_push: {err:?}")))?;
+            func_ids.insert("ar_vec_push".to_string(), id);
+            let mut two_ret = two.clone();
+            two_ret.returns.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
+            for name in ["ar_vec_has", "ar_vec_get"] {
+                let id = self
+                    .module
+                    .declare_function(name, Linkage::Import, &two_ret)
+                    .map_err(|err| codegen_ice(format!("failed to declare {name}: {err:?}")))?;
+                func_ids.insert(name.to_string(), id);
+            }
+            let mut three_ret = two_ret.clone();
+            three_ret.params.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
+            let id = self
+                .module
+                .declare_function("ar_vec_put", Linkage::Import, &three_ret)
+                .map_err(|err| codegen_ice(format!("failed to declare ar_vec_put: {err:?}")))?;
+            func_ids.insert("ar_vec_put".to_string(), id);
+            // pop(id) -> i64
+            let mut one_ret = cranelift_codegen::ir::Signature::new(default_call_conv);
+            one_ret.params.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
+            one_ret.returns.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
+            let id = self
+                .module
+                .declare_function("ar_vec_pop", Linkage::Import, &one_ret)
+                .map_err(|err| codegen_ice(format!("failed to declare ar_vec_pop: {err:?}")))?;
+            func_ids.insert("ar_vec_pop".to_string(), id);
         }
 
         // SL_R.2 reactor host imports

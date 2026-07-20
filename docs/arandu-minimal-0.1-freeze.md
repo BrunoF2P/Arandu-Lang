@@ -120,7 +120,7 @@ Coroutines are language. Multi-task needs **explicit** `SyncExecutor`. Payload h
 | `std.io` module | write/eprint scaffold (prelude io is separate) | OUT / experimental |
 | `std.process` | `exit` host-backed | **IN optional** thin |
 | `std.time` | `monotonic_ns` host-backed | **IN optional** thin |
-| `std.alloc.vec` | full-ish API; typeck residuals in alloc bodies | **IN only if** `Vec` defaults path stays green (`cli_vec_defaults`); else signatures-only |
+| `std.alloc.vec` | host-backed `Vec<int>` free-func API; `Vec<T>`/`new<T>()` type surface | **IN optional** (PROMOTE-L6 **[x]**); not in default template |
 | `std.alloc.allocator_api` | GlobalAllocator + Bump; residual body diags | experimental for install |
 | `std.alloc.gen_arena` | typed API + i64 host MVP | experimental (GenRef path OK for advanced) |
 
@@ -131,7 +131,7 @@ Coroutines are language. Multi-task needs **explicit** `SyncExecutor`. Payload h
 | S1 | `std.core.ptr` broken twin | was high | [x] fixed as compat shim → `ptrOffset` |
 | S2 | `path.is_absolute` host-backed | was medium | [x] `Path::is_absolute` + m10 gold (P1.2) |
 | S3 | `path.join` / `file_name` stubs return input | low for Minimal | documented stub; `PROMOTE-L4` |
-| S4 | alloc body typeck noise if linked as dependency | medium | keep entry-only check policy; don’t put Vec in default template until clean |
+| S4 | alloc body typeck noise if linked as dependency | was medium | [x] vec.aru check-clean; BumpArena/allocator_api still residual |
 | S5 | runtime i64 payload honesty | low if documented | doc in install + Minimal async § |
 | S6 | prelude vs `std.io` dual story | low | Minimal uses prelude `io` only |
 
@@ -239,6 +239,7 @@ Create these files (names fixed for tracking):
 | `m10_path_empty.aru` | 0 | path thin IN (`is_empty` / `is_absolute` / stubs) |
 | `m11_process_exit.aru` | 17 | `std.process.exit` host (P1.1) |
 | `m12_time_env.aru` | 0 | `std.time` + `std.env` hosts (P1.1) |
+| `m13_vec.aru` | 78 | `std.alloc.vec` host-backed (PROMOTE-L6) |
 | `TEMPLATE_main.aru` | 0 | default installer template |
 
 **Command contract:**
@@ -327,6 +328,7 @@ func main(): int {
 | 2026-07-20 | Workspace crate / installer / extension version set to **0.0.1** (honest pre-0.1; first installable profile will be 0.1.0) |
 | 2026-07-20 | DiagCode ↔ docs/errors via xtask (single source); CI jobs split; install-smoke matrix ubuntu+macos early |
 | 2026-07-20 | **P1 quality:** wire `process`/`time`/`env` hosts; `Path::is_absolute`; experimental banners; CI `minimal-gold` |
+| 2026-07-20 | **PROMOTE-L6:** host-backed `std.alloc.vec` (`ar_vec_*`), free-func API, gold m13 exit 78 |
 
 ---
 
@@ -429,14 +431,15 @@ This is the same idea as **stable vs nightly** in other languages — here named
 | **Promote when** | Host symbols + gold + not required by default template |
 | **Track ID** | `PROMOTE-L5-*` (env, fs, process, time, std.io) |
 
-#### L6 — Vec / allocator_api / GenArena experimental for install
+#### L6 — Vec / allocator_api / GenArena — **PROMOTED (2026-07-20)** for Vec thin
 
 | | |
 |--|--|
-| **Root** | API exists; alloc **body** typeck can noise if linked as default deps; GenArena typed tables still host i64 MVP |
-| **Policy** | Do not put Vec in default `arandu new` template until path is check-clean end-to-end. GenArena advanced/experimental |
-| **Promote when** | `cli_vec_defaults` + alloc module self-check clean; optional `vec-hello` gold |
-| **Track ID** | `PROMOTE-L6` |
+| **Root fix** | Host-backed `ar_vec_*` (GenArena pattern); free-function API; `vec.aru` check-clean for multi-file HIR link |
+| **Policy** | **IN optional** — not in default `arandu new` template. GenArena / allocator_api Bump still experimental |
+| **Gold** | `m13_vec.aru` exit 78; `cli_vec_defaults` check+run+module clean |
+| **Later (L6.1)** | Pure-Arandu growth via `ptrOffset`/`sizeOf` JIT intrinsics; method syntax monomorphization |
+| **Track ID** | `PROMOTE-L6` **[x]** (Vec thin) |
 
 #### L7 — Language OUT by design or later phase
 

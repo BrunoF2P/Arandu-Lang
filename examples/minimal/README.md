@@ -30,6 +30,7 @@ arandu_cli run   <file>   # exit code documented in CLI tests
 | `m10_path_empty.aru` | 0 | std.path thin IN |
 | `m11_process_exit.aru` | 17 | std.process.exit host |
 | `m12_time_env.aru` | 0 | std.time + std.env hosts |
+| `m13_vec.aru` | 78 | std.alloc.vec (PROMOTE-L6) |
 
 ## Default template (installer)
 

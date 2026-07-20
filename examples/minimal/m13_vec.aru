@@ -1,0 +1,59 @@
+module examples.minimal.m13_vec
+
+// Minimal 0.1 — PROMOTE-L6: std.alloc.vec (host-backed int elements).
+// Free-function API: push/get/put/len/pop/destroy.
+import std.alloc.vec as vec
+
+func main(): int {
+    let mut v = vec.new<int>()
+    vec.push(v, 10)
+    vec.push(v, 20)
+    vec.push(v, 30)
+
+    let ok = vec.put(v, 1, 5)
+    if !ok {
+        vec.destroy(v)
+        return 1
+    }
+
+    let g0 = vec.get(v, 0)
+    let g1 = vec.get(v, 1)
+    let g2 = vec.get(v, 2)
+    match g0 {
+        Some(a) => {
+            match g1 {
+                Some(b) => {
+                    match g2 {
+                        Some(c) => {
+                            let n = vec.len(v) as int
+                            let gp = vec.pop(v)
+                            match gp {
+                                Some(p) => {
+                                    // 10 + 5 + 30 + 3 + 30 = 78
+                                    vec.destroy(v)
+                                    return a + b + c + n + p
+                                }
+                                None => {
+                                    vec.destroy(v)
+                                    return 2
+                                }
+                            }
+                        }
+                        None => {
+                            vec.destroy(v)
+                            return 3
+                        }
+                    }
+                }
+                None => {
+                    vec.destroy(v)
+                    return 4
+                }
+            }
+        }
+        None => {
+            vec.destroy(v)
+            return 5
+        }
+    }
+}

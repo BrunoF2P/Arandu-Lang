@@ -18,6 +18,7 @@ pub mod supervisor_runtime;
 pub mod to_str_runtime;
 pub mod translator;
 pub mod types;
+pub mod vec_runtime;
 pub mod waker_runtime;
 
 pub use crate::jit::CompiledModule;

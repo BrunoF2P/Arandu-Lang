@@ -76,6 +76,10 @@ const GOLD: &[Gold] = &[
         exit: 0,
     },
     Gold {
+        path: "examples/minimal/m13_vec.aru",
+        exit: 78,
+    },
+    Gold {
         path: "examples/minimal/TEMPLATE_main.aru",
         exit: 0,
     },

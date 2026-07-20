@@ -1,105 +1,102 @@
 module std.alloc.vec
 
-import std.core.mem as mem
-import std.core.result as result
-import std.core.option as option
-import std.alloc.allocator_api as allocApi
+/// Minimal 0.1 — **IN optional** growable array (`Vec<T>`).
+///
+/// ## Implementation (PROMOTE-L6)
+/// Host-backed i64 element storage (`ar_vec_*`), matching GenArena MVP.
+/// Operations are **free functions** taking `Vec<int>` so multi-file HIR link +
+/// monomorphization work (imported method templates still residual).
+///
+/// | API | Status |
+/// |-----|--------|
+/// | `Vec<T>` / `new<T>()` | type system + empty handle |
+/// | `push` / `pop` / `get` / `put` / `len` / `clear` / `destroy` | free funcs on `Vec<int>` |
+///
+/// **Not** in default `arandu new` template.
 
-// T2.1: `A` defaults to GlobalAllocator so callers write `Vec<T>` / `new<T>()`.
-public struct Vec<T, A: allocApi.Allocator = allocApi.GlobalAllocator> {
-    data: ptr[T]
-    len: u64
-    capacity: u64
-    allocator: A
+extern "C" {
+    func ar_vec_new(): int
+    func ar_vec_push(id: int, value: int): void
+    func ar_vec_len(id: int): int
+    func ar_vec_has(id: int, index: int): int
+    func ar_vec_get(id: int, index: int): int
+    func ar_vec_put(id: int, index: int, value: int): int
+    func ar_vec_pop(id: int): int
+    func ar_vec_clear(id: int): void
+    func ar_vec_destroy(id: int): void
 }
 
-public func new<T>() : Vec<T> {
-    return Vec<T> {
-        data: nil,
-        len: 0,
-        capacity: 0,
-        allocator: allocApi.GlobalAllocator{},
+/// Growable buffer handle. Element type `T` is tracked at the type level;
+/// Minimal host path implements `int` elements.
+public struct Vec<T> {
+    id: int
+}
+
+/// Empty vector (no elements until `push`).
+public func new<T>(): Vec<T> {
+    unsafe {
+        return Vec<T> { id: ar_vec_new() }
     }
 }
 
-public func newIn<T, A: allocApi.Allocator>(allocator: A) : Vec<T, A> {
-    return Vec<T, A> {
-        data: nil,
-        len: 0,
-        capacity: 0,
-        allocator: allocator,
+/// Append `value`.
+public func push(mut v: Vec<int>, value: int): void {
+    unsafe {
+        ar_vec_push(v.id, value)
     }
 }
 
-func Vec.grow<T, A: allocApi.Allocator = allocApi.GlobalAllocator>(mut self) : void {
-    let newCap = if self.capacity == 0 { 8 as u64; } else { self.capacity * 2; }
-    let newSize = newCap * mem.sizeOf<T>()
-    let oldSize = self.capacity * mem.sizeOf<T>()
-    let align = mem.alignOf<T>()
-
-    if self.capacity > 0 {
-        let newData = self.allocator
-            .realloc(self.data as ptr[u8], oldSize, newSize, align)
-            .expectOrAbort("Out of Memory (OOM) realocando vetor")
-        
-        self.data = newData as ptr[T]
-        self.capacity = newCap
-    } else {
-        let newData = self.allocator
-            .alloc(newSize, align)
-            .expectOrAbort("Out of Memory (OOM) alocando vetor")
-        
-        self.data = newData as ptr[T]
-        self.capacity = newCap
+/// Remove last element, or `None` if empty.
+public func pop(mut v: Vec<int>): Option<int> {
+    unsafe {
+        if ar_vec_len(v.id) <= 0 {
+            return Option.None
+        }
+        return Option.Some(ar_vec_pop(v.id))
     }
 }
 
-public func Vec.push<T, A: allocApi.Allocator>(mut self, value: T) : void {
-    if self.len == self.capacity {
-        self.grow()
+/// Element at `index`, or `None` if out of range.
+public func get(shared v: Vec<int>, index: u64): Option<int> {
+    unsafe {
+        if ar_vec_has(v.id, index as int) == 0 {
+            return Option.None
+        }
+        return Option.Some(ar_vec_get(v.id, index as int))
     }
-    let destPtr = mem.ptrOffset<T>(self.data, self.len as i32)
-    mem.ptrWrite<T>(destPtr, value)
-    self.len = self.len + 1
 }
 
-public func Vec.pop<T, A: allocApi.Allocator>(mut self) : Option<T> {
-    if self.len == 0 {
-        return Option.None
+/// Overwrite index; `false` if out of range.
+public func put(mut v: Vec<int>, index: u64, value: int): bool {
+    unsafe {
+        return ar_vec_put(v.id, index as int, value) != 0
     }
-    self.len = self.len - 1
-    let elemPtr = mem.ptrOffset<T>(self.data, self.len as i32)
-    return Option.Some(mem.ptrRead<T>(elemPtr))
 }
 
-public func Vec.get<T, A: allocApi.Allocator>(shared self, index: u64) : Option<T> {
-    if index >= self.len {
-        return Option.None
+/// Number of elements.
+public func len(shared v: Vec<int>): u64 {
+    unsafe {
+        let n = ar_vec_len(v.id)
+        if n < 0 {
+            return 0 as u64
+        }
+        return n as u64
     }
-    let elemPtr = mem.ptrOffset<T>(self.data, index as i32)
-    return Option.Some(mem.ptrRead<T>(elemPtr))
 }
 
-public func Vec.put<T, A: allocApi.Allocator>(mut self, index: u64, value: T) : bool {
-    if index >= self.len {
-        return false
+/// Drop length to zero.
+public func clear(mut v: Vec<int>): void {
+    unsafe {
+        ar_vec_clear(v.id)
     }
-    let elemPtr = mem.ptrOffset<T>(self.data, index as i32)
-    mem.ptrWrite<T>(elemPtr, value)
-    return true
 }
 
-public func Vec.clear<T, A: allocApi.Allocator>(mut self) : void {
-    self.len = 0
-}
-
-public func Vec.free<T, A: allocApi.Allocator>(mut self) : void {
-    if self.capacity > 0 {
-        let size = self.capacity * mem.sizeOf<T>()
-        let align = mem.alignOf<T>()
-        self.allocator.dealloc(self.data as ptr[u8], size, align)
-        self.data = nil
-        self.capacity = 0
-        self.len = 0
+/// Destroy host storage; handle is invalid afterwards.
+///
+/// Named `destroy` (not `free`) to avoid clashing with the language reserved
+/// builtin `free` in the JIT symbol table.
+public func destroy(mut v: Vec<int>): void {
+    unsafe {
+        ar_vec_destroy(v.id)
     }
 }
