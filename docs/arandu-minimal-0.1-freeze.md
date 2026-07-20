@@ -1,9 +1,21 @@
 # Arandu Minimal 0.1 — Freeze & Tracking
 
-**Status:** **P0 + P2 project CLI gold** — installer packaging remains (tarball/prefix layout)  
-**Date:** 2026-07-11 (updated 2026-07-19)  
+**Status:** **SHIP-READY residual stack CLOSED (2026-07-20)** — gold suite green; safe to commit/push/`main`.  
+Installer packaging (tarball/prefix layout) remains product work, **not** an open language residual.  
+**Date:** 2026-07-11 (updated 2026-07-20)  
 **Goal:** define a **stable, installable language surface** before public site.  
 **Out of scope for this freeze:** beautiful marketing site (last), LLVM, self-host, package registry.
+
+### Ship gate (what “no residual” means)
+
+| Layer | Closed? | Note |
+|-------|---------|------|
+| IN language + gold `cli_minimal_gold` | **[x]** | m01–m24 + TEMPLATE |
+| Result bare Ok match / expectOrAbort / peel Ref / method mono | **[x]** | m21–m24 |
+| Vec / GenArena / path / POD / allocator thin / str | **[x]** | promote tracks closed |
+| **dyn** / existential `Allocator` | **OUT by design (L7)** | not a half-done IN path |
+| **`ar_gen_*` host i64** | **compiler MVP only** | user path = `std.alloc.gen_arena` free-func |
+| Installer tarball / site / LLVM | **later product** | not language residual |
 
 ---
 
@@ -348,7 +360,8 @@ func main(): int {
 | 2026-07-20 | **POD auto-copy:** `TypeInfo::is_copy` structural (named structs of scalars); GenRef/TaskHandle by value; gold m17=60; Vec-with-ptr not copy |
 | 2026-07-20 | **ABCD promote batch:** docs hygiene; allocator_api thin (m19=112); std.core.str (m20); Vec methods + method mono dedupe (m18=78) |
 | 2026-07-20 | **Residuals batch:** Result.Ok/Err bidirectional custom `E` (m21); peel Ref for `T: I` methods typeck+AMIR (m22/L1); allocator Result+align; installer scripts already P2.5 |
-| 2026-07-20 | **Residuals close:** finish_call trailing-block gated (`match f(){Ok…}`); pattern Ref peel typeck+AMIR (type-only peel for Discriminant ABI); import re-link builtin Result methods; Result/Option method mono; gold m23=13 m24=13; dyn Allocator + `ar_gen_*` escape remain L7/MVP residuals (honest) |
+| 2026-07-20 | **Residuals close:** finish_call trailing-block gated (`match f(){Ok…}`); pattern Ref peel typeck+AMIR (type-only peel for Discriminant ABI); import re-link builtin Result methods; Result/Option method mono; gold m23=13 m24=13 |
+| 2026-07-20 | **SHIP-READY:** residual language stack closed; dyn/`ar_gen_*` reclassified as frozen OUT/MVP (not open work); freeze status ship-ready for push |
 
 ---
 
@@ -465,8 +478,8 @@ This is the same idea as **stable vs nightly** in other languages — here named
 | **Checklist §13.4 (Vec)** | **[x]** root fixed · **[x]** gold · **[x]** CI gold · **[x]** IN optional · **[x]** methods m18 · **[x]** not in default template |
 | **Checklist (GenArena thin)** | **[x]** pure-buffer · **[x]** recycle · **[x]** gold m16 · **[x]** POD GenRef |
 | **Checklist (allocator thin)** | **[x]** free-func · **[x]** gold m19 · **[x]** check-clean · **[x]** not default template |
-| **Residual** | **dyn `Allocator` trait object = L7 OUT** (not thin-close); **`ar_gen_*` i64 AMIR escape promote only** (stdlib GenArena free-func is the user path; host `ar_gen_*` stays for compiler escape promote MVP) |
-| **Track ID** | `PROMOTE-L6` **[x]**; methods **[x]**; allocator thin **[x]**; Result custom E **[x]**; bare Ok match **[x]**; expectOrAbort **[x]** |
+| **Frozen OUT (not residual work)** | dyn `Allocator` → **L7**; `ar_gen_*` → compiler escape MVP only (user API = GenArena free-func m16) |
+| **Track ID** | `PROMOTE-L6` **[x]**; methods **[x]**; allocator thin **[x]**; Result custom E **[x]**; bare Ok match **[x]**; expectOrAbort **[x]** — **stack closed** |
 
 #### L7 — Language OUT by design or later phase
 

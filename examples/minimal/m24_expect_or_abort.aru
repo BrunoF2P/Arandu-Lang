@@ -5,8 +5,6 @@ module examples.minimal.m24_expect_or_abort
 import std.core.result as result
 
 func main(): int {
-    let ok = Result.Ok(5)
-    let a = ok.expectOrAbort("ok path")
-    // 5 + 8 = 13
-    return a + 8
+    // Chain avoids W006 (bound Result without ?); 5 + 8 = 13
+    return Result.Ok(5).expectOrAbort("ok path") + 8
 }
