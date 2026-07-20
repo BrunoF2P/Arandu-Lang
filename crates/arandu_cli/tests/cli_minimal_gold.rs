@@ -108,6 +108,14 @@ const GOLD: &[Gold] = &[
         exit: 0,
     },
     Gold {
+        path: "examples/minimal/m21_result_custom_e.aru",
+        exit: 7,
+    },
+    Gold {
+        path: "examples/minimal/m22_iface_param.aru",
+        exit: 42,
+    },
+    Gold {
         path: "examples/minimal/TEMPLATE_main.aru",
         exit: 0,
     },

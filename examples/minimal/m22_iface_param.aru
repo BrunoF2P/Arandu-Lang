@@ -1,0 +1,25 @@
+module examples.minimal.m22_iface_param
+
+// Minimal 0.1 — method call through type param with interface bound (PROMOTE-L1).
+interface Show {
+    func show(shared self): int
+}
+
+struct Counter {
+    n: int
+}
+
+func Counter.show(shared self): int {
+    return self.n
+}
+
+func emit<T: Show>(shared value: T): int {
+    return value.show()
+}
+
+func main(): int {
+    let c = Counter {
+        n: 42,
+    }
+    return emit(c)
+}

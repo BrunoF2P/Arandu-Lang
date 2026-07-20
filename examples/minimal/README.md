@@ -38,6 +38,8 @@ arandu_cli run   <file>   # exit code documented in CLI tests
 | `m18_vec_methods.aru` | 78 | Vec method-style push/get (receiver mono) |
 | `m19_allocator.aru` | 112 | allocator_api thin global+bump |
 | `m20_str.aru` | 0 | std.core.str concat/split_last |
+| `m21_result_custom_e.aru` | 7 | Result custom E |
+| `m22_iface_param.aru` | 42 | interface method via type param |
 
 ## Default template (installer)
 

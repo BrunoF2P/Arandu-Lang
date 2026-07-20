@@ -246,8 +246,10 @@ Create these files (names fixed for tracking):
 | `m16_gen_arena.aru` | 83 | `std.alloc.gen_arena` pure-buffer free-func (insert/get/remove/recycle) |
 | `m17_pod_copy.aru` | 60 | structural POD auto-copy (named scalar structs by value) |
 | `m18_vec_methods.aru` | 78 | method-style `v.push` (receiver mono) |
-| `m19_allocator.aru` | 112 | `std.alloc.allocator_api` thin global+bump |
+| `m19_allocator.aru` | 112 | `std.alloc.allocator_api` Result+AllocError + bump align |
 | `m20_str.aru` | 0 | `std.core.str` concat/starts/ends/split_last |
+| `m21_result_custom_e.aru` | 7 | `Result.Ok/Err` with custom `E` (return context) |
+| `m22_iface_param.aru` | 42 | method via `T: Show` (PROMOTE-L1) |
 | `TEMPLATE_main.aru` | 0 | default installer template |
 
 **Command contract:**
@@ -343,6 +345,7 @@ func main(): int {
 | 2026-07-20 | **GenArena thin closed:** pure-buffer free-func + recycle gen bump; gold m16=83; `allocator_api` still experimental |
 | 2026-07-20 | **POD auto-copy:** `TypeInfo::is_copy` structural (named structs of scalars); GenRef/TaskHandle by value; gold m17=60; Vec-with-ptr not copy |
 | 2026-07-20 | **ABCD promote batch:** docs hygiene; allocator_api thin (m19=112); std.core.str (m20); Vec methods + method mono dedupe (m18=78) |
+| 2026-07-20 | **Residuals batch:** Result.Ok/Err bidirectional custom `E` (m21); peel Ref for `T: I` methods typeck+AMIR (m22/L1); allocator Result+align; installer scripts already P2.5 |
 
 ---
 
@@ -383,15 +386,13 @@ This is the same idea as **stable vs nightly** in other languages — here named
 
 ### 13.3 Rationale for each major limit (track + promote later)
 
-#### L1 — Free generics yes; receiver method mono **IN**; method-via-`T: I` still OUT
+#### L1 — Free generics + receiver mono + interface-via-`T: I` **CLOSED (2026-07-20)**
 
 | | |
 |--|--|
-| **Symptom (was)** | `BoxG<int>.set_v` not specialized (params double-counted restated `T`) |
-| **Root fix** | `generic_params` for methods: struct params ∪ method-only params (dedupe restated `T`) |
-| **IN now** | Receiver-driven mono: `v.push(10)` on `Vec<int>`; gold **m18=78** |
-| **Still OUT** | `func f<T: I>(shared x: T) { x.m() }` → **T033** (interface through type param) |
-| **Track ID** | `PROMOTE-L1` partial **[x]** receiver mono; residual interface-via-T |
+| **Root fix** | (1) method generic_params dedupe restated `T`; (2) peel `Ref`/`RefMut` on receivers in typeck + AMIR `resolve_method_target` so `shared value: T` resolves `T: I` methods |
+| **Gold** | m18=78 Vec methods; **m22=42** `emit<T: Show>(value.show())` |
+| **Track ID** | `PROMOTE-L1` **[x] closed** |
 
 #### L2 — Multi-file package modules — **PROMOTED (2026-07-19)**
 
@@ -461,8 +462,8 @@ This is the same idea as **stable vs nightly** in other languages — here named
 | **Checklist §13.4 (Vec)** | **[x]** root fixed · **[x]** gold · **[x]** CI gold · **[x]** IN optional · **[x]** methods m18 · **[x]** not in default template |
 | **Checklist (GenArena thin)** | **[x]** pure-buffer · **[x]** recycle · **[x]** gold m16 · **[x]** POD GenRef |
 | **Checklist (allocator thin)** | **[x]** free-func · **[x]** gold m19 · **[x]** check-clean · **[x]** not default template |
-| **Residual** | `Result<T, CustomE>` ctor; interface `Allocator` dyn; bump power-of-two align; `ar_gen_*` AMIR promote |
-| **Track ID** | `PROMOTE-L6` **[x]**; methods **[x]**; allocator thin **[x]** |
+| **Residual** | dyn `Allocator` trait object; `ar_gen_*` AMIR escape promote only |
+| **Track ID** | `PROMOTE-L6` **[x]**; methods **[x]**; allocator thin **[x]**; Result custom E **[x]** |
 
 #### L7 — Language OUT by design or later phase
 

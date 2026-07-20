@@ -41,20 +41,33 @@ pub(super) fn synth_call_expr(
             Some(checker.intern(ArType::Error))
         }
         ExprKind::TypePath { type_name, member } => {
+            // Bare `Result.Ok` / `Result.Err` as paths (not calls): build a
+            // polymorphic-looking Func using expected `Result<T,E>` when present.
+            // Actual calls are handled by `synth_result_ctor` (bidirectional).
             if types::type_name_base(type_name) == "Result" {
                 return Some(match member.as_str() {
                     "Ok" => {
-                        let err_id = checker.intern(ArType::Error);
-                        let err_literal_id = checker.intern(ArType::Err);
-                        let res_ty = ArType::Result(err_id, err_literal_id);
-                        let res_id = checker.intern(res_ty);
-                        checker.intern(ArType::Func(vec![err_id], res_id))
+                        let (ok_id, err_id) = match expected.map(|e| checker.resolve(e)) {
+                            Some(ArType::Result(ok, err)) => (ok, err),
+                            _ => {
+                                let hole = checker.intern(ArType::Error);
+                                let err_lit = checker.intern(ArType::Err);
+                                (hole, err_lit)
+                            }
+                        };
+                        let res_id = checker.intern(ArType::Result(ok_id, err_id));
+                        checker.intern(ArType::Func(vec![ok_id], res_id))
                     }
                     "Err" => {
-                        let err_id = checker.intern(ArType::Error);
-                        let err_literal_id = checker.intern(ArType::Err);
-                        let res_ty = ArType::Result(err_id, err_literal_id);
-                        let res_id = checker.intern(res_ty);
+                        let (ok_id, err_id) = match expected.map(|e| checker.resolve(e)) {
+                            Some(ArType::Result(ok, err)) => (ok, err),
+                            _ => {
+                                let hole = checker.intern(ArType::Error);
+                                let err_lit = checker.intern(ArType::Err);
+                                (hole, err_lit)
+                            }
+                        };
+                        let res_id = checker.intern(ArType::Result(ok_id, err_id));
                         checker.intern(ArType::Func(vec![err_id], res_id))
                     }
                     _ => checker.intern(ArType::Error),
@@ -254,7 +267,9 @@ pub(super) fn synth_call_expr(
                     return Some(void_ty);
                 }
             }
-            if let Some(result_ty) = synth_result_ctor(checker, callee_id, args_range, span) {
+            if let Some(result_ty) =
+                synth_result_ctor(checker, callee_id, args_range, span, expected)
+            {
                 return Some(checker.intern(result_ty));
             }
             if let Some(option_ty) = synth_option_ctor(checker, callee_id, args_range, span) {

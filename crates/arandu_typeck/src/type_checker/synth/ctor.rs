@@ -20,6 +20,7 @@ pub(crate) fn synth_result_ctor(
     callee: ExprId,
     args: IndexRange,
     span: Span,
+    expected: Option<TypeId>,
 ) -> Option<ArType> {
     let (type_name, member) = type_path_member(checker.pool, callee)?;
     let global_scope = checker.symbols.global_scope();
@@ -33,6 +34,15 @@ pub(crate) fn synth_result_ctor(
         return None;
     }
     let arg_ids = checker.pool.expr_list(args).to_vec();
+
+    // Bidirectional: when the expected type is `Result<T, E>`, pin both sides
+    // (same family as `.Ok` / `.Err` sugar). Bare `Result.Ok(x)` without context
+    // still defaults `E = Err` for the canonical error path.
+    let expected_result = expected.and_then(|id| match checker.resolve(id) {
+        ArType::Result(ok, err) => Some((id, ok, err)),
+        _ => None,
+    });
+
     match member {
         "Ok" => {
             if arg_ids.len() != 1 {
@@ -45,6 +55,23 @@ pub(crate) fn synth_result_ctor(
                 .with_label(span, format!("{} arguments provided", arg_ids.len()));
                 checker.diagnostics.push(diag);
                 return Some(ArType::Error);
+            }
+            if let Some((exp_id, ok_id, _err_id)) = expected_result {
+                let got = synth_expr(checker, arg_ids[0]);
+                if !checker.unify_ids(ok_id, got) {
+                    checker.add_constraint(
+                        ok_id,
+                        got,
+                        ConstraintOrigin::CallArg {
+                            call_span: span,
+                            param_span: span,
+                            arg_span: checker.pool.expr_span(arg_ids[0]),
+                            arg_index: 0,
+                        },
+                    );
+                }
+                // Return the expected Result so return-type check is exact.
+                return Some(checker.resolve(exp_id));
             }
             let ok_ty_id = synth_expr(checker, arg_ids[0]);
             let err_literal_id = checker.intern(ArType::Err);
@@ -62,9 +89,27 @@ pub(crate) fn synth_result_ctor(
                 checker.diagnostics.push(diag);
                 return Some(ArType::Error);
             }
+            if let Some((exp_id, _ok_id, err_id)) = expected_result {
+                let got = synth_expr(checker, arg_ids[0]);
+                if !checker.unify_ids(err_id, got) {
+                    checker.add_constraint(
+                        err_id,
+                        got,
+                        ConstraintOrigin::CallArg {
+                            call_span: span,
+                            param_span: span,
+                            arg_span: checker.pool.expr_span(arg_ids[0]),
+                            arg_index: 0,
+                        },
+                    );
+                }
+                return Some(checker.resolve(exp_id));
+            }
+            // No expected type: Ok-side is unknown — use a fresh hole (Error) so
+            // later annotation/return can refine; E comes from the argument.
             let err_ty_id = synth_expr(checker, arg_ids[0]);
-            let err_id = checker.intern(ArType::Error);
-            Some(ArType::Result(err_id, err_ty_id))
+            let ok_hole = checker.intern(ArType::Error);
+            Some(ArType::Result(ok_hole, err_ty_id))
         }
         _ => None,
     }
@@ -495,9 +540,22 @@ pub(crate) fn synth_method_call(
         return Some(checker.intern(ArType::Error));
     }
 
-    let actual_base_ty_id = match checker.resolve(base_ty_id) {
-        ArType::Nullable(inner) => inner,
-        _ => base_ty_id,
+    // Peel Nullable / & / &mut / ptr so `shared value: T` (typed as `&T`) still
+    // resolves methods and `T: Interface` constraints (PROMOTE-L1 family).
+    let actual_base_ty_id = {
+        let mut id = match checker.resolve(base_ty_id) {
+            ArType::Nullable(inner) => inner,
+            _ => base_ty_id,
+        };
+        for _ in 0..4 {
+            match checker.resolve(id) {
+                ArType::Ref(inner) | ArType::RefMut(inner) | ArType::Ptr(inner) => {
+                    id = inner;
+                }
+                _ => break,
+            }
+        }
+        id
     };
 
     // ToStr v0.1 intrinsic: `receiver.to_str()` with zero args → `str`.

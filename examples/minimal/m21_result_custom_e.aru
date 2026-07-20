@@ -1,0 +1,22 @@
+module examples.minimal.m21_result_custom_e
+
+// Minimal 0.1 — Result.Ok/Err with custom E (return-type context).
+enum E {
+    A,
+    B,
+}
+
+func ok_seven(): Result<int, E> {
+    return Result.Ok(7)
+}
+
+func err_a(): Result<int, E> {
+    return Result.Err(E.A)
+}
+
+func main(): int {
+    let x = ok_seven()?
+    // err path is constructed; not forced at runtime
+    let _ = err_a
+    return x
+}

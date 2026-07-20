@@ -21,30 +21,23 @@ fn resolve_method_target(
     };
 
     let base_expr = pool.expr(base_id);
-    let base_ty = interner.resolve(base_expr.ty);
+    // Peel Nullable / & / &mut / ptr so `shared self: &T` still resolves methods
+    // (same family as typeck synth_method_call + PROMOTE-L1 interface via T).
+    let mut base_ty = interner.resolve(base_expr.ty);
+    for _ in 0..4 {
+        base_ty = match base_ty {
+            ArType::Nullable(inner)
+            | ArType::Ref(inner)
+            | ArType::RefMut(inner)
+            | ArType::Ptr(inner) => interner.resolve(inner),
+            other => other,
+        };
+        if matches!(base_ty, ArType::Named(_, _)) {
+            break;
+        }
+    }
     let struct_id = match base_ty {
-        ArType::Nullable(inner) => {
-            let inner_ty = interner.resolve(inner);
-            match inner_ty {
-                ArType::Named(id, _) => Some(id),
-                ArType::Ptr(ptr_inner) => {
-                    let ptr_inner_ty = interner.resolve(ptr_inner);
-                    match ptr_inner_ty {
-                        ArType::Named(id, _) => Some(id),
-                        _ => None,
-                    }
-                }
-                _ => None,
-            }
-        }
         ArType::Named(id, _) => Some(id),
-        ArType::Ptr(inner) => {
-            let inner_ty = interner.resolve(inner);
-            match inner_ty {
-                ArType::Named(id, _) => Some(id),
-                _ => None,
-            }
-        }
         _ => None,
     }?;
 

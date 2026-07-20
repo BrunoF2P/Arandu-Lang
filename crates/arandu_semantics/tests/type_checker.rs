@@ -985,6 +985,27 @@ fn test_result_ok_generic() {
 }
 
 #[test]
+fn test_result_ok_custom_error_enum() {
+    // Bidirectional: return type Result<T, E> pins E for Result.Ok / Result.Err.
+    assert_type_errors!(
+        "
+        enum E { A, B }
+        func ok(): Result<int, E> {
+            return Result.Ok(1)
+        }
+        func err(): Result<int, E> {
+            return Result.Err(E.A)
+        }
+        func main(): int {
+            let x = ok()?
+            return x
+        }
+        ",
+        []
+    );
+}
+
+#[test]
 fn test_generic_where_interface_ok() {
     assert_type_errors!(
         "
