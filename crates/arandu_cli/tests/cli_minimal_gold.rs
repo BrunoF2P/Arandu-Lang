@@ -96,6 +96,18 @@ const GOLD: &[Gold] = &[
         exit: 60,
     },
     Gold {
+        path: "examples/minimal/m18_vec_methods.aru",
+        exit: 78,
+    },
+    Gold {
+        path: "examples/minimal/m19_allocator.aru",
+        exit: 112,
+    },
+    Gold {
+        path: "examples/minimal/m20_str.aru",
+        exit: 0,
+    },
+    Gold {
         path: "examples/minimal/TEMPLATE_main.aru",
         exit: 0,
     },

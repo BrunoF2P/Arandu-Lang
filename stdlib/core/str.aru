@@ -1,0 +1,65 @@
+module std.core.str
+
+/// Minimal 0.1 — **IN optional** thin string helpers (PROMOTE str thin).
+///
+/// Host fat-str ABI (`ptr` + `len`), malloc-backed results (same lifetime
+/// policy as ToStr / path join). Not in default template.
+///
+/// | Function       | Status |
+/// |----------------|--------|
+/// | `is_empty`     | pure |
+/// | `len`          | host (fat-str length) |
+/// | `concat`       | host |
+/// | `starts_with`  | host |
+/// | `ends_with`    | host |
+/// | `split_last`   | host (after last `sep`; empty sep → full string) |
+
+extern "C" {
+    func ar_str_len(s: str): u64
+    func ar_str_concat(a: str, b: str): str
+    func ar_str_starts_with(s: str, prefix: str): int
+    func ar_str_ends_with(s: str, suffix: str): int
+    func ar_str_split_last(s: str, sep: str): str
+}
+
+/// True when the string has zero length.
+public func is_empty(s: str): bool {
+    return s == ""
+}
+
+/// Byte length (UTF-8 bytes; fat-str `len` slot).
+public func len(s: str): u64 {
+    unsafe {
+        return ar_str_len(s)
+    }
+}
+
+/// Concatenate two strings (malloc-backed result).
+public func concat(a: str, b: str): str {
+    unsafe {
+        return ar_str_concat(a, b)
+    }
+}
+
+/// True if `s` begins with `prefix`.
+public func starts_with(s: str, prefix: str): bool {
+    unsafe {
+        return ar_str_starts_with(s, prefix) != 0
+    }
+}
+
+/// True if `s` ends with `suffix`.
+public func ends_with(s: str, suffix: str): bool {
+    unsafe {
+        return ar_str_ends_with(s, suffix) != 0
+    }
+}
+
+/// Substring after the last occurrence of `sep` (byte-wise).
+///
+/// Empty `sep` or no match → full `s` (malloc copy). Trailing sep → empty.
+public func split_last(s: str, sep: str): str {
+    unsafe {
+        return ar_str_split_last(s, sep)
+    }
+}

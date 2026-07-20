@@ -121,7 +121,8 @@ Coroutines are language. Multi-task needs **explicit** `SyncExecutor`. Payload h
 | `std.process` | `exit` host-backed | **IN optional** thin |
 | `std.time` | `monotonic_ns` host-backed | **IN optional** thin |
 | `std.alloc.vec` | pure-buffer `Vec<T>` free-func API (new/with_capacity/push/…/destroy) | **IN optional** — **PROMOTE-L6 closed**; not in default template |
-| `std.alloc.allocator_api` | GlobalAllocator + Bump; residual body diags | experimental for install |
+| `std.alloc.allocator_api` | free-func global/bump thin (`ar_vec_*`, OOM abort) | **IN optional** — not in default template |
+| `std.core.str` | concat / starts_with / ends_with / split_last / len | **IN optional** — host fat-str |
 | `std.alloc.gen_arena` | pure-buffer free-func (`new`/`insert`/`get`/`remove`/`len`/`destroy`) | **IN optional** — GenArena thin closed; not in default template; compiler `ar_gen_*` i64 remains for AMIR promote |
 
 ### 4.3 Std half-done / bugs to track before freeze green
@@ -131,7 +132,7 @@ Coroutines are language. Multi-task needs **explicit** `SyncExecutor`. Payload h
 | S1 | `std.core.ptr` broken twin | was high | [x] fixed as compat shim → `ptrOffset` |
 | S2 | `path.is_absolute` host-backed | was medium | [x] `Path::is_absolute` + m10 gold (P1.2) |
 | S3 | `path.join` / `file_name` stubs return input | was low | **[x]** host `Path::join` / `file_name` + m10 gold (PROMOTE-L4) |
-| S4 | alloc body typeck noise if linked as dependency | was medium | [x] vec.aru check-clean; BumpArena/allocator_api still residual |
+| S4 | alloc body typeck noise if linked as dependency | was medium | **[x]** vec + allocator_api thin check-clean (free-func; OOM abort) |
 | S5 | runtime i64 payload honesty | low if documented | doc in install + Minimal async § |
 | S6 | prelude vs `std.io` dual story | low | Minimal uses prelude `io` only |
 
@@ -244,6 +245,9 @@ Create these files (names fixed for tracking):
 | `m15_vec_capacity.aru` | 21 | with_capacity / capacity / reserve / clear / is_empty |
 | `m16_gen_arena.aru` | 83 | `std.alloc.gen_arena` pure-buffer free-func (insert/get/remove/recycle) |
 | `m17_pod_copy.aru` | 60 | structural POD auto-copy (named scalar structs by value) |
+| `m18_vec_methods.aru` | 78 | method-style `v.push` (receiver mono) |
+| `m19_allocator.aru` | 112 | `std.alloc.allocator_api` thin global+bump |
+| `m20_str.aru` | 0 | `std.core.str` concat/starts/ends/split_last |
 | `TEMPLATE_main.aru` | 0 | default installer template |
 
 **Command contract:**
@@ -338,6 +342,7 @@ func main(): int {
 | 2026-07-20 | **PROMOTE-L4 closed:** host `path.join` / `file_name` (fat-str); m10 gold real join/file_name; C path helpers |
 | 2026-07-20 | **GenArena thin closed:** pure-buffer free-func + recycle gen bump; gold m16=83; `allocator_api` still experimental |
 | 2026-07-20 | **POD auto-copy:** `TypeInfo::is_copy` structural (named structs of scalars); GenRef/TaskHandle by value; gold m17=60; Vec-with-ptr not copy |
+| 2026-07-20 | **ABCD promote batch:** docs hygiene; allocator_api thin (m19=112); std.core.str (m20); Vec methods + method mono dedupe (m18=78) |
 
 ---
 
@@ -378,15 +383,15 @@ This is the same idea as **stable vs nightly** in other languages — here named
 
 ### 13.3 Rationale for each major limit (track + promote later)
 
-#### L1 — Free generics yes; method call through `T: I` not in gold
+#### L1 — Free generics yes; receiver method mono **IN**; method-via-`T: I` still OUT
 
 | | |
 |--|--|
-| **Symptom** | `func f<T: I>(shared x: T) { x.m() }` → **T033** (indirect / non-direct call) |
-| **Root** | Typeck understands bounds; mono/codegen does not yet materialize stable **direct** method dispatch via type params |
-| **Minimal policy** | Gold shows free-function mono (`identity<T>`). Bounds in typeck OK; method-via-param **OUT of gold** |
-| **Promote when** | Direct call / mono path for interface methods through type params is green + gold example |
-| **Track ID** | `PROMOTE-L1` |
+| **Symptom (was)** | `BoxG<int>.set_v` not specialized (params double-counted restated `T`) |
+| **Root fix** | `generic_params` for methods: struct params ∪ method-only params (dedupe restated `T`) |
+| **IN now** | Receiver-driven mono: `v.push(10)` on `Vec<int>`; gold **m18=78** |
+| **Still OUT** | `func f<T: I>(shared x: T) { x.m() }` → **T033** (interface through type param) |
+| **Track ID** | `PROMOTE-L1` partial **[x]** receiver mono; residual interface-via-T |
 
 #### L2 — Multi-file package modules — **PROMOTED (2026-07-19)**
 
@@ -447,15 +452,17 @@ This is the same idea as **stable vs nightly** in other languages — here named
 | | |
 |--|--|
 | **Root fix** | Pure-buffer (`ar_vec_malloc/realloc/buf_free` + mem); generic free-func API; nested mono worklist; auto-ref type-param infer |
-| **Policy** | **`std.alloc.vec` + `std.alloc.gen_arena` IN optional** — not in default `arandu new`. **`allocator_api` remains experimental** |
-| **Public API (Vec)** | `new`, `with_capacity`, `push`, `pop`, `get`, `put`, `len`, `capacity`, `is_empty`, `reserve`, `clear`, `destroy` |
+| **Policy** | **`std.alloc.vec` + `gen_arena` + `allocator_api` IN optional** — not in default `arandu new` |
+| **Public API (Vec)** | free-func + **methods** `v.push` / `pop` / `get` / … (receiver mono) |
 | **Public API (GenArena)** | `new`, `insert`, `get`, `remove`, `len`, `is_empty`, `destroy`; `GenRef` by value (POD auto-copy) |
-| **Gold** | m13=78, m15=21, m16=83; `cli_vec_defaults` + `--opt` paths; module check-clean |
+| **Public API (allocator)** | `global_alloc`/`dealloc`/`realloc`; `bump_new`/`alloc`/`reset`/`remaining`/`destroy` |
+| **Gold** | m13=78, m15=21, m16=83, m18=78, m19=112; module check-clean |
 | **L6.1** | **[x]** mem intrinsics; mut-ref materialize; while SSA; DCE jump-args + multi-path `_0`; C mem emit |
-| **Checklist §13.4 (Vec)** | **[x]** root fixed · **[x]** gold · **[x]** CI gold · **[x]** IN optional inventory · **[x]** no experimental banner on vec · **[x]** not in default template · **[x]** decision log |
-| **Checklist (GenArena thin)** | **[x]** pure-buffer free-func · **[x]** recycle + gen bump · **[x]** gold m16 · **[x]** not in default template · **[x]** fail-closed get |
-| **Residual** | Method-style `v.push` / method GenArena; custom allocators; compiler `ar_gen_*` i64 remains for AMIR escape promote |
-| **Track ID** | `PROMOTE-L6` **[x] closed**; `PROMOTE-L6.1` **[x]**; GenArena thin **[x]** |
+| **Checklist §13.4 (Vec)** | **[x]** root fixed · **[x]** gold · **[x]** CI gold · **[x]** IN optional · **[x]** methods m18 · **[x]** not in default template |
+| **Checklist (GenArena thin)** | **[x]** pure-buffer · **[x]** recycle · **[x]** gold m16 · **[x]** POD GenRef |
+| **Checklist (allocator thin)** | **[x]** free-func · **[x]** gold m19 · **[x]** check-clean · **[x]** not default template |
+| **Residual** | `Result<T, CustomE>` ctor; interface `Allocator` dyn; bump power-of-two align; `ar_gen_*` AMIR promote |
+| **Track ID** | `PROMOTE-L6` **[x]**; methods **[x]**; allocator thin **[x]** |
 
 #### L7 — Language OUT by design or later phase
 

@@ -18,7 +18,7 @@ module std.alloc.vec
 /// `mark_local_materialized` (prune must keep the base bind).
 ///
 /// **Not** in default `arandu new` template (optional import).
-/// `allocator_api` stays experimental; GenArena thin is a sibling IN optional track.
+/// Sibling IN optional: `gen_arena`, `allocator_api`, method-style `v.push` (same module).
 
 import std.core.mem as mem
 
@@ -167,4 +167,58 @@ public func destroy<T>(mut v: Vec<T>): void {
         v.capacity = 0 as u64
         v.len = 0 as u64
     }
+}
+
+// ── Method-style surface (receiver mono; same bodies as free-funcs) ─────────
+// Restated type params on methods (`Vec.push<T>`) share SymbolIds with the
+// struct; monomorphize peels `Vec<int>` receiver → specialize without `.push<int>`.
+
+/// Method form of [`push`].
+public func Vec.push<T>(mut self, value: T): void {
+    push(self, value)
+}
+
+/// Method form of [`pop`].
+public func Vec.pop<T>(mut self): Option<T> {
+    return pop(self)
+}
+
+/// Method form of [`get`].
+public func Vec.get<T>(shared self, index: u64): Option<T> {
+    return get(self, index)
+}
+
+/// Method form of [`put`].
+public func Vec.put<T>(mut self, index: u64, value: T): bool {
+    return put(self, index, value)
+}
+
+/// Method form of [`len`].
+public func Vec.len<T>(shared self): u64 {
+    return len(self)
+}
+
+/// Method form of [`capacity`].
+public func Vec.capacity<T>(shared self): u64 {
+    return capacity(self)
+}
+
+/// Method form of [`is_empty`].
+public func Vec.is_empty<T>(shared self): bool {
+    return is_empty(self)
+}
+
+/// Method form of [`reserve`].
+public func Vec.reserve<T>(mut self, additional: u64): void {
+    reserve(self, additional)
+}
+
+/// Method form of [`clear`].
+public func Vec.clear<T>(mut self): void {
+    clear(self)
+}
+
+/// Method form of [`destroy`].
+public func Vec.destroy<T>(mut self): void {
+    destroy(self)
 }

@@ -128,6 +128,11 @@ impl<'a> CEmitter<'a> {
                     | "ar_vec_malloc"
                     | "ar_vec_buf_free"
                     | "ar_vec_realloc"
+                    | "ar_str_len"
+                    | "ar_str_concat"
+                    | "ar_str_starts_with"
+                    | "ar_str_ends_with"
+                    | "ar_str_split_last"
             ) {
                 continue;
             }
@@ -330,6 +335,52 @@ static ArStr ar_path_file_name(ArStr p) {{
     uint8_t *buf = (uint8_t*)malloc((size_t)n + 1);
     if (!buf) abort();
     memcpy(buf, p.ptr + i, (size_t)n);
+    buf[n] = 0;
+    return ar_str_pack(buf, n);
+}}
+/* std.core.str thin hosts */
+static int64_t ar_str_len(ArStr s) {{
+    return (int64_t)(s.len < 0 ? 0 : s.len);
+}}
+static ArStr ar_str_concat(ArStr a, ArStr b) {{
+    {len_c_ty} al = a.len < 0 ? 0 : a.len;
+    {len_c_ty} bl = b.len < 0 ? 0 : b.len;
+    {len_c_ty} total = al + bl;
+    uint8_t *buf = (uint8_t*)malloc((size_t)total + 1);
+    if (!buf) abort();
+    if (al > 0 && a.ptr) memcpy(buf, a.ptr, (size_t)al);
+    if (bl > 0 && b.ptr) memcpy(buf + al, b.ptr, (size_t)bl);
+    buf[total] = 0;
+    return ar_str_pack(buf, total);
+}}
+static int64_t ar_str_starts_with(ArStr s, ArStr p) {{
+    if (p.len <= 0) return 1;
+    if (s.len < p.len || !s.ptr || !p.ptr) return 0;
+    return memcmp(s.ptr, p.ptr, (size_t)p.len) == 0 ? 1 : 0;
+}}
+static int64_t ar_str_ends_with(ArStr s, ArStr p) {{
+    if (p.len <= 0) return 1;
+    if (s.len < p.len || !s.ptr || !p.ptr) return 0;
+    return memcmp(s.ptr + (s.len - p.len), p.ptr, (size_t)p.len) == 0 ? 1 : 0;
+}}
+static ArStr ar_str_split_last(ArStr s, ArStr sep) {{
+    if (s.len <= 0 || !s.ptr) return ar_str_pack((const uint8_t*)"", 0);
+    if (sep.len <= 0 || !sep.ptr) {{
+        uint8_t *buf = (uint8_t*)malloc((size_t)s.len + 1);
+        if (!buf) abort();
+        memcpy(buf, s.ptr, (size_t)s.len);
+        buf[s.len] = 0;
+        return ar_str_pack(buf, s.len);
+    }}
+    {len_c_ty} last = -1;
+    for ({len_c_ty} i = 0; i + sep.len <= s.len; i++) {{
+        if (memcmp(s.ptr + i, sep.ptr, (size_t)sep.len) == 0) last = i;
+    }}
+    {len_c_ty} start = last < 0 ? 0 : last + sep.len;
+    {len_c_ty} n = s.len - start;
+    uint8_t *buf = (uint8_t*)malloc((size_t)n + 1);
+    if (!buf) abort();
+    if (n > 0) memcpy(buf, s.ptr + start, (size_t)n);
     buf[n] = 0;
     return ar_str_pack(buf, n);
 }}"#

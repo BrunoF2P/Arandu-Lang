@@ -204,6 +204,98 @@ pub unsafe extern "C" fn ar_path_file_name(ptr: *const u8, len: i64) -> ArFatStr
     }
 }
 
+fn slice_from_fat(ptr: *const u8, len: i64) -> &'static [u8] {
+    if len <= 0 || ptr.is_null() {
+        return b"";
+    }
+    unsafe { std::slice::from_raw_parts(ptr, len as usize) }
+}
+
+/// Fat-str length (bytes).
+///
+/// # Safety
+/// Fat string ABI.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ar_str_len(_ptr: *const u8, len: i64) -> i64 {
+    len.max(0)
+}
+
+/// Concatenate two fat strings (malloc-style process-lifetime buffer).
+///
+/// # Safety
+/// Fat string ABI for both inputs.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ar_str_concat(
+    a_ptr: *const u8,
+    a_len: i64,
+    b_ptr: *const u8,
+    b_len: i64,
+) -> ArFatStr {
+    let a = slice_from_fat(a_ptr, a_len);
+    let b = slice_from_fat(b_ptr, b_len);
+    let mut out = Vec::with_capacity(a.len() + b.len());
+    out.extend_from_slice(a);
+    out.extend_from_slice(b);
+    let len = out.len() as i64;
+    let ptr = Box::into_raw(out.into_boxed_slice()) as *mut u8;
+    ArFatStr { ptr, len }
+}
+
+/// Prefix check (byte-wise).
+///
+/// # Safety
+/// Fat string ABI.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ar_str_starts_with(
+    s_ptr: *const u8,
+    s_len: i64,
+    p_ptr: *const u8,
+    p_len: i64,
+) -> i64 {
+    let s = slice_from_fat(s_ptr, s_len);
+    let p = slice_from_fat(p_ptr, p_len);
+    i64::from(s.starts_with(p))
+}
+
+/// Suffix check (byte-wise).
+///
+/// # Safety
+/// Fat string ABI.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ar_str_ends_with(
+    s_ptr: *const u8,
+    s_len: i64,
+    p_ptr: *const u8,
+    p_len: i64,
+) -> i64 {
+    let s = slice_from_fat(s_ptr, s_len);
+    let p = slice_from_fat(p_ptr, p_len);
+    i64::from(s.ends_with(p))
+}
+
+/// Bytes after the last occurrence of `sep` (byte-wise). Empty sep → full `s`.
+///
+/// # Safety
+/// Fat string ABI.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ar_str_split_last(
+    s_ptr: *const u8,
+    s_len: i64,
+    sep_ptr: *const u8,
+    sep_len: i64,
+) -> ArFatStr {
+    let s = slice_from_fat(s_ptr, s_len);
+    let sep = slice_from_fat(sep_ptr, sep_len);
+    if sep.is_empty() {
+        return fat_str_from_string(String::from_utf8_lossy(s).into_owned());
+    }
+    if let Some(pos) = s.windows(sep.len()).rposition(|w| w == sep) {
+        let after = &s[pos + sep.len()..];
+        return fat_str_from_string(String::from_utf8_lossy(after).into_owned());
+    }
+    fat_str_from_string(String::from_utf8_lossy(s).into_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,6 +342,22 @@ mod tests {
             let leaf = ar_path_file_name(b"leaf".as_ptr(), 4);
             let sl = std::slice::from_raw_parts(leaf.ptr, leaf.len as usize);
             assert_eq!(sl, b"leaf");
+        }
+    }
+
+    #[test]
+    fn str_concat_prefix_suffix_split() {
+        unsafe {
+            assert_eq!(ar_str_len(b"hi".as_ptr(), 2), 2);
+            let c = ar_str_concat(b"ab".as_ptr(), 2, b"cd".as_ptr(), 2);
+            let cs = std::slice::from_raw_parts(c.ptr, c.len as usize);
+            assert_eq!(cs, b"abcd");
+            assert_eq!(ar_str_starts_with(b"hello".as_ptr(), 5, b"he".as_ptr(), 2), 1);
+            assert_eq!(ar_str_starts_with(b"hello".as_ptr(), 5, b"x".as_ptr(), 1), 0);
+            assert_eq!(ar_str_ends_with(b"hello".as_ptr(), 5, b"lo".as_ptr(), 2), 1);
+            let tail = ar_str_split_last(b"a/b/c".as_ptr(), 5, b"/".as_ptr(), 1);
+            let ts = std::slice::from_raw_parts(tail.ptr, tail.len as usize);
+            assert_eq!(ts, b"c");
         }
     }
 }

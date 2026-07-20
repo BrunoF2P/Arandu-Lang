@@ -35,6 +35,9 @@ arandu_cli run   <file>   # exit code documented in CLI tests
 | `m15_vec_capacity.aru` | 21 | vec with_capacity / reserve / clear |
 | `m16_gen_arena.aru` | 83 | std.alloc.gen_arena thin (insert/get/remove) |
 | `m17_pod_copy.aru` | 60 | POD auto-copy named structs |
+| `m18_vec_methods.aru` | 78 | Vec method-style push/get (receiver mono) |
+| `m19_allocator.aru` | 112 | allocator_api thin global+bump |
+| `m20_str.aru` | 0 | std.core.str concat/split_last |
 
 ## Default template (installer)
 

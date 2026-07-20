@@ -290,13 +290,19 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &P
                             struct_params_for_mono = Some(struct_params);
                         }
                     }
-                    // Mono key params = struct type params (if method) ++ method type params.
-                    // Enables specializing `Box.get` when only the receiver carries `T`.
+                    // Mono key params = struct type params (if method) ++ method-only
+                    // type params. Methods restate receiver params (`BoxG.get<T>`) with
+                    // the **same** SymbolIds as the struct — must not double-count or
+                    // receiver-driven mono sees params=[T,T] vs recv_args=[int] and skips.
                     let mut all_params = Vec::new();
                     if let Some(sp) = struct_params_for_mono {
                         all_params.extend(sp.iter().copied());
                     }
-                    all_params.extend(method_params);
+                    for p in method_params {
+                        if !all_params.contains(&p) {
+                            all_params.push(p);
+                        }
+                    }
                     if !all_params.is_empty() {
                         checker
                             .type_info

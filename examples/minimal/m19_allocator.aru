@@ -1,0 +1,21 @@
+module examples.minimal.m19_allocator
+
+// Minimal 0.1 — allocator_api thin (global + bump free-func; OOM aborts).
+// Alias cannot be `alloc` (reserved builtin).
+import std.alloc.allocator_api as aapi
+
+func main(): int {
+    let p = aapi.global_alloc(16 as u64)
+    let q = aapi.global_realloc(p, 16 as u64, 32 as u64)
+    aapi.global_dealloc(q, 32 as u64)
+
+    let mut arena = aapi.bump_new(64 as u64)
+    let _a = aapi.bump_alloc(arena, 8 as u64, 8 as u64)
+    let _b = aapi.bump_alloc(arena, 8 as u64, 8 as u64)
+    let rem = aapi.bump_remaining(arena) as int
+    aapi.bump_reset(arena)
+    let rem2 = aapi.bump_remaining(arena) as int
+    aapi.bump_destroy(arena)
+    // 48 + 64 = 112
+    return rem + rem2
+}

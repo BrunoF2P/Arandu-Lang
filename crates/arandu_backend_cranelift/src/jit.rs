@@ -168,6 +168,23 @@ impl AranduJit {
             "ar_path_file_name",
             crate::rt_runtime::ar_path_file_name as *const u8,
         );
+        builder.symbol("ar_str_len", crate::rt_runtime::ar_str_len as *const u8);
+        builder.symbol(
+            "ar_str_concat",
+            crate::rt_runtime::ar_str_concat as *const u8,
+        );
+        builder.symbol(
+            "ar_str_starts_with",
+            crate::rt_runtime::ar_str_starts_with as *const u8,
+        );
+        builder.symbol(
+            "ar_str_ends_with",
+            crate::rt_runtime::ar_str_ends_with as *const u8,
+        );
+        builder.symbol(
+            "ar_str_split_last",
+            crate::rt_runtime::ar_str_split_last as *const u8,
+        );
         // Minimal 0.1 optional OS surface (process / time / env)
         builder.symbol(
             "ar_process_exit",
@@ -586,6 +603,57 @@ impl AranduJit {
                     codegen_ice(format!("failed to declare ar_path_file_name: {err:?}"))
                 })?;
             func_ids.insert("ar_path_file_name".to_string(), id);
+
+            // std.core.str thin hosts
+            let mut len_sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+            len_sig
+                .params
+                .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+            len_sig.params.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
+            len_sig.returns.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
+            let id = self
+                .module
+                .declare_function("ar_str_len", Linkage::Import, &len_sig)
+                .map_err(|err| codegen_ice(format!("failed to declare ar_str_len: {err:?}")))?;
+            func_ids.insert("ar_str_len".to_string(), id);
+
+            // concat / starts / ends / split_last reuse join_sig or file_sig shapes
+            let id = self
+                .module
+                .declare_function("ar_str_concat", Linkage::Import, &join_sig)
+                .map_err(|err| codegen_ice(format!("failed to declare ar_str_concat: {err:?}")))?;
+            func_ids.insert("ar_str_concat".to_string(), id);
+
+            let mut pref_sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+            for _ in 0..2 {
+                pref_sig
+                    .params
+                    .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+                pref_sig.params.push(cranelift_codegen::ir::AbiParam::new(
+                    cranelift_codegen::ir::types::I64,
+                ));
+            }
+            pref_sig.returns.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
+            for name in ["ar_str_starts_with", "ar_str_ends_with"] {
+                let id = self
+                    .module
+                    .declare_function(name, Linkage::Import, &pref_sig)
+                    .map_err(|err| codegen_ice(format!("failed to declare {name}: {err:?}")))?;
+                func_ids.insert(name.to_string(), id);
+            }
+            let id = self
+                .module
+                .declare_function("ar_str_split_last", Linkage::Import, &join_sig)
+                .map_err(|err| {
+                    codegen_ice(format!("failed to declare ar_str_split_last: {err:?}"))
+                })?;
+            func_ids.insert("ar_str_split_last".to_string(), id);
         }
 
         // Minimal OS: exit(void), monotonic_ns/args_len (i64 -> / <-)
