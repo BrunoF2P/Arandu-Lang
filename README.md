@@ -9,7 +9,7 @@ Arandu is an experimental Brazilian systems programming language focused on memo
 
 **Solidification gate (S5) closed** — foundation (DoD AMIR `TypeId`, spans, `DataLayout`, host C↔Cranelift parity, unified imports) is stable enough to resume language-level Fase 3 work. Details: [docs/arandu-solidification-matrix-v0.1.md](docs/arandu-solidification-matrix-v0.1.md).
 
-**Product freeze:** [Arandu Minimal 0.1](docs/arandu-minimal-0.1-freeze.md) — language surface green; **project CLI gold** (`new` / `check` / `run` / `build` / `doctor`, stdlib via `current_exe`) in [docs/arandu-project-cli-gold-v0.1.md](docs/arandu-project-cli-gold-v0.1.md). Packaging tarball + site still next.
+**Product freeze:** [Arandu Minimal 0.1](docs/arandu-minimal-0.1-freeze.md) — language surface green; **project CLI gold** (`new` / `check` / `run` / `build` / `doctor`, stdlib via `current_exe`) in [docs/arandu-project-cli-gold-v0.1.md](docs/arandu-project-cli-gold-v0.1.md). Install tarballs ship from **GitHub Releases** on `v*` tags (see below).
 
 Implemented:
 
@@ -68,6 +68,32 @@ Arandu has strong idiomatic casing rules, largely driven by the parser which can
 - **Constants**: `SCREAMING_SNAKE_CASE` or `camelCase` (e.g. `MAX_RETRIES`, `maxRetries`).
 
 *Note: `snake_case` is allowed for values but `camelCase` is the officially recommended and preferred style for all Arandu code.*
+
+## Install (release tarball)
+
+Tagged releases (`vX.Y.Z`, matching `crates/arandu_cli` version) build host packages and attach them to the [GitHub Release](https://github.com/BrunoF2P/Arandu-Lang/releases):
+
+| Asset | Host |
+|-------|------|
+| `arandu-*-x86_64-unknown-linux-gnu.tar.gz` | Linux x86_64 |
+| `arandu-*-aarch64-apple-darwin.tar.gz` | macOS Apple Silicon |
+| `arandu-*-x86_64-apple-darwin.tar.gz` | macOS Intel |
+
+Each archive has a `.blake3` sidecar. Install from a checkout (or copy `scripts/install-from-tarball.sh`):
+
+```bash
+# example: Linux x86_64, version 0.0.1
+gh release download v0.0.1 -p 'arandu-*-x86_64-unknown-linux-gnu.tar.gz*'
+bash scripts/install-from-tarball.sh ./arandu-0.0.1-x86_64-unknown-linux-gnu.tar.gz
+# puts toolchain under ~/.local/arandu and symlinks in ~/.local/arandu/bin
+```
+
+From the monorepo without a Release:
+
+```bash
+./scripts/install-local.sh          # build + versioned prefix install
+./scripts/package-release.sh        # dist/arandu-$VERSION-$TARGET.tar.gz + BLAKE3
+```
 
 ## Requirements
 

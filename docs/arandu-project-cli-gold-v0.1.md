@@ -155,7 +155,8 @@ Reuses real init points: `current_exe`, stdlib cascade, manifest parse (BUG-09),
 | Package-local multi-module (`import my_app.util`) | `PROMOTE-L2` |
 | Disk-persistent Salsa cache across processes | future CACHE/DET |
 | LLVM release backend body | roadmap dual-backend |
-| Install script / GitHub release tarball | P2.5 |
+| Install script / local tarball + BLAKE3 | **done** (P2.5 scripts + `install-smoke` CI) |
+| GitHub Release on `v*` tags | **done** (`.github/workflows/release.yml`) |
 | Marketing site | after packaging |
 
 ---

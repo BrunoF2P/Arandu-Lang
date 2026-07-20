@@ -1,0 +1,151 @@
+# Publish installable tarballs to a GitHub Release when a version tag is pushed.
+#
+# Tag convention: vX.Y.Z must match crates/arandu_cli Cargo.toml version.
+# Example:
+#   git tag v0.0.1 && git push origin v0.0.1
+#
+# Artifacts (per host target):
+#   arandu-$VERSION-$TARGET.tar.gz
+#   arandu-$VERSION-$TARGET.tar.gz.blake3
+#   arandu-$VERSION-$TARGET.tar.gz.blake3sum
+#
+# Install (example, Linux x86_64):
+#   gh release download v0.0.1 -p 'arandu-*-x86_64-unknown-linux-gnu.tar.gz*'
+#   bash scripts/install-from-tarball.sh ./arandu-0.0.1-x86_64-unknown-linux-gnu.tar.gz
+#
+# Manual package-only dry run: Actions → Release → Run workflow (dry_run=true).
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      note:
+        description: "Optional note (workflow_dispatch only packages; no GitHub Release)"
+        required: false
+        default: "dry-run package matrix"
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: Package (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          # Intel macOS for older Macs
+          - os: macos-13
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Resolve VERSION (tag ↔ Cargo.toml)
+        shell: bash
+        run: |
+          set -euo pipefail
+          CARGO_V="$(
+            sed -n 's/^version = "\([^"]*\)"/\1/p' crates/arandu_cli/Cargo.toml | head -1
+          )"
+          if [[ -z "$CARGO_V" ]]; then
+            echo "error: could not read version from crates/arandu_cli/Cargo.toml" >&2
+            exit 1
+          fi
+
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+            TAG="${GITHUB_REF_NAME}"
+            VERSION="${TAG#v}"
+            if [[ "$VERSION" != "$CARGO_V" ]]; then
+              echo "error: tag '${TAG}' implies VERSION=${VERSION}, but Cargo.toml has ${CARGO_V}" >&2
+              echo "  bump crates to ${VERSION} (or retag to v${CARGO_V}) before releasing" >&2
+              exit 1
+            fi
+          else
+            # workflow_dispatch: package crate version only (no Release upload)
+            VERSION="$CARGO_V"
+          fi
+
+          # package-release builds for the host; archive name must match the host triple.
+          HOST="$(rustc -vV | sed -n 's/^host: //p')"
+          if [[ "$HOST" != "${{ matrix.target }}" ]]; then
+            echo "error: runner host is '${HOST}', matrix.target is '${{ matrix.target }}'" >&2
+            echo "  no cross-compile yet — fix matrix OS/target pairing" >&2
+            exit 1
+          fi
+
+          {
+            echo "VERSION=${VERSION}"
+            echo "TARGET=${{ matrix.target }}"
+          } >>"$GITHUB_ENV"
+          echo "packaging arandu-${VERSION}-${{ matrix.target }}"
+
+      - name: package-release
+        shell: bash
+        run: bash scripts/package-release.sh
+        env:
+          VERSION: ${{ env.VERSION }}
+          TARGET: ${{ env.TARGET }}
+
+      - name: List dist/
+        run: ls -la dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arandu-${{ env.VERSION }}-${{ matrix.target }}
+          path: |
+            dist/arandu-${{ env.VERSION }}-${{ matrix.target }}.tar.gz
+            dist/arandu-${{ env.VERSION }}-${{ matrix.target }}.tar.gz.blake3
+            dist/arandu-${{ env.VERSION }}-${{ matrix.target }}.tar.gz.blake3sum
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: package
+    runs-on: ubuntu-latest
+    # Only real version tags create a Release (not workflow_dispatch dry packages).
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download all tarballs
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          pattern: arandu-*
+          merge-multiple: true
+
+      - name: Show assets
+        run: find release-assets -type f | sort
+
+      - name: Create / update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # Defaults to the pushed tag (GITHUB_REF).
+          name: Arandu ${{ github.ref_name }}
+          draft: false
+          # Honest pre-0.1: mark v0.0.* and any -rc/-beta as prerelease.
+          prerelease: ${{ startsWith(github.ref_name, 'v0.0.') || contains(github.ref_name, '-') }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            release-assets/*.tar.gz
+            release-assets/*.blake3
+            release-assets/*.blake3sum
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
