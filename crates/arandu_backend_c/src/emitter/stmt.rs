@@ -1,9 +1,86 @@
 use super::CEmitter;
-use arandu_middle::amir::{AmirFunc, AmirOperand, AmirStmt, AmirTerminator};
+use arandu_middle::amir::{AmirFunc, AmirOperand, AmirStmt, AmirTerminator, TempId};
 use arandu_middle::types::ArType;
 use std::fmt::Write;
 
 impl<'a> CEmitter<'a> {
+    /// Emit `std.core.mem` intrinsics as C loads/stores/pointer arithmetic.
+    ///
+    /// Parity with Cranelift JIT: `sizeOf` is normally folded in AMIR lower;
+    /// residual calls and `ptrOffset` / `ptrRead` / `ptrWrite` must not become
+    /// unresolved external symbols in emit-c.
+    fn try_emit_mem_intrinsic(
+        &mut self,
+        lhs: &Option<TempId>,
+        callee: &AmirOperand,
+        args: &[AmirOperand],
+        func: &AmirFunc,
+    ) -> bool {
+        let name = match callee {
+            AmirOperand::FunctionRef(id) | AmirOperand::GlobalRef(id) => {
+                self.symbols.get(*id).name.as_str()
+            }
+            _ => return false,
+        };
+        let bare = name.rsplit(['.', '$']).next().unwrap_or(name);
+        let is_read = bare == "ptrRead" || bare == "ptr_read" || name.contains("ptrRead");
+        let is_write = bare == "ptrWrite" || bare == "ptr_write" || name.contains("ptrWrite");
+        let is_offset = bare == "ptrOffset" || bare == "ptr_offset" || name.contains("ptrOffset");
+        let is_size = bare == "sizeOf" || bare == "size_of" || name.contains("sizeOf");
+        let is_align = bare == "alignOf" || bare == "align_of" || name.contains("alignOf");
+
+        if is_read {
+            if args.is_empty() {
+                return true;
+            }
+            let p = self.format_operand(&args[0], func);
+            if let Some(dest) = lhs {
+                let _ = writeln!(&mut self.output, "    t{} = *({});", dest.as_usize(), p);
+            }
+            return true;
+        }
+        if is_write {
+            if args.len() < 2 {
+                return true;
+            }
+            let p = self.format_operand(&args[0], func);
+            let v = self.format_operand(&args[1], func);
+            let _ = writeln!(&mut self.output, "    *({}) = {};", p, v);
+            return true;
+        }
+        if is_offset {
+            if args.len() < 2 {
+                return true;
+            }
+            let p = self.format_operand(&args[0], func);
+            let i = self.format_operand(&args[1], func);
+            // C pointer arithmetic scales by pointee size when `p` is a typed pointer.
+            if let Some(dest) = lhs {
+                let _ = writeln!(
+                    &mut self.output,
+                    "    t{} = ({}) + ({});",
+                    dest.as_usize(),
+                    p,
+                    i
+                );
+            }
+            return true;
+        }
+        if is_size || is_align {
+            // Residual only — prefer AMIR fold. Host pointer width for `int`.
+            let n = if is_size {
+                self.layout.pointer_width()
+            } else {
+                self.layout.pointer_width().min(8)
+            };
+            if let Some(dest) = lhs {
+                let _ = writeln!(&mut self.output, "    t{} = {}ULL;", dest.as_usize(), n);
+            }
+            return true;
+        }
+        false
+    }
+
     pub(super) fn emit_stmt(&mut self, stmt: &AmirStmt, func: &AmirFunc) {
         match stmt {
             AmirStmt::Assign { lhs, rhs } => {
@@ -54,6 +131,9 @@ impl<'a> CEmitter<'a> {
                 let _ = writeln!(&mut self.output, "    {} = {};", lhs_str, rhs_str);
             }
             AmirStmt::Call { lhs, callee, args } => {
+                if self.try_emit_mem_intrinsic(lhs, callee, args, func) {
+                    return;
+                }
                 let callee_str = self.format_operand(callee, func);
                 let args_str: Vec<_> = args.iter().map(|a| self.format_operand(a, func)).collect();
                 if let Some(dest) = lhs {

@@ -7,8 +7,8 @@ module std.alloc.vec
 /// (`ar_vec_malloc` / `ar_vec_realloc` / `ar_vec_buf_free`) and typed via
 /// mem intrinsics (`sizeOf` / `ptrOffset` / `ptrRead` / `ptrWrite`).
 ///
-/// Free-function API on `Vec<int>` (cross-module free-func generic mono is
-/// still residual). `Vec<T>` / `new<T>()` serve the type system.
+/// Free-function API is **generic** (`push<T>`, …). Nested free-func mono
+/// (e.g. `push` → `ensure_capacity`) uses worklist specialization.
 ///
 /// Mut-ref field stores through free-func params require AMIR to keep the
 /// base pointer binding (`mark_local_materialized` / prune fix).
@@ -40,8 +40,8 @@ public func new<T>(): Vec<T> {
     }
 }
 
-/// Geometric growth for `Vec<int>` (min capacity 8, factor 2).
-func ensure_capacity_int(mut v: Vec<int>, minCap: u64): void {
+/// Geometric growth (min capacity 8, factor 2) until `capacity >= minCap`.
+func ensure_capacity<T>(mut v: Vec<T>, minCap: u64): void {
     if v.capacity >= minCap {
         return
     }
@@ -52,7 +52,7 @@ func ensure_capacity_int(mut v: Vec<int>, minCap: u64): void {
     while newCap < minCap {
         newCap = newCap * 2
     }
-    let elem = mem.sizeOf<int>()
+    let elem = mem.sizeOf<T>()
     let oldBytes = v.capacity * elem
     let newBytes = newCap * elem
     unsafe {
@@ -61,75 +61,75 @@ func ensure_capacity_int(mut v: Vec<int>, minCap: u64): void {
         if p == nullp {
             abort()
         }
-        v.data = p as ptr[int]
+        v.data = p as ptr[T]
         v.capacity = newCap
     }
 }
 
 /// Append `value` (amortized O(1)).
-public func push(mut v: Vec<int>, value: int): void {
+public func push<T>(mut v: Vec<T>, value: T): void {
     let need = v.len + 1
     if v.capacity < need {
-        ensure_capacity_int(v, need)
+        ensure_capacity<T>(v, need)
     }
     unsafe {
-        let dest = mem.ptrOffset<int>(v.data, v.len as i32)
-        mem.ptrWrite<int>(dest, value)
+        let dest = mem.ptrOffset<T>(v.data, v.len as i32)
+        mem.ptrWrite<T>(dest, value)
     }
     v.len = v.len + 1
 }
 
 /// Remove last element, or `None` if empty.
-public func pop(mut v: Vec<int>): Option<int> {
+public func pop<T>(mut v: Vec<T>): Option<T> {
     if v.len == 0 {
         return Option.None
     }
     v.len = v.len - 1
     unsafe {
-        let elemPtr = mem.ptrOffset<int>(v.data, v.len as i32)
-        return Option.Some(mem.ptrRead<int>(elemPtr))
+        let elemPtr = mem.ptrOffset<T>(v.data, v.len as i32)
+        return Option.Some(mem.ptrRead<T>(elemPtr))
     }
 }
 
 /// Element at `index`, or `None` if out of range.
-public func get(shared v: Vec<int>, index: u64): Option<int> {
+public func get<T>(shared v: Vec<T>, index: u64): Option<T> {
     if index >= v.len {
         return Option.None
     }
     unsafe {
-        let elemPtr = mem.ptrOffset<int>(v.data, index as i32)
-        return Option.Some(mem.ptrRead<int>(elemPtr))
+        let elemPtr = mem.ptrOffset<T>(v.data, index as i32)
+        return Option.Some(mem.ptrRead<T>(elemPtr))
     }
 }
 
 /// Overwrite index; `false` if out of range.
-public func put(mut v: Vec<int>, index: u64, value: int): bool {
+public func put<T>(mut v: Vec<T>, index: u64, value: T): bool {
     if index >= v.len {
         return false
     }
     unsafe {
-        let elemPtr = mem.ptrOffset<int>(v.data, index as i32)
-        mem.ptrWrite<int>(elemPtr, value)
+        let elemPtr = mem.ptrOffset<T>(v.data, index as i32)
+        mem.ptrWrite<T>(elemPtr, value)
     }
     return true
 }
 
 /// Number of elements.
-public func len(shared v: Vec<int>): u64 {
+public func len<T>(shared v: Vec<T>): u64 {
     return v.len
 }
 
 /// Drop length to zero (capacity retained).
-public func clear(mut v: Vec<int>): void {
+public func clear<T>(mut v: Vec<T>): void {
     v.len = 0 as u64
 }
 
 /// Deallocate the buffer.
 ///
 /// Named `destroy` (not `free`) to avoid the reserved builtin `free`.
-public func destroy(mut v: Vec<int>): void {
+public func destroy<T>(mut v: Vec<T>): void {
     if v.capacity > 0 {
-        let size = v.capacity * mem.sizeOf<int>()
+        let size = v.capacity * mem.sizeOf<T>()
         unsafe {
             ar_vec_buf_free(v.data as ptr[u8], size)
         }

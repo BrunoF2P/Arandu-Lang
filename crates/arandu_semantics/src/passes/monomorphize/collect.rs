@@ -579,13 +579,21 @@ fn collect_param_bindings(
                 }
             }
         }
+        // Auto-ref: bare `Vec<int>` matches formal `&Vec<T>` / `&mut Vec<T>`.
+        ArType::Ref(inner) | ArType::RefMut(inner) => {
+            let actual = interner.resolve(actual_id);
+            let act_inner = match actual {
+                ArType::Ref(i) | ArType::RefMut(i) | ArType::Ptr(i) => i,
+                _ => actual_id,
+            };
+            let fty = interner.resolve(*inner);
+            collect_param_bindings(interner, type_params, &fty, act_inner, bindings);
+        }
         ArType::Ptr(inner)
         | ArType::Nullable(inner)
         | ArType::Slice(inner)
         | ArType::Option(inner)
         | ArType::Array(_, inner)
-        | ArType::Ref(inner)
-        | ArType::RefMut(inner)
         | ArType::Coroutine(inner)
         | ArType::Poll(inner)
         | ArType::Range(inner) => {
@@ -596,8 +604,6 @@ fn collect_param_bindings(
                 | ArType::Slice(i)
                 | ArType::Option(i)
                 | ArType::Array(_, i)
-                | ArType::Ref(i)
-                | ArType::RefMut(i)
                 | ArType::Coroutine(i)
                 | ArType::Poll(i)
                 | ArType::Range(i) => Some(i),

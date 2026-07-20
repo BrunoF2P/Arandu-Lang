@@ -120,7 +120,7 @@ Coroutines are language. Multi-task needs **explicit** `SyncExecutor`. Payload h
 | `std.io` module | write/eprint scaffold (prelude io is separate) | OUT / experimental |
 | `std.process` | `exit` host-backed | **IN optional** thin |
 | `std.time` | `monotonic_ns` host-backed | **IN optional** thin |
-| `std.alloc.vec` | pure-buffer `Vec<int>` via mem intrinsics + raw alloc; free-func API | **IN optional** (L6+L6.1 **[x]**); not in default template |
+| `std.alloc.vec` | pure-buffer `Vec<T>` (generic free-func API) + raw alloc | **IN optional** (L6+L6.1 **[x]**); not in default template |
 | `std.alloc.allocator_api` | GlobalAllocator + Bump; residual body diags | experimental for install |
 | `std.alloc.gen_arena` | typed API + i64 host MVP | experimental (GenRef path OK for advanced) |
 
@@ -239,7 +239,7 @@ Create these files (names fixed for tracking):
 | `m10_path_empty.aru` | 0 | path thin IN (`is_empty` / `is_absolute` / stubs) |
 | `m11_process_exit.aru` | 17 | `std.process.exit` host (P1.1) |
 | `m12_time_env.aru` | 0 | `std.time` + `std.env` hosts (P1.1) |
-| `m13_vec.aru` | 78 | `std.alloc.vec` host-backed (PROMOTE-L6) |
+| `m13_vec.aru` | 78 | `std.alloc.vec` pure-buffer + free-func mono (PROMOTE-L6/L6.1) |
 | `m14_mem_intrinsics.aru` | 46 | mem sizeOf/ptrOffset/Read/Write (L6.1) |
 | `TEMPLATE_main.aru` | 0 | default installer template |
 
@@ -329,8 +329,8 @@ func main(): int {
 | 2026-07-20 | Workspace crate / installer / extension version set to **0.0.1** (honest pre-0.1; first installable profile will be 0.1.0) |
 | 2026-07-20 | DiagCode ↔ docs/errors via xtask (single source); CI jobs split; install-smoke matrix ubuntu+macos early |
 | 2026-07-20 | **P1 quality:** wire `process`/`time`/`env` hosts; `Path::is_absolute`; experimental banners; CI `minimal-gold` |
-| 2026-07-20 | **PROMOTE-L6:** host-backed `std.alloc.vec` (`ar_vec_*`), free-func API, gold m13 exit 78 |
-| 2026-07-20 | **L6.1:** mem intrinsics; fix mut-ref projected stores (prune kept base bind); pure-buffer Vec; gold m13/m14 |
+| 2026-07-20 | **PROMOTE-L6:** pure-buffer `std.alloc.vec` + free-func API, gold m13 exit 78 |
+| 2026-07-20 | **L6.1:** mem intrinsics; mut-ref stores; nested free-func mono worklist; generic `push<T>`; gold m13/m14 |
 
 ---
 
@@ -437,11 +437,11 @@ This is the same idea as **stable vs nightly** in other languages — here named
 
 | | |
 |--|--|
-| **Root fix** | Host-backed `ar_vec_*` (GenArena pattern); free-function API; `vec.aru` check-clean for multi-file HIR link |
-| **Policy** | **IN optional** — not in default `arandu new` template. GenArena / allocator_api Bump still experimental |
+| **Root fix** | Pure-buffer path (`ar_vec_malloc/realloc/buf_free` + mem intrinsics); free-function generic API; nested mono worklist |
+| **Policy** | **IN optional** — not in default `arandu new` template. GenArena / allocator_api Bump still experimental. Host handle API (`ar_vec_new/push/…`) is **test/legacy only** |
 | **Gold** | `m13_vec.aru` exit 78; `cli_vec_defaults` check+run+module clean |
-| **L6.1** | **[x]** mem intrinsics + pure-buffer `Vec` growth; mut-ref field store fix (`mark_local_materialized` on projected stores) |
-| **Residual** | free-func generic mono still residual (cross-module). While + mut-ref back-edge / DCE jump-args fixed (AMIR SSA + shared terminator visitor) |
+| **L6.1** | **[x]** mem intrinsics + pure-buffer growth; mut-ref materialize; while SSA; nested free-func mono; generic `push<T>` |
+| **Residual** | Method-style `v.push` mono still OUT of gold; GenArena typed self-host later |
 | **Track ID** | `PROMOTE-L6` **[x]**; `PROMOTE-L6.1` **[x]** |
 
 #### L7 — Language OUT by design or later phase

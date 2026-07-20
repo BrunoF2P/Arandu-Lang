@@ -68,13 +68,29 @@ pub(crate) fn bind_type_params(
                 }
             }
         }
+        // `&T` / `&mut T` formals: peel matching actual refs, or treat a bare
+        // actual as the referent (auto-ref at the call site — same as rustc
+        // type param inference for `fn f(v: &Vec<T>)` called with `Vec<int>`).
+        ArType::Ref(inner) | ArType::RefMut(inner) => {
+            let actual = interner.resolve(actual_id);
+            let act_inner = match actual {
+                ArType::Ref(i) | ArType::RefMut(i) | ArType::Ptr(i) => i,
+                // Bare value will be auto-ref'd; bind against the value type.
+                _ => actual_id,
+            };
+            bind_type_params(
+                checker,
+                type_params,
+                &interner.resolve(*inner),
+                act_inner,
+                bindings,
+            );
+        }
         ArType::Ptr(inner)
         | ArType::Nullable(inner)
         | ArType::Slice(inner)
         | ArType::Option(inner)
         | ArType::Array(_, inner)
-        | ArType::Ref(inner)
-        | ArType::RefMut(inner)
         | ArType::Coroutine(inner)
         | ArType::Poll(inner) => {
             let act_inner = match interner.resolve(actual_id) {
@@ -83,8 +99,6 @@ pub(crate) fn bind_type_params(
                 | ArType::Slice(i)
                 | ArType::Option(i)
                 | ArType::Array(_, i)
-                | ArType::Ref(i)
-                | ArType::RefMut(i)
                 | ArType::Coroutine(i)
                 | ArType::Poll(i) => Some(i),
                 _ => None,

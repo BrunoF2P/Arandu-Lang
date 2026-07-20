@@ -177,7 +177,21 @@ impl AranduJit {
             "ar_env_var_is_set",
             crate::os_runtime::ar_env_var_is_set as *const u8,
         );
-        // Minimal Vec (host-backed i64 elements — std.alloc.vec)
+        // std.alloc.vec:
+        // - Product path (pure-buffer): malloc / realloc / buf_free only.
+        // - Handle API (new/push/get/…): unit-test / legacy GenArena-style table.
+        builder.symbol(
+            "ar_vec_malloc",
+            crate::vec_runtime::ar_vec_malloc as *const u8,
+        );
+        builder.symbol(
+            "ar_vec_buf_free",
+            crate::vec_runtime::ar_vec_buf_free as *const u8,
+        );
+        builder.symbol(
+            "ar_vec_realloc",
+            crate::vec_runtime::ar_vec_realloc as *const u8,
+        );
         builder.symbol("ar_vec_new", crate::vec_runtime::ar_vec_new as *const u8);
         builder.symbol("ar_vec_push", crate::vec_runtime::ar_vec_push as *const u8);
         builder.symbol("ar_vec_len", crate::vec_runtime::ar_vec_len as *const u8);
@@ -192,18 +206,6 @@ impl AranduJit {
         builder.symbol(
             "ar_vec_destroy",
             crate::vec_runtime::ar_vec_destroy as *const u8,
-        );
-        builder.symbol(
-            "ar_vec_malloc",
-            crate::vec_runtime::ar_vec_malloc as *const u8,
-        );
-        builder.symbol(
-            "ar_vec_buf_free",
-            crate::vec_runtime::ar_vec_buf_free as *const u8,
-        );
-        builder.symbol(
-            "ar_vec_realloc",
-            crate::vec_runtime::ar_vec_realloc as *const u8,
         );
         // SL_R.2 reactor (epoll + timerfd)
         builder.symbol(

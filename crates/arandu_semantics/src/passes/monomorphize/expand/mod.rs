@@ -1,23 +1,33 @@
 //! HIR monomorphization expand — free-function and method specialization.
 //!
 //! Pipeline step after [`super::analyze_instantiations`]:
-//! 1. For each **concrete** instantiation key `(F, [T1, …])` of a generic
-//!    free function or method, clone the template body with type-parameter
-//!    substitution and a fresh mangled symbol.
-//! 2. Rewrite call sites:
+//! 1. **Worklist** of concrete keys `(F, [T1, …])` (from the analysis graph,
+//!    then nested callees discovered inside each specialization — same idea as
+//!    rustc's monomorphization collector: specialize → scan body → enqueue).
+//! 2. Clone each template body with type-parameter substitution and a mangled
+//!    symbol.
+//! 3. Rewrite call sites:
 //!    - `Call(Generic(Path(F), [T1,…]), args)` → `Call(Path(F_spec), args)`
 //!    - `Call(Generic(Field(recv, m), [T1,…]), args)` → same Path rewrite
 //!      (receiver is already the first arg from HIR method lowering)
-//! 3. Generic **templates** remain in the HIR for diagnostics/pretty-print but
+//! 4. Generic **templates** remain in the HIR for diagnostics/pretty-print but
 //!    are skipped by AMIR lowering (see `lower_to_amir`).
+//!
+//! Nested free-func calls (`push_t<int>` → `ensure_cap<int>`) are discovered
+//! only after the outer body is specialized (type args become concrete). A
+//! single-pass expand over the static graph misses those — hence the worklist.
 
 use arandu_diagnostics::{DiagCode, Diagnostic};
 use arandu_lexer::Span;
-use arandu_middle::hir::{HirDecl, HirFunc, HirParam, HirProgram};
+use arandu_middle::hir::{
+    HirBlockId, HirCatchHandler, HirCondition, HirDecl, HirExprId, HirExprKind, HirFunc,
+    HirLambdaBody, HirMatchArmBody, HirParam, HirProgram, HirStmtKind,
+};
 use arandu_middle::symbol_table::{SymbolId, SymbolKind};
 use arandu_middle::types::{ArType, TypeId, build_subst_ids, substitute_type_id};
 use arandu_typeck::TypeCheckResult;
 use rustc_hash::FxHashMap;
+use std::collections::VecDeque;
 
 use super::graph::{InstantiationGraph, InstantiationKey};
 
@@ -50,8 +60,8 @@ pub fn expand_specializations<'bump>(
         }
     }
 
-    // Concrete keys only (skip identity template nodes).
-    let concrete: Vec<InstantiationKey<'bump>> = graph
+    // Seed worklist from the analysis graph (concrete keys only).
+    let mut worklist: VecDeque<InstantiationKey<'bump>> = graph
         .iter()
         .map(|n| n.key)
         .filter(|key| {
@@ -60,23 +70,48 @@ pub fn expand_specializations<'bump>(
         })
         .collect();
 
-    if concrete.is_empty() {
-        // Still rewrite is a no-op; done.
+    if worklist.is_empty() {
         return Ok(0);
     }
 
     // key → specialized function symbol
     let mut specialized: FxHashMap<InstantiationKey<'bump>, SymbolId> = FxHashMap::default();
     let mut created = 0usize;
+    // Cap nested discovery (same order as graph recursion limit).
+    const MAX_SPECIALIZATIONS: usize = 4096;
 
-    for key in &concrete {
-        if specialized.contains_key(key) {
+    while let Some(key) = worklist.pop_front() {
+        if specialized.contains_key(&key) {
             continue;
         }
-        match specialize_free_func(tc, hir, key, &template_funcs) {
-            Ok(sym) => {
-                specialized.insert(*key, sym);
+        if !template_funcs.contains_key(&key.symbol)
+            || is_identity_instantiation(tc, key.symbol, key.type_args)
+        {
+            continue;
+        }
+        if created >= MAX_SPECIALIZATIONS {
+            diagnostics.push(Diagnostic::error(
+                DiagCode::G002GenericInstantiationLimit,
+                format!(
+                    "monomorphize: specialization limit ({MAX_SPECIALIZATIONS}) exceeded while expanding nested free-func calls"
+                ),
+                Span::new(0, 0, 0),
+            ));
+            break;
+        }
+
+        match specialize_free_func(tc, hir, &key, &template_funcs) {
+            Ok((sym, body_id)) => {
+                specialized.insert(key, sym);
                 created += 1;
+                // Nested callees only become concrete after this clone+subst.
+                discover_nested_keys(hir, body_id, tc, bump, &template_funcs, |nested| {
+                    if !specialized.contains_key(&nested)
+                        && !worklist.iter().any(|k| k == &nested)
+                    {
+                        worklist.push_back(nested);
+                    }
+                });
             }
             Err(d) => diagnostics.push(d),
         }
@@ -101,6 +136,285 @@ pub fn expand_specializations<'bump>(
     Ok(created)
 }
 
+/// Walk a specialized body and report concrete instantiation keys for nested
+/// free-func / method calls (Generic nodes or inferred mono).
+fn discover_nested_keys<'bump>(
+    hir: &HirProgram,
+    block_id: HirBlockId,
+    tc: &TypeCheckResult,
+    bump: &'bump bumpalo::Bump,
+    template_funcs: &FxHashMap<SymbolId, usize>,
+    mut enqueue: impl FnMut(InstantiationKey<'bump>),
+) {
+    fn visit_block<'bump>(
+        hir: &HirProgram,
+        block_id: HirBlockId,
+        tc: &TypeCheckResult,
+        bump: &'bump bumpalo::Bump,
+        template_funcs: &FxHashMap<SymbolId, usize>,
+        enqueue: &mut impl FnMut(InstantiationKey<'bump>),
+    ) {
+        let blk = hir.pool.block(block_id);
+        for &sid in hir.pool.stmt_list(blk.statements) {
+            visit_stmt(hir, sid, tc, bump, template_funcs, enqueue);
+        }
+    }
+
+    fn visit_stmt<'bump>(
+        hir: &HirProgram,
+        stmt_id: arandu_middle::hir::HirStmtId,
+        tc: &TypeCheckResult,
+        bump: &'bump bumpalo::Bump,
+        template_funcs: &FxHashMap<SymbolId, usize>,
+        enqueue: &mut impl FnMut(InstantiationKey<'bump>),
+    ) {
+        let kind = &hir.pool.stmt(stmt_id).kind;
+        match kind {
+            HirStmtKind::VarDecl { value, .. }
+            | HirStmtKind::Expr(value)
+            | HirStmtKind::Free(value)
+            | HirStmtKind::Set { value, .. } => {
+                visit_expr(hir, *value, tc, bump, template_funcs, enqueue);
+            }
+            HirStmtKind::Return { values } => {
+                for &e in hir.pool.expr_list(*values) {
+                    visit_expr(hir, e, tc, bump, template_funcs, enqueue);
+                }
+            }
+            HirStmtKind::If {
+                condition,
+                then_block,
+                else_block,
+            } => {
+                visit_condition(hir, condition, tc, bump, template_funcs, enqueue);
+                visit_block(hir, *then_block, tc, bump, template_funcs, enqueue);
+                if let Some(b) = else_block {
+                    visit_block(hir, *b, tc, bump, template_funcs, enqueue);
+                }
+            }
+            HirStmtKind::While { condition, body } => {
+                visit_condition(hir, condition, tc, bump, template_funcs, enqueue);
+                visit_block(hir, *body, tc, bump, template_funcs, enqueue);
+            }
+            HirStmtKind::For { body, .. } => {
+                visit_block(hir, *body, tc, bump, template_funcs, enqueue);
+            }
+            HirStmtKind::Match { value, arms } => {
+                visit_expr(hir, *value, tc, bump, template_funcs, enqueue);
+                for arm in hir.pool.match_arms_list(*arms) {
+                    if let Some(g) = arm.guard {
+                        visit_expr(hir, g, tc, bump, template_funcs, enqueue);
+                    }
+                    match &arm.body {
+                        HirMatchArmBody::Expr(e) => {
+                            visit_expr(hir, *e, tc, bump, template_funcs, enqueue)
+                        }
+                        HirMatchArmBody::Block(b) => {
+                            visit_block(hir, *b, tc, bump, template_funcs, enqueue)
+                        }
+                    }
+                }
+            }
+            HirStmtKind::Defer(b) | HirStmtKind::ErrDefer(b) | HirStmtKind::Unsafe(b) => {
+                visit_block(hir, *b, tc, bump, template_funcs, enqueue);
+            }
+            HirStmtKind::Break | HirStmtKind::Continue | HirStmtKind::Error => {}
+        }
+    }
+
+    fn visit_condition<'bump>(
+        hir: &HirProgram,
+        cond: &HirCondition,
+        tc: &TypeCheckResult,
+        bump: &'bump bumpalo::Bump,
+        template_funcs: &FxHashMap<SymbolId, usize>,
+        enqueue: &mut impl FnMut(InstantiationKey<'bump>),
+    ) {
+        match cond {
+            HirCondition::Expr(e) | HirCondition::Is { expr: e, .. } => {
+                visit_expr(hir, *e, tc, bump, template_funcs, enqueue);
+            }
+        }
+    }
+
+    fn maybe_enqueue<'bump>(
+        tc: &TypeCheckResult,
+        bump: &'bump bumpalo::Bump,
+        template_funcs: &FxHashMap<SymbolId, usize>,
+        symbol: SymbolId,
+        type_args: &[TypeId],
+        enqueue: &mut impl FnMut(InstantiationKey<'bump>),
+    ) {
+        if !template_funcs.contains_key(&symbol) {
+            return;
+        }
+        if is_identity_instantiation(tc, symbol, type_args) {
+            return;
+        }
+        // Require fully concrete args (no leftover type params as Named(param)).
+        if type_args.iter().any(|&tid| {
+            matches!(
+                tc.type_info.type_interner.resolve(tid),
+                ArType::Named(id, ref a)
+                    if a.is_empty() && tc.type_info.generic_params.values().any(|ps| ps.contains(&id))
+            )
+        }) {
+            return;
+        }
+        let type_args = bump.alloc_slice_copy(type_args);
+        enqueue(InstantiationKey { symbol, type_args });
+    }
+
+    fn visit_expr<'bump>(
+        hir: &HirProgram,
+        expr_id: HirExprId,
+        tc: &TypeCheckResult,
+        bump: &'bump bumpalo::Bump,
+        template_funcs: &FxHashMap<SymbolId, usize>,
+        enqueue: &mut impl FnMut(InstantiationKey<'bump>),
+    ) {
+        let expr = hir.pool.expr(expr_id);
+        match &expr.kind {
+            HirExprKind::Call {
+                callee,
+                args,
+                trailing_block,
+            } => {
+                visit_expr(hir, *callee, tc, bump, template_funcs, enqueue);
+                for &a in hir.pool.expr_list(*args) {
+                    visit_expr(hir, a, tc, bump, template_funcs, enqueue);
+                }
+                if let Some(b) = trailing_block {
+                    visit_block(hir, *b, tc, bump, template_funcs, enqueue);
+                }
+                // Explicit Generic type args on the callee.
+                if let HirExprKind::Generic {
+                    callee: inner,
+                    args: type_args,
+                } = &hir.pool.expr(*callee).kind
+                {
+                    let symbol = match &hir.pool.expr(*inner).kind {
+                        HirExprKind::Path { symbol } => Some(*symbol),
+                        HirExprKind::TypePath { member_symbol, .. } => Some(*member_symbol),
+                        _ => None,
+                    };
+                    if let Some(symbol) = symbol {
+                        maybe_enqueue(tc, bump, template_funcs, symbol, type_args, enqueue);
+                    }
+                } else if let Some((symbol, type_args_vec)) =
+                    super::collect::instantiation_key_for_call(
+                        hir,
+                        tc,
+                        *callee,
+                        *args,
+                        expr.ty,
+                        expr.span,
+                    )
+                {
+                    maybe_enqueue(tc, bump, template_funcs, symbol, &type_args_vec, enqueue);
+                }
+            }
+            HirExprKind::Generic { callee, args } => {
+                visit_expr(hir, *callee, tc, bump, template_funcs, enqueue);
+                if let Some(symbol) = match &hir.pool.expr(*callee).kind {
+                    HirExprKind::Path { symbol } => Some(*symbol),
+                    HirExprKind::TypePath { member_symbol, .. } => Some(*member_symbol),
+                    _ => None,
+                } {
+                    maybe_enqueue(tc, bump, template_funcs, symbol, args, enqueue);
+                }
+            }
+            HirExprKind::Field { base, .. }
+            | HirExprKind::SafeField { base, .. }
+            | HirExprKind::Alloc { expr: base }
+            | HirExprKind::Try { expr: base }
+            | HirExprKind::Cast { expr: base, .. }
+            | HirExprKind::Unary { expr: base, .. }
+            | HirExprKind::ToStr { value: base }
+            | HirExprKind::ResultCtor { value: base, .. } => {
+                visit_expr(hir, *base, tc, bump, template_funcs, enqueue);
+            }
+            HirExprKind::Index { base, index }
+            | HirExprKind::SafeIndex { base, index }
+            | HirExprKind::Binary {
+                left: base,
+                right: index,
+                ..
+            }
+            | HirExprKind::NullCoalesce {
+                left: base,
+                right: index,
+            } => {
+                visit_expr(hir, *base, tc, bump, template_funcs, enqueue);
+                visit_expr(hir, *index, tc, bump, template_funcs, enqueue);
+            }
+            HirExprKind::If {
+                condition,
+                then_block,
+                else_block,
+            } => {
+                visit_condition(hir, condition, tc, bump, template_funcs, enqueue);
+                visit_block(hir, *then_block, tc, bump, template_funcs, enqueue);
+                visit_block(hir, *else_block, tc, bump, template_funcs, enqueue);
+            }
+            HirExprKind::Match { value, arms } => {
+                visit_expr(hir, *value, tc, bump, template_funcs, enqueue);
+                for arm in hir.pool.match_arms_list(*arms) {
+                    if let Some(g) = arm.guard {
+                        visit_expr(hir, g, tc, bump, template_funcs, enqueue);
+                    }
+                    match &arm.body {
+                        HirMatchArmBody::Expr(e) => {
+                            visit_expr(hir, *e, tc, bump, template_funcs, enqueue)
+                        }
+                        HirMatchArmBody::Block(b) => {
+                            visit_block(hir, *b, tc, bump, template_funcs, enqueue)
+                        }
+                    }
+                }
+            }
+            HirExprKind::Catch { expr, handler } => {
+                visit_expr(hir, *expr, tc, bump, template_funcs, enqueue);
+                match handler {
+                    HirCatchHandler::Expr(e) => {
+                        visit_expr(hir, *e, tc, bump, template_funcs, enqueue)
+                    }
+                    HirCatchHandler::Block { block, .. } => {
+                        visit_block(hir, *block, tc, bump, template_funcs, enqueue)
+                    }
+                }
+            }
+            HirExprKind::Lambda { body, .. } => match body {
+                HirLambdaBody::Expr(e) => visit_expr(hir, *e, tc, bump, template_funcs, enqueue),
+                HirLambdaBody::Block(b) => visit_block(hir, *b, tc, bump, template_funcs, enqueue),
+            },
+            HirExprKind::AsyncBlock { block } | HirExprKind::UnsafeBlock { block } => {
+                visit_block(hir, *block, tc, bump, template_funcs, enqueue);
+            }
+            HirExprKind::StructLiteral { fields, .. } => {
+                for f in hir.pool.field_inits_list(*fields) {
+                    visit_expr(hir, f.value, tc, bump, template_funcs, enqueue);
+                }
+            }
+            HirExprKind::Array { items } => {
+                for &e in hir.pool.expr_list(*items) {
+                    visit_expr(hir, e, tc, bump, template_funcs, enqueue);
+                }
+            }
+            HirExprKind::StringInterp { parts } => {
+                for p in parts {
+                    if let arandu_middle::hir::HirStringPart::Expr(e) = p {
+                        visit_expr(hir, *e, tc, bump, template_funcs, enqueue);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    visit_block(hir, block_id, tc, bump, template_funcs, &mut enqueue);
+}
+
 fn is_identity_instantiation(tc: &TypeCheckResult, symbol: SymbolId, type_args: &[TypeId]) -> bool {
     let Some(params) = tc.type_info.generic_params.get(&symbol) else {
         return false;
@@ -122,7 +436,7 @@ fn specialize_free_func(
     hir: &mut HirProgram,
     key: &InstantiationKey<'_>,
     template_funcs: &FxHashMap<SymbolId, usize>,
-) -> Result<SymbolId, Diagnostic> {
+) -> Result<(SymbolId, HirBlockId), Diagnostic> {
     let &decl_idx = template_funcs.get(&key.symbol).ok_or_else(|| {
         Diagnostic::error(
             DiagCode::G001GenericInstantiationCycle,
@@ -241,7 +555,7 @@ fn specialize_free_func(
     };
     let decl_id = hir.pool.alloc_decl(HirDecl::Func(specialized));
     hir.decls.push(decl_id);
-    Ok(new_func_sym)
+    Ok((new_func_sym, new_body))
 }
 
 /// Clone a template [`HirFunc`] fields we need without cloning the whole pool.

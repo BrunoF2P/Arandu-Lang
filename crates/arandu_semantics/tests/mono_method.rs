@@ -198,6 +198,58 @@ func main(): int {
     assert!(n >= 1, "expected id specialization, got {n}");
 }
 
+/// Nested free-func mono: outer `push_t<int>` must specialize inner `ensure_cap<int>`.
+#[test]
+fn nested_free_func_mono_specializes_callee() {
+    let src = r#"
+struct V<T> {
+    n: int
+}
+
+func ensure_cap<T>(mut v: V<T>, min: int): void {
+    if v.n < min {
+        v.n = min
+    }
+}
+
+func push_t<T>(mut v: V<T>, _x: T): void {
+    ensure_cap<T>(v, 1)
+}
+
+func main(): int {
+    let mut v = V<int> { n: 0 }
+    push_t<int>(v, 10)
+    return v.n
+}
+"#;
+    let program = arandu_parser::parse(src).expect("parse");
+    let resolution = resolve_for_test(0, &program);
+    let mut tc = type_check(resolution, &program);
+    assert!(tc.diagnostics.is_empty(), "typeck: {:?}", tc.diagnostics);
+    let mut hir = lower_to_hir(&mut tc, &program).expect("hir");
+    let n = monomorphize_program(&mut tc, &mut hir).expect("mono");
+    assert!(
+        n >= 2,
+        "expected push_t + ensure_cap specializations, got {n}"
+    );
+    let amir = arandu_semantics::lower_to_amir(&tc, &hir).expect("amir");
+    let names: Vec<_> = amir
+        .funcs
+        .iter()
+        .map(|f| tc.symbols.get(f.symbol).name.clone())
+        .collect();
+    assert!(
+        names.iter().any(|s| s.contains("push_t") && s.contains("int")),
+        "missing push_t<int> in {names:?}"
+    );
+    assert!(
+        names
+            .iter()
+            .any(|s| s.contains("ensure_cap") && s.contains("int")),
+        "missing ensure_cap<int> nested mono in {names:?}"
+    );
+}
+
 #[test]
 fn generic_struct_dual_int_str_methods() {
     let src = r#"
