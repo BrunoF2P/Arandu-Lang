@@ -27,11 +27,13 @@ arandu_cli run   <file>   # exit code documented in CLI tests
 | `m07_async_spawn_join.aru` | 42 | std.runtime spawn/join |
 | `m08_modules/main.aru` | 9 | multi-file via std (path+runtime) |
 | `m09_interp_tostr.aru` | 0 | string interpolation |
-| `m10_path_empty.aru` | 0 | std.path thin IN |
+| `m10_path_empty.aru` | 0 | std.path thin IN (PROMOTE-L4 join/file_name) |
 | `m11_process_exit.aru` | 17 | std.process.exit host |
 | `m12_time_env.aru` | 0 | std.time + std.env hosts |
 | `m13_vec.aru` | 78 | std.alloc.vec (PROMOTE-L6) |
 | `m14_mem_intrinsics.aru` | 46 | mem sizeOf/ptrOffset/Read/Write (L6.1) |
+| `m15_vec_capacity.aru` | 21 | vec with_capacity / reserve / clear |
+| `m16_gen_arena.aru` | 83 | std.alloc.gen_arena thin (insert/get/remove) |
 
 ## Default template (installer)
 

@@ -114,7 +114,7 @@ Coroutines are language. Multi-task needs **explicit** `SyncExecutor`. Payload h
 
 | Module | Reality | Freeze action |
 |--------|---------|---------------|
-| `std.path` | `is_empty` + host `Path::is_absolute`; join/file_name stubs | **IN optional**; stubs → `PROMOTE-L4` |
+| `std.path` | `is_empty` + host `is_absolute` / `join` / `file_name` | **IN optional** — **PROMOTE-L4 closed** |
 | `std.env` | `args_len` + `var_is_set` host (read-only) | **IN optional** thin; no setenv |
 | `std.fs` | exists() scaffold | OUT / experimental |
 | `std.io` module | write/eprint scaffold (prelude io is separate) | OUT / experimental |
@@ -122,7 +122,7 @@ Coroutines are language. Multi-task needs **explicit** `SyncExecutor`. Payload h
 | `std.time` | `monotonic_ns` host-backed | **IN optional** thin |
 | `std.alloc.vec` | pure-buffer `Vec<T>` free-func API (new/with_capacity/push/…/destroy) | **IN optional** — **PROMOTE-L6 closed**; not in default template |
 | `std.alloc.allocator_api` | GlobalAllocator + Bump; residual body diags | experimental for install |
-| `std.alloc.gen_arena` | typed API + i64 host MVP | experimental (GenRef path OK for advanced) |
+| `std.alloc.gen_arena` | pure-buffer free-func (`new`/`insert`/`get`/`remove`/`len`/`destroy`) | **IN optional** — GenArena thin closed; not in default template; compiler `ar_gen_*` i64 remains for AMIR promote |
 
 ### 4.3 Std half-done / bugs to track before freeze green
 
@@ -130,7 +130,7 @@ Coroutines are language. Multi-task needs **explicit** `SyncExecutor`. Payload h
 |----|--------|----------------------|---------------|
 | S1 | `std.core.ptr` broken twin | was high | [x] fixed as compat shim → `ptrOffset` |
 | S2 | `path.is_absolute` host-backed | was medium | [x] `Path::is_absolute` + m10 gold (P1.2) |
-| S3 | `path.join` / `file_name` stubs return input | low for Minimal | documented stub; `PROMOTE-L4` |
+| S3 | `path.join` / `file_name` stubs return input | was low | **[x]** host `Path::join` / `file_name` + m10 gold (PROMOTE-L4) |
 | S4 | alloc body typeck noise if linked as dependency | was medium | [x] vec.aru check-clean; BumpArena/allocator_api still residual |
 | S5 | runtime i64 payload honesty | low if documented | doc in install + Minimal async § |
 | S6 | prelude vs `std.io` dual story | low | Minimal uses prelude `io` only |
@@ -236,12 +236,13 @@ Create these files (names fixed for tracking):
 | `m07_async_spawn_join.aru` | 42 | std.runtime spawn/join |
 | `m08_modules/main.aru` | 9 | multi-file via **stdlib** (not package-local; see L2) |
 | `m09_interp_tostr.aru` | 0 | string interp |
-| `m10_path_empty.aru` | 0 | path thin IN (`is_empty` / `is_absolute` / stubs) |
+| `m10_path_empty.aru` | 0 | path thin IN (`is_empty` / `is_absolute` / `join` / `file_name`; PROMOTE-L4) |
 | `m11_process_exit.aru` | 17 | `std.process.exit` host (P1.1) |
 | `m12_time_env.aru` | 0 | `std.time` + `std.env` hosts (P1.1) |
 | `m13_vec.aru` | 78 | `std.alloc.vec` pure-buffer free-func API (PROMOTE-L6 complete) |
 | `m14_mem_intrinsics.aru` | 46 | mem sizeOf/ptrOffset/Read/Write (L6.1) |
 | `m15_vec_capacity.aru` | 21 | with_capacity / capacity / reserve / clear / is_empty |
+| `m16_gen_arena.aru` | 83 | `std.alloc.gen_arena` pure-buffer free-func (insert/get/remove/recycle) |
 | `TEMPLATE_main.aru` | 0 | default installer template |
 
 **Command contract:**
@@ -332,7 +333,9 @@ func main(): int {
 | 2026-07-20 | **P1 quality:** wire `process`/`time`/`env` hosts; `Path::is_absolute`; experimental banners; CI `minimal-gold` |
 | 2026-07-20 | **PROMOTE-L6:** pure-buffer `std.alloc.vec` + free-func API, gold m13 exit 78 |
 | 2026-07-20 | **L6.1:** mem intrinsics; mut-ref stores; nested free-func mono worklist; generic `push<T>`; gold m13/m14 |
-| 2026-07-20 | **PROMOTE-L6 closed (Vec thin):** `with_capacity`/`capacity`/`is_empty`/`reserve`; m15 gold; nested mono + auto-ref infer; DCE multi-path return slot; C mem intrinsics; GenArena/allocator_api remain experimental |
+| 2026-07-20 | **PROMOTE-L6 closed (Vec thin):** `with_capacity`/`capacity`/`is_empty`/`reserve`; m15 gold; nested mono + auto-ref infer; DCE multi-path return slot; C mem intrinsics |
+| 2026-07-20 | **PROMOTE-L4 closed:** host `path.join` / `file_name` (fat-str); m10 gold real join/file_name; C path helpers |
+| 2026-07-20 | **GenArena thin closed:** pure-buffer free-func + recycle gen bump; gold m16=83; `allocator_api` still experimental |
 
 ---
 
@@ -417,14 +420,16 @@ This is the same idea as **stable vs nightly** in other languages — here named
 | `PROMOTE-L3d` | Supervisor |
 | `PROMOTE-L3e` | Future trait |
 
-#### L4 — `path.join` / `file_name` stubs
+#### L4 — `path.join` / `file_name` — **CLOSED (2026-07-20)**
 
 | | |
 |--|--|
-| **Root** | No first-class stable str concat / split in the language yet |
-| **Policy** | `is_empty` + host `is_absolute` **IN optional**; join/file_name documented **stub** |
-| **Promote when** | str ops exist + real join/file_name e2e |
-| **Track ID** | `PROMOTE-L4` |
+| **Root fix** | Host `Path::join` / `Path::file_name` fat-str returns (`ar_path_join` / `ar_path_file_name`); same family as `is_absolute` |
+| **Policy** | **`std.path` IN optional** — not in default template; Unix gold on Linux CI |
+| **Gold** | m10 exit 0 (join `/tmp`+`x`, file_name leaf, absolute replace) |
+| **C backend** | static path helpers when `ArStr` runtime is emitted |
+| **Residual** | pure-language join via str concat/split (not required for thin) |
+| **Track ID** | `PROMOTE-L4` **[x] closed** |
 
 #### L5 — `std.env` / `fs` / `process` / `time` / module `std.io`
 
@@ -435,18 +440,20 @@ This is the same idea as **stable vs nightly** in other languages — here named
 | **Promote when** | Host symbols + gold + not required by default template |
 | **Track ID** | `PROMOTE-L5-*` (env, fs, process, time, std.io) |
 
-#### L6 — Vec / allocator_api / GenArena — **CLOSED for Vec thin (2026-07-20)**
+#### L6 — Vec / allocator_api / GenArena — **CLOSED for Vec thin + GenArena thin (2026-07-20)**
 
 | | |
 |--|--|
 | **Root fix** | Pure-buffer (`ar_vec_malloc/realloc/buf_free` + mem); generic free-func API; nested mono worklist; auto-ref type-param infer |
-| **Policy** | **`std.alloc.vec` IN optional** — not in default `arandu new`. **GenArena / allocator_api remain experimental** |
-| **Public API** | `new`, `with_capacity`, `push`, `pop`, `get`, `put`, `len`, `capacity`, `is_empty`, `reserve`, `clear`, `destroy` |
-| **Gold** | m13=78, m15=21; `cli_vec_defaults` + `--opt` paths; module check-clean |
+| **Policy** | **`std.alloc.vec` + `std.alloc.gen_arena` IN optional** — not in default `arandu new`. **`allocator_api` remains experimental** |
+| **Public API (Vec)** | `new`, `with_capacity`, `push`, `pop`, `get`, `put`, `len`, `capacity`, `is_empty`, `reserve`, `clear`, `destroy` |
+| **Public API (GenArena)** | `new`, `insert`, `get`, `remove`, `len`, `is_empty`, `destroy`; `GenRef` shared (Copy-like) |
+| **Gold** | m13=78, m15=21, m16=83; `cli_vec_defaults` + `--opt` paths; module check-clean |
 | **L6.1** | **[x]** mem intrinsics; mut-ref materialize; while SSA; DCE jump-args + multi-path `_0`; C mem emit |
 | **Checklist §13.4 (Vec)** | **[x]** root fixed · **[x]** gold · **[x]** CI gold · **[x]** IN optional inventory · **[x]** no experimental banner on vec · **[x]** not in default template · **[x]** decision log |
-| **Residual (not L6-Vec)** | Method-style `v.push`; GenArena typed; custom allocators |
-| **Track ID** | `PROMOTE-L6` **[x] closed**; `PROMOTE-L6.1` **[x]** |
+| **Checklist (GenArena thin)** | **[x]** pure-buffer free-func · **[x]** recycle + gen bump · **[x]** gold m16 · **[x]** not in default template · **[x]** fail-closed get |
+| **Residual** | Method-style `v.push` / method GenArena; custom allocators; compiler `ar_gen_*` i64 remains for AMIR escape promote |
+| **Track ID** | `PROMOTE-L6` **[x] closed**; `PROMOTE-L6.1` **[x]**; GenArena thin **[x]** |
 
 #### L7 — Language OUT by design or later phase
 
@@ -485,8 +492,8 @@ For each `PROMOTE-*` item:
 
 ```text
 P2 installer/CLI  →  PROMOTE-L2 package multi-file
-                  →  PROMOTE-L6 Vec (if template needs collections)
-                  →  PROMOTE-L4 path join
+                  →  PROMOTE-L6 Vec thin [x] + GenArena thin [x]
+                  →  PROMOTE-L4 path join [x]
                   →  PROMOTE-L5 process/time/env as needed
                   →  PROMOTE-L3a/b async-io profile (optional second template)
                   →  L1 / L7 language deep features

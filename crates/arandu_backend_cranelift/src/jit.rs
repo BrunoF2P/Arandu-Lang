@@ -160,6 +160,14 @@ impl AranduJit {
             "ar_path_is_empty",
             crate::rt_runtime::ar_path_is_empty as *const u8,
         );
+        builder.symbol(
+            "ar_path_join",
+            crate::rt_runtime::ar_path_join as *const u8,
+        );
+        builder.symbol(
+            "ar_path_file_name",
+            crate::rt_runtime::ar_path_file_name as *const u8,
+        );
         // Minimal 0.1 optional OS surface (process / time / env)
         builder.symbol(
             "ar_process_exit",
@@ -533,6 +541,51 @@ impl AranduJit {
                 .declare_function(name, Linkage::Import, &path_sig)
                 .map_err(|err| codegen_ice(format!("failed to declare {name}: {err:?}")))?;
             func_ids.insert(name.to_string(), id);
+        }
+        // path join / file_name: (str, str) → str  or  (str) → str
+        // str expands to [ptr, i64] params and [ptr, i64] returns (ArFatStr).
+        {
+            let mut join_sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+            for _ in 0..2 {
+                join_sig
+                    .params
+                    .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+                join_sig.params.push(cranelift_codegen::ir::AbiParam::new(
+                    cranelift_codegen::ir::types::I64,
+                ));
+            }
+            join_sig
+                .returns
+                .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+            join_sig.returns.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
+            let id = self
+                .module
+                .declare_function("ar_path_join", Linkage::Import, &join_sig)
+                .map_err(|err| codegen_ice(format!("failed to declare ar_path_join: {err:?}")))?;
+            func_ids.insert("ar_path_join".to_string(), id);
+
+            let mut file_sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+            file_sig
+                .params
+                .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+            file_sig.params.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
+            file_sig
+                .returns
+                .push(cranelift_codegen::ir::AbiParam::new(ptr_type));
+            file_sig.returns.push(cranelift_codegen::ir::AbiParam::new(
+                cranelift_codegen::ir::types::I64,
+            ));
+            let id = self
+                .module
+                .declare_function("ar_path_file_name", Linkage::Import, &file_sig)
+                .map_err(|err| {
+                    codegen_ice(format!("failed to declare ar_path_file_name: {err:?}"))
+                })?;
+            func_ids.insert("ar_path_file_name".to_string(), id);
         }
 
         // Minimal OS: exit(void), monotonic_ns/args_len (i64 -> / <-)

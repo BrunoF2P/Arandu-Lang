@@ -117,11 +117,24 @@ impl<'a> CEmitter<'a> {
             self.emit_func_decl(func);
         }
         for (symbol, (params, ret)) in &self.program.extern_funcs {
+            let name = sanitize_c_ident(&self.symbols.get(*symbol).name);
+            // Provided as static helpers in this TU (path + pure-buffer alloc).
+            if matches!(
+                name.as_str(),
+                "ar_path_is_absolute"
+                    | "ar_path_is_empty"
+                    | "ar_path_join"
+                    | "ar_path_file_name"
+                    | "ar_vec_malloc"
+                    | "ar_vec_buf_free"
+                    | "ar_vec_realloc"
+            ) {
+                continue;
+            }
             self.ensure_type_emitted(ret);
             for param in params {
                 self.ensure_type_emitted(param);
             }
-            let name = sanitize_c_ident(&self.symbols.get(*symbol).name);
             let ret_str = self.format_type(ret);
             let _ = write!(&mut self.output, "{} {}(", ret_str, name);
             for (i, param) in params.iter().enumerate() {
@@ -255,6 +268,74 @@ static int64_t ar_gen_remove_i64(int64_t r) {{
         );
     }
 
+    /// Raw buffer hosts for `std.alloc.vec` / `std.alloc.gen_arena` pure-buffer path.
+    fn emit_vec_buf_runtime(&mut self) {
+        let _ = writeln!(
+            &mut self.output,
+            r#"/* Pure-buffer alloc (Vec / GenArena thin) — mirrors JIT ar_vec_*. */
+static void *ar_vec_malloc(int64_t size) {{
+    if (size <= 0) return NULL;
+    void *p = malloc((size_t)size);
+    if (!p) abort();
+    return p;
+}}
+static void ar_vec_buf_free(void *p, int64_t size) {{
+    (void)size;
+    free(p);
+}}
+static void *ar_vec_realloc(void *p, int64_t old_size, int64_t new_size) {{
+    if (new_size <= 0) {{ free(p); return NULL; }}
+    void *q = realloc(p, (size_t)new_size);
+    if (!q) abort();
+    (void)old_size;
+    return q;
+}}"#
+        );
+    }
+
+    /// Host path helpers for PROMOTE-L4 (`std.path` join / file_name / is_absolute).
+    fn emit_path_runtime(&mut self, len_c_ty: &str) {
+        let _ = writeln!(
+            &mut self.output,
+            r#"/* std.path host (Unix-oriented gold; mirrors JIT Path helpers). */
+static int64_t ar_path_is_absolute(ArStr p) {{
+    if (p.len <= 0 || !p.ptr) return 0;
+    return p.ptr[0] == '/' ? 1 : 0;
+}}
+static int64_t ar_path_is_empty(ArStr p) {{
+    return p.len <= 0 ? 1 : 0;
+}}
+static ArStr ar_path_join(ArStr a, ArStr b) {{
+    /* Absolute b replaces (Unix Path::join). */
+    if (b.len > 0 && b.ptr && b.ptr[0] == '/') return b;
+    if (a.len <= 0) return b;
+    if (b.len <= 0) return a;
+    int need_sep = !(a.ptr[a.len - 1] == '/');
+    {len_c_ty} total = a.len + b.len + (need_sep ? 1 : 0);
+    uint8_t *buf = (uint8_t*)malloc((size_t)total + 1);
+    if (!buf) abort();
+    memcpy(buf, a.ptr, (size_t)a.len);
+    {len_c_ty} off = a.len;
+    if (need_sep) buf[off++] = '/';
+    memcpy(buf + off, b.ptr, (size_t)b.len);
+    buf[total] = 0;
+    return ar_str_pack(buf, total);
+}}
+static ArStr ar_path_file_name(ArStr p) {{
+    if (p.len <= 0 || !p.ptr) return ar_str_pack((const uint8_t*)"", 0);
+    {len_c_ty} i = p.len;
+    while (i > 0 && p.ptr[i - 1] != '/') i--;
+    {len_c_ty} n = p.len - i;
+    if (n <= 0) return ar_str_pack((const uint8_t*)"", 0);
+    uint8_t *buf = (uint8_t*)malloc((size_t)n + 1);
+    if (!buf) abort();
+    memcpy(buf, p.ptr + i, (size_t)n);
+    buf[n] = 0;
+    return ar_str_pack(buf, n);
+}}"#
+        );
+    }
+
     fn emit_co_poll_runtime(&mut self) {
         // Typed await in expr.rs inlines disc/payload loads for the real C type.
         // Keep i64 helpers only for host/test parity paths that still use them.
@@ -339,6 +420,8 @@ static inline void* ar_co_await_ptr(uint8_t* aw) {{
         let _ = writeln!(&mut self.output, "#endif");
         // F2.3.runtime: process-lifetime gen arena (i64 payload MVP; mirrors JIT host).
         self.emit_gen_arena_runtime();
+        // Pure-buffer host used by std.alloc.vec / gen_arena product surface.
+        self.emit_vec_buf_runtime();
         // A3.6: poll / block_on for coroutine state blobs (disc@0, payload@8).
         self.emit_co_poll_runtime();
         let _ = writeln!(&mut self.output);
@@ -373,6 +456,8 @@ static inline void* ar_co_await_ptr(uint8_t* aw) {{
             "    return (ArStr){{ .ptr = ptr, .len = len }};"
         );
         let _ = writeln!(&mut self.output, "}}");
+        // PROMOTE-L4 path hosts (need ArStr + ar_str_pack).
+        self.emit_path_runtime(len_c_ty);
         let _ = writeln!(
             &mut self.output,
             "static ArStr ar_str_concat_n(int n, ...) {{"

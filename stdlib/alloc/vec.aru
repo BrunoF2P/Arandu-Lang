@@ -18,7 +18,7 @@ module std.alloc.vec
 /// `mark_local_materialized` (prune must keep the base bind).
 ///
 /// **Not** in default `arandu new` template (optional import).
-/// GenArena / `allocator_api` stay **experimental** (separate promote tracks).
+/// `allocator_api` stays experimental; GenArena thin is a sibling IN optional track.
 
 import std.core.mem as mem
 

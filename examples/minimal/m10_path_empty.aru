@@ -1,6 +1,6 @@
 module examples.minimal.m10_path_empty
 
-// Minimal 0.1 — std.path IN optional (is_empty + is_absolute host).
+// Minimal 0.1 — std.path IN optional (PROMOTE-L4 thin: is_empty / is_absolute / join / file_name).
 import std.path as path
 
 func main(): int {
@@ -29,12 +29,27 @@ func main(): int {
         return 7
     }
 
-    // stubs still typecheck and return documented values
-    if path.join("a", "b") != "a" {
+    // join — real host Path::join (Unix)
+    if path.join("a", "b") != "a/b" {
         return 8
     }
-    if path.file_name("leaf") != "leaf" {
+    if path.join("/tmp", "x") != "/tmp/x" {
         return 9
+    }
+    // absolute second component replaces on Unix
+    if path.join("/tmp", "/abs") != "/abs" {
+        return 10
+    }
+
+    // file_name
+    if path.file_name("leaf") != "leaf" {
+        return 11
+    }
+    if path.file_name("/tmp/leaf") != "leaf" {
+        return 12
+    }
+    if path.file_name("/tmp/x/y") != "y" {
+        return 13
     }
 
     return 0

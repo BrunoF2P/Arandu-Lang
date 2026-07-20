@@ -1,22 +1,25 @@
 module std.path
 
-/// Minimal 0.1 — **IN optional** path helpers (honest limits).
+/// Minimal 0.1 — **IN optional** path helpers (PROMOTE-L4 complete for thin path).
 ///
 /// | Function      | Status |
 /// |---------------|--------|
-/// | `is_empty`    | pure, complete |
-/// | `is_absolute` | host-backed via `std::path::Path::is_absolute` |
-/// | `join`        | **stub** — returns `a` until str concat exists (`PROMOTE-L4`) |
-/// | `file_name`   | **stub** — returns `p` until split exists (`PROMOTE-L4`) |
+/// | `is_empty`    | pure |
+/// | `is_absolute` | host `std::path::Path::is_absolute` |
+/// | `join`        | host `Path::join` (OS separator / absolute replace) |
+/// | `file_name`   | host `Path::file_name` (empty when none) |
 ///
-/// Absolute rules follow the **host OS** (Unix: leading `/`; Windows: drive/UNC).
+/// Absolute / join / file_name rules follow the **host OS**.
 /// Gold suite asserts Unix-style paths on Linux CI.
 ///
-/// Bodies link into the entry unit via multi-file HIR.
+/// Returned strings from `join` / `file_name` are malloc-backed (process
+/// lifetime, same policy as ToStr / string interp) — not in default template.
 
 // Host: fat-str ABI (ptr + len) — same as other std path helpers in the JIT.
 extern "C" {
     func ar_path_is_absolute(p: str): int
+    func ar_path_join(a: str, b: str): str
+    func ar_path_file_name(p: str): str
 }
 
 /// True when the path has zero length.
@@ -34,16 +37,19 @@ public func is_absolute(p: str): bool {
     }
 }
 
-/// Join two segments.
+/// Join two path segments with host path semantics.
 ///
-/// **Stub (not Minimal-complete):** returns `a` until language string concat exists.
+/// On Unix, `join("/tmp", "x")` → `"/tmp/x"`; an absolute `b` replaces
+/// (same family as Rust `Path::join`).
 public func join(a: str, b: str): str {
-    return a
+    unsafe {
+        return ar_path_join(a, b)
+    }
 }
 
-/// File name component.
-///
-/// **Stub (not Minimal-complete):** returns `p` until path split exists.
+/// Final path component, or empty string when none (trailing slash, `.`, `..`).
 public func file_name(p: str): str {
-    return p
+    unsafe {
+        return ar_path_file_name(p)
+    }
 }
