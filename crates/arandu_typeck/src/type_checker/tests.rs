@@ -168,6 +168,60 @@ fn type_info_missing_decl_returns_none() {
 }
 
 #[test]
+fn type_info_pod_struct_is_copy_vec_like_is_not() {
+    use std::sync::Arc;
+
+    use rustc_hash::FxHashMap;
+
+    let mut info = TypeInfo::new();
+    let i = &mut info.type_interner;
+    let u32_ty = i.intern(ArType::Primitive(Primitive::U32));
+    let int_ty = i.intern(ArType::Primitive(Primitive::Int));
+    let ptr_ty = i.intern(ArType::Ptr(int_ty));
+    let u64_ty = i.intern(ArType::Primitive(Primitive::U64));
+
+    // GenRef-like: { index: u32, generation: u32 } → copy
+    let gen_sym = SymbolId::new(0, 10);
+    let mut gen_fields = FxHashMap::default();
+    gen_fields.insert("index".into(), u32_ty);
+    gen_fields.insert("generation".into(), u32_ty);
+    info.struct_fields.insert(gen_sym, Arc::new(gen_fields));
+    let gen_tid = info
+        .type_interner
+        .intern(ArType::Named(gen_sym, vec![]));
+    assert!(
+        info.is_copy(gen_tid),
+        "POD handle struct should be auto-copy"
+    );
+
+    // Vec-like: { data: ptr[int], len: u64 } → not copy
+    let vec_sym = SymbolId::new(0, 11);
+    let mut vec_fields = FxHashMap::default();
+    vec_fields.insert("data".into(), ptr_ty);
+    vec_fields.insert("len".into(), u64_ty);
+    info.struct_fields.insert(vec_sym, Arc::new(vec_fields));
+    let vec_tid = info
+        .type_interner
+        .intern(ArType::Named(vec_sym, vec![]));
+    assert!(
+        !info.is_copy(vec_tid),
+        "struct with ptr field must not be auto-copy"
+    );
+
+    // Empty unit struct → copy
+    let unit_sym = SymbolId::new(0, 12);
+    info.struct_fields
+        .insert(unit_sym, Arc::new(FxHashMap::default()));
+    let unit_tid = info
+        .type_interner
+        .intern(ArType::Named(unit_sym, vec![]));
+    assert!(info.is_copy(unit_tid), "empty struct is POD copy");
+
+    // Bare ptr remains copy (cheap handle)
+    assert!(info.is_copy(ptr_ty));
+}
+
+#[test]
 fn type_info_enum_variant_tag() {
     let mut info = TypeInfo::new();
     info.record_enum_variant_tag(SymbolId::new(0, 0), 0);

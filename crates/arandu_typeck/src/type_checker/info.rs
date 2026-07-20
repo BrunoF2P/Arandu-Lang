@@ -5,7 +5,9 @@ use rustc_hash::FxHashMap;
 use crate::SymbolId;
 use arandu_parser::ast_pool::ExprId;
 
-use super::types::{self, ArType, TypeId, TypeInterner};
+use super::types::{
+    self, ArType, Primitive, TypeId, TypeInterner, build_subst_ids, substitute_type,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum EnumPayloadShape {
@@ -67,6 +69,111 @@ impl TypeInfo {
 
     pub fn record_enum_variant_tag(&mut self, variant: SymbolId, tag: usize) {
         self.enum_variant_tags.insert(variant, tag);
+    }
+
+    /// Whether values of this type may be used after "move" (copy semantics).
+    ///
+    /// # Rules (Minimal / big-tech POD)
+    /// - Scalars, AMIR `GenRef`, bare `ptr`/`&`/`&mut`: same as [`ArType::is_copy_v01`].
+    /// - **Named structs**: auto-copy iff **all fields are POD components**
+    ///   (no raw pointers / refs / `str` / owned aggregates). Empty structs are copy.
+    /// - Tuples / arrays / `Option` / `Result`: copy iff all payload components are POD.
+    ///
+    /// Bare pointers stay copy (cheap handles); wrapping them in a struct (`Vec`)
+    /// does **not** make the struct copy — that would double-free ownership.
+    #[must_use]
+    pub fn is_copy(&self, id: TypeId) -> bool {
+        let mut visiting = FxHashMap::default();
+        self.is_copy_rec(id, &mut visiting)
+    }
+
+    /// `visiting`: TypeId → currently on the stack (cycle → not copy).
+    fn is_copy_rec(&self, id: TypeId, visiting: &mut FxHashMap<TypeId, bool>) -> bool {
+        if visiting.get(&id).copied().unwrap_or(false) {
+            return false;
+        }
+        visiting.insert(id, true);
+        let result = self.type_interner.with_type(id, |ty| match ty {
+            ArType::Named(sym, args) => self.is_named_struct_pod_copy(*sym, args, visiting),
+            ArType::Tuple(elems) => elems.iter().all(|&e| self.is_pod_component(e, visiting)),
+            ArType::Array(_, elem) => self.is_pod_component(*elem, visiting),
+            ArType::Option(inner) => self.is_pod_component(*inner, visiting),
+            ArType::Result(ok, err) => {
+                self.is_pod_component(*ok, visiting) && self.is_pod_component(*err, visiting)
+            }
+            other => other.is_copy_v01(),
+        });
+        visiting.insert(id, false);
+        result
+    }
+
+    /// POD component: bitwise-copyable value without dual ownership of heap.
+    fn is_pod_component(&self, id: TypeId, visiting: &mut FxHashMap<TypeId, bool>) -> bool {
+        if visiting.get(&id).copied().unwrap_or(false) {
+            return false;
+        }
+        self.type_interner.with_type(id, |ty| match ty {
+            ArType::Primitive(p) => {
+                p.is_numeric()
+                    || matches!(p, Primitive::Bool | Primitive::Char | Primitive::Byte)
+            }
+            ArType::IntLiteral | ArType::FloatLiteral | ArType::GenRef => true,
+            ArType::Named(sym, args) => self.is_named_struct_pod_copy(*sym, args, visiting),
+            ArType::Tuple(elems) => elems.iter().all(|&e| self.is_pod_component(e, visiting)),
+            ArType::Array(_, elem) => self.is_pod_component(*elem, visiting),
+            ArType::Option(inner) => self.is_pod_component(*inner, visiting),
+            ArType::Result(ok, err) => {
+                self.is_pod_component(*ok, visiting) && self.is_pod_component(*err, visiting)
+            }
+            // Nested ownership / handles: not POD components of a struct.
+            ArType::Ptr(_)
+            | ArType::Ref(_)
+            | ArType::RefMut(_)
+            | ArType::Nullable(_)
+            | ArType::Func(_, _)
+            | ArType::Slice(_)
+            | ArType::Coroutine(_)
+            | ArType::Poll(_)
+            | ArType::Range(_)
+            | ArType::Err
+            | ArType::Void
+            | ArType::Error => false,
+        })
+    }
+
+    fn is_named_struct_pod_copy(
+        &self,
+        sym: SymbolId,
+        args: &[TypeId],
+        visiting: &mut FxHashMap<TypeId, bool>,
+    ) -> bool {
+        let Some(fields) = self.struct_fields.get(&sym) else {
+            return false;
+        };
+        if fields.is_empty() {
+            return true;
+        }
+        let params = self.generic_params.get(&sym);
+        let use_subst = params.is_some_and(|p| !p.is_empty()) && !args.is_empty();
+        if use_subst {
+            let params = params.expect("checked is_some");
+            if params.len() != args.len() {
+                return false;
+            }
+            let subst = build_subst_ids(params, args, &self.type_interner);
+            for &field_tid in fields.values() {
+                let field_ty = self.type_interner.resolve(field_tid);
+                let inst = substitute_type(&field_ty, &subst, &self.type_interner);
+                let inst_id = self.type_interner.intern(inst);
+                if !self.is_pod_component(inst_id, visiting) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        fields
+            .values()
+            .all(|&fid| self.is_pod_component(fid, visiting))
     }
 }
 

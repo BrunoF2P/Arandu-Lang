@@ -16,6 +16,9 @@ extern "C" {
 }
 
 /// Fat handle: slot index + remembered generation (8 bytes).
+///
+/// POD auto-copy (structural): all fields are scalars, so the move checker
+/// treats `GenRef` like `int` — assign/pass by value without consuming the origin.
 /// Not interchangeable with ptr[T] or &T without compiler promotion.
 public struct GenRef {
     index: u32
@@ -157,8 +160,8 @@ public func insert<T>(mut a: GenArena<T>, value: T): GenRef {
 
 /// Load payload; **aborts** if generation mismatches or slot is empty.
 ///
-/// `GenRef` is taken `shared` so handles stay Copy-like (index+generation POD).
-public func get<T>(shared a: GenArena<T>, shared r: GenRef): T {
+/// `GenRef` is a POD struct (two `u32`s): language auto-copy — pass by value freely.
+public func get<T>(shared a: GenArena<T>, r: GenRef): T {
     let idx = r.index as u64
     if idx >= a.slots {
         unsafe {
@@ -183,8 +186,8 @@ public func get<T>(shared a: GenArena<T>, shared r: GenRef): T {
 
 /// Drop ownership of the slot if `r.generation` still matches; else `None`.
 ///
-/// The caller's `GenRef` is not consumed (shared); stale re-use yields `None`.
-public func remove<T>(mut a: GenArena<T>, shared r: GenRef): Option<T> {
+/// `GenRef` is POD auto-copy; stale re-use after recycle yields `None` (not O001).
+public func remove<T>(mut a: GenArena<T>, r: GenRef): Option<T> {
     let idx = r.index as u64
     if idx >= a.slots {
         return Option.None

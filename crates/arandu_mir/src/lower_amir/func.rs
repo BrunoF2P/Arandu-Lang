@@ -46,7 +46,7 @@ pub(crate) fn lower_func(
 
     // Return register is TempId(0) — span is the function header.
     let ret_ty = f.return_type;
-    let ret_is_copy = tc.type_info.type_interner.is_copy_v01(ret_ty);
+    let ret_is_copy = tc.type_info.is_copy(ret_ty);
     let ret_is_nullable = tc
         .type_info
         .type_interner

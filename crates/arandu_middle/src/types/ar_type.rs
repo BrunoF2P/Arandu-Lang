@@ -286,6 +286,10 @@ impl ArType {
         }
     }
 
+    /// Leaf / non-structural copy predicate (no named-field lookup).
+    ///
+    /// For named structs / POD aggregates, use `TypeInfo::is_copy` in typeck
+    /// (structural: all scalar fields → auto-copy; ptr fields → not copy).
     #[must_use]
     pub fn is_copy_v01(&self) -> bool {
         match self {
@@ -304,6 +308,7 @@ impl ArType {
             | ArType::RefMut(_)
             | ArType::GenRef => true,
             ArType::Error | ArType::Void | ArType::Err => true,
+            // Named / aggregates: structural decision needs `TypeInfo::is_copy`.
             ArType::Named(_, _)
             | ArType::Func(_, _)
             | ArType::Slice(_)

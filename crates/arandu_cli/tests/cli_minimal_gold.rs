@@ -92,6 +92,10 @@ const GOLD: &[Gold] = &[
         exit: 83,
     },
     Gold {
+        path: "examples/minimal/m17_pod_copy.aru",
+        exit: 60,
+    },
+    Gold {
         path: "examples/minimal/TEMPLATE_main.aru",
         exit: 0,
     },

@@ -243,6 +243,7 @@ Create these files (names fixed for tracking):
 | `m14_mem_intrinsics.aru` | 46 | mem sizeOf/ptrOffset/Read/Write (L6.1) |
 | `m15_vec_capacity.aru` | 21 | with_capacity / capacity / reserve / clear / is_empty |
 | `m16_gen_arena.aru` | 83 | `std.alloc.gen_arena` pure-buffer free-func (insert/get/remove/recycle) |
+| `m17_pod_copy.aru` | 60 | structural POD auto-copy (named scalar structs by value) |
 | `TEMPLATE_main.aru` | 0 | default installer template |
 
 **Command contract:**
@@ -336,6 +337,7 @@ func main(): int {
 | 2026-07-20 | **PROMOTE-L6 closed (Vec thin):** `with_capacity`/`capacity`/`is_empty`/`reserve`; m15 gold; nested mono + auto-ref infer; DCE multi-path return slot; C mem intrinsics |
 | 2026-07-20 | **PROMOTE-L4 closed:** host `path.join` / `file_name` (fat-str); m10 gold real join/file_name; C path helpers |
 | 2026-07-20 | **GenArena thin closed:** pure-buffer free-func + recycle gen bump; gold m16=83; `allocator_api` still experimental |
+| 2026-07-20 | **POD auto-copy:** `TypeInfo::is_copy` structural (named structs of scalars); GenRef/TaskHandle by value; gold m17=60; Vec-with-ptr not copy |
 
 ---
 
@@ -447,7 +449,7 @@ This is the same idea as **stable vs nightly** in other languages — here named
 | **Root fix** | Pure-buffer (`ar_vec_malloc/realloc/buf_free` + mem); generic free-func API; nested mono worklist; auto-ref type-param infer |
 | **Policy** | **`std.alloc.vec` + `std.alloc.gen_arena` IN optional** — not in default `arandu new`. **`allocator_api` remains experimental** |
 | **Public API (Vec)** | `new`, `with_capacity`, `push`, `pop`, `get`, `put`, `len`, `capacity`, `is_empty`, `reserve`, `clear`, `destroy` |
-| **Public API (GenArena)** | `new`, `insert`, `get`, `remove`, `len`, `is_empty`, `destroy`; `GenRef` shared (Copy-like) |
+| **Public API (GenArena)** | `new`, `insert`, `get`, `remove`, `len`, `is_empty`, `destroy`; `GenRef` by value (POD auto-copy) |
 | **Gold** | m13=78, m15=21, m16=83; `cli_vec_defaults` + `--opt` paths; module check-clean |
 | **L6.1** | **[x]** mem intrinsics; mut-ref materialize; while SSA; DCE jump-args + multi-path `_0`; C mem emit |
 | **Checklist §13.4 (Vec)** | **[x]** root fixed · **[x]** gold · **[x]** CI gold · **[x]** IN optional inventory · **[x]** no experimental banner on vec · **[x]** not in default template · **[x]** decision log |

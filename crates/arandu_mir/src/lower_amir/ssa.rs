@@ -103,7 +103,7 @@ impl LowerCtx<'_> {
         // Emit a dummy Load statement
         let ty_id = self.locals[local.as_usize()].ty;
         let ty = self.resolve_ty(ty_id);
-        let is_copy = ty.is_copy_v01();
+        let is_copy = self.tc.type_info.is_copy(ty_id);
         let is_nullable = matches!(ty, ArType::Nullable(_));
         let is_mem = super::is_memory_type(&ty);
         let temp = self.next_temp_id();
@@ -162,7 +162,7 @@ impl LowerCtx<'_> {
             // Block is not sealed: generate a placeholder block parameter
             let ty_id = self.locals[local.as_usize()].ty;
             let ty = self.resolve_ty(ty_id);
-            let is_copy = ty.is_copy_v01();
+            let is_copy = self.tc.type_info.is_copy(ty_id);
             let temp_id = self.new_temp(ty);
             self.temp_origins[temp_id.as_usize()] = Some(local);
             let from_name = self.locals[local.as_usize()]
@@ -189,7 +189,7 @@ impl LowerCtx<'_> {
             } else {
                 let ty_id = self.locals[local.as_usize()].ty;
                 let ty = self.resolve_ty(ty_id);
-                let is_copy = ty.is_copy_v01();
+                let is_copy = self.tc.type_info.is_copy(ty_id);
                 let temp_id = self.new_temp(ty);
                 self.temp_origins[temp_id.as_usize()] = Some(local);
                 let from_name = self.locals[local.as_usize()]

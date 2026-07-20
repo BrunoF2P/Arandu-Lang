@@ -68,7 +68,7 @@ impl LowerCtx<'_> {
 
     /// Allocate a temp from an already-interned type id (no `ArType` clone).
     pub(crate) fn new_temp_id(&mut self, ty: crate::types::TypeId) -> TempId {
-        let is_copy = self.tc.type_info.type_interner.is_copy_v01(ty);
+        let is_copy = self.tc.type_info.is_copy(ty);
         let is_nullable = self
             .tc
             .type_info
@@ -154,9 +154,13 @@ impl LowerCtx<'_> {
     /// Intern from borrow — avoids cloning `ArType` when the caller only has a ref
     /// (e.g. `expr.ty`).
     pub(crate) fn new_temp_ref(&mut self, ty: &ArType) -> TempId {
-        let is_copy = ty.is_copy_v01();
-        let is_nullable = matches!(ty, ArType::Nullable(_));
         let ty = self.intern_ty_ref(ty);
+        let is_copy = self.tc.type_info.is_copy(ty);
+        let is_nullable = self
+            .tc
+            .type_info
+            .type_interner
+            .with_type(ty, |t| matches!(t, ArType::Nullable(_)));
         let id = self.next_temp_id();
         let span = if Self::span_is_usable(self.current_span) {
             self.current_span

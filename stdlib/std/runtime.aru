@@ -78,6 +78,8 @@ public struct SyncExecutor {
 }
 
 /// Opaque join handle (host queue id). Payload type is recovered at `join<T>`.
+///
+/// POD auto-copy (`id: int`): pass/reuse by value without move consumption.
 public struct TaskHandle {
     id: int
 }
@@ -375,6 +377,8 @@ public struct Supervisor {
 }
 
 /// experimental — not Minimal 0.1
+///
+/// POD auto-copy (`id: int`).
 public struct WorkerHandle {
     id: int
 }

@@ -34,6 +34,7 @@ arandu_cli run   <file>   # exit code documented in CLI tests
 | `m14_mem_intrinsics.aru` | 46 | mem sizeOf/ptrOffset/Read/Write (L6.1) |
 | `m15_vec_capacity.aru` | 21 | vec with_capacity / reserve / clear |
 | `m16_gen_arena.aru` | 83 | std.alloc.gen_arena thin (insert/get/remove) |
+| `m17_pod_copy.aru` | 60 | POD auto-copy named structs |
 
 ## Default template (installer)
 

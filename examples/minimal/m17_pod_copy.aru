@@ -1,0 +1,44 @@
+module examples.minimal.m17_pod_copy
+
+// Minimal 0.1 — structural POD auto-copy (named structs with only scalar fields).
+// Point / nested POD may be passed by value repeatedly without O001.
+
+struct Point {
+    x: int
+    y: int
+}
+
+struct Pair {
+    a: Point
+    b: Point
+}
+
+func sum_point(p: Point): int {
+    return p.x + p.y
+}
+
+func main(): int {
+    let p = Point {
+        x: 10,
+        y: 20,
+    }
+    // Same POD value used twice by value (would O001 if Point moved).
+    let a = sum_point(p)
+    let b = sum_point(p)
+    // 30 + 30 = 60
+    if a + b != 60 {
+        return 1
+    }
+
+    let q = Pair {
+        a: p,
+        b: p,
+    }
+    let s = sum_point(q.a) + sum_point(q.b)
+    if s != 60 {
+        return 2
+    }
+
+    // 60 + 60 - 60 = 60
+    return a + b + s - 60
+}

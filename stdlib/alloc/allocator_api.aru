@@ -20,6 +20,7 @@ public interface Allocator {
     func realloc(p: ptr[u8], oldSize: u64, newSize: u64, align: u64) : Result<ptr[u8], AllocError>;
 }
 
+/// Empty unit-like allocator tag — POD auto-copy (no fields).
 public struct GlobalAllocator {}
 
 public func GlobalAllocator.alloc(shared self, size: u64, align: u64) : Result<ptr[u8], AllocError> {
