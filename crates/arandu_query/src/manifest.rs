@@ -331,7 +331,7 @@ entry = "src/main.aru"
 "#;
         let data = parse_manifest_str(Path::new("Arandu.toml"), text).unwrap();
         assert_eq!(data.name, "hello");
-        assert_eq!(data.version, "0.1.0");
+        assert_eq!(data.version, "0.0.1");
         assert_eq!(data.entry, "src/main.aru");
     }
 

@@ -72,12 +72,18 @@ echo "==> extracting (staging)"
 tar -xzf "$ARCHIVE" -C "$STAGE"
 
 # Expect single top-level arandu-VERSION/
-mapfile -t TOP < <(find "$STAGE" -mindepth 1 -maxdepth 1 -type d)
-if [[ ${#TOP[@]} -ne 1 ]]; then
+# Portable: no mapfile/process-substitution (macOS /bin/bash is 3.2).
+TOP_COUNT=0
+TREE=""
+for d in "$STAGE"/*; do
+  [[ -d "$d" ]] || continue
+  TOP_COUNT=$((TOP_COUNT + 1))
+  TREE="$d"
+done
+if [[ "$TOP_COUNT" -ne 1 || -z "$TREE" ]]; then
   echo "error: archive must contain exactly one top-level directory" >&2
   exit 1
 fi
-TREE="${TOP[0]}"
 VERSION_NAME="$(basename "$TREE")"
 VERSION_DIR="$PREFIX/$VERSION_NAME"
 

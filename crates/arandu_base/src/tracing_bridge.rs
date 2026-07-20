@@ -11,23 +11,23 @@
 //!   flags; the self-profile layer captures *all* spans for the flamegraph.
 //! - `RUST_LOG` still works as an escape hatch for ad-hoc debugging.
 
+use std::path::PathBuf;
+#[cfg(debug_assertions)]
 use std::{
     collections::HashMap,
     fmt,
-    path::PathBuf,
     sync::{Mutex, OnceLock},
     time::Instant,
 };
+#[cfg(debug_assertions)]
 use tracing::{
     Event, Id, Subscriber,
     field::{Field, Visit},
     span::Attributes,
 };
-use tracing_subscriber::{
-    EnvFilter, Registry,
-    layer::{Context, Layer},
-    prelude::*,
-};
+use tracing_subscriber::{EnvFilter, Registry, prelude::*};
+#[cfg(debug_assertions)]
+use tracing_subscriber::layer::{Context, Layer};
 
 // ── Static helpers (lazy-init via OnceLock) ───────────────────────────
 

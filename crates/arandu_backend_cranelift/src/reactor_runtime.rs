@@ -3,6 +3,7 @@
 // Arandu code. Safety invariants are enforced by the compiler and JIT symbol resolution.
 #![allow(clippy::missing_safety_doc)]
 
+#[cfg(target_os = "linux")]
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
