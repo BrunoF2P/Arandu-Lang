@@ -696,7 +696,7 @@ fn test_official_ok_suite() {
     paths.sort();
 
     for path in paths {
-        let source = fs::read_to_string(&path).unwrap();
+        let source = fs::read_to_string(&path).unwrap().replace("\r\n", "\n");
         let program = parse(&source)
             .unwrap_or_else(|err| panic!("failed to parse {}: {:?}", path.display(), err));
         let resolution = resolve_for_test(0, &program);
@@ -765,7 +765,8 @@ fn test_official_invalid_suite() {
     for name in sorted_names {
         let path = invalid_dir.join(format!("{name}.aru"));
         let diag_path = invalid_dir.join(format!("{name}.diag"));
-        let source = fs::read_to_string(&path).unwrap();
+        // Golden diagnostic spans use LF byte offsets on every platform.
+        let source = fs::read_to_string(&path).unwrap().replace("\r\n", "\n");
 
         // Standardize relative filepath format with forward slashes:
         let rel_filepath = path
