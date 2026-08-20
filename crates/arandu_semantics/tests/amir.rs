@@ -119,11 +119,11 @@ func main() {
 fn non_copy_local_use_after_move_fails_during_amir_analysis() {
     let src = r#"
 struct Boxed {
-    value: int
+    value: str
 }
 
 func main() {
-    let a: Boxed = Boxed { value: 1 }
+    let a: Boxed = Boxed { value: "one" }
     let b: Boxed = a
     let c: Boxed = a
 }
@@ -167,11 +167,11 @@ func main() {
 fn branch_move_mismatch_reports_o007() {
     let src = r#"
 struct Boxed {
-    value: int
+    value: str
 }
 
 func main(cond: bool) {
-    let a: Boxed = Boxed { value: 1 }
+    let a: Boxed = Boxed { value: "one" }
     if cond {
         let b: Boxed = a
     }

@@ -1,0 +1,38 @@
+module examples.minimal.m10_path_empty_windows
+
+// Windows variant of m10_path_empty. `std.path` follows host semantics.
+import std.path as path
+
+func main(): int {
+    if !path.is_empty("") {
+        return 1
+    }
+    if path.is_empty("x") {
+        return 2
+    }
+
+    if !path.is_absolute("C:\\") {
+        return 3
+    }
+    if path.is_absolute("rel") {
+        return 4
+    }
+    if path.is_absolute(".\\x") {
+        return 5
+    }
+
+    if path.file_name(path.join("a", "b")) != "b" {
+        return 6
+    }
+    if path.file_name(path.join("C:\\tmp", "x")) != "x" {
+        return 7
+    }
+    if path.file_name(path.join("C:\\tmp", "C:\\abs")) != "abs" {
+        return 8
+    }
+
+    if path.file_name("C:\\tmp\\leaf") != "leaf" {
+        return 9
+    }
+    return 0
+}

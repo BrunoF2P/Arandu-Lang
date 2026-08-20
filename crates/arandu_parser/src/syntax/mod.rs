@@ -181,13 +181,13 @@ mod tests {
     fn subtree_reparse_reuses_sibling_green_identity() {
         let src1 = two_funcs(2);
         let t1 = parse_syntax(&src1);
-        let alpha1 = t1.items()[0].green().into_owned();
+        let alpha1 = t1.items()[0].green().to_owned();
 
         let needle = "return 2";
         let start = src1.find(needle).expect("needle") as u32;
         let end = start + needle.len() as u32;
         let (_src2, t2) = reparse_subtree(&t1, start, end, "return 99");
-        let alpha2 = t2.items()[0].green().into_owned();
+        let alpha2 = t2.items()[0].green().to_owned();
 
         // replace_child clones Arc for untouched children → same green identity.
         let p1: *const rowan::GreenNodeData = &*alpha1;

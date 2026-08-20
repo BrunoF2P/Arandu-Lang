@@ -560,6 +560,10 @@ impl AranduJit {
         // str expands to [ptr, i64] params and [ptr, i64] returns (ArFatStr).
         {
             let mut join_sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+            #[cfg(windows)]
+            {
+                join_sig.call_conv = cranelift_codegen::isa::CallConv::SystemV;
+            }
             for _ in 0..2 {
                 join_sig
                     .params
@@ -581,6 +585,10 @@ impl AranduJit {
             func_ids.insert("ar_path_join".to_string(), id);
 
             let mut file_sig = cranelift_codegen::ir::Signature::new(default_call_conv);
+            #[cfg(windows)]
+            {
+                file_sig.call_conv = cranelift_codegen::isa::CallConv::SystemV;
+            }
             file_sig
                 .params
                 .push(cranelift_codegen::ir::AbiParam::new(ptr_type));

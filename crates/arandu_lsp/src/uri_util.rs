@@ -83,8 +83,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn roundtrip_unix_path() {
-        let p = PathBuf::from("/tmp/hello world.aru");
+    fn roundtrip_absolute_path() {
+        let p = std::env::temp_dir().join("hello world.aru");
         let uri = uri_from_path(&p).expect("uri");
         assert!(uri.as_str().starts_with("file://"));
         assert!(uri.as_str().contains("%20") || uri.as_str().contains("hello"));

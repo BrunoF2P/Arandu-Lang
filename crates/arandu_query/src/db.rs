@@ -246,7 +246,7 @@ impl DatabaseImpl {
         *g = Some(roots);
         // Keep flat stdlib_root in sync when roots carry one.
         if let Some(std) = roots.stdlib_root(self) {
-            self.set_stdlib_root((*std).clone());
+            self.set_stdlib_root(std.as_ref().clone());
         }
     }
 
@@ -273,10 +273,10 @@ impl DatabaseImpl {
     pub fn register_source_file(&self, path: String, file: SourceFile) {
         let mut reg = self.files.write().unwrap_or_else(|e| e.into_inner());
         let file_id = file.file_id(self.as_source_db());
-        if file_id >= reg.next_id {
+        if *file_id >= reg.next_id {
             reg.next_id = file_id.saturating_add(1);
         }
-        reg.insert(path, file_id, file);
+        reg.insert(path, *file_id, file);
     }
 
     /// Drop a registry key so `resolve_module_path` no longer returns a stale file.
@@ -342,7 +342,7 @@ impl DatabaseImpl {
 
 impl arandu_middle::db::SourceDatabase for DatabaseImpl {
     fn exported_symbols(&self, file: SourceFile) -> Arc<arandu_middle::ExportedSymbolTable> {
-        crate::passes::exported_symbols(self, file)
+        crate::passes::exported_symbols(self, file).clone()
     }
 
     fn symbol_span(&self, symbol_id: arandu_middle::SymbolId) -> arandu_base::Span {
@@ -354,7 +354,7 @@ impl arandu_middle::db::SourceDatabase for DatabaseImpl {
         file: SourceFile,
     ) -> Result<Arc<arandu_parser::Program>, arandu_parser::ParseError> {
         let res = crate::passes::parse(self, file);
-        match &*res {
+        match &**res {
             Ok(p) => Ok(Arc::clone(p)),
             Err(e) => Err(e.clone()),
         }
@@ -441,7 +441,7 @@ impl ArandCompilerDb for DatabaseImpl {
         let reg = self.files.read().unwrap_or_else(|e| e.into_inner());
         reg.by_id
             .get(&file)
-            .map(|f| f.text(self.as_source_db()))
+            .map(|f| f.text(self.as_source_db()).clone())
             .unwrap_or_else(|| Arc::from(""))
     }
 
@@ -450,7 +450,7 @@ impl ArandCompilerDb for DatabaseImpl {
         let reg = self.files.read().unwrap_or_else(|e| e.into_inner());
         reg.by_id
             .get(&file)
-            .map(|f| f.path(self.as_source_db()))
+            .map(|f| f.path(self.as_source_db()).clone())
             .unwrap_or_else(|| Arc::new(PathBuf::new()))
     }
 

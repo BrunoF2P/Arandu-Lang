@@ -22,11 +22,11 @@ fn test_simple_import_graph() {
     // Find node indices
     let idx_a = graph
         .node_indices()
-        .find(|&i| graph[i] == file_id_a)
+        .find(|&i| graph[i] == *file_id_a)
         .unwrap();
     let idx_b = graph
         .node_indices()
-        .find(|&i| graph[i] == file_id_b)
+        .find(|&i| graph[i] == *file_id_b)
         .unwrap();
 
     // Verify edges
@@ -58,15 +58,15 @@ fn test_transitive_import_graph() {
     // Find node indices
     let idx_a = graph
         .node_indices()
-        .find(|&i| graph[i] == file_id_a)
+        .find(|&i| graph[i] == *file_id_a)
         .unwrap();
     let idx_b = graph
         .node_indices()
-        .find(|&i| graph[i] == file_id_b)
+        .find(|&i| graph[i] == *file_id_b)
         .unwrap();
     let idx_c = graph
         .node_indices()
-        .find(|&i| graph[i] == file_id_c)
+        .find(|&i| graph[i] == *file_id_c)
         .unwrap();
 
     // Verify edges
@@ -97,11 +97,11 @@ fn test_circular_import_graph_does_not_overflow() {
     // Find node indices
     let idx_a = graph
         .node_indices()
-        .find(|&i| graph[i] == file_id_a)
+        .find(|&i| graph[i] == *file_id_a)
         .unwrap();
     let idx_b = graph
         .node_indices()
-        .find(|&i| graph[i] == file_id_b)
+        .find(|&i| graph[i] == *file_id_b)
         .unwrap();
 
     // Verify edges (cyclic paths)

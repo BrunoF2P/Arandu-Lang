@@ -132,19 +132,24 @@ const GOLD: &[Gold] = &[
 #[test]
 fn minimal_gold_check_and_run() {
     for g in GOLD {
-        let check = run_cli(&["check", g.path]);
+        let path = if cfg!(windows) && g.path == "examples/minimal/m10_path_empty.aru" {
+            "examples/minimal/m10_path_empty_windows.aru"
+        } else {
+            g.path
+        };
+        let check = run_cli(&["check", path]);
         assert!(
             check.status.success(),
             "check failed {}: {}",
-            g.path,
+            path,
             String::from_utf8_lossy(&check.stderr)
         );
-        let run = run_cli(&["run", g.path]);
+        let run = run_cli(&["run", path]);
         assert_eq!(
             run.status.code(),
             Some(g.exit),
             "run exit mismatch {}: stderr={}",
-            g.path,
+            path,
             String::from_utf8_lossy(&run.stderr)
         );
     }

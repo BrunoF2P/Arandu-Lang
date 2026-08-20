@@ -12,6 +12,8 @@ use std::time::Duration;
 
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
+#[cfg(windows)]
+use std::os::windows::io::AsRawSocket;
 
 struct SockSlot {
     kind: SockKind,
@@ -49,6 +51,14 @@ fn raw_fd_of(kind: &SockKind) -> i32 {
     match kind {
         SockKind::Listener(l) => l.as_raw_fd(),
         SockKind::Stream(s) => s.as_raw_fd(),
+    }
+}
+
+#[cfg(windows)]
+fn raw_socket_of(kind: &SockKind) -> windows_sys::Win32::Networking::WinSock::SOCKET {
+    match kind {
+        SockKind::Listener(listener) => listener.as_raw_socket() as usize,
+        SockKind::Stream(stream) => stream.as_raw_socket() as usize,
     }
 }
 
@@ -277,8 +287,59 @@ pub unsafe extern "C" fn ar_rt_tcp_wait(sock: i64, events: i64, timeout_ms: i64)
     }
     #[cfg(not(unix))]
     {
-        let _ = (sock, events, timeout_ms);
-        -1
+        #[cfg(windows)]
+        {
+            use windows_sys::Win32::Networking::WinSock::{
+                POLLERR, POLLHUP, POLLRDNORM, POLLWRNORM, WSAPOLLFD, WSAPoll,
+            };
+
+            let fd = {
+                let g = lock();
+                let Some(Some(slot)) = g.get(sock as usize) else {
+                    return -1;
+                };
+                raw_socket_of(&slot.kind)
+            };
+            let mut pfd = WSAPOLLFD {
+                fd,
+                events: 0,
+                revents: 0,
+            };
+            if events & WAIT_READ != 0 {
+                pfd.events |= POLLRDNORM;
+            }
+            if events & WAIT_WRITE != 0 {
+                pfd.events |= POLLWRNORM;
+            }
+            let timeout_arg = if timeout_ms < 0 {
+                -1
+            } else {
+                timeout_ms.min(i32::MAX as i64) as i32
+            };
+            let rc = unsafe { WSAPoll(&mut pfd, 1, timeout_arg) };
+            if rc < 0 {
+                return -1;
+            }
+            if rc == 0 {
+                return 0;
+            }
+            let mut out = 0i64;
+            if pfd.revents & POLLRDNORM != 0 {
+                out |= WAIT_READ;
+            }
+            if pfd.revents & POLLWRNORM != 0 {
+                out |= WAIT_WRITE;
+            }
+            if pfd.revents & (POLLERR | POLLHUP) != 0 {
+                out |= WAIT_READ;
+            }
+            out
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (sock, events, timeout_ms);
+            -1
+        }
     }
 }
 

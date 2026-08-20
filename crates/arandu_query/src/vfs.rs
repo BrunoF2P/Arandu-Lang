@@ -161,7 +161,7 @@ pub fn map_import_key(
 
     // stdlib/… → install stdlib root (not package listing)
     if let Some(rest) = key.strip_prefix("stdlib/") {
-        let stdlib = roots.stdlib_root(db)?;
+        let stdlib = roots.stdlib_root(db).as_ref()?.clone();
         let candidate = stdlib.join(rest);
         // Stdlib is install-fixed; existence via metadata is OK (not watch-driven).
         if candidate.is_file() {
@@ -173,14 +173,14 @@ pub fn map_import_key(
     // my_app/util.aru → package_src/util.aru
     let pkg_prefix = format!("{pkg}/");
     if let Some(rest) = key.strip_prefix(&pkg_prefix) {
-        if listing_contains(db, listing, rest) {
+        if listing_contains(db, *listing, rest) {
             return Some(src.join(rest));
         }
         return None;
     }
 
     // Bare util.aru (legacy import form) relative to package src
-    if !key.contains("..") && listing_contains(db, listing, &key) {
+    if !key.contains("..") && listing_contains(db, *listing, &key) {
         return Some(src.join(&key));
     }
 

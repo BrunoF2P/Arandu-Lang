@@ -32,8 +32,8 @@ pub fn cycle_recover(
 #[salsa::tracked]
 pub fn local_symbols(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<ResolutionResult> {
     let program_res = parse(db, file);
-    let resolved = match &*program_res {
-        Ok(program) => arandu_resolve::resolve_local(file.file_id(db), program),
+    let resolved = match &**program_res {
+        Ok(program) => arandu_resolve::resolve_local(*file.file_id(db), program),
         Err(_) => ResolutionResult {
             is_cycle_fallback: false,
             symbols: arandu_semantics::SymbolTable::default(),
@@ -102,7 +102,7 @@ pub fn syntax_tree(
     file: SourceFile,
 ) -> HashEq<arandu_parser::SyntaxTree> {
     let text = file.text(db);
-    let file_id = file.file_id(db);
+    let file_id = *file.file_id(db);
     // Prefer DatabaseImpl incremental path; share Arc text with SourceFile.
     let tree = if let Some(impl_db) = db.as_db_impl() {
         impl_db.syntax_tree_for_arc(file_id, Arc::clone(&text))
@@ -125,7 +125,7 @@ pub fn parse(
     file: SourceFile,
 ) -> HashEq<Result<Arc<Program>, arandu_parser::ParseError>> {
     let tree = syntax_tree(db, file);
-    match arandu_parser::lower_syntax_to_program(&tree, file.file_id(db)) {
+    match arandu_parser::lower_syntax_to_program(&tree, *file.file_id(db)) {
         Ok(program) => HashEq::new(Ok(Arc::new(program))),
         Err(err) => HashEq::new(Err(err)),
     }
@@ -142,7 +142,7 @@ pub fn resolve(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<ResolutionR
 
     // Prefer Arc unshare over deep-cloning ResolutionResult when we are the sole owner.
     let locals_owned = std::sync::Arc::unwrap_or_clone(std::sync::Arc::clone(&locals_arc.value));
-    let resolved = match &*program_res {
+    let resolved = match &**program_res {
         Ok(program) => arandu_resolve::resolve_imports_and_bodies(
             &arandu_resolve::SourceDbLoader(db.as_source_db()),
             program,
@@ -177,7 +177,7 @@ pub fn module_signatures(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<T
     let program_res = parse(db, file);
     let resolved_arc = resolve(db, file);
 
-    let res = match &*program_res {
+    let res = match &**program_res {
         Ok(program) => {
             // Prefer unique ownership of the resolve Arc (no deep clone when sole owner).
             let ResolutionResult {
@@ -259,7 +259,7 @@ pub fn item_source_input(
     let resolved = resolve(db, file);
     let text = file.text(db);
 
-    let Ok(program) = &*program_res else {
+    let Ok(program) = &**program_res else {
         return HashEq::new(ItemSourceInput {
             program: Arc::new(empty_program()),
             item_sym,
@@ -341,7 +341,7 @@ pub fn func_body_input(
     file: SourceFile,
     func_sym: arandu_middle::SymbolId,
 ) -> HashEq<ItemSourceInput> {
-    item_source_input(db, file, func_sym)
+    item_source_input(db, file, func_sym).clone()
 }
 
 fn empty_program() -> Program {
@@ -391,7 +391,7 @@ pub fn file_typeck_view(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<Ty
     let program_res = parse(db, file);
     let signatures = module_signatures(db, file);
 
-    let Ok(program) = &*program_res else {
+    let Ok(program) = &**program_res else {
         return HashEq::share(&signatures);
     };
 
@@ -486,7 +486,7 @@ fn link_imported_hir_modules(
     hir: &mut arandu_semantics::hir::HirProgram,
 ) {
     let mut visited = std::collections::HashSet::new();
-    visited.insert(root.file_id(db));
+    visited.insert(*root.file_id(db));
 
     fn walk(
         db: &dyn ArandCompilerDb,
@@ -496,7 +496,7 @@ fn link_imported_hir_modules(
         hir: &mut arandu_semantics::hir::HirProgram,
     ) {
         let program_res = parse(db, file);
-        let Ok(program) = &*program_res else {
+        let Ok(program) = &**program_res else {
             return;
         };
 
@@ -508,7 +508,7 @@ fn link_imported_hir_modules(
                 // Prelude-only or missing file — nothing to lower.
                 continue;
             };
-            let imported_id = imported_file.file_id(db);
+            let imported_id = *imported_file.file_id(db);
             if !visited.insert(imported_id) {
                 continue;
             }
@@ -517,7 +517,7 @@ fn link_imported_hir_modules(
             walk(db, imported_file, visited, type_check_result, hir);
 
             let imported_parse = parse(db, imported_file);
-            let Ok(imported_program) = &*imported_parse else {
+            let Ok(imported_program) = &**imported_parse else {
                 continue;
             };
 
@@ -538,7 +538,7 @@ fn link_imported_hir_modules(
                 );
                 continue;
             }
-            let mut imported_tc = (*imported_tc_arc).clone();
+            let mut imported_tc = (**imported_tc_arc).clone();
 
             match arandu_semantics::lower_to_hir(&mut imported_tc, imported_program) {
                 Ok(temp_hir) => {
@@ -580,7 +580,7 @@ pub fn lower_amir(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<LowerAmi
 
     // Clone for mutation: lower_to_hir / monomorphize update symbols + type_info.
     // Arc fields are O(1); mono may Arc::make_mut type_info once.
-    let mut type_check_result = (*type_check_result_arc).clone();
+    let mut type_check_result = (**type_check_result_arc).clone();
 
     let empty_amir = || AmirProgram {
         funcs: vec![],
@@ -590,7 +590,7 @@ pub fn lower_amir(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<LowerAmi
 
     let mut hir = {
         arandu_base::time_pass!("lower-hir");
-        match &*program_res {
+        match &**program_res {
             Ok(program) => match arandu_semantics::lower_to_hir(&mut type_check_result, program) {
                 Ok(h) => h,
                 Err(diags) => {
@@ -668,7 +668,7 @@ pub fn module_dependency_graph(
         graph: &mut Graph<u32, ()>,
         visited: &mut std::collections::HashMap<u32, petgraph::graph::NodeIndex>,
     ) -> petgraph::graph::NodeIndex {
-        let file_id = file.file_id(db.as_source_db());
+        let file_id = *file.file_id(db.as_source_db());
         if let Some(&node) = visited.get(&file_id) {
             return node;
         }
@@ -677,7 +677,7 @@ pub fn module_dependency_graph(
         visited.insert(file_id, node);
 
         let program_res = crate::passes::parse(db, file);
-        if let Ok(program) = &*program_res {
+        if let Ok(program) = &**program_res {
             for import in &program.imports {
                 if let Some(path) = arandu_resolve::canonicalize_import_path(import) {
                     if let Some(imported_file) = db.as_source_db().resolve_module_path(&path) {

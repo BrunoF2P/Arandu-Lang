@@ -641,11 +641,11 @@ fn goto_on_snapshot(
     let symbol = tc.symbols.try_get(sym_id)?;
     let def_span: Span = symbol.span;
     let def_uri = uri_for_file_id(by_file_id, docs, &snap.db, def_span.file_id)?;
-    let def_text = if def_span.file_id == info.source.file_id(&snap.db) {
-        text
+    let def_text = if def_span.file_id == *info.source.file_id(&snap.db) {
+        text.clone()
     } else if let Some(&def_id) = by_file_id.get(&def_span.file_id) {
         let d = docs.get(&def_id)?;
-        d.source.text(&snap.db)
+        d.source.text(&snap.db).clone()
     } else {
         let p = snap.db.file_path(def_span.file_id);
         Arc::from(std::fs::read_to_string(p.as_ref()).ok()?.as_str())

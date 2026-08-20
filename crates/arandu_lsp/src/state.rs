@@ -61,7 +61,7 @@ impl ServerState {
         if let Some(&id) = self.by_uri.get(&uri_s) {
             if let Some(doc) = self.docs.get_mut(id) {
                 let source = doc.source;
-                let fid = source.file_id(self.host.db());
+                let fid = *source.file_id(self.host.db());
                 self.host.set_text(source, Arc::from(text));
                 self.by_file_id.insert(fid, id);
                 return id;

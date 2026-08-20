@@ -231,12 +231,17 @@ mod tests {
     }
 
     #[test]
-    fn spawn_true_and_wait() {
+    fn spawn_and_wait() {
         unsafe {
             let s = ar_rt_supervisor_create();
-            let path = b"/bin/true";
+            #[cfg(unix)]
+            let path = "/bin/true".to_string();
+            #[cfg(windows)]
+            let path = std::env::var("WINDIR")
+                .map(|windir| format!("{windir}\\System32\\whoami.exe"))
+                .unwrap_or_else(|_| r"C:\\Windows\\System32\\whoami.exe".to_string());
             let w = ar_rt_supervisor_spawn(s, path.as_ptr(), path.len() as i64, 0);
-            assert!(w >= 0, "spawn true");
+            assert!(w >= 0, "spawn platform test worker");
             let code = ar_rt_supervisor_wait(s, w);
             assert_eq!(code, 0);
             ar_rt_supervisor_destroy(s);

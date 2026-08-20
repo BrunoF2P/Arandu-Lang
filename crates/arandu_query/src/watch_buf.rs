@@ -388,7 +388,7 @@ impl PackageWatchSession {
             db,
             self.package_name.clone(),
             Arc::new(self.package_src.clone()),
-            stdlib,
+            stdlib.clone(),
             self.listing,
         );
         db.set_module_roots(self.module_roots);

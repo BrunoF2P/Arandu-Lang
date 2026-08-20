@@ -16,7 +16,7 @@ static COUNTER_LOCK: Mutex<()> = Mutex::new(());
 
 fn free_func_list(db: &DatabaseImpl, file: SourceFile) -> Vec<arandu_middle::SymbolId> {
     let program = parse(db, file);
-    let Ok(program) = &*program else {
+    let Ok(program) = &**program else {
         return vec![];
     };
     let sigs = module_signatures(db, file);
@@ -25,7 +25,7 @@ fn free_func_list(db: &DatabaseImpl, file: SourceFile) -> Vec<arandu_middle::Sym
 
 fn body_item_list(db: &DatabaseImpl, file: SourceFile) -> Vec<arandu_middle::SymbolId> {
     let program = parse(db, file);
-    let Ok(program) = &*program else {
+    let Ok(program) = &**program else {
         return vec![];
     };
     let sigs = module_signatures(db, file);

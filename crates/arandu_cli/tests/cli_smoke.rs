@@ -1,8 +1,16 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 use std::fs;
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
 
 fn run_cli(args: &[&str]) -> std::process::Output {
+    // The CLI's JIT runtime owns process-wide resources. Keep child CLI runs
+    // serial inside this integration-test binary to avoid cross-test races.
+    static CLI_RUN_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    let _guard = CLI_RUN_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("CLI test lock should not be poisoned");
     Command::new(env!("CARGO_BIN_EXE_arandu_cli"))
         .args(args)
         .output()
@@ -106,8 +114,11 @@ fn run_stable_main_demos() {
         ("examples/stable/syntax/safe_main.aru", 3),
         ("examples/stable/syntax/try_main.aru", 42),
         ("examples/stable/syntax/fib_main.aru", 55),
-        // 50099 & 0xff == 179 (int? 0 ≠ nil)
-        ("examples/stable/syntax/nullable_main.aru", 179),
+        // Unix reports the low 8 bits; Windows preserves the full exit value.
+        (
+            "examples/stable/syntax/nullable_main.aru",
+            if cfg!(windows) { 50099 } else { 179 },
+        ),
         // catch 3*10+7 + prints missingPath
         ("examples/stable/syntax/catch_main.aru", 37),
     ];
@@ -871,17 +882,17 @@ fn check_own_self_use_after_move_fails() {
     fs::write(
         &file,
         r#"struct Holder {
-    v: int
+    text: str
 }
 
 func Holder.take(own self): int {
-    return self.v
+    return 10
 }
 
 func main(): int {
-    let b = Holder { v: 10 }
+    let b = Holder { text: "moved" }
     let n = b.take()
-    return n + b.v
+    return n + b.take()
 }
 "#,
     )

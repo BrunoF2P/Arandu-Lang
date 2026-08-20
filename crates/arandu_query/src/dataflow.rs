@@ -343,7 +343,7 @@ pub fn func_analysis_diags(
     file: SourceFile,
     func_sym: SymbolId,
 ) -> HashEq<Vec<IdeDiagnostic>> {
-    item_ide_diagnostics(db, file, func_sym)
+    item_ide_diagnostics(db, file, func_sym).clone()
 }
 
 /// Diagnostics attributed to one basic block (entry carries item diags until AMIR stmt spans exist).
@@ -441,7 +441,7 @@ pub fn file_ide_diagnostics(
     let mut out: Vec<IdeDiagnostic> = Vec::new();
     let mut covered = std::collections::HashSet::new();
 
-    if let Ok(program) = &*program_res {
+    if let Ok(program) = &**program_res {
         let items = arandu_semantics::body_item_symbols(program, signatures.resolved.as_ref());
         for &item_sym in &items {
             let diags = item_ide_diagnostics(db, file, item_sym);

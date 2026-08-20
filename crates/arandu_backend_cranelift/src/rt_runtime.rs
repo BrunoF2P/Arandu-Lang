@@ -176,8 +176,7 @@ fn path_from_fat(ptr: *const u8, len: i64) -> Option<std::path::PathBuf> {
 ///
 /// # Safety
 /// Fat string ABI for both inputs; returns malloc-style owned buffer.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ar_path_join(
+unsafe fn ar_path_join_impl(
     a_ptr: *const u8,
     a_len: i64,
     b_ptr: *const u8,
@@ -193,8 +192,7 @@ pub unsafe extern "C" fn ar_path_join(
 ///
 /// # Safety
 /// Fat string ABI.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ar_path_file_name(ptr: *const u8, len: i64) -> ArFatStr {
+unsafe fn ar_path_file_name_impl(ptr: *const u8, len: i64) -> ArFatStr {
     let Some(path) = path_from_fat(ptr, len) else {
         return fat_str_from_string(String::new());
     };
@@ -224,8 +222,7 @@ pub unsafe extern "C" fn ar_str_len(_ptr: *const u8, len: i64) -> i64 {
 ///
 /// # Safety
 /// Fat string ABI for both inputs.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ar_str_concat(
+unsafe fn ar_str_concat_impl(
     a_ptr: *const u8,
     a_len: i64,
     b_ptr: *const u8,
@@ -277,8 +274,7 @@ pub unsafe extern "C" fn ar_str_ends_with(
 ///
 /// # Safety
 /// Fat string ABI.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ar_str_split_last(
+unsafe fn ar_str_split_last_impl(
     s_ptr: *const u8,
     s_len: i64,
     sep_ptr: *const u8,
@@ -294,6 +290,120 @@ pub unsafe extern "C" fn ar_str_split_last(
         return fat_str_from_string(String::from_utf8_lossy(after).into_owned());
     }
     fat_str_from_string(String::from_utf8_lossy(s).into_owned())
+}
+
+// Cranelift represents `str` as two return registers. Windows x64's C ABI
+// returns this 16-byte struct indirectly, whereas SysV returns it in RAX/RDX.
+// Keep the exported JIT boundary on SysV there; native Rust callers use the
+// platform ABI only through the private implementations above.
+/// Join two valid fat-string paths.
+///
+/// # Safety
+/// Both pointer/length pairs must satisfy the fat-string ABI.
+#[cfg(not(windows))]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ar_path_join(
+    a_ptr: *const u8,
+    a_len: i64,
+    b_ptr: *const u8,
+    b_len: i64,
+) -> ArFatStr {
+    unsafe { ar_path_join_impl(a_ptr, a_len, b_ptr, b_len) }
+}
+
+#[cfg(windows)]
+/// Join two valid fat-string paths using the System V ABI expected by JIT code.
+///
+/// # Safety
+/// Both pointer/length pairs must satisfy the fat-string ABI.
+#[unsafe(no_mangle)]
+pub unsafe extern "sysv64" fn ar_path_join(
+    a_ptr: *const u8,
+    a_len: i64,
+    b_ptr: *const u8,
+    b_len: i64,
+) -> ArFatStr {
+    unsafe { ar_path_join_impl(a_ptr, a_len, b_ptr, b_len) }
+}
+
+#[cfg(not(windows))]
+/// Return the final component of a valid fat-string path.
+///
+/// # Safety
+/// `ptr` and `len` must satisfy the fat-string ABI.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ar_path_file_name(ptr: *const u8, len: i64) -> ArFatStr {
+    unsafe { ar_path_file_name_impl(ptr, len) }
+}
+
+#[cfg(windows)]
+/// Return the final path component using the System V ABI expected by JIT code.
+///
+/// # Safety
+/// `ptr` and `len` must satisfy the fat-string ABI.
+#[unsafe(no_mangle)]
+pub unsafe extern "sysv64" fn ar_path_file_name(ptr: *const u8, len: i64) -> ArFatStr {
+    unsafe { ar_path_file_name_impl(ptr, len) }
+}
+
+#[cfg(not(windows))]
+/// Concatenate two valid fat strings.
+///
+/// # Safety
+/// Both pointer/length pairs must satisfy the fat-string ABI.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ar_str_concat(
+    a_ptr: *const u8,
+    a_len: i64,
+    b_ptr: *const u8,
+    b_len: i64,
+) -> ArFatStr {
+    unsafe { ar_str_concat_impl(a_ptr, a_len, b_ptr, b_len) }
+}
+
+#[cfg(windows)]
+/// Concatenate two fat strings using the System V ABI expected by JIT code.
+///
+/// # Safety
+/// Both pointer/length pairs must satisfy the fat-string ABI.
+#[unsafe(no_mangle)]
+pub unsafe extern "sysv64" fn ar_str_concat(
+    a_ptr: *const u8,
+    a_len: i64,
+    b_ptr: *const u8,
+    b_len: i64,
+) -> ArFatStr {
+    unsafe { ar_str_concat_impl(a_ptr, a_len, b_ptr, b_len) }
+}
+
+#[cfg(not(windows))]
+/// Return the suffix after the final occurrence of `sep`.
+///
+/// # Safety
+/// Both pointer/length pairs must satisfy the fat-string ABI.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ar_str_split_last(
+    s_ptr: *const u8,
+    s_len: i64,
+    sep_ptr: *const u8,
+    sep_len: i64,
+) -> ArFatStr {
+    unsafe { ar_str_split_last_impl(s_ptr, s_len, sep_ptr, sep_len) }
+}
+
+#[cfg(windows)]
+/// Split a fat string using the System V ABI expected by JIT code.
+///
+/// # Safety
+/// Both pointer/length pairs must satisfy the fat-string ABI.
+#[unsafe(no_mangle)]
+pub unsafe extern "sysv64" fn ar_str_split_last(
+    s_ptr: *const u8,
+    s_len: i64,
+    sep_ptr: *const u8,
+    sep_len: i64,
+) -> ArFatStr {
+    unsafe { ar_str_split_last_impl(s_ptr, s_len, sep_ptr, sep_len) }
 }
 
 #[cfg(test)]
@@ -313,9 +423,12 @@ mod tests {
     #[test]
     fn path_absolute() {
         unsafe {
-            let p = b"/tmp";
-            assert_eq!(ar_path_is_absolute(p.as_ptr(), 4), 1);
-            assert_eq!(ar_path_is_absolute(b"/".as_ptr(), 1), 1);
+            let current_dir = std::env::current_dir().unwrap();
+            let current_dir = current_dir.to_string_lossy();
+            assert_eq!(
+                ar_path_is_absolute(current_dir.as_ptr(), current_dir.len() as i64),
+                1
+            );
             assert_eq!(ar_path_is_absolute(b"rel".as_ptr(), 3), 0);
             assert_eq!(ar_path_is_absolute(b"".as_ptr(), 0), 0);
             assert_eq!(ar_path_is_absolute(b"./x".as_ptr(), 3), 0);
@@ -327,13 +440,24 @@ mod tests {
     fn path_join_and_file_name() {
         unsafe {
             let j = ar_path_join(b"/tmp".as_ptr(), 4, b"x".as_ptr(), 1);
-            assert_eq!(j.len, 6);
             let s = std::slice::from_raw_parts(j.ptr, j.len as usize);
-            assert_eq!(s, b"/tmp/x");
+            assert_eq!(
+                s,
+                std::path::Path::new("/tmp")
+                    .join("x")
+                    .to_string_lossy()
+                    .as_bytes()
+            );
 
             let j2 = ar_path_join(b"a".as_ptr(), 1, b"b".as_ptr(), 1);
             let s2 = std::slice::from_raw_parts(j2.ptr, j2.len as usize);
-            assert_eq!(s2, b"a/b");
+            assert_eq!(
+                s2,
+                std::path::Path::new("a")
+                    .join("b")
+                    .to_string_lossy()
+                    .as_bytes()
+            );
 
             let fnm = ar_path_file_name(b"/tmp/leaf".as_ptr(), 9);
             let sn = std::slice::from_raw_parts(fnm.ptr, fnm.len as usize);

@@ -62,12 +62,12 @@ fn syntax_tree_reuses_sibling_green_after_set_text() {
     let mut db = DatabaseImpl::new();
     let file = db.new_file("cst3.aru".into(), two_funcs(2));
     let t1 = syntax_tree(&db, file);
-    let alpha1 = t1.items()[0].green().into_owned();
+    let alpha1 = t1.items()[0].green().to_owned();
     let p1 = std::ptr::from_ref(&*alpha1).cast::<()>();
 
     file.set_text(&mut db).to(Arc::from(two_funcs(99)));
     let t2 = syntax_tree(&db, file);
-    let alpha2 = t2.items()[0].green().into_owned();
+    let alpha2 = t2.items()[0].green().to_owned();
     let p2 = std::ptr::from_ref(&*alpha2).cast::<()>();
 
     assert_eq!(

@@ -33,7 +33,7 @@ pub fn typecheck(
     snap: &AnalysisSnapshot,
     source: SourceFile,
 ) -> arandu_query::db::HashEq<TypeCheckResult> {
-    arandu_query::passes::type_check(&snap.db, source)
+    arandu_query::passes::type_check(&snap.db, source).clone()
 }
 
 fn ty_str(t: &arandu_middle::types::ArType) -> String {

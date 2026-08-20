@@ -94,7 +94,7 @@ fn pipeline_lower(
     {
         arandu_base::time_pass!("parse");
         let program_res = arandu_query::passes::parse(db, file);
-        if let Err(err) = &*program_res {
+        if let Err(err) = &**program_res {
             print_parse_error_and_exit(err, filepath);
         }
     }
@@ -134,7 +134,7 @@ fn parse_and_check(
         arandu_base::time_pass!("parse");
         arandu_query::passes::parse(db, file)
     };
-    let program = match &*program_res {
+    let program = match &**program_res {
         Ok(program) => std::sync::Arc::clone(program),
         Err(err) => print_parse_error_and_exit(err, filepath),
     };
@@ -154,7 +154,7 @@ fn parse_and_check(
     // TypeCheckResult is Arc-heavy (symbols/resolved/type_info) — clone is O(1) for IR.
     CheckedProgram {
         program,
-        type_check: (*type_check).clone(),
+        type_check: (**type_check).clone(),
     }
 }
 

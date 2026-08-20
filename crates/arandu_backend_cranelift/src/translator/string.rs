@@ -272,7 +272,10 @@ impl FunctionTranslator<'_, '_> {
         let local_ref = self.module.declare_func_in_func(func_id, self.builder.func);
         let call = self.builder.ins().call(local_ref, &[arg, len_ptr]);
         let ptr = self.builder.inst_results(call)[0];
-        let len = self.builder.ins().stack_load(i64_ty, len_slot, 0);
+        let len = self
+            .builder
+            .ins()
+            .stack_load(self.ptr_type, i64_ty, len_slot, 0);
         let len = if self.ptr_type.bits() < 64 {
             self.builder.ins().ireduce(self.ptr_type, len)
         } else {
@@ -326,14 +329,14 @@ impl FunctionTranslator<'_, '_> {
         );
 
         // content_eq = !len_nonzero || bytes_eq  (icmp results are already i8 bools)
-        let not_nonzero = self.builder.ins().bxor_imm(len_nonzero, 1);
+        let not_nonzero = self.builder.ins().bxor_imm_u(len_nonzero, 1);
         let content_eq = self.builder.ins().bor(not_nonzero, bytes_eq);
         let eq = self.builder.ins().band(len_eq, content_eq);
         let _ = i8_ty;
 
         match op {
             arandu_semantics::ops::BinaryOp::Equal => eq,
-            arandu_semantics::ops::BinaryOp::NotEqual => self.builder.ins().bxor_imm(eq, 1),
+            arandu_semantics::ops::BinaryOp::NotEqual => self.builder.ins().bxor_imm_u(eq, 1),
             _ => self.poison_i32(),
         }
     }

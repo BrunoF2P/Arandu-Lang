@@ -9,7 +9,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use arandu_query::{DEFAULT_DEBOUNCE, FsChange, PackageWatchSession, scan_aru_entries};
-use notify::{EventKind, RecursiveMode, Watcher};
+use notify::{EventKind, RecursiveMode};
 use notify_debouncer_full::{DebounceEventResult, DebouncedEvent, new_debouncer};
 
 use crate::project::{self, ProjectFlags};
@@ -44,7 +44,7 @@ pub fn cmd_watch(start: &Path, flags: &ProjectFlags) -> i32 {
         eprintln!("error: package module roots not initialized (internal)");
         return 1;
     };
-    let listing = roots.package_listing(&db);
+    let listing = *roots.package_listing(&db);
     let Some(manifest) = db.project_manifest() else {
         eprintln!("error: package manifest not initialized (internal)");
         return 1;
@@ -96,18 +96,10 @@ pub fn cmd_watch(start: &Path, flags: &ProjectFlags) -> i32 {
     };
 
     // Watch package root (covers src/ + Arandu.toml).
-    if let Err(e) = debouncer
-        .watcher()
-        .watch(&ctx.root, RecursiveMode::Recursive)
-    {
+    if let Err(e) = debouncer.watch(&ctx.root, RecursiveMode::Recursive) {
         eprintln!("error: watch {}: {e}", ctx.root.display());
         return 1;
     }
-    // Track root for debouncer-full file-id cache (rename correlation).
-    debouncer
-        .cache()
-        .add_root(ctx.root.clone(), RecursiveMode::Recursive);
-
     eprintln!(
         "watching {} (package `{}`) — Ctrl-C to stop",
         ctx.root.display(),

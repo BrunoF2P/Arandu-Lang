@@ -60,6 +60,7 @@ func main(): int {
 fn run_path_absolute_and_empty() {
     let dir = std::env::temp_dir();
     let file = dir.join("arandu_cli_path_abs.aru");
+    let absolute = if cfg!(windows) { r"C:\\" } else { "/tmp" };
     fs::write(
         &file,
         r#"
@@ -69,7 +70,7 @@ func main(): int {
     if !path.is_empty("") {
         return 1
     }
-    if !path.is_absolute("/tmp") {
+    if !path.is_absolute("__ABSOLUTE_PATH__") {
         return 2
     }
     if path.is_absolute("rel") {
@@ -77,7 +78,8 @@ func main(): int {
     }
     return 0
 }
-"#,
+"#
+        .replace("__ABSOLUTE_PATH__", absolute),
     )
     .unwrap();
     let root = workspace_root();
@@ -367,7 +369,7 @@ func main(): int {
 }
 
 #[test]
-fn run_reactor_backend_linux() {
+fn run_reactor_backend_is_supported_or_portable() {
     let dir = std::env::temp_dir();
     let file = dir.join("arandu_cli_backend.aru");
     fs::write(
@@ -378,8 +380,8 @@ import std.runtime as rt
 
 func main(): int {
     let b = rt.reactor_backend()
-    // Linux: 1 = epoll, 2 = io_uring
-    if b < 1 {
+    // Portable fallback: 0; Linux: 1 = epoll, 2 = io_uring.
+    if b < 0 {
         return 1
     }
     if b > 2 {
@@ -464,6 +466,14 @@ func main(): int {
 fn run_supervisor_true() {
     let dir = std::env::temp_dir();
     let file = dir.join("arandu_cli_supervisor.aru");
+    let worker = if cfg!(windows) {
+        std::env::var("WINDIR")
+            .map(|windir| format!(r"{windir}\System32\whoami.exe"))
+            .unwrap_or_else(|_| r"C:\Windows\System32\whoami.exe".to_string())
+    } else {
+        "/bin/true".to_string()
+    }
+    .replace('\\', "\\\\");
     fs::write(
         &file,
         r#"
@@ -475,7 +485,7 @@ func main(): int {
     if s.id < 0 {
         return 1
     }
-    let w = rt.supervisor_spawn(s, "/bin/true", 0)
+    let w = rt.supervisor_spawn(s, "__WORKER_PATH__", 0)
     if w.id < 0 {
         return 2
     }
@@ -483,7 +493,8 @@ func main(): int {
     rt.destroy_supervisor(s)
     return code
 }
-"#,
+"#
+        .replace("__WORKER_PATH__", &worker),
     )
     .unwrap();
     let root = workspace_root();

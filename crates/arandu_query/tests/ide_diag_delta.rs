@@ -13,7 +13,7 @@ static COUNTER_LOCK: Mutex<()> = Mutex::new(());
 
 fn body_items(db: &DatabaseImpl, file: SourceFile) -> Vec<arandu_middle::SymbolId> {
     let program = parse(db, file);
-    let Ok(program) = &*program else {
+    let Ok(program) = &**program else {
         return vec![];
     };
     let sigs = module_signatures(db, file);
