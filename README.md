@@ -100,13 +100,17 @@ From the monorepo without a Release:
 
 ## Requirements
 
-- Rust stable with edition 2024 support.
+- `rustup` with the exact verified toolchain from `rust-toolchain.toml`.
 
-If your Rust toolchain is old, update it:
+Rustup selects and installs Rust 1.97.1 plus `rustfmt` and Clippy automatically
+from the repository configuration. Confirm the active toolchain with:
 
 ```bash
-rustup update stable
+rustup show active-toolchain
 ```
+
+Arandu does not currently promise an MSRV. New Rust stable releases are tested
+separately and adopted only through a reviewed `rust-toolchain.toml` update.
 
 ## Language server
 
@@ -119,16 +123,14 @@ Architecture: [docs/arandu-salsa-lsp-architecture-v0.1.md](docs/arandu-salsa-lsp
 
 ## Run
 
-Run all tests:
+Run the canonical S0 validation from the workspace root, in this order:
 
 ```bash
-cargo test
-```
-
-Run the required lint gate:
-
-```bash
-cargo clippy --all-targets --all-features -- -D warnings
+cargo fmt --all -- --check
+cargo check --workspace --locked
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --locked
+cargo run --locked -p xtask -- check-diag-docs
 ```
 
 Print tokens for the hello example:

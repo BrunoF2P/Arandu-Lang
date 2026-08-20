@@ -25,16 +25,16 @@ normalize() {
     | sort -u
 }
 
-echo "==> determinism: cargo test -p ${PKG} --lib -- --test-threads=1"
+echo "==> determinism: cargo test --locked -p ${PKG} --lib -- --test-threads=1"
 set +e
-cargo test -p "$PKG" --lib -- --test-threads=1 --quiet >"$TMP/t1.raw" 2>&1
+cargo test --locked -p "$PKG" --lib -- --test-threads=1 --quiet >"$TMP/t1.raw" 2>&1
 EC1=$?
 set -e
 normalize <"$TMP/t1.raw" >"$TMP/t1.norm"
 
-echo "==> determinism: cargo test -p ${PKG} --lib -- --test-threads=${THREADS_N}"
+echo "==> determinism: cargo test --locked -p ${PKG} --lib -- --test-threads=${THREADS_N}"
 set +e
-cargo test -p "$PKG" --lib -- --test-threads="$THREADS_N" --quiet >"$TMP/tN.raw" 2>&1
+cargo test --locked -p "$PKG" --lib -- --test-threads="$THREADS_N" --quiet >"$TMP/tN.raw" 2>&1
 ECN=$?
 set -e
 normalize <"$TMP/tN.raw" >"$TMP/tN.norm"

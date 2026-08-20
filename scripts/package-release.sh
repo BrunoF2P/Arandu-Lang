@@ -34,7 +34,7 @@ trap 'rm -rf "$STAGE"' EXIT
 
 echo "==> package-release VERSION=$VERSION TARGET=$TARGET"
 
-cargo build -p arandu_cli --release --manifest-path "$ROOT/Cargo.toml"
+cargo build --locked -p arandu_cli --release --manifest-path "$ROOT/Cargo.toml"
 BIN="$ROOT/target/release/arandu_cli"
 
 TREE="$STAGE/$NAME"

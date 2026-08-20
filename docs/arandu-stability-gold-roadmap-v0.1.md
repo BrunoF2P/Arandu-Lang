@@ -40,14 +40,37 @@ fase em que apareceu.
 ## S0 — Baseline reproduzível
 
 - [x] `cargo fmt --all -- --check`.
-- [x] `cargo check --workspace`.
-- [x] `cargo clippy --workspace --all-targets --all-features -- -D warnings` verde no toolchain atual.
-- [x] `cargo test --workspace`.
-- [x] `cargo run -p xtask -- check-diag-docs`.
-- [ ] CI executa exatamente os gates acima em ordem e sem exceções silenciosas.
-- [ ] Toolchain mínimo/suportado está fixado ou documentado, inclusive política de atualização do Clippy.
+- [x] `cargo check --workspace --locked`.
+- [x] `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`.
+- [x] `cargo test --workspace --locked`.
+- [x] `cargo run --locked -p xtask -- check-diag-docs`.
+- [ ] CI executa exatamente os gates acima em ordem e sem exceções silenciosas (implementado; aguarda execução em PR real).
+- [x] Toolchain verificado fixado em `rust-toolchain.toml`; MSRV ainda não é prometido.
+- [x] Clippy e rustfmt pertencem ao mesmo toolchain da compilação.
+- [x] `Cargo.lock` é obrigatório e os gates de build usam `--locked`.
+- [x] Stable futuro roda como aviso e não altera silenciosamente o gate obrigatório.
+- [x] Actions usam SHA imutável e permissões mínimas; Dependabot acompanha atualizações.
 
 **DoD S0:** um checkout limpo reproduz todos os gates localmente e em CI.
+
+### Política de atualização do toolchain
+
+1. O job semanal `Future stable (advisory)` antecipa incompatibilidades sem bloquear `main`.
+2. A adoção ocorre em PR exclusivo que atualiza `rust-toolchain.toml`.
+3. O PR executa S0 completo e os testes arquiteturais focados de query/LSP.
+4. Novos lints são corrigidos na causa; não se adiciona `allow` global apenas para liberar o gate.
+5. `Cargo.lock` só muda quando necessário e seu diff é revisado.
+6. A versão anterior permanece um rollback simples até o merge do PR.
+
+O toolchain verificado não é um MSRV. Um `rust-version` só será publicado
+depois que a versão mínima for testada em CI e sua política de suporte estiver
+documentada.
+
+### Configuração externa necessária
+
+- Branch protection deve exigir `S0 / Gate`.
+- Alterações em `.github/workflows/**` devem receber revisão explícita.
+- Jobs advisory/fuzz não são requisitos de merge.
 
 ## S1 — Contratos e recuperação
 

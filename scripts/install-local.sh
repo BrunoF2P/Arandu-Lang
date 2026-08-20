@@ -62,7 +62,7 @@ echo "    layout=$VERSION_DIR"
 
 if [[ "$SKIP_BUILD" != "1" ]]; then
   echo "==> building arandu_cli (release)"
-  cargo build -p arandu_cli --release --manifest-path "$ROOT/Cargo.toml"
+  cargo build --locked -p arandu_cli --release --manifest-path "$ROOT/Cargo.toml"
 else
   echo "==> SKIP_BUILD=1 (using existing target/release/arandu_cli)"
 fi

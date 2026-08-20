@@ -31,7 +31,7 @@ mkdir -p "$WORKDIR" "$EXTRA_PATH"
 
 # Build once, install with SKIP_BUILD for speed on re-runs if desired.
 echo "==> release build"
-cargo build -p arandu_cli --release --manifest-path "$ROOT/Cargo.toml"
+cargo build --locked -p arandu_cli --release --manifest-path "$ROOT/Cargo.toml"
 
 echo "==> atomic versioned install → $PREFIX"
 SKIP_BUILD=1 PREFIX="$PREFIX" "$ROOT/scripts/install-local.sh" "$PREFIX"

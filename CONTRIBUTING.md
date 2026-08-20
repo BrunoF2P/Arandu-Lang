@@ -10,9 +10,11 @@ Arandu is an experimental Brazilian systems programming language focused on memo
 
 ### Prerequisites
 
-To build and test Arandu, you will need the standard Rust toolchain installed:
+To build and test Arandu, install `rustup`. The repository pins the exact
+verified toolchain in `rust-toolchain.toml`:
 
-- **Rust (Stable)**: Ensure you have the latest stable compiler. [rustup.rs](https://rustup.rs) is the recommended way to install Rust.
+- **Verified Rust:** Rust 1.97.1 with `rustfmt` and Clippy. Rustup selects it automatically.
+- **MSRV:** not promised yet; do not infer it from the verified development toolchain.
 
 ### Setup and Compilation
 
@@ -24,22 +26,22 @@ To build and test Arandu, you will need the standard Rust toolchain installed:
 
 2. Build the workspace:
    ```bash
-   cargo build --workspace
+   cargo build --workspace --locked
    ```
 
 3. Run the test suite:
    ```bash
-   cargo test --workspace
+   cargo test --workspace --locked
    ```
 
 ---
 
 ## Coding Standards & Guidelines
 
-- **Formatting**: Always format your code with `cargo fmt` before submitting a pull request.
-- **Clippy**: Run Clippy to catch common mistakes and keep the code clean:
+- **Formatting**: Always run `cargo fmt --all -- --check` before submitting a pull request.
+- **Clippy**: Run the same warning gate as CI:
    ```bash
-   cargo clippy --workspace --all-targets
+   cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
    ```
 - **No `unwrap` / `expect` in library production code** (`crates/*/src`, excluding `#[cfg(test)]`):
   - Prefer `Result<T, Diagnostic>` (or `thiserror` mapped to `Diagnostic` at the CLI/LSP edge).
@@ -92,11 +94,11 @@ Arandu enforces a strict **1-to-1 bijection** between declared compiler diagnost
    - A **How to Fix** section with a corrected code example.
 
 4. **Verify the Bijection**:
-   Run the test suite with the `ARANDU_VALIDATE_DOCS` environment variable set:
+   Run the canonical xtask check:
    ```bash
-   ARANDU_VALIDATE_DOCS=1 cargo test --workspace
+   cargo run --locked -p xtask -- check-diag-docs
    ```
-   This triggers the build script validation to verify that every diagnostic code matches a documentation file, and vice-versa.
+   This verifies that every diagnostic code matches a documentation file, and vice-versa.
 
 ---
 
@@ -107,7 +109,7 @@ Arandu relies on various test types:
 - **Golden Tests**: Tests that compare the output of parser/AST/AMIR lowering stages against stable snapshots (`.hir`, `.amir`, `.diag` files).
   To update golden tests after making valid parser/compiler modifications, run:
   ```bash
-  UPDATE_EXPECT=1 cargo test --workspace
+  UPDATE_EXPECT=1 cargo test --workspace --locked
   ```
 
 Thank you again for contributing to Arandu!
