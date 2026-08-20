@@ -1,3 +1,5 @@
+#![allow(clippy::panic)]
+
 use arandu_query::analysis::AnalysisHost;
 use std::thread;
 

@@ -10,6 +10,7 @@
 /// Always panics with a stable `ICE:` prefix so it is never a silent failure.
 #[inline(never)]
 #[cold]
+#[allow(clippy::panic)] // Deliberate fatal boundary for an infallible dense-id accessor.
 pub fn invalid_dense_id(kind: &str, index: usize) -> ! {
     panic!("ICE: invalid {kind} index {index} (dense pool invariant broken)");
 }
@@ -17,6 +18,7 @@ pub fn invalid_dense_id(kind: &str, index: usize) -> ! {
 /// Fatal ICE for an invariant that has no recovery path and no Diagnostic context.
 #[inline(never)]
 #[cold]
+#[allow(clippy::panic)] // Deliberate fatal boundary when no Diagnostic context exists.
 pub fn bug(message: &str) -> ! {
     panic!("ICE: {message}");
 }

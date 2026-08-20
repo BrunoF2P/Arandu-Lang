@@ -1,5 +1,5 @@
 #![cfg(target_pointer_width = "64")]
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use arandu_backend_cranelift::CraneliftBackend;
 use arandu_middle::amir::AmirProgram;
@@ -49,6 +49,7 @@ fn emit_c(amir: &AmirProgram, tc: &TypeCheckResult) -> String {
         &tc.type_info.type_interner,
         arandu_middle::layout::DataLayout::host(),
     )
+    .unwrap()
 }
 
 fn test_execution_parity(name: &str, src: &str) {
@@ -426,7 +427,8 @@ fn c_emit_arstr_layout_32bit() {
         tc.type_info.as_ref(),
         &tc.type_info.type_interner,
         DataLayout::ptr_width(4),
-    );
+    )
+    .unwrap();
     assert!(
         c.contains("typedef struct { const uint8_t *ptr; int32_t len; } ArStr;"),
         "expected 32-bit ArStr, headers:\n{}",
@@ -450,7 +452,8 @@ fn c_emit_arstr_i686_sysv() {
         tc.type_info.as_ref(),
         &tc.type_info.type_interner,
         DataLayout::i686_sysv(),
-    );
+    )
+    .unwrap();
     assert!(
         c.contains("typedef struct { const uint8_t *ptr; int32_t len; } ArStr;"),
         "i686 ArStr: {}",

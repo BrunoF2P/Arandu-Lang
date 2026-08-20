@@ -11,6 +11,7 @@ use arandu_middle::amir::{
 use arandu_middle::layout::{LayoutEngine, StructLayoutProvider};
 use arandu_middle::literal_pool::AmirLiteralEntry;
 use arandu_middle::types::{ArType, TypeInterner};
+use arandu_middle::{DiagCode, Diagnostic, Span};
 use arandu_semantics::SymbolTable;
 use std::fmt::Write;
 
@@ -46,6 +47,7 @@ pub struct CEmitter<'a> {
     pub(super) emitted_types: rustc_hash::FxHashSet<String>,
     /// A3.3: unique id for `__ar_co_N` stack payload locals (multi-stmt).
     pub(super) co_stack_slot: u32,
+    pub(super) error: Option<Diagnostic>,
 }
 
 impl<'a> CEmitter<'a> {
@@ -66,6 +68,7 @@ impl<'a> CEmitter<'a> {
             output: String::new(),
             emitted_types: rustc_hash::FxHashSet::default(),
             co_stack_slot: 0,
+            error: None,
         }
     }
 
@@ -90,7 +93,7 @@ impl<'a> CEmitter<'a> {
 
     /// Emits all type definitions, string literal globals, and function bodies,
     /// then returns the complete C source as a `String`.
-    pub fn emit(mut self) -> String {
+    pub fn emit(mut self) -> Result<String, Diagnostic> {
         let needs_str = self.program_uses_str();
         let needs_println = self.program_uses_println();
         // println requires ArStr runtime even if no string literals.
@@ -157,7 +160,22 @@ impl<'a> CEmitter<'a> {
         for func in &self.program.funcs {
             self.emit_func(func);
         }
-        self.output
+        match self.error {
+            Some(error) => Err(error),
+            None => Ok(self.output),
+        }
+    }
+
+    pub(super) fn record_codegen_ice(&mut self, func: &AmirFunc, message: &'static str) {
+        if self.error.is_none() {
+            let span = func
+                .temps
+                .first()
+                .map(|temp| temp.span)
+                .or_else(|| func.locals.first().map(|local| local.span))
+                .unwrap_or_else(|| Span::new(func.symbol.file_id, 0, 0));
+            self.error = Some(Diagnostic::ice(DiagCode::ICEGEN001, message, span));
+        }
     }
 
     /// True if any call targets prelude `io.println` (symbol name or C sanitization).

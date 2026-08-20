@@ -1,4 +1,4 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use arandu_semantics::hir::*;
 use arandu_semantics::passes::type_checker::types::{Primitive, TypeInterner};
 use arandu_semantics::{SymbolTable, lower_to_hir, resolve_for_test, type_check};

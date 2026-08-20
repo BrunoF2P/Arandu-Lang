@@ -8,6 +8,7 @@ pub mod emitter;
 
 pub use emitter::CEmitter;
 
+use arandu_middle::Diagnostic;
 use arandu_middle::amir::AmirProgram;
 use arandu_middle::layout::{DataLayout, LayoutEngine, StructLayoutProvider};
 use arandu_middle::types::TypeInterner;
@@ -24,7 +25,7 @@ pub fn emit_c(
     provider: &dyn StructLayoutProvider,
     interner: &TypeInterner,
     data_layout: DataLayout,
-) -> String {
+) -> Result<String, Diagnostic> {
     let engine = LayoutEngine::from_data_layout(data_layout);
     CEmitter::new(program, symbols, &engine, provider, interner).emit()
 }

@@ -1,4 +1,4 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use arandu_lexer::Span;
 use arandu_semantics::DenseRange;
 use arandu_semantics::amir::{
@@ -453,7 +453,7 @@ fn dce_tracks_used_temps_with_dense_bitsets() {
     );
     let mut literal_pool = AmirLiteralPool::default();
 
-    optimize_amir_func(&mut func, &mut literal_pool);
+    optimize_amir_func(&mut func, &mut literal_pool).unwrap();
 
     let remaining: Vec<_> = func.block_stmt_ids(BlockId::from_usize(0)).collect();
     assert_eq!(remaining.len(), 1);

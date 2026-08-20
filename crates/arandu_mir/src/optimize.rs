@@ -9,15 +9,17 @@ use crate::dce::mark_sweep_dce;
 use crate::literal_pool::AmirLiteralPool;
 use crate::sccp::sccp;
 use crate::simplify_cfg::simplify_cfg;
+use crate::{DiagCode, Diagnostic, Span};
 
 /// Runs the full AMIR optimization pipeline on all functions in `program`.
 ///
 /// Each function is independently optimized in a fixpoint loop.
 /// See [`optimize_amir_func`] for the per-function pass sequence.
-pub fn optimize_amir(program: &mut AmirProgram) {
+pub fn optimize_amir(program: &mut AmirProgram) -> Result<(), Diagnostic> {
     for func in &mut program.funcs {
-        optimize_amir_func(func, &mut program.literal_pool);
+        optimize_amir_func(func, &mut program.literal_pool)?;
     }
+    Ok(())
 }
 
 /// Runs the per-function optimization loop until convergence.
@@ -25,26 +27,37 @@ pub fn optimize_amir(program: &mut AmirProgram) {
 /// Pass order: SCCP (constant propagation) → Mark-Sweep DCE → CFG
 /// Simplification. Each iteration feeds the next; the loop terminates
 /// when no pass reports any change.
-pub fn optimize_amir_func(func: &mut AmirFunc, literal_pool: &mut AmirLiteralPool) {
+pub fn optimize_amir_func(
+    func: &mut AmirFunc,
+    literal_pool: &mut AmirLiteralPool,
+) -> Result<(), Diagnostic> {
     let mut bump = bumpalo::Bump::new();
     let mut iterations = 0;
     loop {
         iterations += 1;
         if iterations > 100 {
-            tracing::warn!(
-                "Optimization loop reached iteration limit (100) and aborted to prevent hang."
-            );
-            break;
+            let span = func
+                .temps
+                .first()
+                .map(|temp| temp.span)
+                .or_else(|| func.locals.first().map(|local| local.span))
+                .unwrap_or_else(|| Span::new(func.symbol.file_id, 0, 0));
+            return Err(Diagnostic::ice(
+                DiagCode::ICEO001,
+                "AMIR optimization did not converge after 100 iterations",
+                span,
+            ));
         }
         let mut changed = false;
         changed |= sccp(func, literal_pool, &bump);
-        changed |= mark_sweep_dce(func);
-        changed |= simplify_cfg(func, &bump);
+        changed |= mark_sweep_dce(func)?;
+        changed |= simplify_cfg(func, &bump)?;
         if !changed {
             break;
         }
         bump.reset();
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -395,7 +408,7 @@ mod tests {
             vec![bool_temp(0), bool_temp(1), bool_temp(2)],
         );
 
-        optimize_amir_func(&mut f, &mut crate::literal_pool::AmirLiteralPool::default());
+        optimize_amir_func(&mut f, &mut crate::literal_pool::AmirLiteralPool::default()).unwrap();
 
         assert_eq!(f.blocks[0].statements.len, 1);
         let stmt = f
@@ -426,7 +439,7 @@ mod tests {
             }],
             vec![int_temp(0), int_temp(1)],
         );
-        optimize_amir_func(&mut f, &mut pool);
+        optimize_amir_func(&mut f, &mut pool).unwrap();
         assert_eq!(f.blocks[0].statements.len, 0);
     }
 
@@ -440,7 +453,7 @@ mod tests {
             }],
             vec![bool_temp(0)],
         );
-        optimize_amir_func(&mut f, &mut crate::literal_pool::AmirLiteralPool::default());
+        optimize_amir_func(&mut f, &mut crate::literal_pool::AmirLiteralPool::default()).unwrap();
         assert_eq!(f.blocks[0].statements.len, 1);
     }
 
@@ -542,7 +555,8 @@ mod tests {
         optimize_amir_func(
             &mut func,
             &mut crate::literal_pool::AmirLiteralPool::default(),
-        );
+        )
+        .unwrap();
 
         // After optimization: only 1 block (merged bb0 + bb1 + bb3), with 2 stmts + Return
         assert_eq!(func.blocks.len(), 1);

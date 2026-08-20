@@ -49,9 +49,11 @@ impl<'a> CEmitter<'a> {
                         BinaryOp::ShiftLeft => "<<",
                         BinaryOp::ShiftRight => ">>",
                         BinaryOp::NullCoalesce => {
-                            panic!(
-                                "internal: NullCoalesce must be CFG-lowered before codegen (not a BinaryOp)"
+                            self.record_codegen_ice(
+                                func,
+                                "NullCoalesce reached C codegen before CFG lowering",
                             );
+                            "/* invalid NullCoalesce */"
                         }
                         BinaryOp::RangeExclusive | BinaryOp::RangeInclusive => unreachable!(),
                         _ => unreachable!(),
@@ -271,7 +273,11 @@ impl<'a> CEmitter<'a> {
                         let _ = write!(&mut self.output, "*{}", op_val);
                     }
                     UnaryOp::Ref | UnaryOp::RefMut => {
-                        panic!("Unary Ref/RefMut should lower as Borrow/BorrowMut");
+                        self.record_codegen_ice(
+                            func,
+                            "Unary Ref/RefMut reached C codegen before Borrow lowering",
+                        );
+                        let _ = write!(&mut self.output, "/* invalid reference rvalue */ 0");
                     }
                     _ => {
                         let _ = write!(&mut self.output, "{}", op_val);

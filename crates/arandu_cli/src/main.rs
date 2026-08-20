@@ -39,6 +39,12 @@ fn print_parse_error_and_exit(err: &arandu_parser::ParseError, filepath: &str) -
     print_diagnostics_and_exit(std::iter::once(diag), filepath);
 }
 
+fn optimize_amir_or_exit(amir: &mut arandu_semantics::amir::AmirProgram, filepath: &str) {
+    if let Err(diag) = arandu_semantics::optimize_amir(amir) {
+        print_diagnostics_and_exit(std::iter::once(diag), filepath);
+    }
+}
+
 fn validate_hir_and_monomorphize(
     hir: &mut arandu_semantics::hir::HirProgram,
     type_check: &mut arandu_semantics::TypeCheckResult,
@@ -510,7 +516,7 @@ fn main() {
                 };
                 if let Some(ref mut amir) = amir_owned {
                     arandu_base::time_pass!("optimize-amir");
-                    arandu_semantics::optimize_amir(amir);
+                    optimize_amir_or_exit(amir, &filepath);
                 }
                 let amir = match &amir_owned {
                     Some(a) => a,
@@ -542,7 +548,7 @@ fn main() {
                 };
                 if let Some(ref mut amir) = amir_owned {
                     arandu_base::time_pass!("optimize-amir");
-                    arandu_semantics::optimize_amir(amir);
+                    optimize_amir_or_exit(amir, &filepath);
                     tracing::info!("Optimisation passes applied");
                 }
                 let amir = match &amir_owned {
@@ -620,7 +626,7 @@ fn main() {
                 };
                 if let Some(ref mut amir) = amir_owned {
                     arandu_base::time_pass!("optimize-amir");
-                    arandu_semantics::optimize_amir(amir);
+                    optimize_amir_or_exit(amir, &filepath);
                 }
                 let amir = match &amir_owned {
                     Some(a) => a,
@@ -634,7 +640,10 @@ fn main() {
                     type_check.type_info.as_ref(),
                     &type_check.type_info.type_interner,
                     data_layout,
-                );
+                )
+                .unwrap_or_else(|diag| {
+                    print_diagnostics_and_exit(std::iter::once(diag), &filepath)
+                });
                 print!("{c_src}");
             }
 
@@ -794,7 +803,7 @@ fn cmd_project_run(start: &Path, flags: &project::ProjectFlags, opt: bool, _debu
         None
     };
     if let Some(ref mut amir) = amir_owned {
-        arandu_semantics::optimize_amir(amir);
+        optimize_amir_or_exit(amir, &filepath);
     }
     let amir = match &amir_owned {
         Some(a) => a,
@@ -880,7 +889,7 @@ fn cmd_project_build(start: &Path, flags: &project::ProjectFlags, opt: bool, _de
         None
     };
     if let Some(ref mut amir) = amir_owned {
-        arandu_semantics::optimize_amir(amir);
+        optimize_amir_or_exit(amir, &filepath);
     }
     let amir = match &amir_owned {
         Some(a) => a,

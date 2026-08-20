@@ -3,6 +3,7 @@ use crate::amir::{
     for_each_rvalue_operand, for_each_terminator_operand,
 };
 use crate::layout::DenseRange;
+use crate::{DiagCode, Diagnostic, Span};
 use smallvec::SmallVec;
 use std::collections::VecDeque;
 
@@ -16,11 +17,11 @@ use std::collections::VecDeque;
 /// Phase 2 — Sweep: removes every unmarked statement by rebuilding the stmt table.
 ///
 /// Returns `true` if any instruction was removed.
-pub fn mark_sweep_dce(func: &mut AmirFunc) -> bool {
+pub fn mark_sweep_dce(func: &mut AmirFunc) -> Result<bool, Diagnostic> {
     let n_stmts = func.stmts.len();
     let n_temps = func.temps.len();
     if n_stmts == 0 || n_temps == 0 {
-        return false;
+        return Ok(false);
     }
 
     // --- def map: TempId → InstrId (last def; used for use→def chain) ------
@@ -128,10 +129,11 @@ pub fn mark_sweep_dce(func: &mut AmirFunc) -> bool {
 
     let any_removed = live.iter().any(|&l| !l);
     if !any_removed {
-        return false;
+        return Ok(false);
     }
 
     let old = std::mem::replace(&mut func.stmts, crate::amir::AmirStmtTable::new());
+    let ice_span = optimization_span(func);
     let mut slots: Vec<Option<AmirStmt>> = old.payloads.raw.into_iter().map(Some).collect();
     let mut new_stmts = crate::amir::AmirStmtTable::new();
     let mut new_ranges: Vec<DenseRange> = Vec::with_capacity(func.blocks.len());
@@ -142,9 +144,13 @@ pub fn mark_sweep_dce(func: &mut AmirFunc) -> bool {
         for &stmt_id in ids {
             let idx = stmt_id.as_usize();
             if live[idx] {
-                let stmt = slots[idx]
-                    .take()
-                    .unwrap_or_else(|| panic!("ICE: each live stmt is moved at most once"));
+                let stmt = slots.get_mut(idx).and_then(Option::take).ok_or_else(|| {
+                    Diagnostic::ice(
+                        DiagCode::ICEO001,
+                        format!("DCE encountered duplicate or out-of-range statement id {idx}"),
+                        ice_span,
+                    )
+                })?;
                 new_stmts.push(stmt);
                 kept += 1;
             }
@@ -157,7 +163,15 @@ pub fn mark_sweep_dce(func: &mut AmirFunc) -> bool {
         block.statements = range;
     }
 
-    true
+    Ok(true)
+}
+
+fn optimization_span(func: &AmirFunc) -> Span {
+    func.temps
+        .first()
+        .map(|temp| temp.span)
+        .or_else(|| func.locals.first().map(|local| local.span))
+        .unwrap_or_else(|| Span::new(func.symbol.file_id, 0, 0))
 }
 
 // ---------------------------------------------------------------------------
@@ -313,7 +327,7 @@ mod tests {
             }],
             vec![bool_temp(0)],
         );
-        assert!(!mark_sweep_dce(&mut f));
+        assert!(!mark_sweep_dce(&mut f).unwrap());
         assert_eq!(f.blocks[0].statements.len, 1);
     }
 
@@ -326,7 +340,7 @@ mod tests {
             }],
             vec![bool_temp(0), bool_temp(1)],
         );
-        assert!(mark_sweep_dce(&mut f));
+        assert!(mark_sweep_dce(&mut f).unwrap());
         assert_eq!(f.blocks[0].statements.len, 0);
     }
 
@@ -356,7 +370,7 @@ mod tests {
             ],
             vec![int_temp(0), int_temp(1)],
         );
-        assert!(!mark_sweep_dce(&mut f));
+        assert!(!mark_sweep_dce(&mut f).unwrap());
         assert_eq!(f.blocks[0].statements.len, 2);
     }
 
@@ -388,7 +402,7 @@ mod tests {
             ],
             vec![bool_temp(0), bool_temp(1), bool_temp(2)],
         );
-        assert!(mark_sweep_dce(&mut f));
+        assert!(mark_sweep_dce(&mut f).unwrap());
         // _0 is always live, so the t0 = Use(true) stmt survives.
         // t2 = t1 + true and t1 = t0 * true are correctly removed.
         assert_eq!(f.blocks[0].statements.len, 1);
@@ -406,7 +420,7 @@ mod tests {
             }],
             vec![],
         );
-        assert!(!mark_sweep_dce(&mut f));
+        assert!(!mark_sweep_dce(&mut f).unwrap());
         assert_eq!(f.blocks[0].statements.len, 1);
     }
 
@@ -468,7 +482,7 @@ mod tests {
             stmts,
             cfg,
         };
-        assert!(!mark_sweep_dce(&mut f));
+        assert!(!mark_sweep_dce(&mut f).unwrap());
         assert_eq!(f.blocks[1].statements.len, 1);
         assert_eq!(f.blocks[2].statements.len, 1);
     }
@@ -523,7 +537,43 @@ mod tests {
             cfg,
         };
         // t1 is only referenced from Goto.args — must not be removed.
-        assert!(!mark_sweep_dce(&mut f));
+        assert!(!mark_sweep_dce(&mut f).unwrap());
         assert_eq!(f.blocks[0].statements.len, 1);
+    }
+
+    #[test]
+    fn overlapping_statement_ranges_return_ice() {
+        let mut stmts = AmirStmtTable::new();
+        stmts.push(AmirStmt::Assign {
+            lhs: TempId::from_usize(0),
+            rhs: AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Bool(true))),
+        });
+        stmts.push(AmirStmt::Assign {
+            lhs: TempId::from_usize(1),
+            rhs: AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Bool(false))),
+        });
+        let blocks = (0..2)
+            .map(|id| AmirBasicBlock {
+                id: BlockId::from_usize(id),
+                statements: DenseRange::new(0, 1),
+                params: Vec::new(),
+                terminator: AmirTerminator::Return,
+            })
+            .collect::<Vec<_>>();
+        let cfg = crate::cfg::compute_cfg_edges(&blocks);
+        let mut f = AmirFunc {
+            symbol: crate::SymbolId::new(0, 0),
+            return_type: intern_ty(ArType::Primitive(Primitive::Int)),
+            receiver: None,
+            params: Vec::new(),
+            locals: Vec::new(),
+            temps: vec![int_temp(0), int_temp(1)],
+            blocks,
+            stmts,
+            cfg,
+        };
+
+        let error = mark_sweep_dce(&mut f).unwrap_err();
+        assert_eq!(error.code, DiagCode::ICEO001);
     }
 }

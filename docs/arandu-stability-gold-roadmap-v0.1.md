@@ -44,7 +44,7 @@ fase em que apareceu.
 - [x] `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`.
 - [x] `cargo test --workspace --locked`.
 - [x] `cargo run --locked -p xtask -- check-diag-docs`.
-- [ ] CI executa exatamente os gates acima em ordem e sem exceções silenciosas (implementado; aguarda execução em PR real).
+- [x] CI executa exatamente os gates acima em ordem e sem exceções silenciosas (`S0 / Gate` validado em runner GitHub).
 - [x] Toolchain verificado fixado em `rust-toolchain.toml`; MSRV ainda não é prometido.
 - [x] Clippy e rustfmt pertencem ao mesmo toolchain da compilação.
 - [x] `Cargo.lock` é obrigatório e os gates de build usam `--locked`.
@@ -52,6 +52,10 @@ fase em que apareceu.
 - [x] Actions usam SHA imutável e permissões mínimas; Dependabot acompanha atualizações.
 
 **DoD S0:** um checkout limpo reproduz todos os gates localmente e em CI.
+
+**Estado:** `gold` — DoD técnico validado localmente e no GitHub Actions;
+`S0 / Gate` confirmado como check obrigatório da branch principal em
+2026-08-20.
 
 ### Política de atualização do toolchain
 
@@ -68,13 +72,15 @@ documentada.
 
 ### Configuração externa necessária
 
-- Branch protection deve exigir `S0 / Gate`.
+- Branch protection exige `S0 / Gate`.
 - Alterações em `.github/workflows/**` devem receber revisão explícita.
 - Jobs advisory/fuzz não são requisitos de merge.
 
 ## S1 — Contratos e recuperação
 
-- [ ] Classificar `panic!`, `unwrap` e `expect` em código de produção: teste/invariante local, erro recuperável ou ICE reportável.
+Roadmap executável e auditoria de mercado: [`arandu-s1-contracts-recovery-roadmap-v0.1.md`](arandu-s1-contracts-recovery-roadmap-v0.1.md).
+
+- [x] Classificar `panic!`, `unwrap` e `expect` em código de produção: teste/invariante local, erro recuperável ou ICE reportável.
 - [ ] Converter caminhos alcançáveis por código Arandu inválido em diagnóstico/ICE, nunca abort do compilador.
 - [ ] Documentar limites suportados de cada backend e comando da CLI.
 - [ ] Garantir ordenação determinística de diagnósticos e artefatos em execuções repetidas.
