@@ -45,8 +45,8 @@ testar internals que pertencem ao Cranelift, Salsa ou Rowan.
 | `arandu_mir` | DCE apaga efeito/jump arg; pass não converge | CFG, DCE, ICE tipado e validação pré/pós-pass | tipos incompatíveis nos argumentos e convergência adversarial |
 | `arandu_semantics` | composição das fases perde spans ou entra em panic | recovery/HIR/AMIR | corpus transversal sem unwind (iniciado) |
 | `arandu_query` | acumulador some no cache; ciclo/cancelamento deixa stale | cutoff, cache, ciclos, snapshots, revisão pós-cancelamento e ciclo estável por 16 revisões | ciclo concorrente repetido e revisão após panic de evento |
-| `arandu_backend_c` | IR inválida gera C parcial; signed/layout diverge | rejeição `ICE-GEN-001`, paridade e emissão byte-idêntica | matriz signed/layout e atomicidade no CLI |
-| `arandu_backend_cranelift` | bloco/parâmetro inválido ou index/shift miscompila | verifier, JIT e diferencial índice+shift | limites de shift e índices negativos/fora da faixa conforme contrato |
+| `arandu_backend_c` | IR inválida gera C parcial; signed/layout diverge | validator compartilhado antes da emissão; rejeição idêntica de aresta SSA, tipo poison e faixa inválida; `ICE-GEN-001`; emissão byte-idêntica | matriz signed/layout e atomicidade no CLI |
+| `arandu_backend_cranelift` | bloco/parâmetro inválido ou index/shift miscompila | validator compartilhado antes de mutar o JIT; mesma rejeição do C; verifier e diferencial índice+shift | limites de shift e índices negativos/fora da faixa conforme contrato |
 | `arandu_cli` | erro operacional vira sucesso/artefato parcial | exit codes e projetos | atomicidade de build/emit e caminhos Unicode/CRLF |
 | `arandu_lsp` | UTF-16/CRLF desloca edição; worker publica stale | revisões/debounce | roundtrip astral+CRLF (iniciado) e resposta descartada após close |
 | `arandu_fmt` | segunda formatação muda saída; string altera indentação | smoke estrutural | idempotência Unicode/CRLF e fallback inválido (iniciado) |

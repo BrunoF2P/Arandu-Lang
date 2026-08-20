@@ -26,6 +26,12 @@ pub fn emit_c(
     interner: &TypeInterner,
     data_layout: DataLayout,
 ) -> Result<String, Diagnostic> {
+    if let Some(issue) = arandu_middle::validate_amir_program(program, symbols, interner)
+        .into_iter()
+        .next()
+    {
+        return Err(issue);
+    }
     let engine = LayoutEngine::from_data_layout(data_layout);
     CEmitter::new(program, symbols, &engine, provider, interner).emit()
 }

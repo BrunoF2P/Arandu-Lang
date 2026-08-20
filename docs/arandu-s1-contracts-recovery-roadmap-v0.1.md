@@ -130,7 +130,8 @@ esses lints localmente; produção não ganha `allow` amplo.
 - [x] Alterar backend C para `Result<String, Diagnostic>`.
 - [x] Converter `NullCoalesce` residual e `Ref/RefMut` não baixado em
       `ICE-GEN-001`.
-- [ ] Garantir que C e Cranelift rejeitam a mesma classe de AMIR inválida.
+- [x] Garantir que C e Cranelift rejeitam as mesmas classes de AMIR inválida
+      (aresta SSA, tipo poison e faixa de statements), antes de gerar artefato.
 - [ ] Documentar matriz de tipos, layouts, host/cross-target e recursos não
       suportados por backend.
 - [x] Tornar layout target-dependent falível, com overflow verificado em
