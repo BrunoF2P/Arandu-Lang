@@ -140,7 +140,12 @@ impl FunctionTranslator<'_, '_> {
                     | arandu_semantics::ops::BinaryOp::Sub
                     | arandu_semantics::ops::BinaryOp::Mul
                     | arandu_semantics::ops::BinaryOp::Div
-                    | arandu_semantics::ops::BinaryOp::Mod => expected_ty,
+                    | arandu_semantics::ops::BinaryOp::Mod
+                    | arandu_semantics::ops::BinaryOp::BitOr
+                    | arandu_semantics::ops::BinaryOp::BitXor
+                    | arandu_semantics::ops::BinaryOp::BitAnd
+                    | arandu_semantics::ops::BinaryOp::ShiftLeft
+                    | arandu_semantics::ops::BinaryOp::ShiftRight => expected_ty,
                     // Comparisons (incl. `x == nil` / `x != nil`): prefer the
                     // non-constant side's ABI type so Nil is a zero of matching width.
                     arandu_semantics::ops::BinaryOp::Equal

@@ -9,7 +9,31 @@ use crate::dce::mark_sweep_dce;
 use crate::literal_pool::AmirLiteralPool;
 use crate::sccp::sccp;
 use crate::simplify_cfg::simplify_cfg;
-use crate::{DiagCode, Diagnostic, Span};
+use crate::types::TypeInterner;
+use crate::{DiagCode, Diagnostic, Span, SymbolTable};
+
+/// Validates AMIR before and after optimization, preventing malformed IR from
+/// reaching a mutating pass or backend.
+pub fn optimize_amir_checked(
+    program: &mut AmirProgram,
+    symbols: &SymbolTable,
+    interner: &TypeInterner,
+) -> Result<(), Diagnostic> {
+    if let Some(issue) = crate::amir_validate::validate_amir_program(program, symbols, interner)
+        .into_iter()
+        .next()
+    {
+        return Err(issue);
+    }
+    optimize_amir(program)?;
+    if let Some(issue) = crate::amir_validate::validate_amir_program(program, symbols, interner)
+        .into_iter()
+        .next()
+    {
+        return Err(issue);
+    }
+    Ok(())
+}
 
 /// Runs the full AMIR optimization pipeline on all functions in `program`.
 ///

@@ -115,7 +115,6 @@ fn test_early_cutoff_on_function_body_change() {
 
 #[test]
 fn test_cross_file_collision_during_circular_import_is_still_deterministic() {
-    let mut db = DatabaseImpl::default();
     // circular dependency: A imports B, B imports A
     let mod_a_text = r#"
         import mod_b
@@ -129,17 +128,37 @@ fn test_cross_file_collision_during_circular_import_is_still_deterministic() {
             mod_a.foo()
         }
     "#;
-    let mod_a = db.new_file("mod_a.aru".to_string(), mod_a_text.to_string());
-    let _mod_b = db.new_file("mod_b.aru".to_string(), mod_b_text.to_string());
+    let run = |reverse: bool| {
+        let mut db = DatabaseImpl::default();
+        let mod_a;
+        if reverse {
+            let _mod_b = db.new_file("mod_b.aru".to_string(), mod_b_text.to_string());
+            mod_a = db.new_file("mod_a.aru".to_string(), mod_a_text.to_string());
+        } else {
+            mod_a = db.new_file("mod_a.aru".to_string(), mod_a_text.to_string());
+            let _mod_b = db.new_file("mod_b.aru".to_string(), mod_b_text.to_string());
+        }
 
-    let tc_a = arandu_query::passes::type_check(&db, mod_a);
-    let has_cycle_error = tc_a
-        .diagnostics
-        .iter()
-        .any(|d| d.message.contains("cyclic"));
-    if !has_cycle_error {
-        panic!("Expected a cycle error or unresolved type, got no diagnostics");
-    }
+        let tc = arandu_query::passes::type_check(&db, mod_a);
+        let mut diagnostics = tc
+            .diagnostics
+            .iter()
+            .map(|d| (d.code.as_str(), d.message.clone(), d.span.start, d.span.end))
+            .collect::<Vec<_>>();
+        diagnostics.sort();
+        diagnostics
+    };
+
+    let forward = run(false);
+    let reverse = run(true);
+    assert!(
+        !forward.is_empty(),
+        "circular import must emit a diagnostic"
+    );
+    assert_eq!(
+        forward, reverse,
+        "diagnostics must not depend on module registration order"
+    );
 }
 
 #[test]

@@ -2,8 +2,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use arandu_backend_cranelift::CraneliftBackend;
-use arandu_middle::amir::AmirProgram;
+use arandu_middle::amir::{AmirConstant, AmirOperand, AmirProgram, AmirRvalue, AmirStmt};
 use arandu_middle::layout::DataLayout;
+use arandu_middle::ops::BinaryOp;
 use arandu_semantics::{
     CodegenBackend, TypeCheckResult, lower_to_amir, lower_to_hir, resolve_for_test, type_check,
 };
@@ -129,6 +130,69 @@ int main() {
         expected, actual_result,
         "Execution mismatch for {}! Cranelift={}, C={}",
         name, expected, actual_result
+    );
+}
+
+#[test]
+fn c_emission_is_byte_deterministic() {
+    let src = r#"
+        struct Pair { left: int; right: int }
+        func main(): int {
+            let pair = Pair { left: 20, right: 22 }
+            return pair.left + pair.right
+        }
+    "#;
+    let (amir, tc) = compile_src(src);
+
+    let first = emit_c(&amir, &tc);
+    let second = emit_c(&amir, &tc);
+    let (fresh_amir, fresh_tc) = compile_src(src);
+    let fresh = emit_c(&fresh_amir, &fresh_tc);
+
+    assert_eq!(first.as_bytes(), second.as_bytes());
+    assert_eq!(first.as_bytes(), fresh.as_bytes());
+}
+
+#[test]
+fn c_backend_rejects_residual_null_coalesce_without_partial_success() {
+    let (mut amir, tc) = compile_src("func main(): int { let x = 1; return x }");
+    let assign = amir
+        .funcs
+        .iter_mut()
+        .flat_map(|func| func.stmts.payloads.raw.iter_mut())
+        .find_map(|stmt| match stmt {
+            AmirStmt::Assign { rhs, .. } => Some(rhs),
+            _ => None,
+        })
+        .expect("fixture must lower at least one assignment");
+    *assign = AmirRvalue::Binary {
+        op: BinaryOp::NullCoalesce,
+        left: AmirOperand::Constant(AmirConstant::Bool(true)),
+        right: AmirOperand::Constant(AmirConstant::Bool(false)),
+    };
+
+    let error = arandu_backend_c::emit_c(
+        &amir,
+        tc.symbols.as_ref(),
+        tc.type_info.as_ref(),
+        &tc.type_info.type_interner,
+        DataLayout::host(),
+    )
+    .unwrap_err();
+    assert_eq!(error.code, arandu_middle::DiagCode::ICEGEN001);
+}
+
+#[test]
+fn parity_index_addressing_combined_with_shift() {
+    test_execution_parity(
+        "index_shift_addressing",
+        r#"
+        func main(): int {
+            let values: [4]int = [3, 5, 7, 11]
+            let index: int = 1 << 1
+            return values[index] + (1024 >> 5)
+        }
+        "#,
     );
 }
 

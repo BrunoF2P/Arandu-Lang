@@ -282,6 +282,30 @@ pub(super) fn synth_binary_unary_expr(
                     }
                     Some(checker.intern(types::resolve_literal_pair(&left_ty, &right_ty)))
                 }
+                BinaryOp::BitOr
+                | BinaryOp::BitXor
+                | BinaryOp::BitAnd
+                | BinaryOp::ShiftLeft
+                | BinaryOp::ShiftRight => {
+                    let left_ty = checker.resolve(left_ty_id);
+                    let right_ty = checker.resolve(right_ty_id);
+                    if !checker.unify_ids(left_ty_id, right_ty_id)
+                        || !left_ty.is_integer()
+                        || !right_ty.is_integer()
+                    {
+                        checker.add_constraint(
+                            left_ty_id,
+                            right_ty_id,
+                            ConstraintOrigin::BinaryOp {
+                                op_span: span,
+                                left_span: checker.pool.expr_span(left_id),
+                                right_span: checker.pool.expr_span(right_id),
+                            },
+                        );
+                        return Some(checker.intern(ArType::Error));
+                    }
+                    Some(checker.intern(types::resolve_literal_pair(&left_ty, &right_ty)))
+                }
                 BinaryOp::Equal
                 | BinaryOp::NotEqual
                 | BinaryOp::Lt

@@ -16,7 +16,7 @@ pub mod suspend_check;
 pub use borrow_check::check_borrows;
 pub use lower_amir::lower_to_amir;
 pub use move_checker::check_moves;
-pub use optimize::optimize_amir;
+pub use optimize::{optimize_amir, optimize_amir_checked};
 pub use pin_free::apply_pin_free_refs;
 pub use suspend_check::check_borrow_across_suspend;
 

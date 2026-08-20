@@ -38,6 +38,16 @@ pub fn validate_amir_func(
     }
 
     for (i, block) in func.blocks.iter().enumerate() {
+        if block.id.as_usize() != i {
+            diags.push(Diagnostic::ice(
+                DiagCode::ICEGEN002,
+                format!(
+                    "block at index {i} has mismatched BlockId bb{} (expected bb{i}) (CFG-0)",
+                    block.id.as_usize()
+                ),
+                span,
+            ));
+        }
         if !is_valid_terminator(&block.terminator) {
             diags.push(Diagnostic::error(
                 DiagCode::U001FeatureNotSupported,
@@ -53,6 +63,52 @@ pub fn validate_amir_func(
                     format!(
                         "bb{i}: terminator targets non-existent bb{} (CFG-3)",
                         succ.as_usize()
+                    ),
+                    span,
+                ));
+            }
+        }
+
+        for_each_terminator_edge(&block.terminator, |target, arg_count| {
+            let Some(target_block) = func.blocks.get(target.as_usize()) else {
+                return;
+            };
+            if arg_count != target_block.params.len() {
+                diags.push(Diagnostic::ice(
+                    DiagCode::ICEGEN002,
+                    format!(
+                        "bb{i} passes {arg_count} argument(s) to bb{}, which expects {} block parameter(s) (SSA-EDGE)",
+                        target.as_usize(),
+                        target_block.params.len()
+                    ),
+                    span,
+                ));
+            }
+        });
+    }
+
+    let mut stmt_owner = vec![None; func.stmts.len()];
+    for (i, block) in func.blocks.iter().enumerate() {
+        let range = block.statements;
+        if range.end_usize() > func.stmts.len() {
+            diags.push(Diagnostic::ice(
+                DiagCode::ICEGEN002,
+                format!(
+                    "bb{i} statement range {}..{} exceeds statement table length {} (IR-RANGE)",
+                    range.start_usize(),
+                    range.end_usize(),
+                    func.stmts.len()
+                ),
+                span,
+            ));
+            continue;
+        }
+        for stmt_index in range.as_range() {
+            if let Some(previous_block) = stmt_owner[stmt_index].replace(i) {
+                diags.push(Diagnostic::ice(
+                    DiagCode::ICEGEN002,
+                    format!(
+                        "statement {stmt_index} is owned by both bb{previous_block} and bb{i} (IR-RANGE)"
                     ),
                     span,
                 ));
@@ -149,5 +205,31 @@ fn terminator_targets(term: &AmirTerminator) -> Vec<BlockId> {
             v
         }
         AmirTerminator::Suspend { resume, .. } => vec![*resume],
+    }
+}
+
+fn for_each_terminator_edge(term: &AmirTerminator, mut f: impl FnMut(BlockId, usize)) {
+    match term {
+        AmirTerminator::Return | AmirTerminator::Unreachable => {}
+        AmirTerminator::Goto { target, args } => f(*target, args.len()),
+        AmirTerminator::Branch {
+            if_true,
+            true_args,
+            if_false,
+            false_args,
+            ..
+        } => {
+            f(*if_true, true_args.len());
+            f(*if_false, false_args.len());
+        }
+        AmirTerminator::SwitchInt {
+            targets, otherwise, ..
+        } => {
+            for (_, target, args) in targets {
+                f(*target, args.len());
+            }
+            f(otherwise.0, otherwise.1.len());
+        }
+        AmirTerminator::Suspend { resume, args, .. } => f(*resume, args.len()),
     }
 }

@@ -107,7 +107,7 @@ esses lints localmente; produção não ganha `allow` amplo.
 - [x] Remover os sete panics propagáveis antes de deixar `-D warnings` bloqueá-los.
 - [x] Manter allow de produção apenas nos dois helpers densos, com justificativa local.
 - [x] Criar inventário versionado por crate: recuperável, operacional, ICE ou teste.
-- [ ] Adicionar regressão que compila corpus inválido sob `catch_unwind` no
+- [x] Adicionar regressão que compila corpus inválido sob `catch_unwind` no
       harness de teste; o compilador deve retornar diagnóstico, não unwind.
 
 **Saída:** novos panics de produção falham no S0 e as exceções são explícitas.
@@ -118,9 +118,10 @@ esses lints localmente; produção não ganha `allow` amplo.
       coleção de ICEs, preservando convergência e efeitos observáveis.
 - [x] Propagar falha por `optimize` → CLI sem efeitos na query; a otimização
       permanece sobre a cópia pertencente à CLI, fora das queries Salsa.
-- [ ] Cobrir statement movido duas vezes, predecessor/argumento incompatível e
+- [x] Cobrir statement movido duas vezes, predecessor/argumento incompatível e
       terminador inválido com AMIR sintética adversarial.
-- [ ] Executar `amir_validate` antes e depois das transformações relevantes.
+- [x] Executar `amir_validate` antes e depois das transformações relevantes no
+      caminho de otimização da CLI.
 
 **Saída:** AMIR malformada falha como `ICE-O-001`/`ICE-GEN-002`, sem panic.
 
@@ -132,7 +133,8 @@ esses lints localmente; produção não ganha `allow` amplo.
 - [ ] Garantir que C e Cranelift rejeitam a mesma classe de AMIR inválida.
 - [ ] Documentar matriz de tipos, layouts, host/cross-target e recursos não
       suportados por backend.
-- [ ] Testar que backend inválido não produz artefato parcial publicável.
+- [x] Testar que backend inválido retorna `Err(ICE-GEN-001)`, sem sucesso
+      contendo artefato parcial.
 
 **Saída:** todo backend tem sucesso tipado ou diagnóstico tipado.
 
@@ -151,7 +153,7 @@ esses lints localmente; produção não ganha `allow` amplo.
 ### S1-E — Determinismo e guardrails obrigatórios
 
 - [ ] Repetir diagnósticos com ordens de registro e paralelismo diferentes.
-- [ ] Gerar C duas vezes e comparar bytes no mesmo ambiente/toolchain.
+- [x] Gerar C duas vezes e comparar bytes no mesmo ambiente/toolchain.
 - [ ] Empacotar duas vezes e comparar lista, permissões e conteúdo; timestamps
       de arquivo ficam explicitamente fora ou são normalizados.
 - [ ] Manter obrigatórios: ciclos de imports, stale IDs/revisions, CFG/SSA e

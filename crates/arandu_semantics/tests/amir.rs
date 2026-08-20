@@ -3,8 +3,8 @@ use arandu_lexer::Span;
 use arandu_semantics::DenseRange;
 use arandu_semantics::amir::{
     AmirBasicBlock, AmirConstant, AmirFunc, AmirLocal, AmirOperand, AmirPlace, AmirProjection,
-    AmirRvalue, AmirStmt, AmirStmtTable, AmirTemp, AmirTerminator, BlockId, Dominators, LocalId,
-    TempId, reachable_blocks_dense,
+    AmirRvalue, AmirStmt, AmirStmtTable, AmirTemp, AmirTerminator, BlockId, BlockParam, Dominators,
+    LocalId, TempId, reachable_blocks_dense,
 };
 use arandu_semantics::literal_pool::AmirLiteralPool;
 use arandu_semantics::passes::liveness::analyze_local_liveness;
@@ -492,6 +492,98 @@ fn validate_amir_rejects_poison_temp_with_icegen002() {
     let issues = arandu_middle::amir_validate::validate_amir_func(&func, &symbols, &interner);
     assert_eq!(issues.len(), 1);
     assert_eq!(issues[0].code, DiagCode::ICEGEN002);
+}
+
+fn validation_symbols() -> arandu_semantics::SymbolTable {
+    let mut symbols = arandu_semantics::SymbolTable::new(0);
+    symbols
+        .define(
+            symbols.global_scope(),
+            "test_fn",
+            SymbolKind::Func,
+            dummy_span(),
+        )
+        .unwrap();
+    symbols
+}
+
+#[test]
+fn validate_amir_rejects_edge_argument_count_mismatch() {
+    let interner = arandu_middle::types::TypeInterner::new();
+    let ty = interner.intern(ArType::Primitive(arandu_middle::types::Primitive::Int));
+    let blocks = vec![
+        AmirBasicBlock {
+            id: BlockId::from_usize(0),
+            statements: DenseRange::empty(),
+            params: Vec::new(),
+            terminator: AmirTerminator::Goto {
+                target: BlockId::from_usize(1),
+                args: Vec::new(),
+            },
+        },
+        AmirBasicBlock {
+            id: BlockId::from_usize(1),
+            statements: DenseRange::empty(),
+            params: vec![BlockParam {
+                id: temp(0),
+                local: local(0),
+                ty,
+                from: None,
+                moved: false,
+            }],
+            terminator: AmirTerminator::Return,
+        },
+    ];
+    let func = test_func(
+        vec![test_local(0, 1)],
+        vec![AmirTemp { ty, ..test_temp(0) }],
+        blocks,
+        AmirStmtTable::new(),
+    );
+
+    let issues =
+        arandu_middle::amir_validate::validate_amir_func(&func, &validation_symbols(), &interner);
+    assert!(
+        issues.iter().any(|issue| {
+            issue.code == DiagCode::ICEGEN002 && issue.message.contains("SSA-EDGE")
+        })
+    );
+}
+
+#[test]
+fn validate_amir_rejects_overlapping_and_out_of_bounds_statement_ranges() {
+    let interner = arandu_middle::types::TypeInterner::new();
+    let mut stmts = AmirStmtTable::new();
+    stmts.push(AmirStmt::Nop);
+    let blocks = vec![
+        AmirBasicBlock {
+            id: BlockId::from_usize(0),
+            statements: DenseRange::new(0, 1),
+            params: Vec::new(),
+            terminator: AmirTerminator::Return,
+        },
+        AmirBasicBlock {
+            id: BlockId::from_usize(1),
+            statements: DenseRange::new(0, 1),
+            params: Vec::new(),
+            terminator: AmirTerminator::Unreachable,
+        },
+        AmirBasicBlock {
+            id: BlockId::from_usize(2),
+            statements: DenseRange::new(1, 1),
+            params: Vec::new(),
+            terminator: AmirTerminator::Unreachable,
+        },
+    ];
+    let func = test_func(Vec::new(), Vec::new(), blocks, stmts);
+
+    let issues =
+        arandu_middle::amir_validate::validate_amir_func(&func, &validation_symbols(), &interner);
+    let range_issues = issues
+        .iter()
+        .filter(|issue| issue.message.contains("IR-RANGE"))
+        .count();
+    assert_eq!(range_issues, 2);
 }
 
 #[test]

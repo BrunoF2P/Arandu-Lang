@@ -1,6 +1,7 @@
 #![allow(clippy::panic)]
 
 use arandu_query::analysis::AnalysisHost;
+use arandu_query::file_ide_diagnostics;
 use std::thread;
 
 #[test]
@@ -51,4 +52,21 @@ fn test_concurrent_salsa_queries() {
             }
         }
     }
+
+    assert!(
+        file_ide_diagnostics(host.db(), f).is_empty(),
+        "latest valid revision must not retain diagnostics from cancelled readers"
+    );
+
+    host.set_text(f, "func main(): int { return missing }".to_string());
+    assert!(
+        !file_ide_diagnostics(host.db(), f).is_empty(),
+        "a new invalid revision must still execute after concurrent cancellation"
+    );
+
+    host.set_text(f, "func main(): int { return 42 }".to_string());
+    assert!(
+        file_ide_diagnostics(host.db(), f).is_empty(),
+        "fixing the file must discard diagnostics from the previous revision"
+    );
 }
