@@ -178,6 +178,26 @@ impl<'a> CEmitter<'a> {
         }
     }
 
+    pub(super) fn checked_layout(&mut self, ty: &ArType) -> arandu_middle::layout::TypeLayout {
+        match self.layout.layout_of_type(ty, self.interner, self.provider) {
+            Ok(layout) => layout,
+            Err(error) => {
+                if self.error.is_none() {
+                    self.error = Some(Diagnostic::ice(
+                        DiagCode::ICEGEN001,
+                        format!("C code generation rejected an invalid type layout: {error}"),
+                        Span::new(0, 0, 0),
+                    ));
+                }
+                arandu_middle::layout::TypeLayout {
+                    size: 0,
+                    align: 1,
+                    field_offsets: Vec::new(),
+                }
+            }
+        }
+    }
+
     /// True if any call targets prelude `io.println` (symbol name or C sanitization).
     fn program_uses_println(&self) -> bool {
         for func in &self.program.funcs {
@@ -788,7 +808,7 @@ static inline void* ar_co_await_ptr(uint8_t* aw) {{
             return;
         }
 
-        let layout = self.layout.layout_of_type(ty, self.interner, self.provider);
+        let layout = self.checked_layout(ty);
         if layout.size > 0 {
             let _ = writeln!(
                 &mut self.output,

@@ -1,6 +1,6 @@
 use super::{LowerCtx, amir_unsupported};
 use crate::amir::{AmirConstant, AmirOperand, AmirRvalue, AmirStmt, TempId};
-use crate::diagnostics::Diagnostic;
+use crate::diagnostics::{DiagCode, Diagnostic};
 use crate::ops::BinaryOp;
 use crate::passes::type_checker::types::{ArType, Primitive, is_option_type, result_ok_err_id};
 use crate::{SymbolKind, SymbolTable};
@@ -964,11 +964,19 @@ impl LowerCtx<'_> {
         let ty = self.resolve_ty(type_args[0]);
         let pointer_width = std::mem::size_of::<usize>() as u64;
         let engine = arandu_middle::layout::LayoutEngine::new(pointer_width);
-        let layout = engine.layout_of_type(
-            &ty,
-            &self.tc.type_info.type_interner,
-            self.tc.type_info.as_ref(),
-        );
+        let layout = engine
+            .layout_of_type(
+                &ty,
+                &self.tc.type_info.type_interner,
+                self.tc.type_info.as_ref(),
+            )
+            .map_err(|error| {
+                Diagnostic::ice(
+                    DiagCode::ICEGEN002,
+                    format!("failed to compute layout for mem.{bare}: {error}"),
+                    callee_expr.span,
+                )
+            })?;
         let value = if is_size { layout.size } else { layout.align };
 
         let lit = self.intern_literal_int(value.to_string());

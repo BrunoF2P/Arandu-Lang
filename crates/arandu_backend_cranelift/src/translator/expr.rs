@@ -15,9 +15,7 @@ impl FunctionTranslator<'_, '_> {
         let malloc_ref = self
             .module
             .declare_func_in_func(malloc_id, self.builder.func);
-        let pointer_width = self.ptr_type.bytes() as u64;
-        let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
-        let layout = engine.layout_of_type(inner, &self.type_info.type_interner, self.type_info);
+        let layout = self.checked_layout(inner);
         let size = self
             .builder
             .ins()
@@ -242,15 +240,10 @@ impl FunctionTranslator<'_, '_> {
                     .declare_func_in_func(malloc_func_id, self.builder.func);
 
                 let pointer_width = self.ptr_type.bytes() as u64;
-                let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
                 let struct_ty = expected_ar_type.cloned().unwrap_or_else(|| {
                     arandu_semantics::types::ArType::Named(*struct_symbol, Vec::new())
                 });
-                let layout = engine.layout_of_type(
-                    &struct_ty,
-                    &self.type_info.type_interner,
-                    self.type_info,
-                );
+                let layout = self.checked_layout(&struct_ty);
 
                 let size_val = self.builder.ins().iconst(self.ptr_type, layout.size as i64);
                 let call_inst = self.builder.ins().call(local_ref, &[size_val]);
@@ -263,7 +256,7 @@ impl FunctionTranslator<'_, '_> {
                         .get(struct_symbol)
                         .and_then(|m| m.get(name.as_str()).copied())
                         .unwrap_or(i);
-                    let offset = layout.field_offsets[field_idx] as i32;
+                    let offset = layout.field_offsets.get(field_idx).copied().unwrap_or(0) as i32;
                     let op_ty = self.get_operand_ar_type(op);
                     if matches!(op_ty, ArType::Primitive(Primitive::Str)) {
                         let (elem_ptr, elem_len) = self.translate_str_operand(op);
@@ -310,17 +303,15 @@ impl FunctionTranslator<'_, '_> {
                     .declare_func_in_func(malloc_func_id, self.builder.func);
 
                 let pointer_width = self.ptr_type.bytes() as u64;
-                let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
                 let tuple_ty = expected_ar_type.cloned().unwrap_or(ArType::Error);
-                let layout =
-                    engine.layout_of_type(&tuple_ty, &self.type_info.type_interner, self.type_info);
+                let layout = self.checked_layout(&tuple_ty);
 
                 let size_val = self.builder.ins().iconst(self.ptr_type, layout.size as i64);
                 let call_inst = self.builder.ins().call(local_ref, &[size_val]);
                 let ptr_val = self.builder.inst_results(call_inst)[0];
 
                 for (i, op) in items.iter().enumerate() {
-                    let offset = layout.field_offsets[i] as i32;
+                    let offset = layout.field_offsets.get(i).copied().unwrap_or(0) as i32;
                     let op_ty = self.get_operand_ar_type(op);
                     if matches!(op_ty, ArType::Primitive(Primitive::Str)) {
                         let (elem_ptr, elem_len) = self.translate_str_operand(op);
@@ -369,10 +360,8 @@ impl FunctionTranslator<'_, '_> {
                     .declare_func_in_func(malloc_func_id, self.builder.func);
 
                 let pointer_width = self.ptr_type.bytes() as u64;
-                let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
                 let array_ty = expected_ar_type.cloned().unwrap_or(ArType::Error);
-                let layout =
-                    engine.layout_of_type(&array_ty, &self.type_info.type_interner, self.type_info);
+                let layout = self.checked_layout(&array_ty);
 
                 let size_val = self.builder.ins().iconst(self.ptr_type, layout.size as i64);
                 let call_inst = self.builder.ins().call(local_ref, &[size_val]);
@@ -382,11 +371,7 @@ impl FunctionTranslator<'_, '_> {
                     ArType::Array(_, inner) => self.type_info.resolve_type_id(*inner),
                     _ => ArType::Error,
                 };
-                let item_layout = engine.layout_of_type(
-                    &item_ar_ty,
-                    &self.type_info.type_interner,
-                    self.type_info,
-                );
+                let item_layout = self.checked_layout(&item_ar_ty);
                 let item_size = item_layout.size as i32;
 
                 for (i, op) in items.iter().enumerate() {
@@ -443,13 +428,7 @@ impl FunctionTranslator<'_, '_> {
                     }
                     other => other,
                 };
-                let pointer_width = self.ptr_type.bytes() as u64;
-                let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
-                let layout = engine.layout_of_type(
-                    &struct_ty,
-                    &self.type_info.type_interner,
-                    self.type_info,
-                );
+                let layout = self.checked_layout(&struct_ty);
                 let Some(&off) = layout.field_offsets.get(*field) else {
                     // Dead `p?.field` access branch with nil/ZST base, or incomplete layout.
                     return self.poison_i32();
@@ -476,10 +455,8 @@ impl FunctionTranslator<'_, '_> {
                     .declare_func_in_func(malloc_func_id, self.builder.func);
 
                 let pointer_width = self.ptr_type.bytes() as u64;
-                let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
                 let enum_ty = expected_ar_type.cloned().unwrap_or(ArType::Error);
-                let layout =
-                    engine.layout_of_type(&enum_ty, &self.type_info.type_interner, self.type_info);
+                let layout = self.checked_layout(&enum_ty);
 
                 let size_val = self.builder.ins().iconst(self.ptr_type, layout.size as i64);
                 let call_inst = self.builder.ins().call(local_ref, &[size_val]);
@@ -579,12 +556,7 @@ impl FunctionTranslator<'_, '_> {
                     if let Some(variant_shape) = variants.get(tag) {
                         if let Some(payload_ty_id) = variant_shape.payload_ty {
                             let payload_ty = self.type_info.resolve_type_id(payload_ty_id);
-                            let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
-                            let payload_layout = engine.layout_of_type(
-                                &payload_ty,
-                                &self.type_info.type_interner,
-                                self.type_info,
-                            );
+                            let payload_layout = self.checked_layout(&payload_ty);
                             if *index < payload_layout.field_offsets.len() {
                                 payload_offset = payload_layout.field_offsets[*index] as i32;
                             }
@@ -620,10 +592,7 @@ impl FunctionTranslator<'_, '_> {
                     _ => ArType::Error,
                 };
 
-                let pointer_width = self.ptr_type.bytes() as u64;
-                let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
-                let layout =
-                    engine.layout_of_type(&elem_ty, &self.type_info.type_interner, self.type_info);
+                let layout = self.checked_layout(&elem_ty);
 
                 let elem_size = self.builder.ins().iconst(self.ptr_type, layout.size as i64);
                 let offset_val = self.builder.ins().imul(idx_val, elem_size);

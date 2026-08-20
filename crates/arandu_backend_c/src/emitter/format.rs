@@ -149,7 +149,7 @@ impl<'a> CEmitter<'a> {
         }
     }
 
-    pub(super) fn format_place(&self, place: &AmirPlace, func: &AmirFunc) -> String {
+    pub(super) fn format_place(&mut self, place: &AmirPlace, func: &AmirFunc) -> String {
         let local_idx = place.local.as_usize();
         let mut current_ty = self.local_ty(func, place.local);
         let mut path = format!("l{}", local_idx);
@@ -180,9 +180,7 @@ impl<'a> CEmitter<'a> {
                         ArType::Named(id, _) => *id,
                         _ => arandu_middle::SymbolId::DUMMY,
                     };
-                    let layout =
-                        self.layout
-                            .layout_of_type(&struct_ty, self.interner, self.provider);
+                    let layout = self.checked_layout(&struct_ty);
                     let field_name = self
                         .symbols
                         .get(*field_symbol_id)

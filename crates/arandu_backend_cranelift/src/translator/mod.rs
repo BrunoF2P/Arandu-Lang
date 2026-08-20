@@ -137,6 +137,47 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
         }
     }
 
+    pub(crate) fn checked_layout(&mut self, ty: &ArType) -> arandu_semantics::layout::TypeLayout {
+        let pointer_width = self.ptr_type.bytes() as u64;
+        let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
+        match engine.layout_of_type(ty, &self.type_info.type_interner, self.type_info) {
+            Ok(layout)
+                if layout.size <= i32::MAX as u64
+                    && layout
+                        .field_offsets
+                        .iter()
+                        .all(|offset| *offset <= i32::MAX as u64) =>
+            {
+                layout
+            }
+            Ok(layout) => {
+                self.record_ice(
+                    format!(
+                        "type layout exceeds Cranelift's signed 32-bit offset limit: size={}, offsets={:?}",
+                        layout.size, layout.field_offsets
+                    ),
+                    self.func_span(),
+                );
+                arandu_semantics::layout::TypeLayout {
+                    size: 0,
+                    align: 1,
+                    field_offsets: Vec::new(),
+                }
+            }
+            Err(error) => {
+                self.record_ice(
+                    format!("Cranelift rejected an invalid type layout: {error}"),
+                    self.func_span(),
+                );
+                arandu_semantics::layout::TypeLayout {
+                    size: 0,
+                    align: 1,
+                    field_offsets: Vec::new(),
+                }
+            }
+        }
+    }
+
     pub(crate) fn poison_i32(&mut self) -> Value {
         self.builder.ins().iconst(self.ptr_type, 0)
     }
@@ -251,11 +292,14 @@ impl<'a, 'b> FunctionTranslator<'a, 'b> {
                 self.local_map.insert(local.id, var);
                 // F2.0: address-taken scalars get a real stack slot so `&x` is valid.
                 if local.is_memory && Self::needs_scalar_stack_home(&lty) {
-                    let pointer_width = self.ptr_type.bytes() as u64;
-                    let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
-                    let layout =
-                        engine.layout_of_type(&lty, &self.type_info.type_interner, self.type_info);
-                    let size = layout.size.max(1) as u32;
+                    let layout = self.checked_layout(&lty);
+                    let size = u32::try_from(layout.size.max(1)).unwrap_or_else(|_| {
+                        self.record_ice(
+                            "type layout exceeds Cranelift's u32 stack-slot limit",
+                            local.span,
+                        );
+                        1
+                    });
                     let align = layout.align.max(1);
                     let align_shift = align.trailing_zeros() as u8;
                     let slot = self.builder.create_sized_stack_slot(

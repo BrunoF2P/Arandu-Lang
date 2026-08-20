@@ -133,6 +133,8 @@ esses lints localmente; produção não ganha `allow` amplo.
 - [ ] Garantir que C e Cranelift rejeitam a mesma classe de AMIR inválida.
 - [ ] Documentar matriz de tipos, layouts, host/cross-target e recursos não
       suportados por backend.
+- [x] Tornar layout target-dependent falível, com overflow verificado em
+      arrays/agregados e propagação sem artefato parcial em C/Cranelift.
 - [x] Testar que backend inválido retorna `Err(ICE-GEN-001)`, sem sucesso
       contendo artefato parcial.
 

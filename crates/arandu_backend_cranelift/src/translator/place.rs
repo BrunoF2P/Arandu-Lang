@@ -80,13 +80,7 @@ impl FunctionTranslator<'_, '_> {
                     let inner_ty = self.type_info.resolve_type_id(inner_ty_id).clone();
                     current_ty = inner_ty;
 
-                    let pointer_width = self.ptr_type.bytes() as u64;
-                    let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
-                    let layout = engine.layout_of_type(
-                        &current_ty,
-                        &self.type_info.type_interner,
-                        self.type_info,
-                    );
+                    let layout = self.checked_layout(&current_ty);
                     let elem_size = self.builder.ins().iconst(self.ptr_type, layout.size as i64);
                     let offset_val = self.builder.ins().imul(idx_val, elem_size);
                     ptr_val = self.builder.ins().iadd(ptr_val, offset_val);
@@ -136,13 +130,7 @@ impl FunctionTranslator<'_, '_> {
                 let inner_ty = self.type_info.resolve_type_id(inner_ty_id).clone();
                 current_ty = inner_ty;
 
-                let pointer_width = self.ptr_type.bytes() as u64;
-                let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
-                let layout = engine.layout_of_type(
-                    &current_ty,
-                    &self.type_info.type_interner,
-                    self.type_info,
-                );
+                let layout = self.checked_layout(&current_ty);
                 let elem_size = self.builder.ins().iconst(self.ptr_type, layout.size as i64);
                 let offset_val = self.builder.ins().imul(idx_val, elem_size);
                 let target_ptr = self.builder.ins().iadd(ptr_val, offset_val);
@@ -188,9 +176,6 @@ impl FunctionTranslator<'_, '_> {
         current_ty: &mut ArType,
         symbol_id: arandu_semantics::SymbolId,
     ) -> i32 {
-        let pointer_width = self.ptr_type.bytes() as u64;
-        let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
-
         // Unwrap one pointer layer for field access on `*p.field` bases.
         let struct_ty = match &*current_ty {
             ArType::Ptr(inner)
@@ -214,8 +199,7 @@ impl FunctionTranslator<'_, '_> {
             .and_then(|m| m.get(field_name.as_str()).copied())
             .unwrap_or(0);
 
-        let layout =
-            engine.layout_of_type(&struct_ty, &self.type_info.type_interner, self.type_info);
+        let layout = self.checked_layout(&struct_ty);
         let offset = layout.field_offsets.get(field_idx).copied().unwrap_or(0) as i32;
 
         // Update current_ty to the field type for nested projections.

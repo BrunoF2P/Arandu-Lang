@@ -175,10 +175,7 @@ impl FunctionTranslator<'_, '_> {
                 ArType::Ptr(inner) => self.resolve_ty(*inner),
                 other => other.clone(),
             };
-            let pointer_width = self.ptr_type.bytes() as u64;
-            let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
-            let layout =
-                engine.layout_of_type(&elem_ty, &self.type_info.type_interner, self.type_info);
+            let layout = self.checked_layout(&elem_ty);
             let elem_size = layout.size.max(1) as i64;
             let size_val = self.builder.ins().iconst(self.ptr_type, elem_size);
             let idx_ext = if self.ptr_type.bits() > 32 {
@@ -199,11 +196,9 @@ impl FunctionTranslator<'_, '_> {
         if is_size_of || is_align_of {
             // Residual bare sizeOf/alignOf (should be folded in lower_amir). Use
             // pointer width for int-sized default; prefer lhs-driven layout when possible.
-            let pointer_width = self.ptr_type.bytes() as u64;
-            let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
             // Default to host `int` (pointer-sized) when type args were lost.
             let ty = ArType::Primitive(Primitive::Int);
-            let layout = engine.layout_of_type(&ty, &self.type_info.type_interner, self.type_info);
+            let layout = self.checked_layout(&ty);
             let value = if is_size_of {
                 layout.size
             } else {

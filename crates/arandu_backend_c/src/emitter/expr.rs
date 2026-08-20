@@ -75,10 +75,8 @@ impl<'a> CEmitter<'a> {
                     }
                     other => other,
                 };
-                let layout = self
-                    .layout
-                    .layout_of_type(&struct_ty, self.interner, self.provider);
-                let offset = layout.field_offsets[*field];
+                let layout = self.checked_layout(&struct_ty);
+                let offset = layout.field_offsets.get(*field).copied().unwrap_or(0);
 
                 let base_temp = match base {
                     AmirOperand::Copy(t) | AmirOperand::Move(t) => t.as_usize(),
@@ -206,9 +204,7 @@ impl<'a> CEmitter<'a> {
             } => {
                 let _ = write!(&mut self.output, "*({expected_c_type}*)&(struct {{");
                 let struct_ty = arandu_middle::types::ArType::Named(*struct_symbol, Vec::new());
-                let layout = self
-                    .layout
-                    .layout_of_type(&struct_ty, self.interner, self.provider);
+                let layout = self.checked_layout(&struct_ty);
                 let field_defs = self.provider.get_struct_fields(*struct_symbol);
                 let mut resolved_fields = Vec::new();
                 for (i, (name, op)) in fields.iter().enumerate() {
@@ -414,11 +410,7 @@ impl<'a> CEmitter<'a> {
                 let payload_ar = self.interner.resolve(*payload_ty);
                 let payload_c = self.format_type(&payload_ar);
                 let v = self.format_operand(value, func);
-                let payload_size = self
-                    .layout
-                    .layout_of_type(&payload_ar, self.interner, self.provider)
-                    .size
-                    .max(1);
+                let payload_size = self.checked_layout(&payload_ar).size.max(1);
                 let size = 8 + payload_size;
                 let _ = write!(
                     &mut self.output,

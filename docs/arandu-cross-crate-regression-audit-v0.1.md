@@ -26,6 +26,10 @@ testar internals que pertencem ao Cranelift, Salsa ou Rowan.
   semântica. O caso Arandu aplicável é array/index/layout, não sandbox WebAssembly.
 - A especificação LSP define posições em UTF-16; regressões de offsets e
   resultados stale são tratadas nas fronteiras de conversão e publicação.
+- O `rustc_abi` usa `SizeOverflow` e um limite exclusivo por address space;
+  `std::alloc::Layout` também torna `repeat`/`extend` falíveis. Arandu agora
+  aplica o limite positivo de `isize` do alvo a arrays, offsets e padding, e
+  propaga `LayoutError` até MIR/C/Cranelift sem saturação.
 
 ## Matriz executável
 
@@ -35,12 +39,12 @@ testar internals que pertencem ao Cranelift, Salsa ou Rowan.
 | `arandu_lexer` | Unicode/escape/comment truncado causa loop ou unwind | recovery e goldens | corpus adversarial determinístico e CRLF/LF equivalente |
 | `arandu_parser` | nesting truncado causa unwind; recovery engole item seguinte | recovery/CST goldens | corpus sem unwind, nesting limitado e irmão preservado após erro |
 | `arandu_diagnostics` | código sem documentação; ordem/span não determinístico | bijeção e renderer | render LF/CRLF e Unicode repetido byte a byte |
-| `arandu_middle` | CFG/SSA inválida aceita; layout usa ABI host | validator cobre IDs, arestas e ownership de statements; layouts 32/64 | tipos de argumentos por aresta e overflow de layout adversarial |
+| `arandu_middle` | CFG/SSA inválida aceita; layout usa ABI host | validator cobre IDs, ownership de statements, aridade e tipos por aresta/parâmetro; layout falível testa limites/offsets 32/64 | ampliar layouts recursivos e limites específicos dos backends |
 | `arandu_resolve` | ciclo/HashMap muda diagnóstico; namespace stale | ciclo permutado produz diagnósticos idênticos | ampliar permutações para grafos com três módulos |
 | `arandu_typeck` | recovery produz cascata; tipo recursivo explode | aliases/ciclos/goldens | profundidade adversarial e corpus sem unwind |
 | `arandu_mir` | DCE apaga efeito/jump arg; pass não converge | CFG, DCE, ICE tipado e validação pré/pós-pass | tipos incompatíveis nos argumentos e convergência adversarial |
 | `arandu_semantics` | composição das fases perde spans ou entra em panic | recovery/HIR/AMIR | corpus transversal sem unwind (iniciado) |
-| `arandu_query` | acumulador some no cache; ciclo/cancelamento deixa stale | cutoff, cache, ciclos, snapshots e revisão pós-cancelamento | ciclo concorrente repetido e revisão após panic de evento |
+| `arandu_query` | acumulador some no cache; ciclo/cancelamento deixa stale | cutoff, cache, ciclos, snapshots, revisão pós-cancelamento e ciclo estável por 16 revisões | ciclo concorrente repetido e revisão após panic de evento |
 | `arandu_backend_c` | IR inválida gera C parcial; signed/layout diverge | rejeição `ICE-GEN-001`, paridade e emissão byte-idêntica | matriz signed/layout e atomicidade no CLI |
 | `arandu_backend_cranelift` | bloco/parâmetro inválido ou index/shift miscompila | verifier, JIT e diferencial índice+shift | limites de shift e índices negativos/fora da faixa conforme contrato |
 | `arandu_cli` | erro operacional vira sucesso/artefato parcial | exit codes e projetos | atomicidade de build/emit e caminhos Unicode/CRLF |

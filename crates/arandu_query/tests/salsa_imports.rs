@@ -162,6 +162,66 @@ fn test_cross_file_collision_during_circular_import_is_still_deterministic() {
 }
 
 #[test]
+fn test_circular_import_diagnostics_survive_repeated_body_revisions() {
+    let mut db = DatabaseImpl::default();
+    let mod_a = db.new_file(
+        "mod_a.aru".to_string(),
+        r#"
+            import mod_b
+            public func foo() {
+                mod_b.bar()
+            }
+        "#
+        .to_string(),
+    );
+    let mod_b = db.new_file(
+        "mod_b.aru".to_string(),
+        r#"
+            import mod_a
+            public func bar() {
+                let marker = 0
+                mod_a.foo()
+            }
+        "#
+        .to_string(),
+    );
+
+    let diagnostic_signature = |db: &DatabaseImpl| {
+        let tc = arandu_query::passes::type_check(db, mod_a);
+        let mut diagnostics = tc
+            .diagnostics
+            .iter()
+            .map(|d| (d.code.as_str(), d.message.clone(), d.span.start, d.span.end))
+            .collect::<Vec<_>>();
+        diagnostics.sort();
+        diagnostics
+    };
+    let expected = diagnostic_signature(&db);
+    assert!(
+        !expected.is_empty(),
+        "circular import must emit a diagnostic before revisions"
+    );
+
+    for revision in 1..=16 {
+        let marker = revision % 2;
+        mod_b.set_text(&mut db).to(std::sync::Arc::from(format!(
+            r#"
+            import mod_a
+            public func bar() {{
+                let marker = {marker}
+                mod_a.foo()
+            }}
+        "#
+        )));
+        assert_eq!(
+            diagnostic_signature(&db),
+            expected,
+            "cycle diagnostics changed or disappeared after body revision {revision}"
+        );
+    }
+}
+
+#[test]
 fn test_import_generic_spawn_infer_from_coroutine() {
     let mut db = arandu_query::DatabaseImpl::default();
     let src = r#"

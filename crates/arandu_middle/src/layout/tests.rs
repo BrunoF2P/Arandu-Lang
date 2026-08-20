@@ -1,6 +1,44 @@
 use super::*;
 use crate::newtype_index;
 
+struct LayoutEngine(super::LayoutEngine);
+
+impl LayoutEngine {
+    fn new(pointer_width: u64) -> Self {
+        Self(super::LayoutEngine::new(pointer_width))
+    }
+
+    fn from_data_layout(data_layout: DataLayout) -> Self {
+        Self(super::LayoutEngine::from_data_layout(data_layout))
+    }
+
+    #[allow(clippy::panic)]
+    fn layout_of(
+        &self,
+        type_id: TypeId,
+        interner: &TypeInterner,
+        provider: &dyn StructLayoutProvider,
+    ) -> TypeLayout {
+        match self.0.layout_of(type_id, interner, provider) {
+            Ok(layout) => layout,
+            Err(error) => panic!("expected valid test layout, got {error}"),
+        }
+    }
+
+    fn try_layout_of(
+        &self,
+        type_id: TypeId,
+        interner: &TypeInterner,
+        provider: &dyn StructLayoutProvider,
+    ) -> Result<TypeLayout, LayoutError> {
+        self.0.layout_of(type_id, interner, provider)
+    }
+
+    fn fat_ptr_len_offset(&self) -> u64 {
+        self.0.fat_ptr_len_offset()
+    }
+}
+
 newtype_index!(TestId);
 
 #[test]
@@ -212,6 +250,51 @@ fn test_array_layout() {
     let layout = engine.layout_of(tid, &interner, &provider);
     assert_eq!(layout.size, 20); // 5 * 4
     assert_eq!(layout.align, 4);
+}
+
+#[test]
+fn array_layout_rejects_target_size_bound_on_32_and_64_bit() {
+    let interner = TypeInterner::new();
+    let provider = MockProvider;
+    let byte = interner.intern(ArType::Primitive(Primitive::U8));
+
+    for (pointer_width, bound) in [(4, 1_u64 << 31), (8, 1_u64 << 63)] {
+        let engine = LayoutEngine::new(pointer_width);
+        let last_valid = interner.intern(ArType::Array(bound - 1, byte));
+        assert_eq!(
+            engine
+                .try_layout_of(last_valid, &interner, &provider)
+                .map(|layout| layout.size),
+            Ok(bound - 1)
+        );
+
+        let too_large = interner.intern(ArType::Array(bound, byte));
+        assert_eq!(
+            engine.try_layout_of(too_large, &interner, &provider),
+            Err(LayoutError::SizeOverflow {
+                operation: LayoutOperation::ArrayRepeat,
+                limit: bound,
+            })
+        );
+    }
+}
+
+#[test]
+fn aggregate_layout_rejects_offset_that_crosses_target_bound() {
+    let engine = LayoutEngine::new(4);
+    let interner = TypeInterner::new();
+    let provider = MockProvider;
+    let byte = interner.intern(ArType::Primitive(Primitive::U8));
+    let almost_full = interner.intern(ArType::Array((1_u64 << 31) - 1, byte));
+    let tuple = interner.intern(ArType::Tuple(vec![almost_full, byte]));
+
+    assert_eq!(
+        engine.try_layout_of(tuple, &interner, &provider),
+        Err(LayoutError::SizeOverflow {
+            operation: LayoutOperation::FieldOffset,
+            limit: 1_u64 << 31,
+        })
+    );
 }
 
 #[test]

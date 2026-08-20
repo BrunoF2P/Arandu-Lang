@@ -551,6 +551,97 @@ fn validate_amir_rejects_edge_argument_count_mismatch() {
 }
 
 #[test]
+fn validate_amir_rejects_edge_argument_type_mismatch() {
+    let interner = arandu_middle::types::TypeInterner::new();
+    let int_ty = interner.intern(ArType::Primitive(arandu_middle::types::Primitive::Int));
+    let bool_ty = interner.intern(ArType::Primitive(arandu_middle::types::Primitive::Bool));
+    let blocks = vec![
+        AmirBasicBlock {
+            id: BlockId::from_usize(0),
+            statements: DenseRange::empty(),
+            params: Vec::new(),
+            terminator: AmirTerminator::Goto {
+                target: BlockId::from_usize(1),
+                args: vec![AmirOperand::Copy(temp(0))],
+            },
+        },
+        AmirBasicBlock {
+            id: BlockId::from_usize(1),
+            statements: DenseRange::empty(),
+            params: vec![BlockParam {
+                id: temp(1),
+                local: local(0),
+                ty: bool_ty,
+                from: None,
+                moved: false,
+            }],
+            terminator: AmirTerminator::Return,
+        },
+    ];
+    let func = test_func(
+        vec![test_local(0, 1)],
+        vec![
+            AmirTemp {
+                ty: int_ty,
+                ..test_temp(0)
+            },
+            AmirTemp {
+                ty: bool_ty,
+                ..test_temp(1)
+            },
+        ],
+        blocks,
+        AmirStmtTable::new(),
+    );
+
+    let issues =
+        arandu_middle::amir_validate::validate_amir_func(&func, &validation_symbols(), &interner);
+    assert!(
+        issues.iter().any(|issue| {
+            issue.code == DiagCode::ICEGEN002 && issue.message.contains("SSA-TYPE")
+        }),
+        "edge operands must have the exact type declared by the destination parameter: {issues:?}"
+    );
+}
+
+#[test]
+fn validate_amir_rejects_block_parameter_temp_type_mismatch() {
+    let interner = arandu_middle::types::TypeInterner::new();
+    let int_ty = interner.intern(ArType::Primitive(arandu_middle::types::Primitive::Int));
+    let bool_ty = interner.intern(ArType::Primitive(arandu_middle::types::Primitive::Bool));
+    let blocks = vec![AmirBasicBlock {
+        id: BlockId::from_usize(0),
+        statements: DenseRange::empty(),
+        params: vec![BlockParam {
+            id: temp(0),
+            local: local(0),
+            ty: bool_ty,
+            from: None,
+            moved: false,
+        }],
+        terminator: AmirTerminator::Return,
+    }];
+    let func = test_func(
+        vec![test_local(0, 1)],
+        vec![AmirTemp {
+            ty: int_ty,
+            ..test_temp(0)
+        }],
+        blocks,
+        AmirStmtTable::new(),
+    );
+
+    let issues =
+        arandu_middle::amir_validate::validate_amir_func(&func, &validation_symbols(), &interner);
+    assert!(
+        issues.iter().any(|issue| {
+            issue.code == DiagCode::ICEGEN002 && issue.message.contains("SSA-PARAM")
+        }),
+        "block parameters and their defining temps must agree on type: {issues:?}"
+    );
+}
+
+#[test]
 fn validate_amir_rejects_overlapping_and_out_of_bounds_statement_ranges() {
     let interner = arandu_middle::types::TypeInterner::new();
     let mut stmts = AmirStmtTable::new();
