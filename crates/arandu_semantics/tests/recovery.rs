@@ -1,4 +1,4 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use arandu_lexer::lex_recovering;
 use arandu_parser::parse_recovering;
 use arandu_semantics::resolve_for_test;
@@ -164,4 +164,24 @@ fn test_recovery_name_resolution() {
         "should suggest 'Person' in hints, got: {:?}",
         diag_ty.hints
     );
+}
+
+#[test]
+fn malformed_unicode_and_truncated_constructs_never_unwind() {
+    let adversarial_sources = [
+        "\u{feff}func main(: int { return 0",
+        "func main(): str { return \"olá 😀\\u{110000}\" }",
+        "func main(): int { match 1 { 0 => { return 0 }",
+        "func main(): int { /* nested /* comment */ return 1",
+        "func main(): int { let x = (((((((1 + 2; return x }",
+        "func main(): int { let é = 1; return desconhecido😀 }",
+    ];
+
+    for source in adversarial_sources {
+        let outcome = std::panic::catch_unwind(|| {
+            let parsed = parse_recovering(source);
+            let _ = resolve_for_test(0, &parsed.program);
+        });
+        assert!(outcome.is_ok(), "compiler unwound for source: {source:?}");
+    }
 }

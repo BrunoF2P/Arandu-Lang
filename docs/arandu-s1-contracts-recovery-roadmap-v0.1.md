@@ -5,6 +5,9 @@
 **Objetivo:** código Arandu inválido nunca encerra o compilador por `panic`; falhas
 internas são ICEs identificáveis, e falhas operacionais pertencem à CLI/LSP.
 
+Auditoria transversal de falhas reais e regressões por crate:
+[`arandu-cross-crate-regression-audit-v0.1.md`](arandu-cross-crate-regression-audit-v0.1.md).
+
 Este documento desdobra o S1 do roadmap Gold. Ele não promete ausência absoluta
 de `panic`: distingue entrada inválida, falha operacional e quebra de invariante
 do compilador. Apagar `unwrap` mecanicamente ou continuar usando uma DB Salsa
