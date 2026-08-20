@@ -542,7 +542,11 @@ fn test_hir_golden_files() {
 
     for path in entries {
         let name = path.file_stem().unwrap().to_str().unwrap();
-        let src = std::fs::read_to_string(&path).unwrap();
+        // Golden spans use LF byte offsets on every platform, including
+        // pre-existing Windows worktrees whose fixtures may still be CRLF.
+        let src = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("\r\n", "\n");
 
         let program = arandu_parser::parse(&src).unwrap_or_else(|err| {
             panic!("failed to parse {name}: {err:?}");
