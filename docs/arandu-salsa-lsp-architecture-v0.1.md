@@ -1,6 +1,6 @@
 # Arandu — Salsa, LSP e Identidades (v0.1)
 
-**Status:** gold path implementado (F0–F3 + F5). F4 (delta por bloco) opcional/futuro.  
+**Status:** caminho arquitetural implementado (F0–F5, inclusive delta por item/bloco); maturidade de produto acompanhada no [roadmap gold do LSP/editor](./arandu-lsp-editor-gold-roadmap-v0.1.md).
 **Plano:** [`arandu-salsa-lsp-gold-plan-v0.1.md`](./arandu-salsa-lsp-gold-plan-v0.1.md).  
 **Dono do grafo de queries:** `arandu_query` apenas.
 
@@ -57,7 +57,7 @@
 2. Workers: `AnalysisSnapshot` (clone Storage) → diags/goto; publish só se DocumentId vivo e revision match.  
 3. didChange **não** commita Salsa por tecla; flush no debounce / didSave / goto.  
 4. Diagnostics via `file_ide_diagnostics` (F4); fingerprint blake3 evita republish no-op.  
-5. D7: reparse completo do arquivo editado (sem Rowan).
+5. CST-first Rowan: `syntax_tree` tenta reparse do ITEM tocado e reutiliza os green nodes irmãos; fallback seguro faz parse completo.
 
 ## F4 / P3 — delta on-type
 

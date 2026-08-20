@@ -89,7 +89,7 @@ impl ServerState {
         if let Some(id) = self.by_uri.remove(uri_s) {
             if let Some(doc) = self.docs.get(id) {
                 let fid = doc.source.file_id(self.host.db());
-                self.by_file_id.remove(&fid);
+                self.by_file_id.remove(fid);
             }
             self.docs.close(id);
             self.last_diag_fp.remove(&id);

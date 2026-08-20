@@ -3,6 +3,22 @@
 **Fonte única de verdade (checklist executivo).**
 Este documento consolida as decisões arquiteturais sobre Data-Oriented Design (Interning), Polimorfismo Híbrido, OSSA (Ownership SSA), Effects, Async Colorless, Arquitetura de Memória e Binários de Pegada Zero em uma especificação técnica unificada e acionável.
 
+> **Execução atual:** novas grandes fases estão temporariamente subordinadas ao
+> [roadmap de estabilização gold](./arandu-stability-gold-roadmap-v0.1.md) e ao
+> [roadmap gold do LSP/editor](./arandu-lsp-editor-gold-roadmap-v0.1.md).
+> Este arquivo continua sendo a visão de produto e dependências, não a fila
+> diária de hardening.
+
+### Semântica de status
+
+O checklist histórico `[x]` significa que a implementação prevista naquele
+marco foi integrada; não significa automaticamente qualidade `gold`. A
+classificação canônica de maturidade é `gold`, `done`, `partial`,
+`experimental` ou `planned`, conforme definida no roadmap de estabilização.
+Uma fase posterior pode liberar a versão completa de um item antigo sem apagar
+o marco anterior: o item antigo permanece implementado, mas só vira `gold`
+quando cumprir seu contrato atual.
+
 | Documento | Status |
 |-----------|--------|
 | `arandu-strategic-plan-v0.1.md` | **Síntese** — decisões, bugs, papers, fases |
@@ -84,7 +100,7 @@ Fase 2 — A Construção da Infraestrutura & Execução (v0.2) · [FECHADA no c
 [x] SL_C   Stdlib Fundamental: arandu_core e arandu_alloc (primitivas heapless e arena/smallvec/bitset)
 [x] DOC1   docs/ossa-virtual-anchoring.md — RFC retroativo documentando a técnica de âncoras virtuais + poda
 
-Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
+Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [PARCIAL; vários marcos concluídos]
 [x] A1     Query System (Incremental Semantic Database, Salsa-like O(1) invalidation)
    ├─ [x] A1.1   Salsa Integration / CompilerDatabase migration (`CompileSession` removido)
    ├─ [x] A1.2   O(1) FileId lookup em DatabaseImpl (índice reverso FileId→SourceFile via FxHashMap)
@@ -167,7 +183,7 @@ Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [NÃO INICIADA]
 [→] SL_R   Async Runtime: SL_R.0 typed spawn/join/block_on Coroutine + SyncExecutor; SL_R.2 EpollReactor (epoll+timerfd); SL_R.1/3 open
 [ ] SL_T   Testing Harness: arandu_std::testing (test runner integrado e benchmark engine)
 
-Fase 4 — Expressividade de Linguagem e Tipagem (v0.35) · [NÃO INICIADA]
+Fase 4 — Expressividade de Linguagem e Tipagem (v0.35) · [PARCIAL; superfície inicial integrada]
 [x] SYN.1  Retorno implícito: última `Expr` do body → valor de retorno (typeck + AMIR; async wrap A3)
 [x] SYN.2  Interpolação: `$name` + `${expr}` (lexer → StringInterp/ToStr; e2e CLI)
 [x] SYN.3  Opcionais: `nil` → Option.None (contexto); match Some/None no AMIR; `T?` permanece Nullable (§2.1)
@@ -500,7 +516,7 @@ As análises de fluxo de dados (dataflow), tempo de vida (liveness), dominadores
 O compilador do Arandu evita expressamente ponteiros brutos e referências cruzadas que inviabilizariam a compilação incremental e criariam pointer chasing complexo. Toda a infraestrutura do compilador (AST, HIR, AMIR, caches e queries) baseia-se em IDs Estáveis:
 
 * **IDs inteiros estáveis** (`NonZeroU32` em `ExprId`, `TypeId`, `SymbolId`, `FileId`, etc.) indexando `IndexVec`s contíguos — **implementado e em uso em todo o compilador**.
-* **Generational IDs** (`Index (u32)` + `Generation (u32)`) para detecção de referências stale no LSP — **não implementado ainda**. A implementação manual (`stable_id.rs`) foi removida por ser código morto. Quando o LSP (DX.6) for iniciado, adotar a crate `slotmap` que resolve isso com API idiomática e zero `unsafe`.
+* **Generational IDs** para buffers LSP implementados por `DocumentStore` + `slotmap::SlotMap`; `AnalysisRevision` protege handles semânticos stale. IDs densos do compilador mantêm seus contratos próprios e não devem ser convertidos mecanicamente em IDs geracionais.
 * **Stable Handles**: removidos (código morto, nunca integrados ao compilador). A identidade estável entre sessões de compilação é provida pelos IDs inteiros determinísticos do Salsa.
 * **Zero Overhead de Serialização**: Como os IDs não dependem do endereço de memória virtual, salvar e restaurar caches de compilação do disco é um dump contíguo e direto de bytes.
 

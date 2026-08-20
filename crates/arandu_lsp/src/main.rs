@@ -305,7 +305,7 @@ fn on_request(
                     return serde_json::Value::Null;
                 };
                 let text = info.source.text(&snap.db);
-                match ide::hover(snap, info.source, &text, pos) {
+                match ide::hover(snap, info.source, text, pos) {
                     Some(h) => serde_json::to_value(h).unwrap_or(serde_json::Value::Null),
                     None => serde_json::Value::Null,
                 }
@@ -320,7 +320,7 @@ fn on_request(
                     return serde_json::Value::Null;
                 };
                 let text = info.source.text(&snap.db);
-                let items = ide::completions(snap, info.source, &text, pos);
+                let items = ide::completions(snap, info.source, text, pos);
                 serde_json::to_value(CompletionResponse::Array(items))
                     .unwrap_or(serde_json::Value::Null)
             });
@@ -335,7 +335,7 @@ fn on_request(
                     return serde_json::Value::Null;
                 };
                 let text = info.source.text(&snap.db);
-                match ide::signature_help(snap, info.source, &text, pos) {
+                match ide::signature_help(snap, info.source, text, pos) {
                     Some(h) => serde_json::to_value(h).unwrap_or(serde_json::Value::Null),
                     None => serde_json::Value::Null,
                 }
@@ -350,7 +350,7 @@ fn on_request(
                     return serde_json::Value::Null;
                 };
                 let text = info.source.text(&snap.db);
-                let locs = ide::references(snap, info.source, &text, pos, &uri);
+                let locs = ide::references(snap, info.source, text, pos, &uri);
                 serde_json::to_value(locs).unwrap_or(serde_json::Value::Null)
             });
         }
@@ -364,7 +364,7 @@ fn on_request(
                     return serde_json::Value::Null;
                 };
                 let text = info.source.text(&snap.db);
-                match ide::rename_edits(snap, info.source, &text, pos, &uri, &new_name) {
+                match ide::rename_edits(snap, info.source, text, pos, &uri, &new_name) {
                     Some(edit) => serde_json::to_value(edit).unwrap_or(serde_json::Value::Null),
                     None => serde_json::Value::Null,
                 }
@@ -379,7 +379,7 @@ fn on_request(
                     return serde_json::Value::Null;
                 };
                 let text = info.source.text(&snap.db);
-                let syms = ide::document_symbols(snap, info.source, &text, &uri);
+                let syms = ide::document_symbols(snap, info.source, text, &uri);
                 serde_json::to_value(DocumentSymbolResponse::Flat(syms))
                     .unwrap_or(serde_json::Value::Null)
             });
@@ -425,9 +425,9 @@ fn on_request(
                     return serde_json::Value::Null;
                 };
                 let text = info.source.text(&snap.db);
-                let index = LineIndex::new(&text);
-                let start = position_to_offset(&index, range.start, &text);
-                let end = position_to_offset(&index, range.end, &text);
+                let index = LineIndex::new(text);
+                let start = position_to_offset(&index, range.start, text);
+                let end = position_to_offset(&index, range.end, text);
                 let tokens = ide::semantic_tokens_range(snap, info.source, start, end);
                 serde_json::to_value(tokens).unwrap_or(serde_json::Value::Null)
             });
@@ -441,7 +441,7 @@ fn on_request(
                     return serde_json::Value::Null;
                 };
                 let text = info.source.text(&snap.db);
-                let edits = ide::format_document(&text);
+                let edits = ide::format_document(text);
                 serde_json::to_value(edits).unwrap_or(serde_json::Value::Null)
             });
         }
@@ -567,9 +567,9 @@ fn spawn_json<F>(
 
 fn compute_diagnostics(snap: &AnalysisSnapshot, source: SourceFile) -> (Vec<Diagnostic>, [u8; 32]) {
     let text = source.text(&snap.db);
-    let index = LineIndex::new(&text);
+    let index = LineIndex::new(text);
     let ide = arandu_query::file_ide_diagnostics(&snap.db, source);
-    let fp = arandu_query::ide_diags_fingerprint(&ide);
+    let fp = arandu_query::ide_diags_fingerprint(ide);
     let mut bytes = [0u8; 32];
     bytes.copy_from_slice(fp.as_bytes());
     let diags = ide
@@ -632,10 +632,10 @@ fn goto_on_snapshot(
     let id = *by_uri.get(uri.as_str())?;
     let info = docs.get(&id)?;
     let text = info.source.text(&snap.db);
-    let index = LineIndex::new(&text);
-    let offset = position_to_offset(&index, position, &text);
+    let index = LineIndex::new(text);
+    let offset = position_to_offset(&index, position, text);
     let tc = arandu_query::passes::type_check(&snap.db, info.source);
-    let sym_id = state::ServerState::symbol_at(&tc, offset)?;
+    let sym_id = state::ServerState::symbol_at(tc, offset)?;
     let lsp_sym = LspSymbolId::new(sym_id, snap.revision);
     let sym_id = lsp_sym.resolve(snap)?;
     let symbol = tc.symbols.try_get(sym_id)?;

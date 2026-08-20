@@ -187,8 +187,8 @@ fn file_ide_diagnostics_fingerprint_stable_on_noop() {
     let mut db = DatabaseImpl::new();
     let file = db.new_file("fp.aru".into(), "func main(): int { return 1 }\n".into());
     let d1 = file_ide_diagnostics(&db, file);
-    let fp1 = arandu_query::ide_diags_fingerprint(&d1);
+    let fp1 = arandu_query::ide_diags_fingerprint(d1);
     let d2 = file_ide_diagnostics(&db, file);
-    let fp2 = arandu_query::ide_diags_fingerprint(&d2);
+    let fp2 = arandu_query::ide_diags_fingerprint(d2);
     assert_eq!(fp1, fp2);
 }

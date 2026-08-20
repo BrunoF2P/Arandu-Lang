@@ -287,7 +287,7 @@ impl DatabaseImpl {
         let mut reg = self.files.write().unwrap_or_else(|e| e.into_inner());
         if let Some(file) = reg.remove_path(path) {
             let fid = file.file_id(self.as_source_db());
-            reg.by_id.remove(&fid);
+            reg.by_id.remove(fid);
         }
     }
 

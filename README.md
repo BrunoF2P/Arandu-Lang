@@ -11,6 +11,8 @@ Arandu is an experimental Brazilian systems programming language focused on memo
 
 **Product freeze:** [Arandu Minimal 0.1](docs/arandu-minimal-0.1-freeze.md) — language surface green; **project CLI gold** (`new` / `check` / `run` / `build` / `doctor`, stdlib via `current_exe`) in [docs/arandu-project-cli-gold-v0.1.md](docs/arandu-project-cli-gold-v0.1.md). Install tarballs ship from **GitHub Releases** on `v*` tags (see below).
 
+**Current execution roadmaps:** [compiler stabilization gold](docs/arandu-stability-gold-roadmap-v0.1.md) and [LSP/editor gold](docs/arandu-lsp-editor-gold-roadmap-v0.1.md). Implemented milestones are not called `gold` unless their published scope and gates are complete.
+
 Implemented:
 
 - Rust workspace.
@@ -46,9 +48,9 @@ Implemented:
 - **CST-first** (rowan): `syntax_tree` → lower AST; reparse de subtree por ITEM; crate `arandu_fmt` + CLI `fmt`.
 - **Project CLI (P2 gold)** — `arandu_cli new|doctor|check|run|build`; `Arandu.toml` as Salsa input; stdlib cascade (`--stdlib-path` > `ARANDU_STDLIB` > relative to binary).
 
-Not implemented yet:
+Not gold / still partial or experimental:
 
-- Memory checker / generational fallback
+- Full typed/self-hosted generational fallback beyond the current i64 GenRef MVP
 - Full user `Display` trait / custom `to_str` for structs/enums
 - Full ownership surface syntax
 - Production C polish / freestanding RT; LLVM release backend
@@ -230,7 +232,7 @@ tests/ui/         UI diagnostic fixtures (.aru → .diag)
 
 ## Next Steps
 
-See [docs/arandu-compiler-roadmap-v0.1.md](docs/arandu-compiler-roadmap-v0.1.md). The next recommended technical milestones are the memory checker / generational fallback and production backends (C, LLVM).
+Close the [compiler stabilization gold roadmap](docs/arandu-stability-gold-roadmap-v0.1.md) and the [LSP/editor gold roadmap](docs/arandu-lsp-editor-gold-roadmap-v0.1.md) before selecting the next major feature phase from the [master roadmap](docs/arandu-compiler-roadmap-v0.1.md).
 
 ## License
 

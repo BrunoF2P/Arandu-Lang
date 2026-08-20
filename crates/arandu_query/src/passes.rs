@@ -105,9 +105,9 @@ pub fn syntax_tree(
     let file_id = *file.file_id(db);
     // Prefer DatabaseImpl incremental path; share Arc text with SourceFile.
     let tree = if let Some(impl_db) = db.as_db_impl() {
-        impl_db.syntax_tree_for_arc(file_id, Arc::clone(&text))
+        impl_db.syntax_tree_for_arc(file_id, Arc::clone(text))
     } else {
-        arandu_parser::parse_syntax_arc(Arc::clone(&text))
+        arandu_parser::parse_syntax_arc(Arc::clone(text))
     };
     HashEq::new(tree)
 }
@@ -125,7 +125,7 @@ pub fn parse(
     file: SourceFile,
 ) -> HashEq<Result<Arc<Program>, arandu_parser::ParseError>> {
     let tree = syntax_tree(db, file);
-    match arandu_parser::lower_syntax_to_program(&tree, *file.file_id(db)) {
+    match arandu_parser::lower_syntax_to_program(tree, *file.file_id(db)) {
         Ok(program) => HashEq::new(Ok(Arc::new(program))),
         Err(err) => HashEq::new(Err(err)),
     }
@@ -375,7 +375,7 @@ pub fn item_body_typeck(
     let body_in = item_source_input(db, file, item_sym);
     let signatures = module_signatures(db, file);
     let res =
-        arandu_semantics::check_item_body_only(&signatures, body_in.program.as_ref(), item_sym);
+        arandu_semantics::check_item_body_only(signatures, body_in.program.as_ref(), item_sym);
     HashEq::new(res)
 }
 
@@ -392,7 +392,7 @@ pub fn file_typeck_view(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<Ty
     let signatures = module_signatures(db, file);
 
     let Ok(program) = &**program_res else {
-        return HashEq::share(&signatures);
+        return HashEq::share(signatures);
     };
 
     let item_syms = arandu_semantics::body_item_symbols(program, signatures.resolved.as_ref());
@@ -408,7 +408,7 @@ pub fn file_typeck_view(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<Ty
     }
 
     // Residual for decls without primary keys (normally empty).
-    let residual = arandu_semantics::check_non_func_bodies_only(&signatures, program);
+    let residual = arandu_semantics::check_non_func_bodies_only(signatures, program);
     if !residual.diagnostics.is_empty()
         || residual.type_info.expr_types.iter().any(|s| s.is_some())
         || !residual.type_info.decl_types.is_empty()
@@ -450,7 +450,7 @@ pub fn type_check(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<TypeChec
     }
 
     // Share the same Arc as `file_typeck_view` — no deep clone of TypeCheckResult.
-    HashEq::share(&res)
+    HashEq::share(res)
 }
 
 /// AMIR plus the **post-monomorphize** [`TypeCheckResult`] used to build it.

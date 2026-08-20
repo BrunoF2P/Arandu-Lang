@@ -220,6 +220,6 @@ pub fn highlights_in_range(tokens: &[HlToken], range_start: u32, range_end: u32)
 pub fn file_highlights(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<Arc<[HlToken]>> {
     let tree = syntax_tree(db, file);
     let resolved = resolve(db, file);
-    let tokens = compute_highlights(&tree, &resolved);
+    let tokens = compute_highlights(tree, resolved);
     HashEq::new(tokens)
 }

@@ -2,6 +2,10 @@
 
 **Status: S5 GATE CLOSED** (2026-07) — compiler foundation solid enough to resume language-level Fase 3 work.
 
+This matrix records the scope of the 2026-07 gate. Items listed as out of S5
+may have been implemented later; current maturity is tracked by
+[`arandu-stability-gold-roadmap-v0.1.md`](./arandu-stability-gold-roadmap-v0.1.md).
+
 Cranelift is **host-only** (typically 64-bit). 32-bit / embedded validation is **layout + C emit**, not Cranelift.
 
 ## Backend roles

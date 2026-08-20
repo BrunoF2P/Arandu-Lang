@@ -2,6 +2,13 @@
 
 **Documento de síntese.** Consolida análise estrutural, backlog de bugs, pesquisa acadêmica e decisões de arquitetura.
 
+> **Nota de vigência:** este documento preserva decisões e a ordem histórica,
+> mas seus checklists de implementação anteriores ao CST-first/Salsa/LSP gold
+> não representam o estado operacional atual. Para execução, use o
+> [roadmap mestre](./arandu-compiler-roadmap-v0.1.md), o
+> [roadmap de estabilização](./arandu-stability-gold-roadmap-v0.1.md) e o
+> [roadmap do LSP/editor](./arandu-lsp-editor-gold-roadmap-v0.1.md).
+
 | Documento | Papel |
 |-----------|--------|
 | [arandu-compiler-roadmap-v0.1.md](./arandu-compiler-roadmap-v0.1.md) | Checklist executivo, fases, DiagCodes, grafo de dependências |
@@ -50,7 +57,7 @@ Estas decisões absorvem a análise estrutural + papers. **Não reabrir** sem RF
 | D4 | **Insight Polonius, não implementação Datalog** | Loans/origins como **dataflow esparso no CFG**, nativo em Rust |
 | D5 | **Aliasing por proveniência** (influência Tree Borrows) | Não copiar Stacked Borrows; preparar `unsafe` com árvore de proveniência |
 | D6 | **Backend C burro primeiro** | AMIR → C quase 1:1; sem otimização no backend inicial |
-| D7 | **Sem Rowan/CST agora** | Manter spans, trivia, comentários preserváveis para migração futura |
+| D7 | **CST-first canônico** | Rowan já está integrado: `syntax_tree` → AST; não manter caminho paralelo de re-lex/parse |
 | D8 | **Efeitos no AMIR como flags**, não effect system v1 | `can_throw`, `can_suspend`, etc. — prepara async/Result sem redesign |
 | D9 | **Identidade de pesquisa (v0.2+)** | “Ownership pragmático por alcançabilidade + fallback geracional” — não copiar Rust nem Vale integralmente |
 
@@ -279,11 +286,11 @@ Os itens acima compartilham uma característica: o sintoma reportado inicialment
 | `arandu_hir` público + serde | Tooling |
 | Stdlib mínima (`arandu_std`) | Prelude externo, não hardcoded |
 
-### Fase 3 — Tooling e performance (v0.3)
+### Fase 3 — Tooling e performance (v0.3, plano histórico absorvido)
 
-- Incremental / query system (Salsa-like)
-- LSP mínimo
-- Formatter (parser → texto; depois CST se necessário)
+- Query system incremental via Salsa — implementado; maturidade no roadmap de estabilização.
+- LSP gold arquitetural — implementado; maturidade de editor no roadmap LSP/editor.
+- Formatter CST-first via `arandu_fmt` — implementado; integração E2E ainda não é gold.
 - Optimizer: inlining, escape analysis leve
 
 ### Fase 4 — Pesquisa e backend sério (v0.4+)

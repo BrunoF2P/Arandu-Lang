@@ -497,7 +497,7 @@ pub fn workspace_symbols(
     let mut out = Vec::new();
     for doc in docs {
         let text = doc.source.text(&snap.db);
-        let index = LineIndex::new(&text);
+        let index = LineIndex::new(text);
         let tc = typecheck(snap, doc.source);
         for symbol in tc.symbols.iter() {
             let name = symbol.name.to_string();
@@ -673,8 +673,8 @@ pub fn code_actions(uri: &Uri, context: &lsp_types::CodeActionContext) -> CodeAc
 #[must_use]
 pub fn semantic_tokens(snap: &AnalysisSnapshot, source: SourceFile) -> SemanticTokens {
     encode_highlights(
-        &arandu_query::file_highlights(&snap.db, source),
-        &source.text(&snap.db),
+        arandu_query::file_highlights(&snap.db, source),
+        source.text(&snap.db),
     )
 }
 
@@ -687,8 +687,8 @@ pub fn semantic_tokens_range(
     range_end: u32,
 ) -> SemanticTokens {
     let all = arandu_query::file_highlights(&snap.db, source);
-    let slice = arandu_query::highlights_in_range(&all, range_start, range_end);
-    encode_highlights(&slice, &source.text(&snap.db))
+    let slice = arandu_query::highlights_in_range(all, range_start, range_end);
+    encode_highlights(&slice, source.text(&snap.db))
 }
 
 fn encode_highlights(highlights: &[arandu_query::HlToken], text: &str) -> SemanticTokens {
@@ -750,7 +750,7 @@ mod tests {
         let items = completions(
             &snap,
             file,
-            &text,
+            text,
             Position {
                 line: 0,
                 character: text.len() as u32,
@@ -862,6 +862,6 @@ mod tests {
         let snap = host.snapshot();
         let text = file.text(&snap.db);
         let uri = crate::uri_util::parse_uri("file:///h.aru").expect("uri");
-        let _syms = document_symbols(&snap, file, &text, &uri);
+        let _syms = document_symbols(&snap, file, text, &uri);
     }
 }

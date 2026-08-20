@@ -61,7 +61,7 @@ fn type_ident_classified() {
         "expected type-like highlight"
     );
     // param `a` in signature
-    let a_start = text_offset(&file.text(&db), "a:") as u32;
+    let a_start = text_offset(file.text(&db), "a:") as u32;
     let a_hl = hls
         .iter()
         .find(|t| t.start == a_start && t.end == a_start + 1);

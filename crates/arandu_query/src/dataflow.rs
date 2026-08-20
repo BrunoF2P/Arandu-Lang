@@ -151,7 +151,7 @@ pub fn liveness_facts(
             live_out_counts: vec![],
         });
     }
-    let live = arandu_mir::liveness::analyze_local_liveness(&func);
+    let live = arandu_mir::liveness::analyze_local_liveness(func);
     let n = func.blocks.len();
     let mut live_in_counts = Vec::with_capacity(n);
     let mut live_out_counts = Vec::with_capacity(n);
@@ -185,8 +185,8 @@ pub fn block_dataflow_facts(
     let live_in_count = live.live_in_counts.get(i).copied().unwrap_or(0);
     let live_out_count = live.live_out_counts.get(i).copied().unwrap_or(0);
 
-    let init_counts = arandu_mir::definite_init::init_in_counts(&func);
-    let moved_counts = arandu_mir::move_checker::moved_in_counts(&func);
+    let init_counts = arandu_mir::definite_init::init_in_counts(func);
+    let moved_counts = arandu_mir::move_checker::moved_in_counts(func);
     let init_in_count = init_counts.get(i).copied().unwrap_or(0);
     let moved_in_count = moved_counts.get(i).copied().unwrap_or(0);
     let stmt_count = func.blocks.get(i).map(|b| b.statements.len).unwrap_or(0);
@@ -217,7 +217,7 @@ pub fn func_borrow_summaries(
     if func.blocks.is_empty() {
         return HashEq::new(vec![]);
     }
-    HashEq::new(arandu_mir::borrow_facts::block_borrow_summaries(&func))
+    HashEq::new(arandu_mir::borrow_facts::block_borrow_summaries(func))
 }
 
 /// F2.1: may-borrow facts for one basic block (memoized independently).
@@ -295,16 +295,16 @@ pub fn item_ide_diagnostics(
     if !amir.blocks.is_empty() {
         let sigs = crate::passes::module_signatures(db, file);
         for (bid, d) in
-            arandu_mir::definite_init::check_definite_init_by_block(&amir, sigs.symbols.as_ref())
+            arandu_mir::definite_init::check_definite_init_by_block(amir, sigs.symbols.as_ref())
         {
             out.push(IdeDiagnostic::from_diag(&d, Some(item_sym), Some(bid)));
         }
-        for (bid, d) in arandu_mir::move_checker::check_moves_by_block(&amir, sigs.symbols.as_ref())
+        for (bid, d) in arandu_mir::move_checker::check_moves_by_block(amir, sigs.symbols.as_ref())
         {
             out.push(IdeDiagnostic::from_diag(&d, Some(item_sym), Some(bid)));
         }
         for (bid, d) in
-            arandu_mir::borrow_check::check_borrows_by_block(&amir, sigs.symbols.as_ref())
+            arandu_mir::borrow_check::check_borrows_by_block(amir, sigs.symbols.as_ref())
         {
             out.push(IdeDiagnostic::from_diag(&d, Some(item_sym), Some(bid)));
         }
@@ -313,7 +313,7 @@ pub fn item_ide_diagnostics(
         let no_fallback =
             arandu_base::NO_GENERATIONAL_FALLBACK.load(std::sync::atomic::Ordering::Relaxed);
         for (bid, d) in arandu_mir::escape_analysis::check_escapes_by_block(
-            &amir,
+            amir,
             sigs.symbols.as_ref(),
             &body_tc.type_info.type_interner,
             arandu_mir::escape_analysis::EscapeCheckOptions { no_fallback },
@@ -375,20 +375,20 @@ pub fn block_diagnostics(
     }
     if !amir.blocks.is_empty() {
         for (bid, d) in
-            arandu_mir::definite_init::check_definite_init_by_block(&amir, sigs.symbols.as_ref())
+            arandu_mir::definite_init::check_definite_init_by_block(amir, sigs.symbols.as_ref())
         {
             if bid == block {
                 out.push(IdeDiagnostic::from_diag(&d, Some(func_sym), Some(bid)));
             }
         }
-        for (bid, d) in arandu_mir::move_checker::check_moves_by_block(&amir, sigs.symbols.as_ref())
+        for (bid, d) in arandu_mir::move_checker::check_moves_by_block(amir, sigs.symbols.as_ref())
         {
             if bid == block {
                 out.push(IdeDiagnostic::from_diag(&d, Some(func_sym), Some(bid)));
             }
         }
         for (bid, d) in
-            arandu_mir::borrow_check::check_borrows_by_block(&amir, sigs.symbols.as_ref())
+            arandu_mir::borrow_check::check_borrows_by_block(amir, sigs.symbols.as_ref())
         {
             if bid == block {
                 out.push(IdeDiagnostic::from_diag(&d, Some(func_sym), Some(bid)));

@@ -1,5 +1,11 @@
 # Roadmap de Evolução da IDE Arandu
 
+> **Execução gold:** o gate operacional e a ordem de hardening agora vivem em
+> [`docs/arandu-lsp-editor-gold-roadmap-v0.1.md`](../../docs/arandu-lsp-editor-gold-roadmap-v0.1.md).
+> Este documento preserva a visão de longo prazo e as propostas avançadas. Um
+> recurso marcado como implementado aqui ainda pode estar `done`, e não `gold`,
+> enquanto faltar o respectivo gate E2E, de protocolo ou distribuição.
+
 Este documento define os objetivos e prioridades para o suporte a IDE do Arandu (extensão do VS Code e servidor de linguagem `arandu-lsp`), organizados em pilares conceituais baseados na filosofia de design do compilador e nas melhores práticas do ecossistema de desenvolvimento moderno.
 
 ---
@@ -44,7 +50,7 @@ Foco em usabilidade básica e robustez de edição:
 - [x] Destaque de sintaxe via TextMate e cores semânticas completas (Semantic Tokens).
 - [x] **Indicador de Status do Servidor (Status Bar)**: Exibição visual do estado do LSP (iniciando, ativo, erro) com clique rápido para abrir os logs.
 - [ ] **Refatoração Segura com Preview**: Rename Symbol e Safe Delete com janela de confirmação de call-sites antes da aplicação.
-- [ ] **Formatador Nativo Integrado**: Formatação imediata ao salvar utilizando `arandu_fmt`.
+- [x] **Formatador Nativo Integrado no LSP**: `textDocument/formatting` usa `arandu_fmt`; format-on-save e E2E da extensão ainda pertencem ao gate gold L2.
 - [ ] **Debugger Inspecionável**: Geração de DWARF com mapeamento das variáveis de origem (`temp_origins`).
 - [ ] **Valores Inline no Debugger**: Renderização visual do estado de variáveis ativas inline.
 - [ ] **Geração de Stubs de Interfaces**: Ação rápida para implementar membros de interface estruturais ausentes.

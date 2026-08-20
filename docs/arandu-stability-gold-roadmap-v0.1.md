@@ -1,0 +1,88 @@
+# Arandu — Roadmap de Estabilização Gold
+
+**Status:** ativo — bloqueia a abertura de uma nova grande fase do roadmap mestre.  
+**Escopo:** compilador, CLI, queries, diagnósticos, backends no escopo declarado e processo de release.  
+**Fora do escopo:** completar LLVM, estabilizar uma ABI 1.0 ou implementar todo o ecossistema futuro.
+
+Este roadmap transforma “estável” em uma promessa verificável. Ele não exige que
+todo subsistema futuro exista; exige que cada capacidade publicada declare seus
+limites, falhe de forma controlada e seja protegida por gates reproduzíveis.
+
+## Estados canônicos
+
+| Estado | Significado |
+|--------|-------------|
+| `gold` | Escopo completo, limites documentados, regressões automatizadas e todos os gates verdes. |
+| `done` | Implementação prevista existe e está coberta, mas ainda falta ao menos um requisito de produto/gold. |
+| `partial` | Caminho útil existe, porém há lacunas relevantes dentro do escopo desejado. |
+| `experimental` | Disponível para validação; compatibilidade e comportamento podem mudar. |
+| `planned` | Ainda não há implementação integrada ao caminho canônico. |
+
+`done` não promove automaticamente um item a `gold`. Dependências futuras podem
+melhorar uma implementação antiga; nesse caso o item permanece `done` ou
+`partial` até que seu contrato gold seja satisfeito, sem reescrever a história da
+fase em que apareceu.
+
+## Baseline auditado
+
+| Área | Estado | Evidência e limite atual |
+|------|--------|--------------------------|
+| Lexer/parser/CST | `done` | Goldens, recovery e CST-first; falta campanha de robustez/release explicitamente versionada. |
+| Resolve/typeck | `done` | Multi-file, privacidade, generics e testes oficiais; estabilidade da superfície da linguagem ainda é v0.x. |
+| AHIR/AMIR/dataflow | `done` | Invariantes, CFG, move/borrow e otimizações cobertos; IR pública/serializada não é estável. |
+| Salsa incremental | `done` | Cutoff por arquivo/item/bloco e guardrails; falta orçamento de performance contínuo para gold. |
+| CLI de projeto | `done` | `new/check/run/build/doctor` e instalação cobertos; matriz de release cross-platform é residual. |
+| Diagnósticos | `done` | Bijeção `DiagCode` ↔ docs e goldens; preservar determinismo contínuo. |
+| Cranelift JIT | `experimental` | Backend host dev/debug, não backend release nem promessa 32-bit. |
+| Backend C | `experimental` | Caminho portátil correto no escopo testado; runtime freestanding e polimento não são gold. |
+| ABI/runtime | `partial` | `DataLayout` e runtime host existem; ABI pública estável não existe. |
+
+## S0 — Baseline reproduzível
+
+- [x] `cargo fmt --all -- --check`.
+- [x] `cargo check --workspace`.
+- [x] `cargo clippy --workspace --all-targets --all-features -- -D warnings` verde no toolchain atual.
+- [x] `cargo test --workspace`.
+- [x] `cargo run -p xtask -- check-diag-docs`.
+- [ ] CI executa exatamente os gates acima em ordem e sem exceções silenciosas.
+- [ ] Toolchain mínimo/suportado está fixado ou documentado, inclusive política de atualização do Clippy.
+
+**DoD S0:** um checkout limpo reproduz todos os gates localmente e em CI.
+
+## S1 — Contratos e recuperação
+
+- [ ] Classificar `panic!`, `unwrap` e `expect` em código de produção: teste/invariante local, erro recuperável ou ICE reportável.
+- [ ] Converter caminhos alcançáveis por código Arandu inválido em diagnóstico/ICE, nunca abort do compilador.
+- [ ] Documentar limites suportados de cada backend e comando da CLI.
+- [ ] Garantir ordenação determinística de diagnósticos e artefatos em execuções repetidas.
+- [ ] Manter testes de ciclos de imports, IDs stale, CFG e layout como guardrails obrigatórios.
+
+**DoD S1:** entradas inválidas dentro da gramática suportada não derrubam o processo e os limites experimentais são explícitos.
+
+## S2 — Projetos reais e sessões longas
+
+- [ ] Corpus versionado com projetos multi-file pequenos, médios e adversariais.
+- [ ] Teste repetido de editar/renomear/remover módulos sem reutilização de `FileId`.
+- [ ] Sessões longas de query/LSP sem crescimento não limitado de memória.
+- [ ] Benchmarks com orçamento para cold build, noop rebuild e edição isolada.
+- [ ] Fuzzing contínuo de lexer/parser/CST e seeds de crashes preservadas como regressão.
+- [ ] Teste de determinismo repetido com ordens de registro e paralelismo diferentes.
+
+**DoD S2:** o compilador permanece correto e previsível além das fixtures unitárias.
+
+## S3 — Distribuição beta gold
+
+- [ ] Matriz de instalação e smoke test nos hosts oficialmente suportados.
+- [ ] Artefatos versionados, checksums e descoberta de stdlib testados fora do monorepo.
+- [ ] Política de compatibilidade v0.x para linguagem, manifesto, CLI e LSP publicada.
+- [ ] Release candidate usado em projetos do corpus sem bloqueador conhecido.
+- [ ] Lista de limitações conhecidas revisada e ligada ao roadmap mestre.
+
+**DoD S3:** Arandu é utilizável como beta gold dentro do escopo publicado.
+
+## Regra de saída
+
+Este roadmap fecha somente quando S0–S3 estiverem completos. Depois disso, o
+roadmap mestre pode escolher a próxima grande fase. Itens LLVM, ABI 1.0,
+self-hosting e ecossistema continuam `planned`; não bloqueiam o beta gold porque
+não fazem parte da promessa publicada.

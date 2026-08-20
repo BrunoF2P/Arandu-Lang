@@ -48,7 +48,7 @@ fn item_ide_diags_beta_edit_skips_alpha() {
 
     let d_alpha0 = item_ide_diagnostics(&db, file, alpha);
     let _ = item_ide_diagnostics(&db, file, beta);
-    let fp_alpha0 = ide_diags_fingerprint(&d_alpha0);
+    let fp_alpha0 = ide_diags_fingerprint(d_alpha0);
 
     ITEM_IDE_DIAGS_EXEC_COUNT.store(0, Ordering::SeqCst);
 
@@ -69,7 +69,7 @@ fn item_ide_diags_beta_edit_skips_alpha() {
         "expected ≤1 item_ide_diagnostics execute after beta-only edit, got {execs}"
     );
 
-    let fp_alpha1 = ide_diags_fingerprint(&d_alpha1);
+    let fp_alpha1 = ide_diags_fingerprint(d_alpha1);
     // Alpha diags content should be stable (empty↔empty) even if SymbolId renumbered.
     assert_eq!(
         fp_alpha0, fp_alpha1,
@@ -82,9 +82,9 @@ fn file_ide_diagnostics_fingerprint_stable_on_noop() {
     let mut db = DatabaseImpl::new();
     let file = db.new_file("fp3.aru".into(), "func main(): int { return 1 }\n".into());
     let d1 = file_ide_diagnostics(&db, file);
-    let fp1 = ide_diags_fingerprint(&d1);
+    let fp1 = ide_diags_fingerprint(d1);
     let d2 = file_ide_diagnostics(&db, file);
-    let fp2 = ide_diags_fingerprint(&d2);
+    let fp2 = ide_diags_fingerprint(d2);
     assert_eq!(fp1, fp2);
 }
 

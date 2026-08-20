@@ -1,5 +1,10 @@
 # Plano gold — fechar Salsa, LSP e Generational IDs
 
+> **Documento histórico de implementação.** As fases deste plano foram
+> absorvidas pela arquitetura atual. Pendências de maturidade e produto vivem
+> no [roadmap gold do LSP/editor](./arandu-lsp-editor-gold-roadmap-v0.1.md);
+> não use os rótulos “PRÓXIMA” abaixo como fila operacional atual.
+
 **Status:** F0–F5 **implementados** (2026-07), incluindo F4 delta de diags / early cutoff por função.  
 **Relacionado:** [`arandu-salsa-lsp-architecture-v0.1.md`](./arandu-salsa-lsp-architecture-v0.1.md), RFC Salsa, roadmap A1 / DX.6 / A10.  
 **Princípio:** fechar na **origem** (modelo de concorrência + VFS + queries + política de handles). Reusar libs (`salsa`, `slotmap`, `lsp-server`/`lsp-types`). Sem polir o MVP async como se fosse o alvo. Sem afirmar superioridade a rust-analyzer.
@@ -292,7 +297,7 @@ didClose → DocumentStore::close (id stale)
 
 - [ ] Atualizar roadmap: A1/DX.6/A10 com sub-itens “gold done” (sem marketing falso)  
 - [ ] Architecture: status CompileSession/symbol_span/dataflow alinhado à realidade  
-- [ ] D7 explícito: reparse arquivo, sem Rowan  
+- [x] D7 substituído pelo pipeline CST-first Rowan: reparse de ITEM com fallback full
 - [ ] CLI `-Zexplain-rebuild` permanece  
 - [ ] Remover código morto tower-lsp  
 - [ ] Comentário `doc_store`: SlotMap (não HopSlotMap)

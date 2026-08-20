@@ -51,7 +51,7 @@ fn syntax_tree_has_structured_func_items() {
         "func alpha(): int {\n    return 1\n}\nfunc beta(): int {\n    return 2\n}\n".into(),
     );
     let tree = syntax_tree(&db, file);
-    let s = arandu_parser::inspect_green_structure(&tree);
+    let s = arandu_parser::inspect_green_structure(tree);
     assert_eq!(s.func_items, 2, "{s:?}");
     assert_eq!(s.blocks, 2, "{s:?}");
     assert!(s.typed_items >= 2);

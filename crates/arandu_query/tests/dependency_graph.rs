@@ -11,12 +11,12 @@ fn test_simple_import_graph() {
     let file_id_b = mod_b.file_id(&db);
 
     let graph_hash = arandu_query::passes::module_dependency_graph(&db, mod_a);
-    let graph = &*graph_hash;
+    let graph = graph_hash;
 
     // Verify nodes
     let node_weights: Vec<u32> = graph.node_weights().copied().collect();
-    assert!(node_weights.contains(&file_id_a));
-    assert!(node_weights.contains(&file_id_b));
+    assert!(node_weights.contains(file_id_a));
+    assert!(node_weights.contains(file_id_b));
     assert_eq!(node_weights.len(), 2);
 
     // Find node indices
@@ -46,13 +46,13 @@ fn test_transitive_import_graph() {
     let file_id_c = mod_c.file_id(&db);
 
     let graph_hash = arandu_query::passes::module_dependency_graph(&db, mod_a);
-    let graph = &*graph_hash;
+    let graph = graph_hash;
 
     // Verify nodes
     let node_weights: Vec<u32> = graph.node_weights().copied().collect();
-    assert!(node_weights.contains(&file_id_a));
-    assert!(node_weights.contains(&file_id_b));
-    assert!(node_weights.contains(&file_id_c));
+    assert!(node_weights.contains(file_id_a));
+    assert!(node_weights.contains(file_id_b));
+    assert!(node_weights.contains(file_id_c));
     assert_eq!(node_weights.len(), 3);
 
     // Find node indices
@@ -86,12 +86,12 @@ fn test_circular_import_graph_does_not_overflow() {
     let file_id_b = mod_b.file_id(&db);
 
     let graph_hash = arandu_query::passes::module_dependency_graph(&db, mod_a);
-    let graph = &*graph_hash;
+    let graph = graph_hash;
 
     // Verify nodes
     let node_weights: Vec<u32> = graph.node_weights().copied().collect();
-    assert!(node_weights.contains(&file_id_a));
-    assert!(node_weights.contains(&file_id_b));
+    assert!(node_weights.contains(file_id_a));
+    assert!(node_weights.contains(file_id_b));
     assert_eq!(node_weights.len(), 2);
 
     // Find node indices
