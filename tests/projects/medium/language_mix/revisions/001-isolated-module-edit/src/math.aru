@@ -1,0 +1,8 @@
+public func double(value: int): int {
+    let factor = 2
+    return value * factor
+}
+
+public func offset(value: int): int {
+    return value + 2
+}

@@ -2,8 +2,11 @@
 //!
 //! ```text
 //! cargo run -p xtask -- check-diag-docs
+//! cargo run -p xtask -- check-project-corpus
 //! cargo run -p xtask -- help
 //! ```
+
+mod corpus;
 
 use std::env;
 use std::path::PathBuf;
@@ -14,6 +17,7 @@ fn main() {
     let cmd = args.next().unwrap_or_else(|| "help".into());
     let code = match cmd.as_str() {
         "check-diag-docs" => cmd_check_diag_docs(),
+        "check-project-corpus" => corpus::cmd_check_project_corpus(&workspace_root()),
         "help" | "-h" | "--help" => {
             print_help();
             0
@@ -34,10 +38,12 @@ xtask — Arandu workspace tasks
 
 Commands:
   check-diag-docs   Bijection: DiagCode (user-facing) ↔ docs/errors/*.md
+  check-project-corpus  Validate S2 projects and incremental ↔ clean equivalence
   help              This message
 
 Examples:
   cargo run -p xtask -- check-diag-docs
+  cargo run -p xtask -- check-project-corpus
   ./scripts/check-diag-docs.sh
 "
     );

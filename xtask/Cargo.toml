@@ -13,3 +13,6 @@ path = "src/main.rs"
 
 [dependencies]
 arandu_diagnostics = { path = "../crates/arandu_diagnostics" }
+arandu_middle = { path = "../crates/arandu_middle" }
+arandu_query = { path = "../crates/arandu_query" }
+salsa = { workspace = true }

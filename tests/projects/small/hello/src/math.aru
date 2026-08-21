@@ -1,0 +1,3 @@
+public func answer(): int {
+    return 42
+}

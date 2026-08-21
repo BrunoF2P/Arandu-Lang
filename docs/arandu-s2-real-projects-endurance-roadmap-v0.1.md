@@ -35,15 +35,15 @@ cargas versionadas, budgets mensuráveis e regressões de sessão longa. LLVM, A
 
 ## S2-A — Corpus versionado e oráculo limpo
 
-- [ ] Criar `tests/projects/{small,medium,adversarial}` com manifesto de casos,
+- [x] Criar `tests/projects/{small,medium,adversarial}` com manifesto de casos,
       features exercitadas, comando e resultado esperado.
-- [ ] Incluir projetos multi-file válidos, inválidos, ciclos, Unicode/CRLF,
+- [x] Incluir projetos multi-file válidos, inválidos, ciclos, Unicode/CRLF,
       generics, ownership, async e backends dentro do contrato publicado.
-- [ ] Criar runner único no `xtask`; descoberta e ordem dos casos são
+- [x] Criar runner único no `xtask`; descoberta e ordem dos casos são
       determinísticas e arquivos órfãos falham o gate.
-- [ ] Para cada revisão incremental, comparar diagnóstico/HIR/AMIR relevante com
+- [x] Para cada revisão incremental, comparar diagnóstico/HIR/AMIR relevante com
       uma DB limpa construída do mesmo estado final.
-- [ ] Registrar tamanho do corpus por arquivos, linhas, bytes e módulos, sem usar
+- [x] Registrar tamanho do corpus por arquivos, linhas, bytes e módulos, sem usar
       número de testes como proxy de cobertura.
 
 **Saída:** toda campanha S2 usa cargas reais reproduzíveis e um oráculo limpo.

@@ -1,0 +1,23 @@
+module s2_medium
+import s2_medium.math as math
+
+struct Box {
+    value: int
+}
+
+func Box.read(shared self): int {
+    return self.value
+}
+
+func identity<T>(value: T): T {
+    return value
+}
+
+async func ready(): int {
+    return 7
+}
+
+func main(): int {
+    let boxed = Box { value: identity<int>(math.double(20)) }
+    return math.offset(boxed.read())
+}
