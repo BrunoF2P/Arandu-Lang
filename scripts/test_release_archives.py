@@ -7,6 +7,7 @@ import tarfile
 import tempfile
 import unittest
 import zipfile
+import json
 
 
 def load(name: str, filename: str):
@@ -44,6 +45,40 @@ class ArchiveValidationTests(unittest.TestCase):
             archive = Path(directory) / "bad.zip"
             with zipfile.ZipFile(archive, "w") as output:
                 output.writestr("arandu-0.0.1/../../escape", b"bad")
+            with self.assertRaises(SystemExit):
+                zip_tools.validate(archive, "arandu-0.0.1", "0.0.1", "x86_64-pc-windows-msvc")
+
+    def test_zip_rejects_incomplete_package(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "incomplete.zip"
+            with zipfile.ZipFile(archive, "w") as output:
+                output.writestr("arandu-0.0.1/bin/arandu.exe", b"binary")
+            with self.assertRaises(SystemExit):
+                zip_tools.validate(archive, "arandu-0.0.1", "0.0.1", "x86_64-pc-windows-msvc")
+
+    def test_zip_rejects_manifest_target_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "wrong-target.zip"
+            root = "arandu-0.0.1"
+            required = {
+                "bin/arandu.exe": b"a", "bin/arandu_cli.exe": b"a",
+                "bin/arandu-lsp.exe": b"l", "BLAKE3SUMS": b"",
+                "LICENSE-MIT": b"m", "LICENSE-APACHE": b"a",
+                "share/arandu/stdlib/std/io.aru": b"public func print() {}",
+            }
+            manifest = {"schema": 1, "version": "0.0.1", "target": "aarch64-pc-windows-msvc", "components": ["arandu", "arandu-lsp", "stdlib"], "archive": "zip"}
+            with zipfile.ZipFile(archive, "w") as output:
+                for name, contents in required.items():
+                    output.writestr(f"{root}/{name}", contents)
+                output.writestr(f"{root}/release-manifest.json", json.dumps(manifest))
+            with self.assertRaises(SystemExit):
+                zip_tools.validate(archive, root, "0.0.1", "x86_64-pc-windows-msvc")
+
+    def test_zip_rejects_unexpected_content(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "extra.zip"
+            with zipfile.ZipFile(archive, "w") as output:
+                output.writestr("arandu-0.0.1/autorun.dll", b"unexpected")
             with self.assertRaises(SystemExit):
                 zip_tools.validate(archive, "arandu-0.0.1", "0.0.1", "x86_64-pc-windows-msvc")
 

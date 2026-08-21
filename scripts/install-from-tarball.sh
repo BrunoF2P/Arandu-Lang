@@ -114,6 +114,11 @@ if [[ ! -x "$TREE/bin/arandu-lsp" ]]; then
   echo "error: archive missing bin/arandu-lsp" >&2
   exit 1
 fi
+REPORTED_VERSION="$("$TREE/bin/arandu" --version)"
+if [[ "$REPORTED_VERSION" != "arandu $PACKAGE_VERSION" ]]; then
+  echo "error: binary version '$REPORTED_VERSION' does not match package version $PACKAGE_VERSION" >&2
+  exit 1
+fi
 
 # Optional: verify in-tree BLAKE3SUMS against extracted files.
 if [[ -f "$TREE/BLAKE3SUMS" ]]; then
@@ -136,9 +141,13 @@ if [[ -e "$VERSION_DIR" || -L "$VERSION_DIR" ]]; then
   BACKUP="${VERSION_DIR}.old.$$"
   rm -rf "$BACKUP"
   mv "$VERSION_DIR" "$BACKUP"
-  rm -rf "$BACKUP"
 fi
-mv "$TREE" "$VERSION_DIR"
+if [[ "${ARANDU_TEST_FAIL_PUBLISH:-0}" == "1" ]] || ! mv "$TREE" "$VERSION_DIR"; then
+  [[ -n "${BACKUP:-}" && -e "$BACKUP" ]] && mv "$BACKUP" "$VERSION_DIR"
+  echo "error: publish failed; previous installation restored" >&2
+  exit 1
+fi
+[[ -n "${BACKUP:-}" && -e "$BACKUP" ]] && rm -rf "$BACKUP"
 
 ln -sfn "$VERSION_NAME" "$PREFIX/current"
 ln -sfn "../current/bin/arandu" "$PREFIX/bin/arandu"
@@ -149,3 +158,16 @@ env -u ARANDU_STDLIB PATH="$PREFIX/bin:/usr/bin:/bin" \
   "$PREFIX/bin/arandu" doctor
 
 echo "installed $VERSION_NAME under $PREFIX"
+
+if [[ "${ARANDU_NO_MODIFY_PATH:-0}" == "1" ]]; then
+  echo "PATH unchanged; add: export PATH=\"$PREFIX/bin:\$PATH\""
+else
+  PROFILE="${ARANDU_PROFILE:-$HOME/.profile}"
+  PATH_LINE="export PATH=\"$PREFIX/bin:\$PATH\" # Arandu SDK"
+  if [[ -f "$PROFILE" ]] && grep -Fqx "$PATH_LINE" "$PROFILE"; then
+    echo "$PREFIX/bin is already configured in $PROFILE"
+  else
+    printf '\n%s\n' "$PATH_LINE" >>"$PROFILE"
+    echo "added $PREFIX/bin to PATH in $PROFILE (open a new shell)"
+  fi
+fi

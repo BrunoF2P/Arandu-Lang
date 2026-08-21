@@ -76,19 +76,25 @@ continua pertencendo ao S3-C.
 
 ## S3-C — Matriz de instalação e RC no corpus
 
-- [ ] Criar `S3 / Distribution` para Linux, macOS ARM e Windows x86_64,
+- [x] Criar `S3 / Distribution` para Linux, macOS ARM e Windows x86_64,
       dependente dos gates gold anteriores.
-- [ ] Em cada host, empacotar, instalar em prefixo temporário e remover checkout,
+- [x] Em cada host, empacotar, instalar em prefixo temporário e remover checkout,
       `ARANDU_STDLIB`, Cargo e caminhos de build da execução.
-- [ ] Executar `doctor`, `new`, `check`, `run`, LSP initialize/shutdown e todos
+- [x] Executar `doctor`, `new`, `check`, `run`, LSP initialize/shutdown e todos
       os projetos publicáveis do corpus usando somente a instalação.
-- [ ] Reinstalar a mesma versão, alternar versões e provar rollback/erro atômico
-      sem instalação parcialmente visível.
-- [ ] Testar archives adulterados, incompletos, de target errado e versão
+- [x] Reinstalar a mesma versão e provar rollback/erro atômico sem alterar a
+      instalação ativa nem deixar uma instalação parcialmente publicada.
+- [ ] Alternar entre duas RCs reais e voltar à anterior. Esta é evidência de
+      promoção em S3-E: não será simulada renomeando o mesmo binário local.
+- [x] Testar archives adulterados, incompletos, de target errado e versão
       incompatível; todos abortam antes de publicar `current`.
 
 **Saída:** a release candidate funciona como produto instalado, não como
 checkout privilegiado.
+
+**Estado:** implementação `gold` local em Windows. A conclusão multiplataforma
+depende do mesmo job verde nos runners Linux, macOS ARM e Windows; a troca entre
+duas versões reais será comprovada durante a promoção S3-E.
 
 ## S3-D — Publicação verificável
 

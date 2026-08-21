@@ -58,7 +58,7 @@ jobs:
       - run: git diff --exit-code
 
   package:
-    name: Package (${{ matrix.target }})
+    name: S3 / Distribution (${{ matrix.target }})
     needs: validate
     strategy:
       fail-fast: false
@@ -147,6 +147,99 @@ jobs:
       - name: List dist/
         shell: bash
         run: ls -la dist/
+
+      - name: Install package into empty prefix (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          archive="dist/arandu-${VERSION}-${TARGET}.tar.gz"
+          ARANDU_NO_MODIFY_PATH=1 PREFIX="$RUNNER_TEMP/arandu-sdk" \
+            bash scripts/install-from-tarball.sh "$archive"
+
+      - name: Install package into empty prefix (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./scripts/install-from-zip.ps1 `
+            "dist/arandu-$env:VERSION-$env:TARGET.zip" `
+            -Prefix "$env:RUNNER_TEMP/arandu-sdk" -NoModifyPath
+
+      - name: S3 / installed SDK smoke (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          python3 scripts/smoke_distribution.py \
+            --arandu "$RUNNER_TEMP/arandu-sdk/bin/arandu" \
+            --lsp "$RUNNER_TEMP/arandu-sdk/current/bin/arandu-lsp" \
+            --corpus tests/projects
+
+      - name: S3 / installed SDK smoke (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python scripts/smoke_distribution.py `
+            --arandu "$env:RUNNER_TEMP/arandu-sdk/arandu-$env:VERSION/bin/arandu.exe" `
+            --lsp "$env:RUNNER_TEMP/arandu-sdk/arandu-$env:VERSION/bin/arandu-lsp.exe" `
+            --corpus tests/projects
+
+      - name: S3 / reinstall and reject bad packages (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="dist/arandu-${VERSION}-${TARGET}.tar.gz"
+          before="$(readlink "$RUNNER_TEMP/arandu-sdk/current")"
+          ARANDU_NO_MODIFY_PATH=1 PREFIX="$RUNNER_TEMP/arandu-sdk" \
+            bash scripts/install-from-tarball.sh "$archive"
+          test "$(readlink "$RUNNER_TEMP/arandu-sdk/current")" = "$before"
+          mkdir -p "$RUNNER_TEMP/bad"
+          bad="$RUNNER_TEMP/bad/$(basename "$archive")"
+          cp "$archive" "$bad"
+          cp "${archive}.blake3" "${bad}.blake3"
+          printf 'tampered' >>"$bad"
+          if ARANDU_NO_MODIFY_PATH=1 PREFIX="$RUNNER_TEMP/arandu-sdk" \
+              bash scripts/install-from-tarball.sh "$bad"; then
+            echo "tampered archive was accepted" >&2; exit 1
+          fi
+          test "$(readlink "$RUNNER_TEMP/arandu-sdk/current")" = "$before"
+          if ARANDU_TEST_FAIL_PUBLISH=1 ARANDU_NO_MODIFY_PATH=1 \
+              PREFIX="$RUNNER_TEMP/arandu-sdk" bash scripts/install-from-tarball.sh "$archive"; then
+            echo "injected publish failure was accepted" >&2; exit 1
+          fi
+          test "$(readlink "$RUNNER_TEMP/arandu-sdk/current")" = "$before"
+
+      - name: S3 / reinstall and reject bad packages (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $archive = "dist/arandu-$env:VERSION-$env:TARGET.zip"
+          $prefix = "$env:RUNNER_TEMP/arandu-sdk"
+          $launcher = "$prefix/bin/arandu.cmd"
+          $before = (Get-FileHash -Algorithm SHA256 $launcher).Hash
+          ./scripts/install-from-zip.ps1 $archive -Prefix $prefix -NoModifyPath
+          if ((Get-FileHash -Algorithm SHA256 $launcher).Hash -ne $before) { throw 'same-version reinstall changed launcher' }
+          $badDir = "$env:RUNNER_TEMP/bad"
+          New-Item -ItemType Directory -Force $badDir | Out-Null
+          $bad = "$badDir/$([IO.Path]::GetFileName($archive))"
+          Copy-Item $archive $bad
+          Copy-Item "$archive.sha256" "$bad.sha256"
+          [IO.File]::AppendAllText($bad, 'tampered')
+          try {
+            ./scripts/install-from-zip.ps1 $bad -Prefix $prefix -NoModifyPath
+            throw 'tampered archive was accepted'
+          } catch {
+            if ($_.Exception.Message -eq 'tampered archive was accepted') { throw }
+          }
+          if ((Get-FileHash -Algorithm SHA256 $launcher).Hash -ne $before) { throw 'failed install changed launcher' }
+          $env:ARANDU_TEST_FAIL_PUBLISH = '1'
+          try {
+            ./scripts/install-from-zip.ps1 $archive -Prefix $prefix -NoModifyPath
+            throw 'injected failure was accepted'
+          } catch {
+            if ($_.Exception.Message -eq 'injected failure was accepted') { throw }
+          } finally { Remove-Item Env:ARANDU_TEST_FAIL_PUBLISH -ErrorAction SilentlyContinue }
+          if ((Get-FileHash -Algorithm SHA256 $launcher).Hash -ne $before) { throw 'rollback changed launcher' }
+          & $launcher --version
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

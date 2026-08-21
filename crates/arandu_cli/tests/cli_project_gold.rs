@@ -126,6 +126,13 @@ fn new_scaffolds_package_and_check_run() {
 fn new_classifies_usage_and_operational_failures() {
     let tmp = tempfile_dir("arandu_new_failure_classes");
 
+    let created = run_cli_in(&tmp, &["new", "hello"]);
+    assert!(created.status.success());
+    let created_stdout = String::from_utf8_lossy(&created.stdout);
+    assert!(created_stdout.contains("arandu check"));
+    assert!(created_stdout.contains("arandu run"));
+    assert!(!created_stdout.contains("arandu_cli"));
+
     let invalid = run_cli_in(&tmp, &["new", "../escape"]);
     assert_eq!(invalid.status.code(), Some(2));
     let invalid_stderr = String::from_utf8_lossy(&invalid.stderr);

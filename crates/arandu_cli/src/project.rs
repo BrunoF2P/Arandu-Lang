@@ -135,8 +135,8 @@ entry = "{DEFAULT_ENTRY}"
     println!();
     println!("next:");
     println!("  cd {name}");
-    println!("  arandu_cli check");
-    println!("  arandu_cli run");
+    println!("  arandu check");
+    println!("  arandu run");
     Ok(CliSuccess::Done)
 }
 
