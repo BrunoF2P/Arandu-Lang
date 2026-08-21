@@ -136,7 +136,6 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: arandu-${{ env.VERSION }}-${{ matrix.target }}
-          if-no-files-found: error
           path: |
             dist/arandu-${{ env.VERSION }}-${{ matrix.target }}.tar.gz
             dist/arandu-${{ env.VERSION }}-${{ matrix.target }}.tar.gz.blake3

@@ -39,15 +39,20 @@ projetos do corpus aprovados. Compilar no CI sem instalar não promove um host.
 
 ## S3-A — Contrato e fonte única de versão
 
-- [ ] Publicar política v0.x separando linguagem, manifesto, CLI, diagnósticos,
+- [x] Publicar política v0.x separando linguagem, manifesto, CLI, diagnósticos,
       LSP, stdlib, formato de archive e APIs internas sem estabilidade.
 - [x] Criar verificador único para tag ↔ workspace ↔ CLI ↔ LSP ↔ extensão e
-      release manifest; impedir versões divergentes antes do build.
-- [ ] Definir `0.1.0-rc.N` como canal RC e critérios objetivos para `0.1.0`.
-- [ ] Publicar matriz de hosts, componentes e comandos realmente suportados.
-- [ ] Consolidar limitações conhecidas sem prometer LLVM/ABI/freestanding.
+      impedir versões divergentes antes do build. O release manifest entra no
+      mesmo verificador quando for criado em S3-B.
+- [x] Definir `0.1.0-rc.N` como canal RC e critérios objetivos para `0.1.0`.
+- [x] Publicar matriz de hosts, componentes e comandos realmente suportados.
+- [x] Consolidar limitações conhecidas sem prometer LLVM/ABI/freestanding.
 
 **Saída:** uma release não pode declarar uma promessa maior que seus contratos.
+
+Contrato normativo: [`arandu-distribution-contract-v0.1.md`](arandu-distribution-contract-v0.1.md).
+S3-A está concluído documentalmente; os artifacts e instaladores que provam
+esse contrato são entregas S3-B/S3-C, não evidência presumida desta etapa.
 
 ## S3-B — Pacote autocontido e instaladores portáveis
 
