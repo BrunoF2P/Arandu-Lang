@@ -258,3 +258,20 @@ fn modify_util_body_updates_via_set_text() {
 
     let _ = fs::remove_dir_all(&root);
 }
+
+#[test]
+fn create_registers_package_and_relative_keys_after_path_canonicalization() {
+    let root = temp_pkg("create_keys");
+    let mut db = DatabaseImpl::new();
+    let (mut sess, _) = seed_session(&mut db, root.clone(), "my_app");
+
+    let added = sess.package_src.join("added.aru");
+    fs::write(&added, "public func added(): int { return 1 }\n").unwrap();
+    sess.push(added, FsChange::Create);
+    let summary = sess.commit(&mut db, true);
+
+    assert_eq!(summary.created, 1);
+    assert!(db.source_file_by_path("my_app/added.aru").is_some());
+    assert!(db.source_file_by_path("added.aru").is_some());
+    let _ = fs::remove_dir_all(&root);
+}

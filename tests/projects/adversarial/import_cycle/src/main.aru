@@ -1,0 +1,6 @@
+module s2_cycle
+import s2_cycle.a as a
+
+func main(): int {
+    return a.left()
+}

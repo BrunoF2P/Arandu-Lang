@@ -1,0 +1,3 @@
+name = "s2_unicode"
+version = "0.0.1"
+entry = "src/main.aru"

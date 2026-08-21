@@ -35,6 +35,12 @@ pub struct RebuildLog {
     events: Mutex<Vec<RebuildEvent>>,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct RebuildCounts {
+    pub executed: usize,
+    pub validated: usize,
+}
+
 impl RebuildLog {
     #[must_use]
     pub fn new() -> Arc<Self> {
@@ -57,6 +63,22 @@ impl RebuildLog {
     #[must_use]
     pub fn snapshot(&self) -> Vec<RebuildEvent> {
         self.events.lock().map(|g| g.clone()).unwrap_or_default()
+    }
+
+    /// Allocation-free aggregate for performance/endurance measurement windows.
+    #[must_use]
+    pub fn counts(&self) -> RebuildCounts {
+        let Ok(events) = self.events.lock() else {
+            return RebuildCounts::default();
+        };
+        let mut counts = RebuildCounts::default();
+        for event in events.iter() {
+            match event {
+                RebuildEvent::Execute { .. } => counts.executed += 1,
+                RebuildEvent::Validate { .. } => counts.validated += 1,
+            }
+        }
+        counts
     }
 
     /// Human-readable causal chain of **executions** (validate hits omitted unless verbose).
@@ -152,6 +174,13 @@ mod tests {
             key: "query_b".to_string(),
         });
         assert_eq!(log.snapshot().len(), 2);
+        assert_eq!(
+            log.counts(),
+            RebuildCounts {
+                executed: 1,
+                validated: 1
+            }
+        );
         assert!(any_execute(&log));
 
         log.clear();

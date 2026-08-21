@@ -344,7 +344,11 @@ impl PackageWatchSession {
     }
 
     fn infer_keys(&self, path: &Path) -> Vec<String> {
-        if let Ok(rel) = path.strip_prefix(&self.package_src) {
+        // Event paths are canonicalized before they enter the buffer. Canonicalize
+        // the root as well so Windows `\\?\` paths and ordinary absolute paths do
+        // not fall through to an unusable absolute-only registry key.
+        let package_src = canonicalize_soft(&self.package_src);
+        if let Ok(rel) = path.strip_prefix(&package_src) {
             let rel = rel.to_string_lossy().replace('\\', "/");
             return self.keys_for_rel(&rel);
         }
@@ -398,7 +402,9 @@ impl PackageWatchSession {
         self.reindex_keys(db);
 
         // Re-register package files under new keys.
-        for (abs, keys) in self.path_keys.clone() {
+        let mut registrations: Vec<_> = self.path_keys.clone().into_iter().collect();
+        registrations.sort_by(|(left, _), (right, _)| left.cmp(right));
+        for (abs, keys) in registrations {
             if let Ok(text) = std::fs::read_to_string(&abs) {
                 for key in keys {
                     db.new_file(key, text.clone());
@@ -427,7 +433,24 @@ enum FsOp {
 }
 
 fn canonicalize_soft(p: &Path) -> PathBuf {
-    std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
+    let path = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    normalize_windows_verbatim(path)
+}
+
+#[cfg(windows)]
+fn normalize_windows_verbatim(path: PathBuf) -> PathBuf {
+    let value = path.to_string_lossy();
+    if let Some(rest) = value.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    value
+        .strip_prefix(r"\\?\")
+        .map_or(path.clone(), PathBuf::from)
+}
+
+#[cfg(not(windows))]
+fn normalize_windows_verbatim(path: PathBuf) -> PathBuf {
+    path
 }
 
 /// Ensure path is absolute for stable map keys.

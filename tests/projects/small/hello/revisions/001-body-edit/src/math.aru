@@ -1,0 +1,4 @@
+public func answer(): int {
+    let base = 40
+    return base + 3
+}

@@ -8,3 +8,5 @@
 *.sh text eol=lf
 *.py text eol=lf
 *.yml text eol=lf
+*.seed text eol=lf
+tests/fuzz-regressions/manifest.tsv text eol=lf

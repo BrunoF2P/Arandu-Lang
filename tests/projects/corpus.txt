@@ -1,0 +1,5 @@
+# path | expectation | features | required diagnostic codes | newline model
+small/hello | ok | multi-file | - | lf
+medium/language_mix | ok | async,generics,multi-file,ownership | - | lf
+adversarial/import_cycle | error | cycles,multi-file | N006 | lf
+adversarial/unicode_type_error | error | crlf,unicode | T002 | crlf

@@ -36,6 +36,7 @@ fase em que apareceu.
 | Cranelift JIT | `experimental` | Backend host dev/debug, não backend release nem promessa 32-bit. |
 | Backend C | `experimental` | Caminho portátil correto no escopo testado; runtime freestanding e polimento não são gold. |
 | ABI/runtime | `partial` | `DataLayout` e runtime host existem; ABI pública estável não existe. |
+| Contratos e recuperação transversal | `gold` | Entrada inválida, ICE, CLI/LSP, backends e determinismo protegidos por `S1 / Recovery` em Linux/Windows; PR #8. |
 
 ## S0 — Baseline reproduzível
 
@@ -81,23 +82,33 @@ documentada.
 Roadmap executável e auditoria de mercado: [`arandu-s1-contracts-recovery-roadmap-v0.1.md`](arandu-s1-contracts-recovery-roadmap-v0.1.md).
 
 - [x] Classificar `panic!`, `unwrap` e `expect` em código de produção: teste/invariante local, erro recuperável ou ICE reportável.
-- [ ] Converter caminhos alcançáveis por código Arandu inválido em diagnóstico/ICE, nunca abort do compilador.
-- [ ] Documentar limites suportados de cada backend e comando da CLI.
-- [ ] Garantir ordenação determinística de diagnósticos e artefatos em execuções repetidas.
-- [ ] Manter testes de ciclos de imports, IDs stale, CFG e layout como guardrails obrigatórios.
+- [x] Converter caminhos alcançáveis por código Arandu inválido em diagnóstico/ICE, nunca abort do compilador.
+- [x] Documentar limites suportados de cada backend e comando da CLI.
+- [x] Garantir ordenação determinística de diagnósticos e artefatos em execuções repetidas.
+- [x] Manter testes de ciclos de imports, IDs stale, CFG e layout como guardrails obrigatórios.
 
 **DoD S1:** entradas inválidas dentro da gramática suportada não derrubam o processo e os limites experimentais são explícitos.
 
+**Estado S1:** `gold` — promovido em 2026-08-21 pelo PR #8 (`28fe6e8`), com
+`S0 / Gate` e `S1 / Recovery` aprovados na branch principal protegida.
+
 ## S2 — Projetos reais e sessões longas
 
-- [ ] Corpus versionado com projetos multi-file pequenos, médios e adversariais.
-- [ ] Teste repetido de editar/renomear/remover módulos sem reutilização de `FileId`.
-- [ ] Sessões longas de query/LSP sem crescimento não limitado de memória.
-- [ ] Benchmarks com orçamento para cold build, noop rebuild e edição isolada.
-- [ ] Fuzzing contínuo de lexer/parser/CST e seeds de crashes preservadas como regressão.
-- [ ] Teste de determinismo repetido com ordens de registro e paralelismo diferentes.
+Roadmap executável: [`arandu-s2-real-projects-endurance-roadmap-v0.1.md`](arandu-s2-real-projects-endurance-roadmap-v0.1.md).
+
+- [x] Corpus versionado com projetos multi-file pequenos, médios e adversariais.
+- [x] Teste repetido de editar/renomear/remover módulos sem reutilização de `FileId`.
+- [x] Sessões longas de query/LSP sem crescimento não limitado de memória.
+- [x] Benchmarks com orçamento para cold build, noop rebuild e edição isolada.
+- [x] Fuzzing contínuo de lexer/parser/CST e seeds de crashes preservadas como regressão.
+- [x] Teste de determinismo repetido com ordens de registro e paralelismo diferentes.
 
 **DoD S2:** o compilador permanece correto e previsível além das fixtures unitárias.
+
+**Estado S2:** `gold` local em 2026-08-21. A promoção na branch principal ocorre
+após `S2 / Endurance` verde em Linux/Windows e inclusão das duas pernas na
+ruleset, conforme o
+[contrato S2-E](arandu-s2-endurance-promotion-v0.1.md).
 
 ## S3 — Distribuição beta gold
 

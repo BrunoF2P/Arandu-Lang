@@ -1,0 +1,7 @@
+module s2_unicode
+
+func main(): int {
+    let mensagem: str = "olá 🌳"
+    let número: int = mensagem
+    return número
+}

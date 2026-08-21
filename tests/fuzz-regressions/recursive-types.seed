@@ -1,0 +1,5 @@
+encoding=utf8
+type A = B
+type B = A
+struct Node { next: Node? }
+func main() {}

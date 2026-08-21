@@ -20,9 +20,9 @@ pub use dataflow::{
     func_borrow_summaries, ide_diags_fingerprint, item_ide_diagnostics, item_ide_diags_fingerprint,
     liveness_facts, BorrowFacts, DataflowFacts, IdeDiagnostic, LivenessMap,
 };
-pub use db::{ArandCompilerDb, DatabaseImpl, SourceFile};
+pub use db::{ArandCompilerDb, DatabaseImpl, RegistryMetrics, SourceFile};
 pub use doc_store::{DocumentId, DocumentStore, OpenDocument};
-pub use explain::{any_execute, RebuildEvent, RebuildLog};
+pub use explain::{any_execute, RebuildCounts, RebuildEvent, RebuildLog};
 pub use highlight::{
     compute_highlights, file_highlights, highlights_in_range, HlKind, HlToken, MOD_DECLARATION,
     MOD_DEFINITION, MOD_MUTABLE,

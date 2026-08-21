@@ -1,0 +1,6 @@
+module s2_small
+import s2_small.math as math
+
+func main(): int {
+    return math.answer()
+}

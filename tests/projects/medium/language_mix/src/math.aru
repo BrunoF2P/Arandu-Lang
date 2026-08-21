@@ -1,0 +1,7 @@
+public func double(value: int): int {
+    return value * 2
+}
+
+public func offset(value: int): int {
+    return value + 2
+}

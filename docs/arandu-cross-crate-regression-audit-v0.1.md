@@ -1,6 +1,6 @@
 # Arandu — auditoria de regressões por crate
 
-**Status:** ativo; primeira campanha S1 iniciada em 2026-08-20.  
+**Status:** S1 `gold` desde 2026-08-21 (PR #8); matriz residual alimenta S2.
 **Objetivo:** transformar falhas reais de compiladores e ferramentas em testes
 proporcionais ao risco do Arandu, sem importar casos de recursos inexistentes.
 
@@ -54,7 +54,8 @@ testar internals que pertencem ao Cranelift, Salsa ou Rowan.
 
 ## Critério de promoção
 
-Esta matriz não promove S1 sozinha. S1 torna-se `gold` apenas quando todas as
-linhas têm regressão automatizada ou justificativa explícita de não
-aplicabilidade, o job `S1 / Recovery` roda em Linux e Windows, e S0 continua
-obrigatório e verde.
+S1 foi promovido a `gold` no PR #8 após regressões automatizadas ou
+justificativas explícitas de não aplicabilidade por linha, execução de
+`S1 / Recovery` em Linux e Windows e preservação do `S0 / Gate` obrigatório.
+As colunas “Próxima regressão Gold” agora são entradas do corpus e das campanhas
+de endurance do S2; não reabrem o contrato S1 já satisfeito.

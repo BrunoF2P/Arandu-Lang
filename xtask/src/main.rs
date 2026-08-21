@@ -2,8 +2,16 @@
 //!
 //! ```text
 //! cargo run -p xtask -- check-diag-docs
+//! cargo run -p xtask -- check-project-corpus
+//! cargo run -p xtask -- check-project-churn
+//! cargo run -p xtask -- check-project-performance
 //! cargo run -p xtask -- help
 //! ```
+
+mod churn;
+mod corpus;
+mod fuzz_regressions;
+mod performance;
 
 use std::env;
 use std::path::PathBuf;
@@ -14,6 +22,13 @@ fn main() {
     let cmd = args.next().unwrap_or_else(|| "help".into());
     let code = match cmd.as_str() {
         "check-diag-docs" => cmd_check_diag_docs(),
+        "check-project-corpus" => corpus::cmd_check_project_corpus(&workspace_root()),
+        "check-project-churn" => churn::cmd_check_project_churn(&workspace_root()),
+        "check-project-performance" => {
+            performance::cmd_check_project_performance(&workspace_root())
+        }
+        "check-fuzz-regressions" => fuzz_regressions::check(&workspace_root()),
+        "run-fuzz-seed" => fuzz_regressions::run_one(args),
         "help" | "-h" | "--help" => {
             print_help();
             0
@@ -34,10 +49,18 @@ xtask — Arandu workspace tasks
 
 Commands:
   check-diag-docs   Bijection: DiagCode (user-facing) ↔ docs/errors/*.md
+  check-project-corpus  Validate S2 projects and incremental ↔ clean equivalence
+  check-project-churn   Run deterministic S2 module and identity churn
+  check-project-performance  Measure S2 cold/noop/edit and retention budgets
+  check-fuzz-regressions  Run the versioned adversarial corpus with isolation
   help              This message
 
 Examples:
   cargo run -p xtask -- check-diag-docs
+  cargo run -p xtask -- check-project-corpus
+  cargo run -p xtask -- check-project-churn
+  cargo run -p xtask -- check-project-performance
+  cargo run -p xtask -- check-fuzz-regressions
   ./scripts/check-diag-docs.sh
 "
     );

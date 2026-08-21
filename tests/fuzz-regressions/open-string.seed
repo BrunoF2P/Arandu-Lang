@@ -1,0 +1,2 @@
+encoding=utf8
+func main() { let message = "never closed

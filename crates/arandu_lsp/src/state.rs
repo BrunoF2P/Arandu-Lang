@@ -273,4 +273,59 @@ mod tests {
         assert!(st.docs.get(id).is_none());
         assert!(!st.by_uri.contains_key(uri.as_str()));
     }
+
+    #[test]
+    fn s2_endurance_batches_edits_and_discards_stale_snapshots() {
+        const BATCHES: u64 = 100;
+        const CHANGES_PER_BATCH: u64 = 20;
+
+        let mut st = ServerState::new();
+        st.vfs = Vfs::with_debounce(Duration::from_millis(0));
+        let uri = file_url("s2-endurance.aru");
+        let id = st.open_or_commit(&uri, "func main(): int { return 0 }".into());
+        let initial_revision = st.revision().as_u64();
+
+        for batch in 1..=BATCHES {
+            for change in 1..=CHANGES_PER_BATCH {
+                let value = batch * CHANGES_PER_BATCH + change;
+                st.queue_change(&uri, format!("func main(): int {{ return {value} }}"));
+            }
+            assert_eq!(
+                st.vfs.pending_count(),
+                1,
+                "full-text changes for one document must coalesce"
+            );
+
+            let stale_revision = st.revision();
+            let source = st.docs.get(id).expect("live document").source;
+            let snapshot = st.snapshot();
+            let worker = std::thread::spawn(move || {
+                let diagnostics = arandu_query::file_ide_diagnostics(&snapshot.db, source);
+                (snapshot.revision, diagnostics.len())
+            });
+            let (worker_revision, _) = worker.join().expect("snapshot worker must finish");
+            assert_eq!(worker_revision, stale_revision);
+
+            let committed = st.flush_all();
+            assert_eq!(committed, vec![(uri.clone(), id)]);
+            assert_ne!(st.revision(), stale_revision);
+        }
+
+        assert_eq!(
+            st.revision().as_u64(),
+            initial_revision + BATCHES,
+            "2,000 on-type changes must become exactly 100 Salsa commits"
+        );
+        assert_eq!(st.docs.len(), 1, "edits must not leak document identities");
+        assert_eq!(st.by_uri.len(), 1);
+        assert_eq!(st.by_file_id.len(), 1);
+
+        st.close_uri(&uri);
+        assert!(st.docs.get(id).is_none(), "closed ID must remain stale");
+        let reopened = st.open_or_commit(&uri, "func main(): int { return 7 }".into());
+        assert_ne!(
+            reopened, id,
+            "reopen must allocate a new DocumentId generation"
+        );
+    }
 }

@@ -2,7 +2,7 @@ name: Fuzz
 
 on:
   schedule:
-    - cron: '0 3 * * 0'
+    - cron: "0 3 * * 0"
   workflow_dispatch:
 
 permissions:
@@ -12,9 +12,20 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  fuzz-lex:
-    name: Fuzz Lexer
+  fuzz:
+    name: Fuzz / ${{ matrix.target }}
     runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - fuzz_lex
+          - fuzz_parse
+          - fuzz_lex_simd
+          - fuzz_parse_structured
+          - fuzz_pipeline
+          - fuzz_cycles
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -24,82 +35,20 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: arandu_fuzz/corpus/fuzz_lex
-          key: fuzz-corpus-lex-${{ github.run_id }}
-          restore-keys: fuzz-corpus-lex-
-      - run: cargo +nightly fuzz run fuzz_lex -- -max_total_time=1800
+          path: arandu_fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.target }}-
+      - name: Run bounded libFuzzer campaign
+        run: >-
+          cargo +nightly fuzz run ${{ matrix.target }} --
+          -max_total_time=1800
+          -max_len=65536
+          -timeout=2
+          -rss_limit_mb=1024
         working-directory: arandu_fuzz
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
-          name: fuzz-lex-crashes
-          path: arandu_fuzz/corpus/fuzz_lex/crashes/
-
-  fuzz-parse:
-    name: Fuzz Parser
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - run: rustup toolchain install nightly --profile minimal
-      - run: cargo +nightly install cargo-fuzz --locked
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: arandu_fuzz/corpus/fuzz_parse
-          key: fuzz-corpus-parse-${{ github.run_id }}
-          restore-keys: fuzz-corpus-parse-
-      - run: cargo +nightly fuzz run fuzz_parse -- -max_total_time=1800
-        working-directory: arandu_fuzz
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: failure()
-        with:
-          name: fuzz-parse-crashes
-          path: arandu_fuzz/corpus/fuzz_parse/crashes/
-
-  fuzz-lex-simd:
-    name: Fuzz Lexer SIMD Equivalence
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - run: rustup toolchain install nightly --profile minimal
-      - run: cargo +nightly install cargo-fuzz --locked
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: arandu_fuzz/corpus/fuzz_lex_simd
-          key: fuzz-corpus-lex-simd-${{ github.run_id }}
-          restore-keys: fuzz-corpus-lex-simd-
-      - run: cargo +nightly fuzz run fuzz_lex_simd -- -max_total_time=1800
-        working-directory: arandu_fuzz
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: failure()
-        with:
-          name: fuzz-lex-simd-crashes
-          path: arandu_fuzz/corpus/fuzz_lex_simd/crashes/
-
-  fuzz-parse-structured:
-    name: Fuzz Parser (Structured)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - run: rustup toolchain install nightly --profile minimal
-      - run: cargo +nightly install cargo-fuzz --locked
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: arandu_fuzz/corpus/fuzz_parse_structured
-          key: fuzz-corpus-parse-structured-${{ github.run_id }}
-          restore-keys: fuzz-corpus-parse-structured-
-      - run: cargo +nightly fuzz run fuzz_parse_structured -- -max_total_time=1800
-        working-directory: arandu_fuzz
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: failure()
-        with:
-          name: fuzz-parse-structured-crashes
-          path: arandu_fuzz/corpus/fuzz_parse_structured/crashes/
+          name: fuzz-${{ matrix.target }}-artifacts
+          path: arandu_fuzz/artifacts/${{ matrix.target }}/
+          if-no-files-found: ignore
