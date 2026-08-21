@@ -5,9 +5,7 @@
 #   git tag v0.0.1 && git push origin v0.0.1
 #
 # Artifacts (per host target):
-#   arandu-$VERSION-$TARGET.tar.gz
-#   arandu-$VERSION-$TARGET.tar.gz.blake3
-#   arandu-$VERSION-$TARGET.tar.gz.blake3sum
+#   arandu-$VERSION-$TARGET.(tar.gz|zip) plus .blake3 and .blake3sum
 #
 # Install (example, Linux x86_64):
 #   gh release download v0.0.1 -p 'arandu-*-x86_64-unknown-linux-gnu.tar.gz*'
@@ -55,6 +53,8 @@ jobs:
       - run: cargo run --locked -p xtask -- check-diag-docs
       - name: Component and tag version contract
         run: cargo run --locked -p xtask -- check-release-contract
+      - name: Release archive security regressions
+        run: python scripts/test_release_archives.py
       - run: git diff --exit-code
 
   package:
@@ -66,11 +66,16 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            archive: tar.gz
           # macos-latest is Apple Silicon (aarch64). macos-13 (Intel) was
           # retired by GitHub Dec 2025 — jobs sit forever "Waiting for a runner".
           # Intel Mac: install from source or cross-compile later; no hosted image.
           - os: macos-latest
             target: aarch64-apple-darwin
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -124,22 +129,34 @@ jobs:
           echo "packaging arandu-${VERSION}-${{ matrix.target }}"
 
       - name: package-release
+        if: runner.os != 'Windows'
         shell: bash
         run: bash scripts/package-release.sh
         env:
           VERSION: ${{ env.VERSION }}
           TARGET: ${{ env.TARGET }}
 
+      - name: package-release (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/package-release.ps1
+        env:
+          VERSION: ${{ env.VERSION }}
+          TARGET: ${{ env.TARGET }}
+
       - name: List dist/
+        shell: bash
         run: ls -la dist/
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: arandu-${{ env.VERSION }}-${{ matrix.target }}
           path: |
-            dist/arandu-${{ env.VERSION }}-${{ matrix.target }}.tar.gz
-            dist/arandu-${{ env.VERSION }}-${{ matrix.target }}.tar.gz.blake3
-            dist/arandu-${{ env.VERSION }}-${{ matrix.target }}.tar.gz.blake3sum
+            dist/arandu-${{ env.VERSION }}-${{ matrix.target }}.${{ matrix.archive }}
+            dist/arandu-${{ env.VERSION }}-${{ matrix.target }}.${{ matrix.archive }}.blake3
+            dist/arandu-${{ env.VERSION }}-${{ matrix.target }}.${{ matrix.archive }}.blake3sum
+            dist/arandu-${{ env.VERSION }}-${{ matrix.target }}.${{ matrix.archive }}.sha256
+            dist/arandu-${{ env.VERSION }}-${{ matrix.target }}.${{ matrix.archive }}.sha256sum
           if-no-files-found: error
 
   publish:
@@ -151,7 +168,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Download all tarballs
+      - name: Download all packages
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: release-assets
@@ -173,7 +190,10 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             release-assets/*.tar.gz
+            release-assets/*.zip
             release-assets/*.blake3
             release-assets/*.blake3sum
+            release-assets/*.sha256
+            release-assets/*.sha256sum
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

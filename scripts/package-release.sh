@@ -7,9 +7,10 @@
 #
 # Tarball root:
 #   arandu-$VERSION/
-#     bin/arandu_cli
+#     bin/arandu_cli, bin/arandu, bin/arandu-lsp
 #     bin/arandu → arandu_cli
 #     share/arandu/stdlib/
+#     release-manifest.json, LICENSE-MIT, LICENSE-APACHE
 #     BLAKE3SUMS
 #
 # Install with: ./scripts/install-from-tarball.sh dist/arandu-….tar.gz
@@ -35,19 +36,31 @@ trap 'rm -rf "$STAGE"' EXIT
 
 echo "==> package-release VERSION=$VERSION TARGET=$TARGET"
 
-cargo build --locked -p arandu_cli --release --manifest-path "$ROOT/Cargo.toml"
+cargo build --locked -p arandu_cli -p arandu_lsp --release --manifest-path "$ROOT/Cargo.toml"
 BIN="$ROOT/target/release/arandu_cli"
+LSP="$ROOT/target/release/arandu-lsp"
 
 TREE="$STAGE/$NAME"
 mkdir -p "$TREE/bin" "$TREE/share/arandu"
 install -m 755 "$BIN" "$TREE/bin/arandu_cli"
+install -m 755 "$LSP" "$TREE/bin/arandu-lsp"
 ln -sfn arandu_cli "$TREE/bin/arandu"
 cp -a "$ROOT/stdlib" "$TREE/share/arandu/stdlib"
+install -m 644 "$ROOT/LICENSE-MIT" "$ROOT/LICENSE-APACHE" "$TREE/"
+cat >"$TREE/release-manifest.json" <<EOF
+{
+  "schema": 1,
+  "version": "$VERSION",
+  "target": "$TARGET",
+  "components": ["arandu", "arandu-lsp", "stdlib"],
+  "archive": "tar.gz"
+}
+EOF
 
 {
   cd "$TREE"
   # shellcheck disable=SC2044
-  for f in bin/arandu_cli $(find share/arandu/stdlib -type f -name '*.aru' | sort); do
+  for f in LICENSE-APACHE LICENSE-MIT bin/arandu_cli bin/arandu-lsp release-manifest.json $(find share/arandu/stdlib -type f -name '*.aru' | sort); do
     hash="$("$BIN" hash-file "$TREE/$f")"
     printf '%s  %s\n' "$hash" "$f"
   done
@@ -59,12 +72,17 @@ TAR="$OUT_DIR/${ARCHIVE_BASE}.tar.gz"
   python3 "$ROOT/scripts/reproducible_tar.py" create \
     "$TREE" "$TAR" --epoch "$SOURCE_DATE_EPOCH"
 )
+python3 "$ROOT/scripts/reproducible_tar.py" validate "$TAR" \
+  --root "$NAME" --target "$TARGET" --version "$VERSION"
 
 # Tarball integrity (BLAKE3 of the archive bytes).
 HASH="$("$BIN" hash-file "$TAR")"
 printf '%s\n' "$HASH" >"${TAR}.blake3"
 # Also a "hash  filename" form for convenience.
 printf '%s  %s\n' "$HASH" "$(basename "$TAR")" >"${TAR}.blake3sum"
+SHA256="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$TAR")"
+printf '%s\n' "$SHA256" >"${TAR}.sha256"
+printf '%s  %s\n' "$SHA256" "$(basename "$TAR")" >"${TAR}.sha256sum"
 
 echo "==> wrote $TAR"
 echo "    blake3 $HASH"

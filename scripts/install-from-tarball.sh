@@ -9,7 +9,7 @@
 #   <archive>.blake3        # single hex line, preferred
 #   <archive>.blake3sum     # "hex  filename" form
 #
-# If no sidecar is present, installs with a warning (dev only).
+# A sidecar is mandatory unless ARANDU_ALLOW_UNVERIFIED=1 is explicit.
 
 set -euo pipefail
 
@@ -62,13 +62,28 @@ if [[ -n "$EXPECTED" ]]; then
   fi
   echo "==> BLAKE3 ok ($ACTUAL)"
 else
-  echo "warning: no ${ARCHIVE}.blake3 sidecar — skipping integrity check" >&2
+  if [[ "${ARANDU_ALLOW_UNVERIFIED:-0}" != "1" ]]; then
+    echo "error: missing BLAKE3 sidecar (set ARANDU_ALLOW_UNVERIFIED=1 only for local development)" >&2
+    exit 1
+  fi
+  echo "warning: unverified development install explicitly enabled" >&2
+fi
+ARCHIVE_NAME="$(basename "$ARCHIVE")"
+if [[ "$ARCHIVE_NAME" =~ ^arandu-(.+)-(x86_64-unknown-linux-gnu|aarch64-apple-darwin)\.tar\.gz$ ]]; then
+  PACKAGE_VERSION="${BASH_REMATCH[1]}"
+  PACKAGE_TARGET="${BASH_REMATCH[2]}"
+  PACKAGE_ROOT="arandu-${PACKAGE_VERSION}"
+else
+  echo "error: unsupported Arandu archive name: $ARCHIVE_NAME" >&2
+  exit 1
 fi
 
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 
 echo "==> extracting (staging)"
+python3 "$ROOT/scripts/reproducible_tar.py" validate "$ARCHIVE" \
+  --root "$PACKAGE_ROOT" --target "$PACKAGE_TARGET" --version "$PACKAGE_VERSION"
 tar -xzf "$ARCHIVE" -C "$STAGE"
 
 # Expect single top-level arandu-VERSION/
@@ -93,6 +108,10 @@ if [[ ! -x "$TREE/bin/arandu_cli" && ! -x "$TREE/bin/arandu" ]]; then
 fi
 if [[ ! -d "$TREE/share/arandu/stdlib" ]]; then
   echo "error: archive missing share/arandu/stdlib" >&2
+  exit 1
+fi
+if [[ ! -x "$TREE/bin/arandu-lsp" ]]; then
+  echo "error: archive missing bin/arandu-lsp" >&2
   exit 1
 fi
 

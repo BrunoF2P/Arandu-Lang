@@ -297,6 +297,11 @@ fn main() {
     let tracing_cfg = arandu_base::build_tracing_config();
     arandu_base::tracing_bridge::init_tracing(tracing_cfg);
 
+    if args.len() == 2 && matches!(args[1].as_str(), "--version" | "-V") {
+        println!("arandu {}", env!("CARGO_PKG_VERSION"));
+        finish(Ok(CliSuccess::Done));
+    }
+
     if args.len() < 2 {
         usage_and_exit();
     }

@@ -56,19 +56,23 @@ esse contrato são entregas S3-B/S3-C, não evidência presumida desta etapa.
 
 ## S3-B — Pacote autocontido e instaladores portáveis
 
-- [ ] Incluir `arandu`, `arandu-lsp`, stdlib, licença, release manifest e hashes
+- [x] Incluir `arandu`, `arandu-lsp`, stdlib, licença, release manifest e hashes
       internos em todo archive; nenhum componente depende do checkout.
-- [ ] Validar archive contra traversal, links absolutos, entradas duplicadas,
+- [x] Validar archive contra traversal, links absolutos, entradas duplicadas,
       tipo inesperado e conteúdo extra antes da publicação/instalação.
-- [ ] Manter `.tar.gz` reproduzível em Unix e criar `.zip` determinístico no
+- [x] Manter `.tar.gz` reproduzível em Unix e criar `.zip` determinístico no
       Windows, sem fingir que Bash/symlink é instalação nativa.
-- [ ] Criar instalador PowerShell com publicação versionada/atômica e launcher
+- [x] Criar instalador PowerShell com publicação versionada/atômica e launcher
       adequado; Unix preserva prefixo versionado e links relativos.
-- [ ] Exigir checksum externo no modo release; ausência só é permitida em modo
+- [x] Exigir checksum externo no modo release; ausência só é permitida em modo
       de desenvolvimento explicitamente opt-in.
 
 **Saída:** o arquivo baixado contém tudo que o usuário executará e é validado
 antes de tocar o prefixo final.
+
+**Estado:** `gold` local em Windows; promoção depende dos packages e installers
+verdes nos três runners do workflow de release. A prova de uso fora do checkout
+continua pertencendo ao S3-C.
 
 ## S3-C — Matriz de instalação e RC no corpus
 
