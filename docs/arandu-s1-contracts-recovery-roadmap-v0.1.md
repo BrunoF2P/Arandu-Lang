@@ -157,13 +157,13 @@ esses lints localmente; produção não ganha `allow` amplo.
 
 ### S1-E — Determinismo e guardrails obrigatórios
 
-- [ ] Repetir diagnósticos com ordens de registro e paralelismo diferentes.
+- [x] Repetir diagnósticos com ordens de registro e paralelismo diferentes.
 - [x] Gerar C duas vezes e comparar bytes no mesmo ambiente/toolchain.
-- [ ] Empacotar duas vezes e comparar lista, permissões e conteúdo; timestamps
+- [x] Empacotar duas vezes e comparar lista, permissões e conteúdo; timestamps
       de arquivo ficam explicitamente fora ou são normalizados.
-- [ ] Manter obrigatórios: ciclos de imports, stale IDs/revisions, CFG/SSA e
+- [x] Manter obrigatórios: ciclos de imports, stale IDs/revisions, CFG/SSA e
       layouts host/i686/pointer-width.
-- [ ] Criar job `S1 / Recovery` dependente de `S0 / Gate`.
+- [x] Criar job `S1 / Recovery` dependente de `S0 / Gate`.
 
 **Saída:** falhas de recuperação ou ordem não podem regressar silenciosamente.
 

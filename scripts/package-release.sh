@@ -20,6 +20,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION="${VERSION:-}"
 TARGET="${TARGET:-$(rustc -vV | sed -n 's/^host: //p')}"
 OUT_DIR="${OUT_DIR:-$ROOT/dist}"
+SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$ROOT" log -1 --format=%ct)}"
 
 if [[ -z "$VERSION" ]]; then
   VERSION="$(
@@ -55,8 +56,8 @@ cp -a "$ROOT/stdlib" "$TREE/share/arandu/stdlib"
 mkdir -p "$OUT_DIR"
 TAR="$OUT_DIR/${ARCHIVE_BASE}.tar.gz"
 (
-  cd "$STAGE"
-  tar -czf "$TAR" "$NAME"
+  python3 "$ROOT/scripts/reproducible_tar.py" create \
+    "$TREE" "$TAR" --epoch "$SOURCE_DATE_EPOCH"
 )
 
 # Tarball integrity (BLAKE3 of the archive bytes).

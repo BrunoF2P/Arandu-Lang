@@ -114,6 +114,44 @@ jobs:
           diff -u <(norm "$TMP/a") <(norm "$TMP/b")
           echo "semantics type_checker: ok (threads 1 vs 8)"
 
+  s1-recovery:
+    name: S1 / Recovery (${{ matrix.os }})
+    if: github.event_name != 'schedule'
+    needs: s0-gate
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install repository toolchain
+        run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: s1-recovery-${{ matrix.os }}-rust-1.97.1
+      - name: Fetch locked dependency graph
+        run: cargo fetch --locked
+      - name: Import cycles and registration-order determinism
+        run: cargo test --locked -p arandu_query --test salsa_imports
+      - name: Query boundaries and incremental cutoffs
+        run: cargo test --locked -p arandu_query --test architecture_invariants --test item_body_cutoff --test ide_diag_delta --test block_delta
+      - name: Stale document IDs and analysis revisions
+        run: cargo test --locked -p arandu_lsp
+      - name: CFG, SSA and backend rejection parity
+        run: cargo test --locked -p arandu_backend_c --test parity_tests
+      - name: Host, i686 and pointer-width layouts
+        run: cargo test --locked -p arandu_middle layout
+      - name: Diagnostic parallelism (1 vs 8 threads)
+        shell: bash
+        run: bash scripts/check-diag-determinism.sh arandu_typeck 8
+      - name: Reproducible release archive
+        if: runner.os == 'Linux'
+        shell: bash
+        run: bash scripts/check-package-reproducibility.sh
+
   install-smoke:
     name: Install smoke (${{ matrix.os }})
     if: github.event_name != 'schedule'
