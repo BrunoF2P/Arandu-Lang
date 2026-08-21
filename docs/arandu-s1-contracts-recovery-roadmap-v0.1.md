@@ -1,7 +1,9 @@
 # Arandu S1 — Contratos e recuperação
 
-**Status:** em implementação; S1-A/S1-B/S1-C concluídos.
-**Data da auditoria:** 2026-08-20.  
+**Status:** `gold` — S1-A a S1-E concluídos e protegidos em CI.
+**Data da auditoria:** 2026-08-20.
+**Promoção Gold:** 2026-08-21, PR [#8](https://github.com/BrunoF2P/Arandu-Lang/pull/8),
+commit `28fe6e8`; `S0 / Gate` e `S1 / Recovery` aprovados na `main` protegida.
 **Objetivo:** código Arandu inválido nunca encerra o compilador por `panic`; falhas
 internas são ICEs identificáveis, e falhas operacionais pertencem à CLI/LSP.
 
@@ -189,3 +191,7 @@ S1 será `gold` quando:
 - diagnósticos e artefatos forem determinísticos no escopo declarado;
 - ciclos, IDs stale, CFG e layout continuarem verdes no gate obrigatório;
 - `S1 / Recovery` passar em Linux e Windows, com smoke de instalação no macOS.
+
+**Resultado:** critérios satisfeitos no PR #8. O Gold cobre contratos de falha,
+recuperação, determinismo e limites publicados no escopo S1; não promove LLVM,
+ABI 1.0, backends experimentais ou estabilidade da superfície v0.x.
