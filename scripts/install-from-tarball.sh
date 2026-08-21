@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Install from a package-release tarball with BLAKE3 verify + atomic publish.
+# Install from a package-release tarball with bootstrap SHA-256, staged BLAKE3
+# verification and atomic publish.
 #
 # Usage:
 #   ./scripts/install-from-tarball.sh dist/arandu-0.0.1-x86_64-unknown-linux-gnu.tar.gz
 #   PREFIX=/opt/arandu ./scripts/install-from-tarball.sh ./arandu-….tar.gz
 #
-# Expects optional sidecar:
-#   <archive>.blake3        # single hex line, preferred
-#   <archive>.blake3sum     # "hex  filename" form
+# Expects a SHA-256 sidecar for bootstrap without an existing Arandu install:
+#   <archive>.sha256        # single hex line, preferred
+#   <archive>.sha256sum     # "hex  filename" form
 #
 # A sidecar is mandatory unless ARANDU_ALLOW_UNVERIFIED=1 is explicit.
 
@@ -27,10 +28,13 @@ if [[ ! -f "$ARCHIVE" ]]; then
   exit 1
 fi
 
-# Prefer monorepo release binary (known to support hash-file); then PATH.
+# The extracted binary is preferred once staging exists. Monorepo/PATH fallbacks
+# keep local developer packages compatible with the same verifier.
 hash_file() {
   local f="$1"
-  if [[ -x "$ROOT/target/release/arandu_cli" ]]; then
+  if [[ -n "${ARANDU_HASH_TOOL:-}" && -x "$ARANDU_HASH_TOOL" ]]; then
+    "$ARANDU_HASH_TOOL" hash-file "$f"
+  elif [[ -x "$ROOT/target/release/arandu_cli" ]]; then
     "$ROOT/target/release/arandu_cli" hash-file "$f"
   elif [[ -x "$ROOT/target/debug/arandu_cli" ]]; then
     "$ROOT/target/debug/arandu_cli" hash-file "$f"
@@ -44,26 +48,30 @@ hash_file() {
   fi
 }
 
-EXPECTED=""
-if [[ -f "${ARCHIVE}.blake3" ]]; then
-  EXPECTED="$(tr -d '[:space:]' <"${ARCHIVE}.blake3")"
-elif [[ -f "${ARCHIVE}.blake3sum" ]]; then
-  EXPECTED="$(awk '{print $1; exit}' "${ARCHIVE}.blake3sum")"
+sha256_file() {
+  python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$1"
+}
+
+EXPECTED_SHA256=""
+if [[ -f "${ARCHIVE}.sha256" ]]; then
+  EXPECTED_SHA256="$(tr -d '[:space:]' <"${ARCHIVE}.sha256")"
+elif [[ -f "${ARCHIVE}.sha256sum" ]]; then
+  EXPECTED_SHA256="$(awk '{print $1; exit}' "${ARCHIVE}.sha256sum")"
 fi
 
-if [[ -n "$EXPECTED" ]]; then
-  ACTUAL="$(hash_file "$ARCHIVE")"
-  if [[ "$EXPECTED" != "$ACTUAL" ]]; then
-    echo "error: BLAKE3 mismatch for $(basename "$ARCHIVE")" >&2
-    echo "  expected: $EXPECTED" >&2
-    echo "  actual:   $ACTUAL" >&2
+if [[ -n "$EXPECTED_SHA256" ]]; then
+  ACTUAL_SHA256="$(sha256_file "$ARCHIVE")"
+  if [[ "$EXPECTED_SHA256" != "$ACTUAL_SHA256" ]]; then
+    echo "error: SHA-256 mismatch for $(basename "$ARCHIVE")" >&2
+    echo "  expected: $EXPECTED_SHA256" >&2
+    echo "  actual:   $ACTUAL_SHA256" >&2
     echo "  archive corrupt or tampered — aborting" >&2
     exit 1
   fi
-  echo "==> BLAKE3 ok ($ACTUAL)"
+  echo "==> bootstrap SHA-256 ok ($ACTUAL_SHA256)"
 else
   if [[ "${ARANDU_ALLOW_UNVERIFIED:-0}" != "1" ]]; then
-    echo "error: missing BLAKE3 sidecar (set ARANDU_ALLOW_UNVERIFIED=1 only for local development)" >&2
+    echo "error: missing SHA-256 sidecar (set ARANDU_ALLOW_UNVERIFIED=1 only for local development)" >&2
     exit 1
   fi
   echo "warning: unverified development install explicitly enabled" >&2
@@ -114,6 +122,9 @@ if [[ ! -x "$TREE/bin/arandu-lsp" ]]; then
   echo "error: archive missing bin/arandu-lsp" >&2
   exit 1
 fi
+# The archive is already authenticated. Use its staged CLI to verify BLAKE3SUMS
+# before anything is moved into the installation prefix.
+ARANDU_HASH_TOOL="$TREE/bin/arandu"
 REPORTED_VERSION="$("$TREE/bin/arandu" --version)"
 if [[ "$REPORTED_VERSION" != "arandu $PACKAGE_VERSION" ]]; then
   echo "error: binary version '$REPORTED_VERSION' does not match package version $PACKAGE_VERSION" >&2

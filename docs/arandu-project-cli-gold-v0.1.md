@@ -59,7 +59,8 @@ $PREFIX/
 
 1. `current_exe()` is always **canonicalized** before `../share/arandu/stdlib` (PATH symlinks safe).  
 2. Install stages under `$PREFIX/.staging/…`, then `mv` + `ln -sfn` (no half-written final tree).  
-3. Tarball ships with `.blake3` sidecar; `install-from-tarball.sh` refuses on mismatch.  
+3. Tarball bootstrap uses a `.sha256` sidecar; after extraction, the staged
+   Arandu verifies the internal `BLAKE3SUMS` before atomic publication.
 4. Smoke: `./scripts/smoke-install.sh` — clean tmp prefix, `ARANDU_STDLIB` unset, PATH symlink, cwd outside monorepo.
 
 Scripts: `install-local.sh`, `package-release.sh`, `install-from-tarball.sh`, `smoke-install.sh`.  
