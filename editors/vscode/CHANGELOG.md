@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.0-rc.3
+
+- Release candidate promotion preparation.
+
 ## 0.1.0-rc.1
 
 - Align the language client with the first installable Arandu SDK release candidate.

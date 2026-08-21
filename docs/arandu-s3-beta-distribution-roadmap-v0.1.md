@@ -129,7 +129,14 @@ encontrou e corrigiu uma leitura não determinística de payload `int` no backen
 Cranelift; a regressão usa um valor acima de 32 bits e o corpus passou em 200
 execuções consecutivas antes da promoção.
 
-- [ ] Publicar `0.1.0-rc.1`, instalar os três hosts e registrar relatório da RC.
+**Preparação atual:** `0.1.0-rc.3`. As promoções `rc.1` e `rc.2` foram
+interrompidas pelos próprios guardrails antes de completar a cadeia pública.
+O comando `xtask prepare-release` agora atualiza todos os componentes e cria o
+relatório da candidata. O S0 completo roda uma vez no PR; a tag comprova pela
+API do GitHub que esse PR foi mergeado com `S0 / Gate` verde e executa apenas a
+campanha exclusiva de distribuição.
+
+- [ ] Publicar `0.1.0-rc.3`, instalar os três hosts e registrar relatório da RC.
 - [ ] Triar bloqueadores; toda correção repete a RC com número novo, sem mover tag.
 - [ ] Revisar documentação pública, comandos, matriz e limitações a partir dos
       artifacts reais, não do estado da `main`.

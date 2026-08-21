@@ -41,8 +41,12 @@ permissions:
 
 jobs:
   validate:
-    name: S0 / Release gate
+    name: S3 / Release identity
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -50,28 +54,8 @@ jobs:
           persist-credentials: false
       - name: Install repository toolchain
         run: rustup show active-toolchain
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          key: release-gate-rust-1.97.1
-      - run: cargo fetch --locked
-      - run: cargo fmt --all -- --check
-      - run: cargo check --workspace --locked
-      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-      - run: cargo test --workspace --locked
-      - run: cargo run --locked -p xtask -- check-diag-docs
       - name: Component and tag version contract
         run: cargo run --locked -p xtask -- check-release-contract
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: editors/vscode/package-lock.json
-      - name: VS Code client compile and vulnerability gate
-        working-directory: editors/vscode
-        run: |
-          npm ci --ignore-scripts
-          npm run compile
-          npm audit --audit-level=high
       - name: Require release tag to come from main
         if: github.ref_type == 'tag'
         shell: bash
@@ -82,11 +66,48 @@ jobs:
             echo "error: release tag must point to a commit reachable from main" >&2
             exit 1
           fi
+      - name: Require the merged PR to have passed S0
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          pr="$({
+            gh api --paginate \
+              -H 'Accept: application/vnd.github+json' \
+              "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls"
+          } | jq -s '
+            map(.[]) |
+            map(select(.merged_at != null and .base.ref == "main")) |
+            sort_by(.merged_at) |
+            last // empty
+          ')"
+          if [[ -z "$pr" ]]; then
+            echo "error: tagged commit is not associated with a PR merged into main" >&2
+            exit 1
+          fi
+          pr_number="$(jq -r .number <<<"$pr")"
+          head_sha="$(jq -r .head.sha <<<"$pr")"
+          conclusion="$({
+            gh api --paginate \
+              -H 'Accept: application/vnd.github+json' \
+              "repos/$GITHUB_REPOSITORY/commits/$head_sha/check-runs?per_page=100"
+          } | jq -r -s '
+            map(.check_runs[]) |
+            map(select(.name == "S0 / Gate")) |
+            sort_by(.completed_at) |
+            last.conclusion // empty
+          ')"
+          if [[ "$conclusion" != "success" ]]; then
+            echo "error: PR #$pr_number head $head_sha has no successful S0 / Gate" >&2
+            exit 1
+          fi
+          echo "PR #$pr_number passed S0 / Gate at $head_sha"
       - name: Release archive security regressions
         run: python scripts/test_release_archives.py
       - name: Release set determinism regressions
         run: python scripts/test_prepare_release_assets.py
-      - run: git diff --exit-code
 
   package:
     name: S3 / Distribution (${{ matrix.target }})

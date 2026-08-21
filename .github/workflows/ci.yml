@@ -1,8 +1,6 @@
 name: CI
 
 on:
-  push:
-    branches: [main, master]
   pull_request:
   schedule:
     - cron: "17 5 * * 1"
@@ -19,7 +17,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # Required branch-protection check. Keep this order aligned with AGENTS.md.
+  # Required PR check. A release tag verifies this result through GitHub's API;
+  # the same commit is not rebuilt merely because the PR was merged.
   s0-gate:
     name: S0 / Gate
     if: github.event_name != 'schedule'
