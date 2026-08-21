@@ -4,11 +4,13 @@
 //! cargo run -p xtask -- check-diag-docs
 //! cargo run -p xtask -- check-project-corpus
 //! cargo run -p xtask -- check-project-churn
+//! cargo run -p xtask -- check-project-performance
 //! cargo run -p xtask -- help
 //! ```
 
 mod churn;
 mod corpus;
+mod performance;
 
 use std::env;
 use std::path::PathBuf;
@@ -21,6 +23,9 @@ fn main() {
         "check-diag-docs" => cmd_check_diag_docs(),
         "check-project-corpus" => corpus::cmd_check_project_corpus(&workspace_root()),
         "check-project-churn" => churn::cmd_check_project_churn(&workspace_root()),
+        "check-project-performance" => {
+            performance::cmd_check_project_performance(&workspace_root())
+        }
         "help" | "-h" | "--help" => {
             print_help();
             0
@@ -43,12 +48,14 @@ Commands:
   check-diag-docs   Bijection: DiagCode (user-facing) ↔ docs/errors/*.md
   check-project-corpus  Validate S2 projects and incremental ↔ clean equivalence
   check-project-churn   Run deterministic S2 module and identity churn
+  check-project-performance  Measure S2 cold/noop/edit and retention budgets
   help              This message
 
 Examples:
   cargo run -p xtask -- check-diag-docs
   cargo run -p xtask -- check-project-corpus
   cargo run -p xtask -- check-project-churn
+  cargo run -p xtask -- check-project-performance
   ./scripts/check-diag-docs.sh
 "
     );

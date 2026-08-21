@@ -75,17 +75,22 @@ cargas versionadas, budgets mensuráveis e regressões de sessão longa. LLVM, A
 
 ## S2-C — Memória e budgets incrementais
 
-- [ ] Instrumentar métricas estáveis de revisões, arquivos registrados, memos
+- [x] Instrumentar métricas estáveis de revisões, arquivos registrados, memos
       relevantes, RSS/heap quando disponível e contadores de execução de query.
-- [ ] Medir cold build, noop rebuild e edição isolada por item/bloco no corpus.
-- [ ] Definir warm-up, número de amostras, mediana e p95; guardar baseline com
+- [x] Medir cold build, noop rebuild e edição isolada por item/bloco no corpus.
+- [x] Definir warm-up, número de amostras, mediana e p95; guardar baseline com
       toolchain, SO, CPU e commit.
-- [ ] Detectar crescimento não limitado após janelas de churn; distinguir o
+- [x] Detectar crescimento não limitado após janelas de churn; distinguir o
       alocador monotônico de `FileId` de retenção indevida de conteúdo/IR.
-- [ ] Só introduzir LRU, compactação ou reciclagem de DB depois da medição e com
+- [x] Só introduzir LRU, compactação ou reciclagem de DB depois da medição e com
       regressões de early-cutoff; nunca reutilizar `FileId`.
 
 **Saída:** performance e memória têm orçamento explícito sem sacrificar correção.
+
+O protocolo e a calibração inicial estão em
+[`arandu-s2-performance-baseline-v0.1.md`](./arandu-s2-performance-baseline-v0.1.md).
+S2-C encerra sem LRU: a medição atual não justifica a complexidade e a Salsa
+mantém chaves/metadados mesmo quando um valor memoizado é despejado.
 
 ## S2-D — Robustez adversarial e fuzz regressivo
 

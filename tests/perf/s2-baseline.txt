@@ -1,0 +1,9 @@
+# S2-C functional performance contract. Absolute timings are reported, not gated,
+# because shared CI runners are not controlled benchmark hosts.
+protocol=1
+samples=9
+warmup=3
+endurance_revisions=2000
+max_noop_executes=0
+max_edit_p95_executes=64
+max_rss_growth_bytes=268435456

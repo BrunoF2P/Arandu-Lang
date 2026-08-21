@@ -214,6 +214,8 @@ jobs:
         run: cargo run --locked -p xtask -- check-project-corpus
       - name: Stress module churn, identities and stale workers
         run: cargo run --locked -p xtask -- check-project-churn
+      - name: Measure incremental performance and retention budgets
+        run: cargo run --locked -p xtask -- check-project-performance
 
   # Early warning only. Adoption happens through a reviewed rust-toolchain.toml PR.
   future-stable:

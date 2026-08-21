@@ -9,6 +9,13 @@ use salsa::Storage;
 
 pub type FileId = u32;
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct RegistryMetrics {
+    pub registered_paths: usize,
+    pub live_file_ids: usize,
+    pub allocated_file_ids: FileId,
+}
+
 /// Per-file CST cache for incremental [`crate::passes::syntax_tree`] rebuilds.
 #[derive(Default)]
 struct CstCache {
@@ -207,6 +214,18 @@ impl DatabaseImpl {
     #[must_use]
     pub fn rebuild_log(&self) -> Option<&Arc<RebuildLog>> {
         self.rebuild_log.as_ref()
+    }
+
+    /// Stable registry metrics. Allocated identities include unregistered files;
+    /// they are intentionally monotonic for the lifetime of this database.
+    #[must_use]
+    pub fn registry_metrics(&self) -> RegistryMetrics {
+        let registry = self.files.read().unwrap_or_else(|e| e.into_inner());
+        RegistryMetrics {
+            registered_paths: registry.by_path.len(),
+            live_file_ids: registry.by_id.len(),
+            allocated_file_ids: registry.next_id.saturating_sub(100),
+        }
     }
 
     /// Pin the stdlib root used by [`arandu_middle::db::SourceDatabase::resolve_module_path`].
