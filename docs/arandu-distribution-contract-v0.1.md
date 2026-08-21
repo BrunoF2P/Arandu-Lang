@@ -35,9 +35,9 @@ sua versão de compatibilidade é validada antes de uma release do SDK.
 
 | Host | Target Rust | Formato obrigatório | Estado no S3-A |
 | --- | --- | --- | --- |
-| Linux x86-64 glibc | `x86_64-unknown-linux-gnu` | `.tar.gz` | contrato aprovado; prova pendente em S3-C |
-| macOS Apple Silicon | `aarch64-apple-darwin` | `.tar.gz` | contrato aprovado; prova pendente em S3-C |
-| Windows x86-64 | `x86_64-pc-windows-msvc` | `.zip` | contrato aprovado; implementação pendente em S3-B |
+| Linux x86-64 glibc | `x86_64-unknown-linux-gnu` | `.tar.gz` | S3-C gold |
+| macOS Apple Silicon | `aarch64-apple-darwin` | `.tar.gz` | S3-C gold |
+| Windows x86-64 | `x86_64-pc-windows-msvc` | `.zip` | S3-C gold |
 
 `.pkg`, `.msi`, Homebrew, Winget/Scoop e repositórios Linux são conveniências
 posteriores. Eles não substituem os archives portáveis nem podem ampliar a

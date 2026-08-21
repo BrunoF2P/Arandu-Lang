@@ -1,19 +1,26 @@
 # Publish installable tarballs to a GitHub Release when a version tag is pushed.
 #
 # Tag convention: vX.Y.Z must match crates/arandu_cli Cargo.toml version.
-# Example:
-#   git tag v0.0.1 && git push origin v0.0.1
+# Example (only after the version PR is merged and green):
+#   git tag -a v0.1.0-rc.1 -m "Arandu 0.1.0-rc.1"
+#   git push origin v0.1.0-rc.1
 #
 # Artifacts (per host target):
 #   arandu-$VERSION-$TARGET.(tar.gz|zip) plus .blake3 and .blake3sum
 #
 # Install (example, Linux x86_64):
-#   gh release download v0.0.1 -p 'arandu-*-x86_64-unknown-linux-gnu.tar.gz*'
-#   bash scripts/install-from-tarball.sh ./arandu-0.0.1-x86_64-unknown-linux-gnu.tar.gz
+#   gh release download v0.1.0-rc.1 -p 'arandu-*-x86_64-unknown-linux-gnu.tar.gz*'
+#   bash scripts/install-from-tarball.sh ./arandu-0.1.0-rc.1-x86_64-unknown-linux-gnu.tar.gz
 #
-# Manual package-only dry run: Actions → Release → Run workflow (dry_run=true).
+# Manual dry run: Actions → Release → Run workflow. It never publishes.
 
 name: Release
+
+# Never cancel a release after immutable publication has started, and never run
+# two promotions concurrently even when distinct tags are pushed close together.
+concurrency:
+  group: arandu-release-promotion
+  cancel-in-progress: false
 
 on:
   push:
@@ -39,6 +46,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - name: Install repository toolchain
         run: rustup show active-toolchain
@@ -53,6 +61,27 @@ jobs:
       - run: cargo run --locked -p xtask -- check-diag-docs
       - name: Component and tag version contract
         run: cargo run --locked -p xtask -- check-release-contract
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - name: VS Code client compile and vulnerability gate
+        working-directory: editors/vscode
+        run: |
+          npm ci --ignore-scripts
+          npm run compile
+          npm audit --audit-level=high
+      - name: Require release tag to come from main
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA^{commit}" origin/main; then
+            echo "error: release tag must point to a commit reachable from main" >&2
+            exit 1
+          fi
       - name: Release archive security regressions
         run: python scripts/test_release_archives.py
       - name: Release set determinism regressions
@@ -173,7 +202,7 @@ jobs:
           python3 scripts/smoke_distribution.py \
             --arandu "$RUNNER_TEMP/arandu-sdk/bin/arandu" \
             --lsp "$RUNNER_TEMP/arandu-sdk/current/bin/arandu-lsp" \
-            --corpus tests/projects
+            --corpus tests/projects --expected-version "$VERSION"
 
       - name: S3 / installed SDK smoke (Windows)
         if: runner.os == 'Windows'
@@ -182,7 +211,7 @@ jobs:
           python scripts/smoke_distribution.py `
             --arandu "$env:RUNNER_TEMP/arandu-sdk/arandu-$env:VERSION/bin/arandu.exe" `
             --lsp "$env:RUNNER_TEMP/arandu-sdk/arandu-$env:VERSION/bin/arandu-lsp.exe" `
-            --corpus tests/projects
+            --corpus tests/projects --expected-version "$env:VERSION"
 
       - name: S3 / reinstall and reject bad packages (Unix)
         if: runner.os != 'Windows'
@@ -314,6 +343,19 @@ jobs:
           name: verified-release-set
           path: release-assets
 
+      - name: Refuse to modify an already published release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if state="$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft 2>/dev/null)"; then
+            if [[ "$state" != "true" ]]; then
+              echo "error: $GITHUB_REF_NAME is already published and must never be replaced" >&2
+              exit 1
+            fi
+          fi
+
       - name: Create draft and attach the complete set
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
@@ -336,3 +378,105 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release edit "$GITHUB_REF_NAME" --draft=false
+
+  verify-public-release:
+    name: S3 / Public RC (${{ matrix.target }})
+    needs: publish
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+            checksum: blake3
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tar.gz
+            checksum: blake3
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+            checksum: sha256
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      attestations: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download archive from the public release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET: ${{ matrix.target }}
+          ARCHIVE: ${{ matrix.archive }}
+          CHECKSUM: ${{ matrix.checksum }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          name="arandu-${version}-${TARGET}.${ARCHIVE}"
+          mkdir public-release
+          gh release download "$GITHUB_REF_NAME" --dir public-release \
+            --pattern "$name" --pattern "${name}.${CHECKSUM}"
+          gh attestation verify "public-release/$name" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+            --source-ref "$GITHUB_REF"
+
+      - name: Install and smoke public archive (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          archive="public-release/arandu-${version}-${{ matrix.target }}.tar.gz"
+          ARANDU_NO_MODIFY_PATH=1 PREFIX="$RUNNER_TEMP/arandu-public-sdk" \
+            bash scripts/install-from-tarball.sh "$archive"
+          python3 scripts/smoke_distribution.py \
+            --arandu "$RUNNER_TEMP/arandu-public-sdk/bin/arandu" \
+            --lsp "$RUNNER_TEMP/arandu-public-sdk/current/bin/arandu-lsp" \
+            --corpus tests/projects --expected-version "$version"
+
+      - name: Install and smoke public archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          $archive = "public-release/arandu-$version-${{ matrix.target }}.zip"
+          $prefix = "$env:RUNNER_TEMP/arandu-public-sdk"
+          ./scripts/install-from-zip.ps1 $archive -Prefix $prefix -NoModifyPath
+          python scripts/smoke_distribution.py `
+            --arandu "$prefix/arandu-$version/bin/arandu.exe" `
+            --lsp "$prefix/arandu-$version/bin/arandu-lsp.exe" `
+            --corpus tests/projects --expected-version $version
+
+  rc-report:
+    name: S3 / RC evidence
+    needs: verify-public-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Record promotion evidence
+        shell: bash
+        run: |
+          {
+            echo "# Arandu ${GITHUB_REF_NAME} promotion evidence"
+            echo
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "- Linux x86-64: public download, provenance, install and corpus smoke passed"
+            echo "- macOS ARM64: public download, provenance, install and corpus smoke passed"
+            echo "- Windows x86-64: public download, provenance, install and corpus smoke passed"
+            echo "- Immutable release: corrections require a new version and tag"
+          } | tee rc-evidence.md >>"$GITHUB_STEP_SUMMARY"
+      - name: Preserve RC evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rc-evidence-${{ github.ref_name }}
+          path: rc-evidence.md
+          if-no-files-found: error
+          retention-days: 90

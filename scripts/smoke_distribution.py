@@ -81,6 +81,7 @@ def main() -> None:
     parser.add_argument("--arandu", required=True, type=Path)
     parser.add_argument("--lsp", required=True, type=Path)
     parser.add_argument("--corpus", required=True, type=Path)
+    parser.add_argument("--expected-version", required=True)
     args = parser.parse_args()
     arandu = args.arandu.resolve()
     lsp = args.lsp.resolve()
@@ -89,7 +90,12 @@ def main() -> None:
 
     with tempfile.TemporaryDirectory(prefix="arandu-s3c-") as directory:
         work = Path(directory)
-        run([str(arandu), "--version"], work)
+        version = run([str(arandu), "--version"], work)
+        if version.stdout.strip() != f"arandu {args.expected_version}":
+            raise SystemExit(
+                f"installed CLI version mismatch: expected arandu {args.expected_version!s}, "
+                f"found {version.stdout.strip()!r}"
+            )
         run([str(arandu), "doctor"], work)
         created = run([str(arandu), "new", "installed_app"], work)
         if "arandu check" not in created.stdout or "arandu_cli" in created.stdout:

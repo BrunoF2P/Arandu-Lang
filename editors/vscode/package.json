@@ -2,10 +2,10 @@
     "name": "arandu-lang",
     "displayName": "Arandu Language Support",
     "description": "VS Code support for the Arandu Programming Language",
-    "version": "0.0.1",
+    "version": "0.1.0-rc.1",
     "publisher": "arandu",
     "engines": {
-        "vscode": "^1.85.0"
+        "vscode": "^1.92.0"
     },
     "categories": [
         "Programming Languages",

@@ -51,6 +51,17 @@ jobs:
         run: cargo test --workspace --locked
       - name: 5. Diagnostic docs
         run: cargo run --locked -p xtask -- check-diag-docs
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - name: VS Code client compile and vulnerability gate
+        working-directory: editors/vscode
+        run: |
+          npm ci --ignore-scripts
+          npm run compile
+          npm audit --audit-level=high
       - name: Generated files and snapshots leave the tree clean
         run: git diff --exit-code
 

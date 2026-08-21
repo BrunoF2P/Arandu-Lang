@@ -104,7 +104,7 @@ duas versões reais será comprovada durante a promoção S3-E.
       e manifest; documentar `gh attestation verify`.
 - [x] Fixar actions por SHA, permissões mínimas (`contents`, `id-token`,
       `attestations`) e nenhuma credencial persistida nos builders.
-- [ ] Habilitar immutable releases no GitHub. O procedimento já está documentado;
+- [x] Habilitar immutable releases no GitHub. O procedimento já está documentado;
       confirmar a configuração antes da primeira RC, pois ela não é retroativa.
 - [x] Documentar que tags/assets publicados não
       são substituídos; correção exige nova versão.
@@ -115,7 +115,19 @@ duas versões reais será comprovada durante a promoção S3-E.
 
 Procedimento: [`release-verification.md`](release-verification.md).
 
+**Estado:** `gold`; workflow validado na `main` e release immutability habilitada
+no repositório. A prova com uma tag e artifacts públicos reais pertence a S3-E.
+
 ## S3-E — Promoção beta gold
+
+**Preparação RC.1:** versão alinhada em todos os componentes, origem da tag
+restrita à `main`, publicação serializada, rerun de release publicada recusado
+e smoke pós-publicação dos três hosts registrado em
+[`releases/0.1.0-rc.1.md`](releases/0.1.0-rc.1.md).
+O gate também compila e audita o cliente VS Code em Node 20. A campanha local
+encontrou e corrigiu uma leitura não determinística de payload `int` no backend
+Cranelift; a regressão usa um valor acima de 32 bits e o corpus passou em 200
+execuções consecutivas antes da promoção.
 
 - [ ] Publicar `0.1.0-rc.1`, instalar os três hosts e registrar relatório da RC.
 - [ ] Triar bloqueadores; toda correção repete a RC com número novo, sem mover tag.
