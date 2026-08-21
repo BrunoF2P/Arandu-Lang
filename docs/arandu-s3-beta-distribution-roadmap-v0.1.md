@@ -104,7 +104,7 @@ duas versões reais será comprovada durante a promoção S3-E.
       e manifest; documentar `gh attestation verify`.
 - [x] Fixar actions por SHA, permissões mínimas (`contents`, `id-token`,
       `attestations`) e nenhuma credencial persistida nos builders.
-- [ ] Habilitar immutable releases no GitHub. O procedimento já está documentado;
+- [x] Habilitar immutable releases no GitHub. O procedimento já está documentado;
       confirmar a configuração antes da primeira RC, pois ela não é retroativa.
 - [x] Documentar que tags/assets publicados não
       são substituídos; correção exige nova versão.
@@ -114,6 +114,9 @@ duas versões reais será comprovada durante a promoção S3-E.
 **Saída:** consumidores verificam bytes, origem, workflow, commit e tag.
 
 Procedimento: [`release-verification.md`](release-verification.md).
+
+**Estado:** `gold`; workflow validado na `main` e release immutability habilitada
+no repositório. A prova com uma tag e artifacts públicos reais pertence a S3-E.
 
 ## S3-E — Promoção beta gold
 
