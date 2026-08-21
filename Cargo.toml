@@ -53,3 +53,4 @@ bumpalo = "3.20.3"
 # crates that finished U1 set deny locally (backend_c, cli, …).
 unwrap_used = "warn"
 expect_used = "warn"
+panic = "warn"

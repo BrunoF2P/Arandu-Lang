@@ -1,9 +1,10 @@
 #![cfg(target_pointer_width = "64")]
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use arandu_backend_cranelift::CraneliftBackend;
-use arandu_middle::amir::AmirProgram;
+use arandu_middle::amir::{AmirConstant, AmirOperand, AmirProgram, AmirRvalue, AmirStmt};
 use arandu_middle::layout::DataLayout;
+use arandu_middle::ops::BinaryOp;
 use arandu_semantics::{
     CodegenBackend, TypeCheckResult, lower_to_amir, lower_to_hir, resolve_for_test, type_check,
 };
@@ -49,6 +50,32 @@ fn emit_c(amir: &AmirProgram, tc: &TypeCheckResult) -> String {
         &tc.type_info.type_interner,
         arandu_middle::layout::DataLayout::host(),
     )
+    .unwrap()
+}
+
+fn assert_backend_rejection_parity(
+    amir: &AmirProgram,
+    tc: &TypeCheckResult,
+    expected_marker: &str,
+) {
+    let c_error = arandu_backend_c::emit_c(
+        amir,
+        tc.symbols.as_ref(),
+        tc.type_info.as_ref(),
+        &tc.type_info.type_interner,
+        DataLayout::host(),
+    )
+    .unwrap_err();
+    let jit_error = CraneliftBackend::try_new()
+        .unwrap()
+        .compile(amir, tc.symbols.as_ref(), tc.type_info.as_ref())
+        .err()
+        .expect("Cranelift must reject malformed AMIR before producing a module");
+
+    assert_eq!(c_error.code, arandu_middle::DiagCode::ICEGEN002);
+    assert_eq!(jit_error.code, c_error.code);
+    assert_eq!(jit_error.message, c_error.message);
+    assert!(c_error.message.contains(expected_marker));
 }
 
 fn test_execution_parity(name: &str, src: &str) {
@@ -128,6 +155,125 @@ int main() {
         expected, actual_result,
         "Execution mismatch for {}! Cranelift={}, C={}",
         name, expected, actual_result
+    );
+}
+
+#[test]
+fn c_emission_is_byte_deterministic() {
+    let src = r#"
+        struct Pair { left: int; right: int }
+        func main(): int {
+            let pair = Pair { left: 20, right: 22 }
+            return pair.left + pair.right
+        }
+    "#;
+    let (amir, tc) = compile_src(src);
+
+    let first = emit_c(&amir, &tc);
+    let second = emit_c(&amir, &tc);
+    let (fresh_amir, fresh_tc) = compile_src(src);
+    let fresh = emit_c(&fresh_amir, &fresh_tc);
+
+    assert_eq!(first.as_bytes(), second.as_bytes());
+    assert_eq!(first.as_bytes(), fresh.as_bytes());
+}
+
+#[test]
+fn c_backend_rejects_residual_null_coalesce_without_partial_success() {
+    let (mut amir, tc) = compile_src("func main(): int { let x = 1; return x }");
+    let assign = amir
+        .funcs
+        .iter_mut()
+        .flat_map(|func| func.stmts.payloads.raw.iter_mut())
+        .find_map(|stmt| match stmt {
+            AmirStmt::Assign { rhs, .. } => Some(rhs),
+            _ => None,
+        })
+        .expect("fixture must lower at least one assignment");
+    *assign = AmirRvalue::Binary {
+        op: BinaryOp::NullCoalesce,
+        left: AmirOperand::Constant(AmirConstant::Bool(true)),
+        right: AmirOperand::Constant(AmirConstant::Bool(false)),
+    };
+
+    let error = arandu_backend_c::emit_c(
+        &amir,
+        tc.symbols.as_ref(),
+        tc.type_info.as_ref(),
+        &tc.type_info.type_interner,
+        DataLayout::host(),
+    )
+    .unwrap_err();
+    assert_eq!(error.code, arandu_middle::DiagCode::ICEGEN001);
+}
+
+#[test]
+fn c_backend_rejects_unsupported_len_without_partial_success() {
+    let (mut amir, tc) = compile_src("func main(): int { let x = 1; return x }");
+    let assign = amir
+        .funcs
+        .iter_mut()
+        .flat_map(|func| func.stmts.payloads.raw.iter_mut())
+        .find_map(|stmt| match stmt {
+            AmirStmt::Assign { rhs, .. } => Some(rhs),
+            _ => None,
+        })
+        .expect("fixture must lower at least one assignment");
+    *assign = AmirRvalue::Len(AmirOperand::Constant(AmirConstant::Bool(true)));
+
+    let error = arandu_backend_c::emit_c(
+        &amir,
+        tc.symbols.as_ref(),
+        tc.type_info.as_ref(),
+        &tc.type_info.type_interner,
+        DataLayout::host(),
+    )
+    .unwrap_err();
+    assert_eq!(error.code, arandu_middle::DiagCode::ICEGEN001);
+    assert!(error.message.contains("Len"));
+}
+
+#[test]
+fn both_backends_reject_the_same_invalid_ssa_edge() {
+    let (mut amir, tc) = compile_src("func main(): int { let x = 1; return x }");
+    amir.funcs[0].blocks[0].terminator = arandu_middle::amir::AmirTerminator::Goto {
+        target: arandu_middle::amir::BlockId::from_usize(0),
+        args: vec![AmirOperand::Copy(arandu_middle::amir::TempId::from_usize(
+            0,
+        ))],
+    };
+
+    assert_backend_rejection_parity(&amir, &tc, "SSA-EDGE");
+}
+
+#[test]
+fn both_backends_reject_the_same_poison_type() {
+    let (mut amir, tc) = compile_src("func main(): int { let x = 1; return x }");
+    amir.funcs[0].temps[0].ty = tc.type_info.type_interner.error_type_id();
+
+    assert_backend_rejection_parity(&amir, &tc, "TYP-1");
+}
+
+#[test]
+fn both_backends_reject_the_same_out_of_bounds_statement_range() {
+    let (mut amir, tc) = compile_src("func main(): int { let x = 1; return x }");
+    let invalid_len = amir.funcs[0].stmts.len() + 1;
+    amir.funcs[0].blocks[0].statements = arandu_middle::layout::DenseRange::new(0, invalid_len);
+
+    assert_backend_rejection_parity(&amir, &tc, "IR-RANGE");
+}
+
+#[test]
+fn parity_index_addressing_combined_with_shift() {
+    test_execution_parity(
+        "index_shift_addressing",
+        r#"
+        func main(): int {
+            let values: [4]int = [3, 5, 7, 11]
+            let index: int = 1 << 1
+            return values[index] + (1024 >> 5)
+        }
+        "#,
     );
 }
 
@@ -426,7 +572,8 @@ fn c_emit_arstr_layout_32bit() {
         tc.type_info.as_ref(),
         &tc.type_info.type_interner,
         DataLayout::ptr_width(4),
-    );
+    )
+    .unwrap();
     assert!(
         c.contains("typedef struct { const uint8_t *ptr; int32_t len; } ArStr;"),
         "expected 32-bit ArStr, headers:\n{}",
@@ -450,7 +597,8 @@ fn c_emit_arstr_i686_sysv() {
         tc.type_info.as_ref(),
         &tc.type_info.type_interner,
         DataLayout::i686_sysv(),
-    );
+    )
+    .unwrap();
     assert!(
         c.contains("typedef struct { const uint8_t *ptr; int32_t len; } ArStr;"),
         "i686 ArStr: {}",

@@ -1,9 +1,12 @@
 //! AMIR CFG invariant validation (CFG-1 … CFG-5 per `docs/arandu-amir-v0.1.md`).
 
 use crate::SymbolTable;
-use crate::amir::{AmirFunc, AmirProgram, AmirTerminator, BlockId, reachable_blocks_dense};
+use crate::amir::{
+    AmirConstant, AmirFunc, AmirOperand, AmirProgram, AmirTerminator, BlockId,
+    reachable_blocks_dense,
+};
 use crate::diagnostics::{DiagCode, Diagnostic};
-use crate::types::TypeInterner;
+use crate::types::{ArType, Primitive, TypeId, TypeInterner};
 
 /// Validate all functions in an AMIR program.
 #[must_use]
@@ -38,6 +41,16 @@ pub fn validate_amir_func(
     }
 
     for (i, block) in func.blocks.iter().enumerate() {
+        if block.id.as_usize() != i {
+            diags.push(Diagnostic::ice(
+                DiagCode::ICEGEN002,
+                format!(
+                    "block at index {i} has mismatched BlockId bb{} (expected bb{i}) (CFG-0)",
+                    block.id.as_usize()
+                ),
+                span,
+            ));
+        }
         if !is_valid_terminator(&block.terminator) {
             diags.push(Diagnostic::error(
                 DiagCode::U001FeatureNotSupported,
@@ -53,6 +66,70 @@ pub fn validate_amir_func(
                     format!(
                         "bb{i}: terminator targets non-existent bb{} (CFG-3)",
                         succ.as_usize()
+                    ),
+                    span,
+                ));
+            }
+        }
+
+        for_each_terminator_edge(&block.terminator, |target, args| {
+            let Some(target_block) = func.blocks.get(target.as_usize()) else {
+                return;
+            };
+            let arg_count = args.len();
+            if arg_count != target_block.params.len() {
+                diags.push(Diagnostic::ice(
+                    DiagCode::ICEGEN002,
+                    format!(
+                        "bb{i} passes {arg_count} argument(s) to bb{}, which expects {} block parameter(s) (SSA-EDGE)",
+                        target.as_usize(),
+                        target_block.params.len()
+                    ),
+                    span,
+                ));
+            }
+            for (arg_index, (arg, param)) in args.iter().zip(&target_block.params).enumerate() {
+                let Some(arg_ty) = operand_type(func, arg, interner) else {
+                    continue;
+                };
+                if !edge_types_compatible(interner, arg_ty, param.ty) {
+                    diags.push(Diagnostic::ice(
+                        DiagCode::ICEGEN002,
+                        format!(
+                            "bb{i} argument {arg_index} to bb{} has type {}, but block parameter expects {} (SSA-TYPE)",
+                            target.as_usize(),
+                            type_name(interner, arg_ty),
+                            type_name(interner, param.ty)
+                        ),
+                        span,
+                    ));
+                }
+            }
+        });
+    }
+
+    let mut stmt_owner = vec![None; func.stmts.len()];
+    for (i, block) in func.blocks.iter().enumerate() {
+        let range = block.statements;
+        if range.end_usize() > func.stmts.len() {
+            diags.push(Diagnostic::ice(
+                DiagCode::ICEGEN002,
+                format!(
+                    "bb{i} statement range {}..{} exceeds statement table length {} (IR-RANGE)",
+                    range.start_usize(),
+                    range.end_usize(),
+                    func.stmts.len()
+                ),
+                span,
+            ));
+            continue;
+        }
+        for stmt_index in range.as_range() {
+            if let Some(previous_block) = stmt_owner[stmt_index].replace(i) {
+                diags.push(Diagnostic::ice(
+                    DiagCode::ICEGEN002,
+                    format!(
+                        "statement {stmt_index} is owned by both bb{previous_block} and bb{i} (IR-RANGE)"
                     ),
                     span,
                 ));
@@ -119,6 +196,34 @@ pub fn validate_amir_func(
         }
     }
 
+    for (block_index, block) in func.blocks.iter().enumerate() {
+        for (param_index, param) in block.params.iter().enumerate() {
+            let Some(temp) = func.temps.get(param.id.as_usize()) else {
+                diags.push(Diagnostic::ice(
+                    DiagCode::ICEGEN002,
+                    format!(
+                        "bb{block_index} parameter {param_index} references missing temp _{} (SSA-PARAM)",
+                        param.id.as_usize()
+                    ),
+                    span,
+                ));
+                continue;
+            };
+            if temp.ty != param.ty {
+                diags.push(Diagnostic::ice(
+                    DiagCode::ICEGEN002,
+                    format!(
+                        "bb{block_index} parameter {param_index} type {} disagrees with temp _{} type {} (SSA-PARAM)",
+                        type_name(interner, param.ty),
+                        param.id.as_usize(),
+                        type_name(interner, temp.ty)
+                    ),
+                    span,
+                ));
+            }
+        }
+    }
+
     diags
 }
 
@@ -150,4 +255,57 @@ fn terminator_targets(term: &AmirTerminator) -> Vec<BlockId> {
         }
         AmirTerminator::Suspend { resume, .. } => vec![*resume],
     }
+}
+
+fn for_each_terminator_edge(term: &AmirTerminator, mut f: impl FnMut(BlockId, &[AmirOperand])) {
+    match term {
+        AmirTerminator::Return | AmirTerminator::Unreachable => {}
+        AmirTerminator::Goto { target, args } => f(*target, args),
+        AmirTerminator::Branch {
+            if_true,
+            true_args,
+            if_false,
+            false_args,
+            ..
+        } => {
+            f(*if_true, true_args);
+            f(*if_false, false_args);
+        }
+        AmirTerminator::SwitchInt {
+            targets, otherwise, ..
+        } => {
+            for (_, target, args) in targets {
+                f(*target, args);
+            }
+            f(otherwise.0, &otherwise.1);
+        }
+        AmirTerminator::Suspend { resume, args, .. } => f(*resume, args),
+    }
+}
+
+fn operand_type(func: &AmirFunc, operand: &AmirOperand, interner: &TypeInterner) -> Option<TypeId> {
+    match operand {
+        AmirOperand::Copy(temp) | AmirOperand::Move(temp) => {
+            func.temps.get(temp.as_usize()).map(|temp| temp.ty)
+        }
+        AmirOperand::Constant(AmirConstant::Bool(_)) => {
+            Some(interner.intern(ArType::Primitive(Primitive::Bool)))
+        }
+        AmirOperand::Constant(AmirConstant::Nil | AmirConstant::Pool(_))
+        | AmirOperand::FunctionRef(_)
+        | AmirOperand::GlobalRef(_) => None,
+    }
+}
+
+fn type_name(interner: &TypeInterner, ty: TypeId) -> String {
+    format!("{:?}", interner.resolve(ty))
+}
+
+fn edge_types_compatible(interner: &TypeInterner, actual: TypeId, expected: TypeId) -> bool {
+    if actual == expected {
+        return true;
+    }
+    let actual = interner.resolve(actual);
+    let expected = interner.resolve(expected);
+    actual.literal_absorbs(&expected) || expected.literal_absorbs(&actual)
 }

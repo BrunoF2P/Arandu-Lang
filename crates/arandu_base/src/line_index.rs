@@ -40,7 +40,11 @@ impl LineIndex {
             .saturating_sub(1);
         let line_start_byte = self.line_starts[line] as usize;
         let original_offset = offset as usize;
-        let offset_byte = original_offset.min(self.source.len());
+        let capped_offset = original_offset.min(self.source.len());
+        let mut offset_byte = capped_offset;
+        while offset_byte > line_start_byte && !self.source.is_char_boundary(offset_byte) {
+            offset_byte -= 1;
+        }
 
         let mut col = 0;
         if offset_byte > line_start_byte {
@@ -49,8 +53,8 @@ impl LineIndex {
                 col += c.len_utf16();
             }
         }
-        if original_offset > offset_byte {
-            col += original_offset - offset_byte;
+        if original_offset > self.source.len() {
+            col += original_offset - self.source.len();
         }
 
         ((line + 1) as u32, (col + 1) as u32)
@@ -98,5 +102,17 @@ mod tests {
         assert_eq!(index.line_col(3), (2, 1));
         // Byte offset 7 is "\n". Its column in UTF-16 from line start is 2 (since Emoji takes 2 UTF-16 code units).
         assert_eq!(index.line_col(7), (2, 3));
+    }
+
+    #[test]
+    fn offset_inside_utf8_codepoint_clamps_without_panicking() {
+        let index = LineIndex::new("é😀z");
+
+        assert_eq!(index.line_col(1), (1, 1));
+        assert_eq!(index.line_col(3), (1, 2));
+        assert_eq!(index.line_col(4), (1, 2));
+        assert_eq!(index.line_col(5), (1, 2));
+        assert_eq!(index.line_col(6), (1, 4));
+        assert_eq!(index.line_col(7), (1, 5));
     }
 }

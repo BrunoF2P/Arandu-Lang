@@ -38,8 +38,8 @@ pub use arandu_base::NO_GENERATIONAL_FALLBACK;
 pub use arandu_base::bitset::{BitMatrix, BitSet};
 pub use arandu_base::newtype_index;
 pub use layout::{
-    DataLayout, DenseRange, EnumPayloadShape, LayoutEngine, SizeAlign, StructLayoutProvider,
-    TypeLayout,
+    DataLayout, DenseRange, EnumPayloadShape, LayoutEngine, LayoutError, LayoutOperation,
+    SizeAlign, StructLayoutProvider, TypeLayout,
 };
 
 pub use amir_validate::validate_amir_program;

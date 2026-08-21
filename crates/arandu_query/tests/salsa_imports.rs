@@ -1,4 +1,4 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use arandu_query::DatabaseImpl;
 use salsa::Setter;
 
@@ -115,7 +115,6 @@ fn test_early_cutoff_on_function_body_change() {
 
 #[test]
 fn test_cross_file_collision_during_circular_import_is_still_deterministic() {
-    let mut db = DatabaseImpl::default();
     // circular dependency: A imports B, B imports A
     let mod_a_text = r#"
         import mod_b
@@ -129,16 +128,96 @@ fn test_cross_file_collision_during_circular_import_is_still_deterministic() {
             mod_a.foo()
         }
     "#;
-    let mod_a = db.new_file("mod_a.aru".to_string(), mod_a_text.to_string());
-    let _mod_b = db.new_file("mod_b.aru".to_string(), mod_b_text.to_string());
+    let run = |reverse: bool| {
+        let mut db = DatabaseImpl::default();
+        let mod_a;
+        if reverse {
+            let _mod_b = db.new_file("mod_b.aru".to_string(), mod_b_text.to_string());
+            mod_a = db.new_file("mod_a.aru".to_string(), mod_a_text.to_string());
+        } else {
+            mod_a = db.new_file("mod_a.aru".to_string(), mod_a_text.to_string());
+            let _mod_b = db.new_file("mod_b.aru".to_string(), mod_b_text.to_string());
+        }
 
-    let tc_a = arandu_query::passes::type_check(&db, mod_a);
-    let has_cycle_error = tc_a
-        .diagnostics
-        .iter()
-        .any(|d| d.message.contains("cyclic"));
-    if !has_cycle_error {
-        panic!("Expected a cycle error or unresolved type, got no diagnostics");
+        let tc = arandu_query::passes::type_check(&db, mod_a);
+        let mut diagnostics = tc
+            .diagnostics
+            .iter()
+            .map(|d| (d.code.as_str(), d.message.clone(), d.span.start, d.span.end))
+            .collect::<Vec<_>>();
+        diagnostics.sort();
+        diagnostics
+    };
+
+    let forward = run(false);
+    let reverse = run(true);
+    assert!(
+        !forward.is_empty(),
+        "circular import must emit a diagnostic"
+    );
+    assert_eq!(
+        forward, reverse,
+        "diagnostics must not depend on module registration order"
+    );
+}
+
+#[test]
+fn test_circular_import_diagnostics_survive_repeated_body_revisions() {
+    let mut db = DatabaseImpl::default();
+    let mod_a = db.new_file(
+        "mod_a.aru".to_string(),
+        r#"
+            import mod_b
+            public func foo() {
+                mod_b.bar()
+            }
+        "#
+        .to_string(),
+    );
+    let mod_b = db.new_file(
+        "mod_b.aru".to_string(),
+        r#"
+            import mod_a
+            public func bar() {
+                let marker = 0
+                mod_a.foo()
+            }
+        "#
+        .to_string(),
+    );
+
+    let diagnostic_signature = |db: &DatabaseImpl| {
+        let tc = arandu_query::passes::type_check(db, mod_a);
+        let mut diagnostics = tc
+            .diagnostics
+            .iter()
+            .map(|d| (d.code.as_str(), d.message.clone(), d.span.start, d.span.end))
+            .collect::<Vec<_>>();
+        diagnostics.sort();
+        diagnostics
+    };
+    let expected = diagnostic_signature(&db);
+    assert!(
+        !expected.is_empty(),
+        "circular import must emit a diagnostic before revisions"
+    );
+
+    for revision in 1..=16 {
+        let marker = revision % 2;
+        mod_b.set_text(&mut db).to(std::sync::Arc::from(format!(
+            r#"
+            import mod_a
+            public func bar() {{
+                let marker = {marker}
+                mod_a.foo()
+            }}
+        "#
+        )));
+        assert_eq!(
+            diagnostic_signature(&db),
+            expected,
+            "cycle diagnostics changed or disappeared after body revision {revision}"
+        );
     }
 }
 

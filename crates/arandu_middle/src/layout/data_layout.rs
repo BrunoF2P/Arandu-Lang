@@ -101,6 +101,14 @@ impl DataLayout {
     pub const fn pointer_align(self) -> u64 {
         self.pointer.abi_align
     }
+
+    /// Exclusive upper bound for an object in the target's default address
+    /// space. Keeping objects below `isize::MAX + 1` preserves pointer
+    /// differences and one-past-the-end addressing.
+    #[must_use]
+    pub const fn object_size_bound(self) -> u64 {
+        1_u64 << (self.pointer.size * 8 - 1)
+    }
 }
 
 #[cfg(test)]
@@ -137,5 +145,11 @@ mod tests {
         assert_eq!(dl.i64.size, 8);
         assert_eq!(dl.i64.abi_align, 4);
         assert_eq!(dl.f64.abi_align, 4);
+    }
+
+    #[test]
+    fn object_size_bound_follows_target_pointer_width() {
+        assert_eq!(DataLayout::ptr_width(4).object_size_bound(), 1_u64 << 31);
+        assert_eq!(DataLayout::ptr_width(8).object_size_bound(), 1_u64 << 63);
     }
 }

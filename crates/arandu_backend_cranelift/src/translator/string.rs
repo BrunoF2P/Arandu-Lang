@@ -59,13 +59,8 @@ impl FunctionTranslator<'_, '_> {
                     other => other,
                 };
                 let pointer_width = self.ptr_type.bytes() as u64;
-                let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
-                let layout = engine.layout_of_type(
-                    &struct_ty,
-                    &self.type_info.type_interner,
-                    self.type_info,
-                );
-                let offset = layout.field_offsets[*field] as i32;
+                let layout = self.checked_layout(&struct_ty);
+                let offset = layout.field_offsets.get(*field).copied().unwrap_or(0) as i32;
 
                 let loaded_ptr = self.builder.ins().load(
                     self.ptr_type,
@@ -122,12 +117,7 @@ impl FunctionTranslator<'_, '_> {
                     if let Some(variant_shape) = variants.get(tag) {
                         if let Some(payload_ty_id) = variant_shape.payload_ty {
                             let payload_ty = self.type_info.resolve_type_id(payload_ty_id);
-                            let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
-                            let payload_layout = engine.layout_of_type(
-                                &payload_ty,
-                                &self.type_info.type_interner,
-                                self.type_info,
-                            );
+                            let payload_layout = self.checked_layout(&payload_ty);
                             if *index < payload_layout.field_offsets.len() {
                                 payload_offset = payload_layout.field_offsets[*index] as i32;
                             }

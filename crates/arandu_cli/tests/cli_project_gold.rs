@@ -123,6 +123,25 @@ fn new_scaffolds_package_and_check_run() {
 }
 
 #[test]
+fn new_classifies_usage_and_operational_failures() {
+    let tmp = tempfile_dir("arandu_new_failure_classes");
+
+    let invalid = run_cli_in(&tmp, &["new", "../escape"]);
+    assert_eq!(invalid.status.code(), Some(2));
+    let invalid_stderr = String::from_utf8_lossy(&invalid.stderr);
+    assert!(invalid_stderr.contains("invalid project name"));
+
+    fs::create_dir(tmp.join("occupied")).unwrap();
+    let occupied = run_cli_in(&tmp, &["new", "occupied"]);
+    assert_eq!(occupied.status.code(), Some(1));
+    let occupied_stderr = String::from_utf8_lossy(&occupied.stderr);
+    assert!(occupied_stderr.contains("create project"));
+    assert!(occupied_stderr.contains("path already exists"));
+
+    let _ = fs::remove_dir_all(&tmp);
+}
+
+#[test]
 fn package_local_multi_file_check_and_run() {
     let tmp = tempfile_dir("arandu_l2_pkg");
     let name = "pkg_l2";

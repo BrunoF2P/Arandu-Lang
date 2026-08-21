@@ -8,8 +8,8 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process;
 
+use crate::cli_error::{CliFailure, CliResult, CliSuccess};
 use arandu_query::{
     DirectoryListing, MANIFEST_FILENAME, ManifestError, ModuleRoots, ProjectManifest, STDLIB_ENV,
     StdlibResolveOpts, StdlibRoot, find_manifest, load_manifest, register_manifest,
@@ -61,7 +61,7 @@ pub struct ProjectFlags {
 }
 
 /// Parse `--stdlib-path=…` / `--stdlib-path …` / `--release` / `-v` from leftover args.
-pub fn parse_project_flags(args: &[String]) -> (ProjectFlags, Vec<String>) {
+pub fn parse_project_flags(args: &[String]) -> Result<(ProjectFlags, Vec<String>), String> {
     let mut flags = ProjectFlags::default();
     let mut rest = Vec::new();
     let mut i = 0;
@@ -74,8 +74,7 @@ pub fn parse_project_flags(args: &[String]) -> (ProjectFlags, Vec<String>) {
             if i < args.len() {
                 flags.stdlib_path = Some(PathBuf::from(&args[i]));
             } else {
-                eprintln!("error: --stdlib-path requires a directory argument");
-                process::exit(2);
+                return Err("--stdlib-path requires a directory argument".into());
             }
         } else if a == "--release" {
             flags.release = true;
@@ -86,24 +85,31 @@ pub fn parse_project_flags(args: &[String]) -> (ProjectFlags, Vec<String>) {
         }
         i += 1;
     }
-    (flags, rest)
+    Ok((flags, rest))
 }
 
 /// Create a new project directory with `Arandu.toml` + template entry.
-pub fn cmd_new(name: &str) -> i32 {
+pub fn cmd_new(name: &str) -> CliResult {
     if name.is_empty() || name.contains('/') || name.contains('\\') || name == "." || name == ".." {
-        eprintln!("error: invalid project name `{name}` (use a single path segment)");
-        return 2;
+        return Err(CliFailure::usage(format!(
+            "invalid project name `{name}` (use a single path segment)"
+        )));
     }
     let root = PathBuf::from(name);
     if root.exists() {
-        eprintln!("error: `{}` already exists", root.display());
-        return 1;
+        return Err(CliFailure::operational(
+            "create project",
+            Some(root),
+            "path already exists",
+        ));
     }
-    if let Err(e) = fs::create_dir_all(root.join("src")) {
-        eprintln!("error: failed to create project dirs: {e}");
-        return 1;
-    }
+    fs::create_dir_all(root.join("src")).map_err(|e| {
+        CliFailure::operational(
+            "create project directories",
+            Some(root.clone()),
+            e.to_string(),
+        )
+    })?;
 
     let toml = format!(
         r#"# Arandu package manifest (Minimal 0.1)
@@ -116,14 +122,12 @@ entry = "{DEFAULT_ENTRY}"
 
     let manifest_path = root.join(MANIFEST_FILENAME);
     let entry_path = root.join(DEFAULT_ENTRY);
-    if let Err(e) = fs::write(&manifest_path, toml) {
-        eprintln!("error: failed to write {}: {e}", manifest_path.display());
-        return 1;
-    }
-    if let Err(e) = fs::write(&entry_path, main_src) {
-        eprintln!("error: failed to write {}: {e}", entry_path.display());
-        return 1;
-    }
+    fs::write(&manifest_path, toml).map_err(|e| {
+        CliFailure::operational("write project manifest", Some(manifest_path), e.to_string())
+    })?;
+    fs::write(&entry_path, main_src).map_err(|e| {
+        CliFailure::operational("write project entry", Some(entry_path), e.to_string())
+    })?;
 
     println!("created {name}/");
     println!("  {MANIFEST_FILENAME}");
@@ -133,7 +137,7 @@ entry = "{DEFAULT_ENTRY}"
     println!("  cd {name}");
     println!("  arandu_cli check");
     println!("  arandu_cli run");
-    0
+    Ok(CliSuccess::Done)
 }
 
 /// Diagnose toolchain / project / backend (Flutter-style doctor report).

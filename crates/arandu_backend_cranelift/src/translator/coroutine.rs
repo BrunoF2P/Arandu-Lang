@@ -15,10 +15,7 @@ impl FunctionTranslator<'_, '_> {
     ) -> Value {
         use cranelift_codegen::ir::types::I32;
         let payload_ar = self.type_info.resolve_type_id(payload_ty);
-        let pointer_width = self.ptr_type.bytes() as u64;
-        let engine = arandu_semantics::layout::LayoutEngine::new(pointer_width);
-        let layout =
-            engine.layout_of_type(&payload_ar, &self.type_info.type_interner, self.type_info);
+        let layout = self.checked_layout(&payload_ar);
         // Header 8 bytes (disc u32 + pad) + payload.
         let size = (8 + layout.size).max(16);
         let align = layout.align.max(8);

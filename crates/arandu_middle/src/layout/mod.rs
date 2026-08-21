@@ -90,6 +90,44 @@ pub struct TypeLayout {
     pub field_offsets: Vec<u64>, // Field offsets (populated for structs, tuples, etc.)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LayoutOperation {
+    ArrayRepeat,
+    FieldOffset,
+    AggregatePadding,
+    EnumPayload,
+    ResultPayload,
+    OptionPayload,
+    RangePair,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LayoutError {
+    SizeOverflow {
+        operation: LayoutOperation,
+        limit: u64,
+    },
+    InvalidAlignment {
+        align: u64,
+    },
+}
+
+impl std::fmt::Display for LayoutError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SizeOverflow { operation, limit } => write!(
+                f,
+                "type layout overflow during {operation:?}; target object size must be below {limit} bytes"
+            ),
+            Self::InvalidAlignment { align } => {
+                write!(f, "invalid type alignment {align}; expected a power of two")
+            }
+        }
+    }
+}
+
+impl std::error::Error for LayoutError {}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EnumPayloadShape {
     pub payload_ty: Option<TypeId>,
@@ -172,7 +210,7 @@ impl LayoutEngine {
         type_id: TypeId,
         interner: &TypeInterner,
         provider: &dyn StructLayoutProvider,
-    ) -> TypeLayout {
+    ) -> Result<TypeLayout, LayoutError> {
         self.layout_of_type(&interner.resolve(type_id), interner, provider)
     }
 
@@ -187,8 +225,8 @@ impl LayoutEngine {
         ty: &ArType,
         interner: &TypeInterner,
         provider: &dyn StructLayoutProvider,
-    ) -> TypeLayout {
-        match ty {
+    ) -> Result<TypeLayout, LayoutError> {
+        Ok(match ty {
             ArType::Primitive(p) => match p {
                 Primitive::I8
                 | Primitive::U8
@@ -312,9 +350,13 @@ impl LayoutEngine {
             }
             ArType::Slice(_) => self.fat_pointer_layout(),
             ArType::Array(len, inner) => {
-                let inner_layout = self.layout_of(*inner, interner, provider);
+                let inner_layout = self.layout_of(*inner, interner, provider)?;
                 TypeLayout {
-                    size: inner_layout.size * len,
+                    size: self.checked_mul(
+                        inner_layout.size,
+                        *len,
+                        LayoutOperation::ArrayRepeat,
+                    )?,
                     align: inner_layout.align,
                     field_offsets: Vec::new(),
                 }
@@ -325,14 +367,20 @@ impl LayoutEngine {
                 let mut field_offsets = Vec::with_capacity(tys.len());
 
                 for &ty_id in tys {
-                    let layout = self.layout_of(ty_id, interner, provider);
+                    let layout = self.layout_of(ty_id, interner, provider)?;
                     max_align = max_align.max(layout.align);
-                    current_offset = (current_offset + layout.align - 1) & !(layout.align - 1);
+                    current_offset =
+                        self.align_up(current_offset, layout.align, LayoutOperation::FieldOffset)?;
                     field_offsets.push(current_offset);
-                    current_offset += layout.size;
+                    current_offset = self.checked_add(
+                        current_offset,
+                        layout.size,
+                        LayoutOperation::FieldOffset,
+                    )?;
                 }
 
-                let total_size = (current_offset + max_align - 1) & !(max_align - 1);
+                let total_size =
+                    self.align_up(current_offset, max_align, LayoutOperation::AggregatePadding)?;
 
                 TypeLayout {
                     size: total_size,
@@ -366,15 +414,26 @@ impl LayoutEngine {
                         for (_, tid) in fields_with_indices {
                             let ty = interner.resolve(tid);
                             let substituted = substitute(&ty, &subst, interner);
-                            let layout = self.layout_of_type(&substituted, interner, provider);
+                            let layout = self.layout_of_type(&substituted, interner, provider)?;
                             max_align = max_align.max(layout.align);
-                            current_offset =
-                                (current_offset + layout.align - 1) & !(layout.align - 1);
+                            current_offset = self.align_up(
+                                current_offset,
+                                layout.align,
+                                LayoutOperation::FieldOffset,
+                            )?;
                             field_offsets.push(current_offset);
-                            current_offset += layout.size;
+                            current_offset = self.checked_add(
+                                current_offset,
+                                layout.size,
+                                LayoutOperation::FieldOffset,
+                            )?;
                         }
 
-                        let total_size = (current_offset + max_align - 1) & !(max_align - 1);
+                        let total_size = self.align_up(
+                            current_offset,
+                            max_align,
+                            LayoutOperation::AggregatePadding,
+                        )?;
 
                         TypeLayout {
                             size: total_size,
@@ -394,7 +453,8 @@ impl LayoutEngine {
                     let mut max_payload_align = 1;
                     for variant in variants {
                         if let Some(payload_ty_id) = variant.payload_ty {
-                            let payload_layout = self.layout_of(payload_ty_id, interner, provider);
+                            let payload_layout =
+                                self.layout_of(payload_ty_id, interner, provider)?;
                             if payload_layout.size > max_payload_size {
                                 max_payload_size = payload_layout.size;
                             }
@@ -404,7 +464,10 @@ impl LayoutEngine {
                         }
                     }
                     let max_align = max_payload_align.max(tag_size);
-                    let size = (tag_size + max_payload_size + max_align - 1) & !(max_align - 1);
+                    let payload_end =
+                        self.checked_add(tag_size, max_payload_size, LayoutOperation::EnumPayload)?;
+                    let size =
+                        self.align_up(payload_end, max_align, LayoutOperation::AggregatePadding)?;
                     TypeLayout {
                         size,
                         align: max_align,
@@ -425,8 +488,8 @@ impl LayoutEngine {
                 field_offsets: Vec::new(),
             },
             ArType::Result(ok, err) => {
-                let ok_layout = self.layout_of(*ok, interner, provider);
-                let err_layout = self.layout_of(*err, interner, provider);
+                let ok_layout = self.layout_of(*ok, interner, provider)?;
+                let err_layout = self.layout_of(*err, interner, provider)?;
                 let max_align = ok_layout
                     .align
                     .max(err_layout.align)
@@ -434,8 +497,13 @@ impl LayoutEngine {
                 let tag_offset = 0;
                 let payload_offset = self.pointer_width();
                 let max_payload_size = ok_layout.size.max(err_layout.size);
+                let payload_end = self.checked_add(
+                    payload_offset,
+                    max_payload_size,
+                    LayoutOperation::ResultPayload,
+                )?;
                 let total_size =
-                    (payload_offset + max_payload_size + max_align - 1) & !(max_align - 1);
+                    self.align_up(payload_end, max_align, LayoutOperation::AggregatePadding)?;
 
                 TypeLayout {
                     size: total_size,
@@ -444,12 +512,17 @@ impl LayoutEngine {
                 }
             }
             ArType::Option(inner) | ArType::Poll(inner) => {
-                let inner_layout = self.layout_of(*inner, interner, provider);
+                let inner_layout = self.layout_of(*inner, interner, provider)?;
                 let max_align = inner_layout.align.max(self.pointer_width());
                 let tag_offset = 0;
                 let payload_offset = self.pointer_width();
+                let payload_end = self.checked_add(
+                    payload_offset,
+                    inner_layout.size,
+                    LayoutOperation::OptionPayload,
+                )?;
                 let total_size =
-                    (payload_offset + inner_layout.size + max_align - 1) & !(max_align - 1);
+                    self.align_up(payload_end, max_align, LayoutOperation::AggregatePadding)?;
 
                 TypeLayout {
                     size: total_size,
@@ -463,11 +536,14 @@ impl LayoutEngine {
                 field_offsets: Vec::new(),
             },
             ArType::Range(inner) => {
-                let inner_layout = self.layout_of(*inner, interner, provider);
+                let inner_layout = self.layout_of(*inner, interner, provider)?;
                 let align = inner_layout.align;
                 let start_offset = 0;
-                let end_offset = (inner_layout.size + align - 1) & !(align - 1);
-                let total_size = (end_offset + inner_layout.size + align - 1) & !(align - 1);
+                let end_offset =
+                    self.align_up(inner_layout.size, align, LayoutOperation::RangePair)?;
+                let end =
+                    self.checked_add(end_offset, inner_layout.size, LayoutOperation::RangePair)?;
+                let total_size = self.align_up(end, align, LayoutOperation::AggregatePadding)?;
 
                 TypeLayout {
                     size: total_size,
@@ -475,6 +551,62 @@ impl LayoutEngine {
                     field_offsets: vec![start_offset, end_offset],
                 }
             }
+        })
+    }
+
+    fn checked_add(
+        &self,
+        lhs: u64,
+        rhs: u64,
+        operation: LayoutOperation,
+    ) -> Result<u64, LayoutError> {
+        let value = lhs.checked_add(rhs).ok_or(LayoutError::SizeOverflow {
+            operation,
+            limit: self.data_layout.object_size_bound(),
+        })?;
+        self.check_object_size(value, operation)
+    }
+
+    fn checked_mul(
+        &self,
+        lhs: u64,
+        rhs: u64,
+        operation: LayoutOperation,
+    ) -> Result<u64, LayoutError> {
+        let value = lhs.checked_mul(rhs).ok_or(LayoutError::SizeOverflow {
+            operation,
+            limit: self.data_layout.object_size_bound(),
+        })?;
+        self.check_object_size(value, operation)
+    }
+
+    fn align_up(
+        &self,
+        value: u64,
+        align: u64,
+        operation: LayoutOperation,
+    ) -> Result<u64, LayoutError> {
+        if align == 0 || !align.is_power_of_two() {
+            return Err(LayoutError::InvalidAlignment { align });
+        }
+        let mask = align - 1;
+        let padded = value.checked_add(mask).ok_or(LayoutError::SizeOverflow {
+            operation,
+            limit: self.data_layout.object_size_bound(),
+        })? & !mask;
+        self.check_object_size(padded, operation)
+    }
+
+    fn check_object_size(
+        &self,
+        value: u64,
+        operation: LayoutOperation,
+    ) -> Result<u64, LayoutError> {
+        let limit = self.data_layout.object_size_bound();
+        if value >= limit {
+            Err(LayoutError::SizeOverflow { operation, limit })
+        } else {
+            Ok(value)
         }
     }
 }

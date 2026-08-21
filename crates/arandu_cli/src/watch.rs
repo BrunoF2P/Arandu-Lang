@@ -12,16 +12,20 @@ use arandu_query::{DEFAULT_DEBOUNCE, FsChange, PackageWatchSession, scan_aru_ent
 use notify::{EventKind, RecursiveMode};
 use notify_debouncer_full::{DebounceEventResult, DebouncedEvent, new_debouncer};
 
+use crate::cli_error::{CliFailure, CliResult};
 use crate::project::{self, ProjectFlags};
 
 /// Run package-mode watch until Ctrl-C / fatal error.
-pub fn cmd_watch(start: &Path, flags: &ProjectFlags) -> i32 {
+pub fn cmd_watch(start: &Path, flags: &ProjectFlags) -> CliResult {
     let (mut db, rebuild_log) = arandu_query::DatabaseImpl::with_rebuild_log();
     let ctx = match project::load_project(&mut db, start, flags) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("error: {e}");
-            return 1;
+            return Err(CliFailure::operational(
+                "load project",
+                Some(start.into()),
+                e,
+            ));
         }
     };
 
@@ -41,13 +45,19 @@ pub fn cmd_watch(start: &Path, flags: &ProjectFlags) -> i32 {
     }
 
     let Some(roots) = db.module_roots() else {
-        eprintln!("error: package module roots not initialized (internal)");
-        return 1;
+        return Err(CliFailure::operational(
+            "start package watcher",
+            Some(ctx.root),
+            "package module roots not initialized (internal)",
+        ));
     };
     let listing = *roots.package_listing(&db);
     let Some(manifest) = db.project_manifest() else {
-        eprintln!("error: package manifest not initialized (internal)");
-        return 1;
+        return Err(CliFailure::operational(
+            "start package watcher",
+            Some(ctx.manifest_path),
+            "package manifest not initialized (internal)",
+        ));
     };
 
     let mut sess = PackageWatchSession::new(
@@ -90,16 +100,18 @@ pub fn cmd_watch(start: &Path, flags: &ProjectFlags) -> i32 {
     let mut debouncer = match new_debouncer(DEFAULT_DEBOUNCE, None, tx) {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("error: failed to start file watcher: {e}");
-            return 1;
+            return Err(CliFailure::operational(
+                "start file watcher",
+                Some(ctx.root.clone()),
+                e.to_string(),
+            ));
         }
     };
 
     // Watch package root (covers src/ + Arandu.toml).
-    if let Err(e) = debouncer.watch(&ctx.root, RecursiveMode::Recursive) {
-        eprintln!("error: watch {}: {e}", ctx.root.display());
-        return 1;
-    }
+    debouncer
+        .watch(&ctx.root, RecursiveMode::Recursive)
+        .map_err(|e| CliFailure::operational("watch", Some(ctx.root.clone()), e.to_string()))?;
     eprintln!(
         "watching {} (package `{}`) — Ctrl-C to stop",
         ctx.root.display(),
@@ -128,8 +140,11 @@ pub fn cmd_watch(start: &Path, flags: &ProjectFlags) -> i32 {
                 // Fall through to commit any due buffer entries.
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
-                eprintln!("watcher channel closed");
-                return 1;
+                return Err(CliFailure::operational(
+                    "watch project",
+                    Some(ctx.root.clone()),
+                    "watcher channel closed",
+                ));
             }
         }
 

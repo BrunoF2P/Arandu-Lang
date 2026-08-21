@@ -315,6 +315,26 @@ mod tests {
     }
 
     #[test]
+    fn formatting_is_idempotent_with_unicode_crlf_and_braces_in_strings() {
+        let src = "func main(): str {\r\nlet greeting = \"olá 😀 {literal}\"   \r\nreturn greeting\r\n}\r\n";
+        let once = format_source(src);
+        let twice = format_source(&once);
+
+        assert_eq!(once, twice);
+        assert!(once.contains("olá 😀 {literal}"));
+        assert!(!once.contains('\r'));
+        assert!(parses_clean(&once));
+    }
+
+    #[test]
+    fn fallback_formatting_is_idempotent_for_invalid_input() {
+        let src = "func broken( {\r\n  let x = \"😀\"   \r\n\r\n\r\n";
+        let once = format_source(src);
+        assert_eq!(once, format_source(&once));
+        assert!(!once.contains('\r'));
+    }
+
+    #[test]
     fn multiple_actions() {
         let a = actions_for_diagnostic(0, 0, "expected '}'");
         assert!(a.iter().any(|x| x.title.contains('}')));

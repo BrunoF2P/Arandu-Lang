@@ -36,6 +36,7 @@ use pool::WorkerPool;
 use rustc_hash::FxHashMap;
 use state::{walk_register_aru, ServerState};
 use std::error::Error;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -54,7 +55,14 @@ enum JobResult {
         revision: AnalysisRevision,
         value: serde_json::Value,
     },
+    Failed {
+        id: Option<RequestId>,
+        revision: AnalysisRevision,
+    },
 }
+
+const LSP_CONTENT_MODIFIED: i32 = -32801;
+const JSON_RPC_INTERNAL_ERROR: i32 = -32603;
 
 #[derive(Clone)]
 struct DocInfo {
@@ -135,7 +143,7 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     };
     connection.initialize_finish(initialize_id, serde_json::to_value(init_result)?)?;
 
-    let pool = WorkerPool::new(4);
+    let pool = WorkerPool::new(4)?;
     let (job_tx, job_rx) = crossbeam_channel::unbounded::<JobResult>();
     event_loop(&connection, &mut state, &pool, job_tx, job_rx)?;
     io_threads.join()?;
@@ -502,14 +510,20 @@ fn spawn_diagnostics(
     let revision = snap.revision;
     let tx = job_tx.clone();
     pool.spawn(move || {
-        let (diags, fingerprint) = compute_diagnostics(&snap, source);
-        let _ = tx.send(JobResult::Diagnostics {
-            uri,
-            doc_id,
-            revision,
-            fingerprint,
-            diags,
-        });
+        match catch_unwind(AssertUnwindSafe(|| compute_diagnostics(&snap, source))) {
+            Ok((diags, fingerprint)) => {
+                let _ = tx.send(JobResult::Diagnostics {
+                    uri,
+                    doc_id,
+                    revision,
+                    fingerprint,
+                    diags,
+                });
+            }
+            Err(_) => {
+                let _ = tx.send(JobResult::Failed { id: None, revision });
+            }
+        }
     });
 }
 
@@ -528,17 +542,28 @@ fn spawn_goto(
     let docs = collect_doc_infos(state);
     let tx = job_tx.clone();
     pool.spawn(move || {
-        let location = goto_on_snapshot(&snap, &by_uri, &by_file_id, &docs, &uri, pos);
-        let value = match location {
-            Some(loc) => serde_json::to_value(GotoDefinitionResponse::Scalar(loc))
-                .unwrap_or(serde_json::Value::Null),
-            None => serde_json::Value::Null,
-        };
-        let _ = tx.send(JobResult::JsonResponse {
-            id: req_id,
-            revision,
-            value,
-        });
+        match catch_unwind(AssertUnwindSafe(|| {
+            let location = goto_on_snapshot(&snap, &by_uri, &by_file_id, &docs, &uri, pos);
+            match location {
+                Some(loc) => serde_json::to_value(GotoDefinitionResponse::Scalar(loc))
+                    .unwrap_or(serde_json::Value::Null),
+                None => serde_json::Value::Null,
+            }
+        })) {
+            Ok(value) => {
+                let _ = tx.send(JobResult::JsonResponse {
+                    id: req_id,
+                    revision,
+                    value,
+                });
+            }
+            Err(_) => {
+                let _ = tx.send(JobResult::Failed {
+                    id: Some(req_id),
+                    revision,
+                });
+            }
+        }
     });
 }
 
@@ -555,14 +580,23 @@ fn spawn_json<F>(
     let revision = snap.revision;
     let docs = collect_docs_map(state);
     let tx = job_tx.clone();
-    pool.spawn(move || {
-        let value = f(&snap, &docs);
-        let _ = tx.send(JobResult::JsonResponse {
-            id: req_id,
-            revision,
-            value,
-        });
-    });
+    pool.spawn(
+        move || match catch_unwind(AssertUnwindSafe(|| f(&snap, &docs))) {
+            Ok(value) => {
+                let _ = tx.send(JobResult::JsonResponse {
+                    id: req_id,
+                    revision,
+                    value,
+                });
+            }
+            Err(_) => {
+                let _ = tx.send(JobResult::Failed {
+                    id: Some(req_id),
+                    revision,
+                });
+            }
+        },
+    );
 }
 
 fn compute_diagnostics(snap: &AnalysisSnapshot, source: SourceFile) -> (Vec<Diagnostic>, [u8; 32]) {
@@ -706,15 +740,38 @@ fn handle_job_result(
             value,
         } => {
             if revision != state.revision() {
-                connection.sender.send(Message::Response(Response::new_ok(
+                connection.sender.send(Message::Response(Response::new_err(
                     id,
-                    serde_json::Value::Null,
+                    LSP_CONTENT_MODIFIED,
+                    "document changed while the request was running".into(),
                 )))?;
                 return Ok(());
             }
             connection
                 .sender
                 .send(Message::Response(Response::new_ok(id, value)))?;
+        }
+        JobResult::Failed { id, revision } => {
+            // The captured snapshot is dropped with the failed job. Never publish a
+            // diagnostic or successful response from that analysis.
+            if let Some(id) = id {
+                let (code, message) = if revision == state.revision() {
+                    (
+                        JSON_RPC_INTERNAL_ERROR,
+                        "analysis worker failed; request snapshot was discarded",
+                    )
+                } else {
+                    (
+                        LSP_CONTENT_MODIFIED,
+                        "document changed while the failed request was running",
+                    )
+                };
+                connection.sender.send(Message::Response(Response::new_err(
+                    id,
+                    code,
+                    message.into(),
+                )))?;
+            }
         }
     }
     Ok(())

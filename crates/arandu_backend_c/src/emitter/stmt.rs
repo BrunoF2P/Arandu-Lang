@@ -99,11 +99,7 @@ impl<'a> CEmitter<'a> {
                     let payload_c = self.format_type(&payload_ar);
                     let v = self.format_operand(value, func);
                     let slot = self.next_co_stack_slot();
-                    let payload_size = self
-                        .layout
-                        .layout_of_type(&payload_ar, self.interner, self.provider)
-                        .size
-                        .max(1);
+                    let payload_size = self.checked_layout(&payload_ar).size.max(1);
                     let size = 8 + payload_size;
                     let _ = writeln!(
                         &mut self.output,

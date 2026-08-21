@@ -371,6 +371,13 @@ impl AranduJit {
         symbols: &SymbolTable,
         type_info: &arandu_semantics::TypeInfo,
     ) -> Result<CompiledModule, Diagnostic> {
+        if let Some(issue) =
+            arandu_semantics::validate_amir_program(program, symbols, &type_info.type_interner)
+                .into_iter()
+                .next()
+        {
+            return Err(issue);
+        }
         let mut func_ids = FxHashMap::default();
         let default_call_conv = self.module.isa().default_call_conv();
         let ptr_type = self.module.target_config().pointer_type();

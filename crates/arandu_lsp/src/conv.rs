@@ -1,7 +1,6 @@
 //! Byte offset ↔ LSP Position using [`arandu_base::LineIndex`].
 //!
-//! LSP `character` is treated as **UTF-8 byte offset within the line** for now
-//! (correct for ASCII / most Arandu sources). Full UTF-16 mapping can come later.
+//! LSP `character` is a UTF-16 code-unit offset, as required by the protocol.
 
 use arandu_base::{LineIndex, Span};
 use lsp_types::{Position, Range};
@@ -26,13 +25,17 @@ pub fn position_to_offset(index: &LineIndex, pos: Position, text: &str) -> u32 {
         None => return len,
     };
     let line_end = index.line_starts.get(line + 1).copied().unwrap_or(len);
-    // Exclude trailing `\n` from line end for character clamp.
+    // Exclude the complete line ending from the character clamp. Treating the
+    // `\r` in CRLF as editable text shifts Windows client edits by one byte.
     let mut end = line_end;
     if end > line_start {
         let last = text.as_bytes().get((end - 1) as usize).copied();
         if last == Some(b'\n') {
             end -= 1;
         }
+    }
+    if end > line_start && text.as_bytes().get((end - 1) as usize) == Some(&b'\r') {
+        end -= 1;
     }
 
     let mut byte_offset = line_start as usize;
@@ -124,5 +127,38 @@ mod tests {
         assert_eq!(r.start.character, 0);
         assert_eq!(r.end.line, 1);
         assert_eq!(r.end.character, 3);
+    }
+
+    #[test]
+    fn roundtrip_utf16_with_bmp_and_astral_characters() {
+        let text = "aé😀z\n";
+        let idx = LineIndex::new(text);
+
+        for offset in [0, 1, 3, 7, 8] {
+            let position = offset_to_position(&idx, offset);
+            assert_eq!(position_to_offset(&idx, position, text), offset);
+        }
+        assert_eq!(offset_to_position(&idx, 7).character, 4);
+    }
+
+    #[test]
+    fn crlf_clamp_never_targets_carriage_return() {
+        let text = "abc\r\ndef";
+        let idx = LineIndex::new(text);
+        let past_end = Position {
+            line: 0,
+            character: u32::MAX,
+        };
+
+        assert_eq!(position_to_offset(&idx, past_end, text), 3);
+        let edited = apply_lsp_range_edit(
+            text,
+            Range {
+                start: past_end,
+                end: past_end,
+            },
+            "!",
+        );
+        assert_eq!(edited, "abc!\r\ndef");
     }
 }
