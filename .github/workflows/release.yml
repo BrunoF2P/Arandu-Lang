@@ -53,6 +53,8 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - run: cargo test --workspace --locked
       - run: cargo run --locked -p xtask -- check-diag-docs
+      - name: Component and tag version contract
+        run: cargo run --locked -p xtask -- check-release-contract
       - run: git diff --exit-code
 
   package:

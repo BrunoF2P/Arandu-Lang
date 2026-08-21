@@ -112,6 +112,9 @@ ruleset, conforme o
 
 ## S3 — Distribuição beta gold
 
+Roadmap executável e auditoria de mercado:
+[`arandu-s3-beta-distribution-roadmap-v0.1.md`](arandu-s3-beta-distribution-roadmap-v0.1.md).
+
 - [ ] Matriz de instalação e smoke test nos hosts oficialmente suportados.
 - [ ] Artefatos versionados, checksums e descoberta de stdlib testados fora do monorepo.
 - [ ] Política de compatibilidade v0.x para linguagem, manifesto, CLI e LSP publicada.

@@ -3,9 +3,9 @@
 **Fonte única de verdade (checklist executivo).**
 Este documento consolida as decisões arquiteturais sobre Data-Oriented Design (Interning), Polimorfismo Híbrido, OSSA (Ownership SSA), Effects, Async Colorless, Arquitetura de Memória e Binários de Pegada Zero em uma especificação técnica unificada e acionável.
 
-> **Execução atual:** S0 e S1 estão `gold`; novas grandes fases permanecem subordinadas ao
+> **Execução atual:** S0, S1 e S2 estão `gold`; novas grandes fases permanecem subordinadas ao
 > [roadmap de estabilização gold](./arandu-stability-gold-roadmap-v0.1.md), cujo foco atual é
-> [S2 — projetos reais e sessões longas](./arandu-s2-real-projects-endurance-roadmap-v0.1.md), e ao
+> [S3 — distribuição beta gold](./arandu-s3-beta-distribution-roadmap-v0.1.md), e ao
 > [roadmap gold do LSP/editor](./arandu-lsp-editor-gold-roadmap-v0.1.md).
 > Este arquivo continua sendo a visão de produto e dependências, não a fila
 > diária de hardening.
@@ -27,7 +27,8 @@ quando cumprir seu contrato atual.
 | `arandu-amir-v0.1.md` | Contrato AMIR + invariantes formais |
 | `README.md` Next Steps | **Alinhado** — aponta para memória/backend como próximos marcos |
 | `arandu-s1-contracts-recovery-roadmap-v0.1.md` | **Gold** — PR #8, contratos de falha e determinismo |
-| `arandu-s2-real-projects-endurance-roadmap-v0.1.md` | **Ativo** — corpus, churn, memória, performance e fuzz regressivo |
+| `arandu-s2-real-projects-endurance-roadmap-v0.1.md` | **Gold** — corpus, churn, memória, performance e fuzz regressivo |
+| `arandu-s3-beta-distribution-roadmap-v0.1.md` | **Ativo** — matriz de release, compatibilidade v0.x, provenance e RC beta gold |
 
 ---
 
