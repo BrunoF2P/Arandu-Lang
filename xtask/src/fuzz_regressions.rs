@@ -204,29 +204,59 @@ fn load_manifest(corpus: &Path) -> Result<Vec<Entry>, String> {
 fn decode_seed(path: &Path) -> Result<Vec<u8>, String> {
     let bytes =
         fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
-    const HEX_HEADER: &[u8] = b"encoding=hex\n";
-    const UTF8_HEADER: &[u8] = b"encoding=utf8\n";
-    if let Some(hex) = bytes.strip_prefix(HEX_HEADER) {
+    decode_seed_bytes(&bytes, &path.display().to_string())
+}
+
+fn decode_seed_bytes(bytes: &[u8], source: &str) -> Result<Vec<u8>, String> {
+    let Some(newline) = bytes.iter().position(|byte| *byte == b'\n') else {
+        return Err(format!("missing encoding header in {source}"));
+    };
+    let header = bytes[..newline]
+        .strip_suffix(b"\r")
+        .unwrap_or(&bytes[..newline]);
+    let payload = &bytes[newline + 1..];
+    if header == b"encoding=hex" {
+        let hex = payload;
         let compact: Vec<u8> = hex
             .iter()
             .copied()
             .filter(|byte| !byte.is_ascii_whitespace())
             .collect();
         if !compact.len().is_multiple_of(2) {
-            return Err(format!("odd hex length in {}", path.display()));
+            return Err(format!("odd hex length in {source}"));
         }
         return compact
             .chunks_exact(2)
             .map(|pair| {
-                let text = std::str::from_utf8(pair)
-                    .map_err(|_| format!("non-ASCII hex in {}", path.display()))?;
-                u8::from_str_radix(text, 16)
-                    .map_err(|_| format!("invalid hex in {}", path.display()))
+                let text =
+                    std::str::from_utf8(pair).map_err(|_| format!("non-ASCII hex in {source}"))?;
+                u8::from_str_radix(text, 16).map_err(|_| format!("invalid hex in {source}"))
             })
             .collect();
     }
-    bytes
-        .strip_prefix(UTF8_HEADER)
-        .map(<[u8]>::to_vec)
-        .ok_or_else(|| format!("missing encoding header in {}", path.display()))
+    if header == b"encoding=utf8" {
+        return Ok(payload.to_vec());
+    }
+    Err(format!("missing encoding header in {source}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_seed_bytes;
+
+    #[test]
+    fn seed_headers_accept_lf_and_crlf_checkouts() {
+        assert_eq!(
+            decode_seed_bytes(b"encoding=hex\nf09f92\n", "lf.seed"),
+            Ok(vec![0xf0, 0x9f, 0x92])
+        );
+        assert_eq!(
+            decode_seed_bytes(b"encoding=hex\r\nf09f92\r\n", "crlf.seed"),
+            Ok(vec![0xf0, 0x9f, 0x92])
+        );
+        assert_eq!(
+            decode_seed_bytes(b"encoding=utf8\r\nfunc main() {}\r\n", "utf8.seed"),
+            Ok(b"func main() {}\r\n".to_vec())
+        );
+    }
 }
