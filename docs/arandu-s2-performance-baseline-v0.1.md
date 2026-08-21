@@ -21,6 +21,10 @@ peak working set como se fossem a mesma métrica. Heap exato também permanece
 indisponível sem instrumentar/substituir o allocator; RSS e contadores Salsa são
 tratados separadamente.
 
+No GitHub, a perna Linux de `S2 / Endurance` publica o relatório por 30 dias.
+As regras de promoção e de encerramento/recriação de sessão estão em
+[`arandu-s2-endurance-promotion-v0.1.md`](./arandu-s2-endurance-promotion-v0.1.md).
+
 ## Protocolo estatístico
 
 - 3 execuções de warm-up;

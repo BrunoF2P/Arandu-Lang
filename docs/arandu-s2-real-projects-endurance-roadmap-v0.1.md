@@ -1,6 +1,7 @@
 # Arandu S2 — Projetos reais e sessões longas
 
-**Status:** ativo; campanha aberta em 2026-08-21 após promoção S1 Gold.
+**Status:** `gold` local; promoção na `main` depende do primeiro `S2 / Endurance`
+verde em Linux e Windows e da proteção de branch descrita abaixo.
 **Objetivo:** provar que o compilador incremental permanece correto, limitado em
 recursos e previsível durante projetos multi-file e milhares de revisões, além
 das fixtures unitárias.
@@ -110,16 +111,19 @@ O protocolo de promoção, isolamento e budgets está em
 
 ## S2-E — Gate de endurance e promoção
 
-- [ ] Criar `S2 / Endurance` dependente de `S1 / Recovery`, com Linux e Windows.
-- [ ] Executar corpus, churn, equivalência com rebuild limpo e determinismo em
+- [x] Criar `S2 / Endurance` dependente de `S1 / Recovery`, com Linux e Windows.
+- [x] Executar corpus, churn, equivalência com rebuild limpo e determinismo em
       todo PR; budgets finos rodam em ambiente controlado e publicam tendência.
-- [ ] Executar stress LSP relevante sem iniciar VS Code; Extension Host continua
+- [x] Executar stress LSP relevante sem iniciar VS Code; Extension Host continua
       pertencendo ao roadmap L0–L3 do editor.
-- [ ] Publicar relatório de baseline e limitações, incluindo o que é crescimento
+- [x] Publicar relatório de baseline e limitações, incluindo o que é crescimento
       monotônico intencional e o que encerra a sessão/recria a DB.
-- [ ] Manter `S0 / Gate` e `S1 / Recovery` obrigatórios e verdes.
+- [x] Manter `S0 / Gate` e `S1 / Recovery` obrigatórios e verdes.
 
 **Saída:** falhas de sessão longa, escala ou ordem bloqueiam promoção silenciosa.
+
+O contrato de promoção, checks obrigatórios e limitações operacionais está em
+[`arandu-s2-endurance-promotion-v0.1.md`](./arandu-s2-endurance-promotion-v0.1.md).
 
 ## Ordem de implementação
 

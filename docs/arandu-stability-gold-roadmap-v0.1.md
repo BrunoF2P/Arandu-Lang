@@ -96,14 +96,19 @@ Roadmap executável e auditoria de mercado: [`arandu-s1-contracts-recovery-roadm
 
 Roadmap executável: [`arandu-s2-real-projects-endurance-roadmap-v0.1.md`](arandu-s2-real-projects-endurance-roadmap-v0.1.md).
 
-- [ ] Corpus versionado com projetos multi-file pequenos, médios e adversariais.
-- [ ] Teste repetido de editar/renomear/remover módulos sem reutilização de `FileId`.
-- [ ] Sessões longas de query/LSP sem crescimento não limitado de memória.
-- [ ] Benchmarks com orçamento para cold build, noop rebuild e edição isolada.
-- [ ] Fuzzing contínuo de lexer/parser/CST e seeds de crashes preservadas como regressão.
-- [ ] Teste de determinismo repetido com ordens de registro e paralelismo diferentes.
+- [x] Corpus versionado com projetos multi-file pequenos, médios e adversariais.
+- [x] Teste repetido de editar/renomear/remover módulos sem reutilização de `FileId`.
+- [x] Sessões longas de query/LSP sem crescimento não limitado de memória.
+- [x] Benchmarks com orçamento para cold build, noop rebuild e edição isolada.
+- [x] Fuzzing contínuo de lexer/parser/CST e seeds de crashes preservadas como regressão.
+- [x] Teste de determinismo repetido com ordens de registro e paralelismo diferentes.
 
 **DoD S2:** o compilador permanece correto e previsível além das fixtures unitárias.
+
+**Estado S2:** `gold` local em 2026-08-21. A promoção na branch principal ocorre
+após `S2 / Endurance` verde em Linux/Windows e inclusão das duas pernas na
+ruleset, conforme o
+[contrato S2-E](arandu-s2-endurance-promotion-v0.1.md).
 
 ## S3 — Distribuição beta gold
 
