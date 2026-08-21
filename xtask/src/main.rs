@@ -3,9 +3,11 @@
 //! ```text
 //! cargo run -p xtask -- check-diag-docs
 //! cargo run -p xtask -- check-project-corpus
+//! cargo run -p xtask -- check-project-churn
 //! cargo run -p xtask -- help
 //! ```
 
+mod churn;
 mod corpus;
 
 use std::env;
@@ -18,6 +20,7 @@ fn main() {
     let code = match cmd.as_str() {
         "check-diag-docs" => cmd_check_diag_docs(),
         "check-project-corpus" => corpus::cmd_check_project_corpus(&workspace_root()),
+        "check-project-churn" => churn::cmd_check_project_churn(&workspace_root()),
         "help" | "-h" | "--help" => {
             print_help();
             0
@@ -39,11 +42,13 @@ xtask — Arandu workspace tasks
 Commands:
   check-diag-docs   Bijection: DiagCode (user-facing) ↔ docs/errors/*.md
   check-project-corpus  Validate S2 projects and incremental ↔ clean equivalence
+  check-project-churn   Run deterministic S2 module and identity churn
   help              This message
 
 Examples:
   cargo run -p xtask -- check-diag-docs
   cargo run -p xtask -- check-project-corpus
+  cargo run -p xtask -- check-project-churn
   ./scripts/check-diag-docs.sh
 "
     );

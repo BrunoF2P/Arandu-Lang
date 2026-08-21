@@ -212,6 +212,8 @@ jobs:
           key: s2-corpus-${{ matrix.os }}-rust-1.97.1
       - name: Validate project corpus and clean-rebuild oracle
         run: cargo run --locked -p xtask -- check-project-corpus
+      - name: Stress module churn, identities and stale workers
+        run: cargo run --locked -p xtask -- check-project-churn
 
   # Early warning only. Adoption happens through a reviewed rust-toolchain.toml PR.
   future-stable:

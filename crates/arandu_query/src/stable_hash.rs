@@ -125,14 +125,12 @@ impl StableHash for Result<std::sync::Arc<Program>, ParseError> {
 
 fn hash_program(program: &Program) -> blake3::Hash {
     let mut h = Hasher::new();
-    h.update(&[1]);
+    h.update(b"Program/v2");
     h.update(&u32_le(program.span.file_id));
-    h.update(&u32_le(program.span.start));
-    h.update(&u32_le(program.span.end));
-    h.update(&u64_le(program.decls.len() as u64));
-    h.update(&u64_le(program.imports.len() as u64));
-    h.update(&u64_le(program.pool.exprs.len() as u64));
-    h.update(&u64_le(program.pool.stmts.len() as u64));
+    // The old count-only hash treated equal-shaped programs as equal even when
+    // names, literals or operators changed. The canonical AST dump covers every
+    // semantic node without relying on unstable `Debug` output.
+    h.update(program.dump("").as_bytes());
     finish(h)
 }
 
@@ -373,5 +371,17 @@ impl StableHash for arandu_parser::SyntaxTree {
             h.update(&bytes[s..e]);
         }
         finish(h)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StableHash;
+
+    #[test]
+    fn program_hash_changes_when_only_a_literal_changes() {
+        let first = arandu_parser::parse("func answer(): int { return 1 }").unwrap();
+        let second = arandu_parser::parse("func answer(): int { return 2 }").unwrap();
+        assert_ne!(Ok(first).stable_hash(), Ok(second).stable_hash());
     }
 }

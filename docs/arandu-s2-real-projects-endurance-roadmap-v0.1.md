@@ -23,6 +23,8 @@ cargas versionadas, budgets mensuráveis e regressões de sessão longa. LLVM, A
 | [Salsa: cycles](https://salsa-rs.github.io/salsa/plumbing/cycles.html) | Ciclos cross-thread envolvem bloqueio e DAG entre workers. | Repetir grafos cíclicos com ordens e paralelismo diferentes, exigindo convergência e saída idêntica. |
 | [Rust Fuzz Book](https://rust-fuzz.github.io/book/) | Fuzzing encontra falhas por entradas pseudoaleatórias. | Todo crash minimizado vira seed versionada e teste determinístico fora do fuzzer. |
 | [LSP 3.18](https://microsoft.github.io/language-server-protocol/) | O servidor é duradouro e atende requests concorrentes sobre documentos mutáveis. | Corpus S2 alimenta stress do servidor; publicação exige documento e revisão vivos. |
+| [Watchman: recrawl](https://facebook.github.io/watchman/docs/troubleshooting#recrawl) | Filas do SO podem perder eventos; confiar somente no delta deixa estado silenciosamente stale. | Checkpoints executam `rescan_listing` conservador e ainda precisam coincidir com rebuild limpo. |
+| [Watchman: case-insensitivity](https://facebook.github.io/watchman/docs/casefolding) | Rename e caixa divergem entre filesystems; a mesma identidade pode aparecer como create/change/remove. | Normalizar caminhos verbatim do Windows e testar create/delete/rename após canonicalização. |
 
 ## Estados e métricas
 
@@ -50,17 +52,26 @@ cargas versionadas, budgets mensuráveis e regressões de sessão longa. LLVM, A
 
 ## S2-B — Churn de módulos e identidades
 
-- [ ] Executar pelo menos 10 mil operações determinísticas de editar, criar,
+- [x] Executar pelo menos 10 mil operações determinísticas de editar, criar,
       renomear, remover e reabrir módulos em uma sessão.
-- [ ] Provar monotonicidade de `FileId` e invalidade de `DocumentId`,
+- [x] Provar monotonicidade de `FileId` e invalidade de `DocumentId`,
       `AnalysisRevision` e `LspSymbolId` antigos.
-- [ ] Misturar imports cíclicos, rename de pacote e alterações de manifesto sem
+- [x] Misturar imports cíclicos, rename de pacote e alterações de manifesto sem
       depender da ordem de `HashMap` ou de listagem do filesystem.
-- [ ] Alternar snapshots/workers com commits, verificando cancelamento sem
+- [x] Alternar snapshots/workers com commits, verificando cancelamento sem
       deadlock e descarte de resultados stale.
-- [ ] Comparar cada checkpoint com rebuild limpo e repetir com seeds/ordens fixas.
+- [x] Comparar cada checkpoint com rebuild limpo e repetir com seeds/ordens fixas.
 
 **Saída:** sessões longas não confundem identidade histórica com análise atual.
+
+### Falhas encontradas e eliminadas pela campanha
+
+- caminhos existentes recebiam prefixo verbatim `\\?\` no Windows, mas eventos
+  de arquivos já removidos não; o registro podia conservar um módulo fantasma;
+- `HashEq<Program>` comparava apenas contagens e spans, deixando uma alteração
+  literal em corpo importado reutilizar AMIR antigo;
+- reload de manifesto reatribuía `FileId` pela ordem aleatória de `HashMap`;
+  o lote agora é ordenado antes do registro.
 
 ## S2-C — Memória e budgets incrementais
 
