@@ -475,6 +475,26 @@ impl FunctionTranslator<'_, '_> {
 
                 if let Some(op) = payload {
                     let op_ty = self.get_operand_ar_type(op);
+                    let payload_ar_ty = match &enum_ty {
+                        ArType::Named(enum_id, _) => {
+                            arandu_semantics::layout::StructLayoutProvider::get_enum_variants(
+                                self.type_info,
+                                *enum_id,
+                            )
+                            .and_then(|variants| variants.get(*variant_tag).cloned())
+                            .and_then(|shape| shape.payload_ty)
+                        }
+                        ArType::Result(ok, err) => match *variant_tag {
+                            0 => Some(*ok),
+                            1 => Some(*err),
+                            _ => None,
+                        },
+                        // Option.Some = 1; Poll.Ready = 0.
+                        ArType::Option(inner) if *variant_tag == 1 => Some(*inner),
+                        ArType::Poll(inner) if *variant_tag == 0 => Some(*inner),
+                        _ => None,
+                    }
+                    .map(|ty_id| self.type_info.resolve_type_id(ty_id));
                     // ZST payloads (void / typeck error) only need the discriminant tag.
                     // `Err` is a message handle (pointer) and is stored like other scalars.
                     if matches!(op_ty, ArType::Void | ArType::Error) {
@@ -494,7 +514,25 @@ impl FunctionTranslator<'_, '_> {
                             (pointer_width * 2) as i32,
                         );
                     } else {
-                        let val = self.translate_operand(op, None);
+                        // Literals retain their source-level `IntLiteral`/`FloatLiteral`
+                        // type in AMIR. Translate them using the variant's declared
+                        // payload type: otherwise an `int` literal defaults to i32 while
+                        // `int` is pointer-width, leaving the upper bytes uninitialized.
+                        let payload_clif_ty = payload_ar_ty
+                            .as_ref()
+                            .and_then(|ty| crate::types::clif_type(ty, self.ptr_type).concrete())
+                            // Some intrinsic constructors (notably the `Err` handle path)
+                            // are represented by their already-concrete operand type.
+                            .or_else(|| crate::types::clif_type(&op_ty, self.ptr_type).concrete());
+                        if payload_clif_ty.is_none() {
+                            self.record_ice(
+                                format!(
+                                    "missing concrete payload type for enum variant tag {variant_tag}"
+                                ),
+                                self.func_span(),
+                            );
+                        }
+                        let val = self.translate_operand(op, payload_clif_ty);
                         self.builder.ins().store(
                             cranelift_codegen::ir::MemFlagsData::new(),
                             val,

@@ -62,6 +62,15 @@ fn validate(root: &Path, tag: Option<&str>) -> Result<Summary, String> {
         ));
     }
 
+    let extension_lock = root.join("editors/vscode/package-lock.json");
+    let lock_version = json_string_field(&extension_lock, "version")?;
+    if lock_version != canonical {
+        return Err(format!(
+            "{} has version {lock_version}, expected {canonical}",
+            display_relative(root, &extension_lock)
+        ));
+    }
+
     let normalized_tag = tag.map(str::to_owned);
     if let Some(tag) = tag {
         let Some(tag_version) = tag.strip_prefix('v') else {
@@ -173,7 +182,9 @@ fn validate_version(version: &str) -> Result<(), String> {
     if prerelease.is_some_and(|pre| {
         pre.is_empty()
             || pre.split('.').any(|identifier| {
+                let numeric = identifier.bytes().all(|byte| byte.is_ascii_digit());
                 identifier.is_empty()
+                    || (numeric && identifier.len() > 1 && identifier.starts_with('0'))
                     || !identifier
                         .bytes()
                         .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
@@ -208,7 +219,14 @@ mod tests {
 
     #[test]
     fn rejects_noncanonical_versions() {
-        for version in ["v0.1.0", "0.1", "00.1.0", "0.1.0-", "0.1.0-rc!"] {
+        for version in [
+            "v0.1.0",
+            "0.1",
+            "00.1.0",
+            "0.1.0-",
+            "0.1.0-rc!",
+            "0.1.0-rc.01",
+        ] {
             assert!(validate_version(version).is_err(), "{version}");
         }
     }

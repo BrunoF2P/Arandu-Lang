@@ -993,6 +993,28 @@ fn jit_enum_none_payload_never_read() {
 }
 
 #[test]
+fn jit_enum_int_payload_uses_pointer_width() {
+    let src = r#"
+    enum Number {
+        Value(int),
+    }
+    func main(): int {
+        return match Number.Value(4294967303) {
+            Number.Value(value) => value
+        }
+    }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    let backend = backend_for_test();
+    let module = backend.compile(&amir, &symbols, &type_info).unwrap();
+    let result: i64 = unsafe {
+        let f: unsafe fn() -> i64 = module.get_fn("main").unwrap();
+        f()
+    };
+    assert_eq!(result, 4_294_967_303);
+}
+
+#[test]
 fn jit_tuple() {
     let src = r#"
     func pair(): (int, bool) {
