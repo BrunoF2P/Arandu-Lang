@@ -9,6 +9,8 @@ import hashlib
 import os
 from pathlib import Path
 import tarfile
+import json
+import posixpath
 
 
 def canonical_info(path: Path, arcname: str, epoch: int) -> tarfile.TarInfo:
@@ -96,6 +98,56 @@ def compare(left: Path, right: Path) -> None:
             raise SystemExit(f"non-canonical mode for {name}: {mode:o}")
 
 
+def validate(archive_path: Path, root: str, target: str, version: str) -> None:
+    seen: set[str] = set()
+    manifest_bytes: bytes | None = None
+    required = {
+        f"{root}/bin/arandu_cli",
+        f"{root}/bin/arandu",
+        f"{root}/bin/arandu-lsp",
+        f"{root}/BLAKE3SUMS",
+        f"{root}/LICENSE-MIT",
+        f"{root}/LICENSE-APACHE",
+        f"{root}/release-manifest.json",
+    }
+    with tarfile.open(archive_path, "r:gz") as archive:
+        for member in archive.getmembers():
+            name = member.name
+            normalized = posixpath.normpath(name)
+            if name.startswith("/") or normalized == ".." or normalized.startswith("../"):
+                raise SystemExit(f"unsafe archive path: {name}")
+            if name in seen:
+                raise SystemExit(f"duplicate archive entry: {name}")
+            seen.add(name)
+            if name != root and not name.startswith(f"{root}/"):
+                raise SystemExit(f"entry outside package root: {name}")
+            allowed = name in required or name == root or name.startswith(f"{root}/share/arandu/stdlib/") or name in {f"{root}/bin", f"{root}/share", f"{root}/share/arandu", f"{root}/share/arandu/stdlib"}
+            if not allowed:
+                raise SystemExit(f"unexpected archive content: {name}")
+            if member.issym():
+                if name != f"{root}/bin/arandu" or member.linkname != "arandu_cli":
+                    raise SystemExit(f"unexpected symlink: {name} -> {member.linkname}")
+            elif not (member.isfile() or member.isdir()):
+                raise SystemExit(f"unexpected archive entry type: {name}")
+            if name == f"{root}/release-manifest.json":
+                extracted = archive.extractfile(member)
+                if extracted is None:
+                    raise SystemExit("release manifest is not a regular file")
+                manifest_bytes = extracted.read()
+    missing = sorted(required - seen)
+    if missing:
+        raise SystemExit(f"archive missing required entries: {', '.join(missing)}")
+    if not any(name.startswith(f"{root}/share/arandu/stdlib/") and name.endswith(".aru") for name in seen):
+        raise SystemExit("archive contains no stdlib .aru files")
+    try:
+        release = json.loads((manifest_bytes or b"").decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise SystemExit(f"invalid release manifest: {error}") from error
+    expected = {"schema": 1, "version": version, "target": target, "components": ["arandu", "arandu-lsp", "stdlib"], "archive": "tar.gz"}
+    if release != expected:
+        raise SystemExit(f"release manifest mismatch: {release!r}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -106,11 +158,18 @@ def main() -> None:
     compare_parser = subparsers.add_parser("compare")
     compare_parser.add_argument("left", type=Path)
     compare_parser.add_argument("right", type=Path)
+    validate_parser = subparsers.add_parser("validate")
+    validate_parser.add_argument("archive", type=Path)
+    validate_parser.add_argument("--root", required=True)
+    validate_parser.add_argument("--target", required=True)
+    validate_parser.add_argument("--version", required=True)
     args = parser.parse_args()
     if args.command == "create":
         create(args.source, args.output, args.epoch)
-    else:
+    elif args.command == "compare":
         compare(args.left, args.right)
+    else:
+        validate(args.archive, args.root, args.target, args.version)
 
 
 if __name__ == "__main__":

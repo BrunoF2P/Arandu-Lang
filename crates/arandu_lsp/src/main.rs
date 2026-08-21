@@ -146,6 +146,10 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     let pool = WorkerPool::new(4)?;
     let (job_tx, job_rx) = crossbeam_channel::unbounded::<JobResult>();
     event_loop(&connection, &mut state, &pool, job_tx, job_rx)?;
+    // Close lsp-server's sender before joining its writer thread. Keeping the
+    // Connection alive here makes a clean shutdown wait forever for a channel
+    // that this process itself still owns.
+    drop(connection);
     io_threads.join()?;
     Ok(())
 }

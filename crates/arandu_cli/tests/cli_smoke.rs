@@ -32,6 +32,19 @@ fn invalid_usage_exits_with_code_2() {
 }
 
 #[test]
+fn version_is_stable_and_requires_no_project() {
+    for flag in ["--version", "-V"] {
+        let output = run_cli(&[flag]);
+        assert!(output.status.success(), "{flag}: {output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).trim(),
+            format!("arandu {}", env!("CARGO_PKG_VERSION"))
+        );
+        assert!(output.stderr.is_empty());
+    }
+}
+
+#[test]
 fn missing_file_exits_with_code_1() {
     let output = run_cli(&["lex", "missing-file.aru"]);
 
