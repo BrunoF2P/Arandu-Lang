@@ -184,21 +184,21 @@ jobs:
         run: |
           unset ARANDU_STDLIB
           bash scripts/smoke-install.sh
-      - name: Package tarball + BLAKE3 + reinstall from archive
+      - name: Package tarball + checksums + reinstall from archive
         run: |
           set -euo pipefail
           unset ARANDU_STDLIB
           bash scripts/package-release.sh
           TAR=$(find dist -maxdepth 1 -name 'arandu-*.tar.gz' -print -quit)
           test -n "$TAR"
-          test -f "${TAR}.blake3"
+          test -f "${TAR}.sha256"
           PREFIX=$(mktemp -d)
           PREFIX="$PREFIX" bash scripts/install-from-tarball.sh "$TAR"
           env -u ARANDU_STDLIB PATH="$PREFIX/bin:/usr/bin:/bin" \
             bash -c 'cd /tmp && exec "$0" doctor' "$PREFIX/bin/arandu"
-          echo deadbeef > "${TAR}.blake3"
+          echo deadbeef > "${TAR}.sha256"
           if PREFIX=$(mktemp -d) bash scripts/install-from-tarball.sh "$TAR"; then
-            echo "expected blake3 mismatch to abort" >&2
+            echo "expected SHA-256 mismatch to abort" >&2
             exit 1
           fi
 

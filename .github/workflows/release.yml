@@ -247,7 +247,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/bad"
           bad="$RUNNER_TEMP/bad/$(basename "$archive")"
           cp "$archive" "$bad"
-          cp "${archive}.blake3" "${bad}.blake3"
+          cp "${archive}.sha256" "${bad}.sha256"
           printf 'tampered' >>"$bad"
           if ARANDU_NO_MODIFY_PATH=1 PREFIX="$RUNNER_TEMP/arandu-sdk" \
               bash scripts/install-from-tarball.sh "$bad"; then
@@ -410,11 +410,11 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             archive: tar.gz
-            checksum: blake3
+            checksum: sha256
           - os: macos-latest
             target: aarch64-apple-darwin
             archive: tar.gz
-            checksum: blake3
+            checksum: sha256
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             archive: zip
