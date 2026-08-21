@@ -1,6 +1,9 @@
 #![allow(clippy::collapsible_if)]
+mod cli_error;
 mod project;
 mod watch;
+
+use cli_error::{CliFailure, CliResult, CliSuccess};
 
 use std::{
     env, fs,
@@ -8,30 +11,37 @@ use std::{
     process,
 };
 
-fn clean_exit(code: i32) -> ! {
+fn print_diagnostics_and_exit(
+    diagnostics: impl IntoIterator<Item = arandu_middle::Diagnostic>,
+    filepath: &str,
+) -> ! {
+    let source_path = (!filepath.is_empty()).then(|| PathBuf::from(filepath));
+    finish(Err(CliFailure::diagnostics(diagnostics, source_path)))
+}
+
+fn finish(result: CliResult) -> ! {
+    let code = match result {
+        Ok(success) => success.exit_code(),
+        Err(failure) => {
+            failure.render();
+            failure.exit_code()
+        }
+    };
     arandu_base::print_perf_summary();
     arandu_base::finalize_self_profile();
     process::exit(code);
 }
 
-fn print_diagnostics_and_exit(
-    diagnostics: impl IntoIterator<Item = arandu_middle::Diagnostic>,
-    filepath: &str,
+fn fail_usage(message: impl Into<String>) -> ! {
+    finish(Err(CliFailure::usage(message)))
+}
+
+fn fail_operational(
+    operation: &'static str,
+    context: Option<PathBuf>,
+    source: impl Into<String>,
 ) -> ! {
-    let source = if !filepath.is_empty() {
-        fs::read_to_string(filepath).unwrap_or_default()
-    } else {
-        String::new()
-    };
-
-    let named_source = miette::NamedSource::new(filepath, source);
-
-    for diagnostic in diagnostics {
-        let report = miette::Report::new(diagnostic).with_source_code(named_source.clone());
-        eprintln!("{:?}", report);
-    }
-
-    clean_exit(1);
+    finish(Err(CliFailure::operational(operation, context, source)))
 }
 
 fn print_parse_error_and_exit(err: &arandu_parser::ParseError, filepath: &str) -> ! {
@@ -59,8 +69,12 @@ fn validate_hir_and_monomorphize(
     filepath: &str,
 ) {
     if let Err(err) = hir.validate_invariants(&hir.pool, &type_check.symbols) {
-        eprintln!("HIR invariant violation: {err}");
-        clean_exit(1);
+        let diag = arandu_middle::Diagnostic::ice(
+            arandu_middle::DiagCode::ICEL001,
+            format!("HIR invariant violation before monomorphization: {err}"),
+            arandu_middle::Span::new(0, 0, 0),
+        );
+        print_diagnostics_and_exit(std::iter::once(diag), filepath);
     }
 
     if let Err(diags) =
@@ -76,25 +90,27 @@ struct CheckedProgram {
     type_check: arandu_semantics::TypeCheckResult,
 }
 
-/// Print Salsa-accumulated diagnostics once. Returns whether any Error was seen.
-fn print_accumulated_diags(
+/// Render non-fatal Salsa diagnostics or terminate through the typed diagnostic path.
+fn handle_accumulated_diags(
     diags: &[impl std::ops::Deref<Target = arandu_middle::db::DiagnosticsAccumulator>],
     filepath: &str,
-) -> bool {
+) {
     if diags.is_empty() {
-        return false;
+        return;
+    }
+    let diagnostics: Vec<_> = diags.iter().map(|d| d.0.clone()).collect();
+    if diagnostics
+        .iter()
+        .any(|d| matches!(d.severity, arandu_middle::Severity::Error))
+    {
+        print_diagnostics_and_exit(diagnostics, filepath);
     }
     let source = std::fs::read_to_string(filepath).unwrap_or_default();
     let named_source = miette::NamedSource::new(filepath, source);
-    let mut has_fatal = false;
-    for d in diags {
-        if matches!(d.0.severity, arandu_middle::Severity::Error) {
-            has_fatal = true;
-        }
-        let report = miette::Report::new(d.0.clone()).with_source_code(named_source.clone());
+    for diagnostic in diagnostics {
+        let report = miette::Report::new(diagnostic).with_source_code(named_source.clone());
         eprintln!("{:?}", report);
     }
-    has_fatal
 }
 
 /// Single pipeline entry for check / run / amir / emit-c:
@@ -120,9 +136,7 @@ fn pipeline_lower(
     let type_diags = arandu_query::passes::type_check::accumulated::<
         arandu_middle::db::DiagnosticsAccumulator,
     >(db, file);
-    if print_accumulated_diags(&type_diags, filepath) {
-        process::exit(1);
-    }
+    handle_accumulated_diags(&type_diags, filepath);
 
     let artifacts = {
         arandu_base::time_pass!("lower-amir");
@@ -131,9 +145,7 @@ fn pipeline_lower(
     let lower_diags = arandu_query::passes::lower_amir::accumulated::<
         arandu_middle::db::DiagnosticsAccumulator,
     >(db, file);
-    if print_accumulated_diags(&lower_diags, filepath) {
-        process::exit(1);
-    }
+    handle_accumulated_diags(&lower_diags, filepath);
 
     std::sync::Arc::clone(&artifacts.value)
 }
@@ -161,9 +173,7 @@ fn parse_and_check(
     let diagnostics = arandu_query::passes::type_check::accumulated::<
         arandu_middle::db::DiagnosticsAccumulator,
     >(db, file);
-    if print_accumulated_diags(&diagnostics, filepath) {
-        process::exit(1);
-    }
+    handle_accumulated_diags(&diagnostics, filepath);
 
     // TypeCheckResult is Arc-heavy (symbols/resolved/type_info) — clone is O(1) for IR.
     CheckedProgram {
@@ -173,26 +183,24 @@ fn parse_and_check(
 }
 
 fn usage_and_exit() -> ! {
-    eprintln!("usage:");
-    eprintln!("  arandu_cli <lex|parse|check|hir|amir|run|emit-c|graph|fmt> <path> [flags]");
-    eprintln!("  arandu_cli new <project-name>");
-    eprintln!("  arandu_cli doctor [--stdlib-path=<dir>] [-v]");
-    eprintln!("  arandu_cli hash-file <path>          # BLAKE3 hex (packaging checksums)");
-    eprintln!("  arandu_cli watch [package-path]      # re-check on FS changes (package mode)");
-    eprintln!("  arandu_cli check|run|build [--release] [--stdlib-path=<dir>] [package-path]");
-    eprintln!();
-    eprintln!("  emit-c options: --layout=host|ptr4|i686  (default: host)");
-    eprintln!("  G2/F2.3: --no-generational-fallback  (promote O004 notes to errors)");
-    eprintln!("  -Z flags: -Ztime-passes  -Zprofile-queries  -Zprint-alloc-stats  -Zdump-mir");
-    eprintln!(
-        "           : -Zdebug-parser -Zdebug-typeck -Zdebug-ossa -Zdebug-layout -Zdebug-backend -Zdebug-all"
+    let message = concat!(
+        "usage:\n",
+        "  arandu_cli <lex|parse|check|hir|amir|run|emit-c|graph|fmt> <path> [flags]\n",
+        "  arandu_cli new <project-name>\n",
+        "  arandu_cli doctor [--stdlib-path=<dir>] [-v]\n",
+        "  arandu_cli hash-file <path>          # BLAKE3 hex (packaging checksums)\n",
+        "  arandu_cli watch [package-path]      # re-check on FS changes (package mode)\n",
+        "  arandu_cli check|run|build [--release] [--stdlib-path=<dir>] [package-path]\n\n",
+        "  emit-c options: --layout=host|ptr4|ptr8|i686  (default: host)\n",
+        "                  layout model only; cross compiler/sysroot are external\n",
+        "  G2/F2.3: --no-generational-fallback  (promote O004 notes to errors)\n",
+        "  -Z flags: -Ztime-passes  -Zprofile-queries  -Zprint-alloc-stats  -Zdump-mir\n",
+        "           : -Zdebug-parser -Zdebug-typeck -Zdebug-ossa -Zdebug-layout -Zdebug-backend -Zdebug-all\n",
+        "           : -Zself-profile=<path>  -Zexplain-rebuild  -Zno-generational-fallback\n\n",
+        "  backend: build → Cranelift (dev); build --release → LLVM when available\n",
+        "  stdlib:  --stdlib-path > ARANDU_STDLIB > relative to binary (never cwd)"
     );
-    eprintln!("           : -Zself-profile=<path>  -Zexplain-rebuild  -Zno-generational-fallback");
-    eprintln!();
-    eprintln!("  backend: build → Cranelift (dev); build --release → LLVM when available");
-    eprintln!("  stdlib:  --stdlib-path > ARANDU_STDLIB > relative to binary (never cwd)");
-
-    process::exit(2);
+    finish(Err(CliFailure::usage(message)))
 }
 
 /// Attach resolved stdlib root to the DB (install cascade; never cwd-only).
@@ -220,8 +228,9 @@ fn parse_data_layout(flags: &[String]) -> arandu_middle::layout::DataLayout {
                 "i686" | "i686-sysv" => DataLayout::i686_sysv(),
                 "ptr8" | "64" => DataLayout::ptr_width(8),
                 other => {
-                    eprintln!("unknown --layout={other} (use host|ptr4|ptr8|i686)");
-                    process::exit(2);
+                    fail_usage(format!(
+                        "unknown --layout={other} (use host|ptr4|ptr8|i686)"
+                    ));
                 }
             };
         }
@@ -276,7 +285,8 @@ fn main() {
         }
     }
     let data_layout = parse_data_layout(&layout_flags);
-    let (project_flags, extra_positional) = project::parse_project_flags(&raw_project_flags);
+    let (project_flags, extra_positional) = project::parse_project_flags(&raw_project_flags)
+        .unwrap_or_else(|message| fail_usage(format!("error: {message}")));
     // positional extras from flag parser should not exist; merge any leftovers
     let _ = extra_positional;
 
@@ -297,24 +307,23 @@ fn main() {
     match command {
         "new" => {
             if args.len() != 3 {
-                eprintln!("usage: arandu_cli new <project-name>");
-                process::exit(2);
+                fail_usage("usage: arandu_cli new <project-name>");
             }
-            clean_exit(project::cmd_new(&args[2]));
+            finish(project::cmd_new(&args[2]));
         }
         "doctor" => {
             if args.len() != 2 {
-                eprintln!("usage: arandu_cli doctor [--stdlib-path=<dir>] [-v]");
-                process::exit(2);
+                fail_usage("usage: arandu_cli doctor [--stdlib-path=<dir>] [-v]");
             }
-            clean_exit(project::cmd_doctor(&project_flags));
+            finish(Ok(CliSuccess::ProgramExit(project::cmd_doctor(
+                &project_flags,
+            ))));
         }
         "hash-file" => {
             if args.len() != 3 {
-                eprintln!("usage: arandu_cli hash-file <path>");
-                process::exit(2);
+                fail_usage("usage: arandu_cli hash-file <path>");
             }
-            clean_exit(cmd_hash_file(Path::new(&args[2])));
+            finish(cmd_hash_file(Path::new(&args[2])));
         }
         "watch" => {
             let start = if args.len() >= 3 {
@@ -322,7 +331,7 @@ fn main() {
             } else {
                 env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
             };
-            clean_exit(watch::cmd_watch(&start, &project_flags));
+            finish(watch::cmd_watch(&start, &project_flags));
         }
         "build" => {
             // Package mode: always project-oriented.
@@ -331,7 +340,7 @@ fn main() {
             } else {
                 env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
             };
-            clean_exit(cmd_project_build(&start, &project_flags, opt, debug));
+            finish(cmd_project_build(&start, &project_flags, opt, debug));
         }
         // Project-mode check/run when the path is a package (Arandu.toml) or omitted.
         "check" | "run"
@@ -342,12 +351,12 @@ fn main() {
             } else {
                 env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
             };
-            let code = if command == "check" {
+            let result = if command == "check" {
                 cmd_project_check(&start, &project_flags, opt, debug)
             } else {
                 cmd_project_run(&start, &project_flags, opt, debug)
             };
-            clean_exit(code);
+            finish(result);
         }
         _ => {}
     }
@@ -369,8 +378,11 @@ fn main() {
     let mut paths = Vec::new();
     if path.is_dir() {
         if let Err(err) = find_aru_files(path, &mut paths) {
-            eprintln!("failed to list directory {}: {err}", path.display());
-            process::exit(1);
+            fail_operational(
+                "failed to list directory",
+                Some(path.to_path_buf()),
+                err.to_string(),
+            );
         }
         paths.sort();
     } else {
@@ -378,8 +390,11 @@ fn main() {
     }
 
     if paths.is_empty() {
-        eprintln!("no .aru source files found at {}", path.display());
-        process::exit(1);
+        fail_operational(
+            "find Arandu sources",
+            Some(path.to_path_buf()),
+            "no .aru source files found",
+        );
     }
 
     if command == "fmt" {
@@ -388,15 +403,13 @@ fn main() {
             let src = match fs::read_to_string(p) {
                 Ok(s) => s,
                 Err(err) => {
-                    eprintln!("failed to read {}: {err}", p.display());
-                    process::exit(1);
+                    fail_operational("failed to read", Some(p.clone()), err.to_string());
                 }
             };
             let formatted = arandu_fmt::format_source(&src);
             if formatted != src {
                 if let Err(err) = fs::write(p, &formatted) {
-                    eprintln!("failed to write {}: {err}", p.display());
-                    process::exit(1);
+                    fail_operational("failed to write", Some(p.clone()), err.to_string());
                 }
                 changed += 1;
                 eprintln!("formatted {}", p.display());
@@ -412,11 +425,11 @@ fn main() {
 
     if use_parallel {
         if matches!(command, "lex" | "parse" | "run" | "emit-c") {
-            eprintln!(
-                "parallel/multi-file mode is not supported for command '{}'",
-                command
+            fail_operational(
+                "run command",
+                None,
+                format!("parallel/multi-file mode is not supported for command '{command}'"),
             );
-            process::exit(1);
         }
     }
 
@@ -449,8 +462,7 @@ fn main() {
                 source_files.push((source_file, filepath, source));
             }
             Err(err) => {
-                eprintln!("failed to read {}: {err}", p.display());
-                process::exit(1);
+                fail_operational("failed to read", Some(p.clone()), err.to_string());
             }
         }
     }
@@ -464,16 +476,22 @@ fn main() {
             "lex" => match arandu_lexer::lex_to_string(&source) {
                 Ok(output) => println!("{output}"),
                 Err(err) => {
-                    eprintln!("{err}");
-                    clean_exit(1);
+                    fail_operational(
+                        "lex source",
+                        Some(PathBuf::from(&filepath)),
+                        err.to_string(),
+                    );
                 }
             },
 
             "parse" => match arandu_parser::parse_to_string(&source) {
                 Ok(output) => println!("{output}"),
                 Err(err) => {
-                    eprintln!("{err}");
-                    clean_exit(1);
+                    fail_operational(
+                        "parse source",
+                        Some(PathBuf::from(&filepath)),
+                        err.to_string(),
+                    );
                 }
             },
 
@@ -603,8 +621,11 @@ fn main() {
                     .iter()
                     .any(|f| type_check.symbols.get(f.symbol).name.as_str() == "main");
                 if !has_main {
-                    eprintln!("Error: 'main' function not found in compiled program");
-                    clean_exit(1);
+                    fail_operational(
+                        "run program",
+                        Some(PathBuf::from(&filepath)),
+                        "'main' function not found in compiled program",
+                    );
                 }
 
                 unsafe {
@@ -612,16 +633,19 @@ fn main() {
                         if let Some(main_fn) = CompiledCode::get_fn::<unsafe fn()>(&output, "main")
                         {
                             main_fn();
-                            clean_exit(0);
+                            finish(Ok(CliSuccess::Done));
                         }
                     } else if let Some(main_fn) =
                         CompiledCode::get_fn::<unsafe fn() -> i32>(&output, "main")
                     {
                         let code = main_fn();
-                        clean_exit(code);
+                        finish(Ok(CliSuccess::ProgramExit(code)));
                     }
-                    eprintln!("Error: 'main' function not found in compiled program");
-                    clean_exit(1);
+                    fail_operational(
+                        "run program",
+                        Some(PathBuf::from(&filepath)),
+                        "compiled module does not export a callable 'main' function",
+                    );
                 }
             }
             "emit-c" => {
@@ -679,8 +703,7 @@ fn main() {
             }
 
             _ => {
-                eprintln!("Error: unknown command");
-                process::exit(2);
+                fail_usage("error: unknown command");
             }
         }
     };
@@ -715,16 +738,17 @@ fn main() {
 }
 
 /// Print BLAKE3-256 hex of a file (packaging / install integrity).
-fn cmd_hash_file(path: &Path) -> i32 {
+fn cmd_hash_file(path: &Path) -> CliResult {
     match fs::read(path) {
         Ok(bytes) => {
             println!("{}", blake3::hash(&bytes).to_hex());
-            0
+            Ok(CliSuccess::Done)
         }
-        Err(e) => {
-            eprintln!("error: failed to read {}: {e}", path.display());
-            1
-        }
+        Err(error) => Err(CliFailure::operational(
+            "failed to read",
+            Some(path.to_path_buf()),
+            error.to_string(),
+        )),
     }
 }
 
@@ -754,8 +778,7 @@ fn open_entry_file(
     let source = match fs::read_to_string(entry) {
         Ok(s) => s,
         Err(err) => {
-            eprintln!("failed to read {}: {err}", entry.display());
-            process::exit(1);
+            fail_operational("failed to read", Some(entry.to_path_buf()), err.to_string());
         }
     };
     let filepath = entry.to_string_lossy().into_owned();
@@ -767,13 +790,21 @@ fn open_entry_file(
     (source_file, filepath)
 }
 
-fn cmd_project_check(start: &Path, flags: &project::ProjectFlags, _opt: bool, _debug: bool) -> i32 {
+fn cmd_project_check(
+    start: &Path,
+    flags: &project::ProjectFlags,
+    _opt: bool,
+    _debug: bool,
+) -> CliResult {
     let (mut db, rebuild_log) = arandu_query::DatabaseImpl::with_rebuild_log();
     let ctx = match project::load_project(&mut db, start, flags) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("error: {e}");
-            return 1;
+            return Err(CliFailure::operational(
+                "load project",
+                Some(start.into()),
+                e,
+            ));
         }
     };
     let mut registry = arandu_base::SourceRegistry::default();
@@ -781,22 +812,29 @@ fn cmd_project_check(start: &Path, flags: &project::ProjectFlags, _opt: bool, _d
     let _ = pipeline_lower(&db, file, &filepath);
     eprintln!("{}", rebuild_log.status_line());
     println!("ok {} ({}/{})", filepath, ctx.name, ctx.version);
-    0
+    Ok(CliSuccess::Done)
 }
 
-fn cmd_project_run(start: &Path, flags: &project::ProjectFlags, opt: bool, _debug: bool) -> i32 {
+fn cmd_project_run(
+    start: &Path,
+    flags: &project::ProjectFlags,
+    opt: bool,
+    _debug: bool,
+) -> CliResult {
     if flags.release {
-        eprintln!(
-            "error: `run --release` (LLVM) is not implemented yet; use `run` for Cranelift JIT"
-        );
-        return 2;
+        return Err(CliFailure::usage(
+            "`run --release` (LLVM) is not implemented yet; use `run` for Cranelift JIT",
+        ));
     }
     let (mut db, rebuild_log) = arandu_query::DatabaseImpl::with_rebuild_log();
     let ctx = match project::load_project(&mut db, start, flags) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("error: {e}");
-            return 1;
+            return Err(CliFailure::operational(
+                "load project",
+                Some(start.into()),
+                e,
+            ));
         }
     };
     let mut registry = arandu_base::SourceRegistry::default();
@@ -848,40 +886,52 @@ fn cmd_project_run(start: &Path, flags: &project::ProjectFlags, opt: bool, _debu
         .iter()
         .any(|f| type_check.symbols.get(f.symbol).name.as_str() == "main");
     if !has_main {
-        eprintln!("Error: 'main' function not found in compiled program");
-        return 1;
+        return Err(CliFailure::operational(
+            "run project",
+            Some(ctx.entry_path),
+            "'main' function not found in compiled program",
+        ));
     }
 
     unsafe {
         if main_is_void {
             if let Some(main_fn) = CompiledCode::get_fn::<unsafe fn()>(&output, "main") {
                 main_fn();
-                return 0;
+                return Ok(CliSuccess::Done);
             }
         } else if let Some(main_fn) = CompiledCode::get_fn::<unsafe fn() -> i32>(&output, "main") {
-            return main_fn();
+            return Ok(CliSuccess::ProgramExit(main_fn()));
         }
     }
-    eprintln!("Error: 'main' function not found in compiled program");
-    1
+    Err(CliFailure::operational(
+        "run project",
+        Some(ctx.entry_path),
+        "compiled entry point could not be loaded",
+    ))
 }
 
-fn cmd_project_build(start: &Path, flags: &project::ProjectFlags, opt: bool, _debug: bool) -> i32 {
+fn cmd_project_build(
+    start: &Path,
+    flags: &project::ProjectFlags,
+    opt: bool,
+    _debug: bool,
+) -> CliResult {
     let backend = project::BackendChoice::from_release_flag(flags.release);
     if matches!(backend, project::BackendChoice::LlvmReserved) {
-        eprintln!(
-            "error: `build --release` selects LLVM (roadmap dual-backend), which is not available yet"
-        );
-        eprintln!("hint: use `arandu_cli build` for Cranelift (dev) or `emit-c` for C dump");
-        return 2;
+        return Err(CliFailure::usage(
+            "`build --release` selects LLVM, which is not available yet; use `build` for Cranelift or `emit-c` for C output",
+        ));
     }
 
     let (mut db, rebuild_log) = arandu_query::DatabaseImpl::with_rebuild_log();
     let ctx = match project::load_project(&mut db, start, flags) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("error: {e}");
-            return 1;
+            return Err(CliFailure::operational(
+                "load project",
+                Some(start.into()),
+                e,
+            ));
         }
     };
     let mut registry = arandu_base::SourceRegistry::default();
@@ -923,7 +973,7 @@ fn cmd_project_build(start: &Path, flags: &project::ProjectFlags, opt: bool, _de
                 backend.label(),
                 ctx.entry_rel
             );
-            0
+            Ok(CliSuccess::Done)
         }
         Err(diag) => print_diagnostics_and_exit(std::iter::once(diag), &filepath),
     }

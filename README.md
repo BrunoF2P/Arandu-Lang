@@ -35,7 +35,8 @@ Implemented:
 - Opt-in AMIR optimizer (`amir --opt`) with constant folding and DCE.
 - Type interning, `DataLayout` (host / 32-bit / i686), and monomorphization graph infrastructure.
 - Cranelift JIT backend (experimental, **host** dev/debug) with `run` CLI support.
-- C emit path (`emit-c --layout=host|ptr4|i686`) — portable dump; not a polished embedded runtime yet.
+- GNU C emit path (`emit-c --layout=host|ptr4|ptr8|i686`) — layout-aware source;
+  cross compilation still requires a matching external target toolchain and sysroot.
 - **ToStr v0.1** — auto-format `bool`, integers (incl. fixed-width), floats, `char`, and `str` in:
   - string interpolation (`"n=${n}"`)
   - call args whose formal type is `str` (e.g. `io.println(42)`)
@@ -45,6 +46,8 @@ Implemented:
   - User `Display` / custom formatting for structs is later.
 - **Salsa query DB** (`arandu_query`) — incremental `parse` → `resolve` → `type_check` → `lower_amir`; DX.5 `-Zexplain-rebuild` / run `[cached]`/`[rebuilt]`.
 - **LSP gold** (`arandu-lsp`) — diagnostics, goto/hover/complete/signatureHelp/refs/rename/symbols, **type-aware semantic tokens**, **format**, **code actions** (quickfix `;`).  
+  Failure and snapshot behavior is specified in the
+  [CLI/LSP contract](docs/arandu-cli-lsp-contract-v0.1.md).
 - **CST-first** (rowan): `syntax_tree` → lower AST; reparse de subtree por ITEM; crate `arandu_fmt` + CLI `fmt`.
 - **Project CLI (P2 gold)** — `arandu_cli new|doctor|check|run|build`; `Arandu.toml` as Salsa input; stdlib cascade (`--stdlib-path` > `ARANDU_STDLIB` > relative to binary).
 
@@ -172,7 +175,8 @@ Run a program via the Cranelift JIT backend (exit code = `main` return value):
 cargo run -p arandu_cli -- run tests/codegen/add.aru
 ```
 
-Emit portable C (layout follows [`DataLayout`](docs/arandu-abi-layout-v0.1.md)):
+Emit GNU C (layout follows [`DataLayout`](docs/arandu-abi-layout-v0.1.md); see the
+[backend contract](docs/arandu-backend-contract-v0.1.md) before cross-compiling):
 
 ```bash
 cargo run -p arandu_cli -- emit-c examples/stable/syntax/fib_main.aru --layout=host

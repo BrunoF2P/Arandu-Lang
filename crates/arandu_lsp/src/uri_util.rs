@@ -97,4 +97,9 @@ mod tests {
         let u = parse_uri("file:///home/user/a.aru").expect("parse");
         assert_eq!(path_from_uri(&u), PathBuf::from("/home/user/a.aru"));
     }
+
+    #[test]
+    fn malformed_uri_is_rejected_without_panicking() {
+        assert!(parse_uri("not a uri with spaces and %zz").is_none());
+    }
 }

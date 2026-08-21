@@ -65,7 +65,11 @@ impl<'a> CEmitter<'a> {
                 let base_ty = match base {
                     AmirOperand::Copy(t) | AmirOperand::Move(t) => self.temp_ty(func, *t),
                     _ => {
-                        let _ = write!(&mut self.output, "/* unsupported base operand */");
+                        self.record_codegen_ice(
+                            func,
+                            "FieldAccess reached C codegen with a non-temporary base",
+                        );
+                        let _ = write!(&mut self.output, "/* invalid FieldAccess base */ 0");
                         return;
                     }
                 };
@@ -92,7 +96,11 @@ impl<'a> CEmitter<'a> {
                 let base_temp = match value {
                     AmirOperand::Copy(t) | AmirOperand::Move(t) => t.as_usize(),
                     _ => {
-                        let _ = write!(&mut self.output, "/* unsupported base */");
+                        self.record_codegen_ice(
+                            func,
+                            "Discriminant reached C codegen with a non-temporary base",
+                        );
+                        let _ = write!(&mut self.output, "/* invalid Discriminant base */ 0");
                         return;
                     }
                 };
@@ -110,7 +118,11 @@ impl<'a> CEmitter<'a> {
                 let base_temp = match value {
                     AmirOperand::Copy(t) | AmirOperand::Move(t) => t.as_usize(),
                     _ => {
-                        let _ = write!(&mut self.output, "/* unsupported base */");
+                        self.record_codegen_ice(
+                            func,
+                            "EnumPayload reached C codegen with a non-temporary base",
+                        );
+                        let _ = write!(&mut self.output, "/* invalid EnumPayload base */ 0");
                         return;
                     }
                 };
@@ -357,7 +369,11 @@ impl<'a> CEmitter<'a> {
                 } else if let ArType::Array(len, _) = op_ty {
                     let _ = write!(&mut self.output, "{}", len);
                 } else {
-                    let _ = write!(&mut self.output, "/* unsupported Len operand */");
+                    self.record_codegen_ice(
+                        func,
+                        format!("Len reached C codegen for unsupported type {op_ty:?}"),
+                    );
+                    let _ = write!(&mut self.output, "/* invalid Len operand */ 0");
                 }
             }
             AmirRvalue::IndexAccess { base, index } => {
@@ -480,10 +496,13 @@ impl<'a> CEmitter<'a> {
                         let _ = write!(&mut self.output, "ar_u64_to_str((uint64_t)({val}))");
                     }
                     other => {
+                        self.record_codegen_ice(
+                            func,
+                            format!("ToStr reached C codegen for unsupported type {other:?}"),
+                        );
                         let _ = write!(
                             &mut self.output,
-                            "/* unsupported ToStr {:?} */ ar_str_pack((const uint8_t*)\"\", 0)",
-                            other
+                            "/* invalid ToStr source */ ar_str_pack((const uint8_t*)\"\", 0)"
                         );
                     }
                 }

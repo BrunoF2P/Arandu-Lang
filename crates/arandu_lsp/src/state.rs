@@ -258,4 +258,19 @@ mod tests {
         assert!(st.docs.get(id).is_none());
         assert!(!st.by_uri.contains_key(uri.as_str()));
     }
+
+    #[test]
+    fn close_discards_pending_edit_without_reopening_document() {
+        let mut st = ServerState::new();
+        st.vfs = Vfs::with_debounce(Duration::from_millis(0));
+        let uri = file_url("closed-pending.aru");
+        let id = st.open_or_commit(&uri, "func main() {}".into());
+        st.queue_change(&uri, "func main() { let stale = 1; }".into());
+
+        st.close_uri(&uri);
+
+        assert!(st.flush_all().is_empty());
+        assert!(st.docs.get(id).is_none());
+        assert!(!st.by_uri.contains_key(uri.as_str()));
+    }
 }

@@ -1,6 +1,6 @@
 # Arandu S1 — Contratos e recuperação
 
-**Status:** em implementação; S1-A concluído, S1-B/S1-C parciais.  
+**Status:** em implementação; S1-A/S1-B/S1-C concluídos.
 **Data da auditoria:** 2026-08-20.  
 **Objetivo:** código Arandu inválido nunca encerra o compilador por `panic`; falhas
 internas são ICEs identificáveis, e falhas operacionais pertencem à CLI/LSP.
@@ -132,8 +132,9 @@ esses lints localmente; produção não ganha `allow` amplo.
       `ICE-GEN-001`.
 - [x] Garantir que C e Cranelift rejeitam as mesmas classes de AMIR inválida
       (aresta SSA, tipo poison e faixa de statements), antes de gerar artefato.
-- [ ] Documentar matriz de tipos, layouts, host/cross-target e recursos não
-      suportados por backend.
+- [x] Documentar matriz de tipos, layouts, host/cross-target e recursos não
+      suportados por backend em
+      [`arandu-backend-contract-v0.1.md`](arandu-backend-contract-v0.1.md).
 - [x] Tornar layout target-dependent falível, com overflow verificado em
       arrays/agregados e propagação sem artefato parcial em C/Cranelift.
 - [x] Testar que backend inválido retorna `Err(ICE-GEN-001)`, sem sucesso
@@ -143,13 +144,14 @@ esses lints localmente; produção não ganha `allow` amplo.
 
 ### S1-D — Fronteiras CLI e LSP
 
-- [ ] Centralizar `CliError { kind, exit_code, source }` ou equivalente local.
-- [ ] Renderizar falha de validação HIR/AMIR como ICE, não `eprintln!` ad hoc.
-- [ ] Publicar tabela dos comandos, backends, estabilidade e códigos de saída.
-- [ ] No LSP, transformar panic de worker em falha isolada, descartar snapshot e
+- [x] Centralizar `CliError { kind, exit_code, source }` ou equivalente local.
+- [x] Renderizar falha de validação HIR/AMIR como ICE, não `eprintln!` ad hoc.
+- [x] Publicar tabela dos comandos, backends, estabilidade e códigos de saída em
+      [`arandu-cli-lsp-contract-v0.1.md`](arandu-cli-lsp-contract-v0.1.md).
+- [x] No LSP, transformar panic de worker em falha isolada, descartar snapshot e
       nunca publicar resultado stale; não tentar continuar a mesma análise.
-- [ ] Adicionar testes de arquivo removido, URI inválida, stdlib ausente e
-      cancelamento durante edição.
+- [x] Adicionar testes de arquivo removido/fechado, URI inválida, stdlib ausente
+      e cancelamento/revisão durante edição.
 
 **Saída:** CLI e LSP aplicam o mesmo contrato sem misturar camadas.
 

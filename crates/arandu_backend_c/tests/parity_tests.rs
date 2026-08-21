@@ -208,6 +208,32 @@ fn c_backend_rejects_residual_null_coalesce_without_partial_success() {
 }
 
 #[test]
+fn c_backend_rejects_unsupported_len_without_partial_success() {
+    let (mut amir, tc) = compile_src("func main(): int { let x = 1; return x }");
+    let assign = amir
+        .funcs
+        .iter_mut()
+        .flat_map(|func| func.stmts.payloads.raw.iter_mut())
+        .find_map(|stmt| match stmt {
+            AmirStmt::Assign { rhs, .. } => Some(rhs),
+            _ => None,
+        })
+        .expect("fixture must lower at least one assignment");
+    *assign = AmirRvalue::Len(AmirOperand::Constant(AmirConstant::Bool(true)));
+
+    let error = arandu_backend_c::emit_c(
+        &amir,
+        tc.symbols.as_ref(),
+        tc.type_info.as_ref(),
+        &tc.type_info.type_interner,
+        DataLayout::host(),
+    )
+    .unwrap_err();
+    assert_eq!(error.code, arandu_middle::DiagCode::ICEGEN001);
+    assert!(error.message.contains("Len"));
+}
+
+#[test]
 fn both_backends_reject_the_same_invalid_ssa_edge() {
     let (mut amir, tc) = compile_src("func main(): int { let x = 1; return x }");
     amir.funcs[0].blocks[0].terminator = arandu_middle::amir::AmirTerminator::Goto {

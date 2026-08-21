@@ -48,7 +48,7 @@ testar internals que pertencem ao Cranelift, Salsa ou Rowan.
 | `arandu_backend_c` | IR inválida gera C parcial; signed/layout diverge | validator compartilhado antes da emissão; rejeição idêntica de aresta SSA, tipo poison e faixa inválida; `ICE-GEN-001`; emissão byte-idêntica | matriz signed/layout e atomicidade no CLI |
 | `arandu_backend_cranelift` | bloco/parâmetro inválido ou index/shift miscompila | validator compartilhado antes de mutar o JIT; mesma rejeição do C; verifier e diferencial índice+shift | limites de shift e índices negativos/fora da faixa conforme contrato |
 | `arandu_cli` | erro operacional vira sucesso/artefato parcial | exit codes e projetos | atomicidade de build/emit e caminhos Unicode/CRLF |
-| `arandu_lsp` | UTF-16/CRLF desloca edição; worker publica stale | revisões/debounce | roundtrip astral+CRLF (iniciado) e resposta descartada após close |
+| `arandu_lsp` | UTF-16/CRLF desloca edição; worker morre ou publica stale | revisão/debounce; panic isolado por job; snapshot falho descartado; `ContentModified`; close elimina edição pendente | roundtrip astral+CRLF e campanha obrigatória em hosts adicionais |
 | `arandu_fmt` | segunda formatação muda saída; string altera indentação | smoke estrutural | idempotência Unicode/CRLF e fallback inválido (iniciado) |
 | `arandu_test_support` / `xtask` | snapshot errado é atualizado silenciosamente | comparação e bijeção | update exige opt-in e arquivos órfãos falham deterministicamente |
 

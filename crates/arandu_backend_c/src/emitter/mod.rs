@@ -166,7 +166,7 @@ impl<'a> CEmitter<'a> {
         }
     }
 
-    pub(super) fn record_codegen_ice(&mut self, func: &AmirFunc, message: &'static str) {
+    pub(super) fn record_codegen_ice(&mut self, func: &AmirFunc, message: impl Into<String>) {
         if self.error.is_none() {
             let span = func
                 .temps

@@ -27,6 +27,8 @@ fn invalid_usage_exits_with_code_2() {
         err.contains("usage:") && err.contains("arandu_cli"),
         "expected usage help, got: {err}"
     );
+    assert!(err.contains("layout model only"));
+    assert!(err.contains("cross compiler/sysroot are external"));
 }
 
 #[test]
