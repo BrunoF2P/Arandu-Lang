@@ -98,18 +98,22 @@ duas versões reais será comprovada durante a promoção S3-E.
 
 ## S3-D — Publicação verificável
 
-- [ ] Workflow de tag cria draft, baixa todos os artifacts, valida conjunto
+- [x] Workflow de tag cria draft, baixa todos os artifacts, valida conjunto
       exato e só então publica; falha parcial não cria release pública.
-- [ ] Gerar BLAKE3, manifest agregado e attestation GitHub/Sigstore para archives
+- [x] Gerar BLAKE3, manifest agregado e attestation GitHub/Sigstore para archives
       e manifest; documentar `gh attestation verify`.
-- [ ] Fixar actions por SHA, permissões mínimas (`contents`, `id-token`,
+- [x] Fixar actions por SHA, permissões mínimas (`contents`, `id-token`,
       `attestations`) e nenhuma credencial persistida nos builders.
-- [ ] Habilitar immutable releases e documentar que tags/assets publicados não
+- [ ] Habilitar immutable releases no GitHub. O procedimento já está documentado;
+      confirmar a configuração antes da primeira RC, pois ela não é retroativa.
+- [x] Documentar que tags/assets publicados não
       são substituídos; correção exige nova versão.
-- [ ] Dry-run manual produz o mesmo conjunto, mas nunca publica nem atesta como
+- [x] Dry-run manual produz o mesmo conjunto, mas nunca publica nem atesta como
       release oficial.
 
 **Saída:** consumidores verificam bytes, origem, workflow, commit e tag.
+
+Procedimento: [`release-verification.md`](release-verification.md).
 
 ## S3-E — Promoção beta gold
 
