@@ -1,0 +1,8 @@
+# path<TAB>targets<TAB>origin<TAB>covered bug or risk
+truncated-utf8.seed	lex,syntax,pipeline	manual:S2-D	truncated four-byte UTF-8 sequence
+open-string.seed	lex,syntax,pipeline	manual:S2-D	unterminated string recovery
+open-comment.seed	lex,syntax,pipeline	manual:S2-D	unterminated nested block comment recovery
+deep-nesting.seed	syntax,pipeline	manual:S2-D	bounded deep expression nesting
+recursive-types.seed	pipeline	manual:S2-D	recursive aliases and aggregate types
+adversarial-cfg.seed	pipeline	manual:S2-D	nested loop and branch CFG recovery
+cyclic-modules.seed	cycles	manual:S2-D	cyclic module graph in variable registration order

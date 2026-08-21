@@ -11,6 +11,19 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4.13"
 arandu_lexer = { path = "../crates/arandu_lexer" }
 arandu_parser = { path = "../crates/arandu_parser" }
+arandu_fuzz_support = { path = "../crates/arandu_fuzz_support" }
+
+[[bin]]
+name = "fuzz_pipeline"
+path = "fuzz_targets/fuzz_pipeline.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_cycles"
+path = "fuzz_targets/fuzz_cycles.rs"
+test = false
+doc = false
 
 [[bin]]
 name = "fuzz_lex"

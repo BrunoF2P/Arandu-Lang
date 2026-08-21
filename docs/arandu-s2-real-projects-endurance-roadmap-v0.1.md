@@ -94,16 +94,19 @@ mantém chaves/metadados mesmo quando um valor memoizado é despejado.
 
 ## S2-D — Robustez adversarial e fuzz regressivo
 
-- [ ] Consolidar targets de lexer/parser/CST, lowering e pipeline sem backend;
+- [x] Consolidar targets de lexer/parser/CST, lowering e pipeline sem backend;
       cada target tem limite de tamanho/tempo e nenhuma I/O na query.
-- [ ] Importar seeds atuais, minimizar duplicatas e registrar origem/bug coberto.
-- [ ] Todo crash novo vira fixture determinística com `catch_unwind` apenas no
+- [x] Importar seeds atuais, minimizar duplicatas e registrar origem/bug coberto.
+- [x] Todo crash novo vira fixture determinística com `catch_unwind` apenas no
       harness; produção retorna diagnóstico/ICE conforme S1.
-- [ ] Cobrir nesting/profundidade, UTF-8 truncado, comentários/strings abertas,
+- [x] Cobrir nesting/profundidade, UTF-8 truncado, comentários/strings abertas,
       tipos recursivos, CFG adversarial e grafos cíclicos concorrentes.
-- [ ] Manter fuzz contínuo advisory e corpus regressivo obrigatório no gate.
+- [x] Manter fuzz contínuo advisory e corpus regressivo obrigatório no gate.
 
 **Saída:** descobertas aleatórias tornam-se proteção determinística permanente.
+
+O protocolo de promoção, isolamento e budgets está em
+[`arandu-s2-fuzzing-v0.1.md`](./arandu-s2-fuzzing-v0.1.md).
 
 ## S2-E — Gate de endurance e promoção
 

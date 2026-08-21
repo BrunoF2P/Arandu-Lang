@@ -1,0 +1,14 @@
+[package]
+name = "arandu_fuzz_support"
+version = "0.0.1"
+edition = "2021"
+publish = false
+license.workspace = true
+authors.workspace = true
+description = "Shared deterministic fuzz targets for Arandu"
+
+[dependencies]
+arandu_lexer = { path = "../arandu_lexer" }
+arandu_parser = { path = "../arandu_parser" }
+arandu_query = { path = "../arandu_query" }
+

@@ -119,6 +119,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "arandu_fuzz_support"
+version = "0.0.1"
+dependencies = [
+ "arandu_lexer",
+ "arandu_parser",
+ "arandu_query",
+]
+
+[[package]]
 name = "arandu_lexer"
 version = "0.0.1"
 dependencies = [
@@ -1875,6 +1884,7 @@ name = "xtask"
 version = "0.0.1"
 dependencies = [
  "arandu_diagnostics",
+ "arandu_fuzz_support",
  "arandu_middle",
  "arandu_query",
  "salsa",

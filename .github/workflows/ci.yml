@@ -216,6 +216,8 @@ jobs:
         run: cargo run --locked -p xtask -- check-project-churn
       - name: Measure incremental performance and retention budgets
         run: cargo run --locked -p xtask -- check-project-performance
+      - name: Run isolated adversarial fuzz regressions
+        run: cargo run --locked -p xtask -- check-fuzz-regressions
 
   # Early warning only. Adoption happens through a reviewed rust-toolchain.toml PR.
   future-stable:

@@ -10,6 +10,7 @@
 
 mod churn;
 mod corpus;
+mod fuzz_regressions;
 mod performance;
 
 use std::env;
@@ -26,6 +27,8 @@ fn main() {
         "check-project-performance" => {
             performance::cmd_check_project_performance(&workspace_root())
         }
+        "check-fuzz-regressions" => fuzz_regressions::check(&workspace_root()),
+        "run-fuzz-seed" => fuzz_regressions::run_one(args),
         "help" | "-h" | "--help" => {
             print_help();
             0
@@ -49,6 +52,7 @@ Commands:
   check-project-corpus  Validate S2 projects and incremental ↔ clean equivalence
   check-project-churn   Run deterministic S2 module and identity churn
   check-project-performance  Measure S2 cold/noop/edit and retention budgets
+  check-fuzz-regressions  Run the versioned adversarial corpus with isolation
   help              This message
 
 Examples:
@@ -56,6 +60,7 @@ Examples:
   cargo run -p xtask -- check-project-corpus
   cargo run -p xtask -- check-project-churn
   cargo run -p xtask -- check-project-performance
+  cargo run -p xtask -- check-fuzz-regressions
   ./scripts/check-diag-docs.sh
 "
     );
