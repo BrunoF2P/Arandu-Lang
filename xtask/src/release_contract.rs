@@ -1,6 +1,29 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub fn prepare(root: &Path, version: Option<String>) -> i32 {
+    let Some(version) = version else {
+        eprintln!("prepare-release: error: usage: prepare-release X.Y.Z[-rc.N]");
+        return 2;
+    };
+    if let Err(error) = validate_version(&version) {
+        eprintln!("prepare-release: error: {error}");
+        return 2;
+    }
+    match prepare_workspace(root, &version) {
+        Ok(components) => {
+            println!(
+                "prepare-release: ok (version={version}, {components} component manifests; run cargo check --workspace --locked)"
+            );
+            0
+        }
+        Err(error) => {
+            eprintln!("prepare-release: error: {error}");
+            1
+        }
+    }
+}
+
 pub fn check(root: &Path, explicit_tag: Option<String>) -> i32 {
     let environment_tag = github_tag();
     match validate(root, explicit_tag.as_deref().or(environment_tag.as_deref())) {
@@ -89,6 +112,266 @@ fn validate(root: &Path, tag: Option<&str>) -> Result<Summary, String> {
         components: manifests.len() + 1,
         tag: normalized_tag,
     })
+}
+
+fn prepare_workspace(root: &Path, version: &str) -> Result<usize, String> {
+    let canonical_path = root.join("crates/arandu_cli/Cargo.toml");
+    let previous = cargo_package_version(&canonical_path)?;
+
+    let mut manifests = Vec::new();
+    collect_cargo_manifests(&root.join("crates"), &mut manifests)?;
+    manifests.extend([
+        root.join("arandu_fuzz/Cargo.toml"),
+        root.join("xtask/Cargo.toml"),
+    ]);
+    manifests.sort();
+    manifests.dedup();
+
+    let report = root.join(format!("docs/releases/{version}.md"));
+    let mut touched = manifests.clone();
+    touched.extend([
+        root.join("editors/vscode/package.json"),
+        root.join("editors/vscode/package-lock.json"),
+        root.join("docs/diagnostics/SPEC.md"),
+        root.join("editors/vscode/CHANGELOG.md"),
+        root.join("Cargo.lock"),
+        report.clone(),
+    ]);
+    let originals: Vec<_> = touched
+        .iter()
+        .map(|path| (path.clone(), fs::read(path).ok()))
+        .collect();
+
+    let result = (|| {
+        for manifest in &manifests {
+            replace_package_version(manifest, version)?;
+        }
+        replace_json_version(
+            &root.join("editors/vscode/package.json"),
+            &previous,
+            version,
+            1,
+        )?;
+        replace_json_version(
+            &root.join("editors/vscode/package-lock.json"),
+            &previous,
+            version,
+            2,
+        )?;
+        replace_literal(
+            &root.join("docs/diagnostics/SPEC.md"),
+            &format!("compiler_version: arandu {previous}"),
+            &format!("compiler_version: arandu {version}"),
+            1,
+        )?;
+        update_changelog(&root.join("editors/vscode/CHANGELOG.md"), version)?;
+        update_workspace_lock(root, &manifests, version)?;
+        create_release_report(&report, version)?;
+        Ok(())
+    })();
+
+    if let Err(error) = result {
+        for (path, original) in originals {
+            match original {
+                Some(bytes) => {
+                    let _ = fs::write(path, bytes);
+                }
+                None => {
+                    let _ = fs::remove_file(path);
+                }
+            }
+        }
+        return Err(error);
+    }
+
+    Ok(manifests.len() + 1)
+}
+
+fn create_release_report(path: &Path, version: &str) -> Result<(), String> {
+    if path.exists() {
+        return Ok(());
+    }
+    let tag = format!("v{version}");
+    let report = format!(
+        "# Arandu {version} — relatório de promoção\n\n\
+**Estado:** preparação; nenhuma tag foi criada.  \n\
+**Canal:** release candidate pública do SDK Arandu v0.1.\n\n\
+O PR de preparação deve ser mergeado e ficar integralmente verde antes da tag.\n\
+Depois, execute na `main` atualizada:\n\n\
+```bash\n\
+git switch main\n\
+git pull --ff-only origin main\n\
+cargo run --locked -p xtask -- check-release-contract {tag}\n\
+git tag -a {tag} -m \"Arandu {version}\"\n\
+git push origin {tag}\n\
+```\n\n\
+Não mova nem force a tag. O workflow exige o S0 verde do PR mergeado e executa\n\
+somente as provas exclusivas de empacotamento, publicação e instalação pública.\n\n\
+## Evidência exigida\n\n\
+- [ ] Contrato tag ↔ componentes verde.\n\
+- [ ] Commit alcançável pela `main` e PR associado com `S0 / Gate` verde.\n\
+- [ ] Packages Linux x86-64, macOS ARM64 e Windows x86-64 instalados.\n\
+- [ ] Checksums, manifest e provenance verificados.\n\
+- [ ] Archives públicos baixados, instalados e aprovados no corpus.\n\
+- [ ] Artifact `rc-evidence-{tag}` preservado.\n\
+- [ ] Nenhum bloqueador conhecido permanece aberto.\n\n\
+## Resultado\n\n\
+- Tag: `{tag}`\n\
+- Commit: pendente\n\
+- Workflow: pendente\n\
+- Release imutável: pendente\n\
+- Linux x86-64: pendente\n\
+- macOS ARM64: pendente\n\
+- Windows x86-64: pendente\n\
+- Bloqueadores: pendente\n"
+    );
+    write_text(path, &report)
+}
+
+fn replace_package_version(path: &Path, version: &str) -> Result<(), String> {
+    let text = read_text(path)?;
+    let mut in_package = false;
+    let mut replaced = false;
+    let mut output = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_package = trimmed == "[package]";
+        }
+        if in_package && !replaced && trimmed.starts_with("version") {
+            let ending = if line.ends_with("\r\n") {
+                "\r\n"
+            } else if line.ends_with('\n') {
+                "\n"
+            } else {
+                ""
+            };
+            output.push_str(&format!("version = \"{version}\"{ending}"));
+            replaced = true;
+        } else {
+            output.push_str(line);
+        }
+    }
+    if !replaced {
+        return Err(format!("missing [package] version in {}", path.display()));
+    }
+    write_text(path, &output)
+}
+
+fn replace_json_version(
+    path: &Path,
+    previous: &str,
+    version: &str,
+    expected: usize,
+) -> Result<(), String> {
+    replace_literal(
+        path,
+        &format!("\"version\": \"{previous}\""),
+        &format!("\"version\": \"{version}\""),
+        expected,
+    )
+}
+
+fn replace_literal(path: &Path, from: &str, to: &str, expected: usize) -> Result<(), String> {
+    let text = read_text(path)?;
+    let count = text.matches(from).count();
+    if count != expected {
+        return Err(format!(
+            "{} contains {count} copies of {from:?}, expected {expected}",
+            path.display()
+        ));
+    }
+    write_text(path, &text.replace(from, to))
+}
+
+fn update_changelog(path: &Path, version: &str) -> Result<(), String> {
+    let text = read_text(path)?;
+    let heading = format!("## {version}");
+    if text.lines().any(|line| line.trim() == heading) {
+        return Ok(());
+    }
+    let Some(first_break) = text.find('\n') else {
+        return Err(format!("malformed changelog: {}", path.display()));
+    };
+    let mut output = String::with_capacity(text.len() + heading.len() + 48);
+    output.push_str(&text[..=first_break]);
+    output.push('\n');
+    output.push_str(&heading);
+    output.push_str("\n\n- Release candidate promotion preparation.\n");
+    output.push_str(&text[first_break + 1..]);
+    write_text(path, &output)
+}
+
+fn update_workspace_lock(root: &Path, manifests: &[PathBuf], version: &str) -> Result<(), String> {
+    let mut names = Vec::with_capacity(manifests.len());
+    for manifest in manifests {
+        names.push(cargo_package_name(manifest)?);
+    }
+    let path = root.join("Cargo.lock");
+    let text = read_text(&path)?;
+    let mut output = String::with_capacity(text.len());
+    let mut current_name: Option<String> = None;
+    let mut updated = 0usize;
+    for line in text.split_inclusive('\n') {
+        let trimmed = line.trim();
+        if trimmed == "[[package]]" {
+            current_name = None;
+        } else if let Some(name) = trimmed
+            .strip_prefix("name = \"")
+            .and_then(|v| v.strip_suffix('"'))
+        {
+            current_name = Some(name.to_owned());
+        }
+        if trimmed.starts_with("version = \"")
+            && current_name
+                .as_ref()
+                .is_some_and(|name| names.contains(name))
+        {
+            let ending = if line.ends_with("\r\n") {
+                "\r\n"
+            } else if line.ends_with('\n') {
+                "\n"
+            } else {
+                ""
+            };
+            output.push_str(&format!("version = \"{version}\"{ending}"));
+            updated += 1;
+        } else {
+            output.push_str(line);
+        }
+    }
+    let expected = names
+        .iter()
+        .filter(|name| name.as_str() != "arandu_fuzz")
+        .count();
+    if updated != expected {
+        return Err(format!(
+            "Cargo.lock updated {updated} workspace packages, expected {expected}"
+        ));
+    }
+    write_text(&path, &output)
+}
+
+fn cargo_package_name(path: &Path) -> Result<String, String> {
+    let text = read_text(path)?;
+    let mut in_package = false;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_package = line == "[package]";
+            continue;
+        }
+        if in_package {
+            if let Some(value) = line.strip_prefix("name").and_then(parse_assignment_string) {
+                return Ok(value.to_owned());
+            }
+        }
+    }
+    Err(format!("missing [package] name in {}", path.display()))
+}
+
+fn write_text(path: &Path, text: &str) -> Result<(), String> {
+    fs::write(path, text).map_err(|error| format!("cannot write {}: {error}", path.display()))
 }
 
 fn github_tag() -> Option<String> {
