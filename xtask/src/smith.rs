@@ -549,6 +549,39 @@ pub fn run_worker(mut args: impl Iterator<Item = String>) -> i32 {
     0
 }
 
+/// Internal JIT worker entry point used for Cranelift JIT subprocess isolation.
+pub fn run_jit_worker(mut args: impl Iterator<Item = String>) -> i32 {
+    let Some(source_path) = args.next() else {
+        eprintln!("smith-jit-worker: missing source_path");
+        return 2;
+    };
+    let Some(opt_level) = args.next() else {
+        eprintln!("smith-jit-worker: missing opt_level");
+        return 2;
+    };
+    let Some(result_path) = args.next() else {
+        eprintln!("smith-jit-worker: missing result_path");
+        return 2;
+    };
+    let Some(stdout_path) = args.next() else {
+        eprintln!("smith-jit-worker: missing stdout_path");
+        return 2;
+    };
+    let Some(stderr_path) = args.next() else {
+        eprintln!("smith-jit-worker: missing stderr_path");
+        return 2;
+    };
+    let coverage_path = args.next();
+    arandu_fuzz_support::smith::oracle::run_jit_worker(
+        std::path::Path::new(&source_path),
+        &opt_level,
+        std::path::Path::new(&result_path),
+        std::path::Path::new(&stdout_path),
+        std::path::Path::new(&stderr_path),
+        coverage_path.as_deref().map(std::path::Path::new),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

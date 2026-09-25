@@ -1,10 +1,10 @@
 //! Multi-backend differential testing oracles and execution triangulators.
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::Ordering;
-use std::sync::LazyLock;
+use std::sync::{LazyLock, OnceLock};
 
 use arandu_query::AnalysisHost;
 
@@ -15,9 +15,9 @@ use super::artifact::{
 };
 use super::emi::{check_emi_pair_with_expected, inject_dead_pure_statement, inject_emi_mutation};
 use super::process::{
-    capture_jit_eprint, capture_jit_println, captured_stderr, parse_backend_result,
-    read_result_channel, reset_jit_stdout_capture, run_with_timeout, synthesized_args_arg,
-    synthesized_args_len, take_jit_stderr_capture, take_jit_stdout_capture,
+    capture_jit_eprint, capture_jit_println, captured_stderr, describe_exit_status,
+    parse_backend_result, read_result_channel, reset_jit_stdout_capture, run_with_timeout,
+    synthesized_args_arg, synthesized_args_len, take_jit_stderr_capture, take_jit_stdout_capture,
     BACKEND_PROCESS_TIMEOUT,
 };
 use super::synth::synthesize_with_oracle;
@@ -242,35 +242,14 @@ fn check_source_internal(
             )
             .with_scope(format!("{level:?}")));
         }
-        let (output, coverage) = catch_backend_panic("Cranelift", level, || {
-            if collect_block_coverage && level == arandu_mir::OptLevel::O0 {
-                execute_cranelift_with_block_coverage(
-                    &program,
-                    &lowered.type_check.symbols,
-                    &lowered.type_check.type_info,
-                )
-            } else {
-                execute_cranelift(
-                    &program,
-                    &lowered.type_check.symbols,
-                    &lowered.type_check.type_info,
-                )
-                .map(|observation| {
-                    (
-                        observation,
-                        arandu_backend_cranelift::BlockCoverage::default(),
-                    )
-                })
-            }
-        })?
-        .map_err(|error| {
-            Failure::new(
-                "cranelift-execution-failed",
-                format!("Cranelift failed at {level:?}: {error}"),
-                true,
-            )
-            .with_scope(format!("{level:?}"))
-        })?;
+        let (output, coverage) = execute_cranelift_isolated(
+            source,
+            &program,
+            &lowered.type_check.symbols,
+            &lowered.type_check.type_info,
+            level,
+            collect_block_coverage && level == arandu_mir::OptLevel::O0,
+        )?;
         if let Some(expected) = &expected {
             if &output != expected {
                 return Err(Failure::new(
@@ -300,7 +279,11 @@ fn check_source_internal(
                 .map_err(|error| {
                     let shrinkable = is_backend_failure_reproducible(&error);
                     let kind = backend_failure_kind("C", &error);
-                    Failure::new(kind, error, shrinkable).with_scope(format!("{level:?}"))
+                    let is_timeout = error.contains("timed out after");
+                    Failure::new(kind, error.clone(), shrinkable)
+                        .with_backend("C")
+                        .with_timeout(is_timeout)
+                        .with_scope(format!("{level:?}"))
                 })?;
                 if &c_output != output {
                     return Err(Failure::new(
@@ -323,7 +306,11 @@ fn check_source_internal(
                 .map_err(|error| {
                     let shrinkable = is_backend_failure_reproducible(&error);
                     let kind = backend_failure_kind("Wasm", &error);
-                    Failure::new(kind, error, shrinkable).with_scope(format!("{level:?}"))
+                    let is_timeout = error.contains("timed out after");
+                    Failure::new(kind, error.clone(), shrinkable)
+                        .with_backend("Wasm")
+                        .with_timeout(is_timeout)
+                        .with_scope(format!("{level:?}"))
                 })?;
                 if &wasm_output != output {
                     return Err(Failure::new(
@@ -375,6 +362,8 @@ fn lower_validated_source_inner(
         "import std.alloc.hash_map",
         "import std.alloc.smallvec",
         "import std.alloc.string",
+        "import std.core.slice",
+        "import std.core.iter",
         "import std.core.str",
         "import std.core.hash",
         "import std.core.num",
@@ -470,7 +459,7 @@ static STDLIB_CACHE: LazyLock<Result<StdlibFiles, String>> = LazyLock::new(|| {
         .join("../../stdlib")
         .canonicalize()
         .map_err(|error| format!("canonicalize stdlib root: {error}"))?;
-    let sources: [(&str, &str); 17] = [
+    let sources: [(&str, &str); 18] = [
         (
             "alloc/bitset.aru",
             include_str!("../../../../stdlib/alloc/bitset.aru"),
@@ -510,6 +499,10 @@ static STDLIB_CACHE: LazyLock<Result<StdlibFiles, String>> = LazyLock::new(|| {
         (
             "core/intrinsics.aru",
             include_str!("../../../../stdlib/core/intrinsics.aru"),
+        ),
+        (
+            "core/iter.aru",
+            include_str!("../../../../stdlib/core/iter.aru"),
         ),
         (
             "core/hash.aru",
@@ -574,6 +567,9 @@ pub(crate) fn is_backend_failure_reproducible(error: &str) -> bool {
         || error.starts_with("Wasm result channel emitted invalid UTF-8")
         || error.starts_with("Cranelift stdout exceeded the capture limit")
         || error.starts_with("Cranelift stderr exceeded the capture limit")
+        || error.starts_with("Cranelift JIT program exited with ")
+        || error.starts_with("Cranelift JIT program timed out after")
+        || error.starts_with("Cranelift JIT result channel")
         || error.contains("timed out after")
         || error.starts_with("Wasm result channel did not terminate its result")
         || error.starts_with("Wasm result channel did not emit exactly one result line")
@@ -581,6 +577,7 @@ pub(crate) fn is_backend_failure_reproducible(error: &str) -> bool {
         || error.starts_with("generated C result channel did not emit exactly one result line")
         || error.starts_with("parse generated C result channel result ")
         || error.starts_with("parse Wasm result channel result ")
+        || error.starts_with("parse Cranelift JIT result channel result ")
 }
 
 pub(crate) fn backend_failure_kind(backend: &str, error: &str) -> &'static str {
@@ -593,6 +590,17 @@ pub(crate) fn backend_failure_kind(backend: &str, error: &str) -> &'static str {
     }
 
     match backend {
+        "Cranelift" if error.contains("timed out after") => "cranelift-timeout",
+        "Cranelift" if error.contains("signal") => "cranelift-signal",
+        "Cranelift" if error.starts_with("Cranelift JIT program exited with") => "cranelift-exited",
+        "Cranelift" if error.starts_with("Cranelift stdout exceeded") => "cranelift-stdout-limit",
+        "Cranelift" if error.starts_with("Cranelift stderr exceeded") => "cranelift-stderr-limit",
+        "Cranelift"
+            if error.contains("result channel") || error.starts_with("parse Cranelift JIT ") =>
+        {
+            "cranelift-result-channel-failed"
+        }
+        "Cranelift" => "cranelift-failed",
         "C" if error.starts_with("C compiler ") => {
             if error.contains("failed to start process") {
                 "c-compiler-unavailable"
@@ -715,6 +723,480 @@ fn execute_cranelift_internal(
         },
         block_coverage,
     ))
+}
+
+fn serialize_block_coverage(coverage: &arandu_backend_cranelift::BlockCoverage) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    bytes.push(if coverage.truncated { 1u8 } else { 0u8 });
+
+    bytes.extend_from_slice(&(coverage.hits.len() as u32).to_le_bytes());
+    for hit in &coverage.hits {
+        bytes.extend_from_slice(&hit.function_index.to_le_bytes());
+        bytes.extend_from_slice(&hit.block_index.to_le_bytes());
+        match hit.source_span {
+            Some(span) => {
+                bytes.push(1);
+                bytes.extend_from_slice(&span.file_id.to_le_bytes());
+                bytes.extend_from_slice(&span.start.to_le_bytes());
+                bytes.extend_from_slice(&span.end.to_le_bytes());
+            }
+            None => {
+                bytes.push(0);
+            }
+        }
+    }
+
+    bytes.extend_from_slice(&(coverage.source_blocks.len() as u32).to_le_bytes());
+    for mapping in &coverage.source_blocks {
+        bytes.extend_from_slice(&mapping.function_index.to_le_bytes());
+        bytes.extend_from_slice(&mapping.block_index.to_le_bytes());
+        bytes.extend_from_slice(&mapping.span.file_id.to_le_bytes());
+        bytes.extend_from_slice(&mapping.span.start.to_le_bytes());
+        bytes.extend_from_slice(&mapping.span.end.to_le_bytes());
+    }
+
+    bytes
+}
+
+fn deserialize_block_coverage(
+    bytes: &[u8],
+) -> Result<arandu_backend_cranelift::BlockCoverage, String> {
+    let mut cursor = 0;
+    if bytes.len() < 5 {
+        return Err("truncated coverage header".to_string());
+    }
+    let truncated = bytes[cursor] != 0;
+    cursor += 1;
+
+    let hits_len = u32::from_le_bytes(
+        bytes[cursor..cursor + 4]
+            .try_into()
+            .map_err(|_| "invalid hits length".to_string())?,
+    ) as usize;
+    cursor += 4;
+    let mut hits = Vec::with_capacity(hits_len);
+    for _ in 0..hits_len {
+        if cursor + 9 > bytes.len() {
+            return Err("truncated hit record".to_string());
+        }
+        let function_index = u32::from_le_bytes(
+            bytes[cursor..cursor + 4]
+                .try_into()
+                .map_err(|_| "invalid function index".to_string())?,
+        );
+        cursor += 4;
+        let block_index = u32::from_le_bytes(
+            bytes[cursor..cursor + 4]
+                .try_into()
+                .map_err(|_| "invalid block index".to_string())?,
+        );
+        cursor += 4;
+        let has_span = bytes[cursor] != 0;
+        cursor += 1;
+        let source_span = if has_span {
+            if cursor + 12 > bytes.len() {
+                return Err("truncated span record".to_string());
+            }
+            let file_id = u32::from_le_bytes(
+                bytes[cursor..cursor + 4]
+                    .try_into()
+                    .map_err(|_| "invalid file id".to_string())?,
+            );
+            cursor += 4;
+            let start = u32::from_le_bytes(
+                bytes[cursor..cursor + 4]
+                    .try_into()
+                    .map_err(|_| "invalid start offset".to_string())?,
+            );
+            cursor += 4;
+            let end = u32::from_le_bytes(
+                bytes[cursor..cursor + 4]
+                    .try_into()
+                    .map_err(|_| "invalid end offset".to_string())?,
+            );
+            cursor += 4;
+            Some(arandu_middle::Span::new(file_id, start, end))
+        } else {
+            None
+        };
+        hits.push(arandu_backend_cranelift::BlockCoverageHit {
+            function_index,
+            block_index,
+            source_span,
+        });
+    }
+
+    if cursor + 4 > bytes.len() {
+        return Err("truncated source_blocks length".to_string());
+    }
+    let source_blocks_len = u32::from_le_bytes(
+        bytes[cursor..cursor + 4]
+            .try_into()
+            .map_err(|_| "invalid source blocks length".to_string())?,
+    ) as usize;
+    cursor += 4;
+    let mut source_blocks = Vec::with_capacity(source_blocks_len);
+    for _ in 0..source_blocks_len {
+        if cursor + 20 > bytes.len() {
+            return Err("truncated source_block mapping".to_string());
+        }
+        let function_index = u32::from_le_bytes(
+            bytes[cursor..cursor + 4]
+                .try_into()
+                .map_err(|_| "invalid function index".to_string())?,
+        );
+        cursor += 4;
+        let block_index = u32::from_le_bytes(
+            bytes[cursor..cursor + 4]
+                .try_into()
+                .map_err(|_| "invalid block index".to_string())?,
+        );
+        cursor += 4;
+        let file_id = u32::from_le_bytes(
+            bytes[cursor..cursor + 4]
+                .try_into()
+                .map_err(|_| "invalid file id".to_string())?,
+        );
+        cursor += 4;
+        let start = u32::from_le_bytes(
+            bytes[cursor..cursor + 4]
+                .try_into()
+                .map_err(|_| "invalid start offset".to_string())?,
+        );
+        cursor += 4;
+        let end = u32::from_le_bytes(
+            bytes[cursor..cursor + 4]
+                .try_into()
+                .map_err(|_| "invalid end offset".to_string())?,
+        );
+        cursor += 4;
+        source_blocks.push(arandu_backend_cranelift::BlockSourceMapping {
+            function_index,
+            block_index,
+            span: arandu_middle::Span::new(file_id, start, end),
+        });
+    }
+
+    Ok(arandu_backend_cranelift::BlockCoverage {
+        hits,
+        truncated,
+        source_blocks,
+    })
+}
+
+pub fn run_jit_worker(
+    source_path: &Path,
+    opt_level_str: &str,
+    result_path: &Path,
+    stdout_path: &Path,
+    stderr_path: &Path,
+    coverage_path: Option<&Path>,
+) -> i32 {
+    let opt_level = match opt_level_str {
+        "O0" => arandu_mir::OptLevel::O0,
+        "O1" => arandu_mir::OptLevel::O1,
+        "O2" => arandu_mir::OptLevel::O2,
+        _ => {
+            eprintln!("invalid opt_level: {opt_level_str}");
+            return 2;
+        }
+    };
+    let source = match std::fs::read_to_string(source_path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("read source {}: {e}", source_path.display());
+            return 2;
+        }
+    };
+    let lowered = match lower_validated_source(&source) {
+        Ok(l) => l,
+        Err(f) => {
+            eprintln!("lower source: {}", f.message);
+            return 3;
+        }
+    };
+    let mut program = lowered.amir.clone();
+    if let Err(e) = arandu_mir::optimize_amir_checked_with_level(
+        &mut program,
+        &lowered.type_check.symbols,
+        &lowered.type_check.type_info.type_interner,
+        opt_level,
+    ) {
+        eprintln!("optimize program at {opt_level_str}: {e:?}");
+        return 4;
+    }
+    let collect_coverage = coverage_path.is_some();
+    let res = if collect_coverage {
+        execute_cranelift_with_block_coverage(
+            &program,
+            &lowered.type_check.symbols,
+            &lowered.type_check.type_info,
+        )
+    } else {
+        execute_cranelift(
+            &program,
+            &lowered.type_check.symbols,
+            &lowered.type_check.type_info,
+        )
+        .map(|obs| (obs, arandu_backend_cranelift::BlockCoverage::default()))
+    };
+
+    match res {
+        Ok((obs, cov)) => {
+            if let Err(e) = std::fs::write(result_path, format!("{}\n", obs.result)) {
+                eprintln!("write result {}: {e}", result_path.display());
+                return 5;
+            }
+            if let Err(e) = std::fs::write(stdout_path, &obs.stdout) {
+                eprintln!("write stdout {}: {e}", stdout_path.display());
+                return 5;
+            }
+            if let Err(e) = std::fs::write(stderr_path, &obs.stderr) {
+                eprintln!("write stderr {}: {e}", stderr_path.display());
+                return 5;
+            }
+            if let Some(cov_path) = coverage_path {
+                let cov_bytes = serialize_block_coverage(&cov);
+                if let Err(e) = std::fs::write(cov_path, cov_bytes) {
+                    eprintln!("write coverage {}: {e}", cov_path.display());
+                    return 6;
+                }
+            }
+            0
+        }
+        Err(e) => {
+            eprintln!("cranelift JIT error: {e}");
+            1
+        }
+    }
+}
+
+fn get_jit_worker_spec() -> Option<(&'static Path, &'static [String])> {
+    static WORKER_SPEC: OnceLock<Option<(PathBuf, Vec<String>)>> = OnceLock::new();
+    WORKER_SPEC
+        .get_or_init(|| {
+            if std::env::var_os("ARANDU_SMITH_NO_JIT_SUBPROCESS").is_some() {
+                return None;
+            }
+            if let Some(bin) = std::env::var_os("ARANDU_JIT_WORKER_BIN") {
+                return Some((PathBuf::from(bin), Vec::new()));
+            }
+            if let Ok(exe) = std::env::current_exe() {
+                let exe_name = exe.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if exe_name == "xtask" || exe_name == "xtask.exe" {
+                    return Some((exe, vec!["smith-jit-worker".to_string()]));
+                }
+                if std::env::var_os("ARANDU_SMITH_ISOLATE_JIT").is_some() {
+                    let candidate_xtask =
+                        exe.with_file_name(if cfg!(windows) { "xtask.exe" } else { "xtask" });
+                    if candidate_xtask.is_file() {
+                        return Some((candidate_xtask, vec!["smith-jit-worker".to_string()]));
+                    }
+                    if let Some(parent) = exe.parent().and_then(|p| p.parent()) {
+                        let candidate_xtask =
+                            parent.join(if cfg!(windows) { "xtask.exe" } else { "xtask" });
+                        if candidate_xtask.is_file() {
+                            return Some((candidate_xtask, vec!["smith-jit-worker".to_string()]));
+                        }
+                    }
+                    if exe_name.contains("arandu_fuzz_support") {
+                        return Some((
+                            exe,
+                            vec![
+                                "--exact".to_string(),
+                                "smith::tests::__smith_jit_worker".to_string(),
+                                "--ignored".to_string(),
+                                "--nocapture".to_string(),
+                                "--".to_string(),
+                            ],
+                        ));
+                    }
+                }
+            }
+            None
+        })
+        .as_ref()
+        .map(|(path, args)| (path.as_path(), args.as_slice()))
+}
+
+fn execute_cranelift_isolated(
+    source: &str,
+    program: &arandu_semantics::amir::AmirProgram,
+    symbols: &arandu_semantics::SymbolTable,
+    type_info: &arandu_semantics::TypeInfo,
+    level: arandu_mir::OptLevel,
+    collect_coverage: bool,
+) -> Result<(BackendObservation, arandu_backend_cranelift::BlockCoverage), Failure> {
+    if let Some((worker_path, worker_prefix)) = get_jit_worker_spec() {
+        let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+        let directory = std::env::temp_dir();
+        let stem = format!("arandu_smith_jit_{}_{}", std::process::id(), id);
+        let source_path = directory.join(format!("{stem}.aru"));
+        let result_path = directory.join(format!("{stem}.result"));
+        let stdout_path = directory.join(format!("{stem}.stdout"));
+        let stderr_path = directory.join(format!("{stem}.stderr"));
+        let coverage_path = if collect_coverage {
+            Some(directory.join(format!("{stem}.cov")))
+        } else {
+            None
+        };
+
+        let mut cleanup_files = vec![
+            source_path.clone(),
+            result_path.clone(),
+            stdout_path.clone(),
+            stderr_path.clone(),
+        ];
+        if let Some(ref cov) = coverage_path {
+            cleanup_files.push(cov.clone());
+        }
+        let _cleanup = TemporaryArtifacts(cleanup_files);
+
+        if let Err(error) = std::fs::write(&source_path, source) {
+            return Err(Failure::new(
+                "cranelift-execution-failed",
+                format!("write {}: {error}", source_path.display()),
+                false,
+            )
+            .with_backend("Cranelift")
+            .with_scope(format!("{level:?}")));
+        }
+
+        let mut cmd = Command::new(worker_path);
+        cmd.args(worker_prefix);
+        cmd.arg(&source_path);
+        cmd.arg(format!("{level:?}"));
+        cmd.arg(&result_path);
+        cmd.arg(&stdout_path);
+        cmd.arg(&stderr_path);
+        if let Some(ref cov) = coverage_path {
+            cmd.arg(cov);
+        }
+
+        let execution = match run_with_timeout(&mut cmd, BACKEND_PROCESS_TIMEOUT) {
+            Ok(ex) => ex,
+            Err(error) => {
+                let stderr = error.clone();
+                let is_timeout = error.contains("timed out after");
+                let kind = if is_timeout {
+                    "cranelift-timeout"
+                } else {
+                    "cranelift-execution-failed"
+                };
+                return Err(
+                    Failure::new(kind, format!("run Cranelift JIT worker: {error}"), true)
+                        .with_backend("Cranelift")
+                        .with_timeout(is_timeout)
+                        .with_stderr(stderr)
+                        .with_scope(format!("{level:?}")),
+                );
+            }
+        };
+
+        if !execution.status.success() {
+            let details = describe_exit_status(&execution.status);
+            let stderr = captured_stderr(&execution);
+            let kind = if details.signal.is_some() {
+                "cranelift-signal"
+            } else {
+                "cranelift-exited"
+            };
+            return Err(Failure::new(
+                kind,
+                format!("Cranelift JIT worker {details} at {level:?}: {stderr}"),
+                true,
+            )
+            .with_backend("Cranelift")
+            .with_exit_status(details.exit_code, details.signal)
+            .with_stderr(stderr)
+            .with_scope(format!("{level:?}")));
+        }
+
+        if execution.stdout_truncated {
+            return Err(Failure::new(
+                "cranelift-stdout-limit",
+                "Cranelift stdout exceeded the capture limit",
+                true,
+            )
+            .with_backend("Cranelift")
+            .with_scope(format!("{level:?}")));
+        }
+        if execution.stderr_truncated {
+            return Err(Failure::new(
+                "cranelift-stderr-limit",
+                "Cranelift stderr exceeded the capture limit",
+                true,
+            )
+            .with_backend("Cranelift")
+            .with_scope(format!("{level:?}")));
+        }
+
+        let result_bytes = read_result_channel(&result_path, "Cranelift JIT").map_err(|e| {
+            Failure::new("cranelift-result-channel-failed", e, true)
+                .with_backend("Cranelift")
+                .with_scope(format!("{level:?}"))
+        })?;
+        let result = parse_backend_result(&result_bytes, false, "Cranelift JIT result channel")
+            .map_err(|e| {
+                Failure::new("cranelift-result-channel-failed", e, true)
+                    .with_backend("Cranelift")
+                    .with_scope(format!("{level:?}"))
+            })?;
+        let stdout = std::fs::read(&stdout_path).unwrap_or_default();
+        let stderr = std::fs::read(&stderr_path).unwrap_or_default();
+
+        let coverage = if let Some(ref cov_path) = coverage_path {
+            let bytes = std::fs::read(cov_path).map_err(|e| {
+                Failure::new(
+                    "cranelift-coverage-failed",
+                    format!("read coverage: {e}"),
+                    true,
+                )
+                .with_backend("Cranelift")
+                .with_scope(format!("{level:?}"))
+            })?;
+            deserialize_block_coverage(&bytes).map_err(|e| {
+                Failure::new(
+                    "cranelift-coverage-failed",
+                    format!("parse coverage: {e}"),
+                    true,
+                )
+                .with_backend("Cranelift")
+                .with_scope(format!("{level:?}"))
+            })?
+        } else {
+            arandu_backend_cranelift::BlockCoverage::default()
+        };
+
+        Ok((
+            BackendObservation {
+                result,
+                stdout,
+                stderr,
+            },
+            coverage,
+        ))
+    } else {
+        let res = catch_backend_panic("Cranelift", level, || {
+            if collect_coverage {
+                execute_cranelift_with_block_coverage(program, symbols, type_info)
+            } else {
+                execute_cranelift(program, symbols, type_info)
+                    .map(|obs| (obs, arandu_backend_cranelift::BlockCoverage::default()))
+            }
+        })?;
+        res.map_err(|error| {
+            let shrinkable = is_backend_failure_reproducible(&error);
+            let kind = backend_failure_kind("Cranelift", &error);
+            Failure::new(
+                kind,
+                format!("Cranelift failed at {level:?}: {error}"),
+                shrinkable,
+            )
+            .with_backend("Cranelift")
+            .with_scope(format!("{level:?}"))
+        })
+    }
 }
 
 fn execute_c(

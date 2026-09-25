@@ -304,8 +304,18 @@ impl<'a> FuncTranslator<'a> {
                 self.emit_operand(operand, ptr_ty);
                 self.emit_load_value_at(result_ty, 8);
             }
+            UnaryOp::Deref => {
+                let operand_ty = self.operand_arity_ty(operand);
+                if self.interner.slice_abi_element(operand_ty).is_some() {
+                    self.emit_operand(operand, result_ty);
+                } else {
+                    let ptr_ty = self.interner.intern(ArType::Primitive(Primitive::Int));
+                    self.emit_operand(operand, ptr_ty);
+                    self.emit_load_value_at(result_ty, 0);
+                }
+            }
             _ => {
-                // Ref, RefMut, Deref: identity.
+                // Ref, RefMut: identity.
                 self.emit_operand(operand, result_ty);
             }
         }

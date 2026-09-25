@@ -1,6 +1,7 @@
 use arandu_middle::SymbolId;
 use arandu_middle::amir::local::TempId;
 use arandu_middle::amir::value::{AmirOperand, AmirPlace, AmirProjection};
+use arandu_middle::layout::TagEncoding;
 use arandu_middle::types::{ArType, Primitive, TypeId};
 use wasm_encoder::{BlockType, Instruction, ValType};
 
@@ -170,6 +171,23 @@ impl<'a> FuncTranslator<'a> {
         let local_ty = self.func.locals[lhs.local.as_usize()].ty;
 
         if lhs.projections.is_empty() {
+            let local = &self.func.locals[lhs.local.as_usize()];
+            let ty = self.interner.resolve(local.ty);
+            let pointer_like = matches!(
+                ty,
+                ArType::Ptr(_)
+                    | ArType::Ref(_)
+                    | ArType::RefMut(_)
+                    | ArType::Nullable(_)
+                    | ArType::Slice(_)
+            );
+            if local.is_memory && !pointer_like && !self.is_owned_aggregate(local_ty) {
+                let slot = self.local_slot(local.id).unwrap_or(0);
+                self.code.push(Instruction::LocalGet(slot));
+                self.emit_operand(rhs, local_ty);
+                self.emit_store_value_at(local_ty, 0);
+                return;
+            }
             let Some(base) = self.local_slot(lhs.local) else {
                 return;
             };
@@ -328,6 +346,22 @@ impl<'a> FuncTranslator<'a> {
     /// Emit a Load: read from a place into the wasm stack.
     pub(super) fn emit_load(&mut self, place: &AmirPlace, result_ty: TypeId) {
         if place.projections.is_empty() {
+            let local = &self.func.locals[place.local.as_usize()];
+            let ty = self.interner.resolve(local.ty);
+            let pointer_like = matches!(
+                ty,
+                ArType::Ptr(_)
+                    | ArType::Ref(_)
+                    | ArType::RefMut(_)
+                    | ArType::Nullable(_)
+                    | ArType::Slice(_)
+            );
+            if local.is_memory && !pointer_like && !self.is_owned_aggregate(result_ty) {
+                let slot = self.local_slot(local.id).unwrap_or(0);
+                self.code.push(Instruction::LocalGet(slot));
+                self.emit_load_value_at(result_ty, 0);
+                return;
+            }
             // Empty-projection loads are plain local value copies.
             let shape = types::shape(result_ty, self.interner, self.layout_engine.data_layout);
             if let Some(base) = self.local_slot(place.local) {
@@ -381,8 +415,9 @@ impl<'a> FuncTranslator<'a> {
             None => self.code.push(Instruction::I32Const(0)),
         }
         let mut cur_ty = local.ty;
+        let mut from_memory = false;
         for proj in &place.projections {
-            cur_ty = self.emit_place_projection(cur_ty, proj, base_slot);
+            cur_ty = self.emit_place_projection(cur_ty, proj, base_slot, &mut from_memory);
         }
         cur_ty
     }
@@ -394,13 +429,16 @@ impl<'a> FuncTranslator<'a> {
         cur_ty: TypeId,
         proj: &AmirProjection,
         base_slot: Option<u32>,
+        from_memory: &mut bool,
     ) -> TypeId {
         match proj {
             AmirProjection::Deref => {
+                *from_memory = true;
                 // Address unchanged; unwrap one pointer layer.
                 self.strip_ref(cur_ty).unwrap_or(cur_ty)
             }
             AmirProjection::Field(symbol_id) => {
+                *from_memory = true;
                 let owner_ty = self.strip_ref(cur_ty).unwrap_or(cur_ty);
                 let owner = self.interner.resolve(owner_ty);
                 let ArType::Named(struct_id, _) = owner else {
@@ -445,27 +483,61 @@ impl<'a> FuncTranslator<'a> {
                 };
                 let elem_size = self.layout_of(&self.interner.resolve(elem_ty)).size;
                 let int_ty = self.interner.intern(ArType::Primitive(Primitive::Int));
-                // Bounds check: index < len.
-                self.emit_operand(index_op, int_ty);
                 match owner {
                     ArType::Array(len, _) => {
+                        // Bounds check: index < len.
+                        self.emit_operand(index_op, int_ty);
                         self.code.push(Instruction::I32Const(len as i32));
+                        self.code.push(Instruction::I32GeU);
+                        self.code.push(Instruction::If(BlockType::Empty));
+                        self.code.push(Instruction::Unreachable);
+                        self.code.push(Instruction::End);
+                        // address = base + index * elem_size
+                        self.emit_operand(index_op, int_ty);
+                        self.code.push(Instruction::I32Const(elem_size as i32));
+                        self.code.push(Instruction::I32Mul);
+                        self.code.push(Instruction::I32Add);
                     }
                     ArType::Slice(_) => {
-                        let len_slot = base_slot.unwrap_or(0) + 1;
-                        self.code.push(Instruction::LocalGet(len_slot));
+                        if !*from_memory && let Some(slot) = base_slot {
+                            self.emit_operand(index_op, int_ty);
+                            self.code.push(Instruction::LocalGet(slot + 1));
+                            self.code.push(Instruction::I32GeU);
+                            self.code.push(Instruction::If(BlockType::Empty));
+                            self.code.push(Instruction::Unreachable);
+                            self.code.push(Instruction::End);
+                            self.emit_operand(index_op, int_ty);
+                            self.code.push(Instruction::I32Const(elem_size as i32));
+                            self.code.push(Instruction::I32Mul);
+                            self.code.push(Instruction::I32Add);
+                        } else {
+                            self.code.push(Instruction::LocalSet(self.scratch));
+                            self.emit_operand(index_op, int_ty);
+                            self.code.push(Instruction::LocalGet(self.scratch));
+                            self.code.push(Instruction::I32Load(wasm_encoder::MemArg {
+                                offset: 4,
+                                align: 2,
+                                memory_index: 0,
+                            }));
+                            self.code.push(Instruction::I32GeU);
+                            self.code.push(Instruction::If(BlockType::Empty));
+                            self.code.push(Instruction::Unreachable);
+                            self.code.push(Instruction::End);
+                            self.code.push(Instruction::LocalGet(self.scratch));
+                            self.code.push(Instruction::I32Load(wasm_encoder::MemArg {
+                                offset: 0,
+                                align: 2,
+                                memory_index: 0,
+                            }));
+                            self.emit_operand(index_op, int_ty);
+                            self.code.push(Instruction::I32Const(elem_size as i32));
+                            self.code.push(Instruction::I32Mul);
+                            self.code.push(Instruction::I32Add);
+                        }
                     }
                     _ => {}
                 }
-                self.code.push(Instruction::I32GeU);
-                self.code.push(Instruction::If(BlockType::Empty));
-                self.code.push(Instruction::Unreachable);
-                self.code.push(Instruction::End);
-                // address = base + index * elem_size
-                self.emit_operand(index_op, int_ty);
-                self.code.push(Instruction::I32Const(elem_size as i32));
-                self.code.push(Instruction::I32Mul);
-                self.code.push(Instruction::I32Add);
+                *from_memory = true;
                 elem_ty
             }
         }
@@ -504,40 +576,101 @@ impl<'a> FuncTranslator<'a> {
         result_ty: TypeId,
     ) {
         let layout = self.layout_of_id(result_ty);
-        let size = layout.size as i32;
-        let payload_offset = layout.field_offsets.get(1).copied().unwrap_or(4);
+        let size = layout.size.max(1) as i32;
         self.alloc_cell(size);
         self.code.push(Instruction::LocalGet(self.scratch));
         self.code.push(Instruction::LocalSet(self.scratch_b));
-        // Store tag at offset 0.
-        self.push_cell_addr();
-        self.code.push(Instruction::I32Const(variant_tag as i32));
-        self.code.push(Instruction::I32Store(wasm_encoder::MemArg {
-            offset: 0,
-            align: 2,
-            memory_index: 0,
-        }));
-        // Store payload at its layout offset.
-        if let Some(op) = payload {
-            let payload_ty = self.operand_arity_ty(&op);
-            self.push_cell_addr();
-            if self.is_owned_aggregate(payload_ty) {
-                let size = self.layout_of_id(payload_ty).size as i32;
-                self.code.push(Instruction::LocalSet(self.scratch_b));
-                self.emit_operand(&op, payload_ty);
-                self.code.push(Instruction::LocalSet(self.scratch));
-                self.code.push(Instruction::LocalGet(self.scratch_b));
-                self.code.push(Instruction::I32Const(payload_offset as i32));
-                self.code.push(Instruction::I32Add);
-                self.code.push(Instruction::LocalGet(self.scratch));
-                self.code.push(Instruction::I32Const(size));
-                self.code.push(Instruction::MemoryCopy {
-                    src_mem: 0,
-                    dst_mem: 0,
-                });
+
+        let tag_is_niche = matches!(layout.tag_encoding, Some(TagEncoding::Niche { .. }));
+
+        if let Some(TagEncoding::Niche {
+            niche_offset,
+            niche_value,
+            tagged_variant,
+            ..
+        }) = layout.tag_encoding
+        {
+            if variant_tag == tagged_variant {
+                self.push_cell_addr();
+                self.code.push(Instruction::I32Const(niche_value as i32));
+                self.code.push(Instruction::I32Store(wasm_encoder::MemArg {
+                    offset: niche_offset,
+                    align: 2,
+                    memory_index: 0,
+                }));
+            }
+        } else if let Some(TagEncoding::PointerTag {
+            tag_mask,
+            pointer_offset,
+            ..
+        }) = layout.tag_encoding
+        {
+            if let Some(op) = &payload {
+                let payload_ty = self.operand_arity_ty(op);
+                self.push_cell_addr();
+                self.emit_operand(op, payload_ty);
+                let tag_val = (variant_tag as u64) & tag_mask;
+                let mask_inv = !(tag_mask as i32);
+                self.code.push(Instruction::I32Const(mask_inv));
+                self.code.push(Instruction::I32And);
+                self.code.push(Instruction::I32Const(tag_val as i32));
+                self.code.push(Instruction::I32Or);
+                self.code.push(Instruction::I32Store(wasm_encoder::MemArg {
+                    offset: pointer_offset,
+                    align: 2,
+                    memory_index: 0,
+                }));
             } else {
-                self.emit_operand(&op, payload_ty);
-                self.emit_store_value_at(payload_ty, payload_offset);
+                self.push_cell_addr();
+                let tag_val = (variant_tag as u64) & tag_mask;
+                self.code.push(Instruction::I32Const(tag_val as i32));
+                self.code.push(Instruction::I32Store(wasm_encoder::MemArg {
+                    offset: pointer_offset,
+                    align: 2,
+                    memory_index: 0,
+                }));
+            }
+        } else {
+            // Direct tag stored at offset 0.
+            self.push_cell_addr();
+            self.code.push(Instruction::I32Const(variant_tag as i32));
+            self.code.push(Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 2,
+                memory_index: 0,
+            }));
+        }
+
+        // Store payload at its layout offset (for non-PointerTag or if payload not inlined with tag).
+        if let Some(op) = payload {
+            let is_pointer_tag =
+                matches!(layout.tag_encoding, Some(TagEncoding::PointerTag { .. }));
+            if !is_pointer_tag {
+                let payload_offset = if tag_is_niche {
+                    0
+                } else {
+                    layout.field_offsets.get(1).copied().unwrap_or(4)
+                };
+                let payload_ty = self.operand_arity_ty(&op);
+                self.push_cell_addr();
+                if self.is_owned_aggregate(payload_ty) {
+                    let p_size = self.layout_of_id(payload_ty).size as i32;
+                    self.code.push(Instruction::LocalSet(self.scratch_b));
+                    self.emit_operand(&op, payload_ty);
+                    self.code.push(Instruction::LocalSet(self.scratch));
+                    self.code.push(Instruction::LocalGet(self.scratch_b));
+                    self.code.push(Instruction::I32Const(payload_offset as i32));
+                    self.code.push(Instruction::I32Add);
+                    self.code.push(Instruction::LocalGet(self.scratch));
+                    self.code.push(Instruction::I32Const(p_size));
+                    self.code.push(Instruction::MemoryCopy {
+                        src_mem: 0,
+                        dst_mem: 0,
+                    });
+                } else {
+                    self.emit_operand(&op, payload_ty);
+                    self.emit_store_value_at(payload_ty, payload_offset);
+                }
             }
         }
         // Return the cell address (from the backup, since nested allocations

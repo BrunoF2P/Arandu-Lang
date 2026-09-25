@@ -48,6 +48,7 @@ fn main() {
         "run-fuzz-seed" => fuzz_regressions::run_one(args),
         "smith" => smith::run(args),
         "smith-worker" => smith::run_worker(args),
+        "smith-jit-worker" => smith::run_jit_worker(args),
         "verify-fuzz-source" => fuzz_artifact::verify_source(args),
         "check-release-contract" => release_contract::check(&workspace_root(), args.next()),
         "prepare-release" => release_contract::prepare(&workspace_root(), args.next()),

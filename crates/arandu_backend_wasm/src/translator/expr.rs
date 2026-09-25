@@ -2,6 +2,7 @@
 
 use arandu_middle::amir::local::TempId;
 use arandu_middle::amir::value::{AmirOperand, AmirRvalue};
+use arandu_middle::layout::TagEncoding;
 use arandu_middle::types::{ArType, Primitive, TypeId};
 use wasm_encoder::{BlockType, Instruction, ValType};
 
@@ -67,13 +68,51 @@ impl<'a> FuncTranslator<'a> {
                 self.emit_unary(*op, operand, result_ty);
             }
             AmirRvalue::Discriminant { value } => {
-                // Load enum tag (i32 at offset 0 of the enum cell).
-                self.emit_operand(value, result_ty);
-                self.code.push(Instruction::I32Load(wasm_encoder::MemArg {
-                    offset: 0,
-                    align: 2,
-                    memory_index: 0,
-                }));
+                let operand_ty = self.operand_arity_ty(value);
+                let enum_ty = self.strip_ref(operand_ty).unwrap_or(operand_ty);
+                let layout = self.layout_of_id(enum_ty);
+                if let Some(TagEncoding::Niche {
+                    niche_offset,
+                    niche_value,
+                    untagged_variant,
+                    tagged_variant,
+                    ..
+                }) = layout.tag_encoding
+                {
+                    self.code.push(Instruction::I32Const(tagged_variant as i32));
+                    self.code
+                        .push(Instruction::I32Const(untagged_variant as i32));
+                    self.emit_operand(value, operand_ty);
+                    self.code.push(Instruction::I32Load(wasm_encoder::MemArg {
+                        offset: niche_offset,
+                        align: 2,
+                        memory_index: 0,
+                    }));
+                    self.code.push(Instruction::I32Const(niche_value as i32));
+                    self.code.push(Instruction::I32Eq);
+                    self.code.push(Instruction::Select);
+                } else if let Some(TagEncoding::PointerTag {
+                    tag_mask,
+                    pointer_offset,
+                    ..
+                }) = layout.tag_encoding
+                {
+                    self.emit_operand(value, operand_ty);
+                    self.code.push(Instruction::I32Load(wasm_encoder::MemArg {
+                        offset: pointer_offset,
+                        align: 2,
+                        memory_index: 0,
+                    }));
+                    self.code.push(Instruction::I32Const(tag_mask as i32));
+                    self.code.push(Instruction::I32And);
+                } else {
+                    self.emit_operand(value, operand_ty);
+                    self.code.push(Instruction::I32Load(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 2,
+                        memory_index: 0,
+                    }));
+                }
             }
             AmirRvalue::Len(op) => {
                 // For fat pointers: the len is the second slot (local+1).
@@ -144,7 +183,29 @@ impl<'a> FuncTranslator<'a> {
                 let operand_ty = self.operand_arity_ty(value);
                 let enum_ty = self.strip_ref(operand_ty).unwrap_or(operand_ty);
                 let layout = self.layout_of_id(enum_ty);
-                let payload_offset = layout.field_offsets.get(1).copied().unwrap_or(4);
+                if let Some(TagEncoding::PointerTag {
+                    tag_mask,
+                    pointer_offset,
+                    ..
+                }) = layout.tag_encoding
+                {
+                    self.emit_operand(value, operand_ty);
+                    self.code.push(Instruction::I32Load(wasm_encoder::MemArg {
+                        offset: pointer_offset,
+                        align: 2,
+                        memory_index: 0,
+                    }));
+                    let mask_inv = !(tag_mask as i32);
+                    self.code.push(Instruction::I32Const(mask_inv));
+                    self.code.push(Instruction::I32And);
+                    return;
+                }
+                let payload_offset =
+                    if matches!(layout.tag_encoding, Some(TagEncoding::Niche { .. })) {
+                        0
+                    } else {
+                        layout.field_offsets.get(1).copied().unwrap_or(4)
+                    };
                 if self.is_owned_aggregate(result_ty) {
                     let size = self.layout_of_id(result_ty).size as i32;
                     self.emit_operand(value, operand_ty);
@@ -548,30 +609,10 @@ impl<'a> FuncTranslator<'a> {
                 self.code.push(Instruction::LocalGet(self.scratch_d));
                 self.code.push(Instruction::LocalSet(local + 1));
             }
-            AmirRvalue::Load(place) => {
-                if place.projections.is_empty() {
-                    let src = self.local_slot(place.local).unwrap_or(0);
-                    self.code.push(Instruction::LocalGet(src));
-                    self.code.push(Instruction::LocalSet(local));
-                    self.code.push(Instruction::LocalGet(src + 1));
-                    self.code.push(Instruction::LocalSet(local + 1));
-                    return;
-                }
-                self.emit_zero_fat(local);
-            }
-            AmirRvalue::Borrow(place) | AmirRvalue::BorrowMut(place) => {
-                if place.projections.is_empty() {
-                    let src = self.local_slot(place.local).unwrap_or(0);
-                    self.code.push(Instruction::LocalGet(src));
-                    self.code.push(Instruction::LocalSet(local));
-                    self.code.push(Instruction::LocalGet(src + 1));
-                    self.code.push(Instruction::LocalSet(local + 1));
-                } else {
-                    let place_ty = self.emit_place_address(place);
-                    self.emit_load_value_at(place_ty, 0);
-                    self.code.push(Instruction::LocalSet(local + 1));
-                    self.code.push(Instruction::LocalSet(local));
-                }
+            AmirRvalue::Load(place) | AmirRvalue::Borrow(place) | AmirRvalue::BorrowMut(place) => {
+                self.emit_load(place, lhs_ty);
+                self.code.push(Instruction::LocalSet(local + 1));
+                self.code.push(Instruction::LocalSet(local));
             }
             AmirRvalue::Unary {
                 op: arandu_middle::ops::UnaryOp::Deref,
@@ -758,6 +799,13 @@ impl<'a> FuncTranslator<'a> {
             }
             AmirRvalue::BlackBox { value, .. } => {
                 self.emit_fat_assign(lhs, lhs_ty, &AmirRvalue::Use(*value));
+            }
+            AmirRvalue::EnumPayload { .. }
+            | AmirRvalue::FieldAccess { .. }
+            | AmirRvalue::IndexAccess { .. } => {
+                self.emit_rvalue(rhs, lhs_ty);
+                self.code.push(Instruction::LocalSet(local + 1));
+                self.code.push(Instruction::LocalSet(local));
             }
             _ => self.emit_zero_fat(local),
         }

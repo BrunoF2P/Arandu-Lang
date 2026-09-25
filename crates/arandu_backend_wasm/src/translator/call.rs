@@ -198,10 +198,15 @@ impl<'a> FuncTranslator<'a> {
                 if args.len() >= 2 {
                     let int_ty = self.interner.intern(ArType::Primitive(Primitive::Int));
                     if let Some(temp) = lhs {
+                        let (data_arg, len_arg) = if args.len() >= 3 {
+                            (&args[1], &args[2])
+                        } else {
+                            (&args[0], &args[1])
+                        };
                         let local = self.temp_local.get(&temp).copied().unwrap_or(0);
-                        self.emit_operand(&args[0], int_ty);
+                        self.emit_operand(data_arg, int_ty);
                         self.code.push(Instruction::LocalSet(local));
-                        self.emit_operand(&args[1], int_ty);
+                        self.emit_operand(len_arg, int_ty);
                         self.code.push(Instruction::LocalSet(local + 1));
                     }
                 }

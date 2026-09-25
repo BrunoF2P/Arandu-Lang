@@ -10,7 +10,11 @@ use crate::process_job::terminate_process_group;
 #[cfg(windows)]
 use crate::process_job::ProcessJob as BackendProcessJob;
 
-pub const BACKEND_PROCESS_TIMEOUT: Duration = Duration::from_secs(5);
+pub const BACKEND_PROCESS_TIMEOUT: Duration = if cfg!(debug_assertions) {
+    Duration::from_secs(30)
+} else {
+    Duration::from_secs(10)
+};
 pub const MAX_CAPTURED_PROCESS_OUTPUT: usize = 1024 * 1024;
 pub const MAX_RESULT_CHANNEL_BYTES: usize = 64;
 pub const PREFLIGHT_PROCESS_GROUP_ENV: &str = "ARANDU_SMITH_PREFLIGHT_PROCESS_GROUP";
@@ -39,6 +43,7 @@ thread_local! {
     };
 }
 
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn capture_jit_println(ptr: *const u8, len: i64) {
     JIT_STDOUT_CAPTURE.with(|capture| {
         let mut capture = capture.borrow_mut();
@@ -54,8 +59,7 @@ pub extern "C" fn capture_jit_println(ptr: *const u8, len: i64) {
         let remaining = MAX_CAPTURED_PROCESS_OUTPUT.saturating_sub(capture.bytes.len());
         let copied = len.min(remaining);
         if copied > 0 {
-            // SAFETY: the generated language string ABI guarantees `ptr`
-            // addresses `len` readable bytes whenever `len` is positive.
+            // SAFETY: Caller guarantees `ptr` addresses `len` readable bytes.
             let bytes = unsafe { std::slice::from_raw_parts(ptr, copied) };
             capture.bytes.extend_from_slice(bytes);
         }
@@ -71,6 +75,7 @@ pub extern "C" fn capture_jit_println(ptr: *const u8, len: i64) {
     });
 }
 
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn capture_jit_eprint(ptr: *const u8, len: i64) {
     JIT_STDERR_CAPTURE.with(|capture| {
         let mut capture = capture.borrow_mut();
@@ -86,8 +91,7 @@ pub extern "C" fn capture_jit_eprint(ptr: *const u8, len: i64) {
         let remaining = MAX_CAPTURED_PROCESS_OUTPUT.saturating_sub(capture.bytes.len());
         let copied = len.min(remaining);
         if copied > 0 {
-            // SAFETY: the generated language string ABI guarantees `ptr`
-            // addresses `len` readable bytes whenever `len` is positive.
+            // SAFETY: Caller guarantees `ptr` addresses `len` readable bytes.
             let bytes = unsafe { std::slice::from_raw_parts(ptr, copied) };
             capture.bytes.extend_from_slice(bytes);
         }
@@ -121,6 +125,9 @@ pub fn synthesized_arg(index: isize) -> arandu_runtime::rt_runtime::ArFatStr {
     }
 }
 
+/// # Safety
+///
+/// ABI-compatible return of fat string pointer for synthesized args.
 #[cfg(not(windows))]
 pub unsafe extern "C" fn synthesized_args_arg(
     index: isize,
@@ -128,6 +135,9 @@ pub unsafe extern "C" fn synthesized_args_arg(
     synthesized_arg(index)
 }
 
+/// # Safety
+///
+/// ABI-compatible return of fat string pointer for synthesized args on Windows.
 #[cfg(windows)]
 pub unsafe extern "sysv64" fn synthesized_args_arg(
     index: isize,
@@ -230,6 +240,54 @@ pub fn captured_stderr(output: &BoundedOutput) -> String {
         text.push_str("\n[stderr truncated after 1048576 bytes]");
     }
     text
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExitStatusDetails {
+    pub exit_code: Option<i32>,
+    pub signal: Option<i32>,
+    pub description: String,
+}
+
+impl std::fmt::Display for ExitStatusDetails {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.description)
+    }
+}
+
+pub fn describe_exit_status(status: &ExitStatus) -> ExitStatusDetails {
+    let exit_code = status.code();
+    #[cfg(unix)]
+    let signal = {
+        use std::os::unix::process::ExitStatusExt;
+        status.signal()
+    };
+    #[cfg(not(unix))]
+    let signal = None;
+
+    let description = match (exit_code, signal) {
+        (Some(code), _) => format!("exit code {code}"),
+        (None, Some(sig)) => {
+            let name = match sig {
+                4 => " (SIGILL)",
+                6 => " (SIGABRT)",
+                7 => " (SIGBUS)",
+                8 => " (SIGFPE)",
+                9 => " (SIGKILL)",
+                11 => " (SIGSEGV)",
+                13 => " (SIGPIPE)",
+                _ => "",
+            };
+            format!("signal {sig}{name}")
+        }
+        (None, None) => "terminated abnormally".to_string(),
+    };
+
+    ExitStatusDetails {
+        exit_code,
+        signal,
+        description,
+    }
 }
 
 fn shares_preflight_process_group() -> bool {

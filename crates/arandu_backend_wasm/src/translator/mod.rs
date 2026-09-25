@@ -226,6 +226,27 @@ impl<'a> FuncTranslator<'a> {
             self.code.push(Instruction::LocalSet(unpack.target_local));
         }
 
+        // Allocate memory cells for address-taken locals (is_memory).
+        for local in &self.func.locals {
+            let ty = self.interner.resolve(local.ty);
+            let pointer_like = matches!(
+                ty,
+                arandu_middle::types::ArType::Ptr(_)
+                    | arandu_middle::types::ArType::Ref(_)
+                    | arandu_middle::types::ArType::RefMut(_)
+                    | arandu_middle::types::ArType::Nullable(_)
+                    | arandu_middle::types::ArType::Slice(_)
+            );
+            if local.is_memory && !pointer_like && !self.is_owned_aggregate(local.ty) {
+                let size = self.layout_of(&ty).size.max(1) as i32;
+                self.alloc_cell(size);
+                if let Some(slot) = self.local_slot(local.id) {
+                    self.code.push(Instruction::LocalGet(self.scratch));
+                    self.code.push(Instruction::LocalSet(slot));
+                }
+            }
+        }
+
         // Walk the op stream.
         for op in ops {
             match op {

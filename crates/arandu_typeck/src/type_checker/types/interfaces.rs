@@ -551,7 +551,8 @@ pub(crate) fn type_satisfies_interface(
         let self_param = iface.self_param;
         let required_stripped =
             strip_interface_receiver(required_inst, checker, Some(concrete), self_param);
-        let provided_stripped = strip_impl_receiver(provided, checker);
+        let provided_inst = instantiate_impl_method(checker, type_id, concrete, &method, provided);
+        let provided_stripped = strip_impl_receiver(provided_inst, checker);
         if !method_types_compatible(&required_stripped, &provided_stripped, checker) {
             return false;
         }
@@ -610,12 +611,49 @@ fn missing_interface_methods(
         };
         let required_stripped =
             strip_interface_receiver(required_inst, checker, Some(concrete), self_param);
-        let provided_stripped = strip_impl_receiver(provided, checker);
+        let provided_inst = instantiate_impl_method(checker, type_id, concrete, &method, provided);
+        let provided_stripped = strip_impl_receiver(provided_inst, checker);
         if !method_types_compatible(&required_stripped, &provided_stripped, checker) {
             missing.push(format!("{method} (signature mismatch)"));
         }
     }
     missing
+}
+
+fn instantiate_impl_method(
+    checker: &TypeChecker<'_>,
+    type_id: SymbolId,
+    concrete: &ArType,
+    method_name: &str,
+    method_ty: ArType,
+) -> ArType {
+    let ArType::Named(cid, args) = concrete else {
+        return method_ty;
+    };
+    if *cid != type_id || args.len == 0 {
+        return method_ty;
+    }
+    let method_sym = checker
+        .symbols
+        .lookup_associated_member(type_id, method_name);
+    let arg_vec = checker.type_info.type_interner.type_args(*args);
+    let recv_args: Vec<ArType> = arg_vec.iter().map(|&a| checker.resolve(a)).collect();
+
+    let param_syms: Vec<SymbolId> = if let Some(sym) = method_sym
+        && let Some(gp) = checker.type_info.generic_params.get(&sym)
+    {
+        let n = recv_args.len().min(gp.len());
+        gp.iter().copied().take(n).collect()
+    } else if let Some(gp) = checker.type_info.generic_params.get(&type_id) {
+        gp.iter().copied().take(recv_args.len()).collect()
+    } else {
+        return method_ty;
+    };
+    if param_syms.len() != recv_args.len() {
+        return method_ty;
+    }
+    let subst = build_subst(&param_syms, &recv_args);
+    substitute_type(&method_ty, &subst, &checker.type_info.type_interner)
 }
 
 fn concrete_type_id(ty: &ArType) -> Option<SymbolId> {

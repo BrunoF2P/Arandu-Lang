@@ -19,12 +19,17 @@ pub fn shrink_and_confirm(
     (minimized, confirmed)
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Failure {
     pub kind: &'static str,
     pub scope: Option<String>,
     pub message: String,
     pub shrinkable: bool,
+    pub backend: Option<&'static str>,
+    pub exit_code: Option<i32>,
+    pub signal: Option<i32>,
+    pub timeout: bool,
+    pub stderr: Option<String>,
 }
 
 impl Failure {
@@ -34,6 +39,11 @@ impl Failure {
             scope: None,
             message: message.into(),
             shrinkable,
+            backend: None,
+            exit_code: None,
+            signal: None,
+            timeout: false,
+            stderr: None,
         }
     }
 
@@ -42,8 +52,29 @@ impl Failure {
         self
     }
 
+    pub fn with_backend(mut self, backend: &'static str) -> Self {
+        self.backend = Some(backend);
+        self
+    }
+
+    pub fn with_exit_status(mut self, exit_code: Option<i32>, signal: Option<i32>) -> Self {
+        self.exit_code = exit_code;
+        self.signal = signal;
+        self
+    }
+
+    pub fn with_timeout(mut self, timeout: bool) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    pub fn with_stderr(mut self, stderr: impl Into<String>) -> Self {
+        self.stderr = Some(stderr.into());
+        self
+    }
+
     pub fn same_identity(&self, other: &Self) -> bool {
-        self.kind == other.kind && self.scope == other.scope
+        self.kind == other.kind && self.scope == other.scope && self.signal == other.signal
     }
 }
 
@@ -152,26 +183,55 @@ pub fn write_failure_artifact(
         artifact.target,
         seed_file.display().to_string()
     );
+    let backend_str = artifact.failure.backend.unwrap_or_else(|| {
+        if artifact.failure.kind.starts_with("cranelift") {
+            "Cranelift"
+        } else if artifact.failure.kind.starts_with("c-") {
+            "C"
+        } else if artifact.failure.kind.starts_with("wasm") {
+            "Wasm"
+        } else {
+            "unknown"
+        }
+    });
+    let exit_code_str = artifact
+        .failure
+        .exit_code
+        .map_or(String::new(), |c| c.to_string());
+    let signal_str = artifact
+        .failure
+        .signal
+        .map_or(String::new(), |s| s.to_string());
     let metadata = format!(
-        "target={}\ncorpus={}\nseed=0x{:016x}\nfailure_kind={}\nfailure_scope={}\nshrink_attempts={}\nshrink_reductions={}\nshrink_confirmed={}\nreplay={}\n",
+        "target={}\nbackend={}\ncorpus={}\nseed=0x{:016x}\nfailure_kind={}\nfailure_scope={}\nexit_code={}\nsignal={}\ntimeout={}\nshrink_attempts={}\nshrink_reductions={}\nshrink_confirmed={}\nreplay={}\n",
         artifact.target,
+        backend_str,
         artifact.corpus_name,
         artifact.seed,
         artifact.failure.kind,
         artifact.failure.scope.as_deref().unwrap_or(""),
+        exit_code_str,
+        signal_str,
+        artifact.failure.timeout,
         artifact.shrink_attempts,
         artifact.shrink_reductions,
         artifact.shrink_confirmed,
         replay_command
     );
-    for (name, contents) in [
+    let mut files: Vec<(&str, &[u8])> = vec![
         ("candidate.aru", artifact.source.as_bytes()),
         ("emi-candidate.aru", artifact.emi_candidate.as_bytes()),
         ("reproducer.seed", encoded_seed.as_bytes()),
         ("reproducer.bin", &seed_bytes),
         ("metadata.txt", metadata.as_bytes()),
         ("failure.txt", artifact.failure.message.as_bytes()),
-    ] {
+    ];
+    let stderr_bytes;
+    if let Some(ref stderr) = artifact.failure.stderr {
+        stderr_bytes = stderr.as_bytes();
+        files.push(("stderr.txt", stderr_bytes));
+    }
+    for (name, contents) in files {
         std::fs::write(directory.join(name), contents)
             .map_err(|error| format!("write candidate artifact {name}: {error}"))?;
     }

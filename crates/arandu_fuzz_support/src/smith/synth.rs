@@ -513,6 +513,7 @@ pub fn synthesize_with_oracle(seed: u64) -> SynthesizedProgram {
     let source = add_seeded_hash_map_case(source, seed, base_value);
     let source = add_seeded_bitset_case(source, seed);
     let source = add_seeded_try_operator_case(source, seed, base_value);
+    let source = add_seeded_slice_iter_case(source, seed, base_value);
     SynthesizedProgram {
         source,
         expected_result,
@@ -770,6 +771,128 @@ fn add_seeded_try_operator_case(source: String, seed: u64, base: i64) -> String 
         ),
         step_val = step_val,
         expected_pipeline_ok = expected_pipeline_ok,
+    );
+
+    replace_once(
+        source,
+        "    let base: int = ",
+        &format!("{scenario}    let base: int = "),
+    )
+}
+
+/// Add a seed-varying scenario exercising slice operations (len, isEmpty, first, last, subslice, splitAt)
+/// and iterator adapters (iter.enumerate, iter.take, iter.skip).
+fn add_seeded_slice_iter_case(source: String, seed: u64, base: i64) -> String {
+    if seed % 16 != 8 {
+        return source;
+    }
+
+    let declarations = concat!(
+        "struct RangeIter {\n",
+        "    current: int\n",
+        "    end: int\n",
+        "}\n\n",
+        "func RangeIter.next(self: mut ref RangeIter): Option<int> {\n",
+        "    if self.current < self.end {\n",
+        "        let val = self.current\n",
+        "        self.current = self.current + 1\n",
+        "        return Option.Some(val)\n",
+        "    }\n",
+        "    return Option.None\n",
+        "}\n\n",
+        "func make_range_iter(start: int, end: int): RangeIter {\n",
+        "    return RangeIter { current: start, end: end }\n",
+        "}\n\n",
+    );
+
+    let source = replace_once(
+        source,
+        "import std.alloc.vec as vec",
+        "import std.alloc.vec as vec\nimport std.core.iter as iter",
+    );
+    let source = replace_once(
+        source,
+        "struct Sample {",
+        &format!("{declarations}struct Sample {{"),
+    );
+
+    let v0 = base + 10;
+    let v1 = base + 20;
+    let v2 = base + 30;
+    let v3 = base + 40;
+    let v4 = base + 50;
+
+    let scenario = format!(
+        concat!(
+            "    let mut gen_slice_v = vec.new<int>()\n",
+            "    vec.push<int>(gen_slice_v, {v0})\n",
+            "    vec.push<int>(gen_slice_v, {v1})\n",
+            "    vec.push<int>(gen_slice_v, {v2})\n",
+            "    vec.push<int>(gen_slice_v, {v3})\n",
+            "    vec.push<int>(gen_slice_v, {v4})\n",
+            "    let gen_s = vec.asSlice<int>(gen_slice_v)\n",
+            "    let gen_slice_len_ok = slice.len<int>(gen_s) == (5 as usize) && !slice.isEmpty<int>(gen_s)\n",
+            "    let gen_slice_first_ok = match slice.first<int>(gen_s) {{\n",
+            "        Some(f) => *f == {v0}\n",
+            "        None => false\n",
+            "    }}\n",
+            "    let gen_slice_last_ok = match slice.last<int>(gen_s) {{\n",
+            "        Some(l) => *l == {v4}\n",
+            "        None => false\n",
+            "    }}\n",
+            "    let gen_sub_empty_ok = match slice.subslice<int>(gen_s, 0 as usize, 0 as usize) {{\n",
+            "        Some(sub) => slice.len<int>(sub) == (0 as usize)\n",
+            "        None => false\n",
+            "    }}\n",
+            "    let gen_sub_mid_ok = match slice.subslice<int>(gen_s, 1 as usize, 3 as usize) {{\n",
+            "        Some(sub) => slice.len<int>(sub) == (3 as usize) && sub[0] == {v1} && sub[1] == {v2} && sub[2] == {v3}\n",
+            "        None => false\n",
+            "    }}\n",
+            "    let gen_sub_oob_ok = match slice.subslice<int>(gen_s, 4 as usize, 3 as usize) {{\n",
+            "        Some(_) => false\n",
+            "        None => true\n",
+            "    }}\n",
+            "    let gen_split_ok = match slice.splitAt<int>(gen_s, 2 as usize) {{\n",
+            "        Some(sp) => slice.len<int>(sp.left) == (2 as usize) && slice.len<int>(sp.right) == (3 as usize) && sp.left[0] == {v0} && sp.left[1] == {v1} && sp.right[0] == {v2} && sp.right[2] == {v4}\n",
+            "        None => false\n",
+            "    }}\n",
+            "    let gen_split_oob_ok = match slice.splitAt<int>(gen_s, 6 as usize) {{\n",
+            "        Some(_) => false\n",
+            "        None => true\n",
+            "    }}\n",
+            "    vec.destroy<int>(gen_slice_v)\n",
+            "    let gen_it = make_range_iter({v0}, {v0} + 10)\n",
+            "    let gen_taken = iter.take(gen_it, 4 as uint)\n",
+            "    let gen_skipped = iter.skip(gen_taken, 1 as uint)\n",
+            "    let gen_stepped = iter.stepBy(gen_skipped, 2 as uint)\n",
+            "    let gen_count = iter.count(gen_stepped)\n",
+            "    let gen_count_ok = gen_count == (2 as uint)\n",
+            "    let mut gen_it2 = make_range_iter({v0}, {v4})\n",
+            "    let gen_item0 = gen_it2.next()\n",
+            "    let gen_item1 = gen_it2.next()\n",
+            "    let gen_items_ok = match gen_item0 {{\n",
+            "        Some(v) => v == {v0} && match gen_item1 {{\n",
+            "            Some(v2) => v2 == ({v0} + 1)\n",
+            "            None => false\n",
+            "        }}\n",
+            "        None => false\n",
+            "    }}\n",
+            "    if !gen_slice_len_ok {{ return -1000071 }}\n",
+            "    if !gen_slice_first_ok {{ return -1000072 }}\n",
+            "    if !gen_slice_last_ok {{ return -1000073 }}\n",
+            "    if !gen_sub_empty_ok {{ return -1000074 }}\n",
+            "    if !gen_sub_mid_ok {{ return -1000075 }}\n",
+            "    if !gen_sub_oob_ok {{ return -1000076 }}\n",
+            "    if !gen_split_ok {{ return -1000077 }}\n",
+            "    if !gen_split_oob_ok {{ return -1000078 }}\n",
+            "    if !gen_count_ok {{ return -1000079 }}\n",
+            "    if !gen_items_ok {{ return -1000080 }}\n",
+        ),
+        v0 = v0,
+        v1 = v1,
+        v2 = v2,
+        v3 = v3,
+        v4 = v4,
     );
 
     replace_once(

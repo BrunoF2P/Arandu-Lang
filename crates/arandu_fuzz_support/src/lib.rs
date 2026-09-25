@@ -3,6 +3,8 @@
 //! Both libFuzzer and the mandatory regression runner call these functions, so
 //! a target cannot silently bit-rot outside the scheduled fuzz workflow.
 
+#![allow(clippy::result_large_err)]
+
 use arandu_query::{AnalysisHost, DatabaseImpl};
 
 mod incremental;
@@ -10,7 +12,7 @@ mod lsp_session;
 mod module_graph;
 pub mod process_job;
 pub mod shrinker;
-mod smith;
+pub mod smith;
 
 pub const MAX_INPUT_BYTES: usize = 64 * 1024;
 

@@ -1500,6 +1500,14 @@ fn historical_enum_join_failures_match_all_backends_and_optimization_levels() {
             "Wasm match join",
             include_str!("../../../../tests/regressions/enum-wasm-match.aru"),
         ),
+        (
+            "wasm fat pointer struct projection",
+            include_str!("../../../../tests/regressions/wasm-fat-pointer-struct-projection.aru"),
+        ),
+        (
+            "wasm memory local and niche",
+            include_str!("../../../../tests/regressions/wasm-memory-local-and-niche.aru"),
+        ),
     ] {
         check_source(source, true, true)
             .unwrap_or_else(|failure| panic!("{name} regression failed: {failure:?}"));
@@ -1557,4 +1565,163 @@ fn synthesized_try_operator_and_match_case_matches_oracle() {
     assert!(program.source.contains("generated_try_step"));
     assert!(program.source.contains("generated_match_range"));
     run(&32u64.to_le_bytes());
+}
+
+#[test]
+fn test_iter_slice_chain_across_all_backends() {
+    let source = concat!(
+        "import std.alloc.vec as vec\n",
+        "import std.core.slice as slice\n",
+        "import std.core.iter as iter\n",
+        "import std.core.option as core_option\n\n",
+        "struct VecIter {\n",
+        "    items: vec.Vec<int>\n",
+        "    index: usize\n",
+        "}\n\n",
+        "func make_vec_iter(v: vec.Vec<int>): VecIter {\n",
+        "    return VecIter { items: v, index: 0 as usize }\n",
+        "}\n\n",
+        "func VecIter.next(self: mut ref VecIter): Option<int> {\n",
+        "    let item = vec.get<int>(self.items, self.index)\n",
+        "    if self.index < vec.len<int>(self.items) {\n",
+        "        self.index = self.index + (1 as usize)\n",
+        "    }\n",
+        "    return item\n",
+        "}\n\n",
+        "func main(): int {\n",
+        "    let mut v = vec.new<int>()\n",
+        "    vec.push<int>(v, 10)\n",
+        "    vec.push<int>(v, 20)\n",
+        "    vec.push<int>(v, 30)\n",
+        "    vec.push<int>(v, 40)\n",
+        "    vec.push<int>(v, 50)\n",
+        "    let it = make_vec_iter(v)\n",
+        "    let taken = iter.take(it, 4 as uint)\n",
+        "    let skipped = iter.skip(taken, 1 as uint)\n",
+        "    let stepped = iter.stepBy(skipped, 2 as uint)\n",
+        "    let total = iter.count(stepped)\n",
+        "    return total as int\n",
+        "}\n",
+    );
+    let observation = check_source(source, true, true).expect("execution across all backends");
+    // Elements: [10, 20, 30, 40, 50]
+    // take 4: [10, 20, 30, 40]
+    // skip 1: [20, 30, 40]
+    // stepBy 2: [20, 40] -> count = 2
+    assert_eq!(observation.result, 2);
+}
+
+#[test]
+fn test_slice_split_and_cuts_across_all_backends() {
+    let source = concat!(
+        "import std.alloc.vec as vec\n",
+        "import std.core.slice as slice\n",
+        "import std.core.iter as iter\n\n",
+        "struct VecIter {\n",
+        "    items: vec.Vec<int>\n",
+        "    index: usize\n",
+        "}\n\n",
+        "func make_vec_iter(v: vec.Vec<int>): VecIter {\n",
+        "    return VecIter { items: v, index: 0 as usize }\n",
+        "}\n\n",
+        "func VecIter.next(self: mut ref VecIter): Option<int> {\n",
+        "    let item = vec.get<int>(self.items, self.index)\n",
+        "    if self.index < vec.len<int>(self.items) {\n",
+        "        self.index = self.index + (1 as usize)\n",
+        "    }\n",
+        "    return item\n",
+        "}\n\n",
+        "func main(): int {\n",
+        "    let mut v = vec.new<int>()\n",
+        "    vec.push<int>(v, 100)\n",
+        "    vec.push<int>(v, 200)\n",
+        "    vec.push<int>(v, 300)\n",
+        "    vec.push<int>(v, 400)\n",
+        "    let s = vec.asSlice<int>(v)\n",
+        "    let empty_start = match slice.subslice<int>(s, 0 as usize, 0 as usize) {\n",
+        "        Some(sub) => slice.len<int>(sub) == (0 as usize)\n",
+        "        None => false\n",
+        "    }\n",
+        "    if !empty_start { return -1 }\n",
+        "    let empty_end = match slice.subslice<int>(s, 4 as usize, 0 as usize) {\n",
+        "        Some(sub) => slice.len<int>(sub) == (0 as usize)\n",
+        "        None => false\n",
+        "    }\n",
+        "    if !empty_end { return -2 }\n",
+        "    let head = match slice.subslice<int>(s, 0 as usize, 2 as usize) {\n",
+        "        Some(sub) => slice.len<int>(sub) == (2 as usize) && sub[0] == 100 && sub[1] == 200\n",
+        "        None => false\n",
+        "    }\n",
+        "    if !head { return -3 }\n",
+        "    let tail = match slice.subslice<int>(s, 2 as usize, 2 as usize) {\n",
+        "        Some(sub) => slice.len<int>(sub) == (2 as usize) && sub[0] == 300 && sub[1] == 400\n",
+        "        None => false\n",
+        "    }\n",
+        "    if !tail { return -4 }\n",
+        "    let oob1 = match slice.subslice<int>(s, 0 as usize, 5 as usize) {\n",
+        "        Some(_) => false\n",
+        "        None => true\n",
+        "    }\n",
+        "    if !oob1 { return -5 }\n",
+        "    let oob2 = match slice.subslice<int>(s, 5 as usize, 0 as usize) {\n",
+        "        Some(_) => false\n",
+        "        None => true\n",
+        "    }\n",
+        "    let split_check = match slice.splitAt<int>(s, 2 as usize) {\n",
+        "        Some(sp) => slice.len<int>(sp.left) == (2 as usize) && slice.len<int>(sp.right) == (2 as usize) && sp.left[0] == 100 && sp.right[1] == 400\n",
+        "        None => false\n",
+        "    }\n",
+        "    if !split_check { return -7 }\n",
+        "    let split_oob = match slice.splitAt<int>(s, 5 as usize) {\n",
+        "        Some(_) => false\n",
+        "        None => true\n",
+        "    }\n",
+        "    if !split_oob { return -8 }\n",
+        "    let it = make_vec_iter(v)\n",
+        "    let enumerated = iter.enumerate(it)\n",
+        "    let taken_enum = iter.take(enumerated, 3 as uint)\n",
+        "    let mut enum_it = taken_enum\n",
+        "    let mut loop_sum: int = 0\n",
+        "    while true {\n",
+        "        match enum_it.next() {\n",
+        "            Some(item) => {\n",
+        "                if item.index == (1 as uint) {\n",
+        "                    loop_sum = loop_sum + item.value\n",
+        "                }\n",
+        "            }\n",
+        "            None => { break }\n",
+        "        }\n",
+        "    }\n",
+        "    if loop_sum != 200 { return -9 }\n",
+        "    return 42\n",
+        "}\n",
+    );
+    let observation = check_source(source, true, true).expect("execution across all backends");
+    assert_eq!(observation.result, 42);
+}
+
+#[test]
+#[ignore]
+fn __smith_jit_worker() {
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(pos) = args.iter().position(|a| a == "--") {
+        let worker_args = &args[pos + 1..];
+        if worker_args.len() >= 5 {
+            let source_path = std::path::Path::new(&worker_args[0]);
+            let opt_level = &worker_args[1];
+            let result_path = std::path::Path::new(&worker_args[2]);
+            let stdout_path = std::path::Path::new(&worker_args[3]);
+            let stderr_path = std::path::Path::new(&worker_args[4]);
+            let coverage_path = worker_args.get(5).map(std::path::Path::new);
+            let code = run_jit_worker(
+                source_path,
+                opt_level,
+                result_path,
+                stdout_path,
+                stderr_path,
+                coverage_path,
+            );
+            std::process::exit(code);
+        }
+    }
 }

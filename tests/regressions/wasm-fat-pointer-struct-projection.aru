@@ -1,0 +1,23 @@
+import std.alloc.vec as vec
+import std.core.slice as slice
+
+func drop_vec(own v: vec.Vec<int>): void {
+}
+
+func main(): int {
+    let mut v = vec.new<int>()
+    vec.push<int>(v, 100)
+    vec.push<int>(v, 200)
+    vec.push<int>(v, 300)
+    vec.push<int>(v, 400)
+    let s = vec.asSlice<int>(v)
+    let split_check = match slice.splitAt<int>(s, 2 as usize) {
+        Some(sp) => slice.len<int>(sp.left) == (2 as usize) && slice.len<int>(sp.right) == (2 as usize) && sp.left[0] == 100 && sp.right[1] == 400
+        None => false
+    }
+    drop_vec(v)
+    if split_check {
+        return 42
+    }
+    return 1
+}

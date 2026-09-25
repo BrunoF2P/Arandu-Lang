@@ -30,7 +30,7 @@ pub use crate::aot::{
 pub use crate::cgu::{CodegenUnit, compile_cgu, compute_cgu_hash, partition_program};
 pub use crate::debug::DebugSource;
 pub use crate::jit::CompiledModule;
-pub use crate::jit::{BlockCoverage, BlockCoverageHit};
+pub use crate::jit::{BlockCoverage, BlockCoverageHit, BlockSourceMapping};
 pub use cranelift_object::object;
 pub use target_lexicon::{Architecture as TargetArchitecture, Triple};
 

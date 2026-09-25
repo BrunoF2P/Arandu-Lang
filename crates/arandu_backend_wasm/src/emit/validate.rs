@@ -75,6 +75,12 @@ fn reject_unaddressable_place(
             | arandu_middle::types::ArType::RefMut(_)
             | arandu_middle::types::ArType::Nullable(_)
             | arandu_middle::types::ArType::Slice(_)
+            | arandu_middle::types::ArType::Named(..)
+            | arandu_middle::types::ArType::Array(..)
+            | arandu_middle::types::ArType::Tuple(..)
+            | arandu_middle::types::ArType::Option(..)
+            | arandu_middle::types::ArType::Result(..)
+            | arandu_middle::types::ArType::Poll(..)
     );
     if !local.is_memory && !pointer_like {
         diags.push(Diagnostic::ice(

@@ -1,0 +1,55 @@
+import std.alloc.vec as vec
+import std.core.slice as slice
+
+struct Pack {
+    items: vec.Vec<int>
+    marker: int
+}
+
+func read_ref(value: ref int): int {
+    return *value
+}
+
+func make_pack(value: int, marker: int): Pack {
+    let mut items = vec.new<int>()
+    vec.push<int>(items, value)
+    return Pack { items: items, marker: marker }
+}
+
+func main(): int {
+    // 1. Address-taken primitive local (is_memory)
+    let mut borrow_target: int = 42
+    let read_val = read_ref(ref borrow_target)
+    if read_val != 42 { return 1 }
+
+    // 2. Struct containing Vec with address taken (must not double-wrap cell)
+    let pack = make_pack(100, 200)
+    if pack.marker != 200 || vec.len<int>(pack.items) != (1 as usize) {
+        pack.items.destroy()
+        return 2
+    }
+
+    // 3. String stored in is_memory local
+    let text: str = "arandu-smith"
+    if text != "arandu-smith" {
+        pack.items.destroy()
+        return 3
+    }
+
+    // 4. Slice subslice and splitAt on Vec slice
+    let mut v = vec.new<int>()
+    vec.push<int>(v, 10)
+    vec.push<int>(v, 20)
+    vec.push<int>(v, 30)
+    let s = vec.asSlice<int>(v)
+    let sub_ok = match slice.subslice<int>(s, 1 as usize, 2 as usize) {
+        Some(sub) => slice.len<int>(sub) == (2 as usize) && sub[0] == 20 && sub[1] == 30
+        None => false
+    }
+    vec.destroy<int>(v)
+    pack.items.destroy()
+
+    if !sub_ok { return 4 }
+
+    return 0
+}

@@ -68,6 +68,7 @@ impl Rng {
         })
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> u64 {
         // xorshift64*: fixed algorithm and no platform-dependent state.
         self.0 ^= self.0 >> 12;

@@ -11,7 +11,7 @@ pub mod execution;
 pub mod isa;
 pub mod symbols;
 
-pub use block_coverage::{BlockCoverage, BlockCoverageHit};
+pub use block_coverage::{BlockCoverage, BlockCoverageHit, BlockSourceMapping};
 pub use compiler::{AranduJit, AranduModule};
 pub use execution::CompiledModule;
 pub(crate) use isa::codegen_ice;
