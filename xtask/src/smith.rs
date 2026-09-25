@@ -1,7 +1,11 @@
 //! Deterministic, parallel-capable entry point for AranduSmith fuzz targets.
 
+use std::collections::VecDeque;
+use std::io::{IsTerminal, Write};
 use std::panic::{self, AssertUnwindSafe};
 use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -10,23 +14,57 @@ use arandu_fuzz_support::Target;
 const MAX_ITERATIONS: u64 = 1_000_000;
 const DEFAULT_BATCH_SIZE: u64 = 50;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct Config {
     iterations: u64,
+    duration: Option<Duration>,
     first_seed: u64,
     jobs: usize,
     batch_size: u64,
     target: Target,
+    report_path: Option<String>,
+}
+
+fn parse_duration(s: &str) -> Result<Duration, String> {
+    if let Some(ms_str) = s.strip_suffix("ms") {
+        let ms: u64 = ms_str
+            .parse()
+            .map_err(|_| format!("invalid milliseconds in duration: {s}"))?;
+        Ok(Duration::from_millis(ms))
+    } else if let Some(secs_str) = s.strip_suffix('s') {
+        let secs: u64 = secs_str
+            .parse()
+            .map_err(|_| format!("invalid seconds in duration: {s}"))?;
+        Ok(Duration::from_secs(secs))
+    } else if let Some(mins_str) = s.strip_suffix('m') {
+        let mins: u64 = mins_str
+            .parse()
+            .map_err(|_| format!("invalid minutes in duration: {s}"))?;
+        Ok(Duration::from_secs(mins * 60))
+    } else if let Some(hours_str) = s.strip_suffix('h') {
+        let hours: u64 = hours_str
+            .parse()
+            .map_err(|_| format!("invalid hours in duration: {s}"))?;
+        Ok(Duration::from_secs(hours * 3600))
+    } else {
+        let secs: u64 = s
+            .parse()
+            .map_err(|_| format!("invalid duration '{s}': specify unit like 30s, 5m, 100ms"))?;
+        Ok(Duration::from_secs(secs))
+    }
 }
 
 fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Config, String> {
     let mut config = Config {
         iterations: 1,
+        duration: None,
         first_seed: 0,
         jobs: 1,
         batch_size: DEFAULT_BATCH_SIZE,
         target: Target::SynthesizedAll,
+        report_path: None,
     };
+    let mut explicit_iterations = false;
 
     while let Some(option) = args.next() {
         let value = args
@@ -37,6 +75,13 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Config, String> 
                 config.iterations = value
                     .parse()
                     .map_err(|_| "--iterations must be a positive integer".to_owned())?;
+                explicit_iterations = true;
+            }
+            "--duration" => {
+                config.duration = Some(parse_duration(&value)?);
+            }
+            "--report" => {
+                config.report_path = Some(value);
             }
             "--seed" => {
                 config.first_seed = value
@@ -67,6 +112,10 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Config, String> 
         }
     }
 
+    if config.duration.is_some() && !explicit_iterations {
+        config.iterations = MAX_ITERATIONS;
+    }
+
     if !(1..=MAX_ITERATIONS).contains(&config.iterations) {
         return Err(format!(
             "--iterations must be between 1 and {MAX_ITERATIONS}"
@@ -79,11 +128,116 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Config, String> 
     Ok(config)
 }
 
+struct ProgressReporter {
+    total_seeds: Option<u64>,
+    target_name: &'static str,
+    start_time: Instant,
+    last_update: Instant,
+    is_tty: bool,
+}
+
+impl ProgressReporter {
+    fn new(total_seeds: Option<u64>, target_name: &'static str) -> Self {
+        let is_tty = std::io::stderr().is_terminal();
+        Self {
+            total_seeds,
+            target_name,
+            start_time: Instant::now(),
+            last_update: Instant::now(),
+            is_tty,
+        }
+    }
+
+    fn update(&mut self, completed: u64, force: bool) {
+        let now = Instant::now();
+        if !force && now.duration_since(self.last_update) < Duration::from_millis(200) {
+            return;
+        }
+        self.last_update = now;
+        let elapsed = self.start_time.elapsed().as_secs_f64();
+        let speed = if elapsed > 0.001 {
+            completed as f64 / elapsed
+        } else {
+            0.0
+        };
+
+        if self.is_tty {
+            if let Some(total) = self.total_seeds {
+                let pct = (completed as f64 / total as f64) * 100.0;
+                let eta = if speed > 0.0 && completed < total {
+                    let rem_secs = (total - completed) as f64 / speed;
+                    format!("{rem_secs:.1}s")
+                } else {
+                    "0.0s".to_string()
+                };
+                let bar_width = 20;
+                let filled = ((pct / 100.0) * bar_width as f64).min(bar_width as f64) as usize;
+                let bar: String = (0..bar_width)
+                    .map(|i| {
+                        if i < filled {
+                            '='
+                        } else if i == filled {
+                            '>'
+                        } else {
+                            ' '
+                        }
+                    })
+                    .collect();
+                eprint!(
+                    "\r\x1b[2Ksmith: [{bar}] {completed}/{total} ({pct:.1}%) | {speed:.1} seeds/s | elapsed: {elapsed:.1}s | ETA: {eta}"
+                );
+            } else {
+                eprint!(
+                    "\r\x1b[2Ksmith: {completed} seeds | {speed:.1} seeds/s | elapsed: {elapsed:.1}s (target={})",
+                    self.target_name
+                );
+            }
+            let _ = std::io::stderr().flush();
+        } else if force || completed.is_multiple_of(100) {
+            if let Some(total) = self.total_seeds {
+                eprintln!(
+                    "smith: {completed}/{total} seeds passed ({speed:.1} seeds/s, target={})",
+                    self.target_name
+                );
+            } else {
+                eprintln!(
+                    "smith: {completed} seeds passed ({speed:.1} seeds/s, elapsed: {elapsed:.1}s, target={})",
+                    self.target_name
+                );
+            }
+        }
+    }
+
+    fn finish(&self, completed: u64, error: Option<&str>) {
+        if self.is_tty {
+            eprintln!();
+        }
+        let elapsed = self.start_time.elapsed().as_secs_f64();
+        let speed = if elapsed > 0.001 {
+            completed as f64 / elapsed
+        } else {
+            0.0
+        };
+
+        eprintln!("\n======================== AranduSmith Fuzz Summary ========================");
+        eprintln!("Target:           {}", self.target_name);
+        eprintln!("Seeds evaluated:  {completed}");
+        eprintln!("Time elapsed:     {elapsed:.2}s");
+        eprintln!("Throughput:       {speed:.2} seeds/s");
+        if let Some(err) = error {
+            eprintln!("Status:           FAILED\n{err}");
+        } else {
+            eprintln!("Status:           PASSED (all backends in parity, 0 panics)");
+        }
+        eprintln!("==========================================================================\n");
+    }
+}
+
 pub fn run(args: impl Iterator<Item = String>) -> i32 {
     let config = match parse_args(args) {
         Ok(config) => config,
         Err(error) => {
-            eprintln!("smith: {error}\nusage: cargo run --locked -p xtask -- smith [--iterations N] [--seed N] [--target TARGET] [--jobs N] [--batch-size N]");
+            eprintln!("smith: {error}\nusage: cargo run --locked -p xtask -- smith [--iterations N] [--duration TIME] [--seed N] [--target TARGET] [--jobs N] [--batch-size N] [--report PATH]");
             return 2;
         }
     };
@@ -106,29 +260,36 @@ pub fn run(args: impl Iterator<Item = String>) -> i32 {
         remaining -= count;
     }
 
+    let deadline = config.duration.map(|d| Instant::now() + d);
+    let total_seeds = if config.duration.is_some() {
+        None
+    } else {
+        Some(config.iterations)
+    };
+    let mut reporter = ProgressReporter::new(total_seeds, config.target.name());
+
     if config.jobs <= 1 || batches.len() <= 1 {
         let mut completed = 0u64;
+        let mut failed = None;
         for (start_seed, count) in batches {
+            if let Some(dl) = deadline {
+                if Instant::now() >= dl {
+                    break;
+                }
+            }
             if let Err(error) = run_batch_isolated(&executable, config.target, start_seed, count) {
-                eprintln!("smith: {error}; stopping campaign");
-                return 1;
+                let detail = isolate_failure_detail(&executable, config.target, start_seed, count);
+                failed = Some(format!("{error}\n{detail}"));
+                break;
             }
             completed += count;
-            let last_seed = start_seed + count - 1;
-            if completed.is_multiple_of(100) || completed == config.iterations {
-                eprintln!(
-                    "smith: {completed}/{} seeds passed (target={}, last_seed={last_seed})",
-                    config.iterations,
-                    config.target.name()
-                );
-            }
+            reporter.update(completed, false);
         }
-        return 0;
+        reporter.update(completed, true);
+        reporter.finish(completed, failed.as_deref());
+        save_report(&config, completed, failed.as_deref(), reporter.start_time);
+        return if failed.is_some() { 1 } else { 0 };
     }
-
-    use std::collections::VecDeque;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{mpsc, Arc, Mutex};
 
     let batch_queue = Arc::new(Mutex::new(batches.into_iter().collect::<VecDeque<_>>()));
     let stop_signal = Arc::new(AtomicBool::new(false));
@@ -147,6 +308,12 @@ pub fn run(args: impl Iterator<Item = String>) -> i32 {
         handles.push(thread::spawn(move || loop {
             if stop.load(Ordering::Relaxed) {
                 break;
+            }
+            if let Some(dl) = deadline {
+                if Instant::now() >= dl {
+                    stop.store(true, Ordering::Relaxed);
+                    break;
+                }
             }
             let next_batch = {
                 let mut lock = queue.lock().unwrap();
@@ -172,18 +339,13 @@ pub fn run(args: impl Iterator<Item = String>) -> i32 {
         match result {
             Ok(()) => {
                 completed += count;
-                let last_seed = start_seed + count - 1;
-                if completed.is_multiple_of(100) || completed == config.iterations {
-                    eprintln!(
-                        "smith: {completed}/{} seeds passed (target={}, last_seed={last_seed})",
-                        config.iterations,
-                        config.target.name()
-                    );
-                }
+                reporter.update(completed, false);
             }
             Err(error) => {
                 if failed.is_none() {
-                    failed = Some(error);
+                    let detail =
+                        isolate_failure_detail(&executable, config.target, start_seed, count);
+                    failed = Some(format!("{error}\n{detail}"));
                 }
             }
         }
@@ -193,11 +355,37 @@ pub fn run(args: impl Iterator<Item = String>) -> i32 {
         let _ = handle.join();
     }
 
-    if let Some(error) = failed {
-        eprintln!("smith: {error}; stopping campaign");
+    reporter.update(completed, true);
+    reporter.finish(completed, failed.as_deref());
+    save_report(&config, completed, failed.as_deref(), reporter.start_time);
+
+    if failed.is_some() {
         1
     } else {
         0
+    }
+}
+
+fn save_report(config: &Config, completed: u64, error: Option<&str>, start_time: Instant) {
+    if let Some(ref report_path) = config.report_path {
+        let elapsed = start_time.elapsed().as_secs_f64();
+        let speed = if elapsed > 0.001 {
+            completed as f64 / elapsed
+        } else {
+            0.0
+        };
+        let report = serde_json::json!({
+            "target": config.target.name(),
+            "seeds_evaluated": completed,
+            "elapsed_seconds": elapsed,
+            "seeds_per_second": speed,
+            "workers": config.jobs,
+            "success": error.is_none(),
+            "error": error,
+        });
+        if let Err(e) = std::fs::write(report_path, report.to_string()) {
+            eprintln!("smith: failed to write report to {report_path}: {e}");
+        }
     }
 }
 
@@ -235,6 +423,43 @@ fn run_batch_isolated(
             target.name()
         ))
     }
+}
+
+/// When a batch fails, re-run candidate seeds individually with captured output to pinpoint the exact reproducer.
+fn isolate_failure_detail(
+    executable: &std::path::Path,
+    target: Target,
+    start_seed: u64,
+    count: u64,
+) -> String {
+    for offset in 0..count {
+        let seed = start_seed + offset;
+        let mut command = Command::new(executable);
+        command
+            .arg("smith-worker")
+            .arg(target.name())
+            .arg(seed.to_string())
+            .arg("1")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        if let Ok(output) = command.output() {
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let detail = if !stderr.is_empty() {
+                    stderr.to_string()
+                } else {
+                    stdout.to_string()
+                };
+                return format!("--- Exact failing seed: {seed} (0x{seed:016x}) ---\n{detail}");
+            }
+        }
+    }
+    format!(
+        "batch {start_seed}..{} failed but individual seeds did not reproduce cleanly",
+        start_seed + count
+    )
 }
 
 fn run_command_with_timeout(
@@ -342,10 +567,12 @@ mod tests {
             parse_args(args(&[])),
             Ok(Config {
                 iterations: 1,
+                duration: None,
                 first_seed: 0,
                 jobs: 1,
                 batch_size: 50,
                 target: Target::SynthesizedAll,
+                report_path: None,
             })
         );
     }
@@ -364,15 +591,30 @@ mod tests {
                 "4",
                 "--batch-size",
                 "10",
+                "--duration",
+                "30s",
+                "--report",
+                "fuzz-report.json",
             ])),
             Ok(Config {
                 iterations: 25,
+                duration: Some(Duration::from_secs(30)),
                 first_seed: 90,
                 jobs: 4,
                 batch_size: 10,
                 target: Target::LspSession,
+                report_path: Some("fuzz-report.json".to_owned()),
             })
         );
+    }
+
+    #[test]
+    fn parses_various_duration_formats() {
+        assert_eq!(parse_duration("500ms"), Ok(Duration::from_millis(500)));
+        assert_eq!(parse_duration("10s"), Ok(Duration::from_secs(10)));
+        assert_eq!(parse_duration("2m"), Ok(Duration::from_secs(120)));
+        assert_eq!(parse_duration("1h"), Ok(Duration::from_secs(3600)));
+        assert!(parse_duration("invalid").is_err());
     }
 
     #[test]

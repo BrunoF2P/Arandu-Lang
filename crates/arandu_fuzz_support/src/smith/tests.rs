@@ -1426,14 +1426,14 @@ fn synthesized_triple_varies_type_combinations_across_seeds() {
     }
 
     assert!(
-        signatures.len() == 5,
+        signatures.len() == 7,
         "type-directed triples should cover all rotations: {signatures:?}"
     );
     assert!(
-        pair_signatures.len() == 5,
+        pair_signatures.len() == 7,
         "type-directed pairs should cover all rotations: {pair_signatures:?}"
     );
-    for ty in ["int", "uint", "bool", "float", "char"] {
+    for ty in ["int", "uint", "usize", "isize", "bool", "float", "char"] {
         assert!(
             pair_signatures
                 .iter()
@@ -1441,7 +1441,7 @@ fn synthesized_triple_varies_type_combinations_across_seeds() {
             "no generated pair included {ty}: {pair_signatures:?}"
         );
     }
-    for ty in ["int", "uint", "bool", "float", "char"] {
+    for ty in ["int", "uint", "usize", "isize", "bool", "float", "char"] {
         assert!(
             signatures.iter().any(|signature| signature.contains(ty)),
             "no generated triple included {ty}: {signatures:?}"

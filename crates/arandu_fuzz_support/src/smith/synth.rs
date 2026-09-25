@@ -16,6 +16,8 @@ impl Expr {
         match self.value {
             ConstantValue::Int(value) => value.to_string(),
             ConstantValue::UInt(value) => format!("{value} as uint"),
+            ConstantValue::USize(value) => format!("{value} as usize"),
+            ConstantValue::ISize(value) => format!("{value} as isize"),
             ConstantValue::Bool(value) => value.to_string(),
             ConstantValue::Float(value) => float_literal(value),
             ConstantValue::Char(value) => char_literal(value),
@@ -25,58 +27,49 @@ impl Expr {
     fn int_value(&self) -> i64 {
         match self.value {
             ConstantValue::Int(value) => value,
-            ConstantValue::UInt(_)
-            | ConstantValue::Bool(_)
-            | ConstantValue::Float(_)
-            | ConstantValue::Char(_) => {
-                unreachable!("integer expression has non-integer value")
-            }
+            _ => unreachable!("integer expression has non-integer value"),
         }
     }
 
     fn uint_value(&self) -> u64 {
         match self.value {
             ConstantValue::UInt(value) => value,
-            ConstantValue::Int(_)
-            | ConstantValue::Bool(_)
-            | ConstantValue::Float(_)
-            | ConstantValue::Char(_) => {
-                unreachable!("unsigned expression has non-unsigned value")
-            }
+            _ => unreachable!("unsigned expression has non-unsigned value"),
+        }
+    }
+
+    fn usize_value(&self) -> u64 {
+        match self.value {
+            ConstantValue::USize(value) => value,
+            _ => unreachable!("usize expression has non-usize value"),
+        }
+    }
+
+    fn isize_value(&self) -> i64 {
+        match self.value {
+            ConstantValue::ISize(value) => value,
+            _ => unreachable!("isize expression has non-isize value"),
         }
     }
 
     fn bool_value(&self) -> bool {
         match self.value {
             ConstantValue::Bool(value) => value,
-            ConstantValue::Int(_)
-            | ConstantValue::UInt(_)
-            | ConstantValue::Float(_)
-            | ConstantValue::Char(_) => {
-                unreachable!("boolean expression has non-boolean value")
-            }
+            _ => unreachable!("boolean expression has non-boolean value"),
         }
     }
 
     fn float_value(&self) -> f64 {
         match self.value {
             ConstantValue::Float(value) => value,
-            ConstantValue::Int(_)
-            | ConstantValue::UInt(_)
-            | ConstantValue::Bool(_)
-            | ConstantValue::Char(_) => {
-                unreachable!("float expression has non-float value")
-            }
+            _ => unreachable!("float expression has non-float value"),
         }
     }
 
     fn char_value(&self) -> char {
         match self.value {
             ConstantValue::Char(value) => value,
-            ConstantValue::Int(_)
-            | ConstantValue::UInt(_)
-            | ConstantValue::Bool(_)
-            | ConstantValue::Float(_) => unreachable!("char expression has non-char value"),
+            _ => unreachable!("char expression has non-char value"),
         }
     }
 }
@@ -113,8 +106,18 @@ pub fn synthesize_with_oracle(seed: u64) -> SynthesizedProgram {
     let right = gen_expr(&mut rng, Ty::Int, MAX_DEPTH, base_value);
     let float_expr = gen_expr(&mut rng, Ty::Float, MAX_DEPTH, base_value);
     let char_expr = gen_expr(&mut rng, Ty::Char, MAX_DEPTH, base_value);
+    let usize_expr = gen_expr(&mut rng, Ty::USize, MAX_DEPTH, base_value);
+    let isize_expr = gen_expr(&mut rng, Ty::ISize, MAX_DEPTH, base_value);
     let (string_expr, expected_string) = gen_string_expr(&mut rng);
-    let triple_candidates = [&left, &unsigned, &condition, &float_expr, &char_expr];
+    let triple_candidates = [
+        &left,
+        &unsigned,
+        &usize_expr,
+        &isize_expr,
+        &condition,
+        &float_expr,
+        &char_expr,
+    ];
     let pair_start = rng.below(triple_candidates.len() as u64) as usize;
     let pair_values = [
         triple_candidates[pair_start],
@@ -780,9 +783,110 @@ fn gen_expr(rng: &mut Rng, expected: Ty, depth: u8, base: i64) -> Expr {
     match expected {
         Ty::Int => gen_int(rng, depth, base),
         Ty::UInt => gen_uint(rng, depth, base as u64),
+        Ty::USize => gen_usize(rng, depth, base as u64),
+        Ty::ISize => gen_isize(rng, depth, base),
         Ty::Bool => gen_bool(rng, depth, base),
         Ty::Float => gen_float(rng, depth, base as f64),
         Ty::Char => gen_char(rng),
+    }
+}
+
+fn gen_usize(rng: &mut Rng, depth: u8, base: u64) -> Expr {
+    if depth == 0 {
+        let value = base % 100;
+        return Expr {
+            ty: Ty::USize,
+            source: format!("{value} as usize"),
+            value: ConstantValue::USize(value),
+        };
+    }
+    match rng.below(4) {
+        0 => {
+            let value = rng.below(MAX_BASE + 1);
+            Expr {
+                ty: Ty::USize,
+                source: format!("{value} as usize"),
+                value: ConstantValue::USize(value),
+            }
+        }
+        1 => {
+            let left = gen_usize(rng, depth - 1, base);
+            let right = gen_usize(rng, depth - 1, base);
+            let value = left.usize_value().wrapping_add(right.usize_value());
+            Expr {
+                ty: Ty::USize,
+                source: format!("({} + {})", left.source, right.source),
+                value: ConstantValue::USize(value),
+            }
+        }
+        2 => {
+            let left = gen_usize(rng, depth - 1, base);
+            let right = gen_usize(rng, depth - 1, base);
+            let left_v = left.usize_value();
+            let right_v = right.usize_value();
+            if left_v >= right_v {
+                Expr {
+                    ty: Ty::USize,
+                    source: format!("({} - {})", left.source, right.source),
+                    value: ConstantValue::USize(left_v - right_v),
+                }
+            } else {
+                Expr {
+                    ty: Ty::USize,
+                    source: format!("({} + {})", left.source, right.source),
+                    value: ConstantValue::USize(left_v.wrapping_add(right_v)),
+                }
+            }
+        }
+        _ => {
+            let inner = gen_usize(rng, depth - 1, base);
+            let value = inner.usize_value();
+            Expr {
+                ty: Ty::USize,
+                source: format!("identity<usize>({})", inner.source),
+                value: ConstantValue::USize(value),
+            }
+        }
+    }
+}
+
+fn gen_isize(rng: &mut Rng, depth: u8, base: i64) -> Expr {
+    if depth == 0 {
+        let value = base % 50;
+        return Expr {
+            ty: Ty::ISize,
+            source: format!("{value} as isize"),
+            value: ConstantValue::ISize(value),
+        };
+    }
+    match rng.below(3) {
+        0 => {
+            let value = rng.below(MAX_BASE + 1) as i64;
+            Expr {
+                ty: Ty::ISize,
+                source: format!("{value} as isize"),
+                value: ConstantValue::ISize(value),
+            }
+        }
+        1 => {
+            let left = gen_isize(rng, depth - 1, base);
+            let right = gen_isize(rng, depth - 1, base);
+            let value = left.isize_value().wrapping_add(right.isize_value());
+            Expr {
+                ty: Ty::ISize,
+                source: format!("({} + {})", left.source, right.source),
+                value: ConstantValue::ISize(value),
+            }
+        }
+        _ => {
+            let inner = gen_isize(rng, depth - 1, base);
+            let value = inner.isize_value();
+            Expr {
+                ty: Ty::ISize,
+                source: format!("identity<isize>({})", inner.source),
+                value: ConstantValue::ISize(value),
+            }
+        }
     }
 }
 

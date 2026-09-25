@@ -32,6 +32,8 @@ pub const SYNTHESIZED_PROGRAM_ARGS: [&str; 2] = ["", "argument-two"];
 pub enum Ty {
     Int,
     UInt,
+    USize,
+    ISize,
     Bool,
     Float,
     Char,
@@ -42,6 +44,8 @@ impl Ty {
         match self {
             Self::Int => "int",
             Self::UInt => "uint",
+            Self::USize => "usize",
+            Self::ISize => "isize",
             Self::Bool => "bool",
             Self::Float => "float",
             Self::Char => "char",
@@ -81,6 +85,8 @@ impl Rng {
 pub enum ConstantValue {
     Int(i64),
     UInt(u64),
+    USize(u64),
+    ISize(i64),
     Bool(bool),
     Float(f64),
     Char(char),

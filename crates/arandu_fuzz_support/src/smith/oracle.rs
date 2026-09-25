@@ -229,6 +229,19 @@ fn check_source_internal(
             )
             .with_scope(format!("{level:?}"))
         })?;
+        let post_opt_diagnostics = arandu_middle::amir_validate::validate_amir_program(
+            &program,
+            &lowered.type_check.symbols,
+            &lowered.type_check.type_info.type_interner,
+        );
+        if !post_opt_diagnostics.is_empty() {
+            return Err(Failure::new(
+                "optimizer-corrupted-amir",
+                format!("optimizer at {level:?} produced invalid AMIR: {post_opt_diagnostics:?}"),
+                true,
+            )
+            .with_scope(format!("{level:?}")));
+        }
         let (output, coverage) = catch_backend_panic("Cranelift", level, || {
             if collect_block_coverage && level == arandu_mir::OptLevel::O0 {
                 execute_cranelift_with_block_coverage(
