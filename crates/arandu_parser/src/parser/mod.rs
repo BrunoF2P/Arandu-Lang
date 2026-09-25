@@ -765,6 +765,8 @@ static TOKEN_INFO_TABLE: [TokenInfo; TokenKind::COUNT] = {
         let prim = match kind {
             TokenKind::TypeInt => Some("int"),
             TokenKind::TypeUint => Some("uint"),
+            TokenKind::TypeIsize => Some("isize"),
+            TokenKind::TypeUsize => Some("usize"),
             TokenKind::TypeFloat => Some("float"),
             TokenKind::TypeI8 => Some("i8"),
             TokenKind::TypeI16 => Some("i16"),
@@ -835,6 +837,8 @@ static TOKEN_INFO_TABLE: [TokenInfo; TokenKind::COUNT] = {
                 | TokenKind::KwLet
                 | TokenKind::TypeInt
                 | TokenKind::TypeUint
+                | TokenKind::TypeIsize
+                | TokenKind::TypeUsize
                 | TokenKind::TypeFloat
                 | TokenKind::TypeI8
                 | TokenKind::TypeI16

@@ -45,7 +45,7 @@ import std.core.intrinsics as intrinsics
 ///
 /// # Complexity
 /// Time: O(1) | Space: O(1)
-public func len<T>(s: []T): uint {
+public func len<T>(s: []T): usize {
     return intrinsics.sliceLen<T>(s)
 }
 
@@ -90,7 +90,7 @@ public func isEmpty<T>(s: []T): bool {
 ///
 /// # Complexity
 /// Time: O(1) | Space: O(1)
-public func get<T>(s: []T, index: uint): Option<ref T> {
+public func get<T>(s: []T, index: usize): Option<ref T> {
     if index >= len<T>(s) {
         return Option.None
     }
@@ -140,7 +140,7 @@ public func last<T>(s: []T): Option<ref T> {
 ///
 /// # Complexity
 /// Time: O(1) | Space: O(1)
-public func subslice<T>(s: []T, start: uint, count: uint): Option<[]T> {
+public func subslice<T>(s: []T, start: usize, count: usize): Option<[]T> {
     let total = len<T>(s)
     if start > total || count > total - start {
         return Option.None
@@ -155,7 +155,7 @@ public struct Iterator<T> {
     /// Borrowed slice being traversed.
     view: []T
     /// Next slice index to return.
-    index: uint
+    index: usize
 }
 
 /// Creates an iterator over the slice elements.
@@ -205,7 +205,7 @@ public struct Split<T> {
 ///
 /// # Complexity
 /// Time: O(1) | Space: O(1)
-public func splitAt<T>(s: []T, mid: uint): Option<Split<T>> {
+public func splitAt<T>(s: []T, mid: usize): Option<Split<T>> {
     let total = len<T>(s)
     if mid > total {
         return Option.None

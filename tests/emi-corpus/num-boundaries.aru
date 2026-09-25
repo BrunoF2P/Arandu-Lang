@@ -1,8 +1,8 @@
 import std.core.num as num
 
 func main(): int {
-    let max = ((-1 as uint) >> 1) as int
-    let min = -max - 1
+    let max = 2147483647
+    let min = -2147483647 - 1
 
     let positive_overflow = num.checkedAdd(max, 1)
     let positive_add_succeeded = match positive_overflow {

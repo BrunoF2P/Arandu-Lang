@@ -45,18 +45,20 @@ The size and alignment of primitive types are defined below (under a target poin
 | `i16`, `u16` | 2 | 2 | |
 | `i32`, `u32`, `f32` | 4 | 4 | |
 | `i64`, `u64`, `f64` | 8 | 8 | Fixed-width types |
-| `int`, `uint` | $W$ | $W$ | Platform-dependent integer types |
+| `int`, `uint` | 4 | 4 | Fixed-width signed/unsigned 32-bit integers |
+| `isize`, `usize` | $W$ | $W$ | Pointer-width signed/unsigned integers |
 | `float` | 8 | 8† | Always IEEE f64 (`DataLayout`); †i686 may use abi_align 4 |
 | `ptr[T]` | $W$ | $W$ | Platform-dependent pointer |
 | `any` | $W$ | $W$ | Boxed dynamic pointer |
 | `void`, typeck `error` | 0 | 1 | ZSTs (Zero Sized Types) |
 | `Err` | $W$ | $W$ | Message handle: non-null pointer to a NUL-terminated UTF-8 buffer from `err.new` |
 
-### Platform-Dependent Primitive Mappings
+### Primitive Backend Mappings
 
 For compilation backends (such as the C backend and Cranelift JIT), platform-dependent types map to the corresponding native sized types:
-- **`int` / `IntLiteral`**: Represented as a signed integer of width $W$ bytes (`int64_t` / `int32_t` in C; target `ptr_type` `I64` / `I32` in Cranelift).
-- **`uint`**: Represented as an unsigned integer of width $W$ bytes (`uint64_t` / `uint32_t` in C; target `ptr_type` `I64` / `I32` in Cranelift).
+- **`int` / `IntLiteral`**: Represented as signed 32-bit (`int32_t` in C; `I32` in Cranelift).
+- **`uint`**: Represented as unsigned 32-bit (`uint32_t` in C; `I32` in Cranelift).
+- **`isize` / `usize`**: Represented at the target pointer width in C and Cranelift.
 - **`float` / `FloatLiteral`**: Always IEEE **f64** (`double` in C; `F64` in Cranelift) on all targets — **not** reduced to 4 bytes on 32-bit. Alignment may be 4 under `DataLayout::i686_sysv()`.
 
 ---

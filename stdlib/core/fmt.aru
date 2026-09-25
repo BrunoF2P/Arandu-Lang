@@ -54,7 +54,7 @@ public struct Formatter {
     /// Borrowed output buffer.
     buf: []u8
     /// Number of bytes written to the buffer.
-    len: uint
+    len: usize
 }
 
 /// Borrows `buf` as a fixed-capacity destination with zero bytes written.
@@ -68,17 +68,17 @@ public func newFormatter(buf: []u8): Formatter {
 }
 
 /// Returns the current number of formatted bytes in the buffer.
-public func Formatter.len(self: ref Formatter): uint {
+public func Formatter.len(self: ref Formatter): usize {
     return self.len
 }
 
 /// Returns the total capacity of the underlying buffer in bytes.
-public func Formatter.capacity(self: ref Formatter): uint {
+public func Formatter.capacity(self: ref Formatter): usize {
     return slice.len<u8>(self.buf)
 }
 
 /// Returns the remaining writable capacity in bytes.
-public func Formatter.remaining(self: ref Formatter): uint {
+public func Formatter.remaining(self: ref Formatter): usize {
     let cap = slice.len<u8>(self.buf)
     if self.len >= cap {
         return 0
@@ -90,21 +90,21 @@ public func Formatter.remaining(self: ref Formatter): uint {
 ///
 /// Returns `BufferFull` without changing the buffer or length when no room
 /// remains. This method performs no allocation.
-public func Formatter.writeByte(self: mut ref Formatter, b: u8): Result<uint, FmtError> {
+public func Formatter.writeByte(self: mut ref Formatter, b: u8): Result<usize, FmtError> {
     let cap = slice.len<u8>(self.buf)
     if self.len >= cap {
         return Result.Err(FmtError.BufferFull)
     }
     self.buf[self.len] = b
     self.len = self.len + 1
-    return Result.Ok(1)
+    return Result.Ok(1 as usize)
 }
 
 /// Appends `"true"` or `"false"` and returns the number of bytes written.
 ///
 /// If the complete word does not fit, returns `BufferFull` without writing a
 /// partial word. This method performs no allocation.
-public func Formatter.writeBool(self: mut ref Formatter, b: bool): Result<uint, FmtError> {
+public func Formatter.writeBool(self: mut ref Formatter, b: bool): Result<usize, FmtError> {
     if b {
         return self.writeStr("true")
     }
@@ -115,14 +115,14 @@ public func Formatter.writeBool(self: mut ref Formatter, b: bool): Result<uint, 
 ///
 /// If the full string does not fit, returns `BufferFull` and leaves the
 /// buffer and length unchanged. An empty string writes zero bytes.
-public func Formatter.writeStr(self: mut ref Formatter, s: str): Result<uint, FmtError> {
+public func Formatter.writeStr(self: mut ref Formatter, s: str): Result<usize, FmtError> {
     let slen = strings.lenBytes(s)
     let cap = slice.len<u8>(self.buf)
     if self.len > cap || slen > cap - self.len {
         return Result.Err(FmtError.BufferFull)
     }
     let bytes = intrinsics.strBytes(s)
-    let mut i: uint = 0
+    let mut i: usize = 0
     while i < slen {
         self.buf[self.len + i] = bytes[i]
         i = i + 1
@@ -133,10 +133,10 @@ public func Formatter.writeStr(self: mut ref Formatter, s: str): Result<uint, Fm
 
 /// Interface for user-facing, human-readable text presentation.
 public interface Display {
-    func fmt(self: ref Self, f: mut ref Formatter): Result<uint, FmtError>
+    func fmt(self: ref Self, f: mut ref Formatter): Result<usize, FmtError>
 }
 
 /// Interface for developer-facing debug representations.
 public interface Debug {
-    func fmtDebug(self: ref Self, f: mut ref Formatter): Result<uint, FmtError>
+    func fmtDebug(self: ref Self, f: mut ref Formatter): Result<usize, FmtError>
 }

@@ -25,7 +25,7 @@ import std.alloc.vec as vec
 import std.core.hash as hash
 import std.core.intrinsics as intrinsics
 
-const MAX_BUCKETS = 1073741824
+const MAX_BUCKETS = 1073741824 as usize
 
 func capacityFailure(): void {
     unsafe { intrinsics.abort() }
@@ -40,7 +40,7 @@ public struct Entry<K, V> {
     /// Stored value.
     value: V
     /// Probe distance from the ideal bucket.
-    distance: uint
+    distance: usize
 }
 
 /// Fast contiguous hash table based on Robin Hood Hashing with Backward-Shift deletion.
@@ -54,9 +54,9 @@ public struct HashMap<K, V> {
     /// Owned bucket array.
     buckets: vec.Vec<Option<Entry<K, V>>>
     /// Number of stored elements or valid bytes.
-    len: uint
+    len: usize
     /// Bit mask used to index the bucket array.
-    mask: uint
+    mask: usize
 }
 
 /// Computes the 64-bit FNV-1a hash supplied by `key`'s `Hash` implementation.
@@ -76,8 +76,8 @@ public func hashKey<K: hash.Hash>(k: ref K): u64 {
 public func new<K: hash.Hash, V>(): HashMap<K, V> {
     return HashMap<K, V> {
         buckets: vec.new<Option<Entry<K, V>>>(),
-        len: 0,
-        mask: 0,
+        len: 0 as usize,
+        mask: 0 as usize,
     }
 }
 
@@ -89,45 +89,45 @@ public func new<K: hash.Hash, V>(): HashMap<K, V> {
 ///
 /// # Complexity
 /// Time: O(cap) | Space: O(cap)
-public func withCapacity<K: hash.Hash, V>(minCap: uint): HashMap<K, V> {
+public func withCapacity<K: hash.Hash, V>(minCap: usize): HashMap<K, V> {
     if minCap > MAX_BUCKETS {
         capacityFailure()
     }
-    let mut cap: uint = 8
+    let mut cap: usize = 8 as usize
     while cap < minCap {
-        if cap > MAX_BUCKETS / 2 {
+        if cap > MAX_BUCKETS / (2 as usize) {
             capacityFailure()
         }
-        cap = cap * 2
+        cap = cap * (2 as usize)
     }
     let mut buckets = vec.withCapacity<Option<Entry<K, V>>>(cap)
-    let mut i: uint = 0
+    let mut i: usize = 0 as usize
     while i < cap {
         vec.push<Option<Entry<K, V>>>(buckets, Option.None)
-        i = i + 1
+        i = i + (1 as usize)
     }
     return HashMap<K, V> {
         buckets: buckets,
-        len: 0,
-        mask: cap - 1,
+        len: 0 as usize,
+        mask: cap - (1 as usize),
     }
 }
 
 /// Returns the number of key-value pairs in the map.
-public func len<K, V>(self: ref HashMap<K, V>): uint {
+public func len<K, V>(self: ref HashMap<K, V>): usize {
     return self.len
 }
 
 /// Returns `true` if the map contains no elements.
 public func isEmpty<K, V>(self: ref HashMap<K, V>): bool {
-    return self.len == 0
+    return self.len == (0 as usize)
 }
 
 /// Returns the current number of buckets, including empty buckets.
 ///
 /// The map can store fewer entries than this before its 75% growth threshold
 /// triggers a resize. A map from `new()` reports zero until first insertion.
-public func capacity<K, V>(self: ref HashMap<K, V>): uint {
+public func capacity<K, V>(self: ref HashMap<K, V>): usize {
     return vec.len<Option<Entry<K, V>>>(self.buckets)
 }
 
@@ -137,12 +137,12 @@ public func capacity<K, V>(self: ref HashMap<K, V>): uint {
 /// O(bucket count) time and does not allocate.
 public func clear<K, V>(self: mut ref HashMap<K, V>): void {
     let cap = vec.len<Option<Entry<K, V>>>(self.buckets)
-    let mut i: uint = 0
+    let mut i: usize = 0 as usize
     while i < cap {
         vec.put<Option<Entry<K, V>>>(self.buckets, i, Option.None);
-        i = i + 1
+        i = i + (1 as usize)
     }
-    self.len = 0
+    self.len = 0 as usize
 }
 
 /// Releases the bucket buffer owned by the map.
@@ -162,25 +162,25 @@ public func HashMap.destroy<K, V>(self: own HashMap<K, V>): void {
 /// automatically when the load threshold is crossed.
 public func resize<K: hash.Hash, V>(self: mut ref HashMap<K, V>): void {
     let oldCap = vec.len<Option<Entry<K, V>>>(self.buckets)
-    let mut newCap: uint = 8
-    if oldCap > 0 {
-        if oldCap >= MAX_BUCKETS as uint {
+    let mut newCap: usize = 8 as usize
+    if oldCap > (0 as usize) {
+        if oldCap >= MAX_BUCKETS {
             capacityFailure()
         }
-        newCap = oldCap * 2
+        newCap = oldCap * (2 as usize)
     }
     let mut newBuckets = vec.withCapacity<Option<Entry<K, V>>>(newCap)
-    let mut i: uint = 0
+    let mut i: usize = 0 as usize
     while i < newCap {
         vec.push<Option<Entry<K, V>>>(newBuckets, Option.None)
-        i = i + 1
+        i = i + (1 as usize)
     }
     let oldBuckets = self.buckets
     self.buckets = newBuckets
-    self.mask = newCap - 1
-    self.len = 0
+    self.mask = newCap - (1 as usize)
+    self.len = 0 as usize
 
-    let mut j: uint = 0
+    let mut j: usize = 0 as usize
     while j < oldCap {
         match vec.get<Option<Entry<K, V>>>(oldBuckets, j) {
             Some(Some(entry)) => {
@@ -188,7 +188,7 @@ public func resize<K: hash.Hash, V>(self: mut ref HashMap<K, V>): void {
             }
             _ => {}
         }
-        j = j + 1
+        j = j + (1 as usize)
     }
 }
 
@@ -199,12 +199,12 @@ public func resize<K: hash.Hash, V>(self: mut ref HashMap<K, V>): void {
 /// allocate before probing when the 75% load threshold would be exceeded.
 public func insertEntry<K: hash.Hash, V>(self: mut ref HashMap<K, V>, key: K, val: V, h: u64): Option<V> {
     let cap = vec.len<Option<Entry<K, V>>>(self.buckets)
-    if cap == 0 || self.len >= cap - cap / 4 {
+    if cap == (0 as usize) || self.len >= cap - cap / (4 as usize) {
         resize(self)
     }
     let currentCap = vec.len<Option<Entry<K, V>>>(self.buckets)
-    let mut idx = (h as uint) & self.mask
-    let mut dist: uint = 0
+    let mut idx = (h as usize) & self.mask
+    let mut dist: usize = 0 as usize
     let mut curKey = key
     let mut curVal = val
     let mut curHash = h
@@ -218,7 +218,7 @@ public func insertEntry<K: hash.Hash, V>(self: mut ref HashMap<K, V>, key: K, va
                     value: curVal,
                     distance: dist,
                 }));
-                self.len = self.len + 1
+                self.len = self.len + (1 as usize)
                 return Option.None
             }
             Some(Some(entry)) => {
@@ -253,8 +253,8 @@ public func insertEntry<K: hash.Hash, V>(self: mut ref HashMap<K, V>, key: K, va
             }
             _ => {}
         }
-        idx = (idx + 1) & self.mask
-        dist = dist + 1
+        idx = (idx + (1 as usize)) & self.mask
+        dist = dist + (1 as usize)
     }
     return Option.None
 }
@@ -280,12 +280,12 @@ public func insert<K: hash.Hash, V>(self: mut ref HashMap<K, V>, key: K, val: V)
 /// Time: O(1) average | Space: O(1)
 public func contains<K: hash.Hash, V>(self: ref HashMap<K, V>, key: ref K): bool {
     let cap = vec.len<Option<Entry<K, V>>>(self.buckets)
-    if cap == 0 {
+    if cap == (0 as usize) {
         return false
     }
     let h = hashKey<K>(key)
-    let mut idx = (h as uint) & self.mask
-    let mut dist: uint = 0
+    let mut idx = (h as usize) & self.mask
+    let mut dist: usize = 0 as usize
     while dist < cap {
         match vec.get<Option<Entry<K, V>>>(self.buckets, idx) {
             Some(Some(entry)) => {
@@ -300,8 +300,8 @@ public func contains<K: hash.Hash, V>(self: ref HashMap<K, V>, key: ref K): bool
                 return false
             }
         }
-        idx = (idx + 1) & self.mask
-        dist = dist + 1
+        idx = (idx + (1 as usize)) & self.mask
+        dist = dist + (1 as usize)
     }
     return false
 }
@@ -314,12 +314,12 @@ public func contains<K: hash.Hash, V>(self: ref HashMap<K, V>, key: ref K): bool
 /// Time: O(1) average | Space: O(1)
 public func get<K: hash.Hash, V>(self: ref HashMap<K, V>, key: ref K): Option<V> {
     let cap = vec.len<Option<Entry<K, V>>>(self.buckets)
-    if cap == 0 {
+    if cap == (0 as usize) {
         return Option.None
     }
     let h = hashKey<K>(key)
-    let mut idx = (h as uint) & self.mask
-    let mut dist: uint = 0
+    let mut idx = (h as usize) & self.mask
+    let mut dist: usize = 0 as usize
     while dist < cap {
         match vec.get<Option<Entry<K, V>>>(self.buckets, idx) {
             Some(Some(entry)) => {
@@ -334,8 +334,8 @@ public func get<K: hash.Hash, V>(self: ref HashMap<K, V>, key: ref K): Option<V>
                 return Option.None
             }
         }
-        idx = (idx + 1) & self.mask
-        dist = dist + 1
+        idx = (idx + (1 as usize)) & self.mask
+        dist = dist + (1 as usize)
     }
     return Option.None
 }
@@ -350,12 +350,12 @@ public func get<K: hash.Hash, V>(self: ref HashMap<K, V>, key: ref K): Option<V>
 /// Time: O(1) average | Space: O(1)
 public func remove<K: hash.Hash, V>(self: mut ref HashMap<K, V>, key: ref K): Option<V> {
     let cap = vec.len<Option<Entry<K, V>>>(self.buckets)
-    if cap == 0 {
+    if cap == (0 as usize) {
         return Option.None
     }
     let h = hashKey<K>(key)
-    let mut idx = (h as uint) & self.mask
-    let mut dist: uint = 0
+    let mut idx = (h as usize) & self.mask
+    let mut dist: usize = 0 as usize
 
     while dist < cap {
         match vec.get<Option<Entry<K, V>>>(self.buckets, idx) {
@@ -367,15 +367,15 @@ public func remove<K: hash.Hash, V>(self: mut ref HashMap<K, V>, key: ref K): Op
                     let removedVal = entry.value
 
                     let mut curr = idx
-                    let mut next = (idx + 1) & self.mask
+                    let mut next = (idx + (1 as usize)) & self.mask
                     let mut shifting = true
-                    let mut shifted: uint = 0
+                    let mut shifted: usize = 0 as usize
 
                     while shifting && shifted < cap {
                         let mut shouldShift = false
                         match vec.get<Option<Entry<K, V>>>(self.buckets, next) {
                             Some(Some(nextEntry)) => {
-                                if nextEntry.distance > 0 {
+                                if nextEntry.distance > (0 as usize) {
                                     shouldShift = true
                                 }
                             }
@@ -389,14 +389,14 @@ public func remove<K: hash.Hash, V>(self: mut ref HashMap<K, V>, key: ref K): Op
                                         hash: nextEntry.hash,
                                         key: nextEntry.key,
                                         value: nextEntry.value,
-                                        distance: nextEntry.distance - 1,
+                                        distance: nextEntry.distance - (1 as usize),
                                     }));
                                 }
                                 _ => {}
                             }
                             curr = next
-                            next = (next + 1) & self.mask
-                            shifted = shifted + 1
+                            next = (next + (1 as usize)) & self.mask
+                            shifted = shifted + (1 as usize)
                         } else {
                             vec.put<Option<Entry<K, V>>>(self.buckets, curr, Option.None);
                             shifting = false
@@ -409,7 +409,7 @@ public func remove<K: hash.Hash, V>(self: mut ref HashMap<K, V>, key: ref K): Op
                         capacityFailure()
                     }
 
-                    self.len = self.len - 1
+                    self.len = self.len - (1 as usize)
                     return Option.Some(removedVal)
                 }
             }
@@ -417,8 +417,8 @@ public func remove<K: hash.Hash, V>(self: mut ref HashMap<K, V>, key: ref K): Op
                 return Option.None
             }
         }
-        idx = (idx + 1) & self.mask
-        dist = dist + 1
+        idx = (idx + (1 as usize)) & self.mask
+        dist = dist + (1 as usize)
     }
     return Option.None
 }

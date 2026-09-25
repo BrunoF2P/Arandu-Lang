@@ -31,9 +31,9 @@ import std.math.view as view
 
 extern "C" {
     /// Host allocator for a raw byte buffer.
-    func ar_vec_malloc(size: uint): ptr[u8]
+    func ar_vec_malloc(size: usize): ptr[u8]
     /// Host deallocator for a raw byte buffer.
-    func ar_vec_buf_free(p: ptr[u8], size: uint): void
+    func ar_vec_buf_free(p: ptr[u8], size: usize): void
 }
 
 // ── Const-Generic Fixed Matrix ───────────────────────────────────────────────
@@ -208,10 +208,11 @@ public func newMatrix<T>(rows: uint, cols: uint, initial: T): Option<Matrix<T>> 
     }
     let total = rows * cols
     let elemSize = mem.sizeOf<T>()
-    if elemSize == 0 || elemSize > maxElements || total > maxElements / elemSize {
+    let maxElemUsize = maxElements as usize
+    if elemSize == (0 as usize) || elemSize > maxElemUsize || (total as usize) > maxElemUsize / elemSize {
         return Option.None
     }
-    let totalBytes = total * elemSize
+    let totalBytes = (total as usize) * elemSize
     unsafe {
         let nullp: ptr[u8] = nil
         let raw = ar_vec_malloc(totalBytes)
@@ -221,7 +222,7 @@ public func newMatrix<T>(rows: uint, cols: uint, initial: T): Option<Matrix<T>> 
         let p = raw as ptr[T]
         let mut i: uint = 0
         while i < total {
-            let elemPtr = mem.ptrOffset<T>(p, i as i32)
+            let elemPtr = mem.ptrOffset<T>(p, i as isize)
             mem.ptrWrite<T>(elemPtr, initial)
             i = i + 1
         }
@@ -275,7 +276,7 @@ public func Matrix.free<T>(self: mut ref Matrix<T>): void {
     let nullp: ptr[T] = nil
     if self.data != nullp {
         let elemSize = mem.sizeOf<T>()
-        let totalBytes = self.capacity * elemSize
+        let totalBytes = (self.capacity as usize) * elemSize
         unsafe {
             ar_vec_buf_free(self.data as ptr[u8], totalBytes)
             self.data = nullp

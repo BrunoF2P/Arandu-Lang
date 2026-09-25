@@ -18,6 +18,8 @@ fn scalar(ty: &ArType) -> Option<bool> {
             Primitive::Str | Primitive::Any => false,
             Primitive::Int
             | Primitive::Uint
+            | Primitive::ISize
+            | Primitive::USize
             | Primitive::Float
             | Primitive::I8
             | Primitive::I16

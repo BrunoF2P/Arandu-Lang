@@ -34,11 +34,11 @@ module std.core.num
 
 
 func intMax(): int {
-    return ((-1 as uint) >> 1) as int
+    return 2147483647
 }
 
 func intMin(): int {
-    return -intMax() - 1
+    return -2147483647 - 1
 }
 
 /// Checked integer addition.

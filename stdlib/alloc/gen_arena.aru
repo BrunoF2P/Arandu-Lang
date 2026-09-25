@@ -40,11 +40,11 @@ func allocationFailure(): void {
 
 extern "C" {
     /// Host allocator for a raw byte buffer.
-    func ar_vec_malloc(size: uint): ptr[u8]
+    func ar_vec_malloc(size: usize): ptr[u8]
     /// Host deallocator for a raw byte buffer.
-    func ar_vec_buf_free(p: ptr[u8], size: uint): void
+    func ar_vec_buf_free(p: ptr[u8], size: usize): void
     /// Host allocator that resizes a raw byte buffer.
-    func ar_vec_realloc(p: ptr[u8], oldSize: uint, newSize: uint): ptr[u8]
+    func ar_vec_realloc(p: ptr[u8], oldSize: usize, newSize: usize): ptr[u8]
 }
 
 /// Handle identifying a slot and the generation when it was inserted.
@@ -69,13 +69,13 @@ public struct GenArena<T> {
     /// Indexes of reusable slots.
     free: ptr[u32]
     /// Number of indexes in the free list.
-    free_len: uint
+    free_len: usize
     /// Allocated capacity of the free list.
-    free_cap: uint
+    free_cap: usize
     /// Number of slots allocated for values.
-    slots: uint
+    slots: usize
     /// Allocated slot capacity.
-    slots_cap: uint
+    slots_cap: usize
 }
 
 /// Creates an empty arena without allocating its slot tables.
@@ -88,40 +88,40 @@ public func new<T>(): GenArena<T> {
         gen: nil,
         used: nil,
         free: nil,
-        free_len: 0,
-        free_cap: 0,
-        slots: 0,
-        slots_cap: 0,
+        free_len: 0 as usize,
+        free_cap: 0 as usize,
+        slots: 0 as usize,
+        slots_cap: 0 as usize,
     }
 }
 
-func growSlots<T>(a: mut ref GenArena<T>, minCap: uint): void {
+func growSlots<T>(a: mut ref GenArena<T>, minCap: usize): void {
     if a.slots_cap >= minCap {
         return
     }
-    let maxBytes: uint = 2147483647
+    let maxBytes: usize = 2147483647 as usize
     let elem = mem.sizeOf<T>()
     let genElem = mem.sizeOf<u32>()
     let usedElem = mem.sizeOf<u8>()
-    if elem == 0 || genElem == 0 || usedElem == 0 {
+    if elem == (0 as usize) || genElem == (0 as usize) || usedElem == (0 as usize) {
         allocationFailure()
     }
     let mut maxCap = maxBytes / elem
     if maxCap > maxBytes / genElem {
         maxCap = maxBytes / genElem
     }
-    if maxCap < 8 || minCap > maxCap {
+    if maxCap < (8 as usize) || minCap > maxCap {
         allocationFailure()
     }
-    let mut newCap: uint = a.slots_cap
-    if newCap == 0 {
-        newCap = 8
+    let mut newCap: usize = a.slots_cap
+    if newCap == (0 as usize) {
+        newCap = 8 as usize
     }
     while newCap < minCap {
-        if newCap > maxCap / 2 {
+        if newCap > maxCap / (2 as usize) {
             newCap = maxCap
         } else {
-            newCap = newCap * 2
+            newCap = newCap * (2 as usize)
         }
     }
     let oldSlots = a.slots_cap
@@ -146,25 +146,25 @@ func growSlots<T>(a: mut ref GenArena<T>, minCap: uint): void {
     }
 }
 
-func growFree<T>(a: mut ref GenArena<T>, minCap: uint): void {
+func growFree<T>(a: mut ref GenArena<T>, minCap: usize): void {
     if a.free_cap >= minCap {
         return
     }
-    let maxBytes: uint = 2147483647
+    let maxBytes: usize = 2147483647 as usize
     let genElem = mem.sizeOf<u32>()
     let maxCap = maxBytes / genElem
     if minCap > maxCap {
         allocationFailure()
     }
-    let mut newCap: uint = a.free_cap
-    if newCap == 0 {
-        newCap = 8
+    let mut newCap: usize = a.free_cap
+    if newCap == (0 as usize) {
+        newCap = 8 as usize
     }
     while newCap < minCap {
-        if newCap > maxCap / 2 {
+        if newCap > maxCap / (2 as usize) {
             newCap = maxCap
         } else {
-            newCap = newCap * 2
+            newCap = newCap * (2 as usize)
         }
     }
     let oldBytes = a.free_cap * genElem
@@ -189,13 +189,13 @@ func growFree<T>(a: mut ref GenArena<T>, minCap: uint): void {
 /// Growing the slot tables can allocate; reusing an available slot does not.
 /// Allocation failure aborts rather than returning an error.
 public func insert<T>(a: mut ref GenArena<T>, value: T): GenRef {
-    if a.free_len > 0 {
-        let lastIdx = a.free_len - 1
+    if a.free_len > (0 as usize) {
+        let lastIdx = a.free_len - (1 as usize)
         unsafe {
-            let freePtr = mem.ptrOffset<u32>(a.free, lastIdx as i32)
+            let freePtr = mem.ptrOffset<u32>(a.free, lastIdx as isize)
             let slot = mem.ptrRead<u32>(freePtr)
-            let usedPtr = mem.ptrOffset<u8>(a.used, slot as i32)
-            let genPtr = mem.ptrOffset<u32>(a.gen, slot as i32)
+            let usedPtr = mem.ptrOffset<u8>(a.used, slot as isize)
+            let genPtr = mem.ptrOffset<u32>(a.gen, slot as isize)
             let g = mem.ptrRead<u32>(genPtr)
             let maxGeneration: u32 = 4294967295 as u32
             if g == maxGeneration {
@@ -205,7 +205,7 @@ public func insert<T>(a: mut ref GenArena<T>, value: T): GenRef {
             a.free_len = lastIdx
             mem.ptrWrite<u8>(usedPtr, 1 as u8)
             mem.ptrWrite<u32>(genPtr, nextG)
-            let dataPtr = mem.ptrOffset<T>(a.data, slot as i32)
+            let dataPtr = mem.ptrOffset<T>(a.data, slot as isize)
             mem.ptrWrite<T>(dataPtr, value)
             return GenRef {
                 index: slot,
@@ -213,9 +213,9 @@ public func insert<T>(a: mut ref GenArena<T>, value: T): GenRef {
             }
         }
     }
-    let maxBytes: uint = 2147483647
+    let maxBytes: usize = 2147483647 as usize
     let elem = mem.sizeOf<T>()
-    if elem == 0 {
+    if elem == (0 as usize) {
         allocationFailure()
     }
     let mut maxSlots = maxBytes / elem
@@ -225,20 +225,20 @@ public func insert<T>(a: mut ref GenArena<T>, value: T): GenRef {
     if a.slots >= maxSlots {
         allocationFailure()
     }
-    let need = a.slots + 1
+    let need = a.slots + (1 as usize)
     if a.slots_cap < need {
         growSlots<T>(a, need)
     }
     let idx = a.slots as u32
     unsafe {
-        let dataPtr = mem.ptrOffset<T>(a.data, idx as i32)
+        let dataPtr = mem.ptrOffset<T>(a.data, a.slots as isize)
         mem.ptrWrite<T>(dataPtr, value)
-        let genPtr = mem.ptrOffset<u32>(a.gen, idx as i32)
+        let genPtr = mem.ptrOffset<u32>(a.gen, a.slots as isize)
         mem.ptrWrite<u32>(genPtr, 0 as u32)
-        let usedPtr = mem.ptrOffset<u8>(a.used, idx as i32)
+        let usedPtr = mem.ptrOffset<u8>(a.used, a.slots as isize)
         mem.ptrWrite<u8>(usedPtr, 1 as u8)
     }
-    a.slots = a.slots + 1
+    a.slots = a.slots + (1 as usize)
     return GenRef {
         index: idx,
         generation: 0 as u32,
@@ -251,24 +251,24 @@ public func insert<T>(a: mut ref GenArena<T>, value: T): GenRef {
 /// Use `remove` when invalid handles must be handled without aborting. This
 /// reads the value without removing its slot and does not allocate.
 public func get<T>(a: ref GenArena<T>, r: GenRef): T {
-    let idx = r.index as uint
+    let idx = r.index as usize
     if idx >= a.slots {
         unsafe {
             intrinsics.abort()
         }
     }
     unsafe {
-        let usedPtr = mem.ptrOffset<u8>(a.used, r.index as i32)
+        let usedPtr = mem.ptrOffset<u8>(a.used, r.index as isize)
         let u = mem.ptrRead<u8>(usedPtr)
         if u == 0 as u8 {
             intrinsics.abort()
         }
-        let genPtr = mem.ptrOffset<u32>(a.gen, r.index as i32)
+        let genPtr = mem.ptrOffset<u32>(a.gen, r.index as isize)
         let g = mem.ptrRead<u32>(genPtr)
         if g != r.generation {
             intrinsics.abort()
         }
-        let dataPtr = mem.ptrOffset<T>(a.data, r.index as i32)
+        let dataPtr = mem.ptrOffset<T>(a.data, r.index as isize)
         return mem.ptrRead<T>(dataPtr)
     }
 }
@@ -280,31 +280,31 @@ public func get<T>(a: ref GenArena<T>, r: GenRef): T {
 /// for a later `insert`. Growing the free-slot table can allocate and abort
 /// on allocation failure.
 public func remove<T>(a: mut ref GenArena<T>, r: GenRef): Option<T> {
-    let idx = r.index as uint
+    let idx = r.index as usize
     if idx >= a.slots {
         return Option.None
     }
     unsafe {
-        let usedPtr = mem.ptrOffset<u8>(a.used, r.index as i32)
+        let usedPtr = mem.ptrOffset<u8>(a.used, r.index as isize)
         let u = mem.ptrRead<u8>(usedPtr)
         if u == 0 as u8 {
             return Option.None
         }
-        let genPtr = mem.ptrOffset<u32>(a.gen, r.index as i32)
+        let genPtr = mem.ptrOffset<u32>(a.gen, r.index as isize)
         let g = mem.ptrRead<u32>(genPtr)
         if g != r.generation {
             return Option.None
         }
-        let dataPtr = mem.ptrOffset<T>(a.data, r.index as i32)
+        let dataPtr = mem.ptrOffset<T>(a.data, r.index as isize)
         let val = mem.ptrRead<T>(dataPtr)
         mem.ptrWrite<u8>(usedPtr, 0 as u8)
-        let needFree = a.free_len + 1
+        let needFree = a.free_len + (1 as usize)
         if a.free_cap < needFree {
             growFree<T>(a, needFree)
         }
-        let freePtr = mem.ptrOffset<u32>(a.free, a.free_len as i32)
+        let freePtr = mem.ptrOffset<u32>(a.free, a.free_len as isize)
         mem.ptrWrite<u32>(freePtr, r.index)
-        a.free_len = a.free_len + 1
+        a.free_len = a.free_len + (1 as usize)
         return Option.Some(val)
     }
 }
@@ -312,13 +312,13 @@ public func remove<T>(a: mut ref GenArena<T>, r: GenRef): Option<T> {
 /// Returns the number of currently occupied slots in O(1) time.
 ///
 /// Removed slots are excluded even though their storage remains available.
-public func len<T>(a: ref GenArena<T>): uint {
+public func len<T>(a: ref GenArena<T>): usize {
     return a.slots - a.free_len
 }
 
 /// `true` when no live slots.
 public func isEmpty<T>(a: ref GenArena<T>): bool {
-    return len<T>(a) == 0
+    return len<T>(a) == (0 as usize)
 }
 
 /// Releases all slot and free-list buffers and resets the arena to empty.
@@ -326,7 +326,7 @@ public func isEmpty<T>(a: ref GenArena<T>): bool {
 /// Existing handles cannot be used with the reset arena. The stored values
 /// are not individually visited by this operation.
 public func destroy<T>(a: mut ref GenArena<T>): void {
-    if a.slots_cap > 0 {
+    if a.slots_cap > (0 as usize) {
         let elem = mem.sizeOf<T>()
         let genElem = mem.sizeOf<u32>()
         let usedElem = mem.sizeOf<u8>()
@@ -338,16 +338,16 @@ public func destroy<T>(a: mut ref GenArena<T>): void {
         a.data = nil
         a.gen = nil
         a.used = nil
-        a.slots_cap = 0
-        a.slots = 0
+        a.slots_cap = 0 as usize
+        a.slots = 0 as usize
     }
-    if a.free_cap > 0 {
+    if a.free_cap > (0 as usize) {
         let genElem = mem.sizeOf<u32>()
         unsafe {
             ar_vec_buf_free(a.free as ptr[u8], a.free_cap * genElem)
         }
         a.free = nil
-        a.free_cap = 0
-        a.free_len = 0
+        a.free_cap = 0 as usize
+        a.free_len = 0 as usize
     }
 }

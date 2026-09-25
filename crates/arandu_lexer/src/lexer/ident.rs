@@ -104,6 +104,8 @@ pub(crate) fn keyword_kind(text: &str) -> Option<TokenKind> {
         "errdefer" => TokenKind::KwErrdefer,
         "int" => TokenKind::TypeInt,
         "uint" => TokenKind::TypeUint,
+        "isize" => TokenKind::TypeIsize,
+        "usize" => TokenKind::TypeUsize,
         "float" => TokenKind::TypeFloat,
         "i8" => TokenKind::TypeI8,
         "i16" => TokenKind::TypeI16,

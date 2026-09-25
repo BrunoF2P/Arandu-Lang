@@ -29,7 +29,7 @@ import std.core.mem as mem
 import std.core.slice as slice
 import std.core.num as num
 
-func elementOffset(row: uint, col: uint, rowStride: int, colStride: int): Option<i32> {
+func elementOffset(row: uint, col: uint, rowStride: int, colStride: int): Option<isize> {
     let maxOffset: uint = 2147483647
     if row > maxOffset || col > maxOffset {
         return Option.None
@@ -52,14 +52,14 @@ func elementOffset(row: uint, col: uint, rowStride: int, colStride: int): Option
             if value < -2147483648 || value > 2147483647 {
                 return Option.None
             }
-            return Option.Some(value as i32)
+            return Option.Some(value as isize)
         }
         None => { return Option.None }
     }
 }
 
 func saturatedElementCount(rows: uint, cols: uint): uint {
-    let max: uint = -1 as uint
+    let max: uint = 4294967295 as uint
     if rows != 0 && cols > max / rows {
         return max
     }
@@ -112,7 +112,7 @@ public func fromSlice<T>(s: []T, rows: uint, cols: uint): Option<ArrayView<T>> {
         return Option.None
     }
     let total = rows * cols
-    if total > slice.len<T>(s) {
+    if (total as usize) > slice.len<T>(s) {
         return Option.None
     }
     let p = slice.asPtr<T>(s)
@@ -275,7 +275,7 @@ public func fromSliceMut<T>(s: mut ref []T, rows: uint, cols: uint): Option<Arra
         return Option.None
     }
     let total = rows * cols
-    if total > slice.len<T>(*s) {
+    if (total as usize) > slice.len<T>(*s) {
         return Option.None
     }
     let p = slice.asPtr<T>(*s)

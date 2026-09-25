@@ -42,16 +42,16 @@ extern "arandu-intrinsic" {
     func abortGenerationalMismatch() : void
     /// Builds a slice view from a raw pointer and length. The memory must
     /// stay valid for as long as the slice is used.
-    func sliceFromRaw<Owner, T>(owner: ref Owner, data: ptr[T], len: uint): []T
+    func sliceFromRaw<Owner, T>(owner: ref Owner, data: ptr[T], len: usize): []T
     /// Returns the element count of a slice without reading its contents.
     ///
     /// **Safe**: only reads the `len` field of the fat-pointer descriptor;
     /// the element data is never dereferenced.
-    func sliceLen<T>(source: []T): uint
+    func sliceLen<T>(source: []T): usize
     /// Returns the raw pointer to a slice's first element, if any.
     func sliceData<T>(source: []T): ptr[T]
     /// Builds a sub-view over a slice range. Out-of-range bounds trap.
-    func sliceSubslice<T>(source: []T, start: uint, len: uint): []T
+    func sliceSubslice<T>(source: []T, start: usize, len: usize): []T
     /// Borrows the UTF-8 storage of `source` as bytes without allocating.
     ///
     /// **Safe**: reinterprets the `str` fat-pointer descriptor as `[]u8`;

@@ -56,8 +56,8 @@ fn jit_signed_negative_cast_preserves_sign() {
     let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
 
-    let result: i64 = unsafe {
-        let f: unsafe fn() -> i64 = module.get_fn("main").unwrap();
+    let result: i32 = unsafe {
+        let f: unsafe fn() -> i32 = module.get_fn("main").unwrap();
         f()
     };
     assert_eq!(result, -5);
@@ -210,8 +210,8 @@ fn jit_signed_mod() {
     let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
 
-    let result: i64 = unsafe {
-        let f: unsafe fn(i64, i64) -> i64 = module.get_fn("rem").unwrap();
+    let result: i32 = unsafe {
+        let f: unsafe fn(i32, i32) -> i32 = module.get_fn("rem").unwrap();
         f(-7, 3)
     };
     assert_eq!(result, -1);
@@ -229,7 +229,7 @@ fn jit_signed_comparison() {
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
 
     let result: bool = unsafe {
-        let f: unsafe fn(i64, i64) -> bool = module.get_fn("is_gt").unwrap();
+        let f: unsafe fn(i32, i32) -> bool = module.get_fn("is_gt").unwrap();
         f(-1, 0)
     };
     assert!(!result);
@@ -246,8 +246,8 @@ fn jit_signed_shift_right() {
     let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
 
-    let result: i64 = unsafe {
-        let f: unsafe fn(i64) -> i64 = module.get_fn("shr").unwrap();
+    let result: i32 = unsafe {
+        let f: unsafe fn(i32) -> i32 = module.get_fn("shr").unwrap();
         f(-1)
     };
     // Arithmetic shift: -1 >> 1 = -1
@@ -747,18 +747,18 @@ fn jit_struct_field_access() {
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
     #[repr(C)]
     struct Point {
-        x: i64,
-        y: i64,
+        x: i32,
+        y: i32,
     }
     let p = Point { x: 10, y: 20 };
-    let result: i64 = unsafe {
-        let f: unsafe extern "C" fn(Point) -> i64 = module.get_fn("get_x").unwrap();
+    let result: i32 = unsafe {
+        let f: unsafe extern "C" fn(Point) -> i32 = module.get_fn("get_x").unwrap();
         f(p)
     };
     assert_eq!(result, 10);
     let p2 = Point { x: 10, y: 20 };
-    let result: i64 = unsafe {
-        let f: unsafe extern "C" fn(Point) -> i64 = module.get_fn("get_y").unwrap();
+    let result: i32 = unsafe {
+        let f: unsafe extern "C" fn(Point) -> i32 = module.get_fn("get_y").unwrap();
         f(p2)
     };
     assert_eq!(result, 20);
@@ -1072,9 +1072,9 @@ fn jit_enum_none_payload_never_read() {
 fn jit_enum_int_payload_uses_pointer_width() {
     let src = r#"
     enum Number {
-        Value(int),
+        Value(isize),
     }
-    func main(): int {
+    func main(): isize {
         return match Number.Value(4294967303) {
             Number.Value(value) => value
         }

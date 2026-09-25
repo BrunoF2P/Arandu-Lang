@@ -100,7 +100,25 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
             }
         }
 
-        self.translate_rvalue_inner(rvalue, expected_ty, expected_ar_type)
+        let mut val = self.translate_rvalue_inner(rvalue, expected_ty, expected_ar_type);
+        if let Some(target_ty) = expected_ty {
+            let val_ty = self.builder.func.dfg.value_type(val);
+            if val_ty != target_ty && val_ty.is_int() && target_ty.is_int() {
+                if val_ty.bits() < target_ty.bits() {
+                    let is_unsigned = expected_ar_type
+                        .map(crate::types::ar_type_is_unsigned_integer)
+                        .unwrap_or(false);
+                    if is_unsigned {
+                        val = self.builder.ins().uextend(target_ty, val);
+                    } else {
+                        val = self.builder.ins().sextend(target_ty, val);
+                    }
+                } else if val_ty.bits() > target_ty.bits() {
+                    val = self.builder.ins().ireduce(target_ty, val);
+                }
+            }
+        }
+        val
     }
 
     fn translate_rvalue_inner(

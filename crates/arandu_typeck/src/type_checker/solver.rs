@@ -340,12 +340,18 @@ impl TypeChecker<'_> {
                         Primitive::I64 => (i64::MIN as i128..=i64::MAX as i128).contains(&parsed),
                         Primitive::Int => (self.target_info.int_min()..=self.target_info.int_max())
                             .contains(&parsed),
+                        Primitive::ISize => (self.target_info.isize_min()
+                            ..=self.target_info.isize_max())
+                            .contains(&parsed),
                         Primitive::U8 | Primitive::Byte => (0..=u8::MAX as i128).contains(&parsed),
                         Primitive::U16 => (0..=u16::MAX as i128).contains(&parsed),
                         Primitive::U32 => (0..=u32::MAX as i128).contains(&parsed),
                         Primitive::U64 => parsed >= 0 && (parsed as u128 <= u64::MAX as u128),
                         Primitive::Uint => {
                             parsed >= 0 && (parsed as u128 <= self.target_info.uint_max())
+                        }
+                        Primitive::USize => {
+                            parsed >= 0 && (parsed as u128 <= self.target_info.usize_max())
                         }
                         _ => true,
                     };
@@ -459,8 +465,8 @@ impl TypeChecker<'_> {
     }
 
     /// Anti-ambiguity finalization (TYP.3.3):
-    /// Defaults unconstrained integer literals to native pointer-width `int`,
-    /// and float literals to `float`, never silently defaulting to `i32`.
+    /// Defaults unconstrained integer literals to fixed-width `int` (i32),
+    /// and float literals to `float`.
     pub fn finalize_literal_vars(&mut self) {
         let count = self.literal_table.vars.len();
         for idx in 0..count {

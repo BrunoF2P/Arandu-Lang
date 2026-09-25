@@ -437,7 +437,14 @@ impl TargetAbiClassifier {
                         kind: LeafKind::Integer,
                     });
                 }
-                Primitive::Int | Primitive::Uint | Primitive::Any => {
+                Primitive::Int | Primitive::Uint => {
+                    leaves.push(LeafField {
+                        offset: current_offset,
+                        size: 4,
+                        kind: LeafKind::Integer,
+                    });
+                }
+                Primitive::ISize | Primitive::USize | Primitive::Any => {
                     leaves.push(LeafField {
                         offset: current_offset,
                         size: pointer_width,

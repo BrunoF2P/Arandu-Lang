@@ -4,44 +4,44 @@ func main(): int {
     let mut left = bitset.bitsetNew()
     let mut right = bitset.bitsetNew()
 
-    if !left.insert(0 as uint) {
+    if !left.insert(0 as usize) {
         return 1
     }
-    if !left.insert(63 as uint) {
+    if !left.insert(63 as usize) {
         return 2
     }
-    if !left.insert(64 as uint) {
+    if !left.insert(64 as usize) {
         return 3
     }
-    if !left.insert(127 as uint) {
+    if !left.insert(127 as usize) {
         return 4
     }
-    if left.insert(64 as uint) || left.countOnes() != 4 as uint {
+    if left.insert(64 as usize) || left.countOnes() != 4 as uint {
         return 5
     }
-    if !left.contains(0 as uint) || !left.contains(63 as uint) || !left.contains(64 as uint) || !left.contains(127 as uint) || left.contains(128 as uint) {
+    if !left.contains(0 as usize) || !left.contains(63 as usize) || !left.contains(64 as usize) || !left.contains(127 as usize) || left.contains(128 as usize) {
         return 6
     }
-    if !left.remove(63 as uint) || left.remove(63 as uint) || left.contains(63 as uint) {
+    if !left.remove(63 as usize) || left.remove(63 as usize) || left.contains(63 as usize) {
         return 7
     }
 
-    if !right.insert(64 as uint) {
+    if !right.insert(64 as usize) {
         return 8
     }
-    if !right.insert(65 as uint) {
+    if !right.insert(65 as usize) {
         return 9
     }
-    if !right.insert(127 as uint) {
+    if !right.insert(127 as usize) {
         return 10
     }
     left.unionWith(ref right)
-    if left.countOnes() != 4 as uint || !left.contains(0 as uint) || !left.contains(64 as uint) || !left.contains(65 as uint) || !left.contains(127 as uint) {
+    if left.countOnes() != 4 as uint || !left.contains(0 as usize) || !left.contains(64 as usize) || !left.contains(65 as usize) || !left.contains(127 as usize) {
         return 11
     }
 
     left.intersectWith(ref right)
-    if left.countOnes() != 3 as uint || left.contains(0 as uint) || !left.contains(64 as uint) || !left.contains(65 as uint) || !left.contains(127 as uint) {
+    if left.countOnes() != 3 as uint || left.contains(0 as usize) || !left.contains(64 as usize) || !left.contains(65 as usize) || !left.contains(127 as usize) {
         return 12
     }
     left.differenceWith(ref right)
@@ -49,15 +49,15 @@ func main(): int {
         return 13
     }
 
-    let mut capacity = bitset.bitsetWithCapacity(65 as uint)
-    if capacity.contains(0 as uint) || capacity.contains(64 as uint) || capacity.contains(65 as uint) {
+    let mut capacity = bitset.bitsetWithCapacity(65 as usize)
+    if capacity.contains(0 as usize) || capacity.contains(64 as usize) || capacity.contains(65 as usize) {
         return 14
     }
-    if !capacity.insert(64 as uint) || capacity.countOnes() != 1 as uint {
+    if !capacity.insert(64 as usize) || capacity.countOnes() != 1 as uint {
         return 15
     }
     capacity.clear()
-    if capacity.countOnes() != 0 as uint || capacity.contains(64 as uint) {
+    if capacity.countOnes() != 0 as uint || capacity.contains(64 as usize) {
         return 16
     }
     return 0

@@ -3,6 +3,7 @@ use super::emi::*;
 use super::oracle::*;
 use super::process::*;
 use super::synth::*;
+use super::synth::{int_hash_bucket, seeded_hash_collision_key};
 use super::types::*;
 
 use arandu_query::AnalysisHost;
@@ -115,6 +116,17 @@ fn shrink_identity_preserves_backend_failure_phase() {
 
     assert!(!compile.same_identity(&runtime));
     assert!(compile.same_identity(&same_phase));
+}
+
+#[test]
+fn seeded_hash_map_keys_really_collide_after_fixed_width_hashing() {
+    for value in [-32_768, -1, 0, 240, 248, 256, i32::MAX as i64 - 16] {
+        let existing = (0..9).map(|index| value + index * 8).collect::<Vec<_>>();
+        let collision = seeded_hash_collision_key(value, &existing);
+
+        assert!(!existing.contains(&collision));
+        assert_eq!(int_hash_bucket(value), int_hash_bucket(collision));
+    }
 }
 
 #[test]
@@ -373,10 +385,10 @@ fn synthesized_seeded_collection_cases_match_every_backend_and_level() {
     assert_ne!(first_map_insert, second_map_insert);
     assert!(generated[0]
         .source
-        .contains("generated_bit_seed = generated_bits.insert(128 as uint)"));
+        .contains("generated_bit_seed = generated_bits.insert(128 as usize)"));
     assert!(generated[1]
         .source
-        .contains("generated_bit_seed = generated_bits.insert(129 as uint)"));
+        .contains("generated_bit_seed = generated_bits.insert(129 as usize)"));
 
     for generated in generated {
         assert!(generated.source.contains("GeneratedKey.hash"));
@@ -899,9 +911,32 @@ func main(): int {
     }
     return 1
 }
+
 "#;
     let observation = check_source(source, true, true)
         .unwrap_or_else(|failure| panic!("float comparison differential failed: {failure:?}"));
+
+    assert_eq!(observation.result, 0);
+}
+
+#[test]
+fn fixed_width_int_hash_matches_all_backends_and_optimization_levels() {
+    let source = r#"
+import std.core.hash as hash
+
+func main(): int {
+    let mut hasher = hash.fnvNew()
+    hasher.writeInt(240)
+    if hasher.finish() as int != -490752091 { return 1 }
+
+    hasher = hash.fnvNew()
+    hasher.writeInt(-1)
+    if hasher.finish() as int != 1042954577 { return 2 }
+    return 0
+}
+"#;
+    let observation = check_source(source, true, true)
+        .unwrap_or_else(|failure| panic!("fixed-width int hash diverged: {failure:?}"));
 
     assert_eq!(observation.result, 0);
 }
@@ -1234,7 +1269,7 @@ fn synthesis_exercises_array_aggregate_enum_and_control_flow() {
     assert!(source.contains("func make_owned_pack(value: int, marker: int): OwnedPack"));
     assert!(source.contains("return OwnedPack { items: items, marker: marker }"));
     assert!(source.contains("transfer<OwnedPack>(make_owned_pack(sample.left, sample.right))"));
-    assert!(source.contains("vec.len<int>(owned_pack.items) != 1 as uint"));
+    assert!(source.contains("vec.len<int>(owned_pack.items) != 1 as usize"));
     assert!(source.contains("func identity<T>(value: T): T"));
     assert!(source.contains("func make_pair<T, U>(left: T, enabled: U): (T, U)"));
     assert!(source.contains("let pair_value, pair_enabled = make_pair<"));
@@ -1287,9 +1322,9 @@ fn synthesis_exercises_array_aggregate_enum_and_control_flow() {
     assert!(source.contains("io.println(\"result-odd\")"));
     assert!(source.contains("io.eprint(\"result-even\")"));
     assert!(source.contains("io.eprint(\"result-odd\")"));
-    assert!(source.contains("vec.tryReserve<int>(dynamic, 1 as uint)"));
+    assert!(source.contains("vec.tryReserve<int>(dynamic, 1 as usize)"));
     assert!(source.contains("slice.len<int>(vec.asSlice<int>(dynamic))"));
-    assert!(source.contains("vec.get<int>(dynamic, dynamic_len as uint)"));
+    assert!(source.contains("vec.get<int>(dynamic, dynamic_len as usize)"));
     assert!(source.contains("while dynamic_count < 9"));
     assert!(source.contains("vec.tryPush<int>(dynamic, sample.left + dynamic_count)"));
     assert!(source.contains("transfer<vec.Vec<bool>>(make_vec<bool>())"));
@@ -1306,12 +1341,12 @@ fn synthesis_exercises_array_aggregate_enum_and_control_flow() {
     assert!(source.contains("transfer<vec.Vec<char>>(make_vec<char>())"));
     assert!(source.contains("vec.tryPush<char>(characters, sample.character)"));
     assert!(source.contains("slice.len<char>(vec.asSlice<char>(characters))"));
-    assert!(source.contains("vec.get<char>(characters, 0 as uint)"));
+    assert!(source.contains("vec.get<char>(characters, 0 as usize)"));
     assert!(source.contains("recovered_vector_character != sample.character"));
     assert!(source.contains("characters.destroy()"));
     assert!(source.contains("transfer<vec.Vec<float>>(make_vec<float>())"));
     assert!(source.contains("vec.tryPush<float>(floats, float_result)"));
-    assert!(source.contains("vec.get<float>(floats, 0 as uint)"));
+    assert!(source.contains("vec.get<float>(floats, 0 as usize)"));
     assert!(source.contains("recovered_vector_float != float_result"));
     assert!(source.contains("floats.destroy()"));
     assert!(source.contains("vec.destroy<int>(dynamic)"));
@@ -1320,7 +1355,7 @@ fn synthesis_exercises_array_aggregate_enum_and_control_flow() {
     assert!(source.contains("vec.get<int>(dynamic, dynamic_index)"));
     assert!(source.contains("if dynamic_len != 9"));
     assert!(source.contains("if dynamic_tail != sample.left + 8"));
-    assert!(source.contains("vec.put<int>(dynamic, 8 as uint, sample.right)"));
+    assert!(source.contains("vec.put<int>(dynamic, 8 as usize, sample.right)"));
     assert!(source.contains("vec.pop<int>(dynamic)"));
     assert!(source.contains("vec.clear<int>(dynamic)"));
     assert!(source.contains("Some(_) => true"));

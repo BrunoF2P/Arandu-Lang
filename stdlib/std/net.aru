@@ -321,19 +321,19 @@ public func TcpStream.connect(port: int): Result<TcpStream, io.IoError> {
 /// code `-1`, including a nonblocking would-block result; the category is
 /// therefore not precise. An empty buffer returns `Ok(0)` without calling the
 /// host.
-public func TcpStream.read(self: mut ref TcpStream, buf: mut ref []u8): Result<uint, io.IoError> {
+public func TcpStream.read(self: mut ref TcpStream, buf: mut ref []u8): Result<usize, io.IoError> {
     let len = slice.len<u8>(*buf)
-    if len == 0 {
-        return Result.Ok(0 as uint)
+    if len == (0 as usize) {
+        return Result.Ok(0 as usize)
     }
-    if len > ((-1 as uint) >> 1) {
+    if len > (2147483647 as usize) {
         return Result.Err(io.newIoError(io.IoErrorKind.InvalidInput, 5))
     }
     let n = unsafe { tcpRead(self.raw, slice.asPtr<u8>(*buf), len as int) }
     if n < 0 {
         return Result.Err(io.newIoError(io.IoErrorKind.BrokenPipe, -1))
     }
-    return Result.Ok(n as uint)
+    return Result.Ok(n as usize)
 }
 
 /// Writes from `buf` and returns the number of bytes accepted.
@@ -341,19 +341,19 @@ public func TcpStream.read(self: mut ref TcpStream, buf: mut ref []u8): Result<u
 /// A successful write can be short. Any negative host result becomes
 /// `Err(BrokenPipe)` with code `-1`, including would-block; retry logic must
 /// account for the returned count.
-public func TcpStream.write(self: mut ref TcpStream, buf: []u8): Result<uint, io.IoError> {
+public func TcpStream.write(self: mut ref TcpStream, buf: []u8): Result<usize, io.IoError> {
     let len = slice.len<u8>(buf)
-    if len == 0 {
-        return Result.Ok(0 as uint)
+    if len == (0 as usize) {
+        return Result.Ok(0 as usize)
     }
-    if len > ((-1 as uint) >> 1) {
+    if len > (2147483647 as usize) {
         return Result.Err(io.newIoError(io.IoErrorKind.InvalidInput, 5))
     }
     let n = unsafe { tcpWrite(self.raw, slice.asPtr<u8>(buf), len as int) }
     if n < 0 {
         return Result.Err(io.newIoError(io.IoErrorKind.BrokenPipe, -1))
     }
-    return Result.Ok(n as uint)
+    return Result.Ok(n as usize)
 }
 
 /// Flushes any pending writes (no-op for raw TCP stream, always returns true).

@@ -233,8 +233,8 @@ func main(): int {
     if result == nullp { return 0 }
     if matrix.get(1, 1) is Option.Some(_) { return 2 }
     if matrix.slice(1, 1, 1, 1) is Option.Some(_) { return 3 }
-    let huge = unsafe { view.fromRaw<int>(raw, -1 as uint, 2, 1, 1) }
-    if huge.len() != (-1 as uint) { return 4 }
+    let huge = unsafe { view.fromRaw<int>(raw, 4294967295 as uint, 2, 1, 1) }
+    if huge.len() != (4294967295 as uint) { return 4 }
     let mut writable = unsafe { view.fromRawMut<int>(raw, 2, 2, 2147483647, 1) }
     if writable.set(1, 1, 9) { return 5 }
     if writable.sliceMut(1, 1, 1, 1) is Option.Some(_) { return 6 }

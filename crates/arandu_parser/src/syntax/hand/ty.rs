@@ -29,6 +29,8 @@ pub fn primitive_type_token_name(kind: TokenKind) -> Option<&'static str> {
     match kind {
         TokenKind::TypeInt => Some("int"),
         TokenKind::TypeUint => Some("uint"),
+        TokenKind::TypeIsize => Some("isize"),
+        TokenKind::TypeUsize => Some("usize"),
         TokenKind::TypeFloat => Some("float"),
         TokenKind::TypeI8 => Some("i8"),
         TokenKind::TypeI16 => Some("i16"),

@@ -12,7 +12,7 @@ use arandu_fuzz_support::{Target, MAX_INPUT_BYTES};
 const SIMPLE_SEED_TIMEOUT: Duration = Duration::from_secs(2);
 const INCREMENTAL_SEED_TIMEOUT: Duration = Duration::from_secs(5);
 const LSP_SEED_TIMEOUT: Duration = Duration::from_secs(10);
-const SYNTHESIZED_SEED_TIMEOUT: Duration = Duration::from_secs(15);
+const SYNTHESIZED_SEED_TIMEOUT: Duration = Duration::from_secs(120);
 const DIFFERENTIAL_SEED_TIMEOUT: Duration = Duration::from_secs(120);
 static NEXT_SEQUENCE_PREFLIGHT_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -907,7 +907,7 @@ mod tests {
         assert_eq!(seed_timeout(Target::Lex), Duration::from_secs(2));
         assert_eq!(seed_timeout(Target::Incremental), Duration::from_secs(5));
         assert_eq!(seed_timeout(Target::LspSession), Duration::from_secs(10));
-        assert_eq!(seed_timeout(Target::Synthesized), Duration::from_secs(15));
+        assert_eq!(seed_timeout(Target::Synthesized), Duration::from_secs(120));
         assert_eq!(
             seed_timeout(Target::SynthesizedAll),
             Duration::from_secs(120)

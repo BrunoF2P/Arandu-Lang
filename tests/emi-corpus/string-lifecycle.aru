@@ -9,7 +9,7 @@ func main(): int {
         text.destroy()
         return -1
     }
-    if text.len() != 6 as uint {
+    if text.len() != 6 as usize {
         text.destroy()
         return -2
     }
@@ -19,7 +19,7 @@ func main(): int {
         text.destroy()
         return 100 as int + first_byte as int
     }
-    if core_str.lenBytes(*text.asStr()) != 6 as uint {
+    if core_str.lenBytes(*text.asStr()) != 6 as usize {
         text.destroy()
         return -9
     }
@@ -37,45 +37,45 @@ func main(): int {
     }
 
     text.pushScalar('é')
-    if text.len() != 8 as uint {
+    if text.len() != 8 as usize {
         text.destroy()
         return -3
     }
     text.pushScalar('🦀')
-    if text.len() != 12 as uint {
+    if text.len() != 12 as usize {
         text.destroy()
         return -4
     }
     let grown_bytes = text.asBytes()
-    if slice.len<u8>(grown_bytes) != 12 as uint {
+    if slice.len<u8>(grown_bytes) != 12 as usize {
         text.destroy()
         return -13
     }
-    if core_str.lenBytes(*text.asStr()) != 12 as uint
+    if core_str.lenBytes(*text.asStr()) != 12 as usize
         || !core_str.endsWith(*text.asStr(), "🦀")
     {
         text.destroy()
         return -14
     }
 
-    text.truncate(7 as uint)
-    if text.len() != 12 as uint {
+    text.truncate(7 as usize)
+    if text.len() != 12 as usize {
         text.destroy()
         return -5
     }
-    text.truncate(8 as uint)
-    if text.len() != 8 as uint {
+    text.truncate(8 as usize)
+    if text.len() != 8 as usize {
         text.destroy()
         return -6
     }
 
     let old_capacity = text.capacity()
-    if text.tryReserve(2147483647 as uint) || text.capacity() != old_capacity {
+    if text.tryReserve(2147483647 as usize) || text.capacity() != old_capacity {
         text.destroy()
         return -7
     }
     text.clear()
-    if !text.isEmpty() || text.len() != 0 as uint || text.capacity() != old_capacity {
+    if !text.isEmpty() || text.len() != 0 as usize || text.capacity() != old_capacity {
         text.destroy()
         return -8
     }

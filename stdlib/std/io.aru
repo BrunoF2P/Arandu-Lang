@@ -107,19 +107,19 @@ public func errorFromPortable(code: int): IoError {
 
 /// Interface for reading bytes from a stream into a borrowed buffer.
 public interface Read {
-    func read(self: mut ref Self, buf: mut ref []u8): Result<uint, IoError>
+    func read(self: mut ref Self, buf: mut ref []u8): Result<usize, IoError>
 }
 
 /// Interface for writing bytes to a stream sink.
 public interface Write {
-    func write(self: mut ref Self, buf: []u8): Result<uint, IoError>
+    func write(self: mut ref Self, buf: []u8): Result<usize, IoError>
     func flush(self: mut ref Self): Result<bool, IoError>
 }
 
 /// Interface for streams that provide an internal buffer for efficient reads.
 public interface BufRead {
-    func fillBuf(self: mut ref Self): Result<uint, IoError>
-    func consume(self: mut ref Self, amt: uint): void
+    func fillBuf(self: mut ref Self): Result<usize, IoError>
+    func consume(self: mut ref Self, amt: usize): void
 }
 
 /// A buffered reader wrapper providing in-memory staging for stream inputs.
@@ -129,9 +129,9 @@ public struct BufReader<R: Read> {
     /// Backing buffer.
     buf: []u8
     /// Current byte position.
-    pos: uint
+    pos: usize
     /// Usable buffer capacity.
-    cap: uint
+    cap: usize
 }
 
 /// Wraps `inner` with a caller-owned staging slice, initially empty.
@@ -148,7 +148,7 @@ public func newBufReader<R: Read>(inner: R, buf: []u8): BufReader<R> {
 }
 
 /// Returns the number of unconsumed bytes currently available in the buffer.
-public func BufReader.available<R: Read>(self: ref BufReader<R>): uint {
+public func BufReader.available<R: Read>(self: ref BufReader<R>): usize {
     if self.pos >= self.cap {
         return 0
     }
@@ -159,7 +159,7 @@ public func BufReader.available<R: Read>(self: ref BufReader<R>): uint {
 ///
 /// Passing more than `available()` consumes all available bytes. It does not
 /// read from `inner` or allocate.
-public func BufReader.consume<R: Read>(self: mut ref BufReader<R>, amt: uint): void {
+public func BufReader.consume<R: Read>(self: mut ref BufReader<R>, amt: usize): void {
     let avail = self.available()
     if amt >= avail {
         self.pos = self.cap
@@ -174,7 +174,7 @@ public func BufReader.consume<R: Read>(self: mut ref BufReader<R>, amt: uint): v
 /// When bytes remain, no underlying read occurs. When exhausted, errors from
 /// `inner.read` are returned unchanged; a zero result indicates end of input
 /// or no progress as reported by the underlying reader.
-public func BufReader.fillBuf<R: Read>(self: mut ref BufReader<R>): Result<uint, IoError> {
+public func BufReader.fillBuf<R: Read>(self: mut ref BufReader<R>): Result<usize, IoError> {
     if self.pos >= self.cap {
         self.pos = 0
         self.cap = 0
@@ -190,20 +190,20 @@ public func BufReader.fillBuf<R: Read>(self: mut ref BufReader<R>): Result<uint,
 /// A short read is possible; call again to request further bytes. Errors
 /// from the underlying reader propagate without changing the destination
 /// after the failed refill.
-public func BufReader.read<R: Read>(self: mut ref BufReader<R>, out_buf: mut ref []u8): Result<uint, IoError> {
+public func BufReader.read<R: Read>(self: mut ref BufReader<R>, out_buf: mut ref []u8): Result<usize, IoError> {
     let target_len = slice.len<u8>(*out_buf)
     if target_len == 0 {
-        return Result.Ok(0 as uint)
+        return Result.Ok(0 as usize)
     }
     let avail = self.fillBuf()?
     if avail == 0 {
-        return Result.Ok(0 as uint)
+        return Result.Ok(0 as usize)
     }
     let mut to_copy = avail
     if to_copy > target_len {
         to_copy = target_len
     }
-    let mut i: uint = 0
+    let mut i: usize = 0
     while i < to_copy {
         out_buf[i] = self.buf[self.pos + i]
         i = i + 1
@@ -219,7 +219,7 @@ public struct BufWriter<W: Write> {
     /// Backing buffer.
     buf: []u8
     /// Number of bytes pending in the output buffer.
-    buffered_count: uint
+    buffered_count: usize
 }
 
 /// Wraps `inner` with a caller-owned output staging slice.
@@ -235,7 +235,7 @@ public func newBufWriter<W: Write>(inner: W, buf: []u8): BufWriter<W> {
 }
 
 /// Returns the number of bytes currently batched in the buffer.
-public func BufWriter.buffered<W: Write>(self: ref BufWriter<W>): uint {
+public func BufWriter.buffered<W: Write>(self: ref BufWriter<W>): usize {
     return self.buffered_count
 }
 
@@ -250,7 +250,7 @@ public func BufWriter.flush<W: Write>(self: mut ref BufWriter<W>): Result<bool, 
     while self.buffered_count > 0 {
         let pending = self.buffered_count
         let s = unsafe { intrinsics.sliceSubslice<u8>(self.buf, 0, pending) }
-        let mut n: uint = 0
+        let mut n: usize = 0
         match self.inner.write(s) {
             Ok(count) => {
                 n = count
@@ -268,7 +268,7 @@ public func BufWriter.flush<W: Write>(self: mut ref BufWriter<W>): Result<bool, 
         if n == pending {
             self.buffered_count = 0
         } else {
-            let mut i: uint = 0
+            let mut i: usize = 0
             while i + n < pending {
                 self.buf[i] = self.buf[n + i]
                 i = i + 1
@@ -285,7 +285,7 @@ public func BufWriter.flush<W: Write>(self: mut ref BufWriter<W>): Result<bool, 
 /// directly to `inner`; the returned count can then be shorter than
 /// `data.len`. Smaller writes return their full length after staging. Errors
 /// from flushing or the underlying writer propagate.
-public func BufWriter.write<W: Write>(self: mut ref BufWriter<W>, data: []u8): Result<uint, IoError> {
+public func BufWriter.write<W: Write>(self: mut ref BufWriter<W>, data: []u8): Result<usize, IoError> {
     let total = slice.len<u8>(data)
     let cap = slice.len<u8>(self.buf)
     if total >= cap {
@@ -295,7 +295,7 @@ public func BufWriter.write<W: Write>(self: mut ref BufWriter<W>, data: []u8): R
     if self.buffered_count + total > cap {
         let _ = self.flush()?
     }
-    let mut i: uint = 0
+    let mut i: usize = 0
     while i < total {
         self.buf[self.buffered_count + i] = data[i]
         i = i + 1

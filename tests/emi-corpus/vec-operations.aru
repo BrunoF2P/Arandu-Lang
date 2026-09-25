@@ -2,7 +2,7 @@ import std.alloc.vec as vec
 
 func main(): int {
     let mut values = vec.new<int>()
-    if !vec.tryReserve<int>(values, 9 as uint) {
+    if !vec.tryReserve<int>(values, 9 as usize) {
         vec.destroy<int>(values)
         return -1
     }
@@ -14,7 +14,7 @@ func main(): int {
         }
         next = next + 1
     }
-    if !vec.put<int>(values, 8 as uint, 42) {
+    if !vec.put<int>(values, 8 as usize, 42) {
         vec.destroy<int>(values)
         return -3
     }

@@ -41,13 +41,13 @@ module std.alloc.arena
 import std.core.mem as mem
 import std.core.intrinsics as intrinsics
 
-const MAX_ARENA_CAPACITY = 2147483647 as uint
+const MAX_ARENA_CAPACITY = 2147483647 as usize
 
 extern "C" {
     /// Host allocator for a raw byte buffer.
-    func ar_vec_malloc(size: uint): ptr[u8]
+    func ar_vec_malloc(size: usize): ptr[u8]
     /// Host deallocator for a raw byte buffer.
-    func ar_vec_buf_free(p: ptr[u8], size: uint): void
+    func ar_vec_buf_free(p: ptr[u8], size: usize): void
 }
 
 // ── General Bump Arena ───────────────────────────────────────────────────────
@@ -57,20 +57,20 @@ public struct Arena {
     /// Pointer to the stored elements or bytes.
     data: ptr[u8]
     /// Allocated capacity in elements or bytes, as defined by this type.
-    capacity: uint
+    capacity: usize
     /// Current byte offset from the start of the arena.
-    offset: uint
+    offset: usize
 }
 
 /// Obtains one backing buffer with `capacity` bytes for a new arena.
 ///
 /// Subsequent allocations use this fixed buffer. If the host allocator
 /// returns a null pointer, `alloc` returns `None`.
-public func new(capacity: uint): Arena {
+public func new(capacity: usize): Arena {
     let mut actualCapacity = capacity
     let mut data: ptr[u8] = nil
     if capacity > MAX_ARENA_CAPACITY {
-        actualCapacity = 0
+        actualCapacity = 0 as usize
     } else {
         unsafe {
             data = ar_vec_malloc(capacity)
@@ -79,12 +79,12 @@ public func new(capacity: uint): Arena {
     return Arena {
         data: data,
         capacity: actualCapacity,
-        offset: 0,
+        offset: 0 as usize,
     }
 }
 
 /// Creates an `Arena` with `capacity` bytes; equivalent to `new(capacity)`.
-public func Arena.withCapacity(capacity: uint): Arena {
+public func Arena.withCapacity(capacity: usize): Arena {
     return new(capacity)
 }
 
@@ -94,16 +94,16 @@ public func Arena.withCapacity(capacity: uint): Arena {
 /// backing buffer is unavailable or exhausted. An alignment of zero or one
 /// applies no padding. Successful pointers remain valid until `reset` or
 /// `free`; there is no individual deallocation.
-public func Arena.alloc(self: mut ref Arena, size: uint, align: uint): Option<ptr[u8]> {
+public func Arena.alloc(self: mut ref Arena, size: usize, align: usize): Option<ptr[u8]> {
     let nullp: ptr[u8] = nil
     let data = self.data
     if data == nullp || self.capacity > MAX_ARENA_CAPACITY || self.offset > self.capacity {
         return Option.None
     }
-    let mut padding: uint = 0
-    if align > 1 {
+    let mut padding: usize = 0 as usize
+    if align > (1 as usize) {
         let rem = self.offset % align
-        if rem != 0 {
+        if rem != (0 as usize) {
             padding = align - rem
         }
     }
@@ -115,7 +115,7 @@ public func Arena.alloc(self: mut ref Arena, size: uint, align: uint): Option<pt
         return Option.None
     }
     let nextOffset = aligned + size
-    let res = mem.ptrOffset<u8>(self.data, aligned as i32)
+    let res = mem.ptrOffset<u8>(self.data, aligned as isize)
     self.offset = nextOffset
     return Option.Some(res)
 }
@@ -125,10 +125,10 @@ public func Arena.alloc(self: mut ref Arena, size: uint, align: uint): Option<pt
 /// Returns an aligned pointer on success or `None` when the region cannot fit.
 /// The returned storage is raw; callers must initialize elements before
 /// reading them. Resetting or freeing the arena invalidates the pointer.
-public func Arena.allocTyped<T>(self: mut ref Arena, count: uint): Option<ptr[T]> {
+public func Arena.allocTyped<T>(self: mut ref Arena, count: usize): Option<ptr[T]> {
     let elemSize = mem.sizeOf<T>()
     let elemAlign = mem.alignOf<T>()
-    if elemSize > 0 && count > MAX_ARENA_CAPACITY / elemSize {
+    if elemSize > (0 as usize) && count > MAX_ARENA_CAPACITY / elemSize {
         return Option.None
     }
     let totalSize = elemSize * count
@@ -143,7 +143,7 @@ public func Arena.allocTyped<T>(self: mut ref Arena, count: uint): Option<ptr[T]
 ///
 /// Returns `Some(slice)` backed by arena memory, or `None` if it cannot fit.
 /// The slice borrows the arena, so it must not be used after `reset` or `free`.
-public func Arena.allocSlice<T>(self: mut ref Arena, count: uint): Option<[]T> {
+public func Arena.allocSlice<T>(self: mut ref Arena, count: usize): Option<[]T> {
     let optPtr = self.allocTyped<T>(count)
     if optPtr is Option.Some(p) {
         unsafe {
@@ -158,24 +158,24 @@ public func Arena.allocSlice<T>(self: mut ref Arena, count: uint): Option<[]T> {
 /// All previously returned pointers and slices become invalid. The operation
 /// does not visit values stored in the arena and runs in O(1) time.
 public func Arena.reset(self: mut ref Arena): void {
-    self.offset = 0
+    self.offset = 0 as usize
 }
 
 /// Returns the number of bytes currently allocated in the arena.
-public func Arena.allocatedBytes(self: ref Arena): uint {
+public func Arena.allocatedBytes(self: ref Arena): usize {
     return self.offset
 }
 
 /// Returns the number of remaining bytes available before exhaustion.
-public func Arena.remainingBytes(self: ref Arena): uint {
+public func Arena.remainingBytes(self: ref Arena): usize {
     if self.offset >= self.capacity {
-        return 0
+        return 0 as usize
     }
     return self.capacity - self.offset
 }
 
 /// Returns the total capacity in bytes of the arena.
-public func Arena.capacity(self: ref Arena): uint {
+public func Arena.capacity(self: ref Arena): usize {
     return self.capacity
 }
 
@@ -189,8 +189,8 @@ public func Arena.free(self: mut ref Arena): void {
         unsafe {
             ar_vec_buf_free(self.data, self.capacity)
             self.data = nullp
-            self.capacity = 0
-            self.offset = 0
+            self.capacity = 0 as usize
+            self.offset = 0 as usize
         }
     }
 }
@@ -209,22 +209,22 @@ public struct ScratchArena {
     /// Pointer to the stored elements or bytes.
     data: ptr[u8]
     /// Allocated capacity in elements or bytes, as defined by this type.
-    capacity: uint
+    capacity: usize
     /// Current byte offset from the start of the arena.
-    offset: uint
+    offset: usize
     /// Largest byte offset reached since the last peak reset.
-    peak: uint
+    peak: usize
 }
 
 /// Obtains one backing buffer with `capacity` bytes for temporary allocations.
 ///
 /// Allocation is limited to this buffer until `free`; `peakBytes` initially
 /// returns zero.
-public func newScratch(capacity: uint): ScratchArena {
+public func newScratch(capacity: usize): ScratchArena {
     let mut actualCapacity = capacity
     let mut data: ptr[u8] = nil
     if capacity > MAX_ARENA_CAPACITY {
-        actualCapacity = 0
+        actualCapacity = 0 as usize
     } else {
         unsafe {
             data = ar_vec_malloc(capacity)
@@ -233,18 +233,18 @@ public func newScratch(capacity: uint): ScratchArena {
     return ScratchArena {
         data: data,
         capacity: actualCapacity,
-        offset: 0,
-        peak: 0,
+        offset: 0 as usize,
+        peak: 0 as usize,
     }
 }
 
 /// Creates a scratch arena; equivalent to `newScratch(capacity)`.
-public func withCapacity(capacity: uint): ScratchArena {
+public func withCapacity(capacity: usize): ScratchArena {
     return newScratch(capacity)
 }
 
 /// Creates a scratch arena; equivalent to `newScratch(capacity)`.
-public func ScratchArena.withCapacity(capacity: uint): ScratchArena {
+public func ScratchArena.withCapacity(capacity: usize): ScratchArena {
     return newScratch(capacity)
 }
 
@@ -254,16 +254,16 @@ public func ScratchArena.withCapacity(capacity: uint): ScratchArena {
 /// An alignment of zero or one applies no padding. Success advances the
 /// offset and may raise the peak; a later `rewind`, `reset`, or `free` can
 /// invalidate the pointer.
-public func ScratchArena.alloc(self: mut ref ScratchArena, size: uint, align: uint): Option<ptr[u8]> {
+public func ScratchArena.alloc(self: mut ref ScratchArena, size: usize, align: usize): Option<ptr[u8]> {
     let nullp: ptr[u8] = nil
     let data = self.data
     if data == nullp || self.capacity > MAX_ARENA_CAPACITY || self.offset > self.capacity {
         return Option.None
     }
-    let mut padding: uint = 0
-    if align > 1 {
+    let mut padding: usize = 0 as usize
+    if align > (1 as usize) {
         let rem = self.offset % align
-        if rem != 0 {
+        if rem != (0 as usize) {
             padding = align - rem
         }
     }
@@ -275,7 +275,7 @@ public func ScratchArena.alloc(self: mut ref ScratchArena, size: uint, align: ui
         return Option.None
     }
     let nextOffset = aligned + size
-    let res = mem.ptrOffset<u8>(self.data, aligned as i32)
+    let res = mem.ptrOffset<u8>(self.data, aligned as isize)
     self.offset = nextOffset
     if self.offset > self.peak {
         self.peak = self.offset
@@ -286,10 +286,10 @@ public func ScratchArena.alloc(self: mut ref ScratchArena, size: uint, align: ui
 /// Allocates contiguous space for `count` elements of type `T`.
 ///
 /// Returns `Option.Some(ptr[T])` aligned to `mem.alignOf<T>()`, or `Option.None` on out-of-memory.
-public func ScratchArena.allocTyped<T>(self: mut ref ScratchArena, count: uint): Option<ptr[T]> {
+public func ScratchArena.allocTyped<T>(self: mut ref ScratchArena, count: usize): Option<ptr[T]> {
     let elemSize = mem.sizeOf<T>()
     let elemAlign = mem.alignOf<T>()
-    if elemSize > 0 && count > MAX_ARENA_CAPACITY / elemSize {
+    if elemSize > (0 as usize) && count > MAX_ARENA_CAPACITY / elemSize {
         return Option.None
     }
     let totalSize = elemSize * count
@@ -303,7 +303,7 @@ public func ScratchArena.allocTyped<T>(self: mut ref ScratchArena, count: uint):
 /// Allocates a contiguous slice `[]T` of `count` elements from the scratch arena.
 ///
 /// Returns `Option.Some([]T)` backed by arena memory, or `Option.None` on out-of-memory.
-public func ScratchArena.allocSlice<T>(self: mut ref ScratchArena, count: uint): Option<[]T> {
+public func ScratchArena.allocSlice<T>(self: mut ref ScratchArena, count: usize): Option<[]T> {
     let optPtr = self.allocTyped<T>(count)
     if optPtr is Option.Some(p) {
         unsafe {
@@ -317,7 +317,7 @@ public func ScratchArena.allocSlice<T>(self: mut ref ScratchArena, count: uint):
 ///
 /// A mark belongs to this arena and is meaningful only while allocations
 /// made since the checkpoint have not been reset or the arena freed.
-public func ScratchArena.checkpoint(self: ref ScratchArena): uint {
+public func ScratchArena.checkpoint(self: ref ScratchArena): usize {
     return self.offset
 }
 
@@ -326,7 +326,7 @@ public func ScratchArena.checkpoint(self: ref ScratchArena): uint {
 /// If `mark` exceeds the current offset, the rewind is ignored. Pointers and
 /// slices allocated after the mark become invalid. The high-water mark is
 /// preserved for `peakBytes`.
-public func ScratchArena.rewind(self: mut ref ScratchArena, mark: uint): void {
+public func ScratchArena.rewind(self: mut ref ScratchArena, mark: usize): void {
     if mark <= self.offset {
         self.offset = mark
     }
@@ -336,7 +336,7 @@ public func ScratchArena.rewind(self: mut ref ScratchArena, mark: uint): void {
 /// All outstanding pointers and slices become invalid. `peakBytes()` is
 /// preserved across resets for capacity planning.
 public func ScratchArena.reset(self: mut ref ScratchArena): void {
-    self.offset = 0
+    self.offset = 0 as usize
 }
 
 /// Starts a new peak measurement at the current allocation offset.
@@ -348,25 +348,25 @@ public func ScratchArena.resetPeak(self: mut ref ScratchArena): void {
 }
 
 /// Returns the number of bytes currently allocated in the scratch arena.
-public func ScratchArena.allocatedBytes(self: ref ScratchArena): uint {
+public func ScratchArena.allocatedBytes(self: ref ScratchArena): usize {
     return self.offset
 }
 
 /// Returns the number of remaining bytes available before exhaustion.
-public func ScratchArena.remainingBytes(self: ref ScratchArena): uint {
+public func ScratchArena.remainingBytes(self: ref ScratchArena): usize {
     if self.offset >= self.capacity {
-        return 0
+        return 0 as usize
     }
     return self.capacity - self.offset
 }
 
 /// Returns the high-water mark of allocated bytes across the lifetime (or since last `resetPeak`).
-public func ScratchArena.peakBytes(self: ref ScratchArena): uint {
+public func ScratchArena.peakBytes(self: ref ScratchArena): usize {
     return self.peak
 }
 
 /// Returns the total capacity in bytes of the scratch arena.
-public func ScratchArena.capacity(self: ref ScratchArena): uint {
+public func ScratchArena.capacity(self: ref ScratchArena): usize {
     return self.capacity
 }
 
@@ -379,9 +379,9 @@ public func ScratchArena.free(self: mut ref ScratchArena): void {
         unsafe {
             ar_vec_buf_free(self.data, self.capacity)
             self.data = nullp
-            self.capacity = 0
-            self.offset = 0
-            self.peak = 0
+            self.capacity = 0 as usize
+            self.offset = 0 as usize
+            self.peak = 0 as usize
         }
     }
 }

@@ -185,6 +185,8 @@ pub enum TokenKind {
     KwImpl,
     TypeInt,
     TypeUint,
+    TypeIsize,
+    TypeUsize,
     TypeFloat,
     TypeI8,
     TypeI16,
@@ -270,7 +272,7 @@ impl fmt::Display for TokenKind {
 }
 
 impl TokenKind {
-    pub const COUNT: usize = 133;
+    pub const COUNT: usize = 135;
 
     /// Returns `true` if this token kind represents a language keyword.
     #[must_use]
@@ -464,6 +466,8 @@ impl TokenKind {
             TokenKind::Ellipsis => 126,
             TokenKind::Arrow => 127,
             TokenKind::Eof => 128,
+            TokenKind::TypeIsize => 133,
+            TokenKind::TypeUsize => 134,
             TokenKind::Error(_) => 132,
         }
     }
@@ -603,6 +607,8 @@ impl TokenKind {
             129 => TokenKind::KwLet,
             130 => TokenKind::KwRef,
             131 => TokenKind::KwImpl,
+            133 => TokenKind::TypeIsize,
+            134 => TokenKind::TypeUsize,
             _ => TokenKind::Error(crate::LexErrorCode::InvalidChar),
         }
     }
@@ -738,6 +744,8 @@ impl TokenKind {
             TokenKind::KwImpl => "KW_IMPL",
             TokenKind::TypeInt => "TYPE_INT",
             TokenKind::TypeUint => "TYPE_UINT",
+            TokenKind::TypeIsize => "TYPE_ISIZE",
+            TokenKind::TypeUsize => "TYPE_USIZE",
             TokenKind::TypeFloat => "TYPE_FLOAT",
             TokenKind::TypeI8 => "TYPE_I8",
             TokenKind::TypeI16 => "TYPE_I16",
@@ -845,6 +853,8 @@ static TOKEN_FLAGS_TABLE: [TokenFlags; TokenKind::COUNT] = {
                 | TokenKind::IdentType
                 | TokenKind::TypeInt
                 | TokenKind::TypeUint
+                | TokenKind::TypeIsize
+                | TokenKind::TypeUsize
                 | TokenKind::TypeFloat
                 | TokenKind::TypeI8
                 | TokenKind::TypeI16

@@ -167,21 +167,37 @@ pub struct TargetInfo {
 }
 
 impl TargetInfo {
-    /// Maximum value representable by `uint` (native-unsigned-width).
+    /// Maximum value representable by `uint` (fixed 32-bit unsigned, RFC 0023).
     #[must_use]
     pub const fn uint_max(&self) -> u128 {
+        u32::MAX as u128
+    }
+
+    /// Minimum value representable by `int` (fixed 32-bit signed, RFC 0023).
+    #[must_use]
+    pub const fn int_min(&self) -> i128 {
+        i32::MIN as i128
+    }
+
+    /// Maximum value representable by `int` (fixed 32-bit signed, RFC 0023).
+    #[must_use]
+    pub const fn int_max(&self) -> i128 {
+        i32::MAX as i128
+    }
+
+    /// Maximum value representable by `usize` (native-unsigned pointer-width, RFC 0023).
+    #[must_use]
+    pub const fn usize_max(&self) -> u128 {
         match self.pointer_width {
             32 => u32::MAX as u128,
             64 => u64::MAX as u128,
-            // Unknown future width: keep the smallest tested range (32-bit) so
-            // the compiler never admits a value the target might reject.
             _ => u32::MAX as u128,
         }
     }
 
-    /// Minimum value representable by `int` (native-signed-width).
+    /// Minimum value representable by `isize` (native-signed pointer-width, RFC 0023).
     #[must_use]
-    pub const fn int_min(&self) -> i128 {
+    pub const fn isize_min(&self) -> i128 {
         match self.pointer_width {
             32 => i32::MIN as i128,
             64 => i64::MIN as i128,
@@ -189,9 +205,9 @@ impl TargetInfo {
         }
     }
 
-    /// Maximum value representable by `int` (native-signed-width).
+    /// Maximum value representable by `isize` (native-signed pointer-width, RFC 0023).
     #[must_use]
-    pub const fn int_max(&self) -> i128 {
+    pub const fn isize_max(&self) -> i128 {
         match self.pointer_width {
             32 => i32::MAX as i128,
             64 => i64::MAX as i128,

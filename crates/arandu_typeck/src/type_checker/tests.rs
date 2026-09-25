@@ -1205,19 +1205,62 @@ fn test_contextual_literal_overflow_diagnostic() {
 
 #[test]
 fn test_contextual_literal_uint_overflow() {
+    // RFC 0023: uint is fixed 32-bit across all targets.
     let source = r#"
     module test;
     func take(x: uint): uint { return x; }
     func main(): uint {
         let a: uint = 4_000_000_000;
-        let b: uint = 4_000_000_001;
+        let b: uint = 4_294_967_295;
         return take(5_000_000_000);
     }
     "#;
     let program = arandu_parser::parse(source).unwrap();
     let res = arandu_resolve::resolve_for_test(0, &program);
 
-    // 64-bit target: todos os literais cabem em uint (< u64::MAX).
+    // 64-bit target: 5_000_000_000 exceeds 32-bit uint (RFC 0023).
+    let check_res = crate::type_check(res, &program, TargetInfo { pointer_width: 64 });
+    let overflow_diags: Vec<_> = check_res
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == crate::DiagCode::T038IntegerLiteralOutOfRange)
+        .collect();
+    assert_eq!(
+        overflow_diags.len(),
+        1,
+        "5_000_000_000 deve estourar uint mesmo em target de 64-bit (RFC 0023 uint = u32)"
+    );
+
+    // 32-bit target: comportamento idêntico ao 64-bit.
+    let res = arandu_resolve::resolve_for_test(0, &program);
+    let check_res = crate::type_check(res, &program, TargetInfo { pointer_width: 32 });
+    let overflow_diags: Vec<_> = check_res
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == crate::DiagCode::T038IntegerLiteralOutOfRange)
+        .collect();
+    assert_eq!(
+        overflow_diags.len(),
+        1,
+        "uint tem comportamento idêntico em 32-bit e 64-bit"
+    );
+}
+
+#[test]
+fn test_contextual_literal_usize_overflow() {
+    // RFC 0023: usize varies with target pointer width.
+    let source = r#"
+    module test;
+    func take(x: usize): usize { return x; }
+    func main(): usize {
+        let a: usize = 4_000_000_000;
+        return take(5_000_000_000);
+    }
+    "#;
+    let program = arandu_parser::parse(source).unwrap();
+    let res = arandu_resolve::resolve_for_test(0, &program);
+
+    // 64-bit target: 5_000_000_000 cabe em usize (< u64::MAX).
     let check_res = crate::type_check(res, &program, TargetInfo { pointer_width: 64 });
     let overflow_diags: Vec<_> = check_res
         .diagnostics
@@ -1227,20 +1270,10 @@ fn test_contextual_literal_uint_overflow() {
     assert_eq!(
         overflow_diags.len(),
         0,
-        "4_000_000_000 / 4_000_000_001 / 5_000_000_000 devem caber em uint 64-bit"
+        "5_000_000_000 cabe em usize 64-bit"
     );
 
-    // 32-bit target: valores acima de u32::MAX estouram uint.
-    let source = r#"
-    module test;
-    func take(x: uint): uint { return x; }
-    func main(): uint {
-        let a: uint = 4_294_967_296;
-        let b: uint = 7_000_000_000;
-        return take(8_000_000_000);
-    }
-    "#;
-    let program = arandu_parser::parse(source).unwrap();
+    // 32-bit target: valores acima de u32::MAX estouram usize.
     let res = arandu_resolve::resolve_for_test(0, &program);
     let check_res = crate::type_check(res, &program, TargetInfo { pointer_width: 32 });
     let overflow_diags: Vec<_> = check_res
@@ -1250,26 +1283,9 @@ fn test_contextual_literal_uint_overflow() {
         .collect();
     assert_eq!(
         overflow_diags.len(),
-        3,
-        "4_294_967_296 / 7_000_000_000 / 8_000_000_000 devem estourar uint 32-bit"
+        1,
+        "5_000_000_000 deve estourar usize em target 32-bit"
     );
-
-    // 32-bit target: valores <= u32::MAX continuam válidos.
-    let source = r#"
-    module test;
-    func main(): uint {
-        return 4_294_967_295;
-    }
-    "#;
-    let program = arandu_parser::parse(source).unwrap();
-    let res = arandu_resolve::resolve_for_test(0, &program);
-    let check_res = crate::type_check(res, &program, TargetInfo { pointer_width: 32 });
-    let overflow_diags: Vec<_> = check_res
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == crate::DiagCode::T038IntegerLiteralOutOfRange)
-        .collect();
-    assert_eq!(overflow_diags.len(), 0, "u32::MAX cabe em uint 32-bit");
 }
 
 #[test]

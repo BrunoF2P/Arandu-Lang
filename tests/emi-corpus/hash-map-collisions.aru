@@ -32,11 +32,11 @@ func main(): int {
     let key64 = CollisionKey { value: 64 }
 
     let mut table = hash_map.new<CollisionKey, int>()
-    if !hash_map.isEmpty<CollisionKey, int>(table) || hash_map.capacity<CollisionKey, int>(table) != 0 as uint {
+    if !hash_map.isEmpty<CollisionKey, int>(table) || hash_map.capacity<CollisionKey, int>(table) != 0 as usize {
         table.destroy()
         return -1
     }
-    if (hash_map.hashKey<CollisionKey>(ref key0) as uint) & 7 != (hash_map.hashKey<CollisionKey>(ref key40) as uint) & 7 {
+    if (hash_map.hashKey<CollisionKey>(ref key0) as usize) & 7 != (hash_map.hashKey<CollisionKey>(ref key40) as usize) & 7 {
         table.destroy()
         return -2
     }
@@ -49,11 +49,11 @@ func main(): int {
     hash_map.insert<CollisionKey, int>(table, key40, 105)
     let actual_capacity = hash_map.capacity<CollisionKey, int>(table)
     let actual_len = hash_map.len<CollisionKey, int>(table)
-    if actual_capacity != 8 as uint {
+    if actual_capacity != 8 as usize {
         table.destroy()
         return -30 - actual_capacity as int
     }
-    if actual_len != 6 as uint {
+    if actual_len != 6 as usize {
         table.destroy()
         return -40 - actual_len as int
     }
@@ -91,7 +91,7 @@ func main(): int {
     hash_map.insert<CollisionKey, int>(table, key48, 106)
     hash_map.insert<CollisionKey, int>(table, key56, 107)
     hash_map.insert<CollisionKey, int>(table, key64, 108)
-    if hash_map.capacity<CollisionKey, int>(table) != 16 as uint || hash_map.len<CollisionKey, int>(table) != 7 as uint {
+    if hash_map.capacity<CollisionKey, int>(table) != 16 as usize || hash_map.len<CollisionKey, int>(table) != 7 as usize {
         table.destroy()
         return -7
     }

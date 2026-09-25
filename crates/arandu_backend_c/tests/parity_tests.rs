@@ -1228,7 +1228,7 @@ fn c_emit_extern_declaration_present() {
     let (amir, tc) = compile_src(src);
     let c = emit_c(&amir, &tc);
     assert!(
-        c.contains("int64_t my_custom_extern_func(int64_t);"),
+        c.contains("int32_t my_custom_extern_func(int32_t);"),
         "expected custom extern function declaration, got:\n{}",
         c
     );
@@ -1274,14 +1274,14 @@ fn coroutine_value_uses_pointer_abi_in_both_backends() {
         "coroutine_pointer_abi",
         r#"
 extern "C" {
-    func ar_co_block_on_i64(state: ptr[u8]): int
+    func ar_co_block_on_i64(state: ptr[u8]): i64
     func ar_co_free(state: ptr[u8]): void
 }
 async func answer(): int { return 42 }
 func main(): int {
     let job = answer()
     let p = unsafe { job as ptr[u8] }
-    let v = unsafe { ar_co_block_on_i64(p) }
+    let v = unsafe { ar_co_block_on_i64(p) as int }
     unsafe { ar_co_free(p) }
     return v
 }
@@ -1461,15 +1461,15 @@ fn generic_work_thunk_runs_identically_in_c_and_cranelift() {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C)]
 struct CountJobHost {
-    amount: i64,
+    amount: i32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C)]
 struct StatsHost {
-    code: i64,
-    comment: i64,
-    blank: i64,
+    code: i32,
+    comment: i32,
+    blank: i32,
 }
 
 /// Compile the generic thunk source and return the exact host name under which
@@ -1767,7 +1767,7 @@ fn parallel_fold_sim_runs_identically_in_c_and_cranelift() {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C)]
 struct SliceDescriptorHost {
-    ptr: *const i64,
+    ptr: *const i32,
     len: u64,
 }
 
@@ -1807,7 +1807,7 @@ fn parallel_dispatch_chunk_executes_in_worker_pool_and_honors_cancellation() {
 
     let pool = arandu_runtime::worker_scheduler::WorkerPool::new(2, 4).unwrap();
 
-    let items: Vec<i64> = vec![10, 25, 15];
+    let items: Vec<i32> = vec![10, 25, 15];
     let desc = SliceDescriptorHost {
         ptr: items.as_ptr(),
         len: items.len() as u64,

@@ -190,11 +190,7 @@ func main(): int {
 
 #[test]
 fn core_numeric_and_unicode_boundaries_run() {
-    let (max, min) = if usize::BITS == 64 {
-        ("9223372036854775807", "-9223372036854775807 - 1")
-    } else {
-        ("2147483647", "-2147483647 - 1")
-    };
+    let (max, min) = ("2147483647", "-2147483647 - 1");
     let source = format!(
         r#"
 module tests.stdlib.boundaries

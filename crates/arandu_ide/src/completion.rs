@@ -130,8 +130,8 @@ const KEYWORDS: &[(&str, &str)] = &[
 
 /// Primitive/contextual type names accepted in type position.
 const PRIMITIVE_TYPES: &[&str] = &[
-    "int", "uint", "float", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64",
-    "bool", "byte", "char", "str", "any", "void", "Err",
+    "int", "uint", "isize", "usize", "float", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64",
+    "f32", "f64", "bool", "byte", "char", "str", "any", "void", "Err",
 ];
 
 /// Known top-level stdlib path roots for import completion (T3 tokens).

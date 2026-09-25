@@ -96,7 +96,8 @@ fn primitive_scalar_valtype(p: Primitive, layout: DataLayout) -> Option<ValType>
         Primitive::I64 | Primitive::U64 => Some(ValType::I64),
         Primitive::F32 => Some(ValType::F32),
         Primitive::F64 => Some(ValType::F64),
-        Primitive::Int | Primitive::Uint => {
+        Primitive::Int | Primitive::Uint => Some(ValType::I32),
+        Primitive::ISize | Primitive::USize => {
             if layout.pointer_width() <= 4 {
                 Some(ValType::I32)
             } else {
@@ -133,7 +134,12 @@ pub fn ar_is_unsigned(ty: TypeId, interner: &TypeInterner) -> bool {
         ArType::Primitive(p) => {
             matches!(
                 p,
-                Primitive::U8 | Primitive::U16 | Primitive::U32 | Primitive::U64 | Primitive::Uint
+                Primitive::U8
+                    | Primitive::U16
+                    | Primitive::U32
+                    | Primitive::U64
+                    | Primitive::Uint
+                    | Primitive::USize
             ) || *p == Primitive::Byte
         }
         _ => false,
@@ -170,6 +176,8 @@ pub fn ar_is_integer(ty: TypeId, interner: &TypeInterner) -> bool {
                 | Primitive::U64
                 | Primitive::Int
                 | Primitive::Uint
+                | Primitive::ISize
+                | Primitive::USize
                 | Primitive::Byte
                 | Primitive::Char
         ),

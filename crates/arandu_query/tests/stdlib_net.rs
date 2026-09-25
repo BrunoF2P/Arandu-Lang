@@ -74,17 +74,17 @@ fn stdlib_net_tcp_stream_slice_read_write_safe() {
 import std.net as net
 import std.io as io
 
-func readGeneric<R: io.Read>(reader: mut ref R, buf: mut ref []u8): Result<uint, io.IoError> {
+func readGeneric<R: io.Read>(reader: mut ref R, buf: mut ref []u8): Result<usize, io.IoError> {
     return reader.read(buf)
 }
 
-func writeGeneric<W: io.Write>(writer: mut ref W, buf: []u8): Result<uint, io.IoError> {
+func writeGeneric<W: io.Write>(writer: mut ref W, buf: []u8): Result<usize, io.IoError> {
     let _ = writer.flush()
     return writer.write(buf)
 }
 
 func sendData(stream: mut ref net.TcpStream, data: []u8): bool {
-    let res: Result<uint, io.IoError> = writeGeneric<net.TcpStream>(stream, data)
+    let res: Result<usize, io.IoError> = writeGeneric<net.TcpStream>(stream, data)
     match res {
         Result.Ok(_) => { return true }
         Result.Err(_) => { return false }
@@ -92,7 +92,7 @@ func sendData(stream: mut ref net.TcpStream, data: []u8): bool {
 }
 
 func recvData(stream: mut ref net.TcpStream, buf: mut ref []u8): bool {
-    let res: Result<uint, io.IoError> = readGeneric<net.TcpStream>(stream, buf)
+    let res: Result<usize, io.IoError> = readGeneric<net.TcpStream>(stream, buf)
     match res {
         Result.Ok(_) => { return true }
         Result.Err(_) => { return false }

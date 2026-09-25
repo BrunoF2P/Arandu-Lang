@@ -2070,7 +2070,7 @@ fn typ33_unify_literal_vars_retroactive_overflow_t038() {
 }
 
 #[test]
-fn typ33_unconstrained_literal_defaults_to_native_int() {
+fn typ33_unconstrained_literal_defaults_to_fixed_int() {
     let source = "
         func main() {
             let a = 10
@@ -2101,7 +2101,7 @@ fn typ33_unconstrained_literal_defaults_to_native_int() {
 }
 
 #[test]
-fn typ33_unconstrained_float_defaults_to_native_float() {
+fn typ33_unconstrained_float_defaults_to_float() {
     let source = "
         func main() {
             let x = 1.5

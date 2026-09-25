@@ -282,8 +282,10 @@ fn emit_scalar_type(
 ) -> Option<gimli::write::UnitEntryId> {
     let (name, byte_size, encoding) = match type_info.resolve_type_id(type_id) {
         ArType::Primitive(primitive) => match primitive {
-            Primitive::Int => ("int", address_size, gimli::DW_ATE_signed),
-            Primitive::Uint => ("uint", address_size, gimli::DW_ATE_unsigned),
+            Primitive::Int => ("int", 4, gimli::DW_ATE_signed),
+            Primitive::Uint => ("uint", 4, gimli::DW_ATE_unsigned),
+            Primitive::ISize => ("isize", address_size, gimli::DW_ATE_signed),
+            Primitive::USize => ("usize", address_size, gimli::DW_ATE_unsigned),
             Primitive::I8 => ("i8", 1, gimli::DW_ATE_signed),
             Primitive::I16 => ("i16", 2, gimli::DW_ATE_signed),
             Primitive::I32 => ("i32", 4, gimli::DW_ATE_signed),
@@ -297,7 +299,7 @@ fn emit_scalar_type(
             Primitive::Bool => ("bool", 1, gimli::DW_ATE_boolean),
             Primitive::Float | Primitive::Str | Primitive::Any => return None,
         },
-        ArType::IntLiteral => ("int", address_size, gimli::DW_ATE_signed),
+        ArType::IntLiteral => ("int", 4, gimli::DW_ATE_signed),
         _ => return None,
     };
     let type_entry = dwarf.unit.add(dwarf.unit.root(), gimli::DW_TAG_base_type);

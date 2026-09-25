@@ -916,6 +916,8 @@ fn hash_ar_type(hasher: &mut Hasher, ty: &arandu_middle::types::ArType) {
                     Primitive::Char => 15,
                     Primitive::Str => 16,
                     Primitive::Any => 17,
+                    Primitive::ISize => 18,
+                    Primitive::USize => 19,
                 },
             ]);
         }

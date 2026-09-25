@@ -195,14 +195,35 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                         if let (Some(&var), Some(&res0)) =
                             (self.temp_map.get(lhs_temp), results.first())
                         {
-                            self.builder.def_var(var, res0);
+                            let mut res = res0;
+                            if let Some(var_ty) = self.get_temp_clif_type(*lhs_temp) {
+                                let res_ty = self.builder.func.dfg.value_type(res);
+                                if var_ty != res_ty && var_ty.is_int() && res_ty.is_int() {
+                                    if res_ty.bits() > var_ty.bits() {
+                                        res = self.builder.ins().ireduce(var_ty, res);
+                                    } else if res_ty.bits() < var_ty.bits() {
+                                        res = self.builder.ins().sextend(var_ty, res);
+                                    }
+                                }
+                            }
+                            self.builder.def_var(var, res);
                         }
                     }
                 }
             } else if let Some(&var) = self.temp_map.get(lhs_temp) {
                 let results = self.builder.inst_results(call_inst);
                 if !results.is_empty() {
-                    let res0 = results[0];
+                    let mut res0 = results[0];
+                    if let Some(var_ty) = self.get_temp_clif_type(*lhs_temp) {
+                        let res_ty = self.builder.func.dfg.value_type(res0);
+                        if var_ty != res_ty && var_ty.is_int() && res_ty.is_int() {
+                            if res_ty.bits() > var_ty.bits() {
+                                res0 = self.builder.ins().ireduce(var_ty, res0);
+                            } else if res_ty.bits() < var_ty.bits() {
+                                res0 = self.builder.ins().sextend(var_ty, res0);
+                            }
+                        }
+                    }
                     self.builder.def_var(var, res0);
                 }
             }

@@ -96,9 +96,21 @@ pub(super) fn synth_binary_unary_expr(
         } => {
             let inner_id = *inner_expr;
             let ty_id = *ty;
-            let found_ty_id = synth_expr(checker, inner_id);
             let target_ty = checker.lower_type_expr(ty_id, checker.type_scope());
             let target_ty_id = checker.intern(target_ty);
+            let expected_inner = match checker.pool.expr(inner_id) {
+                ExprKind::Int { .. } | ExprKind::Float { .. } => Some(target_ty_id),
+                ExprKind::Unary {
+                    op: UnaryOp::Neg,
+                    expr: sub_id,
+                    ..
+                } => match checker.pool.expr(*sub_id) {
+                    ExprKind::Int { .. } | ExprKind::Float { .. } => Some(target_ty_id),
+                    _ => None,
+                },
+                _ => None,
+            };
+            let found_ty_id = super::synth_expr_expected(checker, inner_id, expected_inner);
             let found_ty = checker.resolve(found_ty_id);
             let target_ty = checker.resolve(target_ty_id);
             if !cast_types_compatible(
@@ -161,6 +173,9 @@ pub(super) fn synth_binary_unary_expr(
                                 }
                                 Primitive::Int => (checker.target_info.int_min()
                                     ..=checker.target_info.int_max())
+                                    .contains(&neg_val),
+                                Primitive::ISize => (checker.target_info.isize_min()
+                                    ..=checker.target_info.isize_max())
                                     .contains(&neg_val),
                                 _ => false,
                             };
@@ -698,7 +713,8 @@ pub(super) fn synth_binary_unary_expr(
                                 ArType::Primitive(Primitive::I16 | Primitive::U16) => Some(16),
                                 ArType::Primitive(Primitive::I32 | Primitive::U32) => Some(32),
                                 ArType::Primitive(Primitive::I64 | Primitive::U64) => Some(64),
-                                ArType::Primitive(Primitive::Int | Primitive::Uint) => {
+                                ArType::Primitive(Primitive::Int | Primitive::Uint) => Some(32),
+                                ArType::Primitive(Primitive::ISize | Primitive::USize) => {
                                     Some(checker.target_info.pointer_width as i128)
                                 }
                                 _ => None,

@@ -329,7 +329,8 @@ impl TypeInfo {
             return false;
         }
         visiting.insert(id, true);
-        let result = self.type_interner.with_type(id, |ty| match ty {
+        let ty = self.type_interner.resolve(id);
+        let result = match &ty {
             ArType::Named(sym, args) => {
                 let args = self.type_interner.type_args(*args);
                 self.is_named_struct_pod_copy(*sym, &args, visiting)
@@ -346,7 +347,7 @@ impl TypeInfo {
                 self.is_pod_component(*ok, visiting) && self.is_pod_component(*err, visiting)
             }
             other => other.is_copy_v01(),
-        });
+        };
         visiting.insert(id, false);
         result
     }
@@ -356,7 +357,8 @@ impl TypeInfo {
         if visiting.get(&id).copied().unwrap_or(false) {
             return false;
         }
-        self.type_interner.with_type(id, |ty| match ty {
+        let ty = self.type_interner.resolve(id);
+        match &ty {
             ArType::Primitive(p) => {
                 p.is_numeric()
                     || matches!(
@@ -395,7 +397,7 @@ impl TypeInfo {
             | ArType::Err
             | ArType::Void
             | ArType::Error => false,
-        })
+        }
     }
 
     fn is_named_struct_pod_copy(

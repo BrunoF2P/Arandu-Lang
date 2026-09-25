@@ -16,6 +16,9 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                 let lhs_ty = self.temp_ar_ty(*lhs);
                 if matches!(&lhs_ty, ArType::Primitive(Primitive::Str)) {
                     let (ptr_val, len_val) = self.translate_str_rvalue(rhs);
+                    if self.error.is_some() {
+                        return;
+                    }
                     if let Some(&(var_ptr, var_len)) = self.str_temp_map.get(lhs) {
                         self.builder.def_var(var_ptr, ptr_val);
                         self.builder.def_var(var_len, len_val);
@@ -25,6 +28,9 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                     let lhs_ar = self.temp_ar_ty(*lhs);
                     let expected_ar_type = Some(&lhs_ar);
                     let val = self.translate_rvalue(rhs, expected_ty, expected_ar_type);
+                    if self.error.is_some() {
+                        return;
+                    }
                     if let Some(&var) = self.temp_map.get(lhs) {
                         self.builder.def_var(var, val);
                     }

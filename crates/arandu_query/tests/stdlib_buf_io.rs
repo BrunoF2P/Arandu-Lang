@@ -60,11 +60,11 @@ struct MockStream {
     count: int
 }
 
-public func MockStream.read(self: mut ref MockStream, buf: mut ref []u8): Result<uint, io.IoError> {
-    return Result.Ok(0)
+public func MockStream.read(self: mut ref MockStream, buf: mut ref []u8): Result<usize, io.IoError> {
+    return Result.Ok(0 as usize)
 }
 
-public func MockStream.write(self: mut ref MockStream, buf: []u8): Result<uint, io.IoError> {
+public func MockStream.write(self: mut ref MockStream, buf: []u8): Result<usize, io.IoError> {
     return Result.Ok(slice.len<u8>(buf))
 }
 

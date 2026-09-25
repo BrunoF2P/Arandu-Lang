@@ -215,7 +215,7 @@ pub fn synthesize_with_oracle(seed: u64) -> SynthesizedProgram {
             .expect("bounded synthesized result fits in i32"),
     };
     let source = format!(
-        "import io\nimport std.alloc.vec as vec\nimport std.core.slice as slice\nimport std.core.result as core_result\n\nstruct Sample {{\n    left: int\n    right: int\n    enabled: bool\n}}\n\nenum Choice {{\n    Left(int),\n    Right(int),\n    Flag(bool),\n}}\n\nfunc identity<T>(value: T): T {{\n    return value\n}}\n\nfunc read_ref(value: ref int): int {{\n    return *value\n}}\n\nfunc read_exclusive(value: mut ref int): int {{\n    return *value\n}}\n\nfunc adjust(value: int, enabled: bool): int {{\n    if enabled {{ return value + 2 }}\n    return value - 2\n}}\n\nfunc main(): int {{\n    let base: int = {base}\n    let float_base: float = {base}.0\n    let float_result: float = identity<float>({float_source})\n    if float_result != {float_expected} {{ return -1000000 }}\n    let values = [identity<int>({}), identity<int>({}), base]\n    let index: int = base % 3\n    {loop_source}\n    let sample = Sample {{ left: values[index], right: values[(index + 1) % 3] + total, enabled: identity<bool>({}) }}\n    let mut borrow_target: int = sample.left\n    let shared_value = read_ref(ref borrow_target)\n    let exclusive_value = read_exclusive(mut ref borrow_target)\n    let mut dynamic = vec.new<int>()\n    if !vec.tryReserve<int>(dynamic, 1 as uint) {{\n        vec.destroy<int>(dynamic)\n        return -1000001\n    }}\n    if vec.capacity<int>(dynamic) < 1 as uint || !vec.isEmpty<int>(dynamic) {{\n        vec.destroy<int>(dynamic)\n        return -1000002\n    }}\n    let mut dynamic_count: int = 0\n    while dynamic_count < 9 {{\n        if !vec.tryPush<int>(dynamic, sample.left + dynamic_count) {{\n            vec.destroy<int>(dynamic)\n            return -1000003\n        }}\n        dynamic_count = dynamic_count + 1\n    }}\n    let dynamic_len = vec.len<int>(dynamic) as int\n    let dynamic_view_len = slice.len<int>(vec.asSlice<int>(dynamic)) as int\n    if dynamic_view_len != dynamic_len {{\n        vec.destroy<int>(dynamic)\n        return -1000004\n    }}\n    let out_of_bounds = vec.get<int>(dynamic, dynamic_len as uint)\n    let out_of_bounds_has_value = match out_of_bounds {{\n        Some(_) => true\n        None => false\n    }}\n    if out_of_bounds_has_value {{\n        vec.destroy<int>(dynamic)\n        return -1000005\n    }}\n    if vec.put<int>(dynamic, dynamic_len as uint, -1) {{\n        vec.destroy<int>(dynamic)\n        return -1000006\n    }}\n    if dynamic_len != 9 {{\n        vec.destroy<int>(dynamic)\n        return -1000007\n    }}\n    let dynamic_index = (base % dynamic_len) as uint\n    let dynamic_element = vec.get<int>(dynamic, dynamic_index)\n    let dynamic_value = match dynamic_element {{\n        Some(value) => value\n        None => 0\n    }}\n    let expected_dynamic_value = sample.left + dynamic_index as int\n    if dynamic_value != expected_dynamic_value {{\n        vec.destroy<int>(dynamic)\n        return -1000008\n    }}\n    let dynamic_last = vec.get<int>(dynamic, 8 as uint)\n    let dynamic_tail = match dynamic_last {{\n        Some(value) => value\n        None => 0\n    }}\n    if dynamic_tail != sample.left + 8 {{\n        vec.destroy<int>(dynamic)\n        return -1000009\n    }}\n    if !vec.put<int>(dynamic, 8 as uint, sample.right) {{\n        vec.destroy<int>(dynamic)\n        return -1000010\n    }}\n    let updated_last = vec.get<int>(dynamic, 8 as uint)\n    let updated_value = match updated_last {{\n        Some(value) => value\n        None => 0\n    }}\n    if updated_value != sample.right {{\n        vec.destroy<int>(dynamic)\n        return -1000011\n    }}\n    let popped = vec.pop<int>(dynamic)\n    let popped_value = match popped {{\n        Some(value) => value\n        None => 0\n    }}\n    if popped_value != sample.right || vec.len<int>(dynamic) != 8 as uint {{\n        vec.destroy<int>(dynamic)\n        return -1000012\n    }}\n    vec.clear<int>(dynamic)\n    let empty_pop = vec.pop<int>(dynamic)\n    let empty_pop_has_value = match empty_pop {{\n        Some(_) => true\n        None => false\n    }}\n    if empty_pop_has_value {{\n        vec.destroy<int>(dynamic)\n        return -1000013\n    }}\n    vec.destroy<int>(dynamic)\n    let adjusted = adjust(shared_value, sample.enabled) + adjust(exclusive_value, !sample.enabled) + dynamic_value\n    let selected = if base % 3 == 0 {{ Choice.Flag(sample.enabled) }} else if base % 3 == 1 {{ Choice.Left(adjusted) }} else {{ Choice.Right(sample.right) }}\n    let result = match selected {{\n        Choice.Left(value) => value\n        Choice.Right(value) => value\n        Choice.Flag(enabled) => if enabled {{ 1 }} else {{ 0 }}\n    }}\n    io.println(result.to_str())\n    return result\n}}\n",
+        "import io\nimport std.alloc.vec as vec\nimport std.core.slice as slice\nimport std.core.result as core_result\n\nstruct Sample {{\n    left: int\n    right: int\n    enabled: bool\n}}\n\nenum Choice {{\n    Left(int),\n    Right(int),\n    Flag(bool),\n}}\n\nfunc identity<T>(value: T): T {{\n    return value\n}}\n\nfunc read_ref(value: ref int): int {{\n    return *value\n}}\n\nfunc read_exclusive(value: mut ref int): int {{\n    return *value\n}}\n\nfunc adjust(value: int, enabled: bool): int {{\n    if enabled {{ return value + 2 }}\n    return value - 2\n}}\n\nfunc main(): int {{\n    let base: int = {base}\n    let float_base: float = {base}.0\n    let float_result: float = identity<float>({float_source})\n    if float_result != {float_expected} {{ return -1000000 }}\n    let values = [identity<int>({}), identity<int>({}), base]\n    let index: int = base % 3\n    {loop_source}\n    let sample = Sample {{ left: values[index], right: values[(index + 1) % 3] + total, enabled: identity<bool>({}) }}\n    let mut borrow_target: int = sample.left\n    let shared_value = read_ref(ref borrow_target)\n    let exclusive_value = read_exclusive(mut ref borrow_target)\n    let mut dynamic = vec.new<int>()\n    if !vec.tryReserve<int>(dynamic, 1 as usize) {{\n        vec.destroy<int>(dynamic)\n        return -1000001\n    }}\n    if vec.capacity<int>(dynamic) < 1 as usize || !vec.isEmpty<int>(dynamic) {{\n        vec.destroy<int>(dynamic)\n        return -1000002\n    }}\n    let mut dynamic_count: int = 0\n    while dynamic_count < 9 {{\n        if !vec.tryPush<int>(dynamic, sample.left + dynamic_count) {{\n            vec.destroy<int>(dynamic)\n            return -1000003\n        }}\n        dynamic_count = dynamic_count + 1\n    }}\n    let dynamic_len = vec.len<int>(dynamic) as int\n    let dynamic_view_len = slice.len<int>(vec.asSlice<int>(dynamic)) as int\n    if dynamic_view_len != dynamic_len {{\n        vec.destroy<int>(dynamic)\n        return -1000004\n    }}\n    let out_of_bounds = vec.get<int>(dynamic, dynamic_len as usize)\n    let out_of_bounds_has_value = match out_of_bounds {{\n        Some(_) => true\n        None => false\n    }}\n    if out_of_bounds_has_value {{\n        vec.destroy<int>(dynamic)\n        return -1000005\n    }}\n    if vec.put<int>(dynamic, dynamic_len as usize, -1) {{\n        vec.destroy<int>(dynamic)\n        return -1000006\n    }}\n    if dynamic_len != 9 {{\n        vec.destroy<int>(dynamic)\n        return -1000007\n    }}\n    let dynamic_index = (base % dynamic_len) as usize\n    let dynamic_element = vec.get<int>(dynamic, dynamic_index)\n    let dynamic_value = match dynamic_element {{\n        Some(value) => value\n        None => 0\n    }}\n    let expected_dynamic_value = sample.left + dynamic_index as int\n    if dynamic_value != expected_dynamic_value {{\n        vec.destroy<int>(dynamic)\n        return -1000008\n    }}\n    let dynamic_last = vec.get<int>(dynamic, 8 as usize)\n    let dynamic_tail = match dynamic_last {{\n        Some(value) => value\n        None => 0\n    }}\n    if dynamic_tail != sample.left + 8 {{\n        vec.destroy<int>(dynamic)\n        return -1000009\n    }}\n    if !vec.put<int>(dynamic, 8 as usize, sample.right) {{\n        vec.destroy<int>(dynamic)\n        return -1000010\n    }}\n    let updated_last = vec.get<int>(dynamic, 8 as usize)\n    let updated_value = match updated_last {{\n        Some(value) => value\n        None => 0\n    }}\n    if updated_value != sample.right {{\n        vec.destroy<int>(dynamic)\n        return -1000011\n    }}\n    let popped = vec.pop<int>(dynamic)\n    let popped_value = match popped {{\n        Some(value) => value\n        None => 0\n    }}\n    if popped_value != sample.right || vec.len<int>(dynamic) != 8 as usize {{\n        vec.destroy<int>(dynamic)\n        return -1000012\n    }}\n    vec.clear<int>(dynamic)\n    let empty_pop = vec.pop<int>(dynamic)\n    let empty_pop_has_value = match empty_pop {{\n        Some(_) => true\n        None => false\n    }}\n    if empty_pop_has_value {{\n        vec.destroy<int>(dynamic)\n        return -1000013\n    }}\n    vec.destroy<int>(dynamic)\n    let adjusted = adjust(shared_value, sample.enabled) + adjust(exclusive_value, !sample.enabled) + dynamic_value\n    let selected = if base % 3 == 0 {{ Choice.Flag(sample.enabled) }} else if base % 3 == 1 {{ Choice.Left(adjusted) }} else {{ Choice.Right(sample.right) }}\n    let result = match selected {{\n        Choice.Left(value) => value\n        Choice.Right(value) => value\n        Choice.Flag(enabled) => if enabled {{ 1 }} else {{ 0 }}\n    }}\n    io.println(result.to_str())\n    return result\n}}\n",
         left.source,
         right.source,
         condition.source,
@@ -282,13 +282,14 @@ pub fn synthesize_with_oracle(seed: u64) -> SynthesizedProgram {
         "    let mut borrow_target:",
         concat!(
             "    let owned_pack = transfer<OwnedPack>(make_owned_pack(sample.left, sample.right))\n",
-            "    if owned_pack.marker != sample.right || vec.len<int>(owned_pack.items) != 1 as uint { return -1000053 }\n",
-            "    let packed_value = vec.get<int>(owned_pack.items, 0 as uint)\n",
+            "    if owned_pack.marker != sample.right || vec.len<int>(owned_pack.items) != 1 as usize { owned_pack.items.destroy(); return -1000053 }\n",
+            "    let packed_value = vec.get<int>(owned_pack.items, 0 as usize)\n",
             "    let recovered_packed_value = match packed_value {\n",
             "        Some(value) => value\n",
             "        None => 0\n",
             "    }\n",
-            "    if recovered_packed_value != sample.left { return -1000054 }\n",
+            "    if recovered_packed_value != sample.left { owned_pack.items.destroy(); return -1000054 }\n",
+            "    owned_pack.items.destroy()\n",
             "    let mut borrow_target:"
         ),
     );
@@ -343,7 +344,7 @@ pub fn synthesize_with_oracle(seed: u64) -> SynthesizedProgram {
         "    let adjusted =",
         concat!(
             "    let mut flags = transfer<vec.Vec<bool>>(make_vec<bool>())\n",
-            "    if !vec.tryReserve<bool>(flags, 1 as uint) {\n",
+            "    if !vec.tryReserve<bool>(flags, 1 as usize) {\n",
             "        vec.destroy<bool>(flags)\n",
             "        return -1000016\n",
             "    }\n",
@@ -352,12 +353,12 @@ pub fn synthesize_with_oracle(seed: u64) -> SynthesizedProgram {
             "        return -1000017\n",
             "    }\n",
             "    let flags_view_len = slice.len<bool>(vec.asSlice<bool>(flags))\n",
-            "    let first_flag = vec.get<bool>(flags, 0 as uint)\n",
+            "    let first_flag = vec.get<bool>(flags, 0 as usize)\n",
             "    let first_flag_value = match first_flag {\n",
             "        Some(value) => value\n",
             "        None => false\n",
             "    }\n",
-            "    if flags_view_len != 1 as uint || first_flag_value != sample.enabled {\n",
+            "    if flags_view_len != 1 as usize || first_flag_value != sample.enabled {\n",
             "        vec.destroy<bool>(flags)\n",
             "        return -1000018\n",
             "    }\n",
@@ -393,7 +394,7 @@ pub fn synthesize_with_oracle(seed: u64) -> SynthesizedProgram {
             "    }\n",
             "    choices.destroy()\n",
             "    let mut characters = transfer<vec.Vec<char>>(make_vec<char>())\n",
-            "    if !vec.tryReserve<char>(characters, 1 as uint) {\n",
+            "    if !vec.tryReserve<char>(characters, 1 as usize) {\n",
             "        characters.destroy()\n",
             "        return -1000023\n",
             "    }\n",
@@ -402,18 +403,18 @@ pub fn synthesize_with_oracle(seed: u64) -> SynthesizedProgram {
             "        return -1000024\n",
             "    }\n",
             "    let characters_view_len = slice.len<char>(vec.asSlice<char>(characters))\n",
-            "    let first_character = vec.get<char>(characters, 0 as uint)\n",
+            "    let first_character = vec.get<char>(characters, 0 as usize)\n",
             "    let recovered_vector_character = match first_character {\n",
             "        Some(value) => value\n",
             "        None => 'a'\n",
             "    }\n",
-            "    if characters_view_len != 1 as uint || recovered_vector_character != sample.character {\n",
+            "    if characters_view_len != 1 as usize || recovered_vector_character != sample.character {\n",
             "        characters.destroy()\n",
             "        return -1000025\n",
             "    }\n",
             "    characters.destroy()\n",
             "    let mut floats = transfer<vec.Vec<float>>(make_vec<float>())\n",
-            "    if !vec.tryReserve<float>(floats, 1 as uint) {\n",
+            "    if !vec.tryReserve<float>(floats, 1 as usize) {\n",
             "        floats.destroy()\n",
             "        return -1000026\n",
             "    }\n",
@@ -421,7 +422,7 @@ pub fn synthesize_with_oracle(seed: u64) -> SynthesizedProgram {
             "        floats.destroy()\n",
             "        return -1000027\n",
             "    }\n",
-            "    let first_float = vec.get<float>(floats, 0 as uint)\n",
+            "    let first_float = vec.get<float>(floats, 0 as usize)\n",
             "    let recovered_vector_float = match first_float {\n",
             "        Some(value) => value\n",
             "        None => 0.0\n",
@@ -432,7 +433,7 @@ pub fn synthesize_with_oracle(seed: u64) -> SynthesizedProgram {
             "    }\n",
             "    floats.destroy()\n",
             "    let mut unsigned_values = transfer<vec.Vec<uint>>(relay<vec.Vec<uint>>(make_vec<uint>()))\n",
-            "    if !vec.tryReserve<uint>(unsigned_values, 1 as uint) {\n",
+            "    if !vec.tryReserve<uint>(unsigned_values, 1 as usize) {\n",
             "        unsigned_values.destroy()\n",
             "        return -1000045\n",
             "    }\n",
@@ -441,12 +442,12 @@ pub fn synthesize_with_oracle(seed: u64) -> SynthesizedProgram {
             "        return -1000046\n",
             "    }\n",
             "    let unsigned_view_len = slice.len<uint>(vec.asSlice<uint>(unsigned_values))\n",
-            "    let first_unsigned = vec.get<uint>(unsigned_values, 0 as uint)\n",
+            "    let first_unsigned = vec.get<uint>(unsigned_values, 0 as usize)\n",
             "    let recovered_unsigned = match first_unsigned {\n",
             "        Some(value) => value\n",
             "        None => 0 as uint\n",
             "    }\n",
-            "    if unsigned_view_len != 1 as uint || recovered_unsigned != uint_result {\n",
+            "    if unsigned_view_len != 1 as usize || recovered_unsigned != uint_result {\n",
             "        unsigned_values.destroy()\n",
             "        return -1000047\n",
             "    }\n",
@@ -455,13 +456,13 @@ pub fn synthesize_with_oracle(seed: u64) -> SynthesizedProgram {
             "        Some(value) => value\n",
             "        None => 0 as uint\n",
             "    }\n",
-            "    if recovered_popped_unsigned != uint_result || vec.len<uint>(unsigned_values) != 0 as uint {\n",
+            "    if recovered_popped_unsigned != uint_result || vec.len<uint>(unsigned_values) != 0 as usize {\n",
             "        unsigned_values.destroy()\n",
             "        return -1000048\n",
             "    }\n",
             "    unsigned_values.destroy()\n",
             "    let mut result_values = transfer<vec.Vec<core_result.Result<int, bool>>>(relay<vec.Vec<core_result.Result<int, bool>>>(make_vec<core_result.Result<int, bool>>()))\n",
-            "    if !vec.tryReserve<core_result.Result<int, bool>>(result_values, 2 as uint) {\n",
+            "    if !vec.tryReserve<core_result.Result<int, bool>>(result_values, 2 as usize) {\n",
             "        result_values.destroy()\n",
             "        return -1000049\n",
             "    }\n",
@@ -474,7 +475,7 @@ pub fn synthesize_with_oracle(seed: u64) -> SynthesizedProgram {
             "        return -1000051\n",
             "    }\n",
             "    let nested_view_len = slice.len<core_result.Result<int, bool>>(vec.asSlice<core_result.Result<int, bool>>(result_values))\n",
-            "    let first_nested_result = vec.get<core_result.Result<int, bool>>(result_values, 0 as uint)\n",
+            "    let first_nested_result = vec.get<core_result.Result<int, bool>>(result_values, 0 as usize)\n",
             "    let first_nested_valid = match first_nested_result {\n",
             "        Some(value) => value.isOk() && value.unwrapOr(-1) == sample.left\n",
             "        None => false\n",
@@ -484,7 +485,7 @@ pub fn synthesize_with_oracle(seed: u64) -> SynthesizedProgram {
             "        Some(value) => value.isErr() && value.unwrapOr(-1) == -1\n",
             "        None => false\n",
             "    }\n",
-            "    if nested_view_len != 2 as uint || !first_nested_valid || !second_nested_valid || vec.len<core_result.Result<int, bool>>(result_values) != 1 as uint {\n",
+            "    if nested_view_len != 2 as usize || !first_nested_valid || !second_nested_valid || vec.len<core_result.Result<int, bool>>(result_values) != 1 as usize {\n",
             "        result_values.destroy()\n",
             "        return -1000052\n",
             "    }\n",
@@ -524,9 +525,10 @@ fn add_seeded_hash_map_case(source: String, seed: u64, base: i64) -> String {
     }
 
     let value_base = i64::try_from(seed % 997).expect("bounded HashMap value seed");
-    let keys = (0..9_i64)
+    let mut keys = (0..9_i64)
         .map(|index| base * 8 + index * 8)
         .collect::<Vec<_>>();
+    keys[5] = seeded_hash_collision_key(keys[0], &keys);
     let values = (0..9_i64)
         .map(|index| value_base + 100 + index)
         .collect::<Vec<_>>();
@@ -575,8 +577,8 @@ fn add_seeded_hash_map_case(source: String, seed: u64, base: i64) -> String {
             value
         ));
     }
-    scenario.push_str("    let map_initial_capacity_ok = hash_map.capacity<GeneratedKey, int>(generated_map) == 8 as uint\n");
-    scenario.push_str("    let map_initial_len_ok = hash_map.len<GeneratedKey, int>(generated_map) == 6 as uint\n");
+    scenario.push_str("    let map_initial_capacity_ok = hash_map.capacity<GeneratedKey, int>(generated_map) == 8 as usize\n");
+    scenario.push_str("    let map_initial_len_ok = hash_map.len<GeneratedKey, int>(generated_map) == 6 as usize\n");
     scenario.push_str(&format!(
         "    let map_previous = hash_map.insert<GeneratedKey, int>(generated_map, generated_map_key2, {})\n",
         values[2] + 900
@@ -618,13 +620,13 @@ fn add_seeded_hash_map_case(source: String, seed: u64, base: i64) -> String {
             value
         ));
     }
-    scenario.push_str("    let map_growth_ok = hash_map.capacity<GeneratedKey, int>(generated_map) == 16 as uint && hash_map.len<GeneratedKey, int>(generated_map) == 7 as uint\n");
+    scenario.push_str("    let map_growth_ok = hash_map.capacity<GeneratedKey, int>(generated_map) == 16 as usize && hash_map.len<GeneratedKey, int>(generated_map) == 7 as usize\n");
     scenario.push_str(&format!(
         "    let map_tail_ok = hash_map.contains<GeneratedKey, int>(generated_map, ref generated_map_key8) && generated_map_value_or_minus_one(ref generated_map, ref generated_map_key8) == {}\n",
         values[8]
     ));
     scenario.push_str("    hash_map.clear<GeneratedKey, int>(generated_map)\n");
-    scenario.push_str("    let map_clear_ok = hash_map.isEmpty<GeneratedKey, int>(generated_map) && generated_map_value_or_minus_one(ref generated_map, ref generated_map_key5) == -1 && hash_map.capacity<GeneratedKey, int>(generated_map) == 16 as uint\n");
+    scenario.push_str("    let map_clear_ok = hash_map.isEmpty<GeneratedKey, int>(generated_map) && generated_map_value_or_minus_one(ref generated_map, ref generated_map_key5) == -1 && hash_map.capacity<GeneratedKey, int>(generated_map) == 16 as usize\n");
     scenario.push_str(&format!(
         "    hash_map.insert<GeneratedKey, int>(generated_map, generated_map_key2, {})\n",
         values[2]
@@ -641,6 +643,26 @@ fn add_seeded_hash_map_case(source: String, seed: u64, base: i64) -> String {
         "    let base: int = ",
         &format!("{scenario}    let base: int = "),
     )
+}
+
+pub(super) fn seeded_hash_collision_key(value: i64, existing: &[i64]) -> i64 {
+    let target_bucket = int_hash_bucket(value);
+    let start = value.saturating_add(1);
+    (start..start.saturating_add(4096))
+        .find(|candidate| {
+            !existing.contains(candidate) && int_hash_bucket(*candidate) == target_bucket
+        })
+        .expect("a distinct i32 hash collision exists in the bounded search window")
+}
+
+pub(super) fn int_hash_bucket(value: i64) -> u8 {
+    let value = value as u32;
+    let mut hash = 14695981039346656037_u64;
+    for shift in [0, 8, 16, 24] {
+        let byte = ((value >> shift) & 255) as u64;
+        hash = (hash ^ byte).wrapping_mul(1099511628211);
+    }
+    (hash & 7) as u8
 }
 
 /// Add a seed-varying BitSet scenario beside the generated HashMap case.
@@ -660,20 +682,20 @@ fn add_seeded_bitset_case(source: String, seed: u64) -> String {
     let scenario = format!(
         concat!(
             "    let mut generated_bits = bitset.bitsetNew()\n",
-            "    let generated_bit0 = generated_bits.insert(0 as uint)\n",
-            "    let generated_bit63 = generated_bits.insert(63 as uint)\n",
-            "    let generated_bit64 = generated_bits.insert(64 as uint)\n",
-            "    let generated_bit127 = generated_bits.insert(127 as uint)\n",
-            "    let generated_bit_seed = generated_bits.insert({seed_bit} as uint)\n",
-            "    let generated_bit_duplicate = generated_bits.insert(64 as uint)\n",
-            "    let generated_bit_membership = generated_bits.contains(0 as uint) && generated_bits.contains(63 as uint) && generated_bits.contains(64 as uint) && generated_bits.contains(127 as uint) && generated_bits.contains({seed_bit} as uint)\n",
+            "    let generated_bit0 = generated_bits.insert(0 as usize)\n",
+            "    let generated_bit63 = generated_bits.insert(63 as usize)\n",
+            "    let generated_bit64 = generated_bits.insert(64 as usize)\n",
+            "    let generated_bit127 = generated_bits.insert(127 as usize)\n",
+            "    let generated_bit_seed = generated_bits.insert({seed_bit} as usize)\n",
+            "    let generated_bit_duplicate = generated_bits.insert(64 as usize)\n",
+            "    let generated_bit_membership = generated_bits.contains(0 as usize) && generated_bits.contains(63 as usize) && generated_bits.contains(64 as usize) && generated_bits.contains(127 as usize) && generated_bits.contains({seed_bit} as usize)\n",
             "    let generated_bit_count = generated_bits.countOnes() == 5 as uint\n",
-            "    let generated_bit_removed = generated_bits.remove(64 as uint)\n",
-            "    let generated_bit_shift_safe = !generated_bits.contains(64 as uint) && generated_bits.contains(63 as uint) && generated_bits.contains(127 as uint) && generated_bits.countOnes() == 4 as uint\n",
-            "    let generated_bit_missing_remove = generated_bits.remove(64 as uint)\n",
+            "    let generated_bit_removed = generated_bits.remove(64 as usize)\n",
+            "    let generated_bit_shift_safe = !generated_bits.contains(64 as usize) && generated_bits.contains(63 as usize) && generated_bits.contains(127 as usize) && generated_bits.countOnes() == 4 as uint\n",
+            "    let generated_bit_missing_remove = generated_bits.remove(64 as usize)\n",
             "    generated_bits.clear()\n",
-            "    let generated_bit_clear = generated_bits.countOnes() == 0 as uint && !generated_bits.contains(127 as uint)\n",
-            "    let generated_bit_reuse = generated_bits.insert({seed_bit} as uint) && generated_bits.contains({seed_bit} as uint) && generated_bits.countOnes() == 1 as uint\n",
+            "    let generated_bit_clear = generated_bits.countOnes() == 0 as uint && !generated_bits.contains(127 as usize)\n",
+            "    let generated_bit_reuse = generated_bits.insert({seed_bit} as usize) && generated_bits.contains({seed_bit} as usize) && generated_bits.countOnes() == 1 as uint\n",
             "    if !generated_bit0 || !generated_bit63 || !generated_bit64 || !generated_bit127 || !generated_bit_seed || generated_bit_duplicate || !generated_bit_membership || !generated_bit_count || !generated_bit_removed || !generated_bit_shift_safe || generated_bit_missing_remove || !generated_bit_clear || !generated_bit_reuse {{ return -1000056 }}\n",
         ),
         seed_bit = seed_bit,

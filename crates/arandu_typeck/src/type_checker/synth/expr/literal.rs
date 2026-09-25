@@ -126,8 +126,13 @@ pub(super) fn synth_literal_expr(
                         Primitive::I32 => (i32::MIN as i128..=i32::MAX as i128).contains(&parsed),
                         Primitive::I64 => (i64::MIN as i128..=i64::MAX as i128).contains(&parsed),
                         Primitive::Int => {
-                            // int é pointer-width signed; o range depende do target.
+                            // int is fixed 32-bit signed (RFC 0023).
                             (checker.target_info.int_min()..=checker.target_info.int_max())
+                                .contains(&parsed)
+                        }
+                        Primitive::ISize => {
+                            // isize is pointer-width signed (RFC 0023).
+                            (checker.target_info.isize_min()..=checker.target_info.isize_max())
                                 .contains(&parsed)
                         }
                         Primitive::U8 | Primitive::Byte => (0..=u8::MAX as i128).contains(&parsed),
@@ -135,8 +140,12 @@ pub(super) fn synth_literal_expr(
                         Primitive::U32 => (0..=u32::MAX as i128).contains(&parsed),
                         Primitive::U64 => parsed >= 0 && (parsed as u128 <= u64::MAX as u128),
                         Primitive::Uint => {
-                            // uint é pointer-width unsigned; o range depende do target.
+                            // uint is fixed 32-bit unsigned (RFC 0023).
                             parsed >= 0 && (parsed as u128 <= checker.target_info.uint_max())
+                        }
+                        Primitive::USize => {
+                            // usize is pointer-width unsigned (RFC 0023).
+                            parsed >= 0 && (parsed as u128 <= checker.target_info.usize_max())
                         }
                         _ => true,
                     };

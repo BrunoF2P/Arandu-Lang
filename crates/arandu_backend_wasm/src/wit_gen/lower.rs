@@ -243,6 +243,8 @@ pub(super) fn map_primitive(prim: Primitive) -> WitPrimitive {
         Primitive::I16 => WitPrimitive::S16,
         Primitive::U32 | Primitive::Uint => WitPrimitive::U32,
         Primitive::I32 | Primitive::Int => WitPrimitive::S32,
+        Primitive::USize => WitPrimitive::U32,
+        Primitive::ISize => WitPrimitive::S32,
         Primitive::U64 => WitPrimitive::U64,
         Primitive::I64 => WitPrimitive::S64,
         Primitive::F32 => WitPrimitive::F32,

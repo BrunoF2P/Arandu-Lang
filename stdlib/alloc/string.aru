@@ -38,17 +38,17 @@ import std.core.intrinsics as intrinsics
 import std.core.char as chars
 import std.core.str as core_str
 
-func maxBufferCapacity(): uint {
-    return 2147483647
+func maxBufferCapacity(): usize {
+    return 2147483647 as usize
 }
 
 extern "C" {
     /// Host allocator for a raw byte buffer.
-    func ar_vec_malloc(size: uint): ptr[u8]
+    func ar_vec_malloc(size: usize): ptr[u8]
     /// Host deallocator for a raw byte buffer.
-    func ar_vec_buf_free(p: ptr[u8], size: uint): void
+    func ar_vec_buf_free(p: ptr[u8], size: usize): void
     /// Host allocator that resizes a raw byte buffer.
-    func ar_vec_realloc(p: ptr[u8], oldSize: uint, newSize: uint): ptr[u8]
+    func ar_vec_realloc(p: ptr[u8], oldSize: usize, newSize: usize): ptr[u8]
     /// Host bridge that appends bytes to an owned string.
     func ar_string_push_str(s: mut ref String, value: str): bool
 }
@@ -116,9 +116,9 @@ public struct String {
     /// Pointer to the owned byte buffer.
     data: ptr[u8]
     /// Number of initialized UTF-8 bytes.
-    len: uint
+    len: usize
     /// Allocated capacity in elements or bytes, as defined by this type.
-    capacity: uint
+    capacity: usize
 }
 
 /// Adopts an `ar_vec_malloc` buffer as an owned `String` without copying.
@@ -132,7 +132,7 @@ public struct String {
 /// be valid UTF-8 before treating the result as text. The buffer is freed
 /// exactly once via `destroy`/`ar_vec_buf_free`.
 @Unsafe
-public func adoptOwned(data: ptr[u8], bufCap: uint, bufLen: uint): String {
+public func adoptOwned(data: ptr[u8], bufCap: usize, bufLen: usize): String {
     return String {
         data: data,
         len: bufLen,
@@ -168,7 +168,7 @@ public func new(): String {
 ///
 /// # Complexity
 /// Time: O(1) | Space: O(cap)
-public func withCapacity(cap: uint): String {
+public func withCapacity(cap: usize): String {
     let mut s = new()
     ensureCapacity(s, cap)
     return s
@@ -201,7 +201,7 @@ public func from(value: str): String {
 /// Returns `true` on success, or `false` on OOM or capacity overflow without
 /// modifying `s`. The maximum accepted capacity is 2,147,483,647 bytes.
 /// Existing borrowed views remain valid only if no reallocation occurs.
-public func tryEnsureCapacity(s: mut ref String, minCap: uint): bool {
+public func tryEnsureCapacity(s: mut ref String, minCap: usize): bool {
     let maxCap = maxBufferCapacity()
     if minCap > maxCap {
         return false
@@ -209,7 +209,7 @@ public func tryEnsureCapacity(s: mut ref String, minCap: uint): bool {
     if s.capacity >= minCap {
         return true
     }
-    let mut newCap: uint = s.capacity
+    let mut newCap: usize = s.capacity
     if newCap == 0 {
         newCap = 8
     }
@@ -233,7 +233,7 @@ public func tryEnsureCapacity(s: mut ref String, minCap: uint): bool {
 }
 
 /// Ensure capacity in bytes ≥ `minCap`. Aborts if reallocation fails.
-func ensureCapacity(s: mut ref String, minCap: uint): void {
+func ensureCapacity(s: mut ref String, minCap: usize): void {
     if !tryEnsureCapacity(s, minCap) {
         unsafe {
             intrinsics.abort()
@@ -246,7 +246,7 @@ func ensureCapacity(s: mut ref String, minCap: uint): void {
 /// Reserves capacity for at least `additional` more bytes beyond current `len`.
 /// Returns `true` on success, or `false` on allocation failure or capacity
 /// overflow without aborting. Existing content remains intact on failure.
-public func tryReserve(s: mut ref String, additional: uint): bool {
+public func tryReserve(s: mut ref String, additional: usize): bool {
     let maxCap = maxBufferCapacity()
     if additional > maxCap - s.len {
         return false
@@ -265,7 +265,7 @@ public func tryReserve(s: mut ref String, additional: uint): bool {
 ///
 /// # Complexity
 /// Time: O(1) | Space: O(1)
-public func len(s: ref String): uint {
+public func len(s: ref String): usize {
     return s.len
 }
 
@@ -279,7 +279,7 @@ public func len(s: ref String): uint {
 ///
 /// # Complexity
 /// Time: O(1) | Space: O(1)
-public func capacity(s: ref String): uint {
+public func capacity(s: ref String): usize {
     return s.capacity
 }
 
@@ -308,7 +308,7 @@ public func isEmpty(s: ref String): bool {
 ///
 /// # Complexity
 /// Time: O(n) reallocation | Space: O(capacity)
-public func reserve(s: mut ref String, additional: uint): void {
+public func reserve(s: mut ref String, additional: usize): void {
     if !tryReserve(s, additional) {
         unsafe {
             intrinsics.abort()
@@ -331,7 +331,7 @@ public func reserve(s: mut ref String, additional: uint): void {
 /// # Complexity
 /// Time: Amortized O(1) | Space: O(1)
 public func pushScalar(s: mut ref String, c: char): void {
-    let clen = chars.lenUtf8(c) as uint
+    let clen = chars.lenUtf8(c) as usize
     if clen > maxBufferCapacity() - s.len {
         unsafe {
             intrinsics.abort()
@@ -344,22 +344,22 @@ public func pushScalar(s: mut ref String, c: char): void {
     let val = c as u32
     unsafe {
         if clen == 1 {
-            let p = mem.ptrOffset<u8>(s.data, s.len as i32)
+            let p = mem.ptrOffset<u8>(s.data, s.len as isize)
             mem.ptrWrite<u8>(p, val as u8)
         } else if clen == 2 {
             let b0 = (192 as u32 | (val >> 6)) as u8
             let b1 = (128 as u32 | (val & 63 as u32)) as u8
-            let p0 = mem.ptrOffset<u8>(s.data, s.len as i32)
-            let p1 = mem.ptrOffset<u8>(s.data, (s.len + 1) as i32)
+            let p0 = mem.ptrOffset<u8>(s.data, s.len as isize)
+            let p1 = mem.ptrOffset<u8>(s.data, (s.len + 1) as isize)
             mem.ptrWrite<u8>(p0, b0)
             mem.ptrWrite<u8>(p1, b1)
         } else if clen == 3 {
             let b0 = (224 as u32 | (val >> 12)) as u8
             let b1 = (128 as u32 | ((val >> 6) & 63 as u32)) as u8
             let b2 = (128 as u32 | (val & 63 as u32)) as u8
-            let p0 = mem.ptrOffset<u8>(s.data, s.len as i32)
-            let p1 = mem.ptrOffset<u8>(s.data, (s.len + 1) as i32)
-            let p2 = mem.ptrOffset<u8>(s.data, (s.len + 2) as i32)
+            let p0 = mem.ptrOffset<u8>(s.data, s.len as isize)
+            let p1 = mem.ptrOffset<u8>(s.data, (s.len + 1) as isize)
+            let p2 = mem.ptrOffset<u8>(s.data, (s.len + 2) as isize)
             mem.ptrWrite<u8>(p0, b0)
             mem.ptrWrite<u8>(p1, b1)
             mem.ptrWrite<u8>(p2, b2)
@@ -368,10 +368,10 @@ public func pushScalar(s: mut ref String, c: char): void {
             let b1 = (128 as u32 | ((val >> 12) & 63 as u32)) as u8
             let b2 = (128 as u32 | ((val >> 6) & 63 as u32)) as u8
             let b3 = (128 as u32 | (val & 63 as u32)) as u8
-            let p0 = mem.ptrOffset<u8>(s.data, s.len as i32)
-            let p1 = mem.ptrOffset<u8>(s.data, (s.len + 1) as i32)
-            let p2 = mem.ptrOffset<u8>(s.data, (s.len + 2) as i32)
-            let p3 = mem.ptrOffset<u8>(s.data, (s.len + 3) as i32)
+            let p0 = mem.ptrOffset<u8>(s.data, s.len as isize)
+            let p1 = mem.ptrOffset<u8>(s.data, (s.len + 1) as isize)
+            let p2 = mem.ptrOffset<u8>(s.data, (s.len + 2) as isize)
+            let p3 = mem.ptrOffset<u8>(s.data, (s.len + 3) as isize)
             mem.ptrWrite<u8>(p0, b0)
             mem.ptrWrite<u8>(p1, b1)
             mem.ptrWrite<u8>(p2, b2)
@@ -427,12 +427,12 @@ public func String.from(value: str): String {
 }
 
 /// Returns the byte length of the String.
-public func String.len(self: ref String): uint {
+public func String.len(self: ref String): usize {
     return len(self)
 }
 
 /// Returns the allocated byte capacity.
-public func String.capacity(self: ref String): uint {
+public func String.capacity(self: ref String): usize {
     return capacity(self)
 }
 
@@ -444,7 +444,7 @@ public func String.isEmpty(self: ref String): bool {
 /// Ensures room for `additional` bytes beyond the current length.
 ///
 /// Reallocation may invalidate borrowed views; allocation failure aborts.
-public func String.reserve(self: mut ref String, additional: uint): void {
+public func String.reserve(self: mut ref String, additional: usize): void {
     reserve(self, additional)
 }
 
@@ -481,7 +481,7 @@ public func String.pushStr(self: mut ref String, value: str): bool {
 ///
 /// Returns `false` on allocation failure or capacity overflow, preserving
 /// existing content.
-public func String.tryReserve(self: mut ref String, additional: uint): bool {
+public func String.tryReserve(self: mut ref String, additional: usize): bool {
     return tryReserve(self, additional)
 }
 
@@ -496,11 +496,11 @@ public func String.clear(self: mut ref String): void {
 ///
 /// A length beyond the current end or inside a multibyte character leaves
 /// the String unchanged. Capacity is retained; no allocation occurs.
-public func truncate(s: mut ref String, newLen: uint): void {
+public func truncate(s: mut ref String, newLen: usize): void {
     if newLen < s.len {
         if newLen > 0 {
             let boundary = unsafe {
-                let p = mem.ptrOffset<u8>(s.data, newLen as i32)
+                let p = mem.ptrOffset<u8>(s.data, newLen as isize)
                 mem.ptrRead<u8>(p)
             }
             if (boundary & (192 as u8)) == (128 as u8) {
@@ -514,7 +514,7 @@ public func truncate(s: mut ref String, newLen: uint): void {
 /// Shortens this String at a UTF-8 boundary; delegates to `truncate`.
 ///
 /// Invalid or out-of-range byte lengths leave the String unchanged.
-public func String.truncate(self: mut ref String, newLen: uint): void {
+public func String.truncate(self: mut ref String, newLen: usize): void {
     truncate(self, newLen)
 }
 
@@ -542,7 +542,7 @@ public func String.contains(self: ref String, needle: str): bool {
 /// Returns the first byte offset of `needle`, or `None` if absent.
 ///
 /// An empty needle yields `Some(0)`; offsets count UTF-8 bytes.
-public func String.find(self: ref String, needle: str): Option<uint> {
+public func String.find(self: ref String, needle: str): Option<usize> {
     return core_str.find(*asStr(self), needle)
 }
 

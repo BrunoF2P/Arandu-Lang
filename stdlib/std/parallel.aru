@@ -63,8 +63,8 @@ public enum ParallelError {
 
 /// Granularity threshold in elements below which input is folded sequentially
 /// without pool scheduling.
-public func granularityCutoff(): uint {
-    return 1024
+public func granularityCutoff(): usize {
+    return 1024 as usize
 }
 
 /// Transport context for one chunk folding operation across the worker boundary.
@@ -89,7 +89,7 @@ public func dispatchChunk<T: marker.Sync, R: marker.Copy + marker.Send, J: marke
 ): i32 {
     let ctx: ChunkContext<T, J> = unsafe { mem.ptrRead<ChunkContext<T, J>>(context) }
     let count = slice.len<T>(ctx.subslice)
-    let mut i: uint = 0
+    let mut i: usize = 0 as usize
     while i < count {
         let nullp: ptr[int] = nil
         if ctx.stop_flag != nullp {
@@ -99,7 +99,7 @@ public func dispatchChunk<T: marker.Sync, R: marker.Copy + marker.Send, J: marke
             }
         }
         unsafe { ctx.job.run(ref ctx.subslice[i], mut ref *result_dest) }
-        i = i + 1
+        i = i + (1 as usize)
     }
     return 0
 }
@@ -127,7 +127,7 @@ public func dispatchChunkWithInit<T: marker.Sync, R: marker.Send, J: marker.Copy
     let ctx: ChunkContextWithInit<T, J, I> = unsafe { mem.ptrRead<ChunkContextWithInit<T, J, I>>(context) }
     let count = slice.len<T>(ctx.subslice)
     let mut state: R = ctx.init.init()
-    let mut i: uint = 0
+    let mut i: usize = 0 as usize
     while i < count {
         let nullp: ptr[int] = nil
         if ctx.stop_flag != nullp {
@@ -137,7 +137,7 @@ public func dispatchChunkWithInit<T: marker.Sync, R: marker.Send, J: marker.Copy
             }
         }
         ctx.job.run(ref ctx.subslice[i], mut ref state)
-        i = i + 1
+        i = i + (1 as usize)
     }
     unsafe { mem.ptrWrite<R>(result_dest, state) }
     return 0
@@ -154,28 +154,28 @@ public func foldSequential<T, R, J: ParallelJob<T, R>>(
 ): R {
     let total_len = slice.len<T>(data)
     let mut acc = seed
-    let mut i: uint = 0
+    let mut i: usize = 0 as usize
     while i < total_len {
         job.run(ref data[i], mut ref acc)
-        i = i + 1
+        i = i + (1 as usize)
     }
     return acc
 }
 
 extern "C" {
     /// Host copy bridge for initializing a worker result buffer.
-    func ar_rt_copy_value<T>(dest: ptr[T], source: ref T, size: uint): void
+    func ar_rt_copy_value<T>(dest: ptr[T], source: ref T, size: usize): void
     /// Host allocator for an aligned worker buffer.
-    func ar_rt_alloc_aligned(size: uint, align: uint): ptr[u8]
+    func ar_rt_alloc_aligned(size: usize, align: usize): ptr[u8]
     /// Host deallocator for an aligned worker buffer.
-    func ar_rt_free_aligned(pointer: ptr[u8], size: uint, align: uint): void
+    func ar_rt_free_aligned(pointer: ptr[u8], size: usize, align: usize): void
     /// Host dispatcher for parallel fold workers.
     func ar_rt_parallel_fold_run(
-        num_chunks: uint,
+        num_chunks: u64,
         contexts: ptr[ptr[u8]],
         thunk: ptr[u8],
         results: ptr[ptr[u8]],
-        workers: uint,
+        workers: u64,
         stop_flag: ptr[int]
     ): i32
 }
@@ -232,7 +232,7 @@ public func parallelFoldWithGrain<T: marker.Sync, R: marker.Copy + marker.Send, 
     max_chunks: uint
 ): Result<R, ParallelError> {
     let total_len = slice.len<T>(data)
-    if total_len == 0 {
+    if total_len == (0 as usize) {
         return Result.Ok(seed)
     }
     if target_chunk_size == 0 || max_chunks == 0 {
@@ -245,9 +245,11 @@ public func parallelFoldWithGrain<T: marker.Sync, R: marker.Copy + marker.Send, 
 
     // Partition solely from the input length. `workers` controls execution,
     // never the reduction tree, so scheduler configuration is not semantic.
-    let mut chunk_count = 1 + (total_len - 1) / target_chunk_size
-    if chunk_count > max_chunks {
-        chunk_count = max_chunks
+    let target_chunk = target_chunk_size as usize
+    let max_c = max_chunks as usize
+    let mut chunk_count = (1 as usize) + (total_len - (1 as usize)) / target_chunk
+    if chunk_count > max_c {
+        chunk_count = max_c
     }
     if chunk_count > total_len {
         chunk_count = total_len
@@ -262,12 +264,12 @@ public func parallelFoldWithGrain<T: marker.Sync, R: marker.Copy + marker.Send, 
     let ptr_elem_size = mem.sizeOf<ptr[u8]>()
     let ptr_align = mem.alignOf<ptr[u8]>()
 
-    // `ptrOffset` accepts an i32 byte displacement after casting the slabs to
+    // `ptrOffset` accepts an isize byte displacement after casting the slabs to
     // bytes. Reject layouts that cannot be represented before multiplying.
-    let max_buffer: uint = 2147483647
-    if ctx_elem_size == 0 || ctx_align == 0
-        || res_elem_size == 0 || res_align == 0
-        || ptr_elem_size == 0 || ptr_align == 0
+    let max_buffer: usize = 2147483647 as usize
+    if ctx_elem_size == (0 as usize) || ctx_align == (0 as usize)
+        || res_elem_size == (0 as usize) || res_align == (0 as usize)
+        || ptr_elem_size == (0 as usize) || ptr_align == (0 as usize)
         || ctx_elem_size > max_buffer / chunk_count
         || res_elem_size > max_buffer / chunk_count
         || ptr_elem_size > max_buffer / chunk_count {
@@ -308,13 +310,13 @@ public func parallelFoldWithGrain<T: marker.Sync, R: marker.Copy + marker.Send, 
         return Result.Err(ParallelError.Failed(-4))
     }
 
-    let mut c: uint = 0
-    while c + 1 < chunk_count {
+    let mut c: usize = 0 as usize
+    while c + (1 as usize) < chunk_count {
         let chunk_offset = c * base_chunk_size
         let ctx_byte_offset = c * ctx_elem_size
         let res_byte_offset = c * res_elem_size
-        let ctx_raw = mem.ptrOffset<u8>(ctx_buf, ctx_byte_offset as i32)
-        let res_raw = mem.ptrOffset<u8>(res_buf, res_byte_offset as i32)
+        let ctx_raw = mem.ptrOffset<u8>(ctx_buf, ctx_byte_offset as isize)
+        let res_raw = mem.ptrOffset<u8>(res_buf, res_byte_offset as isize)
         let chunk_slice = unsafe { intrinsics.sliceSubslice<T>(data, chunk_offset, base_chunk_size) }
         let null_flag: ptr[int] = nil
         let chunk_ctx = ChunkContext<T, J> {
@@ -326,17 +328,17 @@ public func parallelFoldWithGrain<T: marker.Sync, R: marker.Copy + marker.Send, 
         unsafe {
             mem.ptrWrite<ChunkContext<T, J>>(ctx_p, chunk_ctx)
             ar_rt_copy_value<R>(res_raw as ptr[R], identity, res_elem_size)
-            mem.ptrWrite<ptr[u8]>(mem.ptrOffset<ptr[u8]>(ctx_ptrs, c as i32), ctx_raw)
-            mem.ptrWrite<ptr[u8]>(mem.ptrOffset<ptr[u8]>(res_ptrs, c as i32), res_raw)
+            mem.ptrWrite<ptr[u8]>(mem.ptrOffset<ptr[u8]>(ctx_ptrs, c as isize), ctx_raw)
+            mem.ptrWrite<ptr[u8]>(mem.ptrOffset<ptr[u8]>(res_ptrs, c as isize), res_raw)
         }
-        c = c + 1
+        c = c + (1 as usize)
     }
-    let final_offset = (chunk_count - 1) * base_chunk_size
+    let final_offset = (chunk_count - (1 as usize)) * base_chunk_size
     let final_count = total_len - final_offset
     let final_ctx_offset = c * ctx_elem_size
     let final_res_offset = c * res_elem_size
-    let final_ctx_raw = mem.ptrOffset<u8>(ctx_buf, final_ctx_offset as i32)
-    let final_res_raw = mem.ptrOffset<u8>(res_buf, final_res_offset as i32)
+    let final_ctx_raw = mem.ptrOffset<u8>(ctx_buf, final_ctx_offset as isize)
+    let final_res_raw = mem.ptrOffset<u8>(res_buf, final_res_offset as isize)
     let final_slice = unsafe { intrinsics.sliceSubslice<T>(data, final_offset, final_count) }
     let null_flag: ptr[int] = nil
     let final_ctx = ChunkContext<T, J> {
@@ -347,18 +349,18 @@ public func parallelFoldWithGrain<T: marker.Sync, R: marker.Copy + marker.Send, 
     unsafe {
         mem.ptrWrite<ChunkContext<T, J>>(final_ctx_raw as ptr[ChunkContext<T, J>], final_ctx)
         ar_rt_copy_value<R>(final_res_raw as ptr[R], identity, res_elem_size)
-        mem.ptrWrite<ptr[u8]>(mem.ptrOffset<ptr[u8]>(ctx_ptrs, c as i32), final_ctx_raw)
-        mem.ptrWrite<ptr[u8]>(mem.ptrOffset<ptr[u8]>(res_ptrs, c as i32), final_res_raw)
+        mem.ptrWrite<ptr[u8]>(mem.ptrOffset<ptr[u8]>(ctx_ptrs, c as isize), final_ctx_raw)
+        mem.ptrWrite<ptr[u8]>(mem.ptrOffset<ptr[u8]>(res_ptrs, c as isize), final_res_raw)
     }
 
     let thunk_fn = dispatchChunk<T, R, J> as ptr[u8]
     let status = unsafe {
         ar_rt_parallel_fold_run(
-            chunk_count,
+            chunk_count as u64,
             ctx_ptrs,
             thunk_fn,
             res_ptrs,
-            workers,
+            workers as u64,
             null_flag
         )
     }
@@ -377,14 +379,14 @@ public func parallelFoldWithGrain<T: marker.Sync, R: marker.Copy + marker.Send, 
     }
 
     let mut acc = seed
-    let mut i: uint = 0
+    let mut i: usize = 0 as usize
     while i < chunk_count {
-        let res_slot = mem.ptrOffset<ptr[u8]>(res_ptrs, i as i32)
+        let res_slot = mem.ptrOffset<ptr[u8]>(res_ptrs, i as isize)
         let res_raw = unsafe { mem.ptrRead<ptr[u8]>(res_slot) }
         let res_p = res_raw as ptr[R]
         let partial = unsafe { mem.ptrRead<R>(res_p) }
         combine.combine(mut ref acc, ref partial)
-        i = i + 1
+        i = i + (1 as usize)
     }
 
     unsafe {
@@ -423,7 +425,7 @@ public func parallelFoldWithInit<
     workers: uint
 ): Result<R, ParallelError> {
     let total_len = slice.len<T>(data)
-    if total_len == 0 {
+    if total_len == (0 as usize) {
         return Result.Ok(seed)
     }
     if total_len <= granularityCutoff() {
@@ -431,10 +433,10 @@ public func parallelFoldWithInit<
         return Result.Ok(out)
     }
 
-    let target_chunk_size: uint = 64
-    let mut chunk_count = 1 + (total_len - 1) / target_chunk_size
-    if chunk_count > 1024 {
-        chunk_count = 1024
+    let target_chunk_size: usize = 64 as usize
+    let mut chunk_count = (1 as usize) + (total_len - (1 as usize)) / target_chunk_size
+    if chunk_count > (1024 as usize) {
+        chunk_count = 1024 as usize
     }
     if chunk_count > total_len {
         chunk_count = total_len
@@ -449,10 +451,10 @@ public func parallelFoldWithInit<
     let ptr_elem_size = mem.sizeOf<ptr[u8]>()
     let ptr_align = mem.alignOf<ptr[u8]>()
 
-    let max_buffer: uint = 2147483647
-    if ctx_elem_size == 0 || ctx_align == 0
-        || res_elem_size == 0 || res_align == 0
-        || ptr_elem_size == 0 || ptr_align == 0
+    let max_buffer: usize = 2147483647 as usize
+    if ctx_elem_size == (0 as usize) || ctx_align == (0 as usize)
+        || res_elem_size == (0 as usize) || res_align == (0 as usize)
+        || ptr_elem_size == (0 as usize) || ptr_align == (0 as usize)
         || ctx_elem_size > max_buffer / chunk_count
         || res_elem_size > max_buffer / chunk_count
         || ptr_elem_size > max_buffer / chunk_count {
@@ -493,13 +495,13 @@ public func parallelFoldWithInit<
         return Result.Err(ParallelError.Failed(-4))
     }
 
-    let mut c: uint = 0
-    while c + 1 < chunk_count {
+    let mut c: usize = 0 as usize
+    while c + (1 as usize) < chunk_count {
         let chunk_offset = c * base_chunk_size
         let ctx_byte_offset = c * ctx_elem_size
         let res_byte_offset = c * res_elem_size
-        let ctx_raw = mem.ptrOffset<u8>(ctx_buf, ctx_byte_offset as i32)
-        let res_raw = mem.ptrOffset<u8>(res_buf, res_byte_offset as i32)
+        let ctx_raw = mem.ptrOffset<u8>(ctx_buf, ctx_byte_offset as isize)
+        let res_raw = mem.ptrOffset<u8>(res_buf, res_byte_offset as isize)
         let chunk_slice = unsafe { intrinsics.sliceSubslice<T>(data, chunk_offset, base_chunk_size) }
         let null_flag: ptr[int] = nil
         let chunk_ctx = ChunkContextWithInit<T, J, I> {
@@ -511,17 +513,17 @@ public func parallelFoldWithInit<
         let ctx_p = ctx_raw as ptr[ChunkContextWithInit<T, J, I>]
         unsafe {
             mem.ptrWrite<ChunkContextWithInit<T, J, I>>(ctx_p, chunk_ctx)
-            mem.ptrWrite<ptr[u8]>(mem.ptrOffset<ptr[u8]>(ctx_ptrs, c as i32), ctx_raw)
-            mem.ptrWrite<ptr[u8]>(mem.ptrOffset<ptr[u8]>(res_ptrs, c as i32), res_raw)
+            mem.ptrWrite<ptr[u8]>(mem.ptrOffset<ptr[u8]>(ctx_ptrs, c as isize), ctx_raw)
+            mem.ptrWrite<ptr[u8]>(mem.ptrOffset<ptr[u8]>(res_ptrs, c as isize), res_raw)
         }
-        c = c + 1
+        c = c + (1 as usize)
     }
-    let final_offset = (chunk_count - 1) * base_chunk_size
+    let final_offset = (chunk_count - (1 as usize)) * base_chunk_size
     let final_count = total_len - final_offset
     let final_ctx_offset = c * ctx_elem_size
     let final_res_offset = c * res_elem_size
-    let final_ctx_raw = mem.ptrOffset<u8>(ctx_buf, final_ctx_offset as i32)
-    let final_res_raw = mem.ptrOffset<u8>(res_buf, final_res_offset as i32)
+    let final_ctx_raw = mem.ptrOffset<u8>(ctx_buf, final_ctx_offset as isize)
+    let final_res_raw = mem.ptrOffset<u8>(res_buf, final_res_offset as isize)
     let final_slice = unsafe { intrinsics.sliceSubslice<T>(data, final_offset, final_count) }
     let null_flag: ptr[int] = nil
     let final_ctx = ChunkContextWithInit<T, J, I> {
@@ -532,18 +534,18 @@ public func parallelFoldWithInit<
     }
     unsafe {
         mem.ptrWrite<ChunkContextWithInit<T, J, I>>(final_ctx_raw as ptr[ChunkContextWithInit<T, J, I>], final_ctx)
-        mem.ptrWrite<ptr[u8]>(mem.ptrOffset<ptr[u8]>(ctx_ptrs, c as i32), final_ctx_raw)
-        mem.ptrWrite<ptr[u8]>(mem.ptrOffset<ptr[u8]>(res_ptrs, c as i32), final_res_raw)
+        mem.ptrWrite<ptr[u8]>(mem.ptrOffset<ptr[u8]>(ctx_ptrs, c as isize), final_ctx_raw)
+        mem.ptrWrite<ptr[u8]>(mem.ptrOffset<ptr[u8]>(res_ptrs, c as isize), final_res_raw)
     }
 
     let thunk_fn = dispatchChunkWithInit<T, R, J, I> as ptr[u8]
     let status = unsafe {
         ar_rt_parallel_fold_run(
-            chunk_count,
+            chunk_count as u64,
             ctx_ptrs,
             thunk_fn,
             res_ptrs,
-            workers,
+            workers as u64,
             null_flag
         )
     }
@@ -562,14 +564,14 @@ public func parallelFoldWithInit<
     }
 
     let mut acc = seed
-    let mut i: uint = 0
+    let mut i: usize = 0 as usize
     while i < chunk_count {
-        let res_slot = mem.ptrOffset<ptr[u8]>(res_ptrs, i as i32)
+        let res_slot = mem.ptrOffset<ptr[u8]>(res_ptrs, i as isize)
         let res_raw = unsafe { mem.ptrRead<ptr[u8]>(res_slot) }
         let res_p = res_raw as ptr[R]
         let partial = unsafe { mem.ptrRead<R>(res_p) }
         combine.combine(mut ref acc, ref partial)
-        i = i + 1
+        i = i + (1 as usize)
     }
 
     unsafe {

@@ -41,7 +41,7 @@ extern "C" {
     /// Host path joiner that returns a borrowed path result.
     func ar_path_join(a: str, b: str): str
     /// Host path joiner that returns owned string storage.
-    func ar_path_join_owned(a: str, b: str, outBuf: mut ref ptr[u8], outLen: mut ref uint, outCap: mut ref uint): bool
+    func ar_path_join_owned(a: str, b: str, outBuf: mut ref ptr[u8], outLen: mut ref usize, outCap: mut ref usize): bool
     /// Host path parser that locates the last path component.
     func ar_path_file_name(p: str): str
 }
@@ -182,8 +182,8 @@ public func join(a: str, b: str): str {
 /// this function does not return a fallible result.
 public func joinOwned(a: str, b: str): strings.String {
     let mut buf: ptr[u8] = nil
-    let mut len: uint = 0
-    let mut cap: uint = 0
+    let mut len: usize = 0
+    let mut cap: usize = 0
     unsafe {
         if !ar_path_join_owned(a, b, buf, len, cap) {
             intrinsics.abort()

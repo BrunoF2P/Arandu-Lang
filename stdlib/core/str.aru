@@ -65,7 +65,7 @@ public func isEmpty(s: str): bool {
 ///
 /// # Complexity
 /// Time: O(1) | Space: O(1)
-public func lenBytes(s: str): uint {
+public func lenBytes(s: str): usize {
     let bytes = intrinsics.strBytes(s)
     return slice.len<u8>(bytes)
 }
@@ -90,7 +90,7 @@ public func startsWith(s: str, prefix: str): bool {
     if expected_len > source_len {
         return false
     }
-    let mut i: uint = 0
+    let mut i: usize = 0
     while i < expected_len {
         if source[i] != expected[i] {
             return false
@@ -121,7 +121,7 @@ public func endsWith(s: str, suffix: str): bool {
         return false
     }
     let offset = source_len - expected_len
-    let mut i: uint = 0
+    let mut i: usize = 0
     while i < expected_len {
         if source[offset + i] != expected[i] {
             return false
@@ -166,7 +166,7 @@ public func contains(s: str, needle: str): bool {
 ///
 /// # Complexity
 /// Time: O(N * M) | Space: O(1)
-public func find(s: str, needle: str): Option<uint> {
+public func find(s: str, needle: str): Option<usize> {
     let source = intrinsics.strBytes(s)
     let expected = intrinsics.strBytes(needle)
     let source_len = slice.len<u8>(source)
@@ -178,9 +178,9 @@ public func find(s: str, needle: str): Option<uint> {
         return Option.None
     }
     let last = source_len - expected_len
-    let mut start: uint = 0
+    let mut start: usize = 0
     while start <= last {
-        let mut i: uint = 0
+        let mut i: usize = 0
         while i < expected_len && source[start + i] == expected[i] {
             i = i + 1
         }

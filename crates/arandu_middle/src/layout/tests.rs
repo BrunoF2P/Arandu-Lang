@@ -222,8 +222,10 @@ fn test_all_primitive_layouts() {
             (Primitive::F32, 4, 4),
             // Language float is always IEEE f64 (DataLayout), not pointer-width.
             (Primitive::Float, 8, 8),
-            (Primitive::Int, ptr_width, ptr_width),
-            (Primitive::Uint, ptr_width, ptr_width),
+            (Primitive::Int, 4, 4),
+            (Primitive::Uint, 4, 4),
+            (Primitive::ISize, ptr_width, ptr_width),
+            (Primitive::USize, ptr_width, ptr_width),
             (Primitive::I64, 8, 8),
             (Primitive::U64, 8, 8),
             (Primitive::F64, 8, 8),
@@ -550,8 +552,8 @@ fn test_int_literal_layout() {
     let provider = MockProvider;
     let tid = interner.intern(ArType::IntLiteral);
     let layout = engine.layout_of(tid, &interner, &provider);
-    assert_eq!(layout.size, 8);
-    assert_eq!(layout.align, 8);
+    assert_eq!(layout.size, 4);
+    assert_eq!(layout.align, 4);
 }
 
 #[test]
@@ -688,7 +690,7 @@ fn test_target_32bit_vec_and_string_evidence() {
     let struct_sym = SymbolId::new(0, 100);
     let u8_tid = interner.intern(ArType::Primitive(Primitive::U8));
     let ptr_u8_tid = interner.intern(ArType::Ptr(u8_tid));
-    let uint_tid = interner.intern(ArType::Primitive(Primitive::Uint));
+    let usize_tid = interner.intern(ArType::Primitive(Primitive::USize));
 
     let fields = StructFields::from_entries([
         StructFieldInfo {
@@ -700,13 +702,13 @@ fn test_target_32bit_vec_and_string_evidence() {
         StructFieldInfo {
             name: "len".into(),
             symbol: None,
-            ty: uint_tid,
+            ty: usize_tid,
             index: 1,
         },
         StructFieldInfo {
             name: "capacity".into(),
             symbol: None,
-            ty: uint_tid,
+            ty: usize_tid,
             index: 2,
         },
     ]);

@@ -64,11 +64,11 @@ struct MockStream {
     closed: bool
 }
 
-func MockStream.read(self: mut ref MockStream, buf: mut ref []u8): Result<uint, io.IoError> {
-    return Result.Ok(0 as uint)
+func MockStream.read(self: mut ref MockStream, buf: mut ref []u8): Result<usize, io.IoError> {
+    return Result.Ok(0 as usize)
 }
 
-func MockStream.write(self: mut ref MockStream, buf: []u8): Result<uint, io.IoError> {
+func MockStream.write(self: mut ref MockStream, buf: []u8): Result<usize, io.IoError> {
     return Result.Ok(slice.len<u8>(buf))
 }
 
@@ -76,11 +76,11 @@ func MockStream.flush(self: mut ref MockStream): Result<bool, io.IoError> {
     return Result.Ok(true)
 }
 
-func testBufReader(reader: mut ref io.BufReader<MockStream>, dest: mut ref []u8): Result<uint, io.IoError> {
+func testBufReader(reader: mut ref io.BufReader<MockStream>, dest: mut ref []u8): Result<usize, io.IoError> {
     return reader.read(dest)
 }
 
-func testBufWriter(writer: mut ref io.BufWriter<MockStream>, src: []u8): Result<uint, io.IoError> {
+func testBufWriter(writer: mut ref io.BufWriter<MockStream>, src: []u8): Result<usize, io.IoError> {
     return writer.write(src)
 }
 

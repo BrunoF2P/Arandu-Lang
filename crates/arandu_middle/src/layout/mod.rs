@@ -544,7 +544,8 @@ impl LayoutEngine {
                     let t = self.data_layout.f64;
                     TypeLayout::simple(t.size, t.abi_align)
                 }
-                Primitive::Int | Primitive::Uint => {
+                Primitive::Int | Primitive::Uint => TypeLayout::simple(4, 4),
+                Primitive::ISize | Primitive::USize => {
                     let p = self.data_layout.pointer;
                     TypeLayout::simple(p.size, p.abi_align)
                 }
@@ -554,10 +555,7 @@ impl LayoutEngine {
                     TypeLayout::simple(p.size, p.abi_align)
                 }
             },
-            ArType::IntLiteral => {
-                let p = self.data_layout.pointer;
-                TypeLayout::simple(p.size, p.abi_align)
-            }
+            ArType::IntLiteral => TypeLayout::simple(4, 4),
             ArType::FloatLiteral => {
                 let f = self.data_layout.float;
                 TypeLayout::simple(f.size, f.abi_align)

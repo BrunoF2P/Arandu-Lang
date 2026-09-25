@@ -106,19 +106,19 @@ extern "C" {
     /// Host file-open bridge reserved for future public file operations.
     func ar_fs_open(path: str, flags: int, mode: int): int
     /// Host read bridge for a descriptor and caller-owned buffer.
-    func ar_fs_read(fd: int, buf: ptr[u8], count: uint): int
+    func ar_fs_read(fd: int, buf: ptr[u8], count: usize): int
     /// Host write bridge for a descriptor and caller-owned buffer.
-    func ar_fs_write(fd: int, buf: ptr[u8], count: uint): int
+    func ar_fs_write(fd: int, buf: ptr[u8], count: usize): int
     /// Host descriptor-close bridge used by `File.close`.
     func ar_fs_close(fd: int): int
     /// Reads the whole file; on success fills `outBuf`/`outLen`/`outCap`
     /// (owned buffer, adopt via `strings.adoptOwned`). Any error zeroes the
     /// out-params; `err` carries a portable `IoErrorKind` code.
-    func ar_fs_read_all(path: str, outBuf: mut ref ptr[u8], outLen: mut ref uint, outCap: mut ref uint, err: mut ref int): void
+    func ar_fs_read_all(path: str, outBuf: mut ref ptr[u8], outLen: mut ref usize, outCap: mut ref usize, err: mut ref isize): void
     /// Reads a directory into one owned blob (see `readDir`/`DirListing`).
-    func ar_fs_readdir(path: str, outBuf: mut ref ptr[u8], outCount: mut ref uint, outCap: mut ref uint, err: mut ref int): void
+    func ar_fs_readdir(path: str, outBuf: mut ref ptr[u8], outCount: mut ref usize, outCap: mut ref usize, err: mut ref isize): void
     /// Frees buffers returned by `ar_fs_read_all`/`ar_fs_readdir`.
-    func ar_vec_buf_free(p: ptr[u8], size: uint): void
+    func ar_vec_buf_free(p: ptr[u8], size: usize): void
 }
 
 /// Returns the host's boolean existence result for `path`.
@@ -153,14 +153,14 @@ public func fileExists(path: str): bool {
 @Effects(FileRead, Foreign)
 public func readToString(path: str): Result<strings.String, io.IoError> {
     let mut buf: ptr[u8] = nil
-    let mut len: uint = 0
-    let mut cap: uint = 0
-    let mut errCode: int = 0
+    let mut len: usize = 0
+    let mut cap: usize = 0
+    let mut errCode: isize = 0
     unsafe {
         ar_fs_read_all(path, buf, len, cap, errCode)
     }
     if errCode != 0 {
-        return Result.Err(io.errorFromPortable(errCode))
+        return Result.Err(io.errorFromPortable(errCode as int))
     }
     return Result.Ok(unsafe { strings.adoptOwned(buf, cap, len) })
 }
@@ -178,19 +178,19 @@ public struct DirListing {
     /// Pointer for the empty out-of-range name view.
     emptyData: ptr[u8]
     /// Zero length of the empty out-of-range name view.
-    emptyLen: uint
+    emptyLen: usize
     /// Pointer to the owned listing blob.
     data: ptr[u8]
     /// Number of entries in the snapshot.
-    count: uint
+    count: usize
     /// Allocated blob capacity in bytes.
-    capacity: uint
+    capacity: usize
 }
 
 // Fat `str` descriptor stored once per entry inside the owned listing blob.
 struct DirNameDescriptor {
     data: ptr[u8]
-    len: uint
+    len: usize
 }
 
 /// Reads the directory at `path` into an owned `DirListing` (one allocation).
@@ -209,14 +209,14 @@ struct DirNameDescriptor {
 @Effects(FileRead, Foreign)
 public func readDir(path: str): Result<DirListing, io.IoError> {
     let mut buf: ptr[u8] = nil
-    let mut count: uint = 0
-    let mut cap: uint = 0
-    let mut errCode: int = 0
+    let mut count: usize = 0
+    let mut cap: usize = 0
+    let mut errCode: isize = 0
     unsafe {
         ar_fs_readdir(path, buf, count, cap, errCode)
     }
     if errCode != 0 {
-        return Result.Err(io.errorFromPortable(errCode))
+        return Result.Err(io.errorFromPortable(errCode as int))
     }
     return Result.Ok(DirListing {
         emptyData: nil,
@@ -228,9 +228,9 @@ public func readDir(path: str): Result<DirListing, io.IoError> {
 }
 
 /// Reads the `u32` entry field at `byteOff` from the blob (little-endian).
-func readU32At(base: ptr[u8], byteOff: uint): u32 {
+func readU32At(base: ptr[u8], byteOff: usize): u32 {
     unsafe {
-        let p = mem.ptrOffset<u8>(base, byteOff as i32)
+        let p = mem.ptrOffset<u8>(base, byteOff as isize)
         return mem.ptrRead<u32>(p as ptr[u32])
     }
 }
@@ -239,7 +239,7 @@ func readU32At(base: ptr[u8], byteOff: uint): u32 {
 ///
 /// The count reflects the snapshot taken by `readDir`, not later changes to
 /// the directory. This operation takes O(1) time and does not allocate.
-public func DirListing.count(self: ref DirListing): uint {
+public func DirListing.count(self: ref DirListing): usize {
     return self.count
 }
 
@@ -248,12 +248,12 @@ public func DirListing.count(self: ref DirListing): uint {
 ///
 /// The value comes from the entry type supplied during the listing; this
 /// method does not perform a separate filesystem query.
-public func DirListing.isDir(self: ref DirListing, index: uint): bool {
+public func DirListing.isDir(self: ref DirListing, index: usize): bool {
     if index >= self.count {
         return false
     }
     unsafe {
-        let p = mem.ptrOffset<u8>(self.data, (8 + index * 16 + 8) as i32)
+        let p = mem.ptrOffset<u8>(self.data, (8 + index * 16 + 8) as isize)
         return mem.ptrRead<u8>(p) != 0
     }
 }
@@ -263,18 +263,18 @@ public func DirListing.isDir(self: ref DirListing, index: uint): bool {
 ///
 /// The view borrows `self`; the bytes remain valid while the listing owns its
 /// blob. This method does not allocate or decode the name as text.
-public func DirListing.name(self: ref DirListing, index: uint): []u8 {
+public func DirListing.name(self: ref DirListing, index: usize): []u8 {
     if index >= self.count {
         unsafe {
             return intrinsics.sliceFromRaw<DirListing, u8>(self, self.data, 0)
         }
     }
     unsafe {
-        let entryOff: uint = 8 + index * 16
-        let nameOff = readU32At(self.data, entryOff) as uint
-        let nameLen = readU32At(self.data, entryOff + 4) as uint
-        let namesBase = mem.ptrOffset<u8>(self.data, (8 + self.count * 16 + self.count * mem.sizeOf<DirNameDescriptor>()) as i32)
-        let namePtr = mem.ptrOffset<u8>(namesBase, nameOff as i32)
+        let entryOff: usize = 8 + index * 16
+        let nameOff = readU32At(self.data, entryOff) as usize
+        let nameLen = readU32At(self.data, entryOff + 4) as usize
+        let namesBase = mem.ptrOffset<u8>(self.data, (8 + self.count * 16 + self.count * mem.sizeOf<DirNameDescriptor>()) as isize)
+        let namePtr = mem.ptrOffset<u8>(namesBase, nameOff as isize)
         return intrinsics.sliceFromRaw<DirListing, u8>(self, namePtr, nameLen)
     }
 }
@@ -285,14 +285,14 @@ public func DirListing.name(self: ref DirListing, index: uint): []u8 {
 /// Each entry has its own stable descriptor in the listing blob. Multiple
 /// name views may coexist; all become invalid when the listing is destroyed.
 /// This method does not allocate or mutate the listing.
-public func DirListing.nameStr(self: ref DirListing, index: uint): ref str {
+public func DirListing.nameStr(self: ref DirListing, index: usize): ref str {
     if index >= self.count {
         unsafe {
             return intrinsics.strView<DirListing>(self)
         }
     }
     unsafe {
-        let descriptors = mem.ptrOffset<u8>(self.data, (8 + self.count * 16) as i32) as ptr[DirNameDescriptor]
+        let descriptors = mem.ptrOffset<u8>(self.data, (8 + self.count * 16) as isize) as ptr[DirNameDescriptor]
         let views = intrinsics.sliceFromRaw<DirListing, DirNameDescriptor>(self, descriptors, self.count)
         return intrinsics.strView<DirNameDescriptor>(&views[index])
     }
@@ -337,7 +337,7 @@ public func File.close(self: mut ref File): void {
 /// Metadata information about a file or directory.
 public struct Metadata {
     /// File length in bytes.
-    file_size: uint
+    file_size: usize
     /// Whether the entry is a directory.
     is_dir: bool
     /// Whether the entry is a regular file.
@@ -347,7 +347,7 @@ public struct Metadata {
 }
 
 /// Returns the size of the file in bytes.
-public func Metadata.size(self: ref Metadata): uint {
+public func Metadata.size(self: ref Metadata): usize {
     return self.file_size
 }
 

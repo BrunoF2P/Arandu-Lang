@@ -332,7 +332,9 @@ impl<'a, 'b, M: Module> FunctionTranslator<'a, 'b, M> {
     }
 
     pub(crate) fn poison_i32(&mut self) -> Value {
-        self.builder.ins().iconst(self.ptr_type, 0)
+        self.builder
+            .ins()
+            .iconst(cranelift_codegen::ir::types::I32, 0)
     }
 
     pub(crate) fn poison_value(&mut self, clif_ty: cranelift_codegen::ir::Type) -> Value {

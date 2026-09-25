@@ -55,7 +55,8 @@ exists, this contract does not claim Windows backend Gold.
 | Family | Representation | C | Cranelift host JIT |
 |---|---|---|---|
 | `bool`, bytes, chars, fixed integers | fixed-width scalar | Supported | Supported |
-| `int`, `uint` | target pointer-width scalar | Supported by selected layout | Supported at host width |
+| `int`, `uint` | fixed 32-bit scalar | Supported by selected layout | `I32` |
+| `isize`, `usize` | target pointer-width scalar | Supported by selected layout | Supported at host width |
 | `float`, `f32`, `f64` | IEEE scalar; language `float` is f64 | Supported | Supported |
 | pointers, references, borrows | pointer plus AMIR ownership rules | Supported after borrow lowering | Supported after borrow lowering |
 | arrays, slices, `str` | inline array or `{ptr,len}` fat pointer | Supported; target layout applies | Supported on host layout |

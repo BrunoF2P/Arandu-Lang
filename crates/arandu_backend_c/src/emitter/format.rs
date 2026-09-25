@@ -87,21 +87,17 @@ impl<'a> CEmitter<'a> {
             ArType::Primitive(Primitive::U64) => Cow::Borrowed("uint64_t"),
             ArType::Primitive(Primitive::F32) => Cow::Borrowed("float"),
             ArType::Primitive(Primitive::F64) => Cow::Borrowed("double"),
-            ArType::Primitive(Primitive::Uint) => {
+            ArType::Primitive(Primitive::Uint) => Cow::Borrowed("uint32_t"),
+            ArType::Primitive(Primitive::Int) => Cow::Borrowed("int32_t"),
+            ArType::IntLiteral => Cow::Borrowed("int32_t"),
+            ArType::Primitive(Primitive::USize) => {
                 if self.is_64bit_target() {
                     Cow::Borrowed("uint64_t")
                 } else {
                     Cow::Borrowed("uint32_t")
                 }
             }
-            ArType::IntLiteral => {
-                if self.is_64bit_target() {
-                    Cow::Borrowed("int64_t")
-                } else {
-                    Cow::Borrowed("int32_t")
-                }
-            }
-            ArType::Primitive(Primitive::Int) => {
+            ArType::Primitive(Primitive::ISize) => {
                 if self.is_64bit_target() {
                     Cow::Borrowed("int64_t")
                 } else {
