@@ -1829,6 +1829,101 @@ fn test_seeded_option_result_cmp_differential_across_all_backends() {
 }
 
 #[test]
+fn test_str_mem_across_all_backends() {
+    let source = concat!(
+        "import std.alloc.vec as vec\n",
+        "import std.core.slice as slice\n",
+        "import std.core.str as core_str\n",
+        "import std.core.mem as mem\n",
+        "\n",
+        "func main(): int {\n",
+        "    // 1. String operations\n",
+        "    if !core_str.isEmpty(\"\") || core_str.isEmpty(\"hello\") { return -1 }\n",
+        "    if core_str.lenBytes(\"\") != 0 as usize || core_str.lenBytes(\"hello\") != 5 as usize || core_str.lenBytes(\"olá\") != 4 as usize { return -2 }\n",
+        "    if !core_str.startsWith(\"hello world\", \"hello\") || core_str.startsWith(\"hello\", \"world\") || !core_str.startsWith(\"hello\", \"\") { return -3 }\n",
+        "    if !core_str.endsWith(\"main.aru\", \".aru\") || core_str.endsWith(\"main.c\", \".aru\") || !core_str.endsWith(\"main.aru\", \"\") { return -4 }\n",
+        "    if !core_str.contains(\"arandu compiler\", \"compiler\") || core_str.contains(\"arandu\", \"rust\") || !core_str.contains(\"arandu\", \"\") { return -5 }\n",
+        "    let find_comp = core_str.find(\"arandu compiler\", \"compiler\")\n",
+        "    let find_comp_ok = match find_comp {\n",
+        "        Some(idx) => idx == 7 as usize\n",
+        "        None => false\n",
+        "    }\n",
+        "    if !find_comp_ok { return -6 }\n",
+        "    let find_none = core_str.find(\"arandu\", \"xyz\")\n",
+        "    let find_none_ok = match find_none {\n",
+        "        Some(_) => false\n",
+        "        None => true\n",
+        "    }\n",
+        "    if !find_none_ok { return -7 }\n",
+        "    let find_empty = core_str.find(\"arandu\", \"\")\n",
+        "    let find_empty_ok = match find_empty {\n",
+        "        Some(idx) => idx == 0 as usize\n",
+        "        None => false\n",
+        "    }\n",
+        "    if !find_empty_ok { return -8 }\n",
+        "\n",
+        "    // 2. Memory intrinsics: sizeOf, alignOf\n",
+        "    if mem.sizeOf<int>() != 4 as usize || mem.alignOf<int>() != 4 as usize { return -9 }\n",
+        "    if mem.sizeOf<u8>() != 1 as usize || mem.alignOf<u8>() != 1 as usize { return -10 }\n",
+        "    if mem.sizeOf<u16>() != 2 as usize || mem.alignOf<u16>() != 2 as usize { return -11 }\n",
+        "    if mem.sizeOf<u64>() != 8 as usize || mem.alignOf<u64>() != 8 as usize { return -12 }\n",
+        "    if mem.sizeOf<usize>() < 4 as usize || mem.alignOf<usize>() < 4 as usize { return -13 }\n",
+        "\n",
+        "    // 3. Memory value helpers: swap\n",
+        "    let mut swap_x: int = 111\n",
+        "    let mut swap_y: int = 222\n",
+        "    mem.swap<int>(mut ref swap_x, mut ref swap_y)\n",
+        "    if swap_x != 222 || swap_y != 111 { return -14 }\n",
+        "    let mut rep_val: int = 50\n",
+        "    let old_rep = mem.replace<int>(mut ref rep_val, 99)\n",
+        "    let mut ref_target: int = 0\n",
+        "    mem.refWrite<int>(mut ref ref_target, 333)\n",
+        "    if ref_target != 333 { return -16 }\n",
+        "\n",
+        "    // 4. Raw pointer operations\n",
+        "    let mut v = vec.new<int>()\n",
+        "    if !vec.tryPush<int>(v, 10) || !vec.tryPush<int>(v, 20) {\n",
+        "        vec.destroy<int>(v)\n",
+        "        return -17\n",
+        "    }\n",
+        "    let v_slice = vec.asSlice<int>(v)\n",
+        "    let raw_ptr = slice.asPtr<int>(v_slice)\n",
+        "    let val0 = unsafe { mem.ptrRead<int>(raw_ptr) }\n",
+        "    let ptr1 = unsafe { mem.ptrOffset<int>(raw_ptr, 1 as isize) }\n",
+        "    let val1 = unsafe { mem.ptrRead<int>(ptr1) }\n",
+        "    unsafe { mem.ptrWrite<int>(ptr1, 999) }\n",
+        "    let val1_up = unsafe { mem.ptrRead<int>(ptr1) }\n",
+        "    let elem1 = match vec.get<int>(v, 1 as usize) {\n",
+        "        Some(val) => val\n",
+        "        None => 0\n",
+        "    }\n",
+        "    vec.destroy<int>(v)\n",
+        "    if val0 != 10 || val1 != 20 || val1_up != 999 || elem1 != 999 { return -18 }\n",
+        "\n",
+        "    return 42\n",
+        "}\n",
+    );
+    let observation = check_source(source, true, true).expect("execution across all backends");
+    assert_eq!(observation.result, 42);
+}
+
+#[test]
+fn test_seeded_str_mem_differential_across_all_backends() {
+    for seed in [12, 28] {
+        let source = synthesize(seed);
+        assert!(source.contains("gen_find_prefix"));
+        assert!(source.contains("gen_swap_a"));
+        assert!(source.contains("gen_mem_vec"));
+        let observation = check_source(&source, true, true).expect("execution across all backends");
+        assert!(
+            observation.result >= 0,
+            "seed {seed} failed with return code: {}",
+            observation.result
+        );
+    }
+}
+
+#[test]
 #[ignore]
 fn __smith_jit_worker() {
     let args: Vec<String> = std::env::args().collect();

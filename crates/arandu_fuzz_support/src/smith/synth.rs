@@ -515,6 +515,7 @@ pub fn synthesize_with_oracle(seed: u64) -> SynthesizedProgram {
     let source = add_seeded_try_operator_case(source, seed, base_value);
     let source = add_seeded_slice_iter_case(source, seed, base_value);
     let source = add_seeded_option_result_cmp_case(source, seed, base_value);
+    let source = add_seeded_str_mem_case(source, seed, base_value);
     SynthesizedProgram {
         source,
         expected_result,
@@ -1166,6 +1167,130 @@ fn add_seeded_option_result_cmp_case(source: String, seed: u64, base: i64) -> St
             "    let gen_clamp_high = cmp.clampBy(PriorityItem {{ priority: {v1} + 5, payload: 250 }}, PriorityItem {{ priority: {v0}, payload: 100 }}, PriorityItem {{ priority: {v1}, payload: 200 }})\n",
             "    if gen_clamp_high.priority != {v1} {{ return -1000233 }}\n",
         ),
+        v0 = v0,
+        v1 = v1,
+        v2 = v2,
+    );
+
+    replace_once(
+        source,
+        "    let base: int = ",
+        &format!("{scenario}    let base: int = "),
+    )
+}
+
+/// Add a seed-varying scenario exercising std.core.str (isEmpty, lenBytes, startsWith, endsWith, contains, find)
+/// and std.core.mem (sizeOf, alignOf, swap, replace, take, refWrite, ptrOffset, ptrRead, ptrWrite).
+fn add_seeded_str_mem_case(source: String, seed: u64, base: i64) -> String {
+    if seed % 16 != 12 {
+        return source;
+    }
+
+    let source = replace_once(
+        source,
+        "import std.core.result as core_result",
+        "import std.core.result as core_result\nimport std.core.option as core_option\nimport std.core.str as core_str\nimport std.core.mem as mem",
+    );
+
+    let (full, full_len, prefix, suffix, mid_needle, mid_idx, non_matching) =
+        if ((seed / 16) & 1) == 0 {
+            ("arandu", 6, "aran", "ndu", "ran", 1, "rust")
+        } else {
+            ("compiler", 8, "comp", "ler", "pil", 3, "python")
+        };
+
+    let v0 = base + 41;
+    let v1 = base + 73;
+    let v2 = base + 97;
+
+    let scenario = format!(
+        concat!(
+            // 1. String checks: empty, length, prefix, suffix, contains, find
+            "    if !core_str.isEmpty(\"\") || core_str.isEmpty(\"{full}\") {{ return -1000301 }}\n",
+            "    if core_str.lenBytes(\"\") != 0 as usize || core_str.lenBytes(\"{full}\") != {full_len} as usize || core_str.lenBytes(\"café\") != 5 as usize {{ return -1000302 }}\n",
+            "    if !core_str.startsWith(\"{full}\", \"{prefix}\") || core_str.startsWith(\"{full}\", \"{non_matching}\") || !core_str.startsWith(\"{full}\", \"\") || !core_str.startsWith(\"\", \"\") || core_str.startsWith(\"\", \"{prefix}\") {{ return -1000303 }}\n",
+            "    if !core_str.endsWith(\"{full}\", \"{suffix}\") || core_str.endsWith(\"{full}\", \"{prefix}\") || !core_str.endsWith(\"{full}\", \"\") || !core_str.endsWith(\"\", \"\") || core_str.endsWith(\"\", \"{suffix}\") {{ return -1000304 }}\n",
+            "    if !core_str.contains(\"{full}\", \"{mid_needle}\") || core_str.contains(\"{full}\", \"{non_matching}\") || !core_str.contains(\"{full}\", \"\") || !core_str.contains(\"\", \"\") || core_str.contains(\"\", \"{mid_needle}\") {{ return -1000305 }}\n",
+            "    let gen_find_prefix = core_str.find(\"{full}\", \"{prefix}\")\n",
+            "    let gen_find_prefix_ok = match gen_find_prefix {{\n",
+            "        Some(idx) => idx == 0 as usize\n",
+            "        None => false\n",
+            "    }}\n",
+            "    let gen_find_mid = core_str.find(\"{full}\", \"{mid_needle}\")\n",
+            "    let gen_find_mid_ok = match gen_find_mid {{\n",
+            "        Some(idx) => idx == {mid_idx} as usize\n",
+            "        None => false\n",
+            "    }}\n",
+            "    let gen_find_none = core_str.find(\"{full}\", \"{non_matching}\")\n",
+            "    let gen_find_none_ok = match gen_find_none {{\n",
+            "        Some(_) => false\n",
+            "        None => true\n",
+            "    }}\n",
+            "    let gen_find_empty = core_str.find(\"{full}\", \"\")\n",
+            "    let gen_find_empty_ok = match gen_find_empty {{\n",
+            "        Some(idx) => idx == 0 as usize\n",
+            "        None => false\n",
+            "    }}\n",
+            "    let gen_find_in_empty = core_str.find(\"\", \"a\")\n",
+            "    let gen_find_in_empty_ok = match gen_find_in_empty {{\n",
+            "        Some(_) => false\n",
+            "        None => true\n",
+            "    }}\n",
+            "    let gen_find_empty_in_empty = core_str.find(\"\", \"\")\n",
+            "    let gen_find_empty_in_empty_ok = match gen_find_empty_in_empty {{\n",
+            "        Some(idx) => idx == 0 as usize\n",
+            "        None => false\n",
+            "    }}\n",
+            "    if !gen_find_prefix_ok || !gen_find_mid_ok || !gen_find_none_ok || !gen_find_empty_ok || !gen_find_in_empty_ok || !gen_find_empty_in_empty_ok {{ return -1000306 }}\n",
+
+            // 2. Memory intrinsics: sizeOf, alignOf
+            "    if mem.sizeOf<int>() != 4 as usize || mem.alignOf<int>() != 4 as usize {{ return -1000307 }}\n",
+            "    if mem.sizeOf<u8>() != 1 as usize || mem.alignOf<u8>() != 1 as usize {{ return -1000308 }}\n",
+            "    if mem.sizeOf<u16>() != 2 as usize || mem.alignOf<u16>() != 2 as usize {{ return -1000309 }}\n",
+            "    if mem.sizeOf<u64>() != 8 as usize || mem.alignOf<u64>() != 8 as usize {{ return -1000310 }}\n",
+            "    if mem.sizeOf<usize>() < 4 as usize || mem.alignOf<usize>() < 4 as usize {{ return -1000311 }}\n",
+
+            // 3. Memory value helpers: swap, replace, refWrite
+            "    let mut gen_swap_a: int = {v0}\n",
+            "    let mut gen_swap_b: int = {v1}\n",
+            "    mem.swap<int>(mut ref gen_swap_a, mut ref gen_swap_b)\n",
+            "    if gen_swap_a != {v1} || gen_swap_b != {v0} {{ return -1000312 }}\n",
+
+            "    let mut gen_replace_dest: int = {v0}\n",
+            "    let gen_old_val = mem.replace<int>(mut ref gen_replace_dest, {v2})\n",
+            "    if gen_old_val != {v0} || gen_replace_dest != {v2} {{ return -1000313 }}\n",
+
+            "    let mut gen_write_target: int = 0\n",
+            "    mem.refWrite<int>(mut ref gen_write_target, {v0})\n",
+            "    if gen_write_target != {v0} {{ return -1000314 }}\n",
+
+            // 4. Raw pointer operations: ptrOffset, ptrRead, ptrWrite via heap slice
+            "    let mut gen_mem_vec = vec.new<int>()\n",
+            "    if !vec.tryPush<int>(gen_mem_vec, {v0}) || !vec.tryPush<int>(gen_mem_vec, {v1}) {{\n",
+            "        vec.destroy<int>(gen_mem_vec)\n",
+            "        return -1000315\n",
+            "    }}\n",
+            "    let gen_vec_slice = vec.asSlice<int>(gen_mem_vec)\n",
+            "    let gen_raw_ptr = slice.asPtr<int>(gen_vec_slice)\n",
+            "    let gen_read0 = unsafe {{ mem.ptrRead<int>(gen_raw_ptr) }}\n",
+            "    let gen_ptr1 = unsafe {{ mem.ptrOffset<int>(gen_raw_ptr, 1 as isize) }}\n",
+            "    let gen_read1 = unsafe {{ mem.ptrRead<int>(gen_ptr1) }}\n",
+            "    unsafe {{ mem.ptrWrite<int>(gen_ptr1, {v2}) }}\n",
+            "    let gen_read1_updated = unsafe {{ mem.ptrRead<int>(gen_ptr1) }}\n",
+            "    let gen_vec_elem1 = match vec.get<int>(gen_mem_vec, 1 as usize) {{\n",
+            "        Some(v) => v\n",
+            "        None => 0\n",
+            "    }}\n",
+            "    vec.destroy<int>(gen_mem_vec)\n",
+            "    if gen_read0 != {v0} || gen_read1 != {v1} || gen_read1_updated != {v2} || gen_vec_elem1 != {v2} {{ return -1000316 }}\n",
+        ),
+        full = full,
+        full_len = full_len,
+        prefix = prefix,
+        suffix = suffix,
+        mid_needle = mid_needle,
+        mid_idx = mid_idx,
+        non_matching = non_matching,
         v0 = v0,
         v1 = v1,
         v2 = v2,
