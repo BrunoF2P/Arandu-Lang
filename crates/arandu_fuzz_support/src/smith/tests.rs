@@ -389,6 +389,13 @@ fn synthesized_seeded_collection_cases_match_every_backend_and_level() {
     assert!(generated[1]
         .source
         .contains("generated_bit_seed = generated_bits.insert(129 as usize)"));
+    assert!(generated[0]
+        .source
+        .contains("bs_union.unionWith(ref bs_cap)"));
+    assert!(generated[0]
+        .source
+        .contains("generated_map_pre = hash_map.withCapacity"));
+    assert!(generated[0].source.contains("cap_vec = vec.withCapacity"));
 
     for generated in generated {
         assert!(generated.source.contains("GeneratedKey.hash"));
@@ -1919,6 +1926,128 @@ fn test_seeded_str_mem_differential_across_all_backends() {
             observation.result >= 0,
             "seed {seed} failed with return code: {}",
             observation.result
+        );
+    }
+}
+
+#[test]
+fn test_collections_across_all_backends() {
+    let source = concat!(
+        "import std.alloc.vec as vec\n",
+        "import std.alloc.hash_map as hash_map\n",
+        "import std.alloc.bitset as bitset\n",
+        "import std.core.hash as hash\n",
+        "\n",
+        "struct MapKey {\n",
+        "    id: int\n",
+        "}\n",
+        "func MapKey.eq(self: ref MapKey, other: ref MapKey): bool {\n",
+        "    return self.id == other.id\n",
+        "}\n",
+        "func MapKey.hash<H: hash.Hasher>(self: ref MapKey, state: mut ref H): void {\n",
+        "    state.writeInt(self.id)\n",
+        "}\n",
+        "\n",
+        "func main(): int {\n",
+        "    // 1. Vec withCapacity, isEmpty, push, pop, clear\n",
+        "    let mut v = vec.withCapacity<int>(16 as usize)\n",
+        "    if !vec.isEmpty<int>(v) || vec.len<int>(v) != 0 as usize || vec.capacity<int>(v) < 16 as usize { return -1 }\n",
+        "    vec.push<int>(v, 100)\n",
+        "    vec.push<int>(v, 200)\n",
+        "    if vec.isEmpty<int>(v) || vec.len<int>(v) != 2 as usize { return -2 }\n",
+        "    let popped = match vec.pop<int>(v) {\n",
+        "        Some(val) => val == 200\n",
+        "        None => false\n",
+        "    }\n",
+        "    if !popped || vec.len<int>(v) != 1 as usize { return -3 }\n",
+        "    vec.clear<int>(v)\n",
+        "    if !vec.isEmpty<int>(v) || vec.len<int>(v) != 0 as usize || vec.capacity<int>(v) < 16 as usize { return -4 }\n",
+        "    v.destroy()\n",
+        "\n",
+        "    // 2. HashMap withCapacity, insert, contains, remove, clear\n",
+        "    let mut map = hash_map.withCapacity<MapKey, int>(16 as usize)\n",
+        "    if !hash_map.isEmpty<MapKey, int>(map) || hash_map.capacity<MapKey, int>(map) != 16 as usize { return -5 }\n",
+        "    let k1 = MapKey { id: 1 }\n",
+        "    let k2 = MapKey { id: 2 }\n",
+        "    hash_map.insert<MapKey, int>(map, k1, 10)\n",
+        "    hash_map.insert<MapKey, int>(map, k2, 20)\n",
+        "    if hash_map.isEmpty<MapKey, int>(map) || hash_map.len<MapKey, int>(map) != 2 as usize { return -6 }\n",
+        "    if !hash_map.contains<MapKey, int>(map, ref k1) || !hash_map.contains<MapKey, int>(map, ref k2) { return -7 }\n",
+        "    let k3 = MapKey { id: 3 }\n",
+        "    if hash_map.contains<MapKey, int>(map, ref k3) { return -8 }\n",
+        "    let rem1 = match hash_map.remove<MapKey, int>(map, ref k1) {\n",
+        "        Some(val) => val == 10\n",
+        "        None => false\n",
+        "    }\n",
+        "    if !rem1 || hash_map.contains<MapKey, int>(map, ref k1) || hash_map.len<MapKey, int>(map) != 1 as usize { return -9 }\n",
+        "    hash_map.clear<MapKey, int>(map)\n",
+        "    if !hash_map.isEmpty<MapKey, int>(map) || hash_map.len<MapKey, int>(map) != 0 as usize { return -10 }\n",
+        "    map.destroy()\n",
+        "\n",
+        "    // 3. BitSet bitsetWithCapacity, set ops (union, intersect, diff)\n",
+        "    let mut bs1 = bitset.bitsetWithCapacity(128 as usize)\n",
+        "    if bs1.countOnes() != 0 as uint || bs1.contains(0 as usize) || bs1.contains(64 as usize) { return -11 }\n",
+        "    bs1.insert(1 as usize)\n",
+        "    bs1.insert(70 as usize)\n",
+        "    let mut bs2 = bitset.bitsetNew()\n",
+        "    bs2.insert(70 as usize)\n",
+        "    bs2.insert(100 as usize)\n",
+        "    let mut bs_u = bitset.bitsetNew()\n",
+        "    bs_u.unionWith(ref bs1)\n",
+        "    bs_u.unionWith(ref bs2)\n",
+        "    if bs_u.countOnes() != 3 as uint || !bs_u.contains(1 as usize) || !bs_u.contains(70 as usize) || !bs_u.contains(100 as usize) { return -12 }\n",
+        "    let mut bs_i = bitset.bitsetNew()\n",
+        "    bs_i.unionWith(ref bs1)\n",
+        "    bs_i.intersectWith(ref bs2)\n",
+        "    if bs_i.countOnes() != 1 as uint || !bs_i.contains(70 as usize) || bs_i.contains(1 as usize) || bs_i.contains(100 as usize) { return -13 }\n",
+        "    let mut bs_d = bitset.bitsetNew()\n",
+        "    bs_d.unionWith(ref bs1)\n",
+        "    bs_d.differenceWith(ref bs2)\n",
+        "    if bs_d.countOnes() != 1 as uint || !bs_d.contains(1 as usize) || bs_d.contains(70 as usize) { return -14 }\n",
+        "\n",
+        "    return 42\n",
+        "}\n",
+    );
+    let observation = check_source(source, true, true).expect("execution across all backends");
+    assert_eq!(observation.result, 42);
+}
+
+#[test]
+fn test_shrinker_early_cutoff_and_reproduction() {
+    let source = concat!(
+        "func helper_a(): int { return 1 }\n",
+        "func helper_b(): int { return 2 }\n",
+        "func helper_c(): int { return 3 }\n",
+        "func main(): int { return 99 }\n",
+    );
+    // Early cutoff with budget = 1 attempt
+    let mut oracle_attempts = 0;
+    let (result, confirmed) = shrink_and_confirm(source, 1, |candidate| {
+        oracle_attempts += 1;
+        candidate.contains("return 99")
+    });
+    assert!(result.reproduced);
+    assert!(confirmed);
+    assert!(result.attempts <= 2);
+    assert_eq!(oracle_attempts, result.attempts + 1);
+    assert!(result.source.contains("return 99"));
+
+    // Early cutoff when candidate does not reproduce
+    let (failed_shrink, unconfirmed) = shrink_and_confirm(source, 8, |_| false);
+    assert!(!failed_shrink.reproduced);
+    assert!(!unconfirmed);
+    assert_eq!(failed_shrink.source, source);
+}
+
+#[test]
+fn test_smith_synthesis_determinism_and_snapshot() {
+    for seed in [0, 4, 8, 12, 64] {
+        let p1 = synthesize_with_oracle(seed);
+        let p2 = synthesize_with_oracle(seed);
+        assert_eq!(p1.expected_result, p2.expected_result);
+        assert_eq!(
+            p1.source, p2.source,
+            "synthesis must be deterministic for seed {seed}"
         );
     }
 }

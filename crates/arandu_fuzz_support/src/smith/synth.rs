@@ -464,6 +464,17 @@ pub fn synthesize_with_oracle(seed: u64) -> SynthesizedProgram {
             "        return -1000048\n",
             "    }\n",
             "    unsigned_values.destroy()\n",
+            "    let mut cap_vec = vec.withCapacity<int>(16 as usize)\n",
+            "    let cap_vec_init_ok = vec.capacity<int>(cap_vec) >= (16 as usize) && vec.isEmpty<int>(cap_vec) && vec.len<int>(cap_vec) == (0 as usize)\n",
+            "    vec.push<int>(cap_vec, sample.right)\n",
+            "    vec.push<int>(cap_vec, sample.left)\n",
+            "    let cap_vec_push_ok = !vec.isEmpty<int>(cap_vec) && vec.len<int>(cap_vec) == (2 as usize)\n",
+            "    vec.clear<int>(cap_vec)\n",
+            "    let cap_vec_clear_ok = vec.isEmpty<int>(cap_vec) && vec.len<int>(cap_vec) == (0 as usize) && vec.capacity<int>(cap_vec) >= (16 as usize)\n",
+            "    cap_vec.destroy()\n",
+            "    if !cap_vec_init_ok || !cap_vec_push_ok || !cap_vec_clear_ok {\n",
+            "        return -1000059\n",
+            "    }\n",
             "    let mut result_values = transfer<vec.Vec<core_result.Result<int, bool>>>(relay<vec.Vec<core_result.Result<int, bool>>>(make_vec<core_result.Result<int, bool>>()))\n",
             "    if !vec.tryReserve<core_result.Result<int, bool>>(result_values, 2 as usize) {\n",
             "        result_values.destroy()\n",
@@ -575,6 +586,17 @@ fn add_seeded_hash_map_case(source: String, seed: u64, base: i64) -> String {
             "    let generated_map_key{index} = GeneratedKey {{ value: {key} }}\n"
         ));
     }
+    scenario.push_str(
+        "    let mut generated_map_pre = hash_map.withCapacity<GeneratedKey, int>(16 as usize)\n",
+    );
+    scenario.push_str("    let map_pre_cap_ok = hash_map.capacity<GeneratedKey, int>(generated_map_pre) == 16 as usize\n");
+    scenario.push_str("    let map_pre_empty_ok = hash_map.isEmpty<GeneratedKey, int>(generated_map_pre) && hash_map.len<GeneratedKey, int>(generated_map_pre) == 0 as usize\n");
+    scenario.push_str(&format!(
+        "    hash_map.insert<GeneratedKey, int>(generated_map_pre, generated_map_key0, {})\n",
+        values[0]
+    ));
+    scenario.push_str("    let map_pre_contains_ok = hash_map.contains<GeneratedKey, int>(generated_map_pre, ref generated_map_key0) && !hash_map.contains<GeneratedKey, int>(generated_map_pre, ref generated_map_key1)\n");
+    scenario.push_str("    generated_map_pre.destroy()\n");
     scenario.push_str("    let mut generated_map = hash_map.new<GeneratedKey, int>()\n");
     scenario.push_str("    let map_hashes_collide = ((hash_map.hashKey<GeneratedKey>(ref generated_map_key0) as uint) & 7) == ((hash_map.hashKey<GeneratedKey>(ref generated_map_key5) as uint) & 7)\n");
     for (index, value) in values.iter().enumerate().take(6) {
@@ -642,7 +664,7 @@ fn add_seeded_hash_map_case(source: String, seed: u64, base: i64) -> String {
         values[2]
     ));
     scenario.push_str("    generated_map.destroy()\n");
-    scenario.push_str("    if !map_hashes_collide || !map_initial_capacity_ok || !map_initial_len_ok || !map_previous_ok || !map_replacement_ok || !map_head_shift_ok || !map_middle_shift_ok || !map_growth_ok || !map_tail_ok || !map_clear_ok || !map_reuse_ok { return -1000055 }\n");
+    scenario.push_str("    if !map_hashes_collide || !map_pre_cap_ok || !map_pre_empty_ok || !map_pre_contains_ok || !map_initial_capacity_ok || !map_initial_len_ok || !map_previous_ok || !map_replacement_ok || !map_head_shift_ok || !map_middle_shift_ok || !map_growth_ok || !map_tail_ok || !map_clear_ok || !map_reuse_ok { return -1000055 }\n");
 
     replace_once(
         source,
@@ -702,7 +724,27 @@ fn add_seeded_bitset_case(source: String, seed: u64) -> String {
             "    generated_bits.clear()\n",
             "    let generated_bit_clear = generated_bits.countOnes() == 0 as uint && !generated_bits.contains(127 as usize)\n",
             "    let generated_bit_reuse = generated_bits.insert({seed_bit} as usize) && generated_bits.contains({seed_bit} as usize) && generated_bits.countOnes() == 1 as uint\n",
-            "    if !generated_bit0 || !generated_bit63 || !generated_bit64 || !generated_bit127 || !generated_bit_seed || generated_bit_duplicate || !generated_bit_membership || !generated_bit_count || !generated_bit_removed || !generated_bit_shift_safe || generated_bit_missing_remove || !generated_bit_clear || !generated_bit_reuse {{ return -1000056 }}\n",
+            "    let mut bs_cap = bitset.bitsetWithCapacity(192 as usize)\n",
+            "    let bs_cap_initial = bs_cap.countOnes() == 0 as uint && !bs_cap.contains(0 as usize) && !bs_cap.contains(128 as usize)\n",
+            "    bs_cap.insert(1 as usize)\n",
+            "    bs_cap.insert(64 as usize)\n",
+            "    bs_cap.insert(190 as usize)\n",
+            "    let mut bs_other = bitset.bitsetNew()\n",
+            "    bs_other.insert(64 as usize)\n",
+            "    bs_other.insert(128 as usize)\n",
+            "    let mut bs_union = bitset.bitsetNew()\n",
+            "    bs_union.unionWith(ref bs_cap)\n",
+            "    bs_union.unionWith(ref bs_other)\n",
+            "    let bs_union_ok = bs_union.countOnes() == 4 as uint && bs_union.contains(1 as usize) && bs_union.contains(64 as usize) && bs_union.contains(128 as usize) && bs_union.contains(190 as usize)\n",
+            "    let mut bs_inter = bitset.bitsetNew()\n",
+            "    bs_inter.unionWith(ref bs_cap)\n",
+            "    bs_inter.intersectWith(ref bs_other)\n",
+            "    let bs_inter_ok = bs_inter.countOnes() == 1 as uint && bs_inter.contains(64 as usize) && !bs_inter.contains(1 as usize) && !bs_inter.contains(128 as usize)\n",
+            "    let mut bs_diff = bitset.bitsetNew()\n",
+            "    bs_diff.unionWith(ref bs_cap)\n",
+            "    bs_diff.differenceWith(ref bs_other)\n",
+            "    let bs_diff_ok = bs_diff.countOnes() == 2 as uint && bs_diff.contains(1 as usize) && bs_diff.contains(190 as usize) && !bs_diff.contains(64 as usize)\n",
+            "    if !generated_bit0 || !generated_bit63 || !generated_bit64 || !generated_bit127 || !generated_bit_seed || generated_bit_duplicate || !generated_bit_membership || !generated_bit_count || !generated_bit_removed || !generated_bit_shift_safe || generated_bit_missing_remove || !generated_bit_clear || !generated_bit_reuse || !bs_cap_initial || !bs_union_ok || !bs_inter_ok || !bs_diff_ok {{ return -1000056 }}\n",
         ),
         seed_bit = seed_bit,
     );

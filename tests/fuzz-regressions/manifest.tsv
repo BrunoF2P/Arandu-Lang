@@ -34,3 +34,4 @@ emi-arena-lifecycle.seed	emi-corpus	rfc:0022	dead-code EMI over std.alloc.arena 
 emi-string-lifecycle.seed	emi-corpus	rfc:0022	dead-code EMI over std.alloc.string append/growth, borrowed str and byte views, UTF-8 prefix/substring/suffix checks, byte lengths, boundary-safe truncation, capacity failure, clearing, and destruction with a known result across Cranelift/C/Wasm
 emi-num-boundaries.seed	emi-corpus	rfc:0022	dead-code EMI over std.core.num checked and saturating add/sub/mul at signed integer boundaries with target-width-aware oracle across Cranelift/C/Wasm and O0/O1/O2
 rfc23-hash-fixed-int.seed	synthesized-all	rfc:0023	fixed-width int hash must produce a genuine collision case and preserve optimization plus backend parity
+rfc22-smith-stdlib.seed	synthesized-all	rfc:0022	seeded AranduSmith expanded stdlib differential suite across Cranelift, C, and WebAssembly
