@@ -514,6 +514,7 @@ pub fn synthesize_with_oracle(seed: u64) -> SynthesizedProgram {
     let source = add_seeded_bitset_case(source, seed);
     let source = add_seeded_try_operator_case(source, seed, base_value);
     let source = add_seeded_slice_iter_case(source, seed, base_value);
+    let source = add_seeded_option_result_cmp_case(source, seed, base_value);
     SynthesizedProgram {
         source,
         expected_result,
@@ -1044,6 +1045,130 @@ fn add_seeded_slice_iter_case(source: String, seed: u64, base: i64) -> String {
         v5 = v5,
         v6 = v6,
         v7 = v7,
+    );
+
+    replace_once(
+        source,
+        "    let base: int = ",
+        &format!("{scenario}    let base: int = "),
+    )
+}
+
+/// Add a seed-varying scenario exercising Option, Result, and Cmp (Ordering, min, max, clamp, and Ord interface dispatch).
+fn add_seeded_option_result_cmp_case(source: String, seed: u64, base: i64) -> String {
+    if seed % 16 != 4 {
+        return source;
+    }
+
+    let declarations = concat!(
+        "struct PriorityItem {\n",
+        "    priority: int\n",
+        "    payload: int\n",
+        "}\n\n",
+        "func PriorityItem.cmp(self: ref PriorityItem, other: ref PriorityItem): cmp.Ordering {\n",
+        "    if self.priority < other.priority {\n",
+        "        return cmp.Ordering.Less\n",
+        "    }\n",
+        "    if self.priority > other.priority {\n",
+        "        return cmp.Ordering.Greater\n",
+        "    }\n",
+        "    return cmp.Ordering.Equal\n",
+        "}\n\n",
+    );
+
+    let source = replace_once(
+        source,
+        "import std.core.result as core_result",
+        "import std.core.result as core_result\nimport std.core.option as core_option\nimport std.core.cmp as cmp",
+    );
+    let source = replace_once(
+        source,
+        "struct Sample {",
+        &format!("{declarations}struct Sample {{"),
+    );
+
+    let v0 = base + 11;
+    let v1 = base + 22;
+    let v2 = base + 33;
+
+    let scenario = format!(
+        concat!(
+            // 1. Option checks
+            "    let gen_some_val: Option<int> = Option.Some({v0})\n",
+            "    let gen_none_val: Option<int> = Option.None\n",
+            "    if !gen_some_val.isSome() || gen_some_val.isNone() {{ return -1000201 }}\n",
+            "    if gen_none_val.isSome() || !gen_none_val.isNone() {{ return -1000202 }}\n",
+            "    if gen_some_val.unwrapOr({v1}) != {v0} {{ return -1000203 }}\n",
+            "    if gen_none_val.unwrapOr({v1}) != {v1} {{ return -1000204 }}\n",
+            "    let gen_nested_opt: Option<Option<int>> = Option.Some(Option.Some({v2}))\n",
+            "    let gen_nested_ok = match gen_nested_opt {{\n",
+            "        Some(inner) => match inner {{\n",
+            "            Some(v) => v == {v2}\n",
+            "            None => false\n",
+            "        }}\n",
+            "        None => false\n",
+            "    }}\n",
+            "    if !gen_nested_ok {{ return -1000205 }}\n",
+            "    let gen_inner_none: Option<int> = Option.None\n",
+            "    let gen_nested_none: Option<Option<int>> = Option.Some(gen_inner_none)\n",
+            "    let gen_nested_none_ok = match gen_nested_none {{\n",
+            "        Some(inner) => match inner {{\n",
+            "            Some(_) => false\n",
+            "            None => true\n",
+            "        }}\n",
+            "        None => false\n",
+            "    }}\n",
+            "    if !gen_nested_none_ok {{ return -1000206 }}\n",
+
+            // 2. Result checks
+            "    let gen_ok_res: Result<int, int> = Result.Ok({v0})\n",
+            "    let gen_err_res: Result<int, int> = Result.Err({v1})\n",
+            "    if !gen_ok_res.isOk() || gen_ok_res.isErr() {{ return -1000207 }}\n",
+            "    if gen_err_res.isOk() || !gen_err_res.isErr() {{ return -1000208 }}\n",
+            "    if gen_ok_res.unwrapOr({v2}) != {v0} {{ return -1000209 }}\n",
+            "    if gen_err_res.unwrapOr({v2}) != {v2} {{ return -1000210 }}\n",
+            "    let gen_ok_to_opt = gen_ok_res.ok()\n",
+            "    if !gen_ok_to_opt.isSome() || gen_ok_to_opt.unwrapOr(0) != {v0} {{ return -1000211 }}\n",
+            "    let gen_err_to_opt = gen_err_res.ok()\n",
+            "    if gen_err_to_opt.isSome() || !gen_err_to_opt.isNone() {{ return -1000212 }}\n",
+            "    let gen_ok_to_err = gen_ok_res.err()\n",
+            "    if gen_ok_to_err.isSome() || !gen_ok_to_err.isNone() {{ return -1000213 }}\n",
+            "    let gen_err_to_err = gen_err_res.err()\n",
+            "    if !gen_err_to_err.isSome() || gen_err_to_err.unwrapOr(0) != {v1} {{ return -1000214 }}\n",
+
+            // 3. Ordering enum & helpers
+            "    if !cmp.Ordering.Less.isLess() || cmp.Ordering.Less.isEqual() || cmp.Ordering.Less.isGreater() {{ return -1000215 }}\n",
+            "    if cmp.Ordering.Equal.isLess() || !cmp.Ordering.Equal.isEqual() || cmp.Ordering.Equal.isGreater() {{ return -1000216 }}\n",
+            "    if cmp.Ordering.Greater.isLess() || cmp.Ordering.Greater.isEqual() || !cmp.Ordering.Greater.isGreater() {{ return -1000217 }}\n",
+            "    if !cmp.Ordering.Equal.then(cmp.Ordering.Less).isLess() {{ return -1000218 }}\n",
+            "    if !cmp.Ordering.Equal.then(cmp.Ordering.Greater).isGreater() {{ return -1000219 }}\n",
+            "    if !cmp.Ordering.Less.then(cmp.Ordering.Greater).isLess() {{ return -1000220 }}\n",
+            "    if !cmp.Ordering.Greater.then(cmp.Ordering.Less).isGreater() {{ return -1000221 }}\n",
+
+            // 4. Scalar comparison helpers
+            "    if cmp.min({v0}, {v1}) != {v0} {{ return -1000222 }}\n",
+            "    if cmp.min({v1}, {v0}) != {v0} {{ return -1000223 }}\n",
+            "    if cmp.max({v0}, {v1}) != {v1} {{ return -1000224 }}\n",
+            "    if cmp.max({v1}, {v0}) != {v1} {{ return -1000225 }}\n",
+            "    if cmp.clamp({v0} - 10, {v0}, {v1}) != {v0} {{ return -1000226 }}\n",
+            "    if cmp.clamp({v0} + 5, {v0}, {v1}) != ({v0} + 5) {{ return -1000227 }}\n",
+            "    if cmp.clamp({v1} + 10, {v0}, {v1}) != {v1} {{ return -1000228 }}\n",
+
+            // 5. Generic Ord interface dispatch
+            "    let gen_min_item = cmp.minBy(PriorityItem {{ priority: {v0}, payload: 100 }}, PriorityItem {{ priority: {v1}, payload: 200 }})\n",
+            "    if gen_min_item.priority != {v0} || gen_min_item.payload != 100 {{ return -1000229 }}\n",
+            "    let gen_max_item = cmp.maxBy(PriorityItem {{ priority: {v0}, payload: 100 }}, PriorityItem {{ priority: {v1}, payload: 200 }})\n",
+            "    if gen_max_item.priority != {v1} || gen_max_item.payload != 200 {{ return -1000230 }}\n",
+            "    let gen_clamp_low = cmp.clampBy(PriorityItem {{ priority: {v0} - 5, payload: 50 }}, PriorityItem {{ priority: {v0}, payload: 100 }}, PriorityItem {{ priority: {v1}, payload: 200 }})\n",
+            "    if gen_clamp_low.priority != {v0} {{ return -1000231 }}\n",
+            "    let gen_clamp_mid = cmp.clampBy(PriorityItem {{ priority: {v0} + 5, payload: 150 }}, PriorityItem {{ priority: {v0}, payload: 100 }}, PriorityItem {{ priority: {v1}, payload: 200 }})\n",
+            "    if gen_clamp_mid.priority != ({v0} + 5) {{ return -1000232 }}\n",
+            "    let gen_clamp_high = cmp.clampBy(PriorityItem {{ priority: {v1} + 5, payload: 250 }}, PriorityItem {{ priority: {v0}, payload: 100 }}, PriorityItem {{ priority: {v1}, payload: 200 }})\n",
+            "    if gen_clamp_high.priority != {v1} {{ return -1000233 }}\n",
+        ),
+        v0 = v0,
+        v1 = v1,
+        v2 = v2,
     );
 
     replace_once(

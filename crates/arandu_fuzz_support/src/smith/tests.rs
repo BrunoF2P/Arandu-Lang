@@ -1715,6 +1715,120 @@ fn test_seeded_slice_iter_differential_across_all_backends() {
 }
 
 #[test]
+fn test_option_result_cmp_across_all_backends() {
+    let source = concat!(
+        "import std.core.option as core_option\n",
+        "import std.core.result as core_result\n",
+        "import std.core.cmp as cmp\n\n",
+        "struct PriorityItem {\n",
+        "    priority: int\n",
+        "    payload: int\n",
+        "}\n\n",
+        "func PriorityItem.cmp(self: ref PriorityItem, other: ref PriorityItem): cmp.Ordering {\n",
+        "    if self.priority < other.priority {\n",
+        "        return cmp.Ordering.Less\n",
+        "    }\n",
+        "    if self.priority > other.priority {\n",
+        "        return cmp.Ordering.Greater\n",
+        "    }\n",
+        "    return cmp.Ordering.Equal\n",
+        "}\n\n",
+        "func main(): int {\n",
+        "    // 1. Option checks\n",
+        "    let some_val: Option<int> = Option.Some(42)\n",
+        "    let none_val: Option<int> = Option.None\n",
+        "    if !some_val.isSome() || some_val.isNone() { return -1 }\n",
+        "    if none_val.isSome() || !none_val.isNone() { return -2 }\n",
+        "    if some_val.unwrapOr(0) != 42 { return -3 }\n",
+        "    if none_val.unwrapOr(100) != 100 { return -4 }\n",
+        "    let nested_opt: Option<Option<int>> = Option.Some(Option.Some(77))\n",
+        "    let nested_ok = match nested_opt {\n",
+        "        Some(inner) => match inner {\n",
+        "            Some(v) => v == 77\n",
+        "            None => false\n",
+        "        }\n",
+        "        None => false\n",
+        "    }\n",
+        "    if !nested_ok { return -5 }\n",
+        "    let inner_none: Option<int> = Option.None\n",
+        "    let nested_none: Option<Option<int>> = Option.Some(inner_none)\n",
+        "    let nested_none_ok = match nested_none {\n",
+        "        Some(inner) => match inner {\n",
+        "            Some(_) => false\n",
+        "            None => true\n",
+        "        }\n",
+        "        None => false\n",
+        "    }\n",
+        "    if !nested_none_ok { return -6 }\n",
+        "\n",
+        "    // 2. Result checks\n",
+        "    let ok_res: Result<int, int> = Result.Ok(55)\n",
+        "    let err_res: Result<int, int> = Result.Err(99)\n",
+        "    if !ok_res.isOk() || ok_res.isErr() { return -7 }\n",
+        "    if err_res.isOk() || !err_res.isErr() { return -8 }\n",
+        "    if ok_res.unwrapOr(0) != 55 { return -9 }\n",
+        "    if err_res.unwrapOr(123) != 123 { return -10 }\n",
+        "    let ok_to_opt = ok_res.ok()\n",
+        "    if !ok_to_opt.isSome() || ok_to_opt.unwrapOr(0) != 55 { return -11 }\n",
+        "    let err_to_opt = err_res.ok()\n",
+        "    if err_to_opt.isSome() || !err_to_opt.isNone() { return -12 }\n",
+        "    let ok_to_err = ok_res.err()\n",
+        "    if ok_to_err.isSome() || !ok_to_err.isNone() { return -13 }\n",
+        "    let err_to_err = err_res.err()\n",
+        "    if !err_to_err.isSome() || err_to_err.unwrapOr(0) != 99 { return -14 }\n",
+        "\n",
+        "    // 3. Ordering enum & helpers\n",
+        "    if !cmp.Ordering.Less.isLess() || cmp.Ordering.Less.isEqual() || cmp.Ordering.Less.isGreater() { return -15 }\n",
+        "    if cmp.Ordering.Equal.isLess() || !cmp.Ordering.Equal.isEqual() || cmp.Ordering.Equal.isGreater() { return -16 }\n",
+        "    if cmp.Ordering.Greater.isLess() || cmp.Ordering.Greater.isEqual() || !cmp.Ordering.Greater.isGreater() { return -17 }\n",
+        "    if !cmp.Ordering.Equal.then(cmp.Ordering.Less).isLess() { return -18 }\n",
+        "    if !cmp.Ordering.Equal.then(cmp.Ordering.Greater).isGreater() { return -19 }\n",
+        "    if !cmp.Ordering.Less.then(cmp.Ordering.Greater).isLess() { return -20 }\n",
+        "    if !cmp.Ordering.Greater.then(cmp.Ordering.Less).isGreater() { return -21 }\n",
+        "\n",
+        "    // 4. Scalar comparison helpers\n",
+        "    if cmp.min(10, 20) != 10 { return -22 }\n",
+        "    if cmp.min(20, 10) != 10 { return -23 }\n",
+        "    if cmp.max(10, 20) != 20 { return -24 }\n",
+        "    if cmp.max(20, 10) != 20 { return -25 }\n",
+        "    if cmp.clamp(5, 10, 20) != 10 { return -26 }\n",
+        "    if cmp.clamp(15, 10, 20) != 15 { return -27 }\n",
+        "    if cmp.clamp(25, 10, 20) != 20 { return -28 }\n",
+        "\n",
+        "    // 5. Generic Ord interface dispatch\n",
+        "    let min_item = cmp.minBy(PriorityItem { priority: 10, payload: 100 }, PriorityItem { priority: 20, payload: 200 })\n",
+        "    if min_item.priority != 10 || min_item.payload != 100 { return -29 }\n",
+        "    let max_item = cmp.maxBy(PriorityItem { priority: 10, payload: 100 }, PriorityItem { priority: 20, payload: 200 })\n",
+        "    if max_item.priority != 20 || max_item.payload != 200 { return -30 }\n",
+        "    let clamp_low = cmp.clampBy(PriorityItem { priority: 5, payload: 50 }, PriorityItem { priority: 10, payload: 100 }, PriorityItem { priority: 20, payload: 200 })\n",
+        "    if clamp_low.priority != 10 { return -31 }\n",
+        "    let clamp_mid = cmp.clampBy(PriorityItem { priority: 15, payload: 150 }, PriorityItem { priority: 10, payload: 100 }, PriorityItem { priority: 20, payload: 200 })\n",
+        "    if clamp_mid.priority != 15 { return -32 }\n",
+        "    let clamp_high = cmp.clampBy(PriorityItem { priority: 25, payload: 250 }, PriorityItem { priority: 10, payload: 100 }, PriorityItem { priority: 20, payload: 200 })\n",
+        "    if clamp_high.priority != 20 { return -33 }\n",
+        "\n",
+        "    return 42\n",
+        "}\n",
+    );
+    let observation = check_source(source, true, true).expect("execution across all backends");
+    assert_eq!(observation.result, 42);
+}
+
+#[test]
+fn test_seeded_option_result_cmp_differential_across_all_backends() {
+    let source = synthesize(4);
+    assert!(source.contains("gen_some_val"));
+    assert!(source.contains("gen_ok_res"));
+    assert!(source.contains("gen_min_item"));
+    let observation = check_source(&source, true, true).expect("execution across all backends");
+    assert!(
+        observation.result >= 0,
+        "unexpected error return code: {}",
+        observation.result
+    );
+}
+
+#[test]
 #[ignore]
 fn __smith_jit_worker() {
     let args: Vec<String> = std::env::args().collect();
