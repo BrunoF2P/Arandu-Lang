@@ -201,11 +201,25 @@ impl LowerCtx<'_> {
         let arg_is_ref = matches!(arg_ty, ArType::Ref(_) | ArType::RefMut(_));
         let exclusive = matches!(formal_ty, Some(ArType::RefMut(_))) || mode.is_exclusive();
 
-        // W3.3 auto-ref: formal is ref, value is not — materialize Borrow of place.
-        if formal_is_ref
-            && !arg_is_ref
-            && let Ok(place) = self.lower_expr_to_place(arg, symbols)
-        {
+        // W3.3 auto-ref: formal is ref, value is not — materialize Borrow of place (or temporary local for rvalue).
+        if formal_is_ref && !arg_is_ref {
+            let place = match self.lower_expr_to_place(arg, symbols) {
+                Ok(place) => place,
+                Err(_) => {
+                    let val = self.lower_expr(arg, None, symbols)?;
+                    let tmp = self.new_local_id(
+                        arg_expr.ty,
+                        arandu_middle::SymbolId::DUMMY,
+                        arg_expr.span,
+                    );
+                    self.locals[tmp.as_usize()].is_memory = true;
+                    self.write_variable_source(tmp, val)?;
+                    crate::amir::AmirPlace {
+                        local: tmp,
+                        projections: smallvec::SmallVec::new(),
+                    }
+                }
+            };
             if place.projections.is_empty() {
                 let idx = place.local.as_usize();
                 if idx < self.locals.len() {

@@ -1701,6 +1701,20 @@ fn test_slice_split_and_cuts_across_all_backends() {
 }
 
 #[test]
+fn test_seeded_slice_iter_differential_across_all_backends() {
+    let source = synthesize(8);
+    assert!(source.contains("gen_empty_s"));
+    assert!(source.contains("gen_full_s"));
+    assert!(source.contains("gen_iter_chain_count"));
+    let observation = check_source(&source, true, true).expect("execution across all backends");
+    assert!(
+        observation.result >= 0,
+        "unexpected error return code: {}",
+        observation.result
+    );
+}
+
+#[test]
 #[ignore]
 fn __smith_jit_worker() {
     let args: Vec<String> = std::env::args().collect();

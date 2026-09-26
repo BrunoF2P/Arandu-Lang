@@ -105,9 +105,9 @@ public func Skip.next<I: Iterator<Item>, Item>(self: mut ref Skip<I, Item>): Opt
 /// Pair representing an indexed element in [`Enumerate`].
 public struct Indexed<Item> {
     /// Index paired with this value.
-    index: uint
+    public index: uint
     /// Element paired with this index.
-    value: Item
+    public value: Item
 }
 
 /// An iterator adapter that pairs each element with its 0-based index.
