@@ -23,8 +23,7 @@ pub(crate) fn apply_receiver_ownership(
 
 #[tracing::instrument(level = "trace", target = "arandu_typeck", skip(checker, program))]
 pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Program) {
-    for decl_id in &program.decls {
-        let decl = checker.pool.decl(*decl_id);
+    program.for_each_decl_recursive(|_decl_id, decl| {
         match decl {
             TopLevelDecl::Struct(struct_decl) => {
                 let mut field_entries: Vec<arandu_middle::layout::StructFieldInfo> = Vec::new();
@@ -34,6 +33,16 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
                     let field_tid = checker.intern(field_ty);
                     let field_key = crate::NodeKey::from(field.span);
                     let field_symbol = checker.resolved.definitions.get(&field_key).copied();
+                    if field.visibility == arandu_parser::Visibility::Private
+                        && let Some(field_symbol) = field_symbol
+                    {
+                        checker.type_info.private_fields.insert(field_symbol);
+                    }
+                    if field.visibility == arandu_parser::Visibility::Private
+                        && let Some(field_symbol) = field_symbol
+                    {
+                        checker.type_info.private_fields.insert(field_symbol);
+                    }
                     field_entries.push(arandu_middle::layout::StructFieldInfo {
                         name: field.name.clone(),
                         symbol: field_symbol,
@@ -93,7 +102,7 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
                 let enum_key = crate::NodeKey::from(enum_decl.span);
                 let Some(enum_symbol_id) = checker.resolved.definitions.get(&enum_key).copied()
                 else {
-                    continue;
+                    return;
                 };
                 let params = super::super::types::extract_generic_param_symbols(
                     checker,
@@ -263,13 +272,12 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
             }
             _ => {}
         }
-    }
+    });
 }
 
 #[tracing::instrument(level = "trace", target = "arandu_typeck", skip(checker, program))]
 pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &Program) {
-    for decl_id in &program.decls {
-        let decl = checker.pool.decl(*decl_id);
+    program.for_each_decl_recursive(|_decl_id, decl| {
         match decl {
             TopLevelDecl::Func(func_decl) => {
                 let mut ret_ty = if let Some(result) = &func_decl.result {
@@ -598,5 +606,5 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &P
             }
             _ => {}
         }
-    }
+    });
 }

@@ -97,7 +97,9 @@ fn canonical_export_metadata(artifacts: &LowerAmirArtifacts) -> String {
     let global = symbols.global_scope();
     let mut exported = symbols
         .iter()
-        .filter(|symbol| symbol.scope == global && symbol.is_public)
+        .filter(|symbol| {
+            symbol.scope == global && symbol.visibility == arandu_middle::Visibility::Public
+        })
         .collect::<Vec<_>>();
     exported.sort_by(|left, right| {
         left.name

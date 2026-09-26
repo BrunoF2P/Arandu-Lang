@@ -155,6 +155,7 @@ pub struct TypeChecker<'a> {
     solved_constraints: Vec<solver::SolvedConstraint>,
     /// Scope for lowering type expressions inside the current function body.
     type_scope_id: Option<ScopeId>,
+    current_owner_type: Option<SymbolId>,
     pub pool: &'a AstPool,
     pub target_info: TargetInfo,
     pub current_observed_effects: arandu_middle::EffectFlags,
@@ -252,6 +253,7 @@ impl<'a> TypeChecker<'a> {
             diagnostics,
             solved_constraints: Vec::new(),
             type_scope_id: None,
+            current_owner_type: None,
             pool,
             target_info,
             current_observed_effects: arandu_middle::EffectFlags::NONE,
@@ -410,6 +412,55 @@ impl TypeChecker<'_> {
                 origin,
             },
         );
+    }
+
+    pub(crate) fn check_field_visibility(
+        &mut self,
+        owner: SymbolId,
+        field: &str,
+        span: arandu_lexer::Span,
+    ) {
+        if self
+            .type_info
+            .struct_fields
+            .get(&owner)
+            .and_then(|fields| fields.get(field))
+            .and_then(|field| field.symbol)
+            .is_some_and(|field| self.type_info.private_fields.contains(&field))
+            && self.current_owner_type != Some(owner)
+        {
+            self.diagnostics.push(arandu_middle::Diagnostic::error(
+                arandu_middle::DiagCode::T041PrivateFieldAccess,
+                format!("field '{field}' is private to its struct"),
+                span,
+            ));
+        }
+    }
+
+    pub(crate) fn check_private_field_update(&mut self, owner: SymbolId, span: arandu_lexer::Span) {
+        if self.current_owner_type != Some(owner)
+            && let Some(field) = self
+                .type_info
+                .struct_fields
+                .iter()
+                .find(|(struct_id, _)| **struct_id == owner)
+                .and_then(|(_, fields)| {
+                    fields.iter().find(|field| {
+                        field
+                            .symbol
+                            .is_some_and(|symbol| self.type_info.private_fields.contains(&symbol))
+                    })
+                })
+        {
+            self.diagnostics.push(arandu_middle::Diagnostic::error(
+                arandu_middle::DiagCode::T041PrivateFieldAccess,
+                format!(
+                    "cannot use struct update syntax while field '{}' is private",
+                    field.name
+                ),
+                span,
+            ));
+        }
     }
 
     pub fn add_subtype_constraint(

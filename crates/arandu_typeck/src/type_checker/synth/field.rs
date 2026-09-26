@@ -143,6 +143,7 @@ pub(crate) fn resolve_field(
             };
 
             if let Some(field_ty) = field_from_struct {
+                checker.check_field_visibility(struct_id, field, field_span);
                 field_ty
             } else {
                 if let Some(method_sym) = checker.symbols.lookup_associated_member(struct_id, field)

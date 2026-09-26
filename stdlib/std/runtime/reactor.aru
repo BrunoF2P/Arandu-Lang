@@ -108,7 +108,7 @@ public func reactorPollMs(r: ref EpollReactor, timeoutMs: int): int {
 /// `events` uses the read/write readiness bits from `std.net`. The waker is
 /// signaled when a matching event is observed. A negative result is a host
 /// registration failure.
-public func reactorRegisterSocket(r: ref EpollReactor, sockId: int, events: int, w: ref waker.Waker): int {
+internal func reactorRegisterSocket(r: ref EpollReactor, sockId: int, events: int, w: ref waker.Waker): int {
     unsafe {
         return ar_rt_reactor_register_socket(r.id, sockId, events, w.id)
     }

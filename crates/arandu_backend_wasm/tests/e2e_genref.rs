@@ -32,7 +32,7 @@ fn register_imported_sym(symbols: &mut SymbolTable, id: SymbolId, name: &str) {
             kind: SymbolKind::Func,
             span: arandu_base::Span::new(0, 0, 0),
             scope: arandu_middle::symbol_table::ScopeId(0),
-            is_public: true,
+            visibility: arandu_middle::Visibility::Public,
             lang_item: None,
         },
     );

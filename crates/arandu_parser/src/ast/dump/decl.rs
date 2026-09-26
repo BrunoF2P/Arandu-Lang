@@ -3,8 +3,8 @@ use std::fmt::Write;
 use super::super::ast_pool::AstPool;
 use super::super::{
     ConstDecl, EnumDecl, EnumPayload, ExternDecl, FuncDecl, FuncName, FuncSignature, ImportDecl,
-    InterfaceDecl, Ownership, Param, ResultType, StructDecl, TopLevelDecl, TypeAliasDecl, TypeExpr,
-    TypeName, Visibility,
+    InterfaceDecl, Ownership, Param, ResultType, StructDecl, SubmoduleDecl, TopLevelDecl,
+    TypeAliasDecl, TypeExpr, TypeName, Visibility,
 };
 use super::expr::dump_expr;
 use super::stmt::dump_block_body;
@@ -19,7 +19,21 @@ pub(super) fn dump_top_level_decl(pool: &AstPool, decl: &TopLevelDecl, out: &mut
         TopLevelDecl::Enum(decl) => dump_enum(pool, decl, out),
         TopLevelDecl::Interface(decl) => dump_interface(pool, decl, out),
         TopLevelDecl::Extern(decl) => dump_extern(pool, decl, out),
+        TopLevelDecl::Submodule(decl) => dump_submodule(pool, decl, out),
         TopLevelDecl::Error(span) => out.push(format!("  DeclError {}", dump_span(*span))),
+    }
+}
+
+fn dump_submodule(pool: &AstPool, decl: &SubmoduleDecl, out: &mut Vec<String>) {
+    dump_attrs(pool, &decl.attrs, out, 2);
+    out.push(format!(
+        "  Submodule {} {}{}",
+        dump_span(decl.span),
+        dump_visibility(decl.visibility),
+        decl.name
+    ));
+    for &id in &decl.decls {
+        dump_top_level_decl(pool, pool.decl(id), out);
     }
 }
 
@@ -63,8 +77,11 @@ fn dump_func(pool: &AstPool, func: &FuncDecl, out: &mut Vec<String>) {
         .as_ref()
         .map_or_else(|| "void".to_string(), |r| dump_result_type(r, pool));
     let mut modifiers = Vec::new();
-    if func.visibility == Visibility::Public {
-        modifiers.push("public");
+    match func.visibility {
+        Visibility::Public => modifiers.push("public"),
+        Visibility::Internal => modifiers.push("internal"),
+        Visibility::Private => modifiers.push("private"),
+        Visibility::Module => {}
     }
     if func.is_async {
         modifiers.push("async");
@@ -157,9 +174,10 @@ fn dump_enum(pool: &AstPool, decl: &EnumDecl, out: &mut Vec<String>) {
 fn dump_interface(pool: &AstPool, decl: &InterfaceDecl, out: &mut Vec<String>) {
     dump_attrs(pool, &decl.attrs, out, 2);
     out.push(format!(
-        "  Interface {} {}{}{}{}",
+        "  Interface {} {}{}{}{}{}",
         dump_span(decl.span),
         dump_visibility(decl.visibility),
+        if decl.sealed { "sealed " } else { "" },
         decl.name,
         dump_generic_params(pool, &decl.generic_params),
         dump_where_clause(pool, &decl.where_clause)
@@ -223,6 +241,27 @@ pub(super) fn dump_import(_pool: &AstPool, import: &ImportDecl) -> String {
                 "From {} Import {} {{ {items} }}",
                 path.join("."),
                 dump_span(*span)
+            )
+        }
+        ImportDecl::ReExport {
+            span,
+            visibility,
+            items,
+            path,
+        } => {
+            let items = items
+                .iter()
+                .map(|item| match &item.alias {
+                    Some(alias) => format!("{} as {alias}", item.name),
+                    None => item.name.to_string(),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "ReExport {} {} {}.{{ {items} }}",
+                dump_span(*span),
+                dump_visibility(*visibility),
+                path.join(".")
             )
         }
         ImportDecl::ExternalNamed {

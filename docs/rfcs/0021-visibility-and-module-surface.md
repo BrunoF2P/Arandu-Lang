@@ -334,10 +334,10 @@ somente quando o importador pertence ao mesmo `PackageId`. Isso garante:
 
 | Código | Mensagem |
 |---|---|
-| `N008InternalOutsidePackage` | símbolo `internal` usado fora do pacote declarante |
-| `N009SealedImplOutsidePackage` | implementação de `sealed interface` fora do pacote |
-| `N010ReExportNarrowing` | re-export com visibilidade mais restrita que o símbolo original (erro) |
-| `N011CyclicReExport` | ciclo detectado em re-exports |
+| `N016InternalOutsidePackage` | símbolo `internal` usado fora do pacote declarante |
+| `N017SealedImplOutsidePackage` | implementação de `sealed interface` fora do pacote |
+| `N018ReExportNarrowing` | re-export com visibilidade mais ampla que a declaração original (erro) |
+| `N019CyclicReExport` | ciclo detectado em re-exports |
 
 Cada código exige entrada em `DiagCode`, mapeamento, catálogo em
 `docs/diagnostics/SPEC.md` e `docs/errors/<CODIGO>.md`.
@@ -349,6 +349,32 @@ Cada código exige entrada em `DiagCode`, mapeamento, catálogo em
 - Quick-fix para `N008`: sugere usar API pública alternativa quando disponível.
 - Semantic tokens: `internal` recebe o modificador `defaultLibrary` como
   indicação visual; não são cores fixas — o tema decide.
+
+### 4.8 Estado da implementação
+
+A implementação inicial cobre o modelo de visibilidade no parser e a
+visibilidade `internal` entre módulos registrados em um `PackageModuleMap`:
+
+- O parser distingue `public`, `internal`, `private` e a visibilidade padrão
+  `module`; a AST dump preserva os modificadores explícitos.
+- `Symbol` retém `Visibility`; o campo duplicado `is_public` foi removido e os
+  consumidores com superfície pública comparam a visibilidade explícita.
+- `exported_symbols` continua retornando somente símbolos públicos. A query
+  `internal_symbols` é separada e só é consultada por importadores cujo arquivo
+  e dependência têm o mesmo `PackageId` no mapa da sessão.
+- Um teste de integração verifica exports `internal`, N016 em import explícito
+  fora do pacote, e N017 ao declarar `impl Tipo: Interface` para uma interface
+  selada externa. A AST guarda a declaração explícita de implementação e
+  `SymbolTable` guarda sua identidade por IDs.
+- `sealed interface` é preservada pela AST, dump e metadata de typeck. A
+  exaustividade de `match` com o conjunto de implementadores ainda não está
+  integrada; implementações estruturais sem declaração `impl` também precisam
+  ser fechadas para evitar bypass.
+- Campos `private` usam IDs de símbolo e T041 cobre leituras, escritas,
+  inicializadores, padrões e struct update fora de métodos do tipo proprietário.
+  A visibilidade padrão dos campos permanece acessível no módulo, conforme o
+  modelo existente.
+- Re-exports e módulos inline ainda não estão implementados. A RFC segue `Draft`.
 
 ---
 
@@ -442,14 +468,13 @@ confiar na disciplina — o que não escala em times.
    assinatura de uma função `public`? Provavelmente um aviso ou erro — a assinatura
    seria inutilizável externamente. Definir o diagnóstico exato.
 
-4. **Migração de `is_public: bool` → `Visibility`.** Todos os sites do compilador
-   que leem `is_public` precisam ser atualizados. A mudança é mecânica mas grande.
-   Estratégia: PR de migração isolado antes das novas features.
+4. **Migração de `is_public: bool` → `Visibility`.** Resolvida nesta
+   implementação: o campo duplicado foi removido e os consumidores foram
+   migrados para comparações de `Visibility`.
 
-5. **`private` em campos de struct vs. `module`.** Hoje campos sem keyword são
-   acessíveis em todo o módulo. Introduzir `private` em campos implica que o
-   módulo corrente não pode mais acessar campos default. É isso que queremos?
-   Alternativa: campos sem keyword = module-accessible; `private` = struct-only.
+5. **`private` em campos de struct vs. `module`.** Decidido: campos sem keyword
+   permanecem acessíveis no módulo; `private` restringe a métodos do tipo que
+   declara o campo.
 
 ---
 

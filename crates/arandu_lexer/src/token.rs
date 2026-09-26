@@ -165,6 +165,8 @@ pub enum TokenKind {
     KwFrom,
     KwAs,
     KwPublic,
+    KwInternal,
+    KwPrivate,
     KwExtern,
     KwUnsafe,
     KwWhere,
@@ -272,7 +274,7 @@ impl fmt::Display for TokenKind {
 }
 
 impl TokenKind {
-    pub const COUNT: usize = 135;
+    pub const COUNT: usize = 137;
 
     /// Returns `true` if this token kind represents a language keyword.
     #[must_use]
@@ -301,6 +303,8 @@ impl TokenKind {
                 | TokenKind::KwFrom
                 | TokenKind::KwAs
                 | TokenKind::KwPublic
+                | TokenKind::KwInternal
+                | TokenKind::KwPrivate
                 | TokenKind::KwExtern
                 | TokenKind::KwUnsafe
                 | TokenKind::KwWhere
@@ -374,6 +378,8 @@ impl TokenKind {
             TokenKind::KwFrom => 37,
             TokenKind::KwAs => 38,
             TokenKind::KwPublic => 39,
+            TokenKind::KwInternal => 135,
+            TokenKind::KwPrivate => 136,
             TokenKind::KwExtern => 40,
             TokenKind::KwUnsafe => 41,
             TokenKind::KwWhere => 42,
@@ -515,6 +521,8 @@ impl TokenKind {
             37 => TokenKind::KwFrom,
             38 => TokenKind::KwAs,
             39 => TokenKind::KwPublic,
+            135 => TokenKind::KwInternal,
+            136 => TokenKind::KwPrivate,
             40 => TokenKind::KwExtern,
             41 => TokenKind::KwUnsafe,
             42 => TokenKind::KwWhere,
@@ -724,6 +732,8 @@ impl TokenKind {
             TokenKind::KwFrom => "KW_FROM",
             TokenKind::KwAs => "KW_AS",
             TokenKind::KwPublic => "KW_PUBLIC",
+            TokenKind::KwInternal => "KW_INTERNAL",
+            TokenKind::KwPrivate => "KW_PRIVATE",
             TokenKind::KwExtern => "KW_EXTERN",
             TokenKind::KwUnsafe => "KW_UNSAFE",
             TokenKind::KwWhere => "KW_WHERE",

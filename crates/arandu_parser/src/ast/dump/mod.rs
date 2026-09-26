@@ -148,7 +148,9 @@ pub(super) fn dump_where_clause(pool: &AstPool, where_clause: &[WhereItem]) -> S
 
 pub(super) fn dump_visibility(visibility: Visibility) -> &'static str {
     match visibility {
-        Visibility::Private => "",
+        Visibility::Private => "private ",
+        Visibility::Module => "",
+        Visibility::Internal => "internal ",
         Visibility::Public => "public ",
     }
 }

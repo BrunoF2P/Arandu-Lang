@@ -530,7 +530,15 @@ fn member_completions(
     if owner_kind == Some(SymbolKind::Struct)
         && let Some(fields) = tc.type_info.struct_fields.get(&parent)
     {
+        let private_access = has_owner_method_at(snap, source, receiver_start, tc, parent);
         for field in fields.iter() {
+            if !private_access
+                && field
+                    .symbol
+                    .is_some_and(|symbol| tc.type_info.private_fields.contains(&symbol))
+            {
+                continue;
+            }
             if !accepted(prefix, prefix_l, field.name.as_str()) {
                 continue;
             }
@@ -595,6 +603,36 @@ fn member_completions(
         return None;
     }
     Some(finish_ranked(items))
+}
+
+fn has_owner_method_at(
+    snap: &AnalysisSnapshot,
+    source: SourceFile,
+    offset: u32,
+    tc: &TypeCheckResult,
+    owner: arandu_middle::SymbolId,
+) -> bool {
+    let tree = arandu_query::passes::syntax_tree(&snap.db, source);
+    let output = arandu_parser::syntax::lower_syntax_to_program_recovering(
+        tree.value.as_ref(),
+        *source.file_id(&snap.db),
+    );
+    output.program.decls.iter().any(|decl_id| {
+        let arandu_parser::TopLevelDecl::Func(func) = output.program.pool.decl(*decl_id) else {
+            return false;
+        };
+        if !(func.span.start <= offset && offset <= func.span.end) {
+            return false;
+        }
+        let arandu_parser::FuncName::Method { receiver, .. } = &func.name else {
+            return false;
+        };
+        receiver
+            .path
+            .last()
+            .and_then(|name| tc.symbols.lookup_type(tc.symbols.global_scope(), name))
+            == Some(owner)
+    })
 }
 
 fn module_member_completions(

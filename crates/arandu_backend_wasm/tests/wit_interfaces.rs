@@ -35,7 +35,7 @@ fn generates_named_interface_for_public_interface_symbols() {
             kind: SymbolKind::Interface,
             span: arandu_base::Span::new(0, 0, 0),
             scope: arandu_middle::symbol_table::ScopeId(0),
-            is_public: true,
+            visibility: arandu_middle::Visibility::Public,
             lang_item: None,
         },
     );
@@ -50,7 +50,7 @@ fn generates_named_interface_for_public_interface_symbols() {
             kind: SymbolKind::Func,
             span: arandu_base::Span::new(0, 0, 0),
             scope: arandu_middle::symbol_table::ScopeId(0),
-            is_public: true,
+            visibility: arandu_middle::Visibility::Public,
             lang_item: None,
         },
     );
@@ -65,7 +65,7 @@ fn generates_named_interface_for_public_interface_symbols() {
             kind: SymbolKind::Func,
             span: arandu_base::Span::new(0, 0, 0),
             scope: arandu_middle::symbol_table::ScopeId(0),
-            is_public: true,
+            visibility: arandu_middle::Visibility::Public,
             lang_item: None,
         },
     );
@@ -195,7 +195,7 @@ fn wit_multiple_interfaces_with_scoped_types() {
             kind: SymbolKind::Struct,
             span: arandu_base::Span::new(0, 0, 0),
             scope: arandu_middle::symbol_table::ScopeId(0),
-            is_public: true,
+            visibility: arandu_middle::Visibility::Public,
             lang_item: None,
         },
     );
@@ -210,7 +210,7 @@ fn wit_multiple_interfaces_with_scoped_types() {
             kind: SymbolKind::Interface,
             span: arandu_base::Span::new(0, 0, 0),
             scope: arandu_middle::symbol_table::ScopeId(0),
-            is_public: true,
+            visibility: arandu_middle::Visibility::Public,
             lang_item: None,
         },
     );
@@ -225,7 +225,7 @@ fn wit_multiple_interfaces_with_scoped_types() {
             kind: SymbolKind::Func,
             span: arandu_base::Span::new(0, 0, 0),
             scope: arandu_middle::symbol_table::ScopeId(0),
-            is_public: true,
+            visibility: arandu_middle::Visibility::Public,
             lang_item: None,
         },
     );
@@ -240,7 +240,7 @@ fn wit_multiple_interfaces_with_scoped_types() {
             kind: SymbolKind::Func,
             span: arandu_base::Span::new(0, 0, 0),
             scope: arandu_middle::symbol_table::ScopeId(0),
-            is_public: true,
+            visibility: arandu_middle::Visibility::Public,
             lang_item: None,
         },
     );
@@ -367,7 +367,7 @@ fn wit_receiver_is_exposed_once() {
             kind: SymbolKind::Interface,
             span: arandu_base::Span::new(0, 0, 0),
             scope: arandu_middle::symbol_table::ScopeId(0),
-            is_public: true,
+            visibility: arandu_middle::Visibility::Public,
             lang_item: None,
         },
     );
@@ -382,7 +382,7 @@ fn wit_receiver_is_exposed_once() {
             kind: SymbolKind::Func,
             span: arandu_base::Span::new(0, 0, 0),
             scope: arandu_middle::symbol_table::ScopeId(0),
-            is_public: true,
+            visibility: arandu_middle::Visibility::Public,
             lang_item: None,
         },
     );

@@ -201,7 +201,10 @@ pub fn struct_fields_instantiated(
     if params.len() != generic_args.len() {
         return None;
     }
-    let span = checker.symbols.get(struct_id).span;
+    let span = checker
+        .symbols
+        .try_get(struct_id)
+        .map_or(arandu_lexer::Span::new(0, 0, 0), |s| s.span);
     super::interfaces::check_instantiation_constraints(checker, &params, &generic_args, span);
     let subst = build_subst(&params, &generic_args);
     let res: FxHashMap<String, ArType> = fields
@@ -230,7 +233,10 @@ pub fn struct_field_instantiated(
     if params.len() != generic_args.len() {
         return None;
     }
-    let span = checker.symbols.get(struct_id).span;
+    let span = checker
+        .symbols
+        .try_get(struct_id)
+        .map_or(arandu_lexer::Span::new(0, 0, 0), |s| s.span);
     super::interfaces::check_instantiation_constraints(checker, &params, &generic_args, span);
     let subst = build_subst(&params, &generic_args);
     let ty = checker.resolve(field_ty);
@@ -673,7 +679,7 @@ mod tests {
             kind: arandu_middle::SymbolKind::Struct,
             span: Span::new(0, 0, 0),
             scope: arandu_middle::ScopeId(0),
-            is_public: true,
+            visibility: arandu_parser::Visibility::Public,
             lang_item: None,
         };
         symbols.register_imported_symbol(struct_sym);

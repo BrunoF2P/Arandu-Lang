@@ -233,6 +233,10 @@ Abaixo estão listados todos os diagnósticos mapeados para o compilador Arandu.
 | **N013** | `annotation '@{name}' cannot be applied to a {target}` | Error | `0.1.0` | Anotação conhecida aplicada a uma categoria de declaração fora de seus alvos explícitos. |
 | **N014** | `annotation '@{name}' expects {arguments}` | Error | `0.1.0` | Lista ou forma dos argumentos não corresponde ao contrato da anotação. |
 | **N015** | `annotation '@{name}' cannot be repeated` | Error | `0.1.0` | Uma anotação de cardinalidade única aparece mais de uma vez no mesmo alvo. |
+| **N016** | `'{name}' is internal and cannot be imported from outside its package` | Error | `0.1.0` | Importação explícita de símbolo `internal` por módulo de outro pacote. |
+| **N017** | `cannot implement sealed interface '{name}' outside its package` | Error | `0.1.0` | Implementação de interface selada fora do pacote que a declara. |
+| **N018** | `re-export visibility exceeds source visibility` | Error | `0.1.0` | Re-export tenta ampliar a visibilidade de uma declaração de origem. |
+| **N019** | `cyclic re-export` | Error | `0.1.0` | A superfície exportada depende de um ciclo de re-exports. |
 
 ---
 
@@ -280,6 +284,7 @@ Abaixo estão listados todos os diagnósticos mapeados para o compilador Arandu.
 | **T038** | `integer literal does not fit in the expected type` | Error | `0.1.0` | Um literal inteiro contextual excede o intervalo representável pelo tipo inteiro esperado. |
 | **T039** | `function performs undeclared or denied effect '{effect}'` | Error | `0.1.0` | A função executa um efeito não declarado em `@Effects(...)` ou proibido pela política de efeitos do manifesto. |
 | **T040** | `attempt to divide by zero` | Error | `0.1.0` | Tentativa de realizar divisão ou cálculo de resto (`%`) com divisor zero em tempo de compilação. |
+| **T041** | `field '{name}' is private to its struct` | Error | `0.1.0` | Acesso a campo `private` fora de um método declarado no tipo proprietário. |
 
 ---
 

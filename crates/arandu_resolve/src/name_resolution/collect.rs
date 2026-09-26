@@ -5,11 +5,6 @@ use crate::{DiagCode, Diagnostic, ScopeId, SymbolKind};
 use super::Resolver;
 use super::util::is_type_case;
 
-#[inline]
-fn is_public(vis: Visibility) -> bool {
-    matches!(vis, Visibility::Public)
-}
-
 impl<'a> Resolver<'a> {
     pub(crate) fn collect_import(&mut self, scope: ScopeId, import: &ImportDecl) {
         match import {
@@ -30,6 +25,23 @@ impl<'a> Resolver<'a> {
                     };
                     if let Some(sym) = self.define(scope, name, kind, item.span) {
                         // SmolStr::clone is O(1)
+                        self.record_import_symbol(sym, name.clone(), item.span);
+                    }
+                }
+            }
+            ImportDecl::ReExport {
+                items, visibility, ..
+            } => {
+                for item in items {
+                    let name = item.alias.as_ref().unwrap_or(&item.name);
+                    let kind = if is_type_case(name) {
+                        SymbolKind::ImportType
+                    } else {
+                        SymbolKind::ImportValue
+                    };
+                    if let Some(sym) = self.define(scope, name, kind, item.span)
+                        && *visibility == Visibility::Private
+                    {
                         self.record_import_symbol(sym, name.clone(), item.span);
                     }
                 }
@@ -65,31 +77,31 @@ impl<'a> Resolver<'a> {
     pub(crate) fn collect_top_level(&mut self, scope: ScopeId, decl: &TopLevelDecl) {
         match decl {
             TopLevelDecl::Const(decl) => {
-                self.define_vis(
+                self.define_with_visibility(
                     scope,
                     &decl.name,
                     SymbolKind::Const,
                     decl.span,
-                    is_public(decl.visibility),
+                    decl.visibility,
                 );
             }
             TopLevelDecl::TypeAlias(decl) => {
-                self.define_vis(
+                self.define_with_visibility(
                     scope,
                     &decl.name,
                     SymbolKind::TypeAlias,
                     decl.span,
-                    is_public(decl.visibility),
+                    decl.visibility,
                 );
             }
             TopLevelDecl::Func(decl) => match &decl.name {
                 FuncName::Free { span, name } => {
-                    self.define_vis(
+                    self.define_with_visibility(
                         scope,
                         name,
                         SymbolKind::Func,
                         *span,
-                        is_public(decl.visibility),
+                        decl.visibility,
                     );
                 }
                 FuncName::Method {
@@ -99,18 +111,16 @@ impl<'a> Resolver<'a> {
                 } => {
                     let receiver_str = receiver.path.join(".");
                     let method_name = format!("{receiver_str}.{name}");
-                    let global = self.symbols.global_scope();
-                    match self.symbols.define_vis(
-                        global,
+                    match self.symbols.define_with_visibility(
+                        scope,
                         &method_name,
                         SymbolKind::AssociatedFunc,
                         *span,
-                        is_public(decl.visibility),
+                        decl.visibility,
                     ) {
                         Ok(symbol) => {
                             self.resolved.define(*span, symbol);
-                            if let Some(type_sym) = self.symbols.lookup_type(global, &receiver_str)
-                            {
+                            if let Some(type_sym) = self.symbols.lookup_type(scope, &receiver_str) {
                                 self.symbols
                                     .associated_members
                                     .insert((type_sym, name.clone()), symbol);
@@ -133,12 +143,12 @@ impl<'a> Resolver<'a> {
                 }
             },
             TopLevelDecl::Struct(decl) => {
-                let symbol = self.define_vis(
+                let symbol = self.define_with_visibility(
                     scope,
                     &decl.name,
                     SymbolKind::Struct,
                     decl.span,
-                    is_public(decl.visibility),
+                    decl.visibility,
                 );
                 if let Some(symbol) = symbol {
                     use arandu_middle::symbol_table::LangItem;
@@ -154,10 +164,14 @@ impl<'a> Resolver<'a> {
                 }
             }
             TopLevelDecl::Enum(decl) => {
-                let pub_ = is_public(decl.visibility);
-                if let Some(enum_sym) =
-                    self.define_vis(scope, &decl.name, SymbolKind::Enum, decl.span, pub_)
-                {
+                let visibility = decl.visibility;
+                if let Some(enum_sym) = self.define_with_visibility(
+                    scope,
+                    &decl.name,
+                    SymbolKind::Enum,
+                    decl.span,
+                    visibility,
+                ) {
                     match (self.current_module.as_deref(), decl.name.as_str()) {
                         (Some("std.core.future"), "Poll") => {
                             self.symbols.set_lang_item(
@@ -187,11 +201,11 @@ impl<'a> Resolver<'a> {
                     }
                     // Variants inherit the enum's export visibility (public enum → public ctors).
                     for variant in &decl.variants {
-                        if let Ok(symbol) = self.symbols.define_associated_member_vis(
+                        if let Ok(symbol) = self.symbols.define_associated_member_with_visibility(
                             enum_sym,
                             &variant.name,
                             variant.span,
-                            pub_,
+                            visibility,
                         ) {
                             self.resolved.define(variant.span, symbol);
                             match (
@@ -242,14 +256,17 @@ impl<'a> Resolver<'a> {
                 }
             }
             TopLevelDecl::Interface(decl) => {
-                let symbol = self.define_vis(
+                let symbol = self.define_with_visibility(
                     scope,
                     &decl.name,
                     SymbolKind::Interface,
                     decl.span,
-                    is_public(decl.visibility),
+                    decl.visibility,
                 );
                 if let Some(symbol) = symbol {
+                    if decl.sealed {
+                        self.symbols.sealed_interfaces.insert(symbol);
+                    }
                     use arandu_middle::symbol_table::LangItem;
                     let capability = match (self.current_module.as_deref(), decl.name.as_str()) {
                         (Some("std.core.marker"), "Copy") => Some(LangItem::Copy),
@@ -265,13 +282,46 @@ impl<'a> Resolver<'a> {
             TopLevelDecl::Extern(decl) => {
                 // Intrinsics / FFI block members are the module surface (exportable).
                 for member in &decl.members {
-                    self.define_vis(
+                    self.define_with_visibility(
                         scope,
                         &member.name,
                         SymbolKind::ExternFunc,
                         member.span,
-                        true,
+                        Visibility::Public,
                     );
+                }
+            }
+            TopLevelDecl::Submodule(submod) => {
+                let mod_sym = self.define_with_visibility(
+                    scope,
+                    &submod.name,
+                    SymbolKind::Module,
+                    submod.span,
+                    submod.visibility,
+                );
+                let sub_scope = self.symbols.new_scope(scope);
+                if let Some(id) = mod_sym {
+                    self.symbols.module_scopes.insert(id, sub_scope);
+                }
+                for &inner_id in &submod.decls {
+                    let inner_decl = self.pool.decl(inner_id);
+                    self.collect_top_level(sub_scope, inner_decl);
+                }
+                let symbols_in_subscope: Vec<arandu_middle::SymbolId> =
+                    self.symbols.scope(sub_scope).symbols().to_vec();
+                for sym_id in symbols_in_subscope {
+                    let sym = self.symbols.get(sym_id);
+                    let member_name = sym.name.clone();
+                    self.symbols
+                        .module_members
+                        .insert((submod.name.clone(), member_name.clone()), sym_id);
+                    if let Some(ref cur_mod) = self.current_module {
+                        let qualified: smol_str::SmolStr =
+                            format!("{cur_mod}.{}", submod.name).into();
+                        self.symbols
+                            .module_members
+                            .insert((qualified, member_name), sym_id);
+                    }
                 }
             }
             TopLevelDecl::Error(_) => {}

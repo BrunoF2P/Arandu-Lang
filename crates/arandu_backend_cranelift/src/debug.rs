@@ -187,7 +187,7 @@ pub(crate) fn emit_dwarf(
         );
         entry.set(
             gimli::DW_AT_external,
-            AttributeValue::Flag(symbol.is_public),
+            AttributeValue::Flag(symbol.visibility == arandu_semantics::Visibility::Public),
         );
         let mut frame_base = Expression::new();
         frame_base.op(gimli::DW_OP_call_frame_cfa);

@@ -336,6 +336,7 @@ pub(super) fn synth_literal_expr(
                         let field = checker.pool.field_init(*fid);
                         if field.name == ".." {
                             has_update_base = true;
+                            checker.check_private_field_update(symbol_id, field.span);
                             let base_ty_id = super::super::synth_expr_expected(
                                 checker,
                                 field.value,
@@ -361,6 +362,7 @@ pub(super) fn synth_literal_expr(
                             }
                             continue;
                         }
+                        checker.check_field_visibility(symbol_id, field.name.as_str(), field.span);
                         let defined_field_ty_opt = fields_def.get(field.name.as_str()).cloned();
                         // `nil` in a field needs the field's expected type (`ptr[T]`, `T?`),
                         // not the enclosing function return (which produced bogus `int?` /

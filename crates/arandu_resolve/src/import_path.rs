@@ -18,7 +18,9 @@ pub enum LogicalImport {
 #[must_use]
 pub fn logical_import(import: &ImportDecl) -> Option<LogicalImport> {
     match import {
-        ImportDecl::ModuleAlias { path, .. } | ImportDecl::Named { path, .. } => {
+        ImportDecl::ModuleAlias { path, .. }
+        | ImportDecl::Named { path, .. }
+        | ImportDecl::ReExport { path, .. } => {
             let mut segments = path.iter().map(ToString::to_string);
             let first = segments.next()?;
             let rest = segments.collect::<Vec<_>>().join("/");
@@ -64,7 +66,9 @@ pub fn logical_import(import: &ImportDecl) -> Option<LogicalImport> {
 #[must_use]
 pub fn canonicalize_import_path(import: &ImportDecl) -> Option<String> {
     match import {
-        ImportDecl::ModuleAlias { path, .. } | ImportDecl::Named { path, .. } => {
+        ImportDecl::ModuleAlias { path, .. }
+        | ImportDecl::Named { path, .. }
+        | ImportDecl::ReExport { path, .. } => {
             let path_str = path.join("/");
             if let Some(stripped) = path_str.strip_prefix("std/core/") {
                 Some(format!("stdlib/core/{stripped}.aru"))

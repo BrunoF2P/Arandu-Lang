@@ -36,6 +36,8 @@ pub struct TypeInfo {
     pub return_borrow_summaries: FxHashMap<SymbolId, ReturnBorrowSummary>,
     /// Struct field table: declaration order + name index (type/symbol/index folded in).
     pub struct_fields: FxHashMap<SymbolId, Arc<StructFields>>,
+    /// Field symbols declared with `private` visibility.
+    pub private_fields: FxHashSet<SymbolId>,
     pub enum_variants: FxHashMap<SymbolId, (SymbolId, EnumPayloadShape)>,
     /// Pre-computed discriminant tag for each enum variant symbol.
     pub enum_variant_tags: FxHashMap<SymbolId, usize>,
@@ -85,6 +87,7 @@ impl TypeInfo {
             decl_types: FxHashMap::default(),
             return_borrow_summaries: FxHashMap::default(),
             struct_fields: FxHashMap::default(),
+            private_fields: FxHashSet::default(),
             enum_variants: FxHashMap::default(),
             enum_variant_tags: FxHashMap::default(),
             destructors: FxHashMap::default(),
@@ -592,6 +595,7 @@ impl TypeInfo {
         if other.decl_types.is_empty()
             && other.return_borrow_summaries.is_empty()
             && other.struct_fields.is_empty()
+            && other.private_fields.is_empty()
             && other.enum_variants.is_empty()
             && other.enum_variant_tags.is_empty()
             && other.destructors.is_empty()
@@ -635,6 +639,8 @@ impl TypeInfo {
                 }));
             self.struct_fields.insert(*symbol, Arc::new(translated));
         }
+        self.private_fields
+            .extend(other.private_fields.iter().copied());
         for (symbol, (enum_id, shape)) in &other.enum_variants {
             let translated_shape = match shape {
                 EnumPayloadShape::Unit => EnumPayloadShape::Unit,
@@ -706,6 +712,7 @@ impl TypeInfo {
                 *symbol,
                 types::InterfaceInfo {
                     self_param: interface_info.self_param,
+                    sealed: interface_info.sealed,
                     methods: translated_methods,
                 },
             );

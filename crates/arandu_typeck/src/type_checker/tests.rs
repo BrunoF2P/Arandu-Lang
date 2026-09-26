@@ -515,6 +515,7 @@ fn merge_from_interfaces() {
         SymbolId::new(0, 0),
         InterfaceInfo {
             self_param: None,
+            sealed: false,
             methods: Vec::new(),
         },
     );
@@ -1329,6 +1330,34 @@ fn test_impl_multiple_methods() {
         check_res.diagnostics.len(),
         0,
         "impl with multiple methods should have zero diagnostics"
+    );
+}
+
+#[test]
+fn private_struct_fields_are_accessible_only_from_owner_methods() {
+    let source = r#"
+    module test;
+    struct Secret { private value: int }
+    impl Secret {
+        public func new(value: int): Secret { return Secret { value }; }
+        public func read(self: ref): int { return self.value; }
+    }
+    func leak(secret: Secret): int { return secret.value; }
+    "#;
+    let program = arandu_parser::parse(source).unwrap();
+    let resolution = arandu_resolve::resolve_for_test(0, &program);
+    let result = crate::type_check(resolution, &program, TargetInfo { pointer_width: 64 });
+
+    let private_errors: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == DiagCode::T041PrivateFieldAccess)
+        .collect();
+    assert_eq!(
+        private_errors.len(),
+        1,
+        "diagnostics: {:?}",
+        result.diagnostics
     );
 }
 

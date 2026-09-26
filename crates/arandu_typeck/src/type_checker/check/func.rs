@@ -123,6 +123,21 @@ fn func_type_scope(checker: &TypeChecker<'_>, decl: &FuncDecl) -> crate::ScopeId
 
 #[tracing::instrument(level = "trace", target = "arandu_typeck", skip(checker, decl))]
 pub fn check_func_body(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
+    let old_owner = checker.current_owner_type;
+    checker.current_owner_type = match &decl.name {
+        arandu_parser::FuncName::Method { receiver, .. } => {
+            match checker.lower_named_type(
+                receiver.span,
+                receiver,
+                &[],
+                checker.symbols.global_scope(),
+            ) {
+                ArType::Named(symbol, _) => Some(symbol),
+                _ => None,
+            }
+        }
+        arandu_parser::FuncName::Free { .. } => None,
+    };
     if matches!(decl.name, arandu_parser::FuncName::Method { .. }) {
         validate_method_receiver(checker, decl);
     }
@@ -219,4 +234,5 @@ pub fn check_func_body(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
         checker.type_info.function_effects.insert(symbol_id, total);
     }
     checker.current_observed_effects = old_effects.union(checker.current_observed_effects);
+    checker.current_owner_type = old_owner;
 }

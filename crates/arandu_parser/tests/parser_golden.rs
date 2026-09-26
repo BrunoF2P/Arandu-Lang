@@ -54,6 +54,38 @@ fn parses_function_modifiers_fixture() {
 }
 
 #[test]
+fn parses_visibility_modifiers_and_keeps_default_module_visibility() {
+    let source = "internal func package_api() {}\nprivate struct Hidden { private value: int }\nfunc local() {}\n";
+    let dump = parse_to_string(source).expect("visibility declarations should parse");
+
+    assert!(dump.contains("internal package_api"), "{dump}");
+    assert!(dump.contains(" private Hidden"), "{dump}");
+    assert!(dump.contains("private value Type"), "{dump}");
+    assert!(dump.contains("local() -> void"), "{dump}");
+    assert!(!dump.contains("module local"), "{dump}");
+}
+
+#[test]
+fn parses_sealed_interface_modifier() {
+    let program = arandu_parser::parse("sealed interface Closed { func value(self): int }")
+        .expect("sealed interface should parse");
+    let interface = program
+        .decls
+        .iter()
+        .find_map(|decl| match program.pool.decl(*decl) {
+            arandu_parser::TopLevelDecl::Interface(interface) => Some(interface),
+            _ => None,
+        })
+        .expect("interface declaration");
+    assert!(interface.sealed);
+    assert!(
+        program
+            .dump("sealed interface Closed { func value(self): int }")
+            .contains("sealed")
+    );
+}
+
+#[test]
 fn parses_named_import_fixture() {
     assert_golden("named_import");
 }

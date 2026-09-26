@@ -393,10 +393,9 @@ pub(crate) fn validate_type_constraints_in_program(
     checker: &mut TypeChecker<'_>,
     program: &Program,
 ) {
-    for decl_id in &program.decls {
-        let decl = checker.pool.decl(*decl_id);
+    program.for_each_decl_recursive(|_decl_id, decl| {
         validate_decl_type_constraints(checker, decl);
-    }
+    });
 }
 
 fn validate_decl_type_constraints(checker: &mut TypeChecker<'_>, decl: &TopLevelDecl) {

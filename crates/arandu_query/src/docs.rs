@@ -288,7 +288,7 @@ pub fn module_doc(db: &dyn ArandCompilerDb, file: SourceFile) -> Arc<DocModule> 
                 .filter(|sym| {
                     sym.scope == global_scope
                         && sym.id.file_id == *file.file_id(db)
-                        && sym.is_public
+                        && sym.visibility == arandu_middle::Visibility::Public
                         && matches!(
                             sym.kind,
                             SymbolKind::Func
@@ -317,7 +317,10 @@ pub fn module_doc(db: &dyn ArandCompilerDb, file: SourceFile) -> Arc<DocModule> 
     let global_scope = signatures.symbols.global_scope();
 
     for sym in signatures.symbols.iter() {
-        if sym.scope == global_scope && sym.id.file_id == *file.file_id(db) && sym.is_public {
+        if sym.scope == global_scope
+            && sym.id.file_id == *file.file_id(db)
+            && sym.visibility == arandu_middle::Visibility::Public
+        {
             if let Some(doc) = item_doc(db, file, sym.id) {
                 items.push((*doc.as_ref()).clone());
             }

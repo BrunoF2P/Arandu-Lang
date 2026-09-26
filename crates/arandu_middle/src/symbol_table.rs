@@ -1,4 +1,4 @@
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 
@@ -112,9 +112,8 @@ pub struct Symbol {
     pub kind: SymbolKind,
     pub span: Span,
     pub scope: ScopeId,
-    /// `true` when the defining declaration used `public` (or is a prelude/extern API).
-    /// Used by `exported_symbols` so private names do not cross module boundaries.
-    pub is_public: bool,
+    /// Source-level visibility retained after resolution for export filtering.
+    pub visibility: arandu_parser::Visibility,
     /// Canonical core item classification (zero-indirection, 1 byte).
     pub lang_item: Option<LangItem>,
 }
@@ -123,6 +122,13 @@ pub struct Symbol {
 pub struct Scope {
     pub parent: Option<ScopeId>,
     symbols: Vec<SymbolId>,
+}
+
+impl Scope {
+    #[must_use]
+    pub fn symbols(&self) -> &[SymbolId] {
+        &self.symbols
+    }
 }
 
 /// Flat, contiguous struct of canonical core type symbols.
@@ -148,8 +154,13 @@ pub struct SymbolTable {
     /// error state to avoid diagnosing members of the same failed import.
     pub unresolved_module_aliases: std::collections::BTreeSet<SmolStr>,
     pub associated_members: FxHashMap<(SymbolId, SmolStr), SymbolId>,
+    /// Interface symbols declared with the `sealed` modifier.
+    pub sealed_interfaces: FxHashSet<SymbolId>,
+    /// Explicit type/interface implementation declarations.
+    pub interface_implementations: FxHashSet<(SymbolId, SymbolId)>,
     /// Canonical flat backend names, computed once from defining module paths.
     pub host_function_names: FxHashMap<SymbolId, SmolStr>,
+    pub module_scopes: FxHashMap<SymbolId, ScopeId>,
     /// Type-parameter symbols for named types (`struct` / `enum` / …), in declaration order.
     /// Used so methods on `Box<T>` can import `T` into their type scope.
     pub type_params: FxHashMap<SymbolId, smallvec::SmallVec<[SymbolId; 4]>>,
@@ -179,7 +190,10 @@ impl SymbolTable {
             module_members: FxHashMap::default(),
             unresolved_module_aliases: std::collections::BTreeSet::new(),
             associated_members: FxHashMap::default(),
+            sealed_interfaces: FxHashSet::default(),
+            interface_implementations: FxHashSet::default(),
             host_function_names: FxHashMap::default(),
+            module_scopes: FxHashMap::default(),
             type_params: FxHashMap::default(),
             global_scope_id: ScopeId(0),
             builtins: BuiltinTypes::default(),
@@ -247,7 +261,7 @@ impl SymbolTable {
                 kind: old_symbol.kind,
                 span: old_symbol.span,
                 scope: new_scope,
-                is_public: old_symbol.is_public,
+                visibility: old_symbol.visibility,
                 lang_item: old_symbol.lang_item,
             });
         }
@@ -263,10 +277,23 @@ impl SymbolTable {
             self.associated_members
                 .insert((map_symbol(ty), member), map_symbol(old_symbol_id));
         }
+        self.sealed_interfaces
+            .extend(other.sealed_interfaces.iter().map(|id| map_symbol(*id)));
+        self.interface_implementations.extend(
+            other
+                .interface_implementations
+                .iter()
+                .map(|(ty, iface)| (map_symbol(*ty), map_symbol(*iface))),
+        );
 
         for (old_symbol_id, name) in other.host_function_names {
             self.host_function_names
                 .insert(map_symbol(old_symbol_id), name);
+        }
+
+        for (old_symbol_id, scope) in other.module_scopes {
+            self.module_scopes
+                .insert(map_symbol(old_symbol_id), map_scope(scope));
         }
 
         // 5. Merge type-parameter tables
@@ -421,7 +448,7 @@ impl SymbolTable {
     }
 
     /// Defines a new symbol in the specified scope.
-    /// Define a private (non-exported) symbol. Prefer [`Self::define_vis`] for API items.
+    /// Define a private (non-exported) symbol. Prefer [`Self::define_with_visibility`] for API items.
     ///
     /// # Errors
     ///
@@ -433,21 +460,17 @@ impl SymbolTable {
         kind: SymbolKind,
         span: Span,
     ) -> Result<SymbolId, SymbolId> {
-        self.define_vis(scope, name, kind, span, false)
+        self.define_with_visibility(scope, name, kind, span, arandu_parser::Visibility::Module)
     }
 
-    /// Define a symbol with explicit export visibility (`public` → `is_public`).
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err(existing_symbol_id)` if a symbol with the same name already exists in the given scope.
-    pub fn define_vis(
+    /// Define a symbol while preserving its full source visibility.
+    pub fn define_with_visibility(
         &mut self,
         scope: ScopeId,
         name: &str,
         kind: SymbolKind,
         span: Span,
-        is_public: bool,
+        visibility: arandu_parser::Visibility,
     ) -> Result<SymbolId, SymbolId> {
         if let Some(existing) = self.find_in_scope(scope, name) {
             return Err(existing);
@@ -466,7 +489,7 @@ impl SymbolTable {
             kind,
             span,
             scope,
-            is_public,
+            visibility,
             lang_item: None,
         });
         self.scope_mut(scope).symbols.push(id);
@@ -590,12 +613,12 @@ impl SymbolTable {
         span: Span,
     ) -> Result<SymbolId, SymbolId> {
         // Prelude / module surface is part of the public API of that namespace.
-        let id = self.define_vis(
+        let id = self.define_with_visibility(
             self.global_scope(),
             &format!("{module}.{member}"),
             SymbolKind::NamespaceMember,
             span,
-            true,
+            arandu_parser::Visibility::Public,
         )?;
         self.module_members
             .insert((module.into(), member.into()), id);
@@ -620,25 +643,29 @@ impl SymbolTable {
         member: &str,
         span: Span,
     ) -> Result<SymbolId, SymbolId> {
-        self.define_associated_member_vis(parent_id, member, span, false)
+        self.define_associated_member_with_visibility(
+            parent_id,
+            member,
+            span,
+            arandu_parser::Visibility::Module,
+        )
     }
 
-    /// Associated method / enum variant with explicit export visibility.
-    pub fn define_associated_member_vis(
+    pub fn define_associated_member_with_visibility(
         &mut self,
         parent_id: SymbolId,
         member: &str,
         span: Span,
-        is_public: bool,
+        visibility: arandu_parser::Visibility,
     ) -> Result<SymbolId, SymbolId> {
         let parent_name = self.get(parent_id).name.clone();
         let base_ty = parent_name.split('.').next_back().unwrap_or(&parent_name);
-        let id = self.define_vis(
+        let id = self.define_with_visibility(
             self.global_scope(),
             &format!("{base_ty}.{member}"),
             SymbolKind::AssociatedFunc,
             span,
-            is_public,
+            visibility,
         )?;
         self.associated_members
             .insert((parent_id, member.into()), id);
@@ -717,7 +744,8 @@ impl SymbolTable {
         }
     }
 
-    fn scope(&self, id: ScopeId) -> &Scope {
+    #[must_use]
+    pub fn scope(&self, id: ScopeId) -> &Scope {
         &self.scopes[id.0 as usize]
     }
 

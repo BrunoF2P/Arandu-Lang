@@ -82,8 +82,12 @@ pub(super) fn token_bounds_span(file_id: u32, toks: &[&Token]) -> Option<Span> {
 pub(super) fn parse_visibility(cur: &mut Cursor<'_>) -> Visibility {
     if cur.eat(TokenKind::KwPublic) {
         Visibility::Public
-    } else {
+    } else if cur.eat(TokenKind::KwInternal) {
+        Visibility::Internal
+    } else if cur.eat(TokenKind::KwPrivate) {
         Visibility::Private
+    } else {
+        Visibility::Module
     }
 }
 
@@ -562,6 +566,12 @@ fn try_hand_lower_interface(
     skip_leading_doc_comments(&mut cur);
     let attrs = parse_attributes(&mut ctx, &mut cur)?;
     let visibility = parse_visibility(&mut cur);
+    if cur
+        .peek()
+        .is_some_and(|token| ctx.text(token) == Some("sealed"))
+    {
+        cur.bump();
+    }
     cur.expect(TokenKind::KwInterface)?;
     let name_tok = cur
         .peek()
@@ -594,6 +604,10 @@ fn try_hand_lower_interface(
         span: token_bounds_span(file_id, &toks)?,
         attrs: attrs.into(),
         visibility,
+        sealed: item
+            .children_with_tokens()
+            .filter_map(rowan::NodeOrToken::into_token)
+            .any(|token| token.text() == "sealed"),
         name,
         generic_params,
         where_clause,

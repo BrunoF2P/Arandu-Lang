@@ -22,6 +22,7 @@ pub struct InterfaceMethod {
 #[derive(Debug, Clone)]
 pub struct InterfaceInfo {
     pub self_param: Option<SymbolId>,
+    pub sealed: bool,
     /// Method specifications for the interface.
     pub methods: Vec<InterfaceMethod>,
 }
@@ -31,8 +32,7 @@ pub fn collect_interfaces_and_constraints(
     checker: &mut TypeChecker,
     program: &arandu_parser::Program,
 ) {
-    for decl_id in &program.decls {
-        let decl = checker.pool.decl(*decl_id);
+    program.for_each_decl_recursive(|_decl_id, decl| {
         use arandu_parser::TopLevelDecl;
         match decl {
             TopLevelDecl::Interface(iface) => collect_interface(checker, iface),
@@ -106,7 +106,7 @@ pub fn collect_interfaces_and_constraints(
             }
             _ => {}
         }
-    }
+    });
 }
 
 fn collect_interface(checker: &mut TypeChecker, decl: &arandu_parser::InterfaceDecl) {
@@ -158,6 +158,7 @@ fn collect_interface(checker: &mut TypeChecker, decl: &arandu_parser::InterfaceD
         iface_sym,
         InterfaceInfo {
             self_param,
+            sealed: decl.sealed,
             methods,
         },
     );
@@ -520,6 +521,21 @@ pub(crate) fn type_satisfies_interface(
     let Some(iface) = checker.type_info.interfaces.get(&iface_sym) else {
         return false;
     };
+    if iface.sealed {
+        let Some(type_id) = concrete_type_id(concrete) else {
+            return false;
+        };
+        // Sealed interfaces require an explicit `impl Type: Interface` edge.
+        // Structural conformance would otherwise let foreign types bypass the
+        // package boundary enforced by name resolution.
+        if !checker
+            .symbols
+            .interface_implementations
+            .contains(&(type_id, iface_sym))
+        {
+            return false;
+        }
+    }
     if let Some(
         capability @ (arandu_middle::symbol_table::LangItem::Send
         | arandu_middle::symbol_table::LangItem::Sync
@@ -874,6 +890,7 @@ mod tests {
             span: Span::new(0, 0, 0),
             module: None,
             imports: Vec::new(),
+            interface_impls: Vec::new(),
             decls: Vec::new(),
             docs: Vec::new(),
             pool: AstPool::default(),
@@ -895,7 +912,7 @@ mod tests {
             kind: SymbolKind::Interface,
             span: Span::new(0, 0, 0),
             scope: ScopeId(0),
-            is_public: true,
+            visibility: arandu_parser::Visibility::Public,
             lang_item: None,
         };
         symbols.register_imported_symbol(iface_symbol);
@@ -907,7 +924,7 @@ mod tests {
             kind: SymbolKind::Struct,
             span: Span::new(0, 0, 0),
             scope: ScopeId(0),
-            is_public: true,
+            visibility: arandu_parser::Visibility::Public,
             lang_item: None,
         };
         symbols.register_imported_symbol(struct_symbol);
@@ -919,7 +936,7 @@ mod tests {
             kind: SymbolKind::TypeParam,
             span: Span::new(0, 0, 0),
             scope: ScopeId(0),
-            is_public: true,
+            visibility: arandu_parser::Visibility::Public,
             lang_item: None,
         };
         symbols.register_imported_symbol(self_symbol);
@@ -931,7 +948,7 @@ mod tests {
             kind: SymbolKind::Func,
             span: Span::new(0, 0, 0),
             scope: ScopeId(0),
-            is_public: true,
+            visibility: arandu_parser::Visibility::Public,
             lang_item: None,
         };
         symbols.register_imported_symbol(method_symbol);
@@ -979,6 +996,7 @@ mod tests {
 
         let iface_info = InterfaceInfo {
             self_param: Some(self_sym_id),
+            sealed: false,
             methods: vec![InterfaceMethod {
                 name: "read".into(),
                 sig_id: req_method_type_id,
@@ -988,6 +1006,30 @@ mod tests {
         checker.type_info.interfaces.insert(iface_sym, iface_info);
 
         let concrete = ArType::named(struct_sym_id, &[], &checker.type_info.type_interner);
+        assert!(type_satisfies_interface(
+            &mut checker,
+            &concrete,
+            iface_sym,
+            &[],
+            Span::new(0, 0, 0)
+        ));
+
+        checker
+            .type_info
+            .interfaces
+            .get_mut(&iface_sym)
+            .expect("interface collected")
+            .sealed = true;
+        assert!(!type_satisfies_interface(
+            &mut checker,
+            &concrete,
+            iface_sym,
+            &[],
+            Span::new(0, 0, 0)
+        ));
+        std::sync::Arc::make_mut(&mut checker.symbols)
+            .interface_implementations
+            .insert((struct_sym_id, iface_sym));
         assert!(type_satisfies_interface(
             &mut checker,
             &concrete,

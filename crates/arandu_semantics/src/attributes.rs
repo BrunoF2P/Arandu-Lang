@@ -576,6 +576,11 @@ pub fn validate_decl_attributes(decl: &TopLevelDecl, pool: &AstPool) -> Validate
                 }
             }
         }
+        TopLevelDecl::Submodule(d) => {
+            for &inner_id in &d.decls {
+                append(validate_decl_attributes(pool.decl(inner_id), pool));
+            }
+        }
         TopLevelDecl::Error(_) => {}
     }
     combined

@@ -121,7 +121,10 @@ pub(super) fn synth_call_expr(
                 let mut variant_symbol_opt = None;
                 for (&var_id, &(parent_id, _)) in &checker.type_info.enum_variants {
                     if parent_id == *enum_symbol_id {
-                        let var_name = &checker.symbols.get(var_id).name;
+                        let Some(var_sym) = checker.symbols.try_get(var_id) else {
+                            continue;
+                        };
+                        let var_name = &var_sym.name;
                         if var_name == member || var_name.ends_with(&format!(".{}", member)) {
                             variant_symbol_opt = Some(var_id);
                             break;

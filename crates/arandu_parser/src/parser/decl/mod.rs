@@ -4,8 +4,8 @@ mod module_import;
 mod types;
 
 use super::{
-    Attribute, ParseError, ParseErrorCode, Parser, TokenKind, TopLevelDecl, Visibility,
-    user_facing_token_name,
+    Attribute, ParseError, ParseErrorCode, Parser, SubmoduleDecl, TokenKind, TopLevelDecl,
+    Visibility, user_facing_token_name,
 };
 use crate::{ExprId, ExprKind};
 
@@ -32,6 +32,14 @@ impl<'a> Parser<'a> {
         let result = (|| {
             let attrs = self.parse_attributes()?;
             let visibility = self.parse_visibility();
+            let sealed = self.at_soft_keyword("sealed")
+                && self
+                    .tokens
+                    .get(self.pos + 1)
+                    .is_some_and(|token| token.kind == TokenKind::KwInterface);
+            if sealed {
+                self.advance();
+            }
             match self.current().kind {
                 TokenKind::KwConst => Ok(vec![TopLevelDecl::Const(
                     self.parse_const(attrs, visibility)?,
@@ -49,12 +57,15 @@ impl<'a> Parser<'a> {
                     self.parse_enum_decl(attrs, visibility)?,
                 )]),
                 TokenKind::KwInterface => Ok(vec![TopLevelDecl::Interface(
-                    self.parse_interface_decl(attrs, visibility)?,
+                    self.parse_interface_decl(attrs, visibility, sealed)?,
                 )]),
                 TokenKind::KwExtern => {
                     Ok(vec![TopLevelDecl::Extern(self.parse_extern_decl(attrs)?)])
                 }
                 TokenKind::KwImpl => self.parse_impl_decl(attrs, visibility),
+                TokenKind::KwModule => Ok(vec![TopLevelDecl::Submodule(
+                    self.parse_submodule(attrs, visibility)?,
+                )]),
                 _ => Err(ParseError::new(
                     ParseErrorCode::ExpectedTopLevelDecl,
                     "expected top-level declaration",
@@ -72,7 +83,7 @@ impl<'a> Parser<'a> {
         Ok(decls)
     }
 
-    /// Look ahead past `@attr` / `public` / `async` to classify the green item kind.
+    /// Look ahead past attributes, visibility modifiers, and `async` to classify the green item kind.
     fn peek_top_level_item_kind(&self) -> crate::syntax::SyntaxKind {
         use crate::syntax::SyntaxKind;
         let mut i = self.pos;
@@ -109,7 +120,23 @@ impl<'a> Parser<'a> {
                         }
                     }
                 }
-                TokenKind::KwPublic | TokenKind::KwAsync | TokenKind::Semicolon => i += 1,
+                TokenKind::KwPublic
+                | TokenKind::KwInternal
+                | TokenKind::KwPrivate
+                | TokenKind::KwAsync
+                | TokenKind::Semicolon => i += 1,
+                TokenKind::IdentValue
+                    if self.tokens[i].lexeme(self.source) == "sealed"
+                        && self
+                            .tokens
+                            .get(i + 1)
+                            .is_some_and(|token| token.kind == TokenKind::KwInterface) =>
+                {
+                    i += 1
+                }
+                TokenKind::IdentValue if self.tokens[i].lexeme(self.source) == "use" => {
+                    return SyntaxKind::IMPORT_ITEM;
+                }
                 TokenKind::KwConst => return SyntaxKind::CONST_ITEM,
                 TokenKind::KwType => return SyntaxKind::TYPE_ALIAS_ITEM,
                 TokenKind::KwFunc => return SyntaxKind::FUNC_ITEM,
@@ -118,6 +145,7 @@ impl<'a> Parser<'a> {
                 TokenKind::KwInterface => return SyntaxKind::INTERFACE_ITEM,
                 TokenKind::KwExtern => return SyntaxKind::EXTERN_ITEM,
                 TokenKind::KwImpl => return SyntaxKind::IMPL_ITEM,
+                TokenKind::KwModule => return SyntaxKind::SUBMODULE_ITEM,
                 _ => return SyntaxKind::ITEM,
             }
         }
@@ -322,11 +350,48 @@ impl<'a> Parser<'a> {
         Ok(items)
     }
 
+    pub(crate) fn parse_submodule(
+        &mut self,
+        attrs: Vec<Attribute>,
+        visibility: Visibility,
+    ) -> Result<SubmoduleDecl, ParseError> {
+        let start = self.mark();
+        self.expect_name("KW_MODULE")?;
+        let name = self.expect_module_segment()?;
+        self.skip_semicolons();
+        self.expect_name("LBRACE")?;
+        let mut decls = Vec::new();
+        while !self.at_kind_name("RBRACE") && !self.at_kind_name("EOF") {
+            self.skip_semicolons();
+            if self.at_kind_name("RBRACE") || self.at_kind_name("EOF") {
+                break;
+            }
+            let inner_decls = self.parse_top_level_decls()?;
+            for decl in inner_decls {
+                let id = self.pool.alloc_decl(decl);
+                decls.push(id);
+            }
+            self.skip_semicolons();
+        }
+        self.expect_name("RBRACE")?;
+        Ok(SubmoduleDecl {
+            span: self.span_from_mark(start),
+            attrs: attrs.into(),
+            visibility,
+            name,
+            decls,
+        })
+    }
+
     pub(in crate::parser) fn parse_visibility(&mut self) -> Visibility {
         if self.eat_name("KW_PUBLIC") {
             Visibility::Public
-        } else {
+        } else if self.eat_name("KW_INTERNAL") {
+            Visibility::Internal
+        } else if self.eat_name("KW_PRIVATE") {
             Visibility::Private
+        } else {
+            Visibility::Module
         }
     }
 }

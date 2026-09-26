@@ -23,6 +23,18 @@ impl<'a> Resolver<'a> {
                     self.resolve_signature(scope, member);
                 }
             }
+            TopLevelDecl::Submodule(decl) => {
+                self.resolve_attrs(scope, &decl.attrs);
+                let sub_scope = self
+                    .symbols
+                    .lookup_module(scope, &decl.name)
+                    .and_then(|id| self.symbols.module_scopes.get(&id).copied())
+                    .unwrap_or(scope);
+                for &inner_id in &decl.decls {
+                    let inner_decl = self.pool.decl(inner_id);
+                    self.resolve_top_level(sub_scope, inner_decl);
+                }
+            }
             TopLevelDecl::Error(_) => {}
         }
     }
@@ -48,7 +60,7 @@ impl<'a> Resolver<'a> {
         // Methods on generic types must see the receiver type's type params
         // (`func Box.get(): T` needs `T` from `struct Box<T>`).
         if let FuncName::Method { receiver, .. } = &decl.name {
-            self.import_receiver_type_params(func_scope, receiver);
+            self.import_receiver_type_params(scope, func_scope, receiver);
             self.resolve_type_name(func_scope, receiver);
         }
         self.define_generics(func_scope, &decl.generic_params);
@@ -65,11 +77,16 @@ impl<'a> Resolver<'a> {
     }
 
     /// Bind parent type parameters into a method scope (same `SymbolId`s as the type).
-    fn import_receiver_type_params(&mut self, func_scope: ScopeId, receiver: &TypeName) {
+    fn import_receiver_type_params(
+        &mut self,
+        scope: ScopeId,
+        func_scope: ScopeId,
+        receiver: &TypeName,
+    ) {
         let Some(root) = receiver.path.first() else {
             return;
         };
-        let Some(type_id) = self.symbols.lookup_type(self.symbols.global_scope(), root) else {
+        let Some(type_id) = self.symbols.lookup_type(scope, root) else {
             return;
         };
         let params: smallvec::SmallVec<[crate::SymbolId; 4]> = self
@@ -317,22 +334,43 @@ impl<'a> Resolver<'a> {
 
     pub(crate) fn resolve_method_receivers(&mut self, program: &arandu_parser::Program) {
         let global = self.symbols.global_scope();
-        for decl_id in &program.decls {
+        self.resolve_method_receivers_in_decls(global, &program.decls);
+    }
+
+    fn resolve_method_receivers_in_decls(
+        &mut self,
+        global: ScopeId,
+        decls: &[arandu_parser::DeclId],
+    ) {
+        for decl_id in decls {
             let decl = self.pool.decl(*decl_id);
-            if let arandu_parser::TopLevelDecl::Func(decl) = decl
-                && let arandu_parser::FuncName::Method {
-                    ref receiver,
-                    ref name,
-                    ref span,
-                } = decl.name
-                && self.resolve_type_name(global, receiver)
-                && let Some(struct_sym) =
-                    self.resolved.type_refs.get(&receiver.span.into()).copied()
-                && let Some(method_sym) = self.resolved.definitions.get(&(*span).into()).copied()
-            {
-                self.symbols
-                    .associated_members
-                    .insert((struct_sym, name.clone()), method_sym);
+            match decl {
+                arandu_parser::TopLevelDecl::Func(decl) => {
+                    if let arandu_parser::FuncName::Method {
+                        ref receiver,
+                        ref name,
+                        ref span,
+                    } = decl.name
+                        && self.resolve_type_name(global, receiver)
+                        && let Some(struct_sym) =
+                            self.resolved.type_refs.get(&receiver.span.into()).copied()
+                        && let Some(method_sym) =
+                            self.resolved.definitions.get(&(*span).into()).copied()
+                    {
+                        self.symbols
+                            .associated_members
+                            .insert((struct_sym, name.clone()), method_sym);
+                    }
+                }
+                arandu_parser::TopLevelDecl::Submodule(decl) => {
+                    let sub_scope = self
+                        .symbols
+                        .lookup_module(global, &decl.name)
+                        .and_then(|id| self.symbols.module_scopes.get(&id).copied())
+                        .unwrap_or(global);
+                    self.resolve_method_receivers_in_decls(sub_scope, &decl.decls);
+                }
+                _ => {}
             }
         }
     }

@@ -52,13 +52,35 @@ impl<'a> Resolver<'a> {
             && let Some(root) = module.path.first()
         {
             // Module path root is always part of the file's public identity.
-            self.define_vis(global, root, SymbolKind::Module, module.span, true);
+            self.define_with_visibility(
+                global,
+                root,
+                SymbolKind::Module,
+                module.span,
+                arandu_parser::Visibility::Public,
+            );
         }
 
         for decl_id in &program.decls {
             poll();
             let decl = self.pool.decl(*decl_id);
             self.collect_top_level(global, decl);
+        }
+
+        // Preserve local explicit implementation edges in the lightweight
+        // symbol result. Imported interface edges are added by the full
+        // import pass; this local subset is enough for standalone sealed
+        // interfaces and their exported metadata.
+        for implementation in &program.interface_impls {
+            poll();
+            if let (Some(for_type), Some(interface)) = (
+                super::lookup_type_name(&self.symbols, &implementation.for_type),
+                super::lookup_type_name(&self.symbols, &implementation.interface),
+            ) {
+                self.symbols
+                    .interface_implementations
+                    .insert((for_type, interface));
+            }
         }
 
         if let Some(module) = &program.module {
@@ -109,16 +131,34 @@ impl<'a> Resolver<'a> {
         // Prelude builtins are always public (language surface).
         self.symbols.builtin_alloc = self
             .symbols
-            .define_vis(global_scope, "alloc", SymbolKind::Func, span, true)
+            .define_with_visibility(
+                global_scope,
+                "alloc",
+                SymbolKind::Func,
+                span,
+                arandu_parser::Visibility::Public,
+            )
             .ok();
         self.symbols.builtin_free = self
             .symbols
-            .define_vis(global_scope, "free", SymbolKind::Func, span, true)
+            .define_with_visibility(
+                global_scope,
+                "free",
+                SymbolKind::Func,
+                span,
+                arandu_parser::Visibility::Public,
+            )
             .ok();
 
         let res_sym = self
             .symbols
-            .define_vis(global_scope, "Result", SymbolKind::Enum, span, true)
+            .define_with_visibility(
+                global_scope,
+                "Result",
+                SymbolKind::Enum,
+                span,
+                arandu_parser::Visibility::Public,
+            )
             .ok()
             .or_else(|| self.symbols.lookup_type(global_scope, "Result"));
         if let Some(sym) = res_sym {
@@ -128,7 +168,13 @@ impl<'a> Resolver<'a> {
 
         let opt_sym = self
             .symbols
-            .define_vis(global_scope, "Option", SymbolKind::Enum, span, true)
+            .define_with_visibility(
+                global_scope,
+                "Option",
+                SymbolKind::Enum,
+                span,
+                arandu_parser::Visibility::Public,
+            )
             .ok()
             .or_else(|| self.symbols.lookup_type(global_scope, "Option"));
         if let Some(sym) = opt_sym {
@@ -138,7 +184,13 @@ impl<'a> Resolver<'a> {
 
         let coro_sym = self
             .symbols
-            .define_vis(global_scope, "Coroutine", SymbolKind::Enum, span, true)
+            .define_with_visibility(
+                global_scope,
+                "Coroutine",
+                SymbolKind::Enum,
+                span,
+                arandu_parser::Visibility::Public,
+            )
             .ok()
             .or_else(|| self.symbols.lookup_type(global_scope, "Coroutine"));
         if let Some(sym) = coro_sym {
@@ -148,7 +200,13 @@ impl<'a> Resolver<'a> {
 
         let poll_sym = self
             .symbols
-            .define_vis(global_scope, "Poll", SymbolKind::Enum, span, true)
+            .define_with_visibility(
+                global_scope,
+                "Poll",
+                SymbolKind::Enum,
+                span,
+                arandu_parser::Visibility::Public,
+            )
             .ok()
             .or_else(|| self.symbols.lookup_type(global_scope, "Poll"));
         if let Some(sym) = poll_sym {

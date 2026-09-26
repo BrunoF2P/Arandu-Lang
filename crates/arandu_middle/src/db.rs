@@ -25,7 +25,14 @@ pub struct TargetConfig {
 /// The common database trait used by middle-end crates (resolve, typeck)
 /// to request data from the Salsa database without knowing about `arandu_query`.
 pub trait SourceDatabase: salsa::Database {
+    fn source_file_by_id(&self, file_id: FileId) -> Option<SourceFile>;
     fn exported_symbols(&self, file: SourceFile) -> Arc<crate::ExportedSymbolTable>;
+
+    /// Package-scoped exports are queried separately to preserve public early-cutoff.
+    fn internal_symbols(&self, file: SourceFile) -> Arc<crate::ExportedSymbolTable>;
+
+    /// Compare package identity for two registered files. Missing package metadata fails closed.
+    fn same_package(&self, current_file: FileId, imported_file: SourceFile) -> bool;
 
     /// Retrieves the exact lexical span of a symbol for diagnostics (prevents Span from breaking early cutoff).
     fn symbol_span(&self, symbol_id: crate::SymbolId) -> arandu_lexer::Span;

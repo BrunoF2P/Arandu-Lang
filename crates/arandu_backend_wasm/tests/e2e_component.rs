@@ -226,7 +226,7 @@ fn wit_gen_returns_none_when_no_public_funcs() {
     );
 
     // Private function is still in the AMIR; the WIT generator filters by
-    // is_public. Result may be None or Some (depending on whether the compiler
+    // a public visibility. Result may be None or Some (depending on the compiler
     // emits non-public funcs), but must NOT fail.
     let _ = wit; // Either way is acceptable; test just checks no panic/ICE.
 }

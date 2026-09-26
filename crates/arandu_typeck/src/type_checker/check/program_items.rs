@@ -28,6 +28,7 @@ pub fn primary_def_key(decl: &TopLevelDecl) -> Option<NodeKey> {
         TopLevelDecl::Struct(d) => Some(NodeKey::from(d.span)),
         TopLevelDecl::Enum(d) => Some(NodeKey::from(d.span)),
         TopLevelDecl::Interface(d) => Some(NodeKey::from(d.span)),
+        TopLevelDecl::Submodule(d) => Some(NodeKey::from(d.span)),
         TopLevelDecl::Extern(d) => d.members.first().map(|m| NodeKey::from(m.span)),
         TopLevelDecl::Error(_) => None,
     }
@@ -44,39 +45,43 @@ fn find_decl_for_symbol<'a>(
     resolved: &ResolvedNames,
     item_sym: SymbolId,
 ) -> Option<&'a TopLevelDecl> {
-    for decl_id in &program.decls {
-        let decl = program.pool.decl(*decl_id);
-        let Some(key) = primary_def_key(decl) else {
-            continue;
-        };
-        if resolved.definitions.get(&key) == Some(&item_sym) {
-            return Some(decl);
+    let mut found = None;
+    program.for_each_decl_recursive(|_decl_id, decl| {
+        if found.is_some() {
+            return;
+        }
+        if let Some(key) = primary_def_key(decl)
+            && resolved.definitions.get(&key) == Some(&item_sym)
+        {
+            found = Some(decl);
+            return;
         }
         // Extern: any member symbol maps to the whole extern block.
         if let TopLevelDecl::Extern(ext) = decl {
             for member in &ext.members {
                 let mkey = NodeKey::from(member.span);
                 if resolved.definitions.get(&mkey) == Some(&item_sym) {
-                    return Some(decl);
+                    found = Some(decl);
+                    return;
                 }
             }
         }
-    }
-    None
+    });
+    found
 }
 
 /// Free + method function symbols (P1 helper; subset of [`body_item_symbols`]).
 #[must_use]
 pub fn free_func_symbols(program: &Program, resolved: &ResolvedNames) -> Vec<SymbolId> {
     let mut out = Vec::new();
-    for decl_id in &program.decls {
-        if let TopLevelDecl::Func(func_decl) = program.pool.decl(*decl_id) {
+    program.for_each_decl_recursive(|_decl_id, decl| {
+        if let TopLevelDecl::Func(func_decl) = decl {
             let key = func_name_key(func_decl);
             if let Some(&id) = resolved.definitions.get(&key) {
                 out.push(id);
             }
         }
-    }
+    });
     out.sort_by_key(|s| (s.file_id, s.local_id.0));
     out.dedup();
     out
@@ -89,15 +94,14 @@ pub fn free_func_symbols(program: &Program, resolved: &ResolvedNames) -> Vec<Sym
 #[must_use]
 pub fn body_item_symbols(program: &Program, resolved: &ResolvedNames) -> Vec<SymbolId> {
     let mut out = Vec::new();
-    for decl_id in &program.decls {
-        let decl = program.pool.decl(*decl_id);
+    program.for_each_decl_recursive(|_decl_id, decl| {
         let Some(key) = primary_def_key(decl) else {
-            continue;
+            return;
         };
         if let Some(&id) = resolved.definitions.get(&key) {
             out.push(id);
         }
-    }
+    });
     out.sort_by_key(|s| (s.file_id, s.local_id.0));
     out.dedup();
     out
@@ -194,7 +198,8 @@ fn check_one_item_body(checker: &mut TypeChecker<'_>, program: &Program, decl: &
         TopLevelDecl::Struct(_)
         | TopLevelDecl::Enum(_)
         | TopLevelDecl::TypeAlias(_)
-        | TopLevelDecl::Interface(_) => {
+        | TopLevelDecl::Interface(_)
+        | TopLevelDecl::Submodule(_) => {
             validate_top_level_any(checker, decl);
         }
         TopLevelDecl::Error(_) => {}

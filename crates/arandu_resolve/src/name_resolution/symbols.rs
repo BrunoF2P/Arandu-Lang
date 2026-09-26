@@ -147,16 +147,16 @@ impl<'a> Resolver<'a> {
         kind: SymbolKind,
         span: Span,
     ) -> Option<crate::SymbolId> {
-        self.define_vis(scope, name, kind, span, false)
+        self.define_with_visibility(scope, name, kind, span, arandu_parser::Visibility::Module)
     }
 
-    pub(crate) fn define_vis(
+    pub(crate) fn define_with_visibility(
         &mut self,
         scope: ScopeId,
         name: &str,
         kind: SymbolKind,
-        span: Span,
-        is_public: bool,
+        span: arandu_lexer::Span,
+        visibility: arandu_parser::Visibility,
     ) -> Option<crate::SymbolId> {
         // A name is reserved if it is already defined in the prelude (ScopeId(0))
         // and we are currently not inside the prelude/std.* itself.
@@ -177,7 +177,10 @@ impl<'a> Resolver<'a> {
                 return None;
             }
         }
-        match self.symbols.define_vis(scope, name, kind, span, is_public) {
+        match self
+            .symbols
+            .define_with_visibility(scope, name, kind, span, visibility)
+        {
             Ok(symbol) => {
                 self.resolved.define(span, symbol);
                 Some(symbol)

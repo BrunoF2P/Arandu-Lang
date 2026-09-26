@@ -240,7 +240,12 @@ fn hash_symbol(hasher: &mut Hasher, symbol: &arandu_middle::Symbol, include_span
         hasher.update(&u32_le(symbol.span.end));
     }
     hasher.update(&u32_le(symbol.scope.0));
-    hasher.update(&[u8::from(symbol.is_public)]);
+    hasher.update(&[match symbol.visibility {
+        arandu_parser::Visibility::Private => 0,
+        arandu_parser::Visibility::Module => 1,
+        arandu_parser::Visibility::Internal => 2,
+        arandu_parser::Visibility::Public => 3,
+    }]);
     if include_spans {
         if let Some(item) = symbol.lang_item {
             hasher.update(&[1, lang_item_discriminant(item)]);

@@ -37,7 +37,11 @@ fn core_lang_item(path: &str, name: &str) -> Option<arandu_middle::symbol_table:
         ),
         _ => return None,
     };
-    (path == module || std::path::Path::new(path).ends_with(file)).then_some(item)
+    (path == module
+        || std::path::Path::new(path).ends_with(file)
+        || path == "std.core.prelude"
+        || std::path::Path::new(path).ends_with("core/prelude.aru"))
+    .then_some(item)
 }
 
 /// Builtin prelude modules injected by `define_prelude` / this helper.
@@ -185,7 +189,8 @@ pub fn resolve_imports_and_bodies_with_poll(
         // Prefer a real file if one is registered; otherwise short-circuit.
         if let Some(prelude_name) = match import {
             arandu_parser::ImportDecl::ModuleAlias { path, .. }
-            | arandu_parser::ImportDecl::Named { path, .. } => prelude_module_from_path(path),
+            | arandu_parser::ImportDecl::Named { path, .. }
+            | arandu_parser::ImportDecl::ReExport { path, .. } => prelude_module_from_path(path),
             _ => None,
         } {
             let file_key = format!("{prelude_name}.aru");
@@ -213,7 +218,8 @@ pub fn resolve_imports_and_bodies_with_poll(
                             }
                         }
                     }
-                    arandu_parser::ImportDecl::Named { items, .. } => {
+                    arandu_parser::ImportDecl::Named { items, .. }
+                    | arandu_parser::ImportDecl::ReExport { items, .. } => {
                         for item in items {
                             let member_name = &item.name;
                             if let Some(&id) = resolver
@@ -228,7 +234,7 @@ pub fn resolve_imports_and_bodies_with_poll(
                                     kind: arandu_middle::SymbolKind::NamespaceMember,
                                     span: item.span,
                                     scope: global,
-                                    is_public: true,
+                                    visibility: arandu_parser::Visibility::Public,
                                     lang_item: None,
                                 };
                                 match resolver.symbols.insert_imported(sym) {
@@ -270,6 +276,34 @@ pub fn resolve_imports_and_bodies_with_poll(
         if let Some(path) = &module_path {
             if let Some(imported_file) = db.resolve_module_path(path) {
                 let exports = db.exported_symbols(imported_file);
+                let internal = db
+                    .same_package(resolver.symbols.file_id, imported_file)
+                    .then(|| db.internal_symbols(imported_file));
+                resolver
+                    .symbols
+                    .interface_implementations
+                    .extend(exports.sealed_implementations.iter().copied());
+                if let Some(table) = &internal {
+                    resolver
+                        .symbols
+                        .interface_implementations
+                        .extend(table.sealed_implementations.iter().copied());
+                }
+                if matches!(import, arandu_parser::ImportDecl::ReExport { .. })
+                    && (exports.is_cycle
+                        || internal.as_ref().is_some_and(|table| table.is_cycle)
+                        || db.source_file_by_id(resolver.symbols.file_id) == Some(imported_file))
+                {
+                    resolver.diagnostics.push(
+                        arandu_middle::Diagnostic::error(
+                            arandu_middle::DiagCode::N019CyclicReExport,
+                            "cyclic re-export detected in module dependencies",
+                            import.span(),
+                        )
+                        .with_hint("break the cycle by re-exporting from one direction only"),
+                    );
+                    continue;
+                }
                 match import {
                     arandu_parser::ImportDecl::ModuleAlias { alias, .. }
                     | arandu_parser::ImportDecl::ExternalAlias { alias, .. } => {
@@ -282,6 +316,11 @@ pub fn resolve_imports_and_bodies_with_poll(
                             exports
                                 .symbols
                                 .iter()
+                                .chain(
+                                    internal
+                                        .iter()
+                                        .flat_map(|table| table.internal_symbols.iter()),
+                                )
                                 .filter(|&(_, &(_, k))| {
                                     matches!(
                                         k,
@@ -292,7 +331,18 @@ pub fn resolve_imports_and_bodies_with_poll(
                                 })
                                 .map(|(n, &(id, _))| (n.as_str(), id))
                                 .collect();
-                        for (name, &(id, kind)) in &exports.symbols {
+                        for (name, &(id, kind)) in exports.symbols.iter().chain(
+                            internal
+                                .iter()
+                                .flat_map(|table| table.internal_symbols.iter()),
+                        ) {
+                            if exports.sealed_symbols.contains(name)
+                                || internal
+                                    .as_ref()
+                                    .is_some_and(|table| table.sealed_symbols.contains(name))
+                            {
+                                resolver.symbols.sealed_interfaces.insert(id);
+                            }
                             let item_lang = core_lang_item(path, name);
                             let sym = arandu_middle::Symbol {
                                 id,
@@ -300,7 +350,7 @@ pub fn resolve_imports_and_bodies_with_poll(
                                 kind,
                                 span: import.span(),
                                 scope: global,
-                                is_public: true, // only public symbols appear in exports
+                                visibility: arandu_parser::Visibility::Public,
                                 lang_item: item_lang,
                             };
                             resolver.symbols.register_imported_symbol(sym);
@@ -353,9 +403,51 @@ pub fn resolve_imports_and_bodies_with_poll(
                         }
                     }
                     arandu_parser::ImportDecl::Named { items, .. }
+                    | arandu_parser::ImportDecl::ReExport { items, .. }
                     | arandu_parser::ImportDecl::ExternalNamed { items, .. } => {
                         for item in items {
-                            if let Some(&(id, kind)) = exports.symbols.get(item.name.as_str()) {
+                            if let Some(&(id, kind)) =
+                                exports.symbols.get(item.name.as_str()).or_else(|| {
+                                    internal.as_ref().and_then(|table| {
+                                        table.internal_symbols.get(item.name.as_str())
+                                    })
+                                })
+                            {
+                                if exports.sealed_symbols.contains(item.name.as_str())
+                                    || internal.as_ref().is_some_and(|table| {
+                                        table.sealed_symbols.contains(item.name.as_str())
+                                    })
+                                {
+                                    resolver.symbols.sealed_interfaces.insert(id);
+                                }
+                                if let arandu_parser::ImportDecl::ReExport { visibility, .. } =
+                                    import
+                                    && *visibility == arandu_parser::Visibility::Public
+                                    && !exports.symbols.contains_key(item.name.as_str())
+                                    && internal.as_ref().is_some_and(|table| {
+                                        table.internal_symbols.contains_key(item.name.as_str())
+                                    })
+                                {
+                                    resolver.diagnostics.push(
+                                        arandu_middle::Diagnostic::error(
+                                            arandu_middle::DiagCode::N018ReExportNarrowing,
+                                            format!(
+                                                "cannot re-export internal symbol '{}' with public visibility",
+                                                item.name
+                                            ),
+                                            item.span,
+                                        )
+                                        .with_hint(
+                                            "reduce the re-export visibility or make the original declaration public",
+                                        ),
+                                    );
+                                }
+                                let sym_visibility = match import {
+                                    arandu_parser::ImportDecl::ReExport { visibility, .. } => {
+                                        *visibility
+                                    }
+                                    _ => arandu_parser::Visibility::Public,
+                                };
                                 let import_name = item.alias.as_ref().unwrap_or(&item.name).clone();
                                 let item_lang = core_lang_item(path, &item.name);
                                 let sym = arandu_middle::Symbol {
@@ -364,7 +456,7 @@ pub fn resolve_imports_and_bodies_with_poll(
                                     kind,
                                     span: item.span,
                                     scope: global,
-                                    is_public: true, // only public symbols appear in exports
+                                    visibility: sym_visibility,
                                     lang_item: item_lang,
                                 };
                                 if let Some(lang) = item_lang {
@@ -419,6 +511,20 @@ pub fn resolve_imports_and_bodies_with_poll(
                                             .insert((type_sym, smol_str::SmolStr::new(method)), id);
                                     }
                                 }
+                            } else if !db.same_package(resolver.symbols.file_id, imported_file)
+                                && db
+                                    .internal_symbols(imported_file)
+                                    .internal_symbols
+                                    .contains_key(item.name.as_str())
+                            {
+                                resolver.diagnostics.push(arandu_middle::Diagnostic::error(
+                                    arandu_middle::DiagCode::N016InternalOutsidePackage,
+                                    format!(
+                                        "'{}' is internal and cannot be imported from outside its package",
+                                        item.name
+                                    ),
+                                    item.span,
+                                ));
                             } else {
                                 // Missing or private: not in the export table.
                                 let mut diag = arandu_middle::Diagnostic::error(
@@ -464,7 +570,8 @@ pub fn resolve_imports_and_bodies_with_poll(
                 }
                 let import_name = match import {
                     arandu_parser::ImportDecl::ModuleAlias { path, .. }
-                    | arandu_parser::ImportDecl::Named { path, .. } => path.join("."),
+                    | arandu_parser::ImportDecl::Named { path, .. }
+                    | arandu_parser::ImportDecl::ReExport { path, .. } => path.join("."),
                     arandu_parser::ImportDecl::ExternalAlias { source, .. }
                     | arandu_parser::ImportDecl::ExternalNamed { source, .. } => source.to_string(),
                 };
@@ -482,7 +589,8 @@ pub fn resolve_imports_and_bodies_with_poll(
             }
             let import_name = match import {
                 arandu_parser::ImportDecl::ModuleAlias { path, .. }
-                | arandu_parser::ImportDecl::Named { path, .. } => path.join("."),
+                | arandu_parser::ImportDecl::Named { path, .. }
+                | arandu_parser::ImportDecl::ReExport { path, .. } => path.join("."),
                 arandu_parser::ImportDecl::ExternalAlias { source, .. }
                 | arandu_parser::ImportDecl::ExternalNamed { source, .. } => source.to_string(),
             };
@@ -496,6 +604,36 @@ pub fn resolve_imports_and_bodies_with_poll(
 
     poll();
     resolver.resolve_method_receivers(program);
+
+    for implementation in &program.interface_impls {
+        poll();
+        let for_type = lookup_type_name(&resolver.symbols, &implementation.for_type);
+        let interface = lookup_type_name(&resolver.symbols, &implementation.interface);
+        let (Some(for_type), Some(interface)) = (for_type, interface) else {
+            continue;
+        };
+        if resolver.symbols.sealed_interfaces.contains(&interface)
+            && !db.same_package_files(resolver.symbols.file_id, interface.file_id)
+        {
+            resolver.diagnostics.push(arandu_middle::Diagnostic::error(
+                arandu_middle::DiagCode::N017SealedImplOutsidePackage,
+                format!(
+                    "cannot implement sealed interface '{}' outside its package",
+                    implementation
+                        .interface
+                        .path
+                        .last()
+                        .map_or("<unknown>", |name| name.as_str())
+                ),
+                implementation.span,
+            ));
+        } else {
+            resolver
+                .symbols
+                .interface_implementations
+                .insert((for_type, interface));
+        }
+    }
 
     for decl_id in &program.decls {
         poll();
@@ -515,6 +653,19 @@ pub fn resolve_imports_and_bodies_with_poll(
         docs: resolver.docs,
         diagnostics: resolver.diagnostics,
     }
+}
+
+fn lookup_type_name(
+    symbols: &arandu_middle::SymbolTable,
+    name: &arandu_parser::TypeName,
+) -> Option<arandu_middle::SymbolId> {
+    let global = symbols.global_scope();
+    if name.path.len() == 1 {
+        return symbols.lookup_type(global, name.path[0].as_str());
+    }
+    let (member_path, member) = name.path.split_at(name.path.len().saturating_sub(1));
+    let namespace = member_path.join(".");
+    symbols.lookup_module_member(&namespace, member.first()?.as_str())
 }
 
 fn explicit_self_import(import: &arandu_parser::ImportDecl) -> Option<String> {
@@ -630,6 +781,7 @@ pub fn collect_symbols(
                         );
                     }
                 }
+                TopLevelDecl::Submodule(_) => {}
                 TopLevelDecl::Error(_) => {}
             }
         }

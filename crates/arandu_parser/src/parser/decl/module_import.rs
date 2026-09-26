@@ -57,6 +57,63 @@ impl<'a> Parser<'a> {
         let docs = self.take_pending_docs();
         let start = self.mark();
 
+        if matches!(
+            self.current().kind,
+            TokenKind::KwPublic | TokenKind::KwInternal | TokenKind::KwPrivate
+        ) && self.tokens.get(self.pos + 1).is_some_and(|token| {
+            token.kind == TokenKind::IdentValue && token.lexeme(self.source) == "use"
+        }) {
+            let visibility = self.parse_visibility();
+            if !self.at_soft_keyword("use") {
+                return Err(ParseError::new(
+                    ParseErrorCode::ExpectedToken,
+                    "expected `use`",
+                    self.current(),
+                    self.file_id,
+                    self.source,
+                ));
+            }
+            self.advance();
+            let mut path = SmallVec::new();
+            path.push(self.expect_module_segment()?);
+            while self.at_kind_name("DOT")
+                && !self
+                    .tokens
+                    .get(self.pos + 1)
+                    .is_some_and(|token| token.kind == TokenKind::LBrace)
+            {
+                self.advance();
+                path.push(self.expect_module_segment()?);
+            }
+            self.expect_name("DOT")?;
+            self.expect_name("LBRACE")?;
+            let items = self.parse_comma_separated_list("RBRACE", 1, |parser| {
+                let item_start = parser.mark();
+                let name = parser.expect_import_name()?;
+                let alias = if parser.eat_name("KW_AS") {
+                    Some(parser.expect_import_name()?)
+                } else {
+                    None
+                };
+                Ok(ImportItem {
+                    span: parser.span_from_mark(item_start),
+                    name,
+                    alias,
+                })
+            })?;
+            self.skip_semicolons();
+            self.expect_name("RBRACE")?;
+            self.expect_optional_semicolon_after_module_path()?;
+            let import = ImportDecl::ReExport {
+                span: self.span_from_mark(start),
+                visibility,
+                path,
+                items,
+            };
+            self.attach_docs(docs, import.span());
+            return Ok(import);
+        }
+
         if self.at_soft_keyword("from") {
             self.advance();
             if self.at_kind_name("STRING_START") {

@@ -179,7 +179,7 @@ fn suggest_from_exact_match() {
         kind: SymbolKind::Func,
         span: dummy_span(),
         scope: ScopeId(0),
-        is_public: true,
+        visibility: arandu_parser::Visibility::Public,
         lang_item: None,
     }];
     assert_eq!(
@@ -197,7 +197,7 @@ fn suggest_from_levenshtein() {
         kind: SymbolKind::Func,
         span: dummy_span(),
         scope: ScopeId(0),
-        is_public: true,
+        visibility: arandu_parser::Visibility::Public,
         lang_item: None,
     }];
     assert_eq!(r.suggest_from("prntln", &syms), Some("println".to_string()));
@@ -212,7 +212,7 @@ fn suggest_from_no_match() {
         kind: SymbolKind::Func,
         span: dummy_span(),
         scope: ScopeId(0),
-        is_public: true,
+        visibility: arandu_parser::Visibility::Public,
         lang_item: None,
     }];
     assert_eq!(r.suggest_from("abcdef", &syms), None);
@@ -227,7 +227,7 @@ fn suggest_from_case_insensitive() {
         kind: SymbolKind::Func,
         span: dummy_span(),
         scope: ScopeId(0),
-        is_public: true,
+        visibility: arandu_parser::Visibility::Public,
         lang_item: None,
     }];
     assert_eq!(
@@ -505,6 +505,7 @@ fn collect_top_level_interface() {
         span: dummy_span(),
         attrs: Vec::new().into(),
         visibility: arandu_parser::Visibility::Private,
+        sealed: false,
         name: "Stringable".into(),
         generic_params: Vec::new().into(),
         where_clause: Vec::new().into(),

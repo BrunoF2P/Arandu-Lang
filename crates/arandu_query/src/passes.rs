@@ -86,25 +86,225 @@ pub fn local_symbols(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<Resol
 
 /// Symbols visible to other files via `import`.
 ///
-/// Root fix for multi-module privacy: only **global-scope** symbols marked
-/// `is_public` (from `public` decls, extern surface, prelude) are exported.
-/// Private free functions / methods no longer leak across modules.
-#[salsa::tracked]
+/// Public surface only. Internal exports live in a separate query so public
+pub fn cycle_recover_exported_symbols(
+    _db: &dyn ArandCompilerDb,
+    _id: salsa::Id,
+    _file: SourceFile,
+) -> Arc<arandu_middle::ExportedSymbolTable> {
+    Arc::new(arandu_middle::ExportedSymbolTable::cycle_fallback())
+}
+
+pub fn cycle_recover_internal_symbols(
+    _db: &dyn ArandCompilerDb,
+    _id: salsa::Id,
+    _file: SourceFile,
+) -> Arc<arandu_middle::ExportedSymbolTable> {
+    Arc::new(arandu_middle::ExportedSymbolTable::cycle_fallback())
+}
+
+/// Symbols visible to other files via `import`.
+///
+/// Public surface only. Internal exports live in a separate query so public
+/// consumers retain early-cutoff when package-private declarations change.
+#[salsa::tracked(cycle_result = cycle_recover_exported_symbols)]
 pub fn exported_symbols(
     db: &dyn ArandCompilerDb,
     file: SourceFile,
 ) -> Arc<arandu_middle::ExportedSymbolTable> {
     let locals = local_symbols(db, file);
     let mut map = std::collections::BTreeMap::new();
+    let mut sealed_symbols = std::collections::BTreeSet::new();
+    let mut sealed_ids = rustc_hash::FxHashSet::default();
 
     let global_scope = locals.symbols.global_scope();
     for symbol in locals.symbols.iter() {
-        if symbol.scope == global_scope && symbol.is_public {
+        if symbol.scope == global_scope && symbol.visibility == arandu_parser::Visibility::Public {
+            if locals.symbols.sealed_interfaces.contains(&symbol.id) {
+                sealed_symbols.insert(symbol.name.to_string());
+                sealed_ids.insert(symbol.id);
+            }
             map.insert(symbol.name.to_string(), (symbol.id, symbol.kind));
         }
     }
 
-    Arc::new(arandu_middle::ExportedSymbolTable { symbols: map })
+    let mut sealed_implementations: Vec<_> = locals
+        .symbols
+        .interface_implementations
+        .iter()
+        .filter(|(_, interface)| sealed_ids.contains(interface))
+        .copied()
+        .collect();
+
+    let program_res = parse(db, file);
+    if let Ok(program) = &**program_res {
+        for import in &program.imports {
+            if let arandu_parser::ImportDecl::ReExport {
+                visibility: arandu_parser::Visibility::Public,
+                items,
+                ..
+            } = import
+            {
+                if let Some(path_key) = arandu_resolve::canonicalize_import_path(import) {
+                    if let Some(target_file) = db.as_source_db().resolve_module_path(&path_key) {
+                        let target_exports = exported_symbols(db, target_file);
+                        if target_exports.is_cycle {
+                            return Arc::new(arandu_middle::ExportedSymbolTable::cycle_fallback());
+                        }
+                        for item in items {
+                            let name = item.name.as_str();
+                            if let Some(&(id, kind)) = target_exports.symbols.get(name) {
+                                let export_name =
+                                    item.alias.as_ref().unwrap_or(&item.name).to_string();
+                                if target_exports.sealed_symbols.contains(name) {
+                                    sealed_symbols.insert(export_name.clone());
+                                    sealed_ids.insert(id);
+                                }
+                                for &(ty, iface) in &target_exports.sealed_implementations {
+                                    if iface == id {
+                                        sealed_implementations.push((ty, iface));
+                                    }
+                                }
+                                map.insert(export_name, (id, kind));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    sealed_implementations.sort_unstable_by_key(|(ty, interface)| {
+        (
+            ty.file_id,
+            ty.local_id.0,
+            interface.file_id,
+            interface.local_id.0,
+        )
+    });
+    sealed_implementations.dedup();
+    Arc::new(arandu_middle::ExportedSymbolTable {
+        symbols: map,
+        internal_symbols: std::collections::BTreeMap::new(),
+        sealed_symbols,
+        sealed_implementations,
+        is_cycle: false,
+    })
+}
+
+#[salsa::tracked(cycle_result = cycle_recover_internal_symbols)]
+#[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
+    query = "internal_symbols",
+    file = ?file.file_id(db),
+))]
+pub fn internal_symbols(
+    db: &dyn ArandCompilerDb,
+    file: SourceFile,
+) -> Arc<arandu_middle::ExportedSymbolTable> {
+    let locals = local_symbols(db, file);
+    let mut map = std::collections::BTreeMap::new();
+    let mut sealed_symbols = std::collections::BTreeSet::new();
+    let mut sealed_ids = rustc_hash::FxHashSet::default();
+    let global_scope = locals.symbols.global_scope();
+    for symbol in locals.symbols.iter() {
+        if symbol.scope == global_scope && symbol.visibility == arandu_parser::Visibility::Internal
+        {
+            if locals.symbols.sealed_interfaces.contains(&symbol.id) {
+                sealed_symbols.insert(symbol.name.to_string());
+                sealed_ids.insert(symbol.id);
+            }
+            map.insert(symbol.name.to_string(), (symbol.id, symbol.kind));
+        }
+    }
+    let mut sealed_implementations: Vec<_> = locals
+        .symbols
+        .interface_implementations
+        .iter()
+        .filter(|(_, interface)| sealed_ids.contains(interface))
+        .copied()
+        .collect();
+
+    let program_res = parse(db, file);
+    if let Ok(program) = &**program_res {
+        for import in &program.imports {
+            if let arandu_parser::ImportDecl::ReExport {
+                visibility: arandu_parser::Visibility::Internal,
+                items,
+                ..
+            } = import
+            {
+                if let Some(path_key) = arandu_resolve::canonicalize_import_path(import) {
+                    if let Some(target_file) = db.as_source_db().resolve_module_path(&path_key) {
+                        let is_same_package = db
+                            .as_source_db()
+                            .same_package(*file.file_id(db), target_file);
+                        let target_exports = exported_symbols(db, target_file);
+                        let target_internal = if is_same_package {
+                            Some(internal_symbols(db, target_file))
+                        } else {
+                            None
+                        };
+                        if target_exports.is_cycle
+                            || target_internal.as_ref().is_some_and(|t| t.is_cycle)
+                        {
+                            return Arc::new(arandu_middle::ExportedSymbolTable::cycle_fallback());
+                        }
+                        for item in items {
+                            let name = item.name.as_str();
+                            if let Some(&(id, kind)) =
+                                target_exports.symbols.get(name).or_else(|| {
+                                    target_internal
+                                        .as_ref()
+                                        .and_then(|t| t.internal_symbols.get(name))
+                                })
+                            {
+                                let export_name =
+                                    item.alias.as_ref().unwrap_or(&item.name).to_string();
+                                if target_exports.sealed_symbols.contains(name)
+                                    || target_internal
+                                        .as_ref()
+                                        .is_some_and(|t| t.sealed_symbols.contains(name))
+                                {
+                                    sealed_symbols.insert(export_name.clone());
+                                    sealed_ids.insert(id);
+                                }
+                                for &(ty, iface) in
+                                    target_exports.sealed_implementations.iter().chain(
+                                        target_internal
+                                            .as_ref()
+                                            .map(|t| t.sealed_implementations.as_slice())
+                                            .unwrap_or_default(),
+                                    )
+                                {
+                                    if iface == id {
+                                        sealed_implementations.push((ty, iface));
+                                    }
+                                }
+                                map.insert(export_name, (id, kind));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    sealed_implementations.sort_unstable_by_key(|(ty, interface)| {
+        (
+            ty.file_id,
+            ty.local_id.0,
+            interface.file_id,
+            interface.local_id.0,
+        )
+    });
+    sealed_implementations.dedup();
+    Arc::new(arandu_middle::ExportedSymbolTable {
+        symbols: std::collections::BTreeMap::new(),
+        internal_symbols: map,
+        sealed_symbols,
+        sealed_implementations,
+        is_cycle: false,
+    })
 }
 
 /// Real definition span for `symbol_id` (from the owning file's resolve result).
@@ -269,6 +469,9 @@ fn signatures_from_program(
     for import in &program.imports {
         if let Some(path) = arandu_resolve::canonicalize_import_path(import) {
             if let Some(imported_file) = db.as_source_db().resolve_module_path(&path) {
+                if exported_symbols(db, imported_file).is_cycle {
+                    continue;
+                }
                 let imported_sigs = module_signatures(db, imported_file);
                 tracing::debug!(
                     target: "arandu_query",
@@ -296,6 +499,56 @@ fn signatures_from_program(
                         }
                     }
                 }
+                for (&var_id, &(parent_id, _)) in &imported_sigs.type_info.enum_variants {
+                    if checker.symbols.try_get(var_id).is_none() {
+                        if let Some(symbol) = imported_sigs.symbols.try_get(var_id).cloned() {
+                            Arc::make_mut(&mut checker.symbols).register_imported_symbol(symbol);
+                        }
+                    }
+                    if checker.symbols.try_get(parent_id).is_none() {
+                        if let Some(symbol) = imported_sigs.symbols.try_get(parent_id).cloned() {
+                            Arc::make_mut(&mut checker.symbols).register_imported_symbol(symbol);
+                        }
+                    }
+                }
+                for &struct_id in imported_sigs.type_info.struct_fields.keys() {
+                    if checker.symbols.try_get(struct_id).is_none() {
+                        if let Some(symbol) = imported_sigs.symbols.try_get(struct_id).cloned() {
+                            Arc::make_mut(&mut checker.symbols).register_imported_symbol(symbol);
+                        }
+                    }
+                }
+                for ((type_id, member_name), member_sym) in
+                    &imported_sigs.symbols.associated_members
+                {
+                    if let Some(symbol) = imported_sigs.symbols.try_get(*member_sym) {
+                        let is_accessible = match symbol.visibility {
+                            arandu_parser::Visibility::Public => true,
+                            arandu_parser::Visibility::Internal => db
+                                .as_source_db()
+                                .same_package(*file.file_id(db), imported_file),
+                            arandu_parser::Visibility::Private
+                            | arandu_parser::Visibility::Module => false,
+                        };
+                        if !is_accessible {
+                            continue;
+                        }
+                        if !checker
+                            .symbols
+                            .associated_members
+                            .contains_key(&(*type_id, member_name.clone()))
+                        {
+                            Arc::make_mut(&mut checker.symbols)
+                                .associated_members
+                                .insert((*type_id, member_name.clone()), *member_sym);
+                        }
+                        if checker.symbols.try_get(*member_sym).is_none() {
+                            Arc::make_mut(&mut checker.symbols)
+                                .register_imported_symbol(symbol.clone());
+                        }
+                    }
+                }
+
                 // Body-derived contracts cross the module boundary
                 // through their own HashEq query. A dependency body
                 // edit therefore stops here when the public relation is
@@ -422,18 +675,90 @@ pub fn module_signatures(db: &dyn ArandCompilerDb, file: SourceFile) -> ModuleSi
     let _ = module_graph_fingerprint(db, file);
     let program_res = parse(db, file);
     let resolved_arc = resolve(db, file);
+    let package_implementations = sealed_package_implementations(db, file);
+    let mut resolved = resolved_arc.value.as_ref().clone();
+    if !package_implementations.is_empty() {
+        Arc::make_mut(&mut resolved.symbols)
+            .interface_implementations
+            .extend(package_implementations);
+    }
 
     let res = match &**program_res {
-        Ok(program) => signatures_from_program(db, file, program, resolved_arc.value.as_ref()),
+        Ok(program) => signatures_from_program(db, file, program, &resolved),
         Err(_) => TypeCheckResult {
             symbols: std::sync::Arc::new(arandu_semantics::SymbolTable::default()),
-            resolved: Arc::clone(&resolved_arc.resolved),
+            resolved: Arc::clone(&resolved.resolved),
             type_info: std::sync::Arc::new(arandu_semantics::TypeInfo::default()),
             diagnostics: vec![],
         },
     };
 
     ModuleSignatures::new(res)
+}
+
+/// Collect explicit sealed-interface edges from every module in the current
+/// package. Resolution remains per-file; this query only composes its typed
+/// symbol IDs and never inspects the filesystem.
+#[salsa::tracked]
+fn sealed_package_implementations(
+    db: &dyn ArandCompilerDb,
+    file: SourceFile,
+) -> Vec<(arandu_middle::SymbolId, arandu_middle::SymbolId)> {
+    let Some(database) = db.as_db_impl() else {
+        return resolve(db, file)
+            .symbols
+            .interface_implementations
+            .iter()
+            .copied()
+            .collect();
+    };
+    let Some(map) = database.package_module_map() else {
+        return resolve(db, file)
+            .symbols
+            .interface_implementations
+            .iter()
+            .copied()
+            .collect();
+    };
+    let current_file = *file.file_id(db);
+    let package = map
+        .bindings(db)
+        .iter()
+        .find(|(_, binding)| *binding.file.file_id(db) == current_file)
+        .map(|(_, binding)| binding.package);
+    let Some(package) = package else {
+        return resolve(db, file)
+            .symbols
+            .interface_implementations
+            .iter()
+            .copied()
+            .collect();
+    };
+
+    let mut implementations = rustc_hash::FxHashSet::default();
+    for (_, binding) in map.bindings(db).iter() {
+        if binding.package != package {
+            continue;
+        }
+        db.unwind_if_revision_cancelled();
+        implementations.extend(
+            resolve(db, binding.file)
+                .symbols
+                .interface_implementations
+                .iter()
+                .copied(),
+        );
+    }
+    let mut implementations: Vec<_> = implementations.into_iter().collect();
+    implementations.sort_unstable_by_key(|(ty, interface)| {
+        (
+            ty.file_id,
+            ty.local_id.0,
+            interface.file_id,
+            interface.local_id.0,
+        )
+    });
+    implementations
 }
 
 /// Per-item input for body typeck: holds current [`Program`] but **HashEq**
@@ -554,6 +879,7 @@ fn empty_program() -> Program {
         span: arandu_base::Span::new(0, 0, 0),
         module: None,
         imports: vec![],
+        interface_impls: vec![],
         decls: vec![],
         docs: vec![],
         pool: arandu_parser::ast_pool::AstPool::default(),

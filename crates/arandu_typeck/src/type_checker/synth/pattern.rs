@@ -166,7 +166,10 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                     let mut variant_symbol_opt = None;
                     for (&var_id, &(parent_id, _)) in &checker.type_info.enum_variants {
                         if parent_id == enum_symbol_id {
-                            let var_name = &checker.symbols.get(var_id).name;
+                            let Some(var_sym) = checker.symbols.try_get(var_id) else {
+                                continue;
+                            };
+                            let var_name = &var_sym.name;
                             if var_name == variant || var_name.ends_with(&format!(".{}", variant)) {
                                 variant_symbol_opt = Some(var_id);
                                 break;
@@ -251,11 +254,17 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
             if let Some(info) = enum_info {
                 match info {
                     EnumInfo::Named(enum_symbol_id) => {
-                        let enum_name = checker.symbols.get(enum_symbol_id).name.clone();
+                        let Some(enum_sym) = checker.symbols.try_get(enum_symbol_id) else {
+                            return;
+                        };
+                        let enum_name = enum_sym.name.clone();
                         let mut variant_symbol_opt = None;
                         for (&var_id, &(parent_id, _)) in &checker.type_info.enum_variants {
                             if parent_id == enum_symbol_id {
-                                let var_name = &checker.symbols.get(var_id).name;
+                                let Some(var_sym) = checker.symbols.try_get(var_id) else {
+                                    continue;
+                                };
+                                let var_name = &var_sym.name;
                                 if var_name == name || var_name.ends_with(&format!(".{}", name)) {
                                     variant_symbol_opt = Some(var_id);
                                     break;
@@ -472,6 +481,11 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                 };
                 for &field_id in checker.pool.field_pattern_list(*fields) {
                     let field = checker.pool.field_pattern(field_id);
+                    checker.check_field_visibility(
+                        struct_symbol_id,
+                        field.name.as_str(),
+                        field.span,
+                    );
                     let field_ty_id_opt = types::struct_field_instantiated(
                         checker,
                         struct_symbol_id,

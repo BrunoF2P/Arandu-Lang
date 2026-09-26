@@ -153,15 +153,19 @@ pub fn function_parameter_names(
     let Ok(program) = &**program else {
         return Vec::new();
     };
-    for &decl_id in &program.decls {
-        match program.pool.decl(decl_id) {
+    let mut result = Vec::new();
+    program.for_each_decl_recursive(|_decl_id, decl| {
+        if !result.is_empty() {
+            return;
+        }
+        match decl {
             arandu_parser::TopLevelDecl::Func(func) => {
                 let (span, name) = match &func.name {
                     arandu_parser::FuncName::Free { span, name }
                     | arandu_parser::FuncName::Method { span, name, .. } => (*span, name),
                 };
                 if span == symbol.span && name.as_str() == symbol.name.as_str() {
-                    return func
+                    result = func
                         .params
                         .iter()
                         .map(|param| param.name.to_string())
@@ -174,7 +178,7 @@ pub fn function_parameter_names(
                         && member.span.start <= symbol.span.start
                         && symbol.span.end <= member.span.end
                 }) {
-                    return member
+                    result = member
                         .params
                         .iter()
                         .map(|param| param.name.to_string())
@@ -183,8 +187,8 @@ pub fn function_parameter_names(
             }
             _ => {}
         }
-    }
-    Vec::new()
+    });
+    result
 }
 
 /// Tightest name/ref/definition containing `offset`.
