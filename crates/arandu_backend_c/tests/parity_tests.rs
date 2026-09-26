@@ -511,6 +511,17 @@ fn test_execution_parity(name: &str, src: &str) {
     let _ = test_execution_result(name, src);
 }
 
+fn test_execution_parity_mono(name: &str, src: &str) {
+    let (amir, tc) = compile_src_mono(src);
+    let actual_result = execute_c(name, &amir, &tc);
+    let expected = execute_cranelift(&amir, &tc);
+    assert_eq!(
+        expected, actual_result,
+        "Execution mismatch for {}! Cranelift={}, C={}",
+        name, expected, actual_result
+    );
+}
+
 #[test]
 fn generated_test_registry_entrypoint_compiles_and_executes() {
     let (amir, tc) = compile_src("func smoke(): void {}");
@@ -922,6 +933,25 @@ fn parity_enum_layout() {
     }
     "#;
     test_execution_parity("enum_layout", src);
+}
+
+#[test]
+fn parity_generic_enum_payload_layout_and_match() {
+    let src = r#"
+    enum Option<T> { Some(T), None }
+
+    func value(option: Option<int>): int {
+        match option {
+            Option.Some(item) => { return item; }
+            Option.None => { return 0; }
+        }
+    }
+
+    func main(): int {
+        return value(Option.Some(42)) - 42
+    }
+    "#;
+    test_execution_parity("generic_enum_payload_layout", src);
 }
 
 #[test]
@@ -2772,6 +2802,59 @@ fn c_backend_emits_native_trap_abort_model() {
 
         func main(): int {
             return safe_or_abort(21);
+        }
+        "#,
+    );
+}
+
+#[test]
+fn parity_user_defined_alloc_and_free() {
+    test_execution_parity(
+        "parity_user_defined_alloc_and_free",
+        r#"
+        func alloc(size: int): int {
+            return size * 3
+        }
+
+        func free(value: int): int {
+            return value + 5
+        }
+
+        func main(): int {
+            let a = alloc(10)
+            let b = free(20)
+            return a + b
+        }
+        "#,
+    );
+}
+
+#[test]
+fn parity_user_defined_generic_option() {
+    test_execution_parity_mono(
+        "parity_user_defined_generic_option",
+        r#"
+        enum Option<T> {
+            Some(T),
+            None,
+        }
+
+        func unwrap_or(opt: Option<int>, default_val: int): int {
+            return match opt {
+                Option.Some(v) => v
+                Option.None => default_val
+            }
+        }
+
+        func wrap<T>(x: T): Option<T> {
+            return Option.Some(x)
+        }
+
+        func main(): int {
+            let a = Option.Some(42)
+            let b: Option<int> = Option.None
+            let c = wrap(15)
+            return unwrap_or(a, 0) + unwrap_or(b, 8) + unwrap_or(c, 0)
         }
         "#,
     );

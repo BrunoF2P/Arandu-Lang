@@ -371,14 +371,7 @@ impl<'a> CEmitter<'a> {
                 } else if let Some(p) = payload {
                     let payload_str = self.format_operand(p, func);
                     let payload_ty = match expected_ar_type {
-                        ArType::Named(id, _) => self
-                            .provider
-                            .get_enum_variants(*id)
-                            .and_then(|variants| {
-                                variants.get(*variant_tag).and_then(|v| v.payload_ty)
-                            })
-                            .map(|ty_id| self.interner.resolve(ty_id))
-                            .unwrap_or(ArType::Error),
+                        ArType::Named(_, _) => self.operand_ty(func, p),
                         ArType::Option(inner) => {
                             if *variant_tag == 1 {
                                 self.interner.resolve(*inner)

@@ -31,6 +31,31 @@ fn compile_src(
     )
 }
 
+fn compile_src_mono(
+    src: &str,
+) -> (
+    arandu_semantics::amir::AmirProgram,
+    arandu_semantics::SymbolTable,
+    arandu_semantics::TypeInfo,
+) {
+    let program = arandu_parser::parse(src).expect("parse failed");
+    let resolution = resolve_for_test(0, &program);
+    let mut tc = type_check(
+        resolution,
+        &program,
+        arandu_semantics::TargetInfo { pointer_width: 64 },
+    );
+    let mut hir = lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
+    let _ =
+        arandu_semantics::monomorphize_program(&mut tc, &mut hir).expect("monomorphization failed");
+    let (amir, _) = lower_to_amir_with_interfaces(&mut tc, &hir, 64).expect("AMIR lowering failed");
+    (
+        amir,
+        Arc::unwrap_or_clone(tc.symbols),
+        Arc::unwrap_or_clone(tc.type_info),
+    )
+}
+
 fn backend_for_test() -> CraneliftBackend {
     CraneliftBackend::try_new().expect("JIT setup should not fail in test environment")
 }
@@ -2184,4 +2209,70 @@ fn jit_nested_aggregate_deep_projection_struct_array() {
     };
     // 100 + 10 (p_origin_x) + 8 (p2_y) + 1 (p0_x) = 119
     assert_eq!(result, 119);
+}
+
+#[test]
+fn jit_user_defined_alloc_and_free_execute_successfully() {
+    let src = r#"
+    func alloc(size: int): int {
+        return size * 3
+    }
+
+    func free(value: int): int {
+        return value + 5
+    }
+
+    func main(): int {
+        let a = alloc(10)
+        let b = free(20)
+        return a + b
+    }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    let backend = backend_for_test();
+    let module = backend.compile(&amir, &symbols, &type_info).unwrap();
+
+    let result: i64 = unsafe {
+        let f: unsafe extern "C" fn() -> i64 = module.get_fn("main").unwrap();
+        f()
+    };
+    // alloc(10) = 30, free(20) = 25 -> 55
+    assert_eq!(result, 55);
+}
+
+#[test]
+fn jit_user_defined_generic_option_executes_successfully() {
+    let src = r#"
+    enum Option<T> {
+        Some(T),
+        None,
+    }
+
+    func unwrap_or(opt: Option<int>, default_val: int): int {
+        return match opt {
+            Option.Some(v) => v
+            Option.None => default_val
+        }
+    }
+
+    func wrap<T>(x: T): Option<T> {
+        return Option.Some(x)
+    }
+
+    func main(): int {
+        let a = Option.Some(42)
+        let b: Option<int> = Option.None
+        let c = wrap(15)
+        return unwrap_or(a, 0) + unwrap_or(b, 8) + unwrap_or(c, 0)
+    }
+    "#;
+    let (amir, symbols, type_info) = compile_src_mono(src);
+    let backend = backend_for_test();
+    let module = backend.compile(&amir, &symbols, &type_info).unwrap();
+
+    let result: i64 = unsafe {
+        let f: unsafe extern "C" fn() -> i64 = module.get_fn("main").unwrap();
+        f()
+    };
+    assert_eq!(result, 65);
 }

@@ -103,6 +103,8 @@ pub enum LangItem {
     Sync,
     /// Cooperative executor handle; its opaque ID is not a transfer proof.
     TaskHandle,
+    Alloc,
+    Free,
 }
 
 #[derive(Debug, Clone)]
@@ -345,8 +347,22 @@ impl SymbolTable {
             LangItem::Coroutine => self.builtins.coroutine = Some(sym),
             LangItem::String => self.builtins.string = Some(sym),
             LangItem::Vec => self.builtins.vec = Some(sym),
+            LangItem::Alloc => self.builtin_alloc = Some(sym),
+            LangItem::Free => self.builtin_free = Some(sym),
             _ => {}
         }
+    }
+
+    #[must_use]
+    pub fn is_alloc_func(&self, sym: SymbolId) -> bool {
+        self.try_get(sym).and_then(|s| s.lang_item) == Some(LangItem::Alloc)
+            || Some(sym) == self.builtin_alloc
+    }
+
+    #[must_use]
+    pub fn is_free_func(&self, sym: SymbolId) -> bool {
+        self.try_get(sym).and_then(|s| s.lang_item) == Some(LangItem::Free)
+            || Some(sym) == self.builtin_free
     }
 
     #[must_use]

@@ -158,10 +158,14 @@ impl<'a> Resolver<'a> {
         span: arandu_lexer::Span,
         visibility: arandu_parser::Visibility,
     ) -> Option<crate::SymbolId> {
-        // A name is reserved if it is already defined in the prelude (ScopeId(0))
-        // and we are currently not inside the prelude/std.* itself.
-        let is_reserved =
-            scope != ScopeId(0) && self.symbols.find_in_scope(ScopeId(0), name).is_some();
+        // Compiler lang items have special semantics by symbol identity, not
+        // because their spelling is globally reserved. Let a local declaration
+        // or an explicit stdlib import shadow the ambient compatibility binding.
+        let is_reserved = scope != ScopeId(0)
+            && self
+                .symbols
+                .find_in_scope(ScopeId(0), name)
+                .is_some_and(|id| self.symbols.get(id).lang_item.is_none());
         if is_reserved {
             let is_std = self
                 .current_module

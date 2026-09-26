@@ -1569,6 +1569,48 @@ fn test_variant_sugar_user_enum_generic() {
 }
 
 #[test]
+fn user_generic_option_constructor_is_not_the_builtin_option() {
+    assert_type_errors!(
+        r#"
+        enum Option<T> { Some(T), None }
+        func main() {
+            let value: Option<int> = Option.Some(7)
+            let empty: Option<int> = Option.None
+        }
+    "#,
+        []
+    );
+}
+
+#[test]
+fn user_generic_option_inferred_without_annotation() {
+    assert_type_errors!(
+        r#"
+        enum Option<T> { Some(T), None }
+        func get_val(o: Option<int>): int {
+            match o {
+                Option.Some(x) => x
+                Option.None => 0
+            }
+        }
+        func make_none(): Option<int> {
+            return Option.None
+        }
+        func wrap<T>(x: T): Option<T> {
+            return Option.Some(x)
+        }
+        func main(): int {
+            let value = Option.Some(7)
+            let wrapped = wrap(10)
+            let none = make_none()
+            return get_val(value) + get_val(wrapped) + get_val(none)
+        }
+    "#,
+        []
+    );
+}
+
+#[test]
 fn test_dot_variant_sugar_shadowing() {
     let source = "
         enum MeuTipo {
@@ -2338,4 +2380,42 @@ fn typ32_array_raw_int_float_literals_still_mismatch() {
         }
     ";
     assert_type_errors!(source, [T002IncompatibleAssignment]);
+}
+
+#[test]
+fn user_func_alloc_shadows_builtin_alloc() {
+    let source = "
+        func alloc(size: int): int {
+            return size * 2
+        }
+        func main() {
+            let res: int = alloc(21)
+        }
+    ";
+    assert_type_errors!(source, []);
+}
+
+#[test]
+fn user_func_free_shadows_builtin_free() {
+    let source = "
+        func free(value: int): int {
+            return value + 1
+        }
+        func main() {
+            let res: int = free(41)
+        }
+    ";
+    assert_type_errors!(source, []);
+}
+
+#[test]
+fn local_var_alloc_and_free_shadow_builtins() {
+    let source = "
+        func main(): int {
+            let alloc = 10
+            let free = 20
+            return alloc + free
+        }
+    ";
+    assert_type_errors!(source, []);
 }

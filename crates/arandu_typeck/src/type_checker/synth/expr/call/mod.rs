@@ -49,7 +49,12 @@ pub(super) fn synth_call_expr(
             // Bare `Result.Ok` / `Result.Err` as paths (not calls): build a
             // polymorphic-looking Func using expected `Result<T,E>` when present.
             // Actual calls are handled by `synth_result_ctor` (bidirectional).
-            if types::type_name_base(type_name) == "Result" {
+            let type_symbol = checker
+                .resolved
+                .type_refs
+                .get(&type_name.span.into())
+                .copied();
+            if type_symbol.is_some_and(|symbol| checker.symbols.is_result_type(symbol)) {
                 return Some(match member.as_str() {
                     "Ok" => {
                         let (ok_id, err_id) = match expected.map(|e| checker.resolve(e)) {
@@ -82,7 +87,7 @@ pub(super) fn synth_call_expr(
                     _ => checker.intern(ArType::Error),
                 });
             }
-            if types::type_name_base(type_name) == "Option" {
+            if type_symbol.is_some_and(|symbol| checker.symbols.is_option_type(symbol)) {
                 let inner_id = match expected.map(|e| checker.resolve(e)) {
                     Some(ArType::Option(inner)) => inner,
                     _ => checker.intern(ArType::Error),
@@ -99,7 +104,7 @@ pub(super) fn synth_call_expr(
                     _ => checker.intern(ArType::Error),
                 });
             }
-            if types::type_name_base(type_name) == "Poll" {
+            if type_symbol.is_some_and(|symbol| checker.symbols.is_poll_type(symbol)) {
                 let inner = match expected.map(|e| checker.resolve(e)) {
                     Some(ArType::Poll(inner)) => inner,
                     _ => checker.intern(ArType::Error),
@@ -138,8 +143,14 @@ pub(super) fn synth_call_expr(
                         .get(&variant_symbol_id)
                         .cloned()
                 {
-                    let enum_ty =
-                        ArType::named(*enum_symbol_id, &[], &checker.type_info.type_interner);
+                    let enum_ty = match expected.map(|id| checker.resolve(id)) {
+                        Some(ArType::Named(expected_enum, args))
+                            if expected_enum == *enum_symbol_id =>
+                        {
+                            ArType::Named(expected_enum, args)
+                        }
+                        _ => ArType::named(*enum_symbol_id, &[], &checker.type_info.type_interner),
+                    };
                     match shape {
                         crate::type_checker::EnumPayloadShape::Unit => {
                             return Some(checker.intern(enum_ty));
@@ -303,6 +314,53 @@ pub(super) fn synth_call_expr(
         } => {
             let callee_id = *callee;
             let args_range = *args;
+            // Enum variant constructors inherit their generic parameters from
+            // the parent enum. They are not generic functions in the symbol
+            // table, so instantiate the variant signature against its parent
+            // before checking payload arguments.
+            if let Some(variant_id) = checker.resolved.expr_symbol(callee_id)
+                && let Some((enum_id, _)) = checker.type_info.enum_variants.get(&variant_id)
+                && let Some(type_params) = checker.type_info.generic_params.get(enum_id).cloned()
+                && !type_params.is_empty()
+                && let Some(ArType::Func(formals, ret)) = checker.decl_type(variant_id)
+            {
+                let formals = checker.type_info.type_interner.type_args(formals);
+                let arg_ids = checker.pool.expr_list(args_range).to_vec();
+                let arg_tys: Vec<TypeId> = arg_ids
+                    .iter()
+                    .copied()
+                    .map(|arg| synth_expr(checker, arg))
+                    .collect();
+                if let Some((params, ret)) = infer_and_instantiate_func(
+                    checker,
+                    &type_params,
+                    &formals,
+                    ret,
+                    &arg_tys,
+                    expected,
+                    span,
+                ) {
+                    let func_ty = ArType::func(&params, ret, &checker.type_info.type_interner);
+                    let func_ty_id = checker.intern(func_ty);
+                    checker.record_expr_type(callee_id, func_ty_id);
+                    for (index, arg) in arg_ids.iter().copied().enumerate() {
+                        if let Some(&param) = params.get(index) {
+                            let got = synth_expr_expected(checker, arg, Some(param));
+                            check_call_arg(
+                                checker,
+                                arg,
+                                param,
+                                got,
+                                span,
+                                checker.pool.expr_span(callee_id),
+                                checker.pool.expr_span(arg),
+                                index,
+                            );
+                        }
+                    }
+                    return Some(ret);
+                }
+            }
             if let Some(callee_sym) = checker.resolved.expr_symbol(callee_id) {
                 if let Some(&eff) = checker.type_info.function_effects.get(&callee_sym) {
                     checker.current_observed_effects = checker.current_observed_effects.union(eff);
@@ -327,7 +385,7 @@ pub(super) fn synth_call_expr(
                         );
                     }
                 }
-                if Some(callee_sym) == checker.symbols.builtin_alloc {
+                if checker.symbols.is_alloc_func(callee_sym) {
                     checker.current_observed_effects = checker
                         .current_observed_effects
                         .union(arandu_middle::EffectFlags::HEAP);
@@ -341,7 +399,7 @@ pub(super) fn synth_call_expr(
                     checker.record_expr_type(expr, ptr_ty);
                     return Some(ptr_ty);
                 }
-                if Some(callee_sym) == checker.symbols.builtin_free {
+                if checker.symbols.is_free_func(callee_sym) {
                     checker.current_observed_effects = checker
                         .current_observed_effects
                         .union(arandu_middle::EffectFlags::HEAP);

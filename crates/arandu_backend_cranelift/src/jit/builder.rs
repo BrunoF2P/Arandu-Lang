@@ -290,6 +290,14 @@ pub(crate) fn create_jit_builder_with_io_and_process_args(
         crate::vec_runtime::ar_rt_free_aligned as *const u8,
     );
     builder.symbol(
+        "ar_rt_raw_malloc",
+        crate::vec_runtime::ar_rt_raw_malloc as *const u8,
+    );
+    builder.symbol(
+        "ar_rt_raw_free",
+        crate::vec_runtime::ar_rt_raw_free as *const u8,
+    );
+    builder.symbol(
         "ar_path_join_owned",
         crate::rt_runtime::ar_path_join_owned as *const u8,
     );

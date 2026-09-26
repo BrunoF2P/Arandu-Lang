@@ -43,8 +43,8 @@ fn resolve_method_target(
     // live on the prelude type symbols (linked by import re-index).
     let type_id = match base_ty {
         ArType::Named(id, _) => Some(id),
-        ArType::Result(_, _) => symbols.lookup_type(symbols.global_scope(), "Result"),
-        ArType::Option(_) => symbols.lookup_type(symbols.global_scope(), "Option"),
+        ArType::Result(_, _) => symbols.builtins.result,
+        ArType::Option(_) => symbols.builtins.option,
         _ => None,
     }?;
 

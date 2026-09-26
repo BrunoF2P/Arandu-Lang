@@ -363,3 +363,33 @@ func main(): int {
         checked.type_info.unsafe_functions
     );
 }
+
+#[test]
+fn pure_function_calling_user_alloc_succeeds() {
+    let mut db = DatabaseImpl::new();
+    let file = db.new_file(
+        "effects_pure_user_alloc.aru".into(),
+        r#"
+func alloc(size: int): int {
+    return size * 2
+}
+
+@Effects(Pure)
+func compute(): int {
+    let res = alloc(10)
+    return res
+}
+"#
+        .into(),
+    );
+
+    let checked = type_check(&db, file);
+    assert!(
+        checked
+            .diagnostics
+            .iter()
+            .all(|d| d.code != DiagCode::T039UnsatisfiedEffect),
+        "user-defined alloc must not trigger HEAP effect: {:?}",
+        checked.diagnostics
+    );
+}

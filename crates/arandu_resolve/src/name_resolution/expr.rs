@@ -29,20 +29,21 @@ impl<'a> Resolver<'a> {
             }
             ExprKind::TypePath { type_name, member } => {
                 let type_resolved = self.resolve_type_name(scope, type_name);
-                let base = type_name.path.last().map_or("", |s| s.as_str());
-                if matches!(
-                    (base, member.as_str()),
-                    ("Result", "Ok" | "Err")
-                        | ("Option", "Some" | "None")
-                        | ("Poll", "Ready" | "Pending")
-                ) {
+                let type_sym = self.resolved.type_refs.get(&type_name.span.into()).copied();
+                let is_builtin_variant = type_sym.is_some_and(|symbol| {
+                    (self.symbols.is_result_type(symbol) && matches!(member.as_str(), "Ok" | "Err"))
+                        || (self.symbols.is_option_type(symbol)
+                            && matches!(member.as_str(), "Some" | "None"))
+                        || (self.symbols.is_poll_type(symbol)
+                            && matches!(member.as_str(), "Ready" | "Pending"))
+                });
+                if is_builtin_variant {
                     return;
                 }
                 if type_resolved {
                     let ty = type_name.path.join(".");
                     // Prefer SymbolId-keyed lookup (Sprint 3); fall back to name for
                     // types that were not in scope (import path not yet resolved).
-                    let type_sym = self.resolved.type_refs.get(&type_name.span.into()).copied();
                     let symbol =
                         type_sym.and_then(|id| self.symbols.lookup_associated_member(id, member));
                     if let Some(symbol) = symbol {

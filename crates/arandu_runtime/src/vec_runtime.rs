@@ -231,6 +231,38 @@ pub unsafe extern "C" fn ar_rt_free_aligned(pointer: *mut u8, size: usize, align
     }
 }
 
+/// Raw heap allocation for runtime hooks.
+///
+/// # Safety
+/// Returned pointer must be freed with [`ar_rt_raw_free`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ar_rt_raw_malloc(size: usize) -> *mut u8 {
+    let size = size.max(1);
+    unsafe {
+        unsafe extern "C" {
+            fn malloc(size: usize) -> *mut std::ffi::c_void;
+        }
+        malloc(size).cast()
+    }
+}
+
+/// Raw heap deallocation for runtime hooks.
+///
+/// # Safety
+/// `pointer` must be null or obtained from [`ar_rt_raw_malloc`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ar_rt_raw_free(pointer: *mut u8) {
+    if pointer.is_null() {
+        return;
+    }
+    unsafe {
+        unsafe extern "C" {
+            fn free(ptr: *mut std::ffi::c_void);
+        }
+        free(pointer.cast());
+    }
+}
+
 /// Free buffer from [`ar_vec_malloc`].
 ///
 /// # Safety

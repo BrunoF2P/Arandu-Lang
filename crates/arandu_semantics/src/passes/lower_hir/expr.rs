@@ -32,21 +32,39 @@ fn lookup_namespace_field(
     type_check.symbols.lookup_module_member(&path[0], field)
 }
 
-fn builtin_ctor_variant(pool: &AstPool, callee: ExprId) -> Option<crate::hir::ResultCtorVariant> {
+fn builtin_ctor_variant(
+    type_check: &TypeCheckResult,
+    pool: &AstPool,
+    callee: ExprId,
+) -> Option<crate::hir::ResultCtorVariant> {
     let ExprKind::TypePath {
         type_name, member, ..
     } = pool.expr(callee)
     else {
         return None;
     };
-    let base = type_name.path.last().map_or("", |s| s.as_str());
-    match (base, member.as_str()) {
-        ("Result", "Ok") => Some(crate::hir::ResultCtorVariant::Ok),
-        ("Result", "Err") => Some(crate::hir::ResultCtorVariant::Err),
-        ("Option", "Some") => Some(crate::hir::ResultCtorVariant::Some),
-        ("Option", "None") => Some(crate::hir::ResultCtorVariant::None),
-        ("Poll", "Ready") => Some(crate::hir::ResultCtorVariant::PollReady),
-        ("Poll", "Pending") => Some(crate::hir::ResultCtorVariant::PollPending),
+    builtin_ctor_variant_for_type_path(type_check, type_name, member)
+}
+
+fn builtin_ctor_variant_for_type_path(
+    type_check: &TypeCheckResult,
+    type_name: &arandu_parser::TypeName,
+    member: &str,
+) -> Option<crate::hir::ResultCtorVariant> {
+    let symbol = type_check
+        .resolved
+        .type_refs
+        .get(&NodeKey::from(type_name.span))
+        .copied()?;
+    let item = type_check.symbols.get(symbol).lang_item?;
+    use arandu_middle::symbol_table::LangItem;
+    match (item, member) {
+        (LangItem::Result, "Ok") => Some(crate::hir::ResultCtorVariant::Ok),
+        (LangItem::Result, "Err") => Some(crate::hir::ResultCtorVariant::Err),
+        (LangItem::Option, "Some") => Some(crate::hir::ResultCtorVariant::Some),
+        (LangItem::Option, "None") => Some(crate::hir::ResultCtorVariant::None),
+        (LangItem::Poll, "Ready") => Some(crate::hir::ResultCtorVariant::PollReady),
+        (LangItem::Poll, "Pending") => Some(crate::hir::ResultCtorVariant::PollPending),
         _ => None,
     }
 }
@@ -144,7 +162,17 @@ pub(crate) fn lower_expr_raw(
         ExprKind::VariantSugar { name, args, .. } => {
             // T2.2: lower like Result/Option/Poll ctors from the recorded expr type.
             let arg_ids = pool.expr_list(*args);
-            let variant = crate::hir::ResultCtorVariant::from_name(name.as_str());
+            let variant = match (type_check.type_info.expr_type(expr), name.as_str()) {
+                (Some(ArType::Result(_, _)), "Ok") => Some(crate::hir::ResultCtorVariant::Ok),
+                (Some(ArType::Result(_, _)), "Err") => Some(crate::hir::ResultCtorVariant::Err),
+                (Some(ArType::Option(_)), "Some") => Some(crate::hir::ResultCtorVariant::Some),
+                (Some(ArType::Option(_)), "None") => Some(crate::hir::ResultCtorVariant::None),
+                (Some(ArType::Poll(_)), "Ready") => Some(crate::hir::ResultCtorVariant::PollReady),
+                (Some(ArType::Poll(_)), "Pending") => {
+                    Some(crate::hir::ResultCtorVariant::PollPending)
+                }
+                _ => None,
+            };
             if let Some(variant) = variant {
                 if arg_ids.len() == 1 {
                     let value_id = lower_expr(type_check, pool, hir_pool, arg_ids[0])?;
@@ -235,16 +263,14 @@ pub(crate) fn lower_expr_raw(
             type_name, member, ..
         } => {
             // Builtin unit ctors as bare TypePath (not Call): `Option.None`, `Poll.Pending`.
-            let base = type_name.path.last().map_or("", |s| s.as_str());
-            if matches!(
-                (base, member.as_str()),
-                ("Option", "None") | ("Poll", "Pending")
-            ) {
-                let variant = if base == "Option" {
+            let variant = builtin_ctor_variant_for_type_path(type_check, type_name, member);
+            if let Some(variant) = variant.filter(|variant| {
+                matches!(
+                    variant,
                     crate::hir::ResultCtorVariant::None
-                } else {
-                    crate::hir::ResultCtorVariant::PollPending
-                };
+                        | crate::hir::ResultCtorVariant::PollPending
+                )
+            }) {
                 let dummy = hir_pool.alloc_expr(HirExpr {
                     kind: HirExprKind::Bool(false),
                     ty: TypeInterner::preinterned_primitive(Primitive::Bool),
@@ -343,15 +369,16 @@ pub(crate) fn lower_expr_raw(
             let callee_id = *callee;
             let arg_ids = pool.expr_list(*args);
             if let Some(callee_sym) = get_resolved_value_ref(type_check, callee_id)
-                && Some(callee_sym) == type_check.symbols.builtin_alloc
+                && type_check.symbols.is_alloc_func(callee_sym)
+                && let Some(&arg) = arg_ids.first()
             {
-                let inner_id = lower_expr(type_check, pool, hir_pool, arg_ids[0])?;
+                let inner_id = lower_expr(type_check, pool, hir_pool, arg)?;
                 let kind = HirExprKind::Alloc { expr: inner_id };
                 let ty = expr_type_for_kind(type_check, hir_pool, &kind, fallback_ty);
                 return Ok(HirExpr { kind, ty, span });
             }
             if trailing_block.is_none()
-                && let Some(variant) = builtin_ctor_variant(pool, callee_id)
+                && let Some(variant) = builtin_ctor_variant(type_check, pool, callee_id)
             {
                 if arg_ids.len() == 1 {
                     let value_id = lower_expr(type_check, pool, hir_pool, arg_ids[0])?;

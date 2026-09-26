@@ -5,6 +5,62 @@ use super::super::constraints::ConstraintOrigin;
 use super::super::types::{self, ArType, TypeId};
 use super::expr::synth_expr;
 
+fn instantiate_enum_payload(
+    checker: &mut TypeChecker<'_>,
+    enum_id: crate::SymbolId,
+    variant_id: crate::SymbolId,
+    enum_args: &[TypeId],
+    payload: &[TypeId],
+) -> Vec<TypeId> {
+    let params = checker
+        .type_info
+        .generic_params
+        .get(&enum_id)
+        .map(|params| params.as_ref().clone())
+        .or_else(|| enum_params_from_variant(checker, variant_id));
+    let Some(params) = params else {
+        return payload.to_vec();
+    };
+    if enum_args.is_empty() || params.is_empty() {
+        return payload.to_vec();
+    }
+    let concrete: Vec<_> = enum_args.iter().map(|&id| checker.resolve(id)).collect();
+    let subst = types::build_subst(&params, &concrete[..params.len().min(concrete.len())]);
+    payload
+        .iter()
+        .map(|&id| {
+            let ty = checker.resolve(id);
+            checker.intern(types::substitute_type(
+                &ty,
+                &subst,
+                &checker.type_info.type_interner,
+            ))
+        })
+        .collect()
+}
+
+fn enum_params_from_variant(
+    checker: &TypeChecker<'_>,
+    variant_id: crate::SymbolId,
+) -> Option<Vec<crate::SymbolId>> {
+    let ret_ty = match checker.type_info.decl_type(variant_id)? {
+        ArType::Func(_, ret) => checker.resolve(ret),
+        ty => ty,
+    };
+    let ArType::Named(_, args) = ret_ty else {
+        return None;
+    };
+    let args = checker.type_info.type_interner.type_args(args);
+    let params: Vec<_> = args
+        .into_iter()
+        .filter_map(|arg| match checker.resolve(arg) {
+            ArType::Named(id, args) if args.is_empty() => Some(id),
+            _ => None,
+        })
+        .collect();
+    (!params.is_empty()).then_some(params)
+}
+
 pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty: TypeId) {
     let pat = checker.pool.pattern(pattern);
     let value_ty = if matches!(pat, Pattern::Bind { .. }) {
@@ -67,6 +123,7 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                 let val_ty = checker.resolve(value_ty);
                 let qualifier_is_result = checker.symbols.is_result_type(enum_symbol_id);
                 let qualifier_is_option = checker.symbols.is_option_type(enum_symbol_id);
+                let qualifier_is_poll = checker.symbols.is_poll_type(enum_symbol_id);
 
                 if qualifier_is_result && let ArType::Result(ok_id, err_id) = val_ty {
                     match variant.as_str() {
@@ -145,9 +202,50 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                             ));
                         }
                     }
+                } else if qualifier_is_poll && let ArType::Poll(inner_id) = val_ty {
+                    match variant.as_str() {
+                        "Ready" => {
+                            if payload.len != 1 {
+                                checker.diagnostics.push(crate::Diagnostic::error(
+                                    crate::DiagCode::T012WrongArgCount,
+                                    format!(
+                                        "enum variant 'Ready' expects 1 payload item, found {}",
+                                        payload.len
+                                    ),
+                                    *span,
+                                ));
+                            }
+                            if let Some(&pat_id) = checker.pool.pattern_list(*payload).first() {
+                                check_pattern(checker, pat_id, inner_id);
+                            }
+                        }
+                        "Pending" => {
+                            if !payload.is_empty() {
+                                checker.diagnostics.push(crate::Diagnostic::error(
+                                    crate::DiagCode::T012WrongArgCount,
+                                    format!(
+                                        "enum variant 'Pending' expects 0 payload items, found {}",
+                                        payload.len
+                                    ),
+                                    *span,
+                                ));
+                            }
+                        }
+                        _ => {
+                            checker.diagnostics.push(crate::Diagnostic::error(
+                                crate::DiagCode::T018UndefinedField,
+                                format!("variant '{variant}' is not defined on Poll"),
+                                *span,
+                            ));
+                        }
+                    }
                 } else {
+                    let enum_args = match val_ty {
+                        ArType::Named(_, args) => checker.type_info.type_interner.type_args(args),
+                        _ => Vec::new(),
+                    };
                     let expected_enum_ty =
-                        ArType::named(enum_symbol_id, &[], &checker.type_info.type_interner);
+                        ArType::named(enum_symbol_id, &enum_args, &checker.type_info.type_interner);
                     if !super::super::types::unify(
                         &val_ty,
                         &expected_enum_ty,
@@ -197,6 +295,13 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                                     }
                                 }
                                 super::super::EnumPayloadShape::Tuple(tids) => {
+                                    let tids = instantiate_enum_payload(
+                                        checker,
+                                        enum_symbol_id,
+                                        variant_symbol_id,
+                                        &enum_args,
+                                        &tids,
+                                    );
                                     if tids.len() != payload.len as usize {
                                         checker.diagnostics.push(crate::Diagnostic::error(
                                             crate::DiagCode::T012WrongArgCount,
@@ -241,19 +346,24 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
             payload,
         } => {
             enum EnumInfo {
-                Named(crate::SymbolId),
+                Named(crate::SymbolId, Vec<TypeId>),
                 Result(TypeId, TypeId),
                 Option(TypeId),
+                Poll(TypeId),
             }
             let enum_info = match checker.resolve(value_ty) {
-                ArType::Named(enum_symbol_id, _) => Some(EnumInfo::Named(enum_symbol_id)),
+                ArType::Named(enum_symbol_id, args) => Some(EnumInfo::Named(
+                    enum_symbol_id,
+                    checker.type_info.type_interner.type_args(args),
+                )),
                 ArType::Result(ok_id, err_id) => Some(EnumInfo::Result(ok_id, err_id)),
                 ArType::Option(inner_id) => Some(EnumInfo::Option(inner_id)),
+                ArType::Poll(inner_id) => Some(EnumInfo::Poll(inner_id)),
                 _ => None,
             };
             if let Some(info) = enum_info {
                 match info {
-                    EnumInfo::Named(enum_symbol_id) => {
+                    EnumInfo::Named(enum_symbol_id, enum_args) => {
                         let Some(enum_sym) = checker.symbols.try_get(enum_symbol_id) else {
                             return;
                         };
@@ -292,6 +402,13 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                                         }
                                     }
                                     super::super::EnumPayloadShape::Tuple(tids) => {
+                                        let tids = instantiate_enum_payload(
+                                            checker,
+                                            enum_symbol_id,
+                                            variant_symbol_id,
+                                            &enum_args,
+                                            &tids,
+                                        );
                                         if tids.len() != payload.len as usize {
                                             checker.diagnostics.push(crate::Diagnostic::error(
                                                 crate::DiagCode::T012WrongArgCount,
@@ -395,6 +512,42 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                             checker.diagnostics.push(crate::Diagnostic::error(
                                 crate::DiagCode::T018UndefinedField,
                                 format!("variant '{name}' is not defined on Option"),
+                                *span,
+                            ));
+                        }
+                    },
+                    EnumInfo::Poll(inner_id) => match name.as_str() {
+                        "Ready" => {
+                            if payload.len != 1 {
+                                checker.diagnostics.push(crate::Diagnostic::error(
+                                    crate::DiagCode::T012WrongArgCount,
+                                    format!(
+                                        "variant 'Ready' expects 1 payload item, found {}",
+                                        payload.len
+                                    ),
+                                    *span,
+                                ));
+                            }
+                            if let Some(&pat_id) = checker.pool.pattern_list(*payload).first() {
+                                check_pattern(checker, pat_id, inner_id);
+                            }
+                        }
+                        "Pending" => {
+                            if !payload.is_empty() {
+                                checker.diagnostics.push(crate::Diagnostic::error(
+                                    crate::DiagCode::T012WrongArgCount,
+                                    format!(
+                                        "variant 'Pending' expects 0 payload items, found {}",
+                                        payload.len
+                                    ),
+                                    *span,
+                                ));
+                            }
+                        }
+                        _ => {
+                            checker.diagnostics.push(crate::Diagnostic::error(
+                                crate::DiagCode::T018UndefinedField,
+                                format!("variant '{name}' is not defined on Poll"),
                                 *span,
                             ));
                         }

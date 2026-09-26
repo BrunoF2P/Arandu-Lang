@@ -713,7 +713,28 @@ impl LayoutEngine {
                         field_offsets,
                         tag_encoding: None,
                     }
-                } else if let Some(variants) = provider.get_enum_variants(*symbol_id) {
+                } else if let Some(mut variants) = provider.get_enum_variants(*symbol_id) {
+                    // Enum payload declarations are stored using the enum's
+                    // generic parameters, just like generic struct fields.
+                    // Substitute the concrete arguments before computing the
+                    // layout of `Enum<T>` so `Enum<int>` includes its payload.
+                    let generic_params = provider.get_generic_params(*symbol_id).unwrap_or(&[]);
+                    let arg_ids = interner.type_args(*generic_args);
+                    if !generic_params.is_empty() && !arg_ids.is_empty() {
+                        let subst: FxHashMap<SymbolId, TypeId> = generic_params
+                            .iter()
+                            .copied()
+                            .zip(arg_ids.iter().copied())
+                            .collect();
+                        for variant in &mut variants {
+                            let Some(payload_id) = variant.payload_ty else {
+                                continue;
+                            };
+                            let payload_ty = interner.resolve(payload_id);
+                            let substituted = substitute(&payload_ty, &subst, interner);
+                            variant.payload_ty = Some(interner.intern(substituted));
+                        }
+                    }
                     let num_variants = variants.len();
                     let max_tag_bits: u32 = if self.pointer_width() >= 8 { 3 } else { 2 };
                     let mut all_payloads_eligible = true;

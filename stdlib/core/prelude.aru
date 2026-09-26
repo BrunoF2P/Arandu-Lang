@@ -43,6 +43,10 @@ import std.core.marker as marker
 import std.core.atomic as atomic
 
 // Canonical re-exports via RFC 0021
+public use std.core.option.{ Option }
+public use std.core.result.{ Result }
+public use std.core.future.{ Poll }
+public use std.core.num.{ checkedAdd, checkedSub, checkedMul, saturatingAdd, saturatingSub }
 public use std.core.cmp.{ Ordering }
 public use std.core.iter.{ Iterator }
 public use std.core.marker.{ Copy, Send, Sync, PhantomData, phantom }

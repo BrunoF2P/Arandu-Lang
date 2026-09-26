@@ -33,6 +33,8 @@ pub(super) fn sanitize_c_ident(name: &str) -> String {
         "rename" => return "ar_rename".to_string(),
         "abort" => return "ar_abort".to_string(),
         "exit" => return "ar_exit".to_string(),
+        "free" => return "ar_user_free".to_string(),
+        "alloc" => return "ar_user_alloc".to_string(),
         _ => {}
     }
     let mut out = String::with_capacity(name.len() + 4);

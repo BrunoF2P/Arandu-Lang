@@ -25,21 +25,11 @@ pub(crate) fn synth_result_ctor(
     expected: Option<TypeId>,
 ) -> Option<ArType> {
     let (type_name, member) = type_path_member(checker.pool, callee)?;
-    let global_scope = checker.symbols.global_scope();
-    let is_result = if let Some(result_sym) = checker.symbols.lookup_type(global_scope, "Result") {
-        if let Some(resolved_sym) = checker
-            .resolved
-            .type_refs
-            .get(&type_name.span.into())
-            .copied()
-        {
-            resolved_sym == result_sym
-        } else {
-            super::super::types::type_name_base(type_name) == "Result"
-        }
-    } else {
-        super::super::types::type_name_base(type_name) == "Result"
-    };
+    let is_result = checker
+        .resolved
+        .type_refs
+        .get(&type_name.span.into())
+        .is_some_and(|symbol| checker.symbols.is_result_type(*symbol));
     if !is_result {
         return None;
     }
@@ -133,21 +123,11 @@ pub(crate) fn synth_option_ctor(
     expected: Option<TypeId>,
 ) -> Option<ArType> {
     let (type_name, member) = type_path_member(checker.pool, callee)?;
-    let global_scope = checker.symbols.global_scope();
-    let is_option = if let Some(option_sym) = checker.symbols.lookup_type(global_scope, "Option") {
-        if let Some(resolved_sym) = checker
-            .resolved
-            .type_refs
-            .get(&type_name.span.into())
-            .copied()
-        {
-            resolved_sym == option_sym
-        } else {
-            super::super::types::type_name_base(type_name) == "Option"
-        }
-    } else {
-        super::super::types::type_name_base(type_name) == "Option"
-    };
+    let is_option = checker
+        .resolved
+        .type_refs
+        .get(&type_name.span.into())
+        .is_some_and(|symbol| checker.symbols.is_option_type(*symbol));
     if !is_option {
         return None;
     }
@@ -524,14 +504,12 @@ pub(crate) fn synth_poll_ctor(
     span: Span,
 ) -> Option<ArType> {
     let (type_name, member) = type_path_member(checker.pool, callee)?;
-    let global_scope = checker.symbols.global_scope();
-    let poll_sym = checker.symbols.lookup_type(global_scope, "Poll")?;
     let resolved_sym = checker
         .resolved
         .type_refs
         .get(&type_name.span.into())
         .copied()?;
-    if resolved_sym != poll_sym {
+    if !checker.symbols.is_poll_type(resolved_sym) {
         return None;
     }
     let arg_ids = checker.pool.expr_list(args).to_vec();

@@ -25,7 +25,7 @@ pub(crate) fn declare_runtime_imports<M: Module>(
     malloc_sig.params.push(AbiParam::new(ptr_type));
     malloc_sig.returns.push(AbiParam::new(ptr_type));
     let malloc_id = module
-        .declare_function("malloc", Linkage::Import, &malloc_sig)
+        .declare_function("ar_rt_raw_malloc", Linkage::Import, &malloc_sig)
         .map_err(|err| codegen_ice(format!("failed to declare malloc: {err:?}")))?;
     insert_sym(func_ids, "malloc", malloc_id);
 
@@ -33,7 +33,7 @@ pub(crate) fn declare_runtime_imports<M: Module>(
     let mut free_sig = Signature::new(default_call_conv);
     free_sig.params.push(AbiParam::new(ptr_type));
     let free_id = module
-        .declare_function("free", Linkage::Import, &free_sig)
+        .declare_function("ar_rt_raw_free", Linkage::Import, &free_sig)
         .map_err(|err| codegen_ice(format!("failed to declare free: {err:?}")))?;
     insert_sym(func_ids, "free", free_id);
 

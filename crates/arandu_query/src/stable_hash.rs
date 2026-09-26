@@ -227,6 +227,8 @@ fn lang_item_discriminant(item: arandu_middle::symbol_table::LangItem) -> u8 {
         LangItem::Send => 13,
         LangItem::Sync => 14,
         LangItem::TaskHandle => 15,
+        LangItem::Alloc => 16,
+        LangItem::Free => 17,
     }
 }
 

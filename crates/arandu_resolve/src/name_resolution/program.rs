@@ -139,6 +139,10 @@ impl<'a> Resolver<'a> {
                 arandu_parser::Visibility::Public,
             )
             .ok();
+        if let Some(sym) = self.symbols.builtin_alloc {
+            self.symbols
+                .set_lang_item(sym, arandu_middle::symbol_table::LangItem::Alloc);
+        }
         self.symbols.builtin_free = self
             .symbols
             .define_with_visibility(
@@ -149,6 +153,10 @@ impl<'a> Resolver<'a> {
                 arandu_parser::Visibility::Public,
             )
             .ok();
+        if let Some(sym) = self.symbols.builtin_free {
+            self.symbols
+                .set_lang_item(sym, arandu_middle::symbol_table::LangItem::Free);
+        }
 
         let res_sym = self
             .symbols

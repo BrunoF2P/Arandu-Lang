@@ -35,6 +35,8 @@ fn core_lang_item(path: &str, name: &str) -> Option<arandu_middle::symbol_table:
             "std/runtime/executor.aru",
             LangItem::TaskHandle,
         ),
+        "alloc" => ("std.core.mem", "core/mem.aru", LangItem::Alloc),
+        "free" => ("std.core.mem", "core/mem.aru", LangItem::Free),
         _ => return None,
     };
     (path == module

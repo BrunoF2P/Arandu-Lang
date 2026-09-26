@@ -310,12 +310,8 @@ pub(super) fn try_rewrite_generic_call<'bump>(
                             ArType::Named(id, _) => Some(id),
                             _ => None,
                         },
-                        ArType::Result(_, _) => {
-                            tc.symbols.lookup_type(tc.symbols.global_scope(), "Result")
-                        }
-                        ArType::Option(_) => {
-                            tc.symbols.lookup_type(tc.symbols.global_scope(), "Option")
-                        }
+                        ArType::Result(_, _) => tc.symbols.builtins.result,
+                        ArType::Option(_) => tc.symbols.builtins.option,
                         _ => None,
                     };
                     let Some(type_id) = type_id else {

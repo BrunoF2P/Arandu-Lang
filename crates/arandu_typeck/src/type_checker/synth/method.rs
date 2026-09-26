@@ -178,10 +178,9 @@ pub(crate) fn synth_method_call(
 
     // Built-in `Result` / `Option` methods (`expectOrAbort`) live under the type
     // symbol in `associated_members`. Resolve their SymbolId from the prelude.
-    let global_scope = checker.symbols.global_scope();
     let builtin_id: Option<SymbolId> = match &base_resolved {
-        ArType::Result(_, _) => checker.symbols.lookup_type(global_scope, "Result"),
-        ArType::Option(_) => checker.symbols.lookup_type(global_scope, "Option"),
+        ArType::Result(_, _) => checker.symbols.builtins.result,
+        ArType::Option(_) => checker.symbols.builtins.option,
         _ => None,
     };
 

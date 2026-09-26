@@ -8,7 +8,6 @@ use arandu_parser::{GenericParam, IndexRange};
 use crate::type_checker::TypeChecker;
 use crate::type_checker::types::{
     ArType, GenericSubst, LowerCtx, TypeId, TypeInterner, build_subst, substitute_type,
-    type_name_base,
 };
 use arandu_middle::types::lower::lower_type_expr_ctx;
 
@@ -268,8 +267,12 @@ pub fn synth_generic_instantiation(
         .collect();
 
     if let ExprKind::TypePath { type_name, member } = checker.pool.expr(callee) {
-        let base_name = type_name_base(type_name);
-        if base_name == "Result" {
+        let type_symbol = checker
+            .resolved
+            .type_refs
+            .get(&type_name.span.into())
+            .copied();
+        if type_symbol.is_some_and(|symbol| checker.symbols.is_result_type(symbol)) {
             if arg_tys.len() != 1 {
                 let diag = crate::Diagnostic::error(
                     crate::DiagCode::T012WrongArgCount,
@@ -308,7 +311,9 @@ pub fn synth_generic_instantiation(
                 }
             };
         }
-        if base_name == "Option" && member == "Some" {
+        if type_symbol.is_some_and(|symbol| checker.symbols.is_option_type(symbol))
+            && member == "Some"
+        {
             if arg_tys.len() != 1 {
                 let diag = crate::Diagnostic::error(
                     crate::DiagCode::T012WrongArgCount,

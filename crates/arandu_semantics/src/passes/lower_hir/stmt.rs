@@ -148,10 +148,10 @@ fn lower_stmt_raw(
             if let ExprKind::Call { callee, args, .. } = pool.expr(*expr) {
                 let callee_id = *callee;
                 if let Some(callee_sym) = type_check.resolved.expr_symbol(callee_id)
-                    && Some(callee_sym) == type_check.symbols.builtin_free
+                    && type_check.symbols.is_free_func(callee_sym)
+                    && let Some(&arg) = pool.expr_list(*args).first()
                 {
-                    let arg_ids = pool.expr_list(*args);
-                    let eid = super::expr::lower_expr(type_check, pool, hir_pool, arg_ids[0])?;
+                    let eid = super::expr::lower_expr(type_check, pool, hir_pool, arg)?;
                     HirStmtKind::Free(eid)
                 } else {
                     let eid = super::expr::lower_expr(type_check, pool, hir_pool, *expr)?;
