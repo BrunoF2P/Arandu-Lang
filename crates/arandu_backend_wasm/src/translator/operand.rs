@@ -174,6 +174,12 @@ impl<'a> FuncTranslator<'a> {
 
     /// Push a zero constant for the given type.
     pub(super) fn emit_zero(&mut self, ty: TypeId) {
+        let shape = types::shape(ty, self.interner, self.layout_engine.data_layout);
+        if shape == Shape::Fat {
+            self.code.push(Instruction::I32Const(0));
+            self.code.push(Instruction::I32Const(0));
+            return;
+        }
         let vt = types::scalar_valtype_for(ty, self.interner, self.layout_engine.data_layout);
         match vt {
             Some(ValType::I32) => self.code.push(Instruction::I32Const(0)),

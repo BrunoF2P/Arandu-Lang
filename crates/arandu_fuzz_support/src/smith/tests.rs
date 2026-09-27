@@ -1571,7 +1571,9 @@ fn synthesized_try_operator_and_match_case_matches_oracle() {
     assert!(program.source.contains("func generated_try_pipeline"));
     assert!(program.source.contains("generated_try_step"));
     assert!(program.source.contains("generated_match_range"));
-    run(&32u64.to_le_bytes());
+    let observation =
+        check_source(&program.source, true, true).expect("execution across all backends");
+    assert_eq!(observation.result, program.expected_result);
 }
 
 #[test]

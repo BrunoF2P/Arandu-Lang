@@ -15,20 +15,28 @@ impl<'a> FuncTranslator<'a> {
         right: &AmirOperand,
         result_ty: TypeId,
     ) {
-        let operand_ty = self.operand_arity_ty(left);
-        if matches!(
-            self.interner.resolve(operand_ty),
-            ArType::Primitive(Primitive::Str)
-        ) && matches!(op, BinaryOp::Equal | BinaryOp::NotEqual)
+        let left_ty = self.operand_arity_ty(left);
+        let right_ty = self.operand_arity_ty(right);
+        let is_str =
+            |ty: TypeId| matches!(self.interner.resolve(ty), ArType::Primitive(Primitive::Str));
+        if (is_str(left_ty) || is_str(right_ty))
+            && matches!(op, BinaryOp::Equal | BinaryOp::NotEqual)
         {
+            let operand_ty = if is_str(left_ty) { left_ty } else { right_ty };
             self.emit_string_equality(op, left, right, operand_ty);
             return;
         }
 
+        let is_empty = |ty: TypeId| {
+            types::shape(ty, self.interner, self.layout_engine.data_layout) == types::Shape::Empty
+        };
+
         // Comparisons return `bool`, but the instruction and operand stack
         // type comes from their operands. Selecting an opcode from `result_ty`
         // would emit an i32 comparison for f64/i64 values and produce an
-        // invalid Wasm module.
+        // invalid Wasm module. For Nil / empty operands, select the sibling's
+        // type so nil compares as a zero of matching width, or fall back to
+        // i32 if both are empty (e.g. nil == nil).
         let operation_ty = if matches!(
             op,
             BinaryOp::Equal
@@ -38,7 +46,13 @@ impl<'a> FuncTranslator<'a> {
                 | BinaryOp::LtEqual
                 | BinaryOp::GtEqual
         ) {
-            operand_ty
+            if !is_empty(left_ty) {
+                left_ty
+            } else if !is_empty(right_ty) {
+                right_ty
+            } else {
+                self.interner.intern(ArType::Primitive(Primitive::Int))
+            }
         } else {
             result_ty
         };
