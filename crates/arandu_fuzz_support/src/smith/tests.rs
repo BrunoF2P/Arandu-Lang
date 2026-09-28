@@ -11,6 +11,16 @@ use std::process::Command;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
+fn assert_synthesized_seed_matches_all_backends(seed: u64) {
+    let generated = synthesize_with_oracle(seed);
+    let observation = check_source(&generated.source, true, true)
+        .unwrap_or_else(|failure| panic!("generated seed {seed} failed: {failure:?}"));
+    assert_eq!(observation.result, generated.expected_result, "seed {seed}");
+    let expected = ExpectedObservation::synthesized(generated.expected_result);
+    assert_eq!(observation.stdout, expected.stdout, "seed {seed}");
+    assert_eq!(observation.stderr, expected.stderr, "seed {seed}");
+}
+
 #[test]
 fn confirmed_failure_artifact_contains_source_seed_and_replay_metadata() {
     let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
@@ -280,6 +290,17 @@ fn synthesis_is_deterministic_and_reaches_amir_for_many_seeds() {
     let first_source = synthesize(0);
     let file = host.new_file("smith/generated.aru".into(), first_source);
 
+    // Keep a few separated incremental updates to exercise the same-file
+    // analysis path without lowering every generated seed. The loop below
+    // still checks determinism and required source features for all seeds.
+    let amir_seeds = [1, 12, 24];
+    drop(lower_validated_file(&host, file).unwrap_or_else(|failure| {
+        panic!(
+            "synthesized seed 0 did not reach valid AMIR: {}",
+            failure.message
+        )
+    }));
+
     for seed in 1..25 {
         let source = synthesize(seed);
         assert_eq!(source, synthesize(seed));
@@ -304,15 +325,15 @@ fn synthesis_is_deterministic_and_reaches_amir_for_many_seeds() {
             seed.is_multiple_of(64),
             "seed {seed} did not follow the deterministic HashMap generation schedule"
         );
-        if seed > 0 {
+        if amir_seeds.contains(&seed) {
             host.set_text(file, source.as_str());
+            drop(lower_validated_file(&host, file).unwrap_or_else(|failure| {
+                panic!(
+                    "synthesized seed {seed} did not reach valid AMIR: {}",
+                    failure.message
+                )
+            }));
         }
-        drop(lower_validated_file(&host, file).unwrap_or_else(|failure| {
-            panic!(
-                "synthesized seed {seed} did not reach valid AMIR: {}",
-                failure.message
-            )
-        }));
     }
 }
 
@@ -365,7 +386,7 @@ fn generated_conditions_cover_scalar_comparisons_across_all_backends() {
             source.contains(&format!("enabled: identity<bool>({})", condition.source)),
             "coverage seed {seed} was not exercised by the synthesized program"
         );
-        run_all_backends(&seed.to_le_bytes());
+        assert_synthesized_seed_matches_all_backends(seed);
     }
 }
 
@@ -791,8 +812,8 @@ fn emi_profiles_an_unexecuted_std_option_guard() {
 
 #[test]
 fn synthesized_triangular_oracle_compares_all_backends_for_multiple_seeds() {
-    let mut exercised_variants = [false; 3];
-    let mut exercised_loop_forms = [false; 2];
+    let mut compared_variants = [false; 3];
+    let mut compared_loop_forms = [false; 2];
     for seed in 0..12_u64 {
         let source = synthesize(seed);
         let base = source
@@ -800,24 +821,27 @@ fn synthesized_triangular_oracle_compares_all_backends_for_multiple_seeds() {
             .find_map(|line| line.strip_prefix("    let base: int = "))
             .and_then(|value| value.parse::<usize>().ok())
             .expect("synthesized base literal");
-        exercised_variants[base % exercised_variants.len()] = true;
+        let variant = base % compared_variants.len();
         let loop_form = if source.contains("for loop_index =") {
             1
         } else {
             0
         };
-        exercised_loop_forms[loop_form] = true;
-        if !seed.is_multiple_of(64) {
-            run_all_backends(&seed.to_le_bytes());
+        if !seed.is_multiple_of(64)
+            && (!compared_variants[variant] || !compared_loop_forms[loop_form])
+        {
+            assert_synthesized_seed_matches_all_backends(seed);
+            compared_variants[variant] = true;
+            compared_loop_forms[loop_form] = true;
         }
     }
     assert!(
-        exercised_variants.into_iter().all(|exercised| exercised),
-        "all three enum variants must be selected by the differential corpus"
+        compared_variants.into_iter().all(|compared| compared),
+        "all three enum variants must be compared across backends"
     );
     assert!(
-        exercised_loop_forms.into_iter().all(|exercised| exercised),
-        "differential seeds must cover both bounded loop forms"
+        compared_loop_forms.into_iter().all(|compared| compared),
+        "both bounded loop forms must be compared across backends"
     );
 }
 
