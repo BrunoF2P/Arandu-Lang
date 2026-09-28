@@ -105,8 +105,16 @@ fn run_emitted_c_with_asan(c_source: &str, name: &str) {
         "emitted C must compile: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+    // LeakSanitizer is not available in the macOS AddressSanitizer runtime.
+    // Keep ASan's UAF/double-free checks enabled there; Linux additionally
+    // checks leaks, which is the platform supported by this test suite's LSan.
+    let detect_leaks = if cfg!(target_os = "linux") {
+        "detect_leaks=1"
+    } else {
+        "detect_leaks=0"
+    };
     let execution = Command::new(&binary)
-        .env("ASAN_OPTIONS", "detect_leaks=1")
+        .env("ASAN_OPTIONS", detect_leaks)
         .output()
         .expect("run emitted C with AddressSanitizer");
     assert!(

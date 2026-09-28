@@ -251,6 +251,7 @@ impl<'a> CEmitter<'a> {
                     | "ar_rt_cancel_i64"
                     | "ar_rt_parallel_fold_run"
                     | "io__eprint"
+                    | "eprint"
             ) {
                 continue;
             }

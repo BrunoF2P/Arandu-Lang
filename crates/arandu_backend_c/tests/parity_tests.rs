@@ -1134,6 +1134,23 @@ fn parity_io_println_to_str() {
 }
 
 #[test]
+fn parity_io_eprint_emits_the_runtime_alias() {
+    let src = r#"
+    import io
+    func main(): int {
+        io.eprint("stderr")
+        return 0
+    }
+    "#;
+    let (amir, tc) = compile_src(src);
+    let emitted = emit_c(&amir, &tc);
+
+    assert!(emitted.contains("static void io__eprint(ArStr s)"));
+    assert!(emitted.contains("static void eprint(ArStr s) { io__eprint(s); }"));
+    test_execution_parity("io_eprint_runtime_alias", src);
+}
+
+#[test]
 fn parity_to_str_method_and_float() {
     let src = r#"
     import io
