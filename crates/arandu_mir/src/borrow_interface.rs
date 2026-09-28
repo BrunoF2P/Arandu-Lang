@@ -10,7 +10,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::amir::{
-    AmirFunc, AmirOperand, AmirProgram, AmirRvalue, AmirStmt, AmirTerminator, TempId,
+    AmirFunc, AmirOperand, AmirPlace, AmirProgram, AmirProjection, AmirRvalue, AmirStmt,
+    AmirTerminator, TempId,
 };
 use crate::types::{
     ArType, BorrowPath, BorrowPathSegment, BorrowSource, ReturnBorrowDependency,
@@ -170,8 +171,17 @@ fn infer_function_interface(
                 .or_default()
                 .insert(BorrowSource {
                     parameter_index,
-                    parameter_path: path,
+                    parameter_path: path.clone(),
                 });
+            if let Some(local_origins) = locals.get_mut(parameter_index as usize) {
+                local_origins
+                    .entry(path.clone())
+                    .or_default()
+                    .insert(BorrowSource {
+                        parameter_index,
+                        parameter_path: path,
+                    });
+            }
         }
     }
 
@@ -238,13 +248,18 @@ fn transfer_statement(
         AmirStmt::Assign { lhs, rhs } => {
             let mut produced = match rhs {
                 AmirRvalue::Use(operand) => operand_origins(*operand, temps),
-                AmirRvalue::Borrow(place) | AmirRvalue::BorrowMut(place) => locals
+                AmirRvalue::Borrow(place) | AmirRvalue::BorrowMut(place) => {
+                    borrowed_place_origins(function, place, type_info, locals)
+                }
+                AmirRvalue::RelativeBorrow { local, .. } => {
+                    locals.get(local.as_usize()).cloned().unwrap_or_default()
+                }
+                AmirRvalue::Load(place) if place.projections.is_empty() => locals
                     .get(place.local.as_usize())
                     .cloned()
                     .unwrap_or_default(),
-                AmirRvalue::RelativeBorrow { local, .. }
-                | AmirRvalue::Load(crate::amir::AmirPlace { local, .. }) => {
-                    locals.get(local.as_usize()).cloned().unwrap_or_default()
+                AmirRvalue::Load(place) => {
+                    borrowed_place_origins(function, place, type_info, locals)
                 }
                 AmirRvalue::Tuple { items } => {
                     aggregate_origins(items, temps, BorrowPathSegment::Tuple)
@@ -314,6 +329,7 @@ fn transfer_statement(
                     value,
                     variant,
                     index,
+                    ..
                 } => {
                     let tag = type_info
                         .enum_variant_tags
@@ -346,6 +362,10 @@ fn transfer_statement(
                     operand_origins(*slice, temps)
                 }
                 AmirRvalue::StrBytes { source } => operand_origins(*source, temps),
+                AmirRvalue::Unary {
+                    op: arandu_middle::ops::UnaryOp::Deref,
+                    operand,
+                } => operand_origins(*operand, temps),
                 _ => Origins::new(),
             };
             if let Some(target) = temps.get_mut(lhs.as_usize()) {
@@ -510,6 +530,117 @@ fn merge_origins(target: &mut Origins, source: &mut Origins) -> bool {
         changed |= target_origins.len() != old_len;
     }
     changed
+}
+
+/// Project a formal borrow origin to the exact place borrowed by an AMIR
+/// `Borrow`/`BorrowMut`. Without stripping these structural projections,
+/// returning `ref option_payload` could not be related to the caller's
+/// `ref Option<T>` input (and nested borrowed payloads were misclassified as
+/// ownerless).
+fn borrowed_place_origins(
+    function: &AmirFunc,
+    place: &AmirPlace,
+    type_info: &TypeInfo,
+    locals: &[Origins],
+) -> Origins {
+    let mut origins = locals
+        .get(place.local.as_usize())
+        .cloned()
+        .unwrap_or_default();
+    let Some(local) = function.locals.get(place.local.as_usize()) else {
+        return Origins::new();
+    };
+    let mut current_ty = type_info.resolve_type_id(local.ty);
+    for projection in &place.projections {
+        let segment = match projection {
+            AmirProjection::Deref => None,
+            AmirProjection::Field(symbol) => {
+                let resolved =
+                    type_info.resolve_type_id(type_info.type_interner.intern(current_ty.clone()));
+                let field = match resolved {
+                    ArType::Named(owner, _) => {
+                        type_info.struct_fields.get(&owner).and_then(|fields| {
+                            fields
+                                .fields
+                                .iter()
+                                .find(|field| field.symbol == Some(*symbol))
+                        })
+                    }
+                    _ => None,
+                };
+                if let Some(field) = field {
+                    current_ty = type_info.resolve_type_id(field.ty);
+                    Some(BorrowPathSegment::Field(field.name.clone()))
+                } else {
+                    None
+                }
+            }
+            AmirProjection::Variant(tag) => match current_ty {
+                ArType::Ref(inner) | ArType::RefMut(inner) | ArType::Ptr(inner) => {
+                    current_ty = type_info.resolve_type_id(inner);
+                    match current_ty {
+                        ArType::Option(_) if *tag == 1 => Some(BorrowPathSegment::OptionSome),
+                        ArType::Result(_, _) if *tag == 0 => Some(BorrowPathSegment::ResultOk),
+                        ArType::Result(_, _) => Some(BorrowPathSegment::ResultErr),
+                        ArType::Poll(_) if *tag == 0 => Some(BorrowPathSegment::PollReady),
+                        ArType::Named(_, _) => {
+                            u32::try_from(*tag).ok().map(BorrowPathSegment::Variant)
+                        }
+                        _ => None,
+                    }
+                }
+                ArType::Option(_) if *tag == 1 => Some(BorrowPathSegment::OptionSome),
+                ArType::Result(_, _) if *tag == 0 => Some(BorrowPathSegment::ResultOk),
+                ArType::Result(_, _) => Some(BorrowPathSegment::ResultErr),
+                ArType::Poll(_) if *tag == 0 => Some(BorrowPathSegment::PollReady),
+                ArType::Named(_, _) => u32::try_from(*tag).ok().map(BorrowPathSegment::Variant),
+                _ => None,
+            },
+            AmirProjection::Payload {
+                index, field_ty, ..
+            } => {
+                let builtin_enum = matches!(
+                    current_ty,
+                    ArType::Option(_) | ArType::Result(_, _) | ArType::Poll(_)
+                );
+                current_ty = type_info.resolve_type_id(*field_ty);
+                if builtin_enum {
+                    None
+                } else {
+                    u32::try_from(*index).ok().map(BorrowPathSegment::Payload)
+                }
+            }
+            AmirProjection::TupleField(index) => {
+                let segment = u32::try_from(*index).ok().map(BorrowPathSegment::Tuple);
+                if let ArType::Tuple(tuple) = current_ty {
+                    current_ty = type_info
+                        .type_interner
+                        .type_args(tuple)
+                        .get(*index)
+                        .copied()
+                        .map(|ty| type_info.resolve_type_id(ty))
+                        .unwrap_or(ArType::Error);
+                }
+                segment
+            }
+            AmirProjection::Index(_) | AmirProjection::IndexConstant(_) => {
+                let inner = match current_ty {
+                    ArType::Array(_, inner)
+                    | ArType::ConstArray(_, inner)
+                    | ArType::Slice(inner) => Some(inner),
+                    _ => None,
+                };
+                if let Some(inner) = inner {
+                    current_ty = type_info.resolve_type_id(inner);
+                }
+                Some(BorrowPathSegment::ArrayElement)
+            }
+        };
+        if let Some(segment) = segment {
+            origins = strip_prefix(&origins, &segment);
+        }
+    }
+    origins
 }
 
 fn field_name(

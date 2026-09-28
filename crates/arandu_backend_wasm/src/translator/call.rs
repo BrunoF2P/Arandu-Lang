@@ -87,6 +87,16 @@ impl<'a> FuncTranslator<'a> {
                 }
                 true
             }
+            IntrinsicKind::AddressOf => {
+                if let Some(arg) = args.first()
+                    && let Some(temp) = lhs
+                {
+                    let local = self.temp_local.get(&temp).copied().unwrap_or(0);
+                    let arg_ty = self.operand_arity_ty(arg);
+                    self.emit_operand_to_local(arg, arg_ty, local);
+                }
+                true
+            }
             IntrinsicKind::PtrRead => {
                 if let Some(arg) = args.first() {
                     let int_ty = self.interner.intern(ArType::Primitive(Primitive::Int));
@@ -340,6 +350,7 @@ impl<'a> FuncTranslator<'a> {
                 }
                 true
             }
+            IntrinsicKind::DropInPlace => false,
         }
     }
 }

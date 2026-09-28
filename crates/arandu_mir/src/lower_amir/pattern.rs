@@ -16,6 +16,7 @@ pub(crate) struct EnumPatternInput<'a> {
     /// Payload pattern ids (looked up by ref — no HirPattern clone).
     payload: &'a [crate::hir::HirPatternId],
     symbols: &'a SymbolTable,
+    bind: bool,
 }
 
 struct BuiltinResultPatternInput<'a> {
@@ -27,6 +28,26 @@ struct BuiltinResultPatternInput<'a> {
     span: Span,
     symbols: &'a SymbolTable,
 }
+
+struct BuiltinOptionPatternInput<'a> {
+    scrutinee: AmirOperand,
+    variant: &'a str,
+    payload: &'a [crate::hir::HirPatternId],
+    inner: crate::types::TypeId,
+    span: Span,
+    symbols: &'a SymbolTable,
+    bind: bool,
+}
+
+struct BuiltinPollPatternInput<'a> {
+    scrutinee: AmirOperand,
+    variant: &'a str,
+    payload: &'a [crate::hir::HirPatternId],
+    inner: crate::types::TypeId,
+    span: Span,
+    symbols: &'a SymbolTable,
+    bind: bool,
+}
 impl LowerCtx<'_> {
     /// Peel `&` / `&mut` / `*` **types** on a match scrutinee so enum/Result/Option
     /// patterns classify correctly for `shared self` methods.
@@ -34,7 +55,7 @@ impl LowerCtx<'_> {
     /// Keeps the operand as-is: Cranelift `Discriminant` / `FieldAccess` already
     /// treat a Ref/Ptr-typed base as a pointer and load through it. Materializing
     /// `*ref` into an aggregate temp breaks that ABI (JIT crash on enum match).
-    fn peel_ref_scrutinee_type(&self, scrutinee: AmirOperand) -> (AmirOperand, ArType) {
+    pub(crate) fn peel_ref_scrutinee_type(&self, scrutinee: AmirOperand) -> (AmirOperand, ArType) {
         let mut ty = self.operand_type(&scrutinee);
         for _ in 0..4 {
             match ty {
@@ -59,6 +80,7 @@ impl LowerCtx<'_> {
             variant_symbol,
             payload,
             symbols,
+            bind,
         } = input;
         let enum_name = &symbols.get(type_symbol).name;
         let variant_symbol_id = variant_symbol.or_else(|| {
@@ -183,13 +205,29 @@ impl LowerCtx<'_> {
                     AmirRvalue::EnumPayload {
                         value: scrutinee,
                         variant: variant_symbol_actual,
+                        variant_tag: tag_value,
                         index: i,
+                        field_ty: tids[i],
+                        tuple_ty: if tids.len() > 1 {
+                            Some(
+                                self.tc
+                                    .type_info
+                                    .type_interner
+                                    .intern(ArType::tuple(&tids, &self.tc.type_info.type_interner)),
+                            )
+                        } else {
+                            None
+                        },
                     },
                 );
 
                 let pat = self.hir.pool.pattern(pat_id);
-                let item_matches =
-                    self.lower_pattern_match(AmirOperand::Copy(tmp_payload), pat, symbols)?;
+                let item_matches = self.lower_pattern_match_mode(
+                    AmirOperand::Copy(tmp_payload),
+                    pat,
+                    symbols,
+                    bind,
+                )?;
 
                 let and_dest = self.new_temp(ArType::Primitive(Primitive::Bool));
                 self.emit_assign_temp(
@@ -207,7 +245,7 @@ impl LowerCtx<'_> {
         }
     }
 
-    fn instantiate_enum_payload_types(
+    pub(crate) fn instantiate_enum_payload_types(
         &self,
         enum_id: SymbolId,
         enum_args: &[crate::types::TypeId],
@@ -291,13 +329,17 @@ impl LowerCtx<'_> {
     /// SYN.3: `Some(v)` / `None` against `Option<T>` (tags: None=0, Some=1).
     fn lower_option_type_tuple_pattern(
         &mut self,
-        scrutinee: AmirOperand,
-        variant: &str,
-        payload: &[crate::hir::HirPatternId],
-        inner: crate::types::TypeId,
-        span: Span,
-        symbols: &SymbolTable,
+        input: BuiltinOptionPatternInput<'_>,
     ) -> Result<AmirOperand, Diagnostic> {
+        let BuiltinOptionPatternInput {
+            scrutinee,
+            variant,
+            payload,
+            inner,
+            span,
+            symbols,
+            bind,
+        } = input;
         let (want_tag, expect_payload) = match variant {
             "None" => (0usize, false),
             "Some" => (1usize, true),
@@ -352,14 +394,18 @@ impl LowerCtx<'_> {
         // Result/Option layout: field 0 = discriminant, field 1 = payload.
         self.emit_assign_temp(
             payload_tmp,
-            AmirRvalue::FieldAccess {
-                base: scrutinee,
-                field: 1,
+            AmirRvalue::EnumPayload {
+                value: scrutinee,
+                variant: SymbolId::DUMMY,
+                variant_tag: want_tag,
+                index: 0,
+                field_ty: inner,
+                tuple_ty: None,
             },
         );
         let pat = self.hir.pool.pattern(payload[0]);
         let item_matches =
-            self.lower_pattern_match(AmirOperand::Copy(payload_tmp), pat, symbols)?;
+            self.lower_pattern_match_mode(AmirOperand::Copy(payload_tmp), pat, symbols, bind)?;
         let and_dest = self.new_temp(ArType::Primitive(Primitive::Bool));
         self.emit_assign_temp(
             and_dest,
@@ -376,6 +422,7 @@ impl LowerCtx<'_> {
     fn lower_result_type_tuple_pattern(
         &mut self,
         input: BuiltinResultPatternInput<'_>,
+        bind: bool,
     ) -> Result<AmirOperand, Diagnostic> {
         let BuiltinResultPatternInput {
             scrutinee,
@@ -424,14 +471,18 @@ impl LowerCtx<'_> {
         let payload_tmp = self.new_temp_id(payload_ty);
         self.emit_assign_temp(
             payload_tmp,
-            AmirRvalue::FieldAccess {
-                base: scrutinee,
-                field: 1,
+            AmirRvalue::EnumPayload {
+                value: scrutinee,
+                variant: SymbolId::DUMMY,
+                variant_tag: want_tag,
+                index: 0,
+                field_ty: payload_ty,
+                tuple_ty: None,
             },
         );
         let pat = self.hir.pool.pattern(payload[0]);
         let item_matches =
-            self.lower_pattern_match(AmirOperand::Copy(payload_tmp), pat, symbols)?;
+            self.lower_pattern_match_mode(AmirOperand::Copy(payload_tmp), pat, symbols, bind)?;
         let and_dest = self.new_temp(ArType::Primitive(Primitive::Bool));
         self.emit_assign_temp(
             and_dest,
@@ -447,13 +498,17 @@ impl LowerCtx<'_> {
     /// `Ready(v)` / `Pending` against builtin `Poll<T>` (tags: Ready=0, Pending=1).
     fn lower_poll_type_tuple_pattern(
         &mut self,
-        scrutinee: AmirOperand,
-        variant: &str,
-        payload: &[crate::hir::HirPatternId],
-        inner: crate::types::TypeId,
-        span: Span,
-        symbols: &SymbolTable,
+        input: BuiltinPollPatternInput<'_>,
     ) -> Result<AmirOperand, Diagnostic> {
+        let BuiltinPollPatternInput {
+            scrutinee,
+            variant,
+            payload,
+            inner,
+            span,
+            symbols,
+            bind,
+        } = input;
         let (tag, has_payload) = match variant {
             "Ready" => (0usize, true),
             "Pending" => (1usize, false),
@@ -503,7 +558,7 @@ impl LowerCtx<'_> {
         );
         let pattern = self.hir.pool.pattern(payload[0]);
         let matches_payload =
-            self.lower_pattern_match(AmirOperand::Copy(payload_temp), pattern, symbols)?;
+            self.lower_pattern_match_mode(AmirOperand::Copy(payload_temp), pattern, symbols, bind)?;
         let result = self.new_temp(ArType::Primitive(Primitive::Bool));
         self.emit_assign_temp(
             result,
@@ -522,21 +577,49 @@ impl LowerCtx<'_> {
         pattern: &HirPattern,
         symbols: &SymbolTable,
     ) -> Result<AmirOperand, Diagnostic> {
+        self.lower_pattern_match_mode(scrutinee, pattern, symbols, true)
+    }
+
+    pub(crate) fn lower_pattern_test(
+        &mut self,
+        scrutinee: AmirOperand,
+        pattern: &HirPattern,
+        symbols: &SymbolTable,
+    ) -> Result<AmirOperand, Diagnostic> {
+        self.lower_pattern_match_mode(scrutinee, pattern, symbols, false)
+    }
+
+    fn lower_pattern_match_mode(
+        &mut self,
+        scrutinee: AmirOperand,
+        pattern: &HirPattern,
+        symbols: &SymbolTable,
+        bind: bool,
+    ) -> Result<AmirOperand, Diagnostic> {
         match pattern {
             HirPattern::Wildcard { .. } => Ok(AmirOperand::Constant(AmirConstant::Bool(true))),
             HirPattern::Bind { symbol, .. } => {
+                if !bind {
+                    return Ok(AmirOperand::Constant(AmirConstant::Bool(true)));
+                }
                 let ty = self
                     .tc
                     .type_info
                     .decl_type(*symbol)
                     .unwrap_or(ArType::Error);
                 let local_id = self.new_local(ty, *symbol, pattern.span());
+                let binding_value = match scrutinee {
+                    AmirOperand::Copy(temp) if !self.temps[temp.as_usize()].is_copy => {
+                        AmirOperand::Move(temp)
+                    }
+                    other => other,
+                };
                 self.emit_store_place(
                     AmirPlace {
                         local: local_id,
                         projections: smallvec::SmallVec::new(),
                     },
-                    scrutinee,
+                    binding_value,
                 )?;
                 Ok(AmirOperand::Constant(AmirConstant::Bool(true)))
             }
@@ -571,6 +654,7 @@ impl LowerCtx<'_> {
                     variant_symbol: *variant_symbol,
                     payload: payload_ids,
                     symbols,
+                    bind,
                 })
             }
             HirPattern::Struct {
@@ -605,8 +689,16 @@ impl LowerCtx<'_> {
 
                     let item_matches = if let Some(pat_id) = field.pattern {
                         let pat = self.hir.pool.pattern(pat_id);
-                        self.lower_pattern_match(AmirOperand::Copy(tmp_field), pat, symbols)?
+                        self.lower_pattern_match_mode(
+                            AmirOperand::Copy(tmp_field),
+                            pat,
+                            symbols,
+                            bind,
+                        )?
                     } else {
+                        if !bind {
+                            continue;
+                        }
                         let key = crate::NodeKey::from(field.span);
                         let Some(symbol_id) = self.tc.resolved.definitions.get(&key).copied()
                         else {
@@ -674,8 +766,12 @@ impl LowerCtx<'_> {
                         },
                     );
 
-                    let item_matches =
-                        self.lower_pattern_match(AmirOperand::Copy(tmp_item), pat, symbols)?;
+                    let item_matches = self.lower_pattern_match_mode(
+                        AmirOperand::Copy(tmp_item),
+                        pat,
+                        symbols,
+                        bind,
+                    )?;
 
                     let and_dest = self.new_temp(ArType::Primitive(Primitive::Bool));
                     self.emit_assign_temp(
@@ -701,16 +797,19 @@ impl LowerCtx<'_> {
                 let payload_ids = self.hir.pool.pattern_list(*payload);
                 // SYN.3: builtin `Option` / `Result` are not `Named` enums — match by tag.
                 match scrutinee_ty {
-                    ArType::Option(inner) => self.lower_option_type_tuple_pattern(
-                        scrutinee,
-                        name.as_str(),
-                        payload_ids,
-                        inner,
-                        *span,
-                        symbols,
-                    ),
-                    ArType::Result(ok, err) => {
-                        self.lower_result_type_tuple_pattern(BuiltinResultPatternInput {
+                    ArType::Option(inner) => {
+                        self.lower_option_type_tuple_pattern(BuiltinOptionPatternInput {
+                            scrutinee,
+                            variant: name.as_str(),
+                            payload: payload_ids,
+                            inner,
+                            span: *span,
+                            symbols,
+                            bind,
+                        })
+                    }
+                    ArType::Result(ok, err) => self.lower_result_type_tuple_pattern(
+                        BuiltinResultPatternInput {
                             scrutinee,
                             variant: name.as_str(),
                             payload: payload_ids,
@@ -718,16 +817,20 @@ impl LowerCtx<'_> {
                             err,
                             span: *span,
                             symbols,
+                        },
+                        bind,
+                    ),
+                    ArType::Poll(inner) => {
+                        self.lower_poll_type_tuple_pattern(BuiltinPollPatternInput {
+                            scrutinee,
+                            variant: name.as_str(),
+                            payload: payload_ids,
+                            inner,
+                            span: *span,
+                            symbols,
+                            bind,
                         })
                     }
-                    ArType::Poll(inner) => self.lower_poll_type_tuple_pattern(
-                        scrutinee,
-                        name.as_str(),
-                        payload_ids,
-                        inner,
-                        *span,
-                        symbols,
-                    ),
                     ArType::Named(type_symbol, _) => self.lower_enum_pattern(EnumPatternInput {
                         scrutinee,
                         span: *span,
@@ -736,6 +839,7 @@ impl LowerCtx<'_> {
                         variant_symbol: None,
                         payload: payload_ids,
                         symbols,
+                        bind,
                     }),
                     other => Err(Diagnostic::error(
                         DiagCode::T002IncompatibleAssignment,
@@ -798,14 +902,19 @@ impl LowerCtx<'_> {
                 if alt_ids.is_empty() {
                     return Ok(AmirOperand::Constant(AmirConstant::Bool(false)));
                 }
-                let mut acc = self.lower_pattern_match(
+                let mut acc = self.lower_pattern_match_mode(
                     scrutinee,
                     self.hir.pool.pattern(alt_ids[0]),
                     symbols,
+                    bind,
                 )?;
                 for &aid in &alt_ids[1..] {
-                    let next =
-                        self.lower_pattern_match(scrutinee, self.hir.pool.pattern(aid), symbols)?;
+                    let next = self.lower_pattern_match_mode(
+                        scrutinee,
+                        self.hir.pool.pattern(aid),
+                        symbols,
+                        bind,
+                    )?;
                     let or_dest = self.new_temp(ArType::Primitive(Primitive::Bool));
                     self.emit_assign_temp(
                         or_dest,

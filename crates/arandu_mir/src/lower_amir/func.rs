@@ -36,11 +36,14 @@ pub(crate) fn lower_func(
         temps: Vec::new(),
         builder: super::builder::AmirBuilder::new(),
         symbol_map: FxHashMap::default(),
+        guard_borrows: FxHashMap::default(),
         loop_stack: Vec::new(),
+        local_scopes: Vec::new(),
         literal_pool,
         defer_frames: Vec::new(),
         temp_states: Vec::new(),
         temp_origins: Vec::new(),
+        temp_place_origins: Vec::new(),
         debug_bindings: Vec::new(),
         local_states: Vec::new(),
         sealed_blocks: FxHashSet::default(),
@@ -68,6 +71,7 @@ pub(crate) fn lower_func(
     });
     ctx.temp_states.push(MoveState::Available);
     ctx.temp_origins.push(None);
+    ctx.temp_place_origins.push(None);
 
     let mut params = Vec::new();
     let mut receiver = None;

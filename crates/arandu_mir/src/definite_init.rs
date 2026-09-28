@@ -32,7 +32,7 @@ use crate::amir::program::AmirFunc;
 use crate::amir::stmt::{AmirStmt, AmirTerminator};
 use crate::amir::value::AmirRvalue;
 use crate::diagnostics::{DiagCode, Diagnostic};
-use crate::{BitMatrix, BitSet, SymbolTable};
+use crate::{BitSet, SymbolTable};
 
 use std::collections::VecDeque;
 
@@ -65,13 +65,37 @@ pub fn initialized_at_block_exit(func: &AmirFunc) -> Vec<BitSet<LocalId>> {
                 }
             }
             for stmt in func.block_stmts(bid) {
-                if let AmirStmt::Store { lhs, .. } = stmt
-                    && lhs.projections.is_empty()
-                {
-                    initialized.insert(lhs.local);
-                }
+                transfer_init_stmt(stmt, &mut initialized);
             }
             initialized
+        })
+        .collect()
+}
+
+/// Definitely initialized locals immediately before each statement.
+pub(crate) fn initialized_before_statements(func: &AmirFunc) -> Vec<Vec<BitSet<LocalId>>> {
+    let Some(block_in) = compute_init_in(func) else {
+        return func
+            .blocks
+            .iter()
+            .map(|block| {
+                vec![BitSet::with_capacity(func.locals.len()); block.statements.len_usize()]
+            })
+            .collect();
+    };
+    func.blocks
+        .iter()
+        .map(|block| {
+            let mut initialized = block_in[block.id.as_usize()].clone();
+            for param in func.block_params(block.params) {
+                initialized.insert(param.local);
+            }
+            let mut snapshots = Vec::with_capacity(block.statements.len_usize());
+            for stmt in func.block_stmts(block.id) {
+                snapshots.push(initialized.clone());
+                transfer_init_stmt(stmt, &mut initialized);
+            }
+            snapshots
         })
         .collect()
 }
@@ -114,12 +138,7 @@ pub fn check_definite_init_by_block(
         for stmt in func.block_stmts(block.id) {
             check_stmt_loads(stmt, &current, func, symbols, bid, &mut diagnostics);
 
-            match stmt {
-                AmirStmt::Store { lhs, .. } if lhs.projections.is_empty() => {
-                    current.insert(lhs.local);
-                }
-                _ => {}
-            }
+            transfer_init_stmt(stmt, &mut current);
         }
     }
 
@@ -133,23 +152,6 @@ fn compute_init_in(func: &AmirFunc) -> Option<Vec<BitSet<LocalId>>> {
 
     if num_locals == 0 || num_blocks == 0 {
         return None;
-    }
-
-    let mut block_gens = BitMatrix::<BlockId, LocalId>::new(num_blocks, num_locals);
-
-    for block in &func.blocks {
-        let bid = block.id;
-        for param in func.block_params(block.params) {
-            block_gens.insert(bid, param.local);
-        }
-        for stmt in func.block_stmts(bid) {
-            match stmt {
-                AmirStmt::Store { lhs, .. } if lhs.projections.is_empty() => {
-                    block_gens.insert(bid, lhs.local);
-                }
-                _ => {}
-            }
-        }
     }
 
     let mut block_in = vec![BitSet::<LocalId>::all_set(num_locals); num_blocks];
@@ -184,7 +186,12 @@ fn compute_init_in(func: &AmirFunc) -> Option<Vec<BitSet<LocalId>>> {
         };
 
         let mut new_out = new_in.clone();
-        new_out.union_with(&block_gens.row_set(bid));
+        for param in func.block_params(block.params) {
+            new_out.insert(param.local);
+        }
+        for stmt in func.block_stmts(bid) {
+            transfer_init_stmt(stmt, &mut new_out);
+        }
 
         debug_assert!(
             block_out[bi].is_superset_of(&new_out),
@@ -224,6 +231,18 @@ fn compute_init_in(func: &AmirFunc) -> Option<Vec<BitSet<LocalId>>> {
     }
 
     Some(block_in)
+}
+
+fn transfer_init_stmt(stmt: &AmirStmt, initialized: &mut BitSet<LocalId>) {
+    match stmt {
+        AmirStmt::Store { lhs, .. } if lhs.projections.is_empty() => {
+            initialized.insert(lhs.local);
+        }
+        AmirStmt::StorageDead(local) => {
+            initialized.remove(*local);
+        }
+        _ => {}
+    }
 }
 
 /// Check whether any `Load` in a statement reads from an uninitialized local.

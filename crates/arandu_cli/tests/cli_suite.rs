@@ -15,6 +15,9 @@ mod cli_archive;
 #[path = "cli_suite/cli_autoref.rs"]
 mod cli_autoref;
 
+#[path = "cli_suite/cli_ownership_regressions.rs"]
+mod cli_ownership_regressions;
+
 #[path = "cli_suite/cli_bench_slt4.rs"]
 mod cli_bench_slt4;
 
@@ -101,3 +104,9 @@ mod cli_wasm_build;
 
 #[path = "cli_suite/cli_while_mut_backedge.rs"]
 mod cli_while_mut_backedge;
+
+#[path = "cli_suite/cli_byte_literal.rs"]
+mod cli_byte_literal;
+
+#[path = "cli_suite/cli_time_wide.rs"]
+mod cli_time_wide;

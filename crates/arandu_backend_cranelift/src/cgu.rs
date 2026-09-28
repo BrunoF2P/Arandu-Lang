@@ -484,9 +484,38 @@ impl HashContext<'_> {
                     self.hash.tag(0);
                     self.symbol(*symbol);
                 }
+                AmirProjection::Variant(tag) => {
+                    self.hash.tag(3);
+                    self.hash.usize(*tag);
+                }
+                AmirProjection::Payload {
+                    variant_tag,
+                    index,
+                    field_ty,
+                    tuple_ty,
+                } => {
+                    self.hash.tag(4);
+                    self.hash.usize(*variant_tag);
+                    self.hash.usize(*index);
+                    self.hash.usize(field_ty.as_usize());
+                    if let Some(tuple_ty) = tuple_ty {
+                        self.hash.tag(1);
+                        self.hash.usize(tuple_ty.as_usize());
+                    } else {
+                        self.hash.tag(0);
+                    }
+                }
+                AmirProjection::TupleField(index) => {
+                    self.hash.tag(5);
+                    self.hash.usize(*index);
+                }
                 AmirProjection::Index(operand) => {
                     self.hash.tag(1);
                     self.operand(operand);
+                }
+                AmirProjection::IndexConstant(index) => {
+                    self.hash.tag(6);
+                    self.hash.usize(*index);
                 }
                 AmirProjection::Deref => self.hash.tag(2),
             }
@@ -622,6 +651,7 @@ impl HashContext<'_> {
                 value,
                 variant,
                 index,
+                ..
             } => {
                 self.hash.tag(9);
                 self.operand(value);

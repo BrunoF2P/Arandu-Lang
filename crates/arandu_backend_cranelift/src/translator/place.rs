@@ -73,6 +73,17 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                         ptr_val = self.builder.ins().iadd_imm_s(ptr_val, i64::from(offset));
                     }
                 }
+                AmirProjection::Variant(_) => {}
+                AmirProjection::Payload { .. } | AmirProjection::TupleField(_) => {
+                    let offset = self.translate_indexed_projection_offset(
+                        &mut current_ty,
+                        &projs[i],
+                        place.local,
+                    );
+                    if offset != 0 {
+                        ptr_val = self.builder.ins().iadd_imm_s(ptr_val, i64::from(offset));
+                    }
+                }
                 AmirProjection::Index(op) => {
                     let idx_val = self.translate_operand(op, Some(self.ptr_type));
                     if let ArType::Array(len, _) = &current_ty {
@@ -129,6 +140,24 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                     let offset_val = self.builder.ins().imul(idx_val, elem_size);
                     ptr_val = self.builder.ins().iadd(ptr_val, offset_val);
                 }
+                AmirProjection::IndexConstant(index) => {
+                    let inner_ty_id = match &current_ty {
+                        ArType::Array(_, inner) | ArType::ConstArray(_, inner) => *inner,
+                        _ => {
+                            self.record_ice(
+                                "constant indexing non-array type in codegen",
+                                self.local_span(place.local),
+                            );
+                            return (self.poison_i32(), 0);
+                        }
+                    };
+                    current_ty = self.type_info.resolve_type_id(inner_ty_id);
+                    let layout = self.checked_layout(&current_ty);
+                    let offset = layout.size.checked_mul(*index as u64).unwrap_or(0);
+                    if offset > 0 {
+                        ptr_val = self.builder.ins().iadd_imm_s(ptr_val, offset as i64);
+                    }
+                }
             }
         }
 
@@ -150,6 +179,15 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                     current_ty = unwrap_ptr_like(&current_ty, self);
                 }
                 let offset = self.translate_projection_offset(&mut current_ty, *symbol_id);
+                (ptr_val, offset)
+            }
+            AmirProjection::Variant(_) => (ptr_val, 0),
+            AmirProjection::Payload { .. } | AmirProjection::TupleField(_) => {
+                let offset = self.translate_indexed_projection_offset(
+                    &mut current_ty,
+                    last_proj,
+                    place.local,
+                );
                 (ptr_val, offset)
             }
             AmirProjection::Index(op) => {
@@ -224,6 +262,27 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                 let elem_size = self.builder.ins().iconst(self.ptr_type, layout.size as i64);
                 let offset_val = self.builder.ins().imul(idx_val, elem_size);
                 let target_ptr = self.builder.ins().iadd(ptr_val, offset_val);
+                (target_ptr, 0)
+            }
+            AmirProjection::IndexConstant(index) => {
+                let inner_ty_id = match &current_ty {
+                    ArType::Array(_, inner) | ArType::ConstArray(_, inner) => *inner,
+                    _ => {
+                        self.record_ice(
+                            "constant indexing non-array type in codegen",
+                            self.local_span(place.local),
+                        );
+                        return (self.poison_i32(), 0);
+                    }
+                };
+                current_ty = self.type_info.resolve_type_id(inner_ty_id);
+                let layout = self.checked_layout(&current_ty);
+                let offset = layout.size.checked_mul(*index as u64).unwrap_or(0);
+                let target_ptr = if offset > 0 {
+                    self.builder.ins().iadd_imm_s(ptr_val, offset as i64)
+                } else {
+                    ptr_val
+                };
                 (target_ptr, 0)
             }
         }
@@ -327,6 +386,73 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
         offset
     }
 
+    fn translate_indexed_projection_offset(
+        &mut self,
+        current_ty: &mut ArType,
+        projection: &AmirProjection,
+        local: arandu_semantics::amir::LocalId,
+    ) -> i32 {
+        let (offset, result_ty) = match projection {
+            AmirProjection::Payload {
+                index,
+                field_ty,
+                tuple_ty,
+                ..
+            } => {
+                let owner_ty = match &*current_ty {
+                    ArType::Ref(inner) | ArType::RefMut(inner) | ArType::Ptr(inner) => {
+                        self.type_info.resolve_type_id(*inner)
+                    }
+                    other => other.clone(),
+                };
+                let owner_layout = self.checked_layout(&owner_ty);
+                let mut offset = owner_layout.field_offsets.get(1).copied().unwrap_or(0);
+                if let Some(tuple_ty) = tuple_ty {
+                    let tuple = self.type_info.resolve_type_id(*tuple_ty);
+                    let tuple_layout = self.checked_layout(&tuple);
+                    offset = offset.saturating_add(
+                        tuple_layout.field_offsets.get(*index).copied().unwrap_or(0),
+                    );
+                }
+                (offset, self.type_info.resolve_type_id(*field_ty))
+            }
+            AmirProjection::TupleField(index) => {
+                let tuple_layout = self.checked_layout(current_ty);
+                let offset = tuple_layout.field_offsets.get(*index).copied().unwrap_or(0);
+                let result = match current_ty {
+                    ArType::Tuple(args) => self
+                        .type_info
+                        .type_interner
+                        .type_args(*args)
+                        .get(*index)
+                        .copied()
+                        .map(|id| self.type_info.resolve_type_id(id))
+                        .unwrap_or(ArType::Error),
+                    _ => ArType::Error,
+                };
+                (offset, result)
+            }
+            _ => {
+                self.record_ice(
+                    "non-indexed projection passed to payload offset",
+                    self.local_span(local),
+                );
+                return 0;
+            }
+        };
+        *current_ty = result_ty;
+        match i32::try_from(offset) {
+            Ok(offset) => offset,
+            Err(_) => {
+                self.record_ice(
+                    "AMIR place projection offset exceeds Cranelift displacement range",
+                    self.local_span(local),
+                );
+                0
+            }
+        }
+    }
+
     pub(crate) fn place_ar_ty(&self, place: &AmirPlace) -> ArType {
         let mut current_ty = self.local_ar_ty(place.local);
         for proj in &place.projections {
@@ -354,7 +480,25 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                         return ArType::Error;
                     }
                 }
-                AmirProjection::Index(_) => {
+                AmirProjection::Variant(_) => {}
+                AmirProjection::Payload { field_ty, .. } => {
+                    current_ty = self.type_info.resolve_type_id(*field_ty);
+                }
+                AmirProjection::TupleField(index) => {
+                    if let ArType::Tuple(args) = &current_ty {
+                        current_ty = self
+                            .type_info
+                            .type_interner
+                            .type_args(*args)
+                            .get(*index)
+                            .copied()
+                            .map(|id| self.type_info.resolve_type_id(id))
+                            .unwrap_or(ArType::Error);
+                    } else {
+                        return ArType::Error;
+                    }
+                }
+                AmirProjection::Index(_) | AmirProjection::IndexConstant(_) => {
                     if matches!(
                         current_ty,
                         ArType::Ptr(_) | ArType::Ref(_) | ArType::RefMut(_) | ArType::Nullable(_)

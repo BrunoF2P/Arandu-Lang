@@ -6,8 +6,8 @@
 //! operands.
 
 use crate::amir::{
-    AmirFunc, AmirOperand, AmirPlace, AmirProjection, AmirRvalue, AmirStmt, AmirTerminator,
-    BlockId, LocalId, TempId, for_each_rvalue_operand, for_each_rvalue_place,
+    AmirConstant, AmirFunc, AmirOperand, AmirPlace, AmirProjection, AmirRvalue, AmirStmt,
+    AmirTerminator, BlockId, LocalId, TempId, for_each_rvalue_operand, for_each_rvalue_place,
 };
 use crate::diagnostics::{DiagCode, Diagnostic};
 use crate::{BitSet, SymbolTable};
@@ -41,6 +41,32 @@ pub(crate) fn move_states_at_block_exit(func: &AmirFunc) -> Vec<MoveState> {
             let mut state = incoming.clone();
             apply_block(BlockId::from_usize(index), func, &origins, &mut state, None);
             state
+        })
+        .collect()
+}
+
+/// Move-state snapshot immediately before every statement, used by cleanup
+/// elaboration so replacement drops agree with the ownership checker.
+pub(crate) fn move_states_before_statements(func: &AmirFunc) -> Vec<Vec<MoveState>> {
+    let bump = bumpalo::Bump::new();
+    let Some(block_in) = compute_move_in(func, &bump) else {
+        return func
+            .blocks
+            .iter()
+            .map(|block| vec![MoveState::new(func.locals.len()); block.statements.len_usize()])
+            .collect();
+    };
+    let origins = temp_origins(func, &bump);
+    func.blocks
+        .iter()
+        .map(|block| {
+            let mut state = block_in[block.id.as_usize()].clone();
+            let mut snapshots = Vec::with_capacity(block.statements.len_usize());
+            for stmt in func.block_stmts(block.id) {
+                snapshots.push(state.clone());
+                apply_stmt(stmt, func, &origins, &mut state, &mut None);
+            }
+            snapshots
         })
         .collect()
 }
@@ -146,6 +172,25 @@ impl MoveState {
             || self.maybe_moved_fields.iter().any(is_descendant)
     }
 
+    pub(crate) fn moved_descendant_paths<'a>(
+        &'a self,
+        place: &'a AmirPlace,
+    ) -> impl Iterator<Item = &'a AmirPlace> + 'a {
+        self.moved_fields.iter().filter(move |moved| {
+            moved.local == place.local
+                && moved.projections.len() > place.projections.len()
+                && place_is_prefix(place, moved)
+        })
+    }
+
+    pub(crate) fn has_maybe_moved_descendant(&self, place: &AmirPlace) -> bool {
+        self.maybe_moved_fields.iter().any(|moved| {
+            moved.local == place.local
+                && moved.projections.len() > place.projections.len()
+                && place_is_prefix(place, moved)
+        })
+    }
+
     fn place_state(&self, place: &AmirPlace) -> LocalMoveState {
         let root = self.root_state(place.local);
         if root != LocalMoveState::Available {
@@ -247,21 +292,6 @@ impl MoveState {
             }
         }
     }
-
-    fn is_monotonic_from(&self, old: &Self) -> bool {
-        if !self.moved.is_superset_of(&old.moved) {
-            return false;
-        }
-        for id in old.maybe_moved.iter() {
-            if !self.maybe_moved.contains(id) && !self.moved.contains(id) {
-                return false;
-            }
-        }
-        old.moved_fields
-            .iter()
-            .chain(&old.maybe_moved_fields)
-            .all(|place| self.place_state(place) != LocalMoveState::Available)
-    }
 }
 
 fn join_move_state(left: LocalMoveState, right: LocalMoveState) -> LocalMoveState {
@@ -273,16 +303,32 @@ fn join_move_state(left: LocalMoveState, right: LocalMoveState) -> LocalMoveStat
 }
 
 fn tracked_move_place(place: &AmirPlace) -> AmirPlace {
-    let projections = if !place.projections.is_empty()
-        && place
-            .projections
-            .iter()
-            .all(|projection| matches!(projection, AmirProjection::Field(_)))
-    {
-        place.projections.clone()
-    } else {
-        SmallVec::new()
-    };
+    // Dereference is an access route, not an ownership path component. Keep
+    // named fields beneath `&mut self` distinct so replacing one field restores
+    // just that field instead of marking the receiver binding itself moved.
+    // Dynamic indices remain conservative and collapse to their root.
+    let mut projections = SmallVec::new();
+    for projection in &place.projections {
+        match projection {
+            AmirProjection::Deref => {}
+            AmirProjection::Field(field) => projections.push(AmirProjection::Field(*field)),
+            AmirProjection::Variant(tag) => projections.push(AmirProjection::Variant(*tag)),
+            projection @ AmirProjection::Payload { .. } => projections.push(*projection),
+            AmirProjection::TupleField(index) => {
+                projections.push(AmirProjection::TupleField(*index));
+            }
+            projection @ AmirProjection::Index(AmirOperand::Constant(AmirConstant::Pool(_))) => {
+                projections.push(*projection);
+            }
+            projection @ AmirProjection::IndexConstant(_) => projections.push(*projection),
+            AmirProjection::Index(_) => {
+                return AmirPlace {
+                    local: place.local,
+                    projections: SmallVec::new(),
+                };
+            }
+        }
+    }
     AmirPlace {
         local: place.local,
         projections,
@@ -391,15 +437,16 @@ fn compute_move_in<'bump>(
 
     let temp_origins = temp_origins(func, bump);
     let mut block_in = bumpalo::collections::Vec::with_capacity_in(num_blocks, bump);
-    let mut block_out = bumpalo::collections::Vec::with_capacity_in(num_blocks, bump);
+    let mut edge_out = vec![Vec::<(BlockId, MoveState)>::new(); num_blocks];
     for _ in 0..num_blocks {
         block_in.push(MoveState::new(num_locals));
-        block_out.push(MoveState::new(num_locals));
     }
     let mut worklist = VecDeque::new();
 
     for block in &func.blocks {
-        worklist.push_back(block.id);
+        if func.predecessors(block.id).is_empty() {
+            worklist.push_back(block.id);
+        }
     }
 
     let mut iterations = 0;
@@ -415,25 +462,29 @@ fn compute_move_in<'bump>(
 
         let bi = bid.as_usize();
         let block = &func.blocks[bi];
-        let new_in = MoveState::join_predecessors(
-            func.predecessors(bid)
-                .iter()
-                .map(|pred| &block_out[pred.as_usize()]),
-            num_locals,
-        );
-        let mut new_out = new_in.clone();
-        apply_block(block.id, func, &temp_origins, &mut new_out, None);
-
-        debug_assert!(
-            new_out.is_monotonic_from(&block_out[bi]),
-            "Move checker dataflow is not monotonic at block {bi}"
-        );
-
-        if new_in != block_in[bi] || new_out != block_out[bi] {
+        let incoming = func
+            .predecessors(bid)
+            .iter()
+            .flat_map(|pred| {
+                edge_out[pred.as_usize()]
+                    .iter()
+                    .filter(move |(target, _)| *target == bid)
+                    .map(|(_, state)| state)
+            })
+            .collect::<Vec<_>>();
+        if !func.predecessors(bid).is_empty() && incoming.is_empty() {
+            continue;
+        }
+        let new_in = MoveState::join_predecessors(incoming.into_iter(), num_locals);
+        let new_edges = block_edge_states(block, func, &temp_origins, &new_in);
+        let changed = new_in != block_in[bi] || new_edges != edge_out[bi];
+        if changed {
             block_in[bi] = new_in;
-            block_out[bi] = new_out;
+            edge_out[bi] = new_edges;
             for succ in successors(&block.terminator) {
-                worklist.push_back(succ);
+                if succ.as_usize() < num_blocks {
+                    worklist.push_back(succ);
+                }
             }
         }
     }
@@ -472,7 +523,35 @@ fn temp_origins<'bump>(
                         // Named fields remain sparse move paths; dynamic index and
                         // dereference projections collapse to their root conservatively.
                         AmirRvalue::Load(place) => {
-                            found_origin = Some(tracked_move_place(place));
+                            // Keep the original projections for the borrow check
+                            // below. MoveState may conservatively collapse an
+                            // indexed/dereferenced path, but erasing `Deref` here
+                            // would make moving an owned field through `&T` look
+                            // like an ordinary local move.
+                            found_origin = Some(place.clone());
+                        }
+                        AmirRvalue::EnumPayload {
+                            value,
+                            variant_tag,
+                            index,
+                            field_ty,
+                            tuple_ty,
+                            ..
+                        } => {
+                            if let AmirOperand::Copy(temp) | AmirOperand::Move(temp) = value
+                                && let Some(mut place) = origins[temp.as_usize()].clone()
+                            {
+                                place
+                                    .projections
+                                    .push(AmirProjection::Variant(*variant_tag));
+                                place.projections.push(AmirProjection::Payload {
+                                    variant_tag: *variant_tag,
+                                    index: *index,
+                                    field_ty: *field_ty,
+                                    tuple_ty: *tuple_ty,
+                                });
+                                found_origin = Some(place);
+                            }
                         }
                         AmirRvalue::Use(AmirOperand::Copy(t) | AmirOperand::Move(t)) => {
                             found_origin = origins[t.as_usize()].clone();
@@ -492,6 +571,84 @@ fn temp_origins<'bump>(
     origins
 }
 
+/// Transfer ownership state independently to each CFG successor. Joining a
+/// branch before propagation makes a move in one arm appear to have happened
+/// in every arm, which is invalid for match fallthrough and conditional moves.
+fn block_edge_states(
+    block: &crate::amir::AmirBasicBlock,
+    func: &AmirFunc,
+    temp_origins: &[Option<AmirPlace>],
+    input: &MoveState,
+) -> Vec<(BlockId, MoveState)> {
+    let mut state = input.clone();
+    for stmt in func.block_stmts(block.id) {
+        apply_stmt(stmt, func, temp_origins, &mut state, &mut None);
+    }
+
+    let mut edges = Vec::new();
+    match &block.terminator {
+        AmirTerminator::Return | AmirTerminator::Unreachable => {}
+        AmirTerminator::Goto { target, args } => {
+            let mut edge = state;
+            for arg in args {
+                consume_operand(arg, func, temp_origins, &mut edge, &mut None, false);
+            }
+            edges.push((*target, edge));
+        }
+        AmirTerminator::Branch {
+            condition,
+            if_true,
+            true_args,
+            if_false,
+            false_args,
+        } => {
+            check_operand_read(condition, func, temp_origins, &state, &mut None);
+            let mut true_state = state.clone();
+            for arg in true_args {
+                consume_operand(arg, func, temp_origins, &mut true_state, &mut None, false);
+            }
+            let mut false_state = state;
+            for arg in false_args {
+                consume_operand(arg, func, temp_origins, &mut false_state, &mut None, false);
+            }
+            edges.push((*if_true, true_state));
+            edges.push((*if_false, false_state));
+        }
+        AmirTerminator::SwitchInt {
+            discriminant,
+            targets,
+            otherwise,
+        } => {
+            check_operand_read(discriminant, func, temp_origins, &state, &mut None);
+            for (_, target, args) in targets {
+                let mut edge = state.clone();
+                for arg in args {
+                    consume_operand(arg, func, temp_origins, &mut edge, &mut None, false);
+                }
+                edges.push((*target, edge));
+            }
+            let (target, args) = otherwise;
+            let mut edge = state;
+            for arg in args {
+                consume_operand(arg, func, temp_origins, &mut edge, &mut None, false);
+            }
+            edges.push((*target, edge));
+        }
+        AmirTerminator::Suspend {
+            future,
+            resume,
+            args,
+        } => {
+            check_operand_read(future, func, temp_origins, &state, &mut None);
+            for arg in args {
+                consume_operand(arg, func, temp_origins, &mut state, &mut None, false);
+            }
+            edges.push((*resume, state));
+        }
+    }
+    edges
+}
+
 fn apply_block(
     block: crate::amir::BlockId,
     func: &AmirFunc,
@@ -500,44 +657,7 @@ fn apply_block(
     mut diagnostics: MoveDiagSink<'_>,
 ) {
     for stmt in func.block_stmts(block) {
-        match stmt {
-            AmirStmt::Assign { rhs, .. } => {
-                check_rvalue_reads(rhs, func, state, &mut diagnostics);
-                consume_rvalue(rhs, func, temp_origins, state, &mut diagnostics);
-            }
-            AmirStmt::Store { lhs, rhs } => {
-                if !lhs.projections.is_empty() {
-                    check_place_state(lhs, state.place_base_state(lhs), func, &mut diagnostics);
-                }
-                consume_operand(rhs, func, temp_origins, state, &mut diagnostics, false);
-                state.restore_place(lhs);
-            }
-            AmirStmt::Call { callee, args, .. } => {
-                consume_operand(callee, func, temp_origins, state, &mut diagnostics, false);
-                for arg in args {
-                    consume_operand(arg, func, temp_origins, state, &mut diagnostics, false);
-                }
-            }
-            AmirStmt::Free(op) => {
-                consume_operand(op, func, temp_origins, state, &mut diagnostics, true);
-            }
-            AmirStmt::Destroy(place) => {
-                // Drop elaboration destroys owned fields before emitting a
-                // final root Destroy for heap-backed aggregate storage. The
-                // root cleanup must not be diagnosed as a second destruction
-                // of an already-dropped field. Explicit destructors reject
-                // partial field moves during lowering, so this exception is
-                // limited to a root with descendant cleanup facts.
-                let recursive_root_cleanup = place.projections.is_empty()
-                    && state.root_state(place.local) == LocalMoveState::Available
-                    && state.has_moved_descendant(place);
-                if !recursive_root_cleanup {
-                    check_consume_place(place, func, state, &mut diagnostics, true);
-                }
-                state.move_place(place);
-            }
-            AmirStmt::StorageLive(_) | AmirStmt::StorageDead(_) | AmirStmt::Nop => {}
-        }
+        apply_stmt(stmt, func, temp_origins, state, &mut diagnostics);
     }
 
     match &func.block(block).terminator {
@@ -626,6 +746,45 @@ fn apply_block(
             }
         }
         AmirTerminator::Return | AmirTerminator::Unreachable => {}
+    }
+}
+
+fn apply_stmt(
+    stmt: &AmirStmt,
+    func: &AmirFunc,
+    temp_origins: &[Option<AmirPlace>],
+    state: &mut MoveState,
+    diagnostics: &mut MoveDiagSink<'_>,
+) {
+    match stmt {
+        AmirStmt::Assign { rhs, .. } => {
+            check_rvalue_reads(rhs, func, state, diagnostics);
+            consume_rvalue(rhs, func, temp_origins, state, diagnostics);
+        }
+        AmirStmt::Store { lhs, rhs } => {
+            if !lhs.projections.is_empty() {
+                check_place_state(lhs, state.place_base_state(lhs), func, diagnostics);
+            }
+            consume_operand(rhs, func, temp_origins, state, diagnostics, false);
+            state.restore_place(lhs);
+        }
+        AmirStmt::Call { callee, args, .. } => {
+            consume_operand(callee, func, temp_origins, state, diagnostics, false);
+            for arg in args {
+                consume_operand(arg, func, temp_origins, state, diagnostics, false);
+            }
+        }
+        AmirStmt::Free(op) => consume_operand(op, func, temp_origins, state, diagnostics, true),
+        AmirStmt::Destroy(place) => {
+            let recursive_root_cleanup = place.projections.is_empty()
+                && state.root_state(place.local) == LocalMoveState::Available
+                && state.has_moved_descendant(place);
+            if !recursive_root_cleanup {
+                check_consume_place(place, func, state, diagnostics, true);
+            }
+            state.move_place(place);
+        }
+        AmirStmt::StorageLive(_) | AmirStmt::StorageDead(_) | AmirStmt::Nop => {}
     }
 }
 

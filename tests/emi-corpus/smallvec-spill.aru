@@ -26,11 +26,11 @@ func main(): int {
         return -7
     }
 
-    let fifth = match values.get(4 as usize) {
+    let fifth = match smallvec.get<int>(ref values, 4 as usize) {
         Some(value) => value
         None => -3
     }
-    let tail = match values.get(8 as usize) {
+    let tail = match smallvec.get<int>(ref values, 8 as usize) {
         Some(value) => value
         None => -8
     }
@@ -38,7 +38,7 @@ func main(): int {
         Some(value) => value
         None => -4
     }
-    let first = match values.get(0 as usize) {
+    let first = match smallvec.get<int>(ref values, 0 as usize) {
         Some(value) => value
         None => -5
     }

@@ -550,7 +550,10 @@ impl SymbolTable {
     pub fn get(&self, id: SymbolId) -> &Symbol {
         match self.try_get(id) {
             Some(s) => s,
-            None => crate::ice::bug("symbol id not found in this SymbolTable"),
+            None => crate::ice::bug(&format!(
+                "symbol id {id:?} not found in SymbolTable for file {}",
+                self.file_id
+            )),
         }
     }
 

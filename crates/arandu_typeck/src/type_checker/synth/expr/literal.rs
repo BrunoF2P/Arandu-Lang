@@ -62,6 +62,7 @@ fn peek_value_type(checker: &mut TypeChecker<'_>, value: ExprId) -> Option<TypeI
         ExprKind::Float { .. } => Some(checker.intern(ArType::FloatLiteral)),
         ExprKind::Bool { .. } => Some(checker.intern(ArType::Primitive(Primitive::Bool))),
         ExprKind::Char { .. } => Some(checker.intern(ArType::Primitive(Primitive::Char))),
+        ExprKind::Byte { .. } => Some(checker.intern(ArType::Primitive(Primitive::U8))),
         ExprKind::InterpolatedString { .. } => {
             Some(checker.intern(ArType::Primitive(Primitive::Str)))
         }
@@ -203,6 +204,7 @@ pub(super) fn synth_literal_expr(
         }
         ExprKind::Bool { .. } => Some(checker.intern(ArType::Primitive(Primitive::Bool))),
         ExprKind::Char { .. } => Some(checker.intern(ArType::Primitive(Primitive::Char))),
+        ExprKind::Byte { .. } => Some(checker.intern(ArType::Primitive(Primitive::U8))),
         ExprKind::InterpolatedString { parts } => {
             // ToStr v0.1: formatable primitives are accepted; lower inserts
             // AmirRvalue::ToStr. Non-formatable types get T034 (not silent Any).
@@ -215,7 +217,13 @@ pub(super) fn synth_literal_expr(
                 {
                     let part_ty_id = synth_expr(checker, *inner_expr);
                     let part_ty = checker.resolve(part_ty_id);
-                    if part_ty.is_error() || part_ty.is_to_str_v01() {
+                    let is_ref_str = match &part_ty {
+                        ArType::Ref(inner) | ArType::RefMut(inner) => {
+                            matches!(checker.resolve(*inner), ArType::Primitive(Primitive::Str))
+                        }
+                        _ => false,
+                    };
+                    if part_ty.is_error() || part_ty.is_to_str_v01() || is_ref_str {
                         continue;
                     }
                     let interner = &checker.type_info.type_interner;

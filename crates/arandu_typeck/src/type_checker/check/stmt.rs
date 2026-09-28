@@ -369,6 +369,7 @@ fn check_return_stmt(
         );
     } else if !val_ty.is_literal()
         && val_ty.default_literal() != current_ret.default_literal()
+        && !(val_ty.is_u8_or_byte() && current_ret.is_u8_or_byte())
         && current_ret.is_numeric()
         && val_ty.is_numeric()
     {
@@ -626,6 +627,7 @@ fn apply_assignment_constraints(
 ) {
     if !actual.is_literal()
         && actual.default_literal() != expected.default_literal()
+        && !(actual.is_u8_or_byte() && expected.is_u8_or_byte())
         && expected.is_numeric()
         && actual.is_numeric()
     {
@@ -671,6 +673,7 @@ fn apply_set_constraints(
         let expected = checker.resolve(expected_id);
         if !actual.is_literal()
             && actual.default_literal() != expected.default_literal()
+            && !(actual.is_u8_or_byte() && expected.is_u8_or_byte())
             && expected.is_numeric()
             && actual.is_numeric()
         {

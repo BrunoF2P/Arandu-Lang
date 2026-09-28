@@ -253,6 +253,59 @@ impl<'a> CEmitter<'a> {
                     }
                     current_ty = field_ty;
                 }
+                AmirProjection::Variant(_) => {}
+                AmirProjection::Payload {
+                    index,
+                    field_ty,
+                    tuple_ty,
+                    ..
+                } => {
+                    let enum_ty = match &current_ty {
+                        ArType::Ref(inner) | ArType::RefMut(inner) | ArType::Ptr(inner) => {
+                            self.interner.resolve(*inner)
+                        }
+                        other => other.clone(),
+                    };
+                    let enum_layout = self.checked_layout(&enum_ty);
+                    let payload_offset = enum_layout.field_offsets.get(1).copied().unwrap_or(0);
+                    let tuple_offset = tuple_ty
+                        .map(|tuple_ty| {
+                            self.checked_layout(&self.interner.resolve(tuple_ty))
+                                .field_offsets
+                                .get(*index)
+                                .copied()
+                                .unwrap_or(0)
+                        })
+                        .unwrap_or(0);
+                    let offset = payload_offset.saturating_add(tuple_offset);
+                    let field_c_ty = self.format_type(&self.interner.resolve(*field_ty));
+                    if matches!(
+                        current_ty,
+                        ArType::Ptr(_) | ArType::Ref(_) | ArType::RefMut(_)
+                    ) {
+                        path = format!("*({field_c_ty}*)((uint8_t*){path} + {offset})");
+                    } else {
+                        path = format!("*({field_c_ty}*)((uint8_t*)&{path} + {offset})");
+                    }
+                    current_ty = self.interner.resolve(*field_ty);
+                }
+                AmirProjection::TupleField(index) => {
+                    let tuple_layout = self.checked_layout(&current_ty);
+                    let offset = tuple_layout.field_offsets.get(*index).copied().unwrap_or(0);
+                    let field_ty = match &current_ty {
+                        ArType::Tuple(args) => self
+                            .interner
+                            .type_args(*args)
+                            .get(*index)
+                            .copied()
+                            .map(|field_ty| self.interner.resolve(field_ty))
+                            .unwrap_or(ArType::Error),
+                        _ => ArType::Error,
+                    };
+                    let field_c_ty = self.format_type(&field_ty);
+                    path = format!("*({field_c_ty}*)((uint8_t*)&{path} + {offset})");
+                    current_ty = field_ty;
+                }
                 AmirProjection::Index(index_op) => {
                     if current_ty.is_borrowed_slice_abi(self.interner)
                         && let ArType::Ref(inner) | ArType::RefMut(inner) = &current_ty
@@ -283,6 +336,37 @@ impl<'a> CEmitter<'a> {
                         );
                     } else {
                         path = format!("(({}*)&{})[{}]", elem_c_ty, path, index_str);
+                    }
+                    current_ty = elem_ty;
+                }
+                AmirProjection::IndexConstant(index) => {
+                    if current_ty.is_borrowed_slice_abi(self.interner)
+                        && let ArType::Ref(inner) | ArType::RefMut(inner) = &current_ty
+                    {
+                        current_ty = self.interner.resolve(*inner);
+                    }
+                    let is_vec = arandu_middle::types::is_vec_type(&current_ty, self.symbols);
+                    let elem_ty = match arandu_middle::types::index_elem_type(
+                        &current_ty,
+                        self.symbols,
+                        self.interner,
+                    ) {
+                        Some(id) => self.interner.resolve(id),
+                        None => ArType::Error,
+                    };
+                    let elem_c_ty = self.format_type(&elem_ty);
+                    if matches!(
+                        current_ty,
+                        ArType::Ptr(_) | ArType::Ref(_) | ArType::RefMut(_)
+                    ) {
+                        path = format!("(({}*){})[{}]", elem_c_ty, path, index);
+                    } else if matches!(current_ty, ArType::Slice(_)) || is_vec {
+                        path = format!(
+                            "(( {}* )(*(void**)((uint8_t*)&{} + 0)))[{}]",
+                            elem_c_ty, path, index
+                        );
+                    } else {
+                        path = format!("(({}*)&{})[{}]", elem_c_ty, path, index);
                     }
                     current_ty = elem_ty;
                 }

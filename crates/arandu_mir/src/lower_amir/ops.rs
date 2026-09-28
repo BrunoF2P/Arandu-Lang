@@ -201,17 +201,42 @@ impl LowerCtx<'_> {
         let arg_is_ref = matches!(arg_ty, ArType::Ref(_) | ArType::RefMut(_));
         let exclusive = matches!(formal_ty, Some(ArType::RefMut(_))) || mode.is_exclusive();
 
+        if let Some((binding, bound_ty)) = self.match_guard_binding_root(arg)
+            && (exclusive || (!self.tc.type_info.is_copy(bound_ty) && !formal_is_ref))
+        {
+            let name = &symbols.get(binding).name;
+            let (code, message) = if exclusive {
+                (
+                    crate::DiagCode::O003MutableBorrowConflict,
+                    format!("cannot mutably borrow match-guard binding `{name}`"),
+                )
+            } else {
+                (
+                    crate::DiagCode::O002MoveWhileBorrowed,
+                    format!("cannot move match-guard binding `{name}` before the guard succeeds"),
+                )
+            };
+            return Err(Diagnostic::error(code, message, arg_expr.span).with_label(
+                arg_expr.span,
+                "guard bindings are shared views of the original scrutinee",
+            ));
+        }
+
+        if formal_is_ref
+            && !exclusive
+            && let HirExprKind::Path { symbol } = &arg_expr.kind
+            && let Some(&(local, _)) = self.guard_borrows.get(symbol)
+        {
+            return self.read_variable_source(local);
+        }
+
         // W3.3 auto-ref: formal is ref, value is not — materialize Borrow of place (or temporary local for rvalue).
         if formal_is_ref && !arg_is_ref {
             let place = match self.lower_expr_to_place(arg, symbols) {
                 Ok(place) => place,
                 Err(_) => {
                     let val = self.lower_expr(arg, None, symbols)?;
-                    let tmp = self.new_local_id(
-                        arg_expr.ty,
-                        arandu_middle::SymbolId::DUMMY,
-                        arg_expr.span,
-                    );
+                    let tmp = self.new_compiler_local_id(arg_expr.ty, arg_expr.span);
                     self.locals[tmp.as_usize()].is_memory = true;
                     self.write_variable_source(tmp, val)?;
                     crate::amir::AmirPlace {
@@ -284,6 +309,23 @@ impl LowerCtx<'_> {
             Ok(op)
         } else {
             self.consume_operand(op)
+        }
+    }
+
+    fn match_guard_binding_root(
+        &self,
+        expr_id: HirExprId,
+    ) -> Option<(crate::SymbolId, crate::types::TypeId)> {
+        let expr = self.hir.pool.expr(expr_id);
+        match &expr.kind {
+            HirExprKind::Path { symbol } => {
+                self.guard_borrows.get(symbol).map(|(_, ty)| (*symbol, *ty))
+            }
+            HirExprKind::Field { base, .. }
+            | HirExprKind::SafeField { base, .. }
+            | HirExprKind::Index { base, .. }
+            | HirExprKind::SafeIndex { base, .. } => self.match_guard_binding_root(*base),
+            _ => None,
         }
     }
 }

@@ -20,6 +20,21 @@ impl LowerCtx<'_> {
         if self.tc.type_info.type_interner.is_error(src_ty) {
             return Ok(op);
         }
+        let is_ref_str = self.tc.type_info.type_interner.with_type(src_ty, |t| {
+            matches!(t, ArType::Ref(inner) | ArType::RefMut(inner)
+                if matches!(self.tc.type_info.type_interner.resolve(*inner), ArType::Primitive(Primitive::Str)))
+        });
+        if is_ref_str {
+            let dest = self.new_temp(ArType::Primitive(Primitive::Str));
+            self.emit_assign_temp(
+                dest,
+                AmirRvalue::Unary {
+                    op: arandu_middle::ops::UnaryOp::Deref,
+                    operand: op,
+                },
+            );
+            return Ok(AmirOperand::Copy(dest));
+        }
         let needs = self.tc.type_info.type_interner.with_type(src_ty, |t| {
             !matches!(t, ArType::Primitive(Primitive::Str)) && t.is_to_str_v01()
         });
@@ -118,7 +133,7 @@ impl LowerCtx<'_> {
                     {
                         self.owned_string_temps.insert(dest);
                     }
-                    Ok(AmirOperand::Copy(dest))
+                    Ok::<AmirOperand, Diagnostic>(AmirOperand::Copy(dest))
                 } else {
                     Ok(str_op)
                 }
@@ -159,8 +174,19 @@ impl LowerCtx<'_> {
                     ArType::Named(id, _) => Some(id),
                     _ => None,
                 };
-                let op: AmirOperand = if let Some(&local_id) = self.symbol_map.get(symbol) {
-                    Ok::<AmirOperand, Diagnostic>(self.read_variable_source(local_id)?)
+                let op: AmirOperand = if let Some(&(local_id, _)) = self.guard_borrows.get(symbol) {
+                    let borrow = self.read_variable_source(local_id)?;
+                    let dest = target.unwrap_or_else(|| self.new_temp_id(expr.ty));
+                    self.emit_assign_temp(
+                        dest,
+                        AmirRvalue::Unary {
+                            op: arandu_middle::ops::UnaryOp::Deref,
+                            operand: borrow,
+                        },
+                    );
+                    Ok::<AmirOperand, Diagnostic>(AmirOperand::Copy(dest))
+                } else if let Some(&local_id) = self.symbol_map.get(symbol) {
+                    Ok(self.read_variable_source(local_id)?)
                 } else if let Some(&tag) =
                     self.tc.type_info.enum_variant_tags.get(symbol).or_else(|| {
                         // Fallback: find the canonical variant SymbolId whose parent enum

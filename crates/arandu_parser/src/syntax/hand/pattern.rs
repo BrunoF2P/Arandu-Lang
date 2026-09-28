@@ -214,6 +214,7 @@ fn parse_literal_expr(
         | TokenKind::BoolTrue
         | TokenKind::BoolFalse
         | TokenKind::Char
+        | TokenKind::ByteChar
         | TokenKind::StringStart
         | TokenKind::Nil => try_hand_lower_expr(ctx, cur, 100),
         _ => None,

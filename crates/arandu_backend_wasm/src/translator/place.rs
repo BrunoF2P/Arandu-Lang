@@ -90,10 +90,22 @@ impl<'a> FuncTranslator<'a> {
                 AmirProjection::Field(symbol_id) => {
                     cur_ty = self.field_projection_ty(cur_ty, *symbol_id)?;
                 }
+                AmirProjection::Variant(_) => {}
+                AmirProjection::Payload { field_ty, .. } => {
+                    cur_ty = *field_ty;
+                }
+                AmirProjection::TupleField(index) => {
+                    cur_ty = match self.interner.resolve(cur_ty) {
+                        ArType::Tuple(args) => {
+                            self.interner.type_args(args).get(*index).copied()?
+                        }
+                        _ => return None,
+                    };
+                }
                 AmirProjection::Deref => {
                     cur_ty = self.strip_ref(cur_ty).unwrap_or(cur_ty);
                 }
-                AmirProjection::Index(_) => {
+                AmirProjection::Index(_) | AmirProjection::IndexConstant(_) => {
                     let owner_ty = self.strip_ref(cur_ty).unwrap_or(cur_ty);
                     let owner = self.interner.resolve(owner_ty);
                     match owner {
@@ -474,6 +486,64 @@ impl<'a> FuncTranslator<'a> {
                     None => cur_ty,
                 }
             }
+            AmirProjection::Variant(_) => cur_ty,
+            AmirProjection::Payload {
+                index,
+                field_ty,
+                tuple_ty,
+                ..
+            } => {
+                let owner_ty = self.strip_ref(cur_ty).unwrap_or(cur_ty);
+                let owner = self.interner.resolve(owner_ty);
+                let owner_layout = self.layout_of(&owner);
+                let mut offset = owner_layout.field_offsets.get(1).copied().unwrap_or(0);
+                if let Some(tuple_ty) = tuple_ty {
+                    let tuple = self.interner.resolve(*tuple_ty);
+                    let tuple_layout = self.layout_of(&tuple);
+                    offset = offset.saturating_add(
+                        tuple_layout.field_offsets.get(*index).copied().unwrap_or(0),
+                    );
+                }
+                if offset > 0 {
+                    match i32::try_from(offset) {
+                        Ok(offset) => {
+                            self.code.push(Instruction::I32Const(offset));
+                            self.code.push(Instruction::I32Add);
+                        }
+                        Err(_) => {
+                            self.code.push(Instruction::Unreachable);
+                            return *field_ty;
+                        }
+                    }
+                }
+                *field_ty
+            }
+            AmirProjection::TupleField(index) => {
+                let tuple = self.interner.resolve(cur_ty);
+                let tuple_layout = self.layout_of(&tuple);
+                let offset = tuple_layout.field_offsets.get(*index).copied().unwrap_or(0);
+                if offset > 0 {
+                    match i32::try_from(offset) {
+                        Ok(offset) => {
+                            self.code.push(Instruction::I32Const(offset));
+                            self.code.push(Instruction::I32Add);
+                        }
+                        Err(_) => {
+                            self.code.push(Instruction::Unreachable);
+                            return cur_ty;
+                        }
+                    }
+                }
+                match tuple {
+                    ArType::Tuple(args) => self
+                        .interner
+                        .type_args(args)
+                        .get(*index)
+                        .copied()
+                        .unwrap_or(cur_ty),
+                    _ => cur_ty,
+                }
+            }
             AmirProjection::Index(index_op) => {
                 let owner_ty = self.strip_ref(cur_ty).unwrap_or(cur_ty);
                 let owner = self.interner.resolve(owner_ty);
@@ -536,6 +606,28 @@ impl<'a> FuncTranslator<'a> {
                         }
                     }
                     _ => {}
+                }
+                *from_memory = true;
+                elem_ty
+            }
+            AmirProjection::IndexConstant(index) => {
+                let owner_ty = self.strip_ref(cur_ty).unwrap_or(cur_ty);
+                let owner = self.interner.resolve(owner_ty);
+                let elem_ty = match owner {
+                    ArType::Array(_, inner) => inner,
+                    _ => return cur_ty,
+                };
+                let elem_size = self.layout_of(&self.interner.resolve(elem_ty)).size;
+                let Some(offset) = elem_size
+                    .checked_mul(*index as u64)
+                    .and_then(|offset| i32::try_from(offset).ok())
+                else {
+                    self.code.push(Instruction::Unreachable);
+                    return cur_ty;
+                };
+                if offset > 0 {
+                    self.code.push(Instruction::I32Const(offset));
+                    self.code.push(Instruction::I32Add);
                 }
                 *from_memory = true;
                 elem_ty

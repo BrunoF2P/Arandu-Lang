@@ -242,11 +242,7 @@ impl<'a> CEmitter<'a> {
                     );
                 }
             }
-            AmirRvalue::EnumPayload {
-                value,
-                variant: _,
-                index: _,
-            } => {
+            AmirRvalue::EnumPayload { value, .. } => {
                 let base_temp = match value {
                     AmirOperand::Copy(t) | AmirOperand::Move(t) => t.as_usize(),
                     _ => {

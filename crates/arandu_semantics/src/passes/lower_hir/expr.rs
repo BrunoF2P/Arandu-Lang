@@ -85,7 +85,13 @@ fn expr_type_for_kind(
         HirExprKind::Str(_) | HirExprKind::StringInterp { .. } | HirExprKind::ToStr { .. } => {
             TypeInterner::preinterned_primitive(Primitive::Str)
         }
-        HirExprKind::Int(_) => interner.intern(ArType::IntLiteral),
+        HirExprKind::Int(_) => {
+            if fallback != error_ty() && fallback != interner.intern(ArType::IntLiteral) {
+                fallback
+            } else {
+                interner.intern(ArType::IntLiteral)
+            }
+        }
         HirExprKind::Float(_) => interner.intern(ArType::FloatLiteral),
         HirExprKind::Bool(_) => TypeInterner::preinterned_primitive(Primitive::Bool),
         HirExprKind::Char(_) => TypeInterner::preinterned_primitive(Primitive::Char),
@@ -703,6 +709,7 @@ pub(crate) fn lower_expr_raw(
         ExprKind::Float { value } => HirExprKind::Float(value.clone()),
         ExprKind::Bool { value } => HirExprKind::Bool(*value),
         ExprKind::Char { value } => HirExprKind::Char(value.clone()),
+        ExprKind::Byte { value } => HirExprKind::Int(crate::SmolStr::new(value.to_string())),
         ExprKind::InterpolatedString { parts } => {
             let part_ids = pool.string_part_list(*parts);
             let mut hir_parts = Vec::with_capacity(part_ids.len());

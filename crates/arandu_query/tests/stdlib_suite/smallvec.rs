@@ -8,7 +8,9 @@ use arandu_query::passes::{exported_symbols, parse};
 const SMALLVEC_ARU: &str = include_str!("../../../../stdlib/alloc/smallvec.aru");
 const MEM_ARU: &str = include_str!("../../../../stdlib/core/mem.aru");
 const OPTION_ARU: &str = include_str!("../../../../stdlib/core/option.aru");
+const SLICE_ARU: &str = include_str!("../../../../stdlib/core/slice.aru");
 const INTRINSICS_ARU: &str = include_str!("../../../../stdlib/core/intrinsics.aru");
+const MARKER_ARU: &str = include_str!("../../../../stdlib/core/marker.aru");
 
 #[test]
 fn stdlib_smallvec_parses_and_exports_expected_symbols() {
@@ -22,7 +24,7 @@ fn stdlib_smallvec_parses_and_exports_expected_symbols() {
         Err(e) => panic!("smallvec.aru must parse; got {e}"),
     }
     let exports = exported_symbols(&db, file);
-    let expected = ["SmallVec4", "new"];
+    let expected = ["SmallVec4", "new", "get", "getRef"];
     for key in expected {
         assert!(
             exports.symbols.contains_key(key),
@@ -41,6 +43,8 @@ fn stdlib_smallvec_usage_in_program() {
     );
     let _ = db.new_file("stdlib/core/mem.aru".to_string(), MEM_ARU.to_string());
     let _ = db.new_file("stdlib/core/option.aru".to_string(), OPTION_ARU.to_string());
+    let _ = db.new_file("stdlib/core/slice.aru".to_string(), SLICE_ARU.to_string());
+    let _ = db.new_file("stdlib/core/marker.aru".to_string(), MARKER_ARU.to_string());
     let smallvec_file = db.new_file(
         "stdlib/alloc/smallvec.aru".to_string(),
         SMALLVEC_ARU.to_string(),

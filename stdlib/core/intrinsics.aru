@@ -59,4 +59,12 @@ extern "arandu-intrinsic" {
     func strBytes(source: str): []u8
     /// Borrows `source` as an immutable `str` view tied to its owner.
     func strView<Owner>(owner: ref Owner): ref str
+
+    /// Runs the destructor of `*p` in-place without deallocating `p`.
+    func dropInPlace<T>(p: ptr[T]): void
+
+    /// Exposes the address behind an exclusive reference to low-level
+    /// container implementations. Dereferencing or retaining the pointer
+    /// beyond the exclusive borrow requires `unsafe`.
+    func addressOf<T>(value: mut ref T): ptr[T]
 }

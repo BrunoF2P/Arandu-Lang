@@ -37,6 +37,7 @@ import std.core.mem as mem
 import std.core.intrinsics as intrinsics
 import std.core.char as chars
 import std.core.str as core_str
+import std.core.hash as hash
 
 func maxBufferCapacity(): usize {
     return 2147483647 as usize
@@ -469,6 +470,29 @@ public func String.asBytes(self: ref String): []u8 {
     return asBytes(self)
 }
 
+/// Compares the UTF-8 byte contents without allocating or copying either
+/// string. Equal strings therefore provide the structural `Hash.eq` contract.
+public func String.eq(self: ref String, other: ref String): bool {
+    if self.len != other.len {
+        return false
+    }
+    let left = asBytes(self)
+    let right = asBytes(other)
+    let mut i: usize = 0 as usize
+    while i < self.len {
+        if left[i] != right[i] {
+            return false
+        }
+        i = i + (1 as usize)
+    }
+    return true
+}
+
+/// Feeds the UTF-8 bytes to a streaming hasher without allocating.
+public func String.hash<H: hash.Hasher>(self: ref String, state: mut ref H): void {
+    state.write(asBytes(self))
+}
+
 /// Appends all bytes of `value` and returns whether it succeeded.
 ///
 /// A `false` result reports allocation failure. Successful growth may
@@ -522,28 +546,28 @@ public func String.truncate(self: mut ref String, newLen: usize): void {
 ///
 /// An empty prefix matches every string.
 public func String.startsWith(self: ref String, prefix: str): bool {
-    return core_str.startsWith(*asStr(self), prefix)
+    return core_str.startsWith(asStr(self), prefix)
 }
 
 /// Compares the end of the initialized bytes with `suffix`.
 ///
 /// An empty suffix matches every string; no allocation occurs.
 public func String.endsWith(self: ref String, suffix: str): bool {
-    return core_str.endsWith(*asStr(self), suffix)
+    return core_str.endsWith(asStr(self), suffix)
 }
 
 /// Searches for `needle` in the initialized bytes without allocation.
 ///
 /// An empty needle matches at the beginning.
 public func String.contains(self: ref String, needle: str): bool {
-    return core_str.contains(*asStr(self), needle)
+    return core_str.contains(asStr(self), needle)
 }
 
 /// Returns the first byte offset of `needle`, or `None` if absent.
 ///
 /// An empty needle yields `Some(0)`; offsets count UTF-8 bytes.
 public func String.find(self: ref String, needle: str): Option<usize> {
-    return core_str.find(*asStr(self), needle)
+    return core_str.find(asStr(self), needle)
 }
 
 /// Copies this String into a separate owned buffer.
@@ -551,7 +575,7 @@ public func String.find(self: ref String, needle: str): Option<usize> {
 /// The clone can be changed or destroyed independently. Allocation failure
 /// aborts through `from`.
 public func String.clone(self: ref String): String {
-    return from(*asStr(self))
+    return from(asStr(self))
 }
 
 /// Consumes this String and releases its owned byte buffer.

@@ -175,6 +175,86 @@ impl TypeInfo {
         Ok(output)
     }
 
+    /// Whether a type structurally contains an explicit `ref`/`mut ref`.
+    /// Slice views are deliberately excluded: callers that need to reason
+    /// about their owner lifetime use the borrow-path contract instead.
+    #[must_use]
+    pub fn contains_explicit_reference(&self, id: TypeId) -> bool {
+        fn visit(info: &TypeInfo, id: TypeId, visiting: &mut Vec<TypeId>) -> bool {
+            if visiting.contains(&id) {
+                return false;
+            }
+            visiting.push(id);
+            let found = match info.type_interner.resolve(id) {
+                ArType::Ref(_) | ArType::RefMut(_) => true,
+                ArType::Tuple(items) => info
+                    .type_interner
+                    .type_args(items)
+                    .into_iter()
+                    .any(|item| visit(info, item, visiting)),
+                ArType::Option(inner)
+                | ArType::Nullable(inner)
+                | ArType::Array(_, inner)
+                | ArType::ConstArray(_, inner)
+                | ArType::Poll(inner)
+                | ArType::Coroutine(inner)
+                | ArType::Range(inner) => visit(info, inner, visiting),
+                ArType::Result(ok, err) => visit(info, ok, visiting) || visit(info, err, visiting),
+                ArType::Named(symbol, arguments) => {
+                    let args = info.type_interner.type_args(arguments);
+                    let substitution = info.generic_params.get(&symbol).and_then(|parameters| {
+                        (parameters.len() == args.len() && !parameters.is_empty())
+                            .then(|| build_subst_ids(parameters, &args, &info.type_interner))
+                    });
+                    let fields_contain_ref =
+                        info.struct_fields.get(&symbol).is_some_and(|fields| {
+                            fields.fields.iter().any(|field| {
+                                let field_ty =
+                                    substitution.as_ref().map_or(field.ty, |substitution| {
+                                        let field = info.type_interner.resolve(field.ty);
+                                        info.type_interner.intern(substitute_type(
+                                            &field,
+                                            substitution,
+                                            &info.type_interner,
+                                        ))
+                                    });
+                                visit(info, field_ty, visiting)
+                            })
+                        });
+                    fields_contain_ref
+                        || info.enum_variants.iter().any(|(_, (owner, payload))| {
+                            if *owner != symbol {
+                                return false;
+                            }
+                            let substitution = substitution.as_ref();
+                            match payload {
+                                EnumPayloadShape::Tuple(items) => items.iter().any(|item| {
+                                    let item_ty = substitution.map_or(*item, |substitution| {
+                                        let item = info.type_interner.resolve(*item);
+                                        info.type_interner.intern(substitute_type(
+                                            &item,
+                                            substitution,
+                                            &info.type_interner,
+                                        ))
+                                    });
+                                    visit(info, item_ty, visiting)
+                                }),
+                                EnumPayloadShape::Unit => false,
+                            }
+                        })
+                }
+                // `[]T` is a view with a separate owner-lifetime contract,
+                // not an embedded explicit reference for this diagnostic.
+                ArType::Slice(_) => false,
+                _ => false,
+            };
+            visiting.pop();
+            found
+        }
+
+        visit(self, id, &mut Vec::new())
+    }
+
     fn collect_borrow_paths(
         &self,
         id: TypeId,
@@ -897,6 +977,7 @@ mod borrow_shape_tests {
         );
 
         let paths = info.borrow_paths(record_type).expect("bounded shape");
+        assert!(info.contains_explicit_reference(record_type));
         assert_eq!(
             paths,
             vec![
@@ -947,6 +1028,16 @@ mod borrow_shape_tests {
             vec![(BorrowPath::root(), BorrowKind::Shared)]
         );
         assert!(info.is_copy(slice));
+        assert!(!info.contains_explicit_reference(slice));
+    }
+
+    #[test]
+    fn plain_str_does_not_claim_an_unconditional_borrow_origin() {
+        let info = TypeInfo::new();
+        let str_view = info.type_interner.intern(ArType::Primitive(Primitive::Str));
+
+        assert!(info.borrow_paths(str_view).expect("str shape").is_empty());
+        assert!(info.is_copy(str_view));
     }
 
     #[test]

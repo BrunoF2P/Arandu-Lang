@@ -11,7 +11,7 @@
 //!
 //! let mut values = vec.new<int>()
 //! values.push(3)
-//! let first = values.get(0)
+//! let first = vec.get<int>(ref values, 0) // Option<ref int>
 //! ```
 //!
 //! ## Safety
@@ -38,6 +38,8 @@ module std.alloc.vec
 
 import std.core.mem as mem
 import std.core.intrinsics as intrinsics
+import std.core.marker as marker
+import std.core.slice as slice
 
 extern "C" {
     /// Host allocator for a raw byte buffer.
@@ -240,26 +242,54 @@ public func pop<T>(v: mut ref Vec<T>): Option<T> {
     }
 }
 
-/// Returns a copy of the element at `index`, or `Option.None` if out of bounds.
+/// Returns a shared reference to the element at `index`, or `Option.None` if out of bounds.
 ///
 /// # Examples
 /// ```arandu
 /// let mut v = vec.new<int>()
 /// vec.push<int>(v, 100)
-/// vec.get<int>(v, 0) // Some(100)
-/// vec.get<int>(v, 5) // None
+/// vec.getCopy<int>(v, 0) // Some(ref 100)
+/// vec.getCopy<int>(v, 5) // None
 /// ```
 ///
 /// # Complexity
 /// Time: O(1) | Space: O(1)
-public func get<T>(v: ref Vec<T>, index: usize): Option<T> {
+public func get<T>(v: ref Vec<T>, index: usize): Option<ref T> {
+    if index >= v.len {
+        return Option.None
+    }
+    return slice.get<T>(asSlice<T>(v), index)
+}
+
+/// Moves a populated optional slot out of the vector and leaves `None` behind.
+///
+/// This is intended for ownership-aware containers built on `Vec<Option<T>>`:
+/// the payload is transferred without copying, while the vector remains fully
+/// initialized and can still be safely destroyed. Returns `None` for an
+/// out-of-range index or an empty slot.
+public func takeSome<T>(v: mut ref Vec<Option<T>>, index: usize): Option<T> {
+    if index >= v.len {
+        return Option.None
+    }
+    unsafe {
+        let elemPtr = mem.ptrOffset<Option<T>>(v.data, index as isize)
+        let slot = mem.ptrRead<Option<T>>(elemPtr)
+        mem.ptrWrite<Option<T>>(elemPtr, Option.None)
+        return slot
+    }
+}
+
+/// Returns a copy of a `Copy` element at `index`, or `Option.None` if out of bounds.
+///
+/// Use `get` for non-copying access to arbitrary elements.
+public func getCopy<Element: marker.Copy>(v: ref Vec<Element>, index: usize): Option<Element> {
     let maxCap: usize = 2147483647 as usize
     if index >= v.len || index > maxCap {
         return Option.None
     }
     unsafe {
-        let elemPtr = mem.ptrOffset<T>(v.data, index as isize)
-        return Option.Some(mem.ptrRead<T>(elemPtr))
+        let elemPtr = mem.ptrOffset<Element>(v.data, index as isize)
+        return Option.Some(mem.ptrRead<Element>(elemPtr))
     }
 }
 
@@ -282,6 +312,7 @@ public func put<T>(v: mut ref Vec<T>, index: usize, value: T): bool {
     }
     unsafe {
         let elemPtr = mem.ptrOffset<T>(v.data, index as isize)
+        mem.dropInPlace<T>(elemPtr)
         mem.ptrWrite<T>(elemPtr, value)
     }
     return true
@@ -364,6 +395,14 @@ public func asSlice<T>(v: ref Vec<T>): []T {
 /// # Complexity
 /// Time: O(1) | Space: O(1)
 public func clear<T>(v: mut ref Vec<T>): void {
+    let mut i: usize = 0
+    while i < v.len {
+        unsafe {
+            let elemPtr = mem.ptrOffset<T>(v.data, i as isize)
+            mem.dropInPlace<T>(elemPtr)
+        }
+        i = i + 1
+    }
     v.len = 0
 }
 
@@ -372,6 +411,7 @@ public func clear<T>(v: mut ref Vec<T>): void {
 /// # Complexity
 /// Time: O(1) | Space: O(1)
 public func destroy<T>(v: mut ref Vec<T>): void {
+    clear<T>(v)
     if v.capacity > 0 {
         let size = v.capacity * mem.sizeOf<T>()
         unsafe {
@@ -379,7 +419,6 @@ public func destroy<T>(v: mut ref Vec<T>): void {
         }
         v.data = nil
         v.capacity = 0
-        v.len = 0
     }
 }
 
@@ -403,10 +442,6 @@ public func Vec.pop<T>(self: mut ref Vec<T>): Option<T> {
 /// Returns a copy of the indexed element as `Some`, or `None` out of bounds.
 ///
 /// The vector is unchanged and no allocation occurs.
-public func Vec.get<T>(self: ref Vec<T>, index: usize): Option<T> {
-    return get(self, index)
-}
-
 /// Replaces an in-range element and returns `true`.
 ///
 /// An out-of-range index returns `false` without changing the vector.

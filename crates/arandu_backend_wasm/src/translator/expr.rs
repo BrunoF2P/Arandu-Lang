@@ -174,11 +174,7 @@ impl<'a> FuncTranslator<'a> {
                 // Allocate layout-driven cell, store tag + payload.
                 self.emit_bump_alloc_enum(*variant_tag, *payload, result_ty);
             }
-            AmirRvalue::EnumPayload {
-                value,
-                variant: _,
-                index: _,
-            } => {
+            AmirRvalue::EnumPayload { value, .. } => {
                 // Load the payload field from an enum cell at its layout offset.
                 let operand_ty = self.operand_arity_ty(value);
                 let enum_ty = self.strip_ref(operand_ty).unwrap_or(operand_ty);

@@ -293,8 +293,18 @@ fn remap_place(place: &AmirPlace, temp_map: &[TempId], local_map: &[LocalId]) ->
     for proj in &place.projections {
         match proj {
             AmirProjection::Field(sym) => new_projections.push(AmirProjection::Field(*sym)),
+            AmirProjection::Variant(tag) => {
+                new_projections.push(AmirProjection::Variant(*tag));
+            }
+            projection @ AmirProjection::Payload { .. } => new_projections.push(*projection),
+            AmirProjection::TupleField(index) => {
+                new_projections.push(AmirProjection::TupleField(*index));
+            }
             AmirProjection::Index(op) => {
                 new_projections.push(AmirProjection::Index(remap_op(op, temp_map)))
+            }
+            AmirProjection::IndexConstant(index) => {
+                new_projections.push(AmirProjection::IndexConstant(*index));
             }
             AmirProjection::Deref => new_projections.push(AmirProjection::Deref),
         }
@@ -348,10 +358,16 @@ fn remap_rvalue(rv: &AmirRvalue, temp_map: &[TempId], local_map: &[LocalId]) -> 
             value,
             variant,
             index,
+            variant_tag,
+            field_ty,
+            tuple_ty,
         } => AmirRvalue::EnumPayload {
             value: remap_op(value, temp_map),
             variant: *variant,
+            variant_tag: *variant_tag,
             index: *index,
+            field_ty: *field_ty,
+            tuple_ty: *tuple_ty,
         },
         AmirRvalue::EnumConstruct {
             variant_tag,

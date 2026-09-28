@@ -42,7 +42,7 @@ fn stdlib_time_usage_in_program() {
     let main_src = r#"
 import std.time as time
 
-func testDuration(): int {
+func testDuration(): i64 {
     let d1 = time.durationFromSecs(2)
     let d2 = time.durationFromMillis(500)
     let total = d1.add(d2)
@@ -54,7 +54,7 @@ func testInstant(): time.Duration {
     return start.elapsed()
 }
 
-func main(): int {
+func main(): i64 {
     let ms = testDuration()
     if ms < 2500 {
         return 1

@@ -47,6 +47,20 @@ public enum Option<T> {
     None,
 }
 
+/// Borrows the payload when the option is `Some`, without copying or consuming it.
+///
+/// The returned reference remains tied to the borrow of `self` by the compiler.
+public func asRef<T>(value: ref Option<T>): Option<ref T> {
+    match value {
+        Some(value) => {
+            return Option.Some(value)
+        }
+        None => {
+            return Option.None
+        }
+    }
+}
+
 /// Returns `true` if the option is the `Some` variant.
 ///
 /// # Examples

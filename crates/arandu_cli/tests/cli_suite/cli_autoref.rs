@@ -47,3 +47,36 @@ func main(): int {
         String::from_utf8_lossy(&run.stderr)
     );
 }
+
+#[test]
+fn auto_ref_rvalue_amir_print_does_not_ice() {
+    let dir = std::env::temp_dir();
+    let file = dir.join("arandu_cli_autoref_rvalue.aru");
+    fs::write(
+        &file,
+        r#"
+module tests.cli.autoref_rvalue
+
+func takes_ref(p: &int): int {
+    return *p
+}
+
+func main(): int {
+    return takes_ref(40 + 2)
+}
+"#,
+    )
+    .expect("write");
+
+    let path = file.to_string_lossy();
+    let amir = run_cli(&["amir", &path]);
+    assert!(
+        amir.status.success(),
+        "AMIR rendering of an auto-ref rvalue failed: {}",
+        String::from_utf8_lossy(&amir.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&amir.stdout).contains("Func main"),
+        "AMIR output must contain main"
+    );
+}

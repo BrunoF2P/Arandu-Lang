@@ -200,6 +200,7 @@ impl<'a> Resolver<'a> {
             | ExprKind::Float { .. }
             | ExprKind::Bool { .. }
             | ExprKind::Char { .. }
+            | ExprKind::Byte { .. }
             | ExprKind::Nil
             | ExprKind::Error => {}
         }

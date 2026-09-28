@@ -373,6 +373,7 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                 self.builder.ins().trap(code);
                 true
             }
+            Some(arandu_semantics::IntrinsicKind::DropInPlace) => false,
             _ => false,
         }
     }

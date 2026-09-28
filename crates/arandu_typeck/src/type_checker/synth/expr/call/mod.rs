@@ -584,14 +584,15 @@ pub(super) fn synth_call_expr(
                             let receiver_ty_id = params[0];
                             // Same auto-ref/auto-deref as synth_method_call: formal
                             // `shared`/`mut self` is `&T`/`&mut T`, receiver value is `T`.
-                            let receiver_ok = checker.unify_ids(receiver_ty_id, actual_base_ty_id)
+                            let receiver_ok = checker.is_assignable(base_ty_id, receiver_ty_id)
                                 || match checker.resolve(receiver_ty_id) {
                                     ArType::Ref(inner) | ArType::RefMut(inner) => {
-                                        checker.unify_ids(inner, actual_base_ty_id)
+                                        checker.is_assignable(base_ty_id, inner)
                                     }
-                                    _ => match checker.resolve(actual_base_ty_id) {
+                                    _ => match checker.resolve(base_ty_id) {
                                         ArType::Ref(inner) | ArType::RefMut(inner) => {
-                                            checker.unify_ids(receiver_ty_id, inner)
+                                            checker.type_info.is_copy(inner)
+                                                && checker.is_assignable(inner, receiver_ty_id)
                                         }
                                         _ => false,
                                     },

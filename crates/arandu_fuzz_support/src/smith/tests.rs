@@ -1331,7 +1331,7 @@ fn synthesis_exercises_array_aggregate_enum_and_control_flow() {
     assert!(source.contains("io.eprint(\"result-odd\")"));
     assert!(source.contains("vec.tryReserve<int>(dynamic, 1 as usize)"));
     assert!(source.contains("slice.len<int>(vec.asSlice<int>(dynamic))"));
-    assert!(source.contains("vec.get<int>(dynamic, dynamic_len as usize)"));
+    assert!(source.contains("vec.getCopy<int>(dynamic, dynamic_len as usize)"));
     assert!(source.contains("while dynamic_count < 9"));
     assert!(source.contains("vec.tryPush<int>(dynamic, sample.left + dynamic_count)"));
     assert!(source.contains("transfer<vec.Vec<bool>>(make_vec<bool>())"));
@@ -1348,18 +1348,18 @@ fn synthesis_exercises_array_aggregate_enum_and_control_flow() {
     assert!(source.contains("transfer<vec.Vec<char>>(make_vec<char>())"));
     assert!(source.contains("vec.tryPush<char>(characters, sample.character)"));
     assert!(source.contains("slice.len<char>(vec.asSlice<char>(characters))"));
-    assert!(source.contains("vec.get<char>(characters, 0 as usize)"));
+    assert!(source.contains("vec.getCopy<char>(characters, 0 as usize)"));
     assert!(source.contains("recovered_vector_character != sample.character"));
     assert!(source.contains("characters.destroy()"));
     assert!(source.contains("transfer<vec.Vec<float>>(make_vec<float>())"));
     assert!(source.contains("vec.tryPush<float>(floats, float_result)"));
-    assert!(source.contains("vec.get<float>(floats, 0 as usize)"));
+    assert!(source.contains("vec.getCopy<float>(floats, 0 as usize)"));
     assert!(source.contains("recovered_vector_float != float_result"));
     assert!(source.contains("floats.destroy()"));
     assert!(source.contains("vec.destroy<int>(dynamic)"));
     assert!(source.contains("dynamic.destroy()"));
     assert!(source.contains("flags.destroy()"));
-    assert!(source.contains("vec.get<int>(dynamic, dynamic_index)"));
+    assert!(source.contains("vec.getCopy<int>(dynamic, dynamic_index)"));
     assert!(source.contains("if dynamic_len != 9"));
     assert!(source.contains("if dynamic_tail != sample.left + 8"));
     assert!(source.contains("vec.put<int>(dynamic, 8 as usize, sample.right)"));
@@ -1591,7 +1591,7 @@ fn test_iter_slice_chain_across_all_backends() {
         "    return VecIter { items: v, index: 0 as usize }\n",
         "}\n\n",
         "func VecIter.next(self: mut ref VecIter): Option<int> {\n",
-        "    let item = vec.get<int>(self.items, self.index)\n",
+        "    let item = vec.getCopy<int>(self.items, self.index)\n",
         "    if self.index < vec.len<int>(self.items) {\n",
         "        self.index = self.index + (1 as usize)\n",
         "    }\n",
@@ -1634,7 +1634,7 @@ fn test_slice_split_and_cuts_across_all_backends() {
         "    return VecIter { items: v, index: 0 as usize }\n",
         "}\n\n",
         "func VecIter.next(self: mut ref VecIter): Option<int> {\n",
-        "    let item = vec.get<int>(self.items, self.index)\n",
+        "    let item = vec.getCopy<int>(self.items, self.index)\n",
         "    if self.index < vec.len<int>(self.items) {\n",
         "        self.index = self.index + (1 as usize)\n",
         "    }\n",
@@ -1902,7 +1902,7 @@ fn test_str_mem_across_all_backends() {
         "    let val1 = unsafe { mem.ptrRead<int>(ptr1) }\n",
         "    unsafe { mem.ptrWrite<int>(ptr1, 999) }\n",
         "    let val1_up = unsafe { mem.ptrRead<int>(ptr1) }\n",
-        "    let elem1 = match vec.get<int>(v, 1 as usize) {\n",
+        "    let elem1 = match vec.getCopy<int>(v, 1 as usize) {\n",
         "        Some(val) => val\n",
         "        None => 0\n",
         "    }\n",

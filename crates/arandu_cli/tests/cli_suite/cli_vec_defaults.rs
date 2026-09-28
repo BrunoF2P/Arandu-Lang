@@ -127,7 +127,7 @@ func main(): int {
     vec.push(v, 9)
     vec.push(v, 10)
     let n = vec.len(v) as int
-    let last = vec.get(v, 9)
+    let last = vec.getCopy(v, 9)
     match last {
         Some(x) => {
             vec.destroy(v)

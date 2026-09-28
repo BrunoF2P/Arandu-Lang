@@ -30,9 +30,15 @@ pub(crate) fn check_call_arg(
     let param_ty = checker.resolve(param_id);
     let arg_ty = checker.resolve(arg_ty_id);
 
+    let is_ref_str = match &arg_ty {
+        ArType::Ref(inner) | ArType::RefMut(inner) => {
+            matches!(checker.resolve(*inner), ArType::Primitive(Primitive::Str))
+        }
+        _ => false,
+    };
     if matches!(param_ty, ArType::Primitive(Primitive::Str)) {
-        if arg_ty.is_error() || arg_ty.is_to_str_v01() {
-            // ToStr v0.1: lower will insert AmirRvalue::ToStr.
+        if arg_ty.is_error() || arg_ty.is_to_str_v01() || is_ref_str {
+            // ToStr v0.1 / auto-deref: lower will insert AmirRvalue::ToStr or Deref.
             return;
         }
         let interner = &checker.type_info.type_interner;
@@ -102,7 +108,12 @@ pub(crate) fn check_call_arg(
     // same widening error as `let a: float = int_var`.
     let arg_ty = checker.resolve(arg_ty_id);
     let param_ty = checker.resolve(param_id);
-    if !arg_ty.is_literal() && arg_ty != param_ty && param_ty.is_numeric() && arg_ty.is_numeric() {
+    if !arg_ty.is_literal()
+        && arg_ty != param_ty
+        && !(arg_ty.is_u8_or_byte() && param_ty.is_u8_or_byte())
+        && param_ty.is_numeric()
+        && arg_ty.is_numeric()
+    {
         checker.add_constraint(
             param_id,
             arg_ty_id,
@@ -129,6 +140,7 @@ pub(crate) fn check_call_arg(
     }
     // Auto-deref: formal `T`, actual `&T` / `&mut T`.
     if let ArType::Ref(inner) | ArType::RefMut(inner) = arg_ty
+        && checker.type_info.is_copy(inner)
         && checker.is_assignable(inner, param_id)
     {
         return;

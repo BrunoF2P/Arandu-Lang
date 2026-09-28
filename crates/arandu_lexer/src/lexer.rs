@@ -128,6 +128,11 @@ impl<'a> Lexer<'a> {
                     return self.skip_block_comment();
                 }
             }
+            b'b' => {
+                if remaining >= 2 && bytes[self.pos + 1] == b'\'' {
+                    return self.lex_byte_char();
+                }
+            }
             b'r' => {
                 if remaining >= 4 && &bytes[self.pos..self.pos + 4] == b"r\"\"\"" {
                     return self.lex_raw_multiline_string();

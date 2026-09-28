@@ -183,7 +183,17 @@ fn lower_func_signature(checker: &mut TypeChecker, sig: &FuncSignature, scope: S
     let mut param_types = Vec::new();
     for param in &sig.params {
         let ty = lower_type_expr_ctx(param.ty, &ctx, &mut checker.type_info.type_interner);
-        param_types.push(checker.type_info.type_interner.intern(ty));
+        let bare = checker.type_info.type_interner.intern(ty);
+        let param_ty = match param.ownership {
+            Some(arandu_parser::Ownership::Shared) => {
+                checker.type_info.type_interner.intern(ArType::Ref(bare))
+            }
+            Some(arandu_parser::Ownership::Mut) => {
+                checker.type_info.type_interner.intern(ArType::RefMut(bare))
+            }
+            _ => bare,
+        };
+        param_types.push(param_ty);
     }
     let ret = if let Some(result) = &sig.result {
         lower_result_type_ctx(result, &ctx, &mut checker.type_info.type_interner)

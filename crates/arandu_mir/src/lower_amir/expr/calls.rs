@@ -2,7 +2,9 @@
 
 use super::super::LowerCtx;
 use crate::SymbolTable;
-use crate::amir::{AmirConstant, AmirOperand, AmirRvalue, AmirStmt, TempId};
+use crate::amir::{
+    AmirConstant, AmirOperand, AmirPlace, AmirProjection, AmirRvalue, AmirStmt, TempId,
+};
 use crate::diagnostics::{DiagCode, Diagnostic};
 use crate::hir::{HirExpr, HirExprId, HirExprKind, IndexRange};
 use crate::passes::type_checker::types::{ArType, Primitive};
@@ -173,11 +175,15 @@ impl LowerCtx<'_> {
             let args_slice = self.hir.pool.expr_list(args);
             let payload_op = match args_slice.len() {
                 0 => None,
-                1 => Some(self.lower_expr(args_slice[0], None, symbols)?),
+                1 => {
+                    let value = self.lower_expr(args_slice[0], None, symbols)?;
+                    Some(self.consume_operand(value)?)
+                }
                 _ => {
                     let mut item_ops = Vec::with_capacity(args_slice.len());
                     for &arg in args_slice {
-                        item_ops.push(self.lower_expr(arg, None, symbols)?);
+                        let value = self.lower_expr(arg, None, symbols)?;
+                        item_ops.push(self.consume_operand(value)?);
                     }
                     let param_tys = match self.resolve_ty(callee_expr.ty) {
                         ArType::Func(params, _) => {
@@ -188,7 +194,7 @@ impl LowerCtx<'_> {
                     let tuple_ty = ArType::tuple(&param_tys, &self.tc.type_info.type_interner);
                     let dest_tuple = self.new_temp(tuple_ty);
                     self.emit_assign_temp(dest_tuple, AmirRvalue::Tuple { items: item_ops });
-                    Some(AmirOperand::Copy(dest_tuple))
+                    Some(self.consume_operand(AmirOperand::Copy(dest_tuple))?)
                 }
             };
             let dest = target.unwrap_or_else(|| self.new_temp_id(expr.ty));
@@ -315,7 +321,34 @@ impl LowerCtx<'_> {
         if let Some(symbol) = callee_symbol {
             let name = symbols.get(symbol).name.as_str();
             let kind = arandu_middle::IntrinsicKind::from_name(name);
+            if kind == Some(arandu_middle::IntrinsicKind::DropInPlace)
+                && let (Some(&arg), [pointer]) = (args_slice.first(), arg_ops.as_slice())
+            {
+                let pointer_ty = self.resolve_ty(self.hir.pool.expr(arg).ty);
+                if matches!(
+                    pointer_ty,
+                    ArType::Ptr(_) | ArType::Ref(_) | ArType::RefMut(_)
+                ) {
+                    let pointer_local = self.new_compiler_local(pointer_ty);
+                    self.mark_local_materialized(pointer_local);
+                    self.push_stmt(AmirStmt::Store {
+                        lhs: AmirPlace {
+                            local: pointer_local,
+                            projections: smallvec::SmallVec::new(),
+                        },
+                        rhs: *pointer,
+                    });
+                    self.push_stmt(AmirStmt::Destroy(AmirPlace {
+                        local: pointer_local,
+                        projections: smallvec::smallvec![AmirProjection::Deref],
+                    }));
+                    return Ok(AmirOperand::Constant(AmirConstant::Nil));
+                }
+            }
             let intrinsic = match (kind, arg_ops.as_slice()) {
+                (Some(arandu_middle::IntrinsicKind::AddressOf), [value]) => {
+                    Some(AmirRvalue::Use(*value))
+                }
                 (Some(arandu_middle::IntrinsicKind::SliceFromRaw), [owner, data, len]) => {
                     Some(AmirRvalue::SliceView {
                         owner: *owner,

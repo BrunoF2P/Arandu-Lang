@@ -78,6 +78,7 @@ impl<'a> CEmitter<'a> {
                 }
                 true
             }
+            Some(arandu_middle::IntrinsicKind::DropInPlace) => false,
             _ => false,
         }
     }
@@ -86,6 +87,9 @@ impl<'a> CEmitter<'a> {
         match stmt {
             AmirStmt::Assign { lhs, rhs } => {
                 let lhs_ty = self.temp_ty(func, *lhs);
+                if matches!(lhs_ty, ArType::Void) {
+                    return;
+                }
                 let lhs_c_ty = self.format_type(&lhs_ty);
                 match rhs {
                     arandu_middle::amir::AmirRvalue::GenInsert {
@@ -290,7 +294,24 @@ impl<'a> CEmitter<'a> {
                                 .unwrap_or("");
                             current_ty = self.instantiated_field_ty(&struct_ty, field_name);
                         }
-                        arandu_middle::amir::AmirProjection::Index(_) => {
+                        arandu_middle::amir::AmirProjection::Variant(_) => {}
+                        arandu_middle::amir::AmirProjection::Payload { field_ty, .. } => {
+                            current_ty = self.interner.resolve(*field_ty);
+                        }
+                        arandu_middle::amir::AmirProjection::TupleField(index) => {
+                            current_ty = match &current_ty {
+                                ArType::Tuple(args) => self
+                                    .interner
+                                    .type_args(*args)
+                                    .get(*index)
+                                    .copied()
+                                    .map(|field_ty| self.interner.resolve(field_ty))
+                                    .unwrap_or(ArType::Error),
+                                _ => ArType::Error,
+                            };
+                        }
+                        arandu_middle::amir::AmirProjection::Index(_)
+                        | arandu_middle::amir::AmirProjection::IndexConstant(_) => {
                             current_ty = match &current_ty {
                                 ArType::Array(_, inner)
                                 | ArType::Slice(inner)

@@ -19,7 +19,9 @@ use crate::amir::{
     BlockId, LocalId, TempId, for_each_rvalue_operand, for_each_rvalue_place,
 };
 // for_each_rvalue_place used in reverse_transfer_stmt
-use crate::borrow_facts::{FuncBorrowFacts, Loan, LoanKind, ProgramPoint, analyze_borrow_facts};
+use crate::borrow_facts::{
+    FuncBorrowFacts, HolderProjection, Loan, LoanKind, ProgramPoint, analyze_borrow_facts,
+};
 use crate::diagnostics::{DiagCode, Diagnostic};
 use crate::liveness::TempLiveness;
 use crate::{Span, SymbolTable};
@@ -429,6 +431,24 @@ fn places_may_overlap(
                 return false;
             }
             (AmirProjection::Field(_), AmirProjection::Field(_)) => {}
+            (AmirProjection::Variant(left), AmirProjection::Variant(right)) if left != right => {
+                return false;
+            }
+            (AmirProjection::Variant(_), AmirProjection::Variant(_)) => {}
+            (
+                AmirProjection::Payload { index: left, .. },
+                AmirProjection::Payload { index: right, .. },
+            ) if left != right => {
+                return false;
+            }
+            (AmirProjection::Payload { .. }, AmirProjection::Payload { .. }) => {}
+            (AmirProjection::TupleField(left), AmirProjection::TupleField(right))
+                if left != right =>
+            {
+                return false;
+            }
+            (AmirProjection::TupleField(_), AmirProjection::TupleField(_)) => {}
+            (AmirProjection::Deref, AmirProjection::Deref) => {}
             // Index operands and dereferences may refer to the same storage.
             _ => return true,
         }
@@ -456,10 +476,30 @@ fn loan_holders_live(
             .and_then(|points| points.get(point.stmt_index))
             .and_then(|loans| loans.get(loan_index))
             .is_some_and(|holders| holders.contains(l));
-        if structurally_present
-            && (facts.local_live.live_in(point.block).contains(l)
-                || facts.local_live.live_out(point.block).contains(l))
-        {
+        let aggregate_carrier = loan
+            .holder_local_paths
+            .get(l.as_usize())
+            .is_some_and(|paths| {
+                paths.iter().any(|path| {
+                    !path.0.is_empty()
+                        && path.0.iter().all(|projection| {
+                            matches!(
+                                projection,
+                                HolderProjection::Slot(_) | HolderProjection::NamedField { .. }
+                            )
+                        })
+                })
+            });
+        let holder_is_live = if aggregate_carrier {
+            facts.local_live.live_in(point.block).contains(l)
+                || facts.local_live.live_out(point.block).contains(l)
+        } else {
+            facts
+                .local_live
+                .live_before(point.block, point.stmt_index)
+                .is_some_and(|live| live.contains(l))
+        };
+        if structurally_present && holder_is_live {
             return true;
         }
     }

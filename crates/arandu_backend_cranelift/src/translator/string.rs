@@ -123,6 +123,7 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                 value,
                 variant,
                 index,
+                ..
             } => {
                 let ptr_val = self.translate_operand(value, Some(self.ptr_type));
                 let pointer_width = self.ptr_type.bytes() as u64;

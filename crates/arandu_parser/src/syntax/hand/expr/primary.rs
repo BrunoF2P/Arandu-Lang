@@ -49,6 +49,14 @@ pub(super) fn parse_primary(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Opti
                     .alloc_expr(ExprKind::Char { value }, ctx.token_span(t)),
             )
         }
+        TokenKind::ByteChar => {
+            let value = t.byte_value(ctx.source).unwrap_or(0);
+            cur.bump();
+            Some(
+                ctx.pool
+                    .alloc_expr(ExprKind::Byte { value }, ctx.token_span(t)),
+            )
+        }
         TokenKind::Nil => {
             cur.bump();
             Some(ctx.pool.alloc_expr(ExprKind::Nil, ctx.token_span(t)))

@@ -188,7 +188,7 @@ func main(): int {
     value.truncate(2)
     if value.len() != 4 { return 1 }
     value.truncate(3)
-    if value.len() != 3 || *value.asStr() != "aé" { return 2 }
+    if value.len() != 3 || value.asStr() != "aé" { return 2 }
     value.truncate(0)
     if value.len() != 0 { return 3 }
     return 0
@@ -200,6 +200,36 @@ func main(): int {
         Some(0),
         "JIT UTF-8 truncate failed: {}",
         String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn jit_interpolates_borrowed_str_without_explicit_dereference() {
+    let output = invoke(
+        "run",
+        r#"module tests.string.interpolate_borrowed_str
+import std.alloc.string as strings
+import std.core.io as io
+
+func main(): int {
+    let mut owner = strings.from("borrowed-view")
+    let view = owner.asStr()
+    io.println("value=${view}")
+    owner.destroy()
+    return 0
+}
+"#,
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "interpolation of `ref str` should compile and run without `*`: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "value=borrowed-view\n"
     );
 }
 
@@ -471,7 +501,7 @@ import std.alloc.string as strings
 
 func main(): int {
     let joined: strings.String = path.joinOwned("/tmp", "owned")
-    let s: str = *joined.asStr()
+    let s: str = joined.asStr()
     if path.fileName(s) != "owned" {
         return 1
     }
@@ -601,7 +631,7 @@ func main(): int {
         return 1
     }
     let view = strings.asStr(value)
-    if *view == "olá" {
+    if view == "olá" {
         return strings.len(value) as int
     }
     return 2

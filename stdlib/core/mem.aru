@@ -56,7 +56,10 @@ extern "arandu-intrinsic" {
     /// Directly reads and returns the value of type `T` pointed to by `p`.
     ///
     /// # Safety
-    /// `p` must be a valid, non-null, properly aligned pointer pointing to initialized memory.
+    /// `p` must be a valid, non-null, properly aligned pointer to initialized
+    /// memory. For non-`Copy` `T`, this operation transfers ownership: the
+    /// caller must ensure the source is no longer read or destroyed as an
+    /// initialized value.
     func ptrRead<T>(p: ptr[T]) : T
 
     /// Directly writes `val` into the memory address pointed to by `p`.
@@ -67,6 +70,13 @@ extern "arandu-intrinsic" {
 
     /// Directly writes `val` into the exclusive reference `dest`.
     func refWrite<T>(dest: mut ref T, val: T) : void
+
+    /// Recursively runs the destructor of `*p` in-place without releasing `p`'s allocation.
+    ///
+    /// # Safety
+    /// `p` must be a valid, non-null pointer pointing to an initialized instance of `T`.
+    /// Reading `*p` after `dropInPlace` without reinitializing it via `ptrWrite` is undefined behavior.
+    func dropInPlace<T>(p: ptr[T]) : void
 }
 
 /// Swaps the values referenced by `x` and `y` in-place without extra allocation.
@@ -112,4 +122,3 @@ public func replace<T>(dest: mut ref T, src: T): T {
 public func take<T>(dest: mut ref Option<T>): Option<T> {
     return replace<Option<T>>(dest, Option.None)
 }
-

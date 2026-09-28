@@ -179,10 +179,10 @@ pub fn lower_to_amir_with_interfaces(
                 no_fallback: no_fallback.get(&function.symbol).copied().unwrap_or(false),
                 return_borrow: solution.summaries.get(&function.symbol).cloned(),
             };
-            let escape_diagnostics = crate::escape_analysis::check_escapes(
+            let escape_diagnostics = crate::escape_analysis::check_escapes_with_type_info(
                 function,
                 &tc.symbols,
-                &tc.type_info.type_interner,
+                &tc.type_info,
                 options.clone(),
             );
             let already_reports_return = escape_diagnostics
@@ -340,12 +340,21 @@ pub(crate) struct LowerCtx<'a> {
     /// Structural construction state (blocks, stmts, cursor, predecessors).
     builder: builder::AmirBuilder,
     symbol_map: FxHashMap<SymbolId, LocalId>,
-    /// (`continue_block`, `exit_block`, `defer_frame_depth_at_loop_entry`)
-    loop_stack: Vec<(BlockId, BlockId, usize)>,
+    /// Pattern bindings exposed as shared references only while evaluating a
+    /// match guard. Owned bindings are committed after the guard succeeds.
+    guard_borrows: FxHashMap<SymbolId, (LocalId, crate::types::TypeId)>,
+    /// (`continue_block`, `exit_block`, `defer_frame_depth`, `local_scope_depth`)
+    loop_stack: Vec<(BlockId, BlockId, usize, usize)>,
+    /// Lexical local scopes used to emit StorageDead on block exits and loop
+    /// control-flow edges. Drop elaboration turns these markers into cleanup.
+    local_scopes: Vec<Vec<LocalId>>,
     literal_pool: &'a mut AmirLiteralPool,
     defer_frames: Vec<DeferFrame>,
     temp_states: Vec<MoveState>,
     temp_origins: Vec<Option<LocalId>>,
+    /// Full source place for temps produced by `Load`; ownership moves and
+    /// match commits must retain field/payload projections.
+    temp_place_origins: Vec<Option<crate::amir::AmirPlace>>,
     /// Cold typed mapping consumed only by native debug-info emission.
     debug_bindings: Vec<(TempId, LocalId)>,
     local_states: Vec<MoveState>,

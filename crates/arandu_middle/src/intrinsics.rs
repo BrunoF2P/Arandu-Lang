@@ -7,6 +7,8 @@ pub enum IntrinsicKind {
     PtrRead,
     /// Write value to raw pointer (`ptrWrite` / `ptr_write`).
     PtrWrite,
+    /// Erase an exclusive reference to a raw address (`addressOf`).
+    AddressOf,
     /// Offset raw pointer by elements (`ptrOffset` / `ptr_offset`).
     PtrOffset,
     /// Size of type in bytes (`sizeOf` / `size_of`).
@@ -29,6 +31,8 @@ pub enum IntrinsicKind {
     StrBytes,
     /// View an owned string prefix as a borrowed string (`strView`).
     StrView,
+    /// Runs the destructor of the value pointed to by raw pointer (`dropInPlace` / `drop_in_place`).
+    DropInPlace,
 }
 
 impl IntrinsicKind {
@@ -47,7 +51,7 @@ impl IntrinsicKind {
     ///    **pure fat-pointer projection** (`SliceLen`, `StrBytes`).
     ///
     /// `SliceSubslice`, `SliceData`, `SliceFromRaw`, `StrView`, `PtrRead`,
-    /// `PtrWrite`, `PtrOffset`, `Abort` and `BlackBox` remain `unsafe`.
+    /// `PtrWrite`, `PtrOffset`, `AddressOf`, `Abort` and `BlackBox` remain `unsafe`.
     #[must_use]
     pub fn is_safe(self) -> bool {
         matches!(
@@ -63,6 +67,7 @@ impl IntrinsicKind {
         match bare {
             "ptrRead" | "ptr_read" | "refRead" | "ref_read" => Some(Self::PtrRead),
             "ptrWrite" | "ptr_write" | "refWrite" | "ref_write" => Some(Self::PtrWrite),
+            "addressOf" | "address_of" => Some(Self::AddressOf),
             "ptrOffset" | "ptr_offset" => Some(Self::PtrOffset),
             "sizeOf" | "size_of" => Some(Self::SizeOf),
             "alignOf" | "align_of" => Some(Self::AlignOf),
@@ -76,6 +81,7 @@ impl IntrinsicKind {
             s if s.starts_with("sliceData") || s.starts_with("slicePtr") => Some(Self::SliceData),
             s if s.starts_with("strBytes") => Some(Self::StrBytes),
             s if s.starts_with("strView") => Some(Self::StrView),
+            "dropInPlace" | "drop_in_place" => Some(Self::DropInPlace),
             _ => None,
         }
     }

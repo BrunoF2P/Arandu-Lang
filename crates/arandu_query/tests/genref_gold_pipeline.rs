@@ -27,11 +27,16 @@ fn o004_ide_diagnostic_has_escape_path_and_structured_no_fallback_fix() {
     let source = r#"
 struct Holder { value: &int }
 
-func main(): int {
+func store(holder: mut ref Holder): int {
     let value = 42
-    let mut holder = Holder { value: &value }
     set holder.value = &value
     return *holder.value
+}
+
+func main(): int {
+    let value = 0
+    let mut holder = Holder { value: &value }
+    return store(mut ref holder)
 }
 "#;
     let mut db = DatabaseImpl::new();
@@ -51,7 +56,7 @@ func main(): int {
         .filter_map(|hint| hint.replacement.as_ref())
         .find(|replacement| replacement.new_text == "@NoFallback\n")
         .expect("structured @NoFallback fix");
-    let func_start = source.find("func main").unwrap();
+    let func_start = source.find("func store").unwrap();
     assert!(source[replacement.start as usize..func_start]
         .chars()
         .all(char::is_whitespace));
@@ -86,11 +91,16 @@ struct Pair {
     right: int
 }
 
-func main(): int {
+func store(holder: mut ref Holder): int {
     let pair = Pair { left: 42, right: 7 }
-    let mut holder = Holder { value: &pair.left }
     set holder.value = &pair.left
     return *holder.value
+}
+
+func main(): int {
+    let value = 0
+    let mut holder = Holder { value: &value }
+    return store(mut ref holder)
 }
 "#;
     let mut db = DatabaseImpl::new();

@@ -246,14 +246,13 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                     offset + pointer_width as i32,
                 );
             } else {
-                let is_aggregate = matches!(
-                    item_ar_ty,
-                    ArType::Named(..)
-                        | ArType::Array(..)
-                        | ArType::ConstArray(..)
-                        | ArType::Tuple(..)
-                );
-                if is_aggregate
+                // Sum types are memory-backed aggregates too. Treating
+                // `Option<T>`/`Result<T, E>` as a scalar stores only their
+                // pointer representation into the array slot, while the
+                // target layout reserves the full tagged payload. The later
+                // drop glue then reads that pointer as a discriminant and
+                // follows an invalid payload address.
+                if self.is_inline_aggregate_ty(&item_ar_ty)
                     && item_layout.size > 0
                     && let Some(memcpy_id) = self.memcpy_func_id()
                 {

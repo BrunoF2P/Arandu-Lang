@@ -212,6 +212,7 @@ impl<'a> Parser<'a> {
             | TokenKind::BoolTrue
             | TokenKind::BoolFalse
             | TokenKind::Char
+            | TokenKind::ByteChar
             | TokenKind::StringStart
             | TokenKind::Nil => self.parse_prefix(),
             _ => Err(ParseError::new(

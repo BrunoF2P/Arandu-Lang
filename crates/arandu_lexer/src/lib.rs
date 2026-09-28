@@ -9,7 +9,9 @@ pub mod simd;
 
 pub use error::{LexError, LexErrorCode};
 pub use lexer::Lexer;
-pub use token::{Span, Token, TokenKind, char_literal, decode_char_content};
+pub use token::{
+    Span, Token, TokenKind, byte_literal, char_literal, decode_byte_content, decode_char_content,
+};
 
 /// Classify a complete source spelling as an identifier token.
 ///
@@ -161,5 +163,27 @@ mod tests {
         assert_eq!(error.code, LexErrorCode::InvalidUnicodeEscape);
         let error = lex("\"\\u{D800}\"").unwrap_err();
         assert_eq!(error.code, LexErrorCode::InvalidUnicodeEscape);
+    }
+
+    #[test]
+    fn byte_literal_lexing_and_decoding() {
+        for b in *b"/*#aZ0 \n\t\r\0'\\" {
+            let source = byte_literal(b);
+            let result = lex(&source).expect("encoded byte literal must lex");
+            assert_eq!(result.tokens[0].kind, TokenKind::ByteChar);
+            assert_eq!(result.tokens[0].byte_value(&source), Some(b), "{source:?}");
+        }
+
+        let hex = "b'\\x41'";
+        let res = lex(hex).expect("hex byte literal must lex");
+        assert_eq!(res.tokens[0].kind, TokenKind::ByteChar);
+        assert_eq!(res.tokens[0].byte_value(hex), Some(65));
+
+        assert_eq!(lex("b''").unwrap_err().code, LexErrorCode::EmptyChar);
+        assert_eq!(lex("b'ab'").unwrap_err().code, LexErrorCode::CharTooLong);
+        assert_eq!(
+            lex("b'open").unwrap_err().code,
+            LexErrorCode::UnterminatedChar
+        );
     }
 }

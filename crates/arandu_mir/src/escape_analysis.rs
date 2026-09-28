@@ -37,8 +37,8 @@ use std::sync::atomic::Ordering;
 pub enum EscapeKind {
     /// Returning a reference derived from a stack local.
     Return,
-    /// Storing a stack-derived ref into memory that outlives the frame (heap /
-    /// aggregate) — candidate for generational fallback.
+    /// Storing a stack-derived ref through an indirection into storage that
+    /// may outlive the frame — candidate for generational fallback.
     HeapStore,
 }
 
@@ -81,6 +81,25 @@ pub fn check_escapes(
         .collect()
 }
 
+/// Run escape analysis with structural borrow metadata from type checking.
+pub fn check_escapes_with_type_info(
+    func: &AmirFunc,
+    symbols: &SymbolTable,
+    type_info: &arandu_typeck::TypeInfo,
+    opts: EscapeCheckOptions,
+) -> Vec<Diagnostic> {
+    check_escapes_by_block_impl(
+        func,
+        symbols,
+        &type_info.type_interner,
+        Some(type_info),
+        opts,
+    )
+    .into_iter()
+    .map(|(_, diagnostic)| diagnostic)
+    .collect()
+}
+
 /// Same as [`check_escapes`], tagged with AMIR block.
 #[must_use]
 pub fn check_escapes_by_block(
@@ -89,11 +108,24 @@ pub fn check_escapes_by_block(
     interner: &crate::types::TypeInterner,
     opts: EscapeCheckOptions,
 ) -> Vec<(BlockId, Diagnostic)> {
+    check_escapes_by_block_impl(func, symbols, interner, None, opts)
+}
+
+fn check_escapes_by_block_impl(
+    func: &AmirFunc,
+    symbols: &SymbolTable,
+    interner: &crate::types::TypeInterner,
+    type_info: Option<&arandu_typeck::TypeInfo>,
+    opts: EscapeCheckOptions,
+) -> Vec<(BlockId, Diagnostic)> {
     if func.blocks.is_empty() {
         return Vec::new();
     }
 
-    let events = find_escapes(func, interner);
+    let events = type_info.map_or_else(
+        || find_escapes(func, interner),
+        |type_info| find_escapes_with_type_info(func, type_info),
+    );
     let no_fb = opts.effective_no_fallback();
     let mut diags = Vec::new();
 
@@ -209,7 +241,29 @@ fn o004_diag(name: &str, span: Span, block: BlockId, reason: &str, as_error: boo
 /// Pure escape finder (no diagnostics).
 #[must_use]
 pub fn find_escapes(func: &AmirFunc, interner: &crate::types::TypeInterner) -> Vec<EscapeEvent> {
+    find_escapes_impl(func, interner, None)
+}
+
+/// Like [`find_escapes`], but uses typeck's structural metadata to avoid
+/// treating named wrappers around slice views as hidden reference carriers.
+pub fn find_escapes_with_type_info(
+    func: &AmirFunc,
+    type_info: &arandu_typeck::TypeInfo,
+) -> Vec<EscapeEvent> {
+    find_escapes_impl(func, &type_info.type_interner, Some(type_info))
+}
+
+fn find_escapes_impl(
+    func: &AmirFunc,
+    interner: &crate::types::TypeInterner,
+    type_info: Option<&arandu_typeck::TypeInfo>,
+) -> Vec<EscapeEvent> {
     let facts = analyze_borrow_facts(func);
+    // Generated functions commonly reuse the same types across many stores.
+    // Resolve the structural carrier question once per used store type. Keep
+    // this lazy: partial IDE MIR may contain temp TypeIds from a broader
+    // interner than the narrow legacy API receives.
+    let mut borrow_carrier_by_type = rustc_hash::FxHashMap::default();
     // Temp → place_local for stack-derived refs (from loans + propagation).
     let mut temp_to_place: Vec<Option<LocalId>> = vec![None; func.temps.len()];
     for loan in &facts.loans {
@@ -393,12 +447,28 @@ pub fn find_escapes(func: &AmirFunc, interner: &crate::types::TypeInterner) -> V
                 let Some(place) = operand_stack_place(rhs, &temp_to_place) else {
                     continue;
                 };
-                // Storing into a projected place or memory local ⇒ may outlive pure SSA.
-                let dest_is_memory = !lhs.projections.is_empty()
-                    || func
-                        .locals
-                        .get(lhs.local.as_usize())
-                        .is_some_and(|l| l.is_memory);
+                // A projected field or materialized local is still stack
+                // storage. However, storing a borrow-carrying aggregate in a
+                // local can outlive the borrow's static window when the
+                // aggregate hides its provenance (for example `Holder { item:
+                // ref T }`). Keep that conservative fallback for structural
+                // carriers, but not for the fat-slice view itself: match
+                // temporaries such as `Option<[]T>` remain ordinary scoped
+                // borrows and must not be mistaken for frame escapes.
+                let destination_is_indirect = lhs
+                    .projections
+                    .iter()
+                    .any(|projection| matches!(projection, crate::amir::AmirProjection::Deref));
+                let rhs_is_borrow_carrier = match rhs {
+                    AmirOperand::Copy(temp) | AmirOperand::Move(temp) => {
+                        func.temps.get(temp.as_usize()).is_some_and(|temp| {
+                            *borrow_carrier_by_type.entry(temp.ty).or_insert_with(|| {
+                                type_is_borrow_carrier(temp.ty, interner, type_info)
+                            })
+                        })
+                    }
+                    _ => false,
+                };
                 let rhs_is_enum = match rhs {
                     AmirOperand::Copy(t) | AmirOperand::Move(t) => enum_construct_temps.contains(t),
                     _ => false,
@@ -426,7 +496,7 @@ pub fn find_escapes(func: &AmirFunc, interner: &crate::types::TypeInterner) -> V
                                 _ => false,
                             }
                         }));
-                if dest_is_memory && !dest_is_ref_slot {
+                if (destination_is_indirect || rhs_is_borrow_carrier) && !dest_is_ref_slot {
                     events.push(EscapeEvent {
                         kind: EscapeKind::HeapStore,
                         place_local: place,
@@ -443,6 +513,89 @@ pub fn find_escapes(func: &AmirFunc, interner: &crate::types::TypeInterner) -> V
     events.sort_by_key(|e| (e.block.as_usize(), e.place_local.as_usize(), e.kind as u8));
     events.dedup_by_key(|e| (e.block, e.place_local, e.kind));
     events
+}
+
+/// Whether a value can hide a first-class borrow inside an aggregate. Slices
+/// are intentionally excluded: their fat-view ABI is Copy and their owner
+/// lifetime is checked at use sites, while aggregates containing explicit
+/// references still require the generational-fallback diagnostic.
+fn type_is_borrow_carrier(
+    ty: crate::types::TypeId,
+    interner: &crate::types::TypeInterner,
+    type_info: Option<&arandu_typeck::TypeInfo>,
+) -> bool {
+    if let Some(type_info) = type_info {
+        let is_aggregate = matches!(
+            interner.resolve(ty),
+            ArType::Named(_, _)
+                | ArType::Tuple(_)
+                | ArType::Option(_)
+                | ArType::Nullable(_)
+                | ArType::Array(_, _)
+                | ArType::ConstArray(_, _)
+                | ArType::Result(_, _)
+                | ArType::Poll(_)
+                | ArType::Coroutine(_)
+                | ArType::Range(_)
+        );
+        return is_aggregate && type_info.contains_explicit_reference(ty);
+    }
+
+    fn contains_reference(
+        ty: crate::types::TypeId,
+        interner: &crate::types::TypeInterner,
+        seen: &mut rustc_hash::FxHashSet<crate::types::TypeId>,
+    ) -> bool {
+        let mut pending = vec![ty];
+        while let Some(ty) = pending.pop() {
+            if !seen.insert(ty) {
+                continue;
+            }
+            match interner.resolve(ty) {
+                ArType::Ref(_) | ArType::RefMut(_) => return true,
+                ArType::Named(_, _) => return true,
+                ArType::Option(inner)
+                | ArType::Nullable(inner)
+                | ArType::Array(_, inner)
+                | ArType::ConstArray(_, inner)
+                | ArType::Poll(inner)
+                | ArType::Coroutine(inner)
+                | ArType::Range(inner) => pending.push(inner),
+                ArType::Result(ok, err) => {
+                    pending.push(ok);
+                    pending.push(err);
+                }
+                ArType::Tuple(args) => pending.extend(interner.type_args(args)),
+                // A slice is a borrowed fat view, but not a hidden
+                // reference-bearing aggregate for this fallback heuristic.
+                ArType::Slice(_) => {}
+                _ => {}
+            }
+        }
+        false
+    }
+
+    match interner.resolve(ty) {
+        ArType::Named(_, _) => true,
+        ArType::Tuple(args) => interner
+            .type_args(args)
+            .into_iter()
+            .any(|ty| contains_reference(ty, interner, &mut rustc_hash::FxHashSet::default())),
+        ArType::Option(inner)
+        | ArType::Nullable(inner)
+        | ArType::Array(_, inner)
+        | ArType::ConstArray(_, inner)
+        | ArType::Poll(inner)
+        | ArType::Coroutine(inner)
+        | ArType::Range(inner) => {
+            contains_reference(inner, interner, &mut rustc_hash::FxHashSet::default())
+        }
+        ArType::Result(ok, err) => {
+            contains_reference(ok, interner, &mut rustc_hash::FxHashSet::default())
+                || contains_reference(err, interner, &mut rustc_hash::FxHashSet::default())
+        }
+        _ => false,
+    }
 }
 
 fn is_return_temp(t: TempId, func: &AmirFunc) -> bool {
@@ -489,7 +642,9 @@ mod tests {
 
     use super::*;
     use crate::SymbolId;
-    use crate::amir::{AmirBasicBlock, AmirLocal, AmirPlace, AmirStmtTable, AmirTemp};
+    use crate::amir::{
+        AmirBasicBlock, AmirLocal, AmirPlace, AmirProjection, AmirStmtTable, AmirTemp,
+    };
     use crate::cfg::compute_cfg_edges;
     use crate::layout::DenseRange;
     use crate::types::{ArType, Primitive, TypeInterner};
@@ -778,6 +933,7 @@ mod tests {
         let int = interner.intern(ArType::Primitive(Primitive::Int));
         let ref_int = interner.intern(ArType::Ref(int));
         let struct_ty = interner.intern(ArType::named(SymbolId::new(0, 1), &[], &interner));
+        let ref_struct_ty = interner.intern(ArType::RefMut(struct_ty));
         let void = interner.intern(ArType::Void);
 
         let mut stmts = AmirStmtTable::new();
@@ -797,15 +953,23 @@ mod tests {
                 )],
             },
         });
-        // local1 (memory) = store t2
+        // Store through a reference can outlive this stack frame.
         stmts.push(AmirStmt::Store {
-            lhs: place(1),
+            lhs: AmirPlace {
+                local: LocalId::from_usize(1),
+                projections: smallvec![AmirProjection::Deref],
+            },
+            rhs: AmirOperand::Copy(TempId::from_usize(2)),
+        });
+        // The same aggregate in a stack local is not an escape.
+        stmts.push(AmirStmt::Store {
+            lhs: place(2),
             rhs: AmirOperand::Copy(TempId::from_usize(2)),
         });
 
         let block = AmirBasicBlock {
             id: BlockId::from_usize(0),
-            statements: DenseRange::new(0, 3),
+            statements: DenseRange::new(0, 4),
             params: DenseRange::empty(),
             terminator: AmirTerminator::Return,
         };
@@ -828,10 +992,18 @@ mod tests {
                 },
                 AmirLocal {
                     id: LocalId::from_usize(1),
+                    ty: ref_struct_ty,
+                    is_memory: false,
+                    symbol: None,
+                    span: Span::new(0, 2, 3),
+                    use_span: None,
+                },
+                AmirLocal {
+                    id: LocalId::from_usize(2),
                     ty: struct_ty,
                     is_memory: true,
                     symbol: None,
-                    span: Span::new(0, 2, 3),
+                    span: Span::new(0, 3, 4),
                     use_span: None,
                 },
             ],
@@ -880,9 +1052,10 @@ mod tests {
             .iter()
             .filter(|d| d.code == DiagCode::O004GenerationalFallback)
             .collect();
-        assert!(
-            !o004.is_empty(),
-            "storing aggregate containing stack borrow into memory must trigger O004: {diags:?}"
+        assert_eq!(
+            o004.len(),
+            1,
+            "only the store through an external indirection escapes; a stack-local aggregate does not: {diags:?}"
         );
     }
 }

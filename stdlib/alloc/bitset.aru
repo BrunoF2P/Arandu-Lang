@@ -40,7 +40,7 @@ public struct BitSet {
 }
 
 func wordAt(words: ref vec.Vec<u64>, index: usize): u64 {
-    match vec.get<u64>(*words, index) {
+    match vec.getCopy<u64>(*words, index) {
         Some(value) => { return value }
         None => { return 0 as u64 }
     }
@@ -92,7 +92,7 @@ public func BitSet.contains(self: ref BitSet, bit: usize): bool {
     if wordIdx >= vec.len<u64>(self.words) {
         return false
     }
-    match vec.get<u64>(self.words, wordIdx) {
+    match vec.getCopy<u64>(self.words, wordIdx) {
         Some(w) => {
             let mask: u64 = (1 as u64) << (bitIdx as u64)
             return (w & mask) != (0 as u64)
@@ -118,7 +118,7 @@ public func BitSet.insert(self: mut ref BitSet, bit: usize): bool {
     while wordIdx >= vec.len<u64>(self.words) {
         vec.push<u64>(self.words, 0 as u64)
     }
-    match vec.get<u64>(self.words, wordIdx) {
+    match vec.getCopy<u64>(self.words, wordIdx) {
         Some(w) => {
             let mask: u64 = (1 as u64) << (bitIdx as u64)
             if (w & mask) != (0 as u64) {
@@ -146,7 +146,7 @@ public func BitSet.remove(self: mut ref BitSet, bit: usize): bool {
     if wordIdx >= vec.len<u64>(self.words) {
         return false
     }
-    match vec.get<u64>(self.words, wordIdx) {
+    match vec.getCopy<u64>(self.words, wordIdx) {
         Some(w) => {
             let mask: u64 = (1 as u64) << (bitIdx as u64)
             if (w & mask) == (0 as u64) {
@@ -187,12 +187,12 @@ public func BitSet.unionWith(self: mut ref BitSet, other: ref BitSet): void {
     let mut i: usize = 0 as usize
     while i < otherLen {
         let mut wSelf: u64 = 0 as u64
-        match vec.get<u64>(self.words, i) {
+        match vec.getCopy<u64>(self.words, i) {
             Some(value) => { wSelf = value }
             None => {}
         }
         let mut wOther: u64 = 0 as u64
-        match vec.get<u64>(other.words, i) {
+        match vec.getCopy<u64>(other.words, i) {
             Some(value) => { wOther = value }
             None => {}
         }

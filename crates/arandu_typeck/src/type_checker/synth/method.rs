@@ -244,18 +244,17 @@ pub(crate) fn synth_method_call(
             let params = checker.type_info.type_interner.type_args(params);
             // Interface methods may declare an explicit `self`/`Self` receiver or
             // only the free-style payload (`Allocator.alloc(size, align)`).
-            // Drop a leading `Self` formal if present, then always prepend the
-            // concrete receiver so call sites stay uniform (TYP.2).
-            let payload = if params
-                .first()
-                .is_some_and(|&p| is_receiver_type_formal(checker, p, actual_base_ty_id))
+            // Preserve the declared receiver formal (e.g. `ref Self`) if present,
+            // or prepend `actual_base_ty_id` if omitted.
+            let (receiver_formal, payload) = if let Some(&first) = params.first()
+                && is_receiver_type_formal(checker, first, actual_base_ty_id)
             {
-                params[1..].to_vec()
+                (first, params[1..].to_vec())
             } else {
-                params
+                (actual_base_ty_id, params)
             };
             let mut new_params = Vec::with_capacity(payload.len() + 1);
-            new_params.push(actual_base_ty_id);
+            new_params.push(receiver_formal);
             new_params.extend(payload);
             (new_params, ret, None)
         } else {
@@ -319,16 +318,15 @@ pub(crate) fn synth_method_call(
     }
 
     let receiver_ty_id = params[0];
-    let receiver_ok = checker.unify_ids(receiver_ty_id, actual_base_ty_id)
+    let receiver_ok = checker.is_assignable(base_ty_id, receiver_ty_id)
         || match checker.resolve(receiver_ty_id) {
             // Auto-ref: method/`self` formal is `&T`/`&mut T`, receiver is `T`.
-            ArType::Ref(inner) | ArType::RefMut(inner) => {
-                checker.unify_ids(inner, actual_base_ty_id)
-            }
-            _ => match checker.resolve(actual_base_ty_id) {
-                // Auto-deref: formal `T`, receiver is `&T`/`&mut T`.
+            ArType::Ref(inner) | ArType::RefMut(inner) => checker.is_assignable(base_ty_id, inner),
+            _ => match checker.resolve(base_ty_id) {
+                // Auto-deref: formal `T`, receiver is `&T`/`&mut T`. Only permitted if `T` is a Copy type
+                // to prevent consuming/moving ownership out of a borrowed reference (soundness hole).
                 ArType::Ref(inner) | ArType::RefMut(inner) => {
-                    checker.unify_ids(receiver_ty_id, inner)
+                    checker.type_info.is_copy(inner) && checker.is_assignable(inner, receiver_ty_id)
                 }
                 _ => false,
             },
@@ -336,7 +334,7 @@ pub(crate) fn synth_method_call(
     if !receiver_ok {
         checker.add_constraint(
             receiver_ty_id,
-            actual_base_ty_id,
+            base_ty_id,
             ConstraintOrigin::CallArg {
                 call_span,
                 param_span: field_span,
@@ -345,7 +343,7 @@ pub(crate) fn synth_method_call(
             },
         );
     } else {
-        validate_exclusive_receiver_autoref(checker, base, receiver_ty_id, actual_base_ty_id);
+        validate_exclusive_receiver_autoref(checker, base, receiver_ty_id, base_ty_id);
     }
 
     let mut explicit_params = params[1..].to_vec();

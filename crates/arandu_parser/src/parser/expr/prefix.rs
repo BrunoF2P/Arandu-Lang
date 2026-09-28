@@ -207,6 +207,12 @@ impl<'a> Parser<'a> {
                 let span = self.span_from_mark(start);
                 Ok(self.pool.alloc_expr(ExprKind::Char { value }, span))
             }
+            TokenKind::ByteChar => {
+                let value = self.current().byte_value(self.source).unwrap_or(0);
+                self.advance();
+                let span = self.span_from_mark(start);
+                Ok(self.pool.alloc_expr(ExprKind::Byte { value }, span))
+            }
             TokenKind::Nil => {
                 self.advance();
                 let span = self.span_from_mark(start);

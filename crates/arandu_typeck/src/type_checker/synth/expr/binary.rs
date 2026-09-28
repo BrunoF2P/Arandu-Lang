@@ -623,6 +623,7 @@ pub(super) fn synth_binary_unary_expr(
                             ExprKind::Int { value, .. } => {
                                 arandu_middle::literal_pool::parse_int_literal(value) == Some(0)
                             }
+                            ExprKind::Byte { value } => *value == 0,
                             ExprKind::Float { value, .. } => {
                                 value.parse::<f64>().map(|f| f == 0.0).unwrap_or(false)
                             }
@@ -692,6 +693,7 @@ pub(super) fn synth_binary_unary_expr(
                             ExprKind::Int { value, .. } => {
                                 arandu_middle::literal_pool::parse_int_literal(value)
                             }
+                            ExprKind::Byte { value } => Some(*value as i128),
                             ExprKind::Unary {
                                 op: UnaryOp::Neg,
                                 expr,

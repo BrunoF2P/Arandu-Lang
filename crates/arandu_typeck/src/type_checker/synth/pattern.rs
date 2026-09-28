@@ -61,8 +61,31 @@ fn enum_params_from_variant(
     (!params.is_empty()).then_some(params)
 }
 
+/// Match ergonomics: a payload reached through a shared or mutable reference
+/// binds non-Copy values by reference, so checking a pattern cannot duplicate
+/// ownership or move out of the borrowed scrutinee.
+fn borrowed_payload_type(
+    checker: &mut TypeChecker<'_>,
+    source_ty: TypeId,
+    payload_ty: TypeId,
+) -> TypeId {
+    if checker.type_info.is_copy(payload_ty) {
+        return payload_ty;
+    }
+    match checker.resolve(source_ty) {
+        ArType::Ref(_) => checker.intern(ArType::Ref(payload_ty)),
+        ArType::RefMut(_) => checker.intern(ArType::RefMut(payload_ty)),
+        _ => payload_ty,
+    }
+}
+
 pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty: TypeId) {
     let pat = checker.pool.pattern(pattern);
+    let pattern_source_ty = value_ty;
+    let borrowed_scrutinee = matches!(
+        checker.resolve(value_ty),
+        ArType::Ref(_) | ArType::RefMut(_) | ArType::Ptr(_)
+    );
     let value_ty = if matches!(pat, Pattern::Bind { .. }) {
         value_ty
     } else {
@@ -139,7 +162,9 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                                 ));
                             }
                             if let Some(&pat_id) = checker.pool.pattern_list(*payload).first() {
-                                check_pattern(checker, pat_id, ok_id);
+                                let payload_ty =
+                                    borrowed_payload_type(checker, pattern_source_ty, ok_id);
+                                check_pattern(checker, pat_id, payload_ty);
                             }
                         }
                         "Err" => {
@@ -154,7 +179,9 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                                 ));
                             }
                             if let Some(&pat_id) = checker.pool.pattern_list(*payload).first() {
-                                check_pattern(checker, pat_id, err_id);
+                                let payload_ty =
+                                    borrowed_payload_type(checker, pattern_source_ty, err_id);
+                                check_pattern(checker, pat_id, payload_ty);
                             }
                         }
                         _ => {
@@ -179,7 +206,9 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                                 ));
                             }
                             if let Some(&pat_id) = checker.pool.pattern_list(*payload).first() {
-                                check_pattern(checker, pat_id, inner_id);
+                                let payload_ty =
+                                    borrowed_payload_type(checker, pattern_source_ty, inner_id);
+                                check_pattern(checker, pat_id, payload_ty);
                             }
                         }
                         "None" => {
@@ -216,7 +245,9 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                                 ));
                             }
                             if let Some(&pat_id) = checker.pool.pattern_list(*payload).first() {
-                                check_pattern(checker, pat_id, inner_id);
+                                let payload_ty =
+                                    borrowed_payload_type(checker, pattern_source_ty, inner_id);
+                                check_pattern(checker, pat_id, payload_ty);
                             }
                         }
                         "Pending" => {
@@ -321,7 +352,12 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                                             tids.get(i).copied().unwrap_or_else(|| {
                                                 checker.type_info.type_interner.error_type_id()
                                             });
-                                        check_pattern(checker, pat_id, expected_pat_ty_id);
+                                        let payload_ty = borrowed_payload_type(
+                                            checker,
+                                            pattern_source_ty,
+                                            expected_pat_ty_id,
+                                        );
+                                        check_pattern(checker, pat_id, payload_ty);
                                     }
                                 }
                             }
@@ -428,7 +464,12 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                                                 tids.get(i).copied().unwrap_or_else(|| {
                                                     checker.type_info.type_interner.error_type_id()
                                                 });
-                                            check_pattern(checker, pat_id, expected_pat_ty_id);
+                                            let payload_ty = borrowed_payload_type(
+                                                checker,
+                                                pattern_source_ty,
+                                                expected_pat_ty_id,
+                                            );
+                                            check_pattern(checker, pat_id, payload_ty);
                                         }
                                     }
                                 }
@@ -454,7 +495,9 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                                 ));
                             }
                             if let Some(&pat_id) = checker.pool.pattern_list(*payload).first() {
-                                check_pattern(checker, pat_id, ok_id);
+                                let payload_ty =
+                                    borrowed_payload_type(checker, pattern_source_ty, ok_id);
+                                check_pattern(checker, pat_id, payload_ty);
                             }
                         }
                         "Err" => {
@@ -469,7 +512,9 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                                 ));
                             }
                             if let Some(&pat_id) = checker.pool.pattern_list(*payload).first() {
-                                check_pattern(checker, pat_id, err_id);
+                                let payload_ty =
+                                    borrowed_payload_type(checker, pattern_source_ty, err_id);
+                                check_pattern(checker, pat_id, payload_ty);
                             }
                         }
                         _ => {
@@ -493,7 +538,9 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                                 ));
                             }
                             if let Some(&pat_id) = checker.pool.pattern_list(*payload).first() {
-                                check_pattern(checker, pat_id, inner_id);
+                                let payload_ty =
+                                    borrowed_payload_type(checker, pattern_source_ty, inner_id);
+                                check_pattern(checker, pat_id, payload_ty);
                             }
                         }
                         "None" => {
@@ -529,7 +576,9 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                                 ));
                             }
                             if let Some(&pat_id) = checker.pool.pattern_list(*payload).first() {
-                                check_pattern(checker, pat_id, inner_id);
+                                let payload_ty =
+                                    borrowed_payload_type(checker, pattern_source_ty, inner_id);
+                                check_pattern(checker, pat_id, payload_ty);
                             }
                         }
                         "Pending" => {
@@ -655,6 +704,23 @@ pub fn check_pattern(checker: &mut TypeChecker<'_>, pattern: PatternId, value_ty
                             .map(|f| f.ty)
                     });
                     if let Some(field_ty_id) = field_ty_id_opt {
+                        if borrowed_scrutinee
+                            && !checker.type_info.is_copy(field_ty_id)
+                            && field.pattern.is_none_or(|nested| {
+                                !matches!(checker.pool.pattern(nested), Pattern::Wildcard { .. })
+                            })
+                        {
+                            checker.diagnostics.push(
+                                crate::Diagnostic::error(
+                                    crate::DiagCode::O002MoveWhileBorrowed,
+                                    "cannot bind a non-Copy field by value from a borrowed struct",
+                                    field.span,
+                                )
+                                .with_note(
+                                    "match the owner by value or use a borrowing field operation",
+                                ),
+                            );
+                        }
                         if let Some(pat_id) = field.pattern {
                             check_pattern(checker, pat_id, field_ty_id);
                         } else {

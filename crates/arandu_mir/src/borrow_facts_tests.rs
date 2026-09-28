@@ -482,7 +482,10 @@ fn enum_payload_round_trip_preserves_holder() {
         rhs: AmirRvalue::EnumPayload {
             value: AmirOperand::Copy(TempId::from_usize(1)),
             variant: crate::SymbolId::new(0, 3),
+            variant_tag: 3,
             index: 0,
+            field_ty: ref_int,
+            tuple_ty: None,
         },
     });
     let block = AmirBasicBlock {

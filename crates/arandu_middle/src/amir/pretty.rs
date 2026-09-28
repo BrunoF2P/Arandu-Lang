@@ -156,8 +156,22 @@ impl AmirPlace {
                 AmirProjection::Field(symbol) => {
                     path.push_str(&format!(".{}", symbols.get(*symbol).name));
                 }
+                AmirProjection::Variant(tag) => {
+                    path.push_str(&format!("::<variant {tag}>"));
+                }
+                AmirProjection::Payload {
+                    variant_tag, index, ..
+                } => {
+                    path.push_str(&format!("::<payload {variant_tag}.{index}>"));
+                }
+                AmirProjection::TupleField(index) => {
+                    path.push_str(&format!(".{index}"));
+                }
                 AmirProjection::Index(op) => {
                     path.push_str(&format!("[{}]", op.to_pretty_string(symbols, pool)));
+                }
+                AmirProjection::IndexConstant(index) => {
+                    path.push_str(&format!("[{index}]"));
                 }
             }
         }
@@ -285,8 +299,13 @@ impl AmirRvalue {
                 value,
                 variant,
                 index,
+                ..
             } => {
-                let variant_name = symbols.get(*variant).name.as_str();
+                let variant_name = if *variant == crate::SymbolId::DUMMY {
+                    "builtin"
+                } else {
+                    symbols.get(*variant).name.as_str()
+                };
                 out.push_str(&format!(
                     "payload({} as {}.{})",
                     value.to_pretty_string(symbols, pool),

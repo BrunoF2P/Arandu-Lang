@@ -281,6 +281,9 @@ impl<'a> CEmitter<'a> {
         for (i, temp) in func.temps.iter().enumerate() {
             if used_temps.contains(&i) {
                 let ty = self.interner.resolve(temp.ty);
+                if matches!(ty, arandu_middle::types::ArType::Void) {
+                    continue;
+                }
                 let ty_str = self.format_type(&ty);
                 let _ = writeln!(&mut self.output, "    {} t{};", ty_str, i);
             }

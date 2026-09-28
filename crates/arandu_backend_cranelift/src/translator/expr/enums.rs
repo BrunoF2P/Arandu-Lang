@@ -209,7 +209,11 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
             _ => arandu_semantics::types::ArType::Error,
         };
         let enum_ty = match base_ty {
-            arandu_semantics::types::ArType::Ptr(inner) => self.type_info.resolve_type_id(inner),
+            arandu_semantics::types::ArType::Ptr(inner)
+            | arandu_semantics::types::ArType::Ref(inner)
+            | arandu_semantics::types::ArType::RefMut(inner) => {
+                self.type_info.resolve_type_id(inner)
+            }
             other => other,
         };
         let layout = self.checked_layout(&enum_ty);
@@ -270,6 +274,7 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
         &mut self,
         value: &AmirOperand,
         variant: &arandu_semantics::SymbolId,
+        variant_tag: usize,
         index: usize,
         expected_ty: Option<Type>,
     ) -> Value {
@@ -339,12 +344,7 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
         let payload_ty = match &enum_ty {
             ArType::Option(inner) => Some(self.type_info.resolve_type_id(*inner)),
             ArType::Result(ok, err) => {
-                let tag = self
-                    .type_info
-                    .enum_variant_tags
-                    .get(variant)
-                    .copied()
-                    .unwrap_or(0);
+                let tag = variant_tag;
                 if tag == 0 {
                     Some(self.type_info.resolve_type_id(*ok))
                 } else {
@@ -358,12 +358,7 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                     *enum_id,
                 )
                 .and_then(|variants| {
-                    let tag = self
-                        .type_info
-                        .enum_variant_tags
-                        .get(variant)
-                        .copied()
-                        .unwrap_or(0);
+                    let tag = variant_tag;
                     variants.get(tag).cloned()
                 })
                 .and_then(|shape| shape.payload_ty)

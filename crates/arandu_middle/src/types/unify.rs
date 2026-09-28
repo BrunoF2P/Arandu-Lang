@@ -84,7 +84,19 @@ pub fn unify(a: &ArType, b: &ArType, interner: &TypeInterner) -> bool {
     }
 
     match (a, b) {
-        (ArType::Primitive(pa), ArType::Primitive(pb)) => pa == pb,
+        (ArType::Ref(inner) | ArType::RefMut(inner), ArType::Primitive(Primitive::Str))
+        | (ArType::Primitive(Primitive::Str), ArType::Ref(inner) | ArType::RefMut(inner))
+            if matches!(interner.resolve(*inner), ArType::Primitive(Primitive::Str)) =>
+        {
+            true
+        }
+        (ArType::Primitive(pa), ArType::Primitive(pb)) => {
+            pa == pb
+                || matches!(
+                    (pa, pb),
+                    (Primitive::U8, Primitive::Byte) | (Primitive::Byte, Primitive::U8)
+                )
+        }
         (ArType::Named(id_a, args_a), ArType::Named(id_b, args_b)) => {
             id_a == id_b
                 && args_a.len == args_b.len
@@ -306,6 +318,16 @@ pub fn is_assignable(actual: &ArType, expected: &ArType, interner: &TypeInterner
         }
     }
 
+    // ref str -> str auto-deref coercion
+    if matches!(expected, ArType::Primitive(Primitive::Str))
+        && let ArType::Ref(inner) | ArType::RefMut(inner) = actual
+    {
+        let inner_actual = interner.resolve(*inner);
+        if matches!(inner_actual, ArType::Primitive(Primitive::Str)) {
+            return true;
+        }
+    }
+
     // Literal absorption
     if actual.is_literal() && actual.literal_absorbs(expected) {
         return true;
@@ -324,7 +346,13 @@ pub fn is_assignable(actual: &ArType, expected: &ArType, interner: &TypeInterner
     }
 
     match (actual, expected) {
-        (ArType::Primitive(pa), ArType::Primitive(pb)) => pa == pb,
+        (ArType::Primitive(pa), ArType::Primitive(pb)) => {
+            pa == pb
+                || matches!(
+                    (pa, pb),
+                    (Primitive::U8, Primitive::Byte) | (Primitive::Byte, Primitive::U8)
+                )
+        }
         (ArType::Named(id_a, args_a), ArType::Named(id_b, args_b)) => {
             id_a == id_b
                 && args_a.len == args_b.len

@@ -5,6 +5,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -15,6 +16,7 @@ const MESSAGE_TIMEOUT: Duration = Duration::from_secs(10);
 const INITIALIZE_P95_BUDGET: Duration = Duration::from_millis(250);
 const INTERACTIVE_BUDGET: Duration = Duration::from_millis(250);
 const COLD_SAMPLES: usize = 7;
+static NEXT_FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
 
 struct FixtureDir(PathBuf);
 
@@ -24,9 +26,18 @@ impl FixtureDir {
             .duration_since(UNIX_EPOCH)
             .expect("system clock after Unix epoch")
             .as_nanos();
-        let path =
-            std::env::temp_dir().join(format!("arandu-lsp-stdio-{}-{nonce}", std::process::id()));
-        fs::create_dir_all(&path).expect("create LSP fixture directory");
+        let path = loop {
+            let id = NEXT_FIXTURE_ID.fetch_add(1, Ordering::Relaxed);
+            let candidate = std::env::temp_dir().join(format!(
+                "arandu-lsp-stdio-{}-{nonce}-{id}",
+                std::process::id()
+            ));
+            match fs::create_dir(&candidate) {
+                Ok(()) => break candidate,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("create LSP fixture directory: {error}"),
+            }
+        };
         Self(path)
     }
 

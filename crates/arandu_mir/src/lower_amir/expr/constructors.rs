@@ -141,6 +141,17 @@ impl LowerCtx<'_> {
         symbols: &SymbolTable,
     ) -> Result<AmirOperand, Diagnostic> {
         let val_op = self.lower_expr(value, None, symbols)?;
+        let val_op = if matches!(
+            variant,
+            ResultCtorVariant::Ok
+                | ResultCtorVariant::Err
+                | ResultCtorVariant::Some
+                | ResultCtorVariant::PollReady
+        ) {
+            self.consume_operand(val_op)?
+        } else {
+            val_op
+        };
         let dest = target.unwrap_or_else(|| self.new_temp_id(expr.ty));
         match variant {
             ResultCtorVariant::Ok => {

@@ -215,7 +215,9 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                 value,
                 variant,
                 index,
-            } => self.translate_enum_payload(value, variant, *index, expected_ty),
+                variant_tag,
+                ..
+            } => self.translate_enum_payload(value, variant, *variant_tag, *index, expected_ty),
             AmirRvalue::IndexAccess { base, index } => {
                 self.translate_index_access(base, index, expected_ty)
             }

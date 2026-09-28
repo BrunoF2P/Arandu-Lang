@@ -133,6 +133,10 @@ impl LowerCtx<'_> {
         });
         self.temp_states.push(MoveState::Available);
         self.temp_origins.push(Some(local));
+        self.temp_place_origins.push(Some(crate::amir::AmirPlace {
+            local,
+            projections: smallvec::SmallVec::new(),
+        }));
         // For `T?`, never redirect a non-Nil constant into the use site: bare
         // `0` would collapse with `nil` under `ne 0, nil`. Materialize via
         // Assign so codegen can box the scalar into a handle.

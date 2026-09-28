@@ -1581,3 +1581,50 @@ fn test_struct_update_and_punning_typecheck() {
         check_res.diagnostics
     );
 }
+
+#[test]
+fn test_cannot_call_own_method_on_borrowed_non_copy_receiver() {
+    let source = r#"
+    module test;
+    public struct Resource { handle: ptr[int]; }
+    public func Resource.consume(self: own Resource): void {}
+
+    public func test_call(r: mut ref Resource): void {
+        r.consume();
+    }
+    "#;
+    let program = arandu_parser::parse(source).unwrap();
+    let res = arandu_resolve::resolve_for_test(0, &program);
+    let check_res = crate::type_check(res, &program, TargetInfo { pointer_width: 64 });
+    assert!(
+        check_res
+            .diagnostics
+            .iter()
+            .any(|d| d.code == arandu_middle::DiagCode::T003IncompatibleCallArg),
+        "Calling consuming own method on a borrowed non-copy receiver must be rejected with T003: {:?}",
+        check_res.diagnostics
+    );
+}
+
+#[test]
+fn test_can_call_ref_methods_on_borrowed_receiver() {
+    let source = r#"
+    module test;
+    public struct Resource { handle: ptr[int]; }
+    public func Resource.inspect(self: ref Resource): void {}
+    public func Resource.modify(self: mut ref Resource): void {}
+
+    public func test_call(r: mut ref Resource): void {
+        r.modify();
+        r.inspect();
+    }
+    "#;
+    let program = arandu_parser::parse(source).unwrap();
+    let res = arandu_resolve::resolve_for_test(0, &program);
+    let check_res = crate::type_check(res, &program, TargetInfo { pointer_width: 64 });
+    assert!(
+        check_res.diagnostics.is_empty(),
+        "Calling ref / mut ref methods on a mut ref receiver must succeed: {:?}",
+        check_res.diagnostics
+    );
+}

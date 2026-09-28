@@ -96,6 +96,39 @@ fn single_block_no_uses_or_defs() {
 }
 
 #[test]
+fn local_statement_liveness_tracks_last_use_inside_block() {
+    let mut stmts = AmirStmtTable::new();
+    stmts.push(AmirStmt::Store {
+        lhs: crate::amir::AmirPlace {
+            local: local_id(0),
+            projections: smallvec::smallvec![],
+        },
+        rhs: AmirOperand::Constant(AmirConstant::Nil),
+    });
+    stmts.push(AmirStmt::Destroy(crate::amir::AmirPlace {
+        local: local_id(0),
+        projections: smallvec::smallvec![],
+    }));
+    let mut block = empty_block(0);
+    block.statements = DenseRange::new(0, 2);
+    let func = void_func(vec![block], stmts);
+    let liveness = analyze_local_liveness(&func);
+
+    assert!(
+        liveness
+            .live_before(block_id(0), 1)
+            .unwrap()
+            .contains(local_id(0))
+    );
+    assert!(
+        !liveness
+            .live_before(block_id(0), 2)
+            .unwrap()
+            .contains(local_id(0))
+    );
+}
+
+#[test]
 fn use_before_def_is_live_in() {
     let mut stmts = AmirStmtTable::new();
     let bid = block_id(0);

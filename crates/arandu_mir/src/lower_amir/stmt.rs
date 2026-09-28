@@ -279,15 +279,21 @@ impl LowerCtx<'_> {
             }
 
             HirStmtKind::Break => {
-                if let Some((_, exit_block, defer_depth)) = self.loop_stack.last().copied() {
+                if let Some((_, exit_block, defer_depth, scope_depth)) =
+                    self.loop_stack.last().copied()
+                {
                     self.exit_defer_frames_from(defer_depth, false, symbols)?;
+                    self.emit_local_scope_exit_from(scope_depth);
                     self.emit_goto(exit_block);
                     self.builder.current_block = None;
                 }
             }
             HirStmtKind::Continue => {
-                if let Some((cont_block, _, defer_depth)) = self.loop_stack.last().copied() {
+                if let Some((cont_block, _, defer_depth, scope_depth)) =
+                    self.loop_stack.last().copied()
+                {
                     self.exit_defer_frames_from(defer_depth, false, symbols)?;
+                    self.emit_local_scope_exit_from(scope_depth);
                     self.emit_goto(cont_block);
                     self.builder.current_block = None;
                 }
@@ -343,7 +349,9 @@ impl LowerCtx<'_> {
                 self.seal_block(bb_exit);
 
                 let defer_depth = self.defer_frames.len();
-                self.loop_stack.push((bb_cond, bb_exit, defer_depth));
+                let scope_depth = self.local_scopes.len();
+                self.loop_stack
+                    .push((bb_cond, bb_exit, defer_depth, scope_depth));
                 self.builder.current_block = Some(bb_body);
                 self.lower_block(*body, symbols)?;
                 if self.builder.current_block.is_some() {
@@ -421,7 +429,10 @@ impl LowerCtx<'_> {
                     self.seal_block(bb_exit);
 
                     let defer_depth = self.defer_frames.len();
-                    self.loop_stack.push((bb_step, bb_exit, defer_depth));
+                    let scope_depth = self.local_scopes.len();
+                    self.begin_local_scope();
+                    self.loop_stack
+                        .push((bb_step, bb_exit, defer_depth, scope_depth));
                     self.builder.current_block = Some(bb_body);
 
                     let bindings_slice = self.hir.pool.for_bindings_list(*bindings);
@@ -455,6 +466,7 @@ impl LowerCtx<'_> {
                     }
 
                     self.lower_block(*body, symbols)?;
+                    self.end_local_scope();
                     if self.builder.current_block.is_some() {
                         self.emit_goto(bb_step);
                     }
@@ -519,7 +531,9 @@ impl LowerCtx<'_> {
                     self.seal_block(bb_exit);
 
                     let defer_depth = self.defer_frames.len();
-                    self.loop_stack.push((bb_step, bb_exit, defer_depth));
+                    let scope_depth = self.local_scopes.len();
+                    self.loop_stack
+                        .push((bb_step, bb_exit, defer_depth, scope_depth));
                     self.builder.current_block = Some(bb_body);
                     self.lower_block(*body, symbols)?;
                     if self.builder.current_block.is_some() {
@@ -735,7 +749,16 @@ impl LowerCtx<'_> {
         let Some(&local_id) = self.symbol_map.get(&place.root_symbol) else {
             return Ok(());
         };
-        let projections: Result<Vec<_>, Diagnostic> = place
+        let root_ty = self.resolve_ty(self.locals[local_id.as_usize()].ty);
+        let mut projections = Vec::new();
+        let starts_with_named_field =
+            matches!(place.suffixes.first(), Some(HirPlaceSuffix::Field { .. }));
+        if starts_with_named_field
+            && matches!(root_ty, ArType::Ref(_) | ArType::RefMut(_) | ArType::Ptr(_))
+        {
+            projections.push(AmirProjection::Deref);
+        }
+        let suffix_projections: Result<Vec<_>, Diagnostic> = place
             .suffixes
             .iter()
             .map(|s| match s {
@@ -753,9 +776,10 @@ impl LowerCtx<'_> {
                 )),
             })
             .collect();
+        projections.extend(suffix_projections?);
         let amir_place = AmirPlace {
             local: local_id,
-            projections: projections?.into(),
+            projections: projections.into(),
         };
 
         // Projected stores address through the local's SSA value (e.g. `s.n = v`
@@ -833,6 +857,7 @@ impl LowerCtx<'_> {
         block: crate::hir::HirBlockId,
         symbols: &SymbolTable,
     ) -> Result<(), Diagnostic> {
+        self.begin_local_scope();
         self.defer_frames.push(DeferFrame {
             entries: Vec::new(),
         });
@@ -847,6 +872,7 @@ impl LowerCtx<'_> {
         if self.builder.current_block.is_some() {
             self.exit_current_defer_frame(false, symbols)?;
         }
+        self.end_local_scope();
         Ok(())
     }
 
@@ -879,6 +905,7 @@ impl LowerCtx<'_> {
         async_payload_ty: Option<crate::types::TypeId>,
         symbols: &SymbolTable,
     ) -> Result<(), Diagnostic> {
+        self.begin_local_scope();
         self.defer_frames.push(DeferFrame {
             entries: Vec::new(),
         });
@@ -905,6 +932,7 @@ impl LowerCtx<'_> {
             if self.builder.current_block.is_some() {
                 self.exit_current_defer_frame(false, symbols)?;
             }
+            self.end_local_scope();
             return Ok(());
         }
         let last_idx = statements_slice.len() - 1;
@@ -978,6 +1006,7 @@ impl LowerCtx<'_> {
         if self.builder.current_block.is_some() {
             self.exit_current_defer_frame(false, symbols)?;
         }
+        self.end_local_scope();
         Ok(())
     }
 }

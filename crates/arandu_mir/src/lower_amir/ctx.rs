@@ -119,6 +119,7 @@ impl LowerCtx<'_> {
         });
         self.temp_states.push(MoveState::Available);
         self.temp_origins.push(None);
+        self.temp_place_origins.push(None);
         id
     }
 
@@ -145,6 +146,7 @@ impl LowerCtx<'_> {
         });
         self.local_states.push(MoveState::Available);
         self.symbol_map.insert(symbol, id);
+        self.track_local_in_scope(id);
         id
     }
 
@@ -206,6 +208,7 @@ impl LowerCtx<'_> {
         });
         self.temp_states.push(MoveState::Available);
         self.temp_origins.push(None);
+        self.temp_place_origins.push(None);
         id
     }
 
@@ -227,23 +230,94 @@ impl LowerCtx<'_> {
         });
         self.local_states.push(MoveState::Available);
         self.symbol_map.insert(symbol, id);
+        self.track_local_in_scope(id);
         id
     }
 
     pub(crate) fn new_compiler_local(&mut self, ty: ArType) -> LocalId {
-        let is_memory = super::is_memory_type(&ty);
         let ty = self.intern_ty(ty);
+        self.new_compiler_local_id(ty, Span::new(0, 0, 0))
+    }
+
+    /// Allocate a materialized compiler temporary without associating it with
+    /// a user symbol. Keeping the symbol absent prevents the sentinel
+    /// [`SymbolId::DUMMY`] from leaking into debug metadata or AMIR printers.
+    pub(crate) fn new_compiler_local_id(
+        &mut self,
+        ty: crate::types::TypeId,
+        span: Span,
+    ) -> LocalId {
+        let is_memory = self
+            .tc
+            .type_info
+            .type_interner
+            .with_type(ty, super::is_memory_type);
         let id = self.next_local_id();
         self.locals.push(AmirLocal {
             id,
             ty,
             is_memory,
             symbol: None,
-            span: Span::new(0, 0, 0),
+            span,
             use_span: None,
         });
         self.local_states.push(MoveState::Available);
+        self.track_local_in_scope(id);
         id
+    }
+
+    fn track_local_in_scope(&mut self, local: LocalId) {
+        if let Some(scope) = self.local_scopes.last_mut() {
+            scope.push(local);
+        }
+    }
+
+    pub(crate) fn begin_local_scope(&mut self) -> usize {
+        self.local_scopes.push(Vec::new());
+        self.local_scopes.len() - 1
+    }
+
+    /// Ends the innermost lexical scope, emitting StorageDead markers in
+    /// reverse declaration order so elaboration can place deterministic drops.
+    pub(crate) fn end_local_scope(&mut self) {
+        if let Some(scope) = self.local_scopes.pop()
+            && !self.local_scopes.is_empty()
+            && self.builder.current_block.is_some()
+        {
+            for local in scope.into_iter().rev() {
+                if self.local_needs_scope_drop(local) {
+                    self.push_stmt(crate::amir::AmirStmt::StorageDead(local));
+                }
+            }
+        }
+    }
+
+    /// Emits scope-exit markers for every lexical scope nested inside `depth`.
+    /// The scopes remain on the compile-time stack: another CFG branch may
+    /// still be lowered from the same lexical source position.
+    pub(crate) fn emit_local_scope_exit_from(&mut self, depth: usize) {
+        let locals = self
+            .local_scopes
+            .iter()
+            .skip(depth)
+            .rev()
+            .flat_map(|scope| scope.iter().rev().copied())
+            .collect::<Vec<_>>();
+        for local in locals {
+            if self.local_needs_scope_drop(local) {
+                self.push_stmt(crate::amir::AmirStmt::StorageDead(local));
+            }
+        }
+    }
+
+    fn local_needs_scope_drop(&self, local: LocalId) -> bool {
+        let Some(local) = self.locals.get(local.as_usize()) else {
+            return false;
+        };
+        crate::drop_elaborate::type_needs_drop(local.ty, &self.tc.type_info)
+            || self.tc.type_info.type_interner.with_type(local.ty, |ty| {
+                matches!(ty, ArType::Primitive(Primitive::Str))
+            })
     }
 
     pub(crate) fn operand_type(&self, op: &AmirOperand) -> ArType {
@@ -427,13 +501,37 @@ impl LowerCtx<'_> {
         if !lhs.projections.is_empty() {
             self.note_local_use(lhs.local, self.current_span);
         }
-        if lhs.projections.is_empty() {
-            self.local_states[lhs.local.as_usize()] = MoveState::Available;
-            if let Some(block) = self.builder.current_block {
-                self.write_variable(block, lhs.local, rhs);
-            }
+        let root_local = lhs.projections.is_empty().then_some(lhs.local);
+        let needs_owner_reload = root_local
+            .is_some_and(|local| !self.tc.type_info.is_copy(self.locals[local.as_usize()].ty));
+        if let Some(local) = root_local {
+            self.local_states[local.as_usize()] = MoveState::Available;
         }
-        self.push_stmt(AmirStmt::Store { lhs, rhs });
+        self.push_stmt(AmirStmt::Store {
+            lhs: lhs.clone(),
+            rhs,
+        });
+        if let (Some(local), Some(block)) = (root_local, self.builder.current_block) {
+            let value = if needs_owner_reload {
+                // A non-Copy binding now owns the value. Do not keep the RHS
+                // temp as its SSA definition: that temp's provenance still
+                // names the moved source place and would make later uses of
+                // the binding look like repeated moves from that source.
+                let ty = self.locals[local.as_usize()].ty;
+                let place = AmirPlace {
+                    local,
+                    projections: smallvec::SmallVec::new(),
+                };
+                let temp = self.new_temp_id(ty);
+                self.emit_assign_temp(temp, AmirRvalue::Load(place.clone()));
+                self.temp_origins[temp.as_usize()] = Some(local);
+                self.temp_place_origins[temp.as_usize()] = Some(place);
+                AmirOperand::Copy(temp)
+            } else {
+                rhs
+            };
+            self.write_variable(block, local, value);
+        }
         Ok(())
     }
 
@@ -464,9 +562,10 @@ impl LowerCtx<'_> {
         self.note_local_use(place.local, self.current_span);
         let temp = self.new_temp_id(ty);
         self.emit_assign_temp(temp, AmirRvalue::Load(place.clone()));
-        if place.projections.is_empty() {
-            self.temp_origins[temp.as_usize()] = Some(place.local);
-        }
+        // Preserve the root for lowering-time diagnostics. The MIR move checker
+        // derives the full projection path from the emitted `Load(place)`.
+        self.temp_origins[temp.as_usize()] = Some(place.local);
+        self.temp_place_origins[temp.as_usize()] = Some(place.clone());
         Ok(AmirOperand::Copy(temp))
     }
 

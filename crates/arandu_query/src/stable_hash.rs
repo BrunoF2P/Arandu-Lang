@@ -1135,8 +1135,40 @@ fn hash_place(hasher: &mut Hasher, place: &arandu_middle::amir::AmirPlace) {
                 hasher.update(&[1]);
                 hash_amir_operand(hasher, operand);
             }
+            AmirProjection::IndexConstant(index) => {
+                hasher.update(&[6]);
+                hash_id(hasher, *index);
+            }
             AmirProjection::Deref => {
                 hasher.update(&[2]);
+            }
+            AmirProjection::Variant(tag) => {
+                hasher.update(&[3]);
+                hash_id(hasher, *tag);
+            }
+            AmirProjection::Payload {
+                variant_tag,
+                index,
+                field_ty,
+                tuple_ty,
+            } => {
+                hasher.update(&[4]);
+                hash_id(hasher, *variant_tag);
+                hash_id(hasher, *index);
+                hash_id(hasher, field_ty.as_usize());
+                match tuple_ty {
+                    Some(ty) => {
+                        hasher.update(&[1]);
+                        hash_id(hasher, ty.as_usize());
+                    }
+                    None => {
+                        hasher.update(&[0]);
+                    }
+                }
+            }
+            AmirProjection::TupleField(index) => {
+                hasher.update(&[5]);
+                hash_id(hasher, *index);
             }
         }
     }
@@ -1259,11 +1291,25 @@ fn hash_rvalue(hasher: &mut Hasher, value: &arandu_middle::amir::AmirRvalue) {
             value,
             variant,
             index,
+            variant_tag,
+            field_ty,
+            tuple_ty,
         } => {
             hasher.update(&[9]);
             hash_amir_operand(hasher, value);
             hash_symbol_id(hasher, *variant);
+            hash_id(hasher, *variant_tag);
             hash_id(hasher, *index);
+            hash_id(hasher, field_ty.as_usize());
+            match tuple_ty {
+                Some(tuple_ty) => {
+                    hasher.update(&[1]);
+                    hash_id(hasher, tuple_ty.as_usize());
+                }
+                None => {
+                    hasher.update(&[0]);
+                }
+            }
         }
         R::EnumConstruct {
             variant_tag,

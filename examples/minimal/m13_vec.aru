@@ -20,9 +20,9 @@ func main(): int {
         return 1
     }
 
-    let g0 = vec.get(v, 0)
-    let g1 = vec.get(v, 1)
-    let g2 = vec.get(v, 2)
+    let g0 = vec.getCopy(v, 0)
+    let g1 = vec.getCopy(v, 1)
+    let g2 = vec.getCopy(v, 2)
     match g0 {
         Some(a) => {
             match g1 {

@@ -13,6 +13,22 @@ use std::collections::{BTreeSet, VecDeque};
 pub(crate) fn collect_loans(func: &AmirFunc) -> (Vec<Loan>, Vec<u32>) {
     let num_temps = func.temps.len();
     let num_locals = func.locals.len();
+    let mut deref_results_stored_in_memory = vec![false; num_temps];
+    for block in &func.blocks {
+        for stmt in func.block_stmts(block.id) {
+            if let AmirStmt::Store { lhs, rhs } = stmt
+                && lhs.projections.is_empty()
+                && func
+                    .locals
+                    .get(lhs.local.as_usize())
+                    .is_some_and(|local| local.is_memory)
+                && let AmirOperand::Copy(temp) | AmirOperand::Move(temp) = rhs
+                && let Some(stored) = deref_results_stored_in_memory.get_mut(temp.as_usize())
+            {
+                *stored = true;
+            }
+        }
+    }
     let mut loans = Vec::new();
     let mut borrow_site_counts = vec![0u32; func.blocks.len()];
 
@@ -99,7 +115,26 @@ pub(crate) fn collect_loans(func: &AmirFunc) -> (Vec<Loan>, Vec<u32>) {
             match stmt {
                 AmirStmt::Assign { lhs, rhs } => {
                     for loan in &mut loans {
-                        let produced = rvalue_holder_paths(rhs, loan);
+                        // A scalar value read through a reference no longer
+                        // carries that reference's provenance. Memory-backed
+                        // values (notably `str` views and aggregates) may
+                        // still contain/represent borrowed storage, so keep
+                        // the carrier path for those results only.
+                        let deref_result_is_memory = !matches!(
+                            rhs,
+                            AmirRvalue::Unary {
+                                op: crate::ops::UnaryOp::Deref,
+                                ..
+                            }
+                        ) || deref_results_stored_in_memory
+                            .get(lhs.as_usize())
+                            .copied()
+                            .unwrap_or(false);
+                        let produced = if deref_result_is_memory {
+                            rvalue_holder_paths(rhs, loan)
+                        } else {
+                            BTreeSet::new()
+                        };
                         changed |= merge_temp_paths(loan, *lhs, produced);
                     }
                 }
@@ -250,6 +285,10 @@ fn rvalue_holder_paths(rhs: &AmirRvalue, loan: &Loan) -> BTreeSet<HolderPath> {
             operand_holder_paths(*slice, loan)
         }
         AmirRvalue::StrBytes { source } => operand_holder_paths(*source, loan),
+        AmirRvalue::Unary {
+            op: crate::ops::UnaryOp::Deref,
+            operand,
+        } => operand_holder_paths(*operand, loan),
         AmirRvalue::Load(place) => {
             let input = loan
                 .holder_local_paths
@@ -293,6 +332,7 @@ fn rvalue_holder_paths(rhs: &AmirRvalue, loan: &Loan) -> BTreeSet<HolderPath> {
             value,
             variant: _,
             index,
+            ..
         } => {
             let input = operand_holder_paths(*value, loan);
             // The tag is deliberately wildcarded here: AMIR identifies the
@@ -425,7 +465,17 @@ pub(crate) fn place_path(place: &crate::amir::AmirPlace) -> HolderPath {
                     file_id: symbol.file_id,
                     local_id: symbol.local_id.0,
                 },
+                crate::amir::AmirProjection::Variant(tag) => {
+                    HolderProjection::Variant(u32::try_from(*tag).unwrap_or(u32::MAX))
+                }
+                crate::amir::AmirProjection::Payload { index, .. } => {
+                    HolderProjection::Payload(u32::try_from(*index).unwrap_or(u32::MAX))
+                }
+                crate::amir::AmirProjection::TupleField(index) => {
+                    HolderProjection::Slot(u32::try_from(*index).unwrap_or(u32::MAX))
+                }
                 crate::amir::AmirProjection::Index(_) => HolderProjection::Element,
+                crate::amir::AmirProjection::IndexConstant(_) => HolderProjection::Element,
                 crate::amir::AmirProjection::Deref => HolderProjection::Deref,
             })
             .collect(),

@@ -271,6 +271,11 @@ impl ArType {
         )
     }
 
+    #[must_use]
+    pub fn is_u8_or_byte(&self) -> bool {
+        matches!(self, ArType::Primitive(Primitive::U8 | Primitive::Byte))
+    }
+
     /// Exhaustively visit every direct child `TypeId` contained in this type.
     ///
     /// This method matches every `ArType` variant explicitly (no wildcard) so that

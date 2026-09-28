@@ -243,6 +243,9 @@ pub enum ExprKind {
     Char {
         value: SmolStr,
     },
+    Byte {
+        value: u8,
+    },
     InterpolatedString {
         parts: IndexRange,
     }, // string_part_ids range
