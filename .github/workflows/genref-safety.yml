@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   c-sanitizers:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -26,7 +26,7 @@ jobs:
         run: cargo test --locked -p arandu_backend_c --test parity_tests c_backend_genref_runtime_executes_beyond_legacy_capacity -- --exact
 
   miri:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

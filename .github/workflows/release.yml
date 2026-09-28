@@ -42,7 +42,7 @@ permissions:
 jobs:
   validate:
     name: S3 / Release identity
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       checks: read
@@ -116,7 +116,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             archive: tar.gz
           # macos-latest is Apple Silicon (aarch64). macos-13 (Intel) was
@@ -361,7 +361,7 @@ jobs:
   docs:
     name: S3 / Package stdlib docs
     needs: validate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -412,7 +412,7 @@ jobs:
   assemble:
     name: S3 / Verify release set
     needs: [package, docs]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -464,7 +464,7 @@ jobs:
   publish:
     name: S3 / Publish verified release
     needs: assemble
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # A manual run proves the identical set without creating a release or attestation.
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     permissions:
@@ -522,7 +522,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             archive: tar.gz
             checksum: sha256
@@ -592,7 +592,7 @@ jobs:
   rc-report:
     name: S3 / RC evidence
     needs: verify-public-release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -620,7 +620,7 @@ jobs:
   notify-website:
     name: S3 / Notify website repository
     needs: [publish, rc-report]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     continue-on-error: true
     steps:
