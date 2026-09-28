@@ -6,6 +6,7 @@ use std::process::{Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[cfg(unix)]
 use crate::process_job::terminate_process_group;
 #[cfg(windows)]
 use crate::process_job::ProcessJob as BackendProcessJob;
@@ -290,6 +291,7 @@ pub fn describe_exit_status(status: &ExitStatus) -> ExitStatusDetails {
     }
 }
 
+#[cfg(unix)]
 fn shares_preflight_process_group() -> bool {
     let parent = std::env::var(PREFLIGHT_PROCESS_GROUP_ENV)
         .ok()
