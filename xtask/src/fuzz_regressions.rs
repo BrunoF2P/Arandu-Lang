@@ -704,8 +704,22 @@ mod tests {
     #[test]
     fn promoted_incremental_sequence_is_replayed_and_added_to_manifest() {
         let root = temp_corpus();
+        #[cfg(unix)]
+        let root_alias = {
+            let alias = root.with_file_name(format!(
+                "arandu-promote-sequence-alias-{}-{}",
+                std::process::id(),
+                NEXT_TEMP_CORPUS.load(Ordering::Relaxed)
+            ));
+            std::os::unix::fs::symlink(&root, &alias).unwrap();
+            alias
+        };
+        #[cfg(unix)]
+        let operation_root = &root_alias;
+        #[cfg(not(unix))]
+        let operation_root = &root;
         let seed_path = promote_sequence_inner(
-            &root,
+            operation_root,
             Target::Incremental,
             &[1, 2, 3],
             "minimized-invalidation",
@@ -719,15 +733,19 @@ mod tests {
         .unwrap();
 
         assert_eq!(decode_seed(&seed_path).unwrap(), [1, 2, 3]);
+        // `load_manifest` canonicalizes entries. On macOS, the temp-directory
+        // path may include `/var` while canonicalization resolves it to
+        // `/private/var`, so compare canonical identities rather than aliases.
+        let canonical_seed_path = seed_path.canonicalize().unwrap();
         assert_eq!(
             fs::read(root.join("arandu_fuzz/corpus/fuzz_incremental/minimized-invalidation"))
                 .unwrap(),
             [1, 2, 3]
         );
-        let entries = load_manifest(&root.join("tests/fuzz-regressions")).unwrap();
+        let entries = load_manifest(&operation_root.join("tests/fuzz-regressions")).unwrap();
         let promoted = entries
             .iter()
-            .find(|entry| entry.path == seed_path)
+            .find(|entry| entry.path == canonical_seed_path)
             .expect("promoted seed is recorded in the manifest");
         assert!(promoted.targets.contains(&Target::Incremental));
         assert_eq!(promoted.origin, "rfc:0022");
@@ -736,6 +754,8 @@ mod tests {
             "public edit must invalidate importer diagnostics"
         );
 
+        #[cfg(unix)]
+        fs::remove_file(root_alias).unwrap();
         fs::remove_dir_all(root).unwrap();
     }
 

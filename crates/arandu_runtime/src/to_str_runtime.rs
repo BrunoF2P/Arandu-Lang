@@ -165,6 +165,22 @@ pub unsafe extern "C" fn ar_jit_eprint(ptr: *const u8, len: i64) {
     });
 }
 
+/// Native AOT link name for the prelude `io.eprint(str)` import.
+///
+/// Cranelift emits this import as the unqualified symbol `eprint`; the JIT
+/// binds that name directly, while AOT builds resolve it from this runtime
+/// library. Keep the dotted `io.eprint` export above for consumers using the
+/// qualified runtime ABI.
+///
+/// # Safety
+/// `ptr` must be valid for `len` bytes if `len > 0`. `len` must be non-negative.
+#[unsafe(export_name = "eprint")]
+pub unsafe extern "C" fn ar_aot_eprint(ptr: *const u8, len: i64) {
+    // SAFETY: this function forwards the caller's pointer/length contract
+    // unchanged to the implementation of the same ABI.
+    unsafe { ar_jit_eprint(ptr, len) };
+}
+
 /// Prelude `err.new(str) -> Err`.
 ///
 /// `Err` is a non-null message handle: a `malloc`'d NUL-terminated copy of the
@@ -231,6 +247,8 @@ mod tests {
 
     unsafe extern "C" {
         fn free(ptr: *mut c_void);
+        #[link_name = "eprint"]
+        fn aot_eprint(ptr: *const u8, len: i64);
     }
 
     /// # Safety
@@ -282,6 +300,12 @@ mod tests {
             assert_eq!(bytes, b"7");
             free(p.cast());
         }
+    }
+
+    #[test]
+    fn aot_eprint_link_symbol_is_exported() {
+        // Link through the exact name referenced by native Cranelift objects.
+        unsafe { aot_eprint(std::ptr::null(), 0) };
     }
 
     #[test]
