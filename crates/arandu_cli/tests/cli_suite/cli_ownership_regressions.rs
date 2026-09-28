@@ -113,13 +113,37 @@ fn run_emitted_c_with_asan(c_source: &str, name: &str) {
     } else {
         "detect_leaks=0"
     };
-    let execution = Command::new(&binary)
-        .env("ASAN_OPTIONS", detect_leaks)
+    let mut command = Command::new(&binary);
+    command.env("ASAN_OPTIONS", detect_leaks);
+    if cfg!(windows) {
+        // Clang's Windows ASan runtime DLL is under its resource directory,
+        // which is not necessarily on PATH even when clang.exe itself is.
+        if let Ok(output) = Command::new("clang").arg("-print-resource-dir").output() {
+            if output.status.success() {
+                let resource_dir = String::from_utf8_lossy(&output.stdout);
+                let runtime_dir = std::path::PathBuf::from(resource_dir.trim())
+                    .join("lib")
+                    .join("windows");
+                if runtime_dir.is_dir() {
+                    let path = std::env::var_os("PATH").unwrap_or_default();
+                    let path = std::env::split_paths(&path)
+                        .chain(std::iter::once(runtime_dir))
+                        .collect::<Vec<_>>();
+                    if let Ok(path) = std::env::join_paths(path) {
+                        command.env("PATH", path);
+                    }
+                }
+            }
+        }
+    }
+    let execution = command
         .output()
         .expect("run emitted C with AddressSanitizer");
     assert!(
         execution.status.success(),
-        "emitted C must clean up all owned values: {}",
+        "emitted C must clean up all owned values (status {}), stdout: {}; stderr: {}",
+        execution.status,
+        String::from_utf8_lossy(&execution.stdout),
         String::from_utf8_lossy(&execution.stderr)
     );
     let _ = fs::remove_file(binary);
