@@ -1,7 +1,7 @@
 //! Host-JIT builder configuration and symbol table registration.
 
 use arandu_semantics::Diagnostic;
-use cranelift_jit::JITBuilder;
+use cranelift_jit::{ArenaMemoryProvider, JITBuilder};
 
 use super::isa::cached_host_isa;
 
@@ -50,6 +50,15 @@ pub(crate) fn create_jit_builder_with_io_and_process_args(
 ) -> Result<JITBuilder, Diagnostic> {
     let isa = cached_host_isa()?;
     let mut builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
+    // Keep generated functions in one address region. x86-64 direct calls use
+    // signed 32-bit PC-relative relocations; the default system provider may
+    // allocate separate functions more than 2 GiB apart on macOS/under ASLR.
+    // A modest arena keeps intra-module calls in range without relying on the
+    // host allocator's placement decisions.
+    let memory = ArenaMemoryProvider::new_with_size(16 * 1024 * 1024).map_err(|error| {
+        super::isa::codegen_ice(format!("failed to reserve Cranelift JIT arena: {error}"))
+    })?;
+    builder.memory_provider(Box::new(memory));
     // ToStr v0.1 host helpers (malloc-backed fat strings).
     builder.symbol(
         "ar_jit_i64_to_str",

@@ -3,6 +3,7 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -652,24 +653,51 @@ fn atomic_platform_replace(path: &Path, staging: &Path) -> Result<(), CliFailure
         .encode_wide()
         .chain(std::iter::once(0))
         .collect::<Vec<_>>();
-    // SAFETY: both paths are owned, NUL-terminated UTF-16 buffers that remain
-    // alive for the duration of the Win32 call; optional pointers are null.
-    let result = unsafe {
-        ReplaceFileW(
-            replaced.as_ptr(),
-            replacement.as_ptr(),
-            std::ptr::null(),
-            REPLACEFILE_WRITE_THROUGH,
-            std::ptr::null(),
-            std::ptr::null(),
-        )
-    };
-    if result == 0 {
+    for attempt in 0..8 {
+        // SAFETY: both paths are owned, NUL-terminated UTF-16 buffers that
+        // remain alive for the duration of the Win32 call; optional pointers
+        // are null.
+        let result = unsafe {
+            ReplaceFileW(
+                replaced.as_ptr(),
+                replacement.as_ptr(),
+                std::ptr::null(),
+                REPLACEFILE_WRITE_THROUGH,
+                std::ptr::null(),
+                std::ptr::null(),
+            )
+        };
+        if result != 0 {
+            return Ok(());
+        }
+
         let error = std::io::Error::last_os_error();
-        let _ = fs::remove_file(staging);
-        return Err(failure("publish build state", path, error));
+        // Concurrent builds can publish identical state simultaneously. One
+        // ReplaceFileW wins; treat the loser's failure as success if the
+        // winner has already installed exactly our staged bytes.
+        let already_published = fs::read(path)
+            .and_then(|published| fs::read(staging).map(|candidate| published == candidate))
+            .unwrap_or(false);
+        if already_published {
+            let _ = fs::remove_file(staging);
+            return Ok(());
+        }
+
+        // Windows may temporarily refuse replacement while another build has
+        // the state file open. Retry only lock-related errors; surface other
+        // failures immediately and keep the total wait bounded (< 200 ms).
+        let transient_lock = matches!(error.raw_os_error(), Some(32 | 33 | 1175));
+        if !transient_lock || attempt == 7 {
+            let _ = fs::remove_file(staging);
+            return Err(failure("publish build state", path, error));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5 << attempt.min(4)));
     }
-    Ok(())
+    Err(failure(
+        "publish build state",
+        path,
+        std::io::Error::other("replacement retry limit exhausted"),
+    ))
 }
 
 fn publish_staging(staging: &Path, destination: &Path) -> Result<(), CliFailure> {
@@ -706,10 +734,15 @@ fn write_staging(path: &Path, bytes: &[u8]) -> Result<PathBuf, CliFailure> {
 }
 
 fn unique_staging_path(path: &Path, operation: &str) -> PathBuf {
+    static NEXT_STAGING_ID: AtomicU64 = AtomicU64::new(0);
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_nanos());
-    path.with_extension(format!("{operation}-tmp-{}-{nonce}", std::process::id()))
+    let sequence = NEXT_STAGING_ID.fetch_add(1, Ordering::Relaxed);
+    path.with_extension(format!(
+        "{operation}-tmp-{}-{nonce}-{sequence}",
+        std::process::id()
+    ))
 }
 
 fn failure(operation: &'static str, path: &Path, error: std::io::Error) -> CliFailure {
@@ -722,4 +755,48 @@ fn safe_relative_path(path: &Path) -> bool {
         && path
             .components()
             .all(|component| matches!(component, Component::Normal(_)))
+}
+
+#[cfg(test)]
+mod atomic_replace_tests {
+    use super::*;
+    use std::sync::{Arc, Barrier};
+    use std::thread;
+
+    #[test]
+    fn concurrent_identical_replacements_are_idempotent() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock is after the Unix epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "arandu-atomic-replace-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).expect("create isolated test directory");
+        let destination = directory.join("current.amir");
+        fs::write(&destination, b"old state").expect("write initial state");
+
+        let writers = 8;
+        let barrier = Arc::new(Barrier::new(writers));
+        let handles: Vec<_> = (0..writers)
+            .map(|_| {
+                let path = destination.clone();
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    atomic_replace(&path, b"complete new state")
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle
+                .join()
+                .expect("replacement worker should not panic")
+                .expect("identical concurrent replacements should succeed");
+        }
+        assert_eq!(fs::read(&destination).unwrap(), b"complete new state");
+        fs::remove_dir_all(directory).expect("remove isolated test directory");
+    }
 }

@@ -64,11 +64,15 @@ where
 
     /// Queue or replace the value for `key` (resets quiet timer for that key).
     pub fn push(&mut self, key: K, value: V) {
+        self.push_at(key, value, Instant::now());
+    }
+
+    fn push_at(&mut self, key: K, value: V, now: Instant) {
         self.pending.insert(
             key,
             Pending {
                 value,
-                changed_at: Instant::now(),
+                changed_at: now,
             },
         );
     }
@@ -111,7 +115,10 @@ where
 
     /// Drain entries whose quiet window has elapsed.
     pub fn take_due(&mut self) -> Vec<(K, V)> {
-        let now = Instant::now();
+        self.take_due_at(Instant::now())
+    }
+
+    fn take_due_at(&mut self, now: Instant) -> Vec<(K, V)> {
         let mut due_keys = Vec::new();
         for (k, p) in &self.pending {
             if p.changed_at + self.debounce <= now {
@@ -161,11 +168,10 @@ mod tests {
     #[test]
     fn take_due_preserves_undue_items() {
         let mut m = DebouncedMap::with_debounce(Duration::from_millis(50));
-        m.push("early", 1);
-        thread::sleep(Duration::from_millis(30));
-        m.push("late", 2);
-        thread::sleep(Duration::from_millis(30));
-        let due = m.take_due();
+        let start = Instant::now();
+        m.push_at("early", 1, start);
+        m.push_at("late", 2, start + Duration::from_millis(30));
+        let due = m.take_due_at(start + Duration::from_millis(51));
         assert_eq!(due, vec![("early", 1)]);
         assert_eq!(m.pending_count(), 1);
         assert_eq!(m.get(&"late"), Some(&2));
