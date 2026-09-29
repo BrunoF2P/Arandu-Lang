@@ -49,9 +49,10 @@ Este documento consolida as decisões arquiteturais sobre Data-Oriented Design (
 > Este é o único roadmap executivo; contratos técnicos vivos permanecem em
 > documentos próprios e campanhas concluídas permanecem recuperáveis no Git.
 
-> **Campanha de estabilização ativa:** auditoria de arquitetura, documentação e
-> portabilidade. Nenhuma nova superfície de linguagem entra antes de concluir a
-> consolidação dos contratos implementados e classificar as dívidas encontradas.
+> **Campanha ativa: 0.1.8 — estabilização e consolidação.** Nenhuma nova superfície
+> de linguagem entra antes de concluir as notas de migração do RFC 0023, classificar
+> as limitações conhecidas (O2, lower_amir, fila LSP) e preparar a release com CI
+> nativo verde em Linux, macOS e Windows. Async e effects permanecem infra interna.
 
 ### Semântica de status
 
@@ -87,52 +88,42 @@ quando cumprir seu contrato atual.
 | GenRef (R0) | `frozen-R0` | [RFC 0001 (R0 Frozen)](./rfcs/0001-generational-fallback-genref.md); casca empírica congelada para medição acadêmica (TCC); AMIR tipada, payload/drop, C/Cranelift, O004/LSP |
 | SL_T — testes e benchmarks | `done`; soak para `gold` | [contrato consolidado](./arandu-testing-benchmark-harness-v0.1.md), SDK/VSIX e matriz nativa `SL_T / Harness` |
 | Paralelismo Estruturado | `done` | [RFC 0003](./rfcs/0003-structured-parallelism.md); funcional em Linux, aguardando benchmark reproduzível e matriz nativa para `gold` |
+| **v0.1.7** | **`released`** | Tag `v0.1.7` publicada; PR #29 verde; 71 commits, 609 arquivos. Inclui RFC 0023 (inteiros portáveis), RFC 0021 (visibilidade/módulos), RFC 0022 (AranduSmith), RFC 0020 (empacotamento nativo), correções de ownership e backends, expansão do corpus. |
 
 ### Fila de execução
 
-1. Concluir a campanha de auditoria, documentação, modularização e portabilidade.
-   A rodada rc.5 corrigiu ciclos/renumeração no SimplifyCFG, validação de
-   parâmetros densos, liveness de domínio vazio, pilha recursiva do RPO e dispatch Linux de sockets
-   sem timer; a evidência fica na [auditoria](./arandu-architecture-audit-v0.1.md).
-   Antes de encerrar: executar os novos casos nos runners nativos, perfilar
-   validação incremental do corpus válido de 50 módulos, aprofundar limites
-   de dataflow e pressão da fila de resultados LSP. Remoção de
-   cópias redundantes não promove O2 nem constitui benchmark de velocidade.
-   Decisão de fechamento: o S0 exige o workspace nativo em Linux, Windows e
-   macOS quando houver mudança de produto; publicar somente após resultado
-   verde do PR, mantendo o soak/SDK como evidência separada. As extrações
-   CLI/runner/IDE já existem. Renomear `arandu_package` e substituir guardrails
-   ou estruturas de memória exige benefício demonstrado, não contagem de linhas.
-   A revisão pré-commit corrigiu ownership join/cancel, empréstimo de ExprKind
-   e recuperação sintática no IDE sem duplicar lowering. O probe de 64 funções
-   comprova cutoff dos resumos de borrow; a granularidade de lower_amir e a
-   pressão do canal de resultados LSP continuam abertas com evidência na auditoria.
-2. Concluir o soak e promover [SL_T](./arandu-testing-benchmark-harness-v0.1.md) a `gold`.
-3. Entregar a `SL_S-Core`:
-   fundação `core`/`alloc`, targets `bin`/`lib`, link multi-file, módulos,
-   texto/coleções seguros, `std.path` estrutural e readiness `wasm32`, sem
-   efeitos de sistema.
-4. **Isolamento e Congelamento do R0 (GenRef)**: Conforme [RFC 0001](./rfcs/0001-generational-fallback-genref.md),
-   a superfície pública, semântica (`@NoFallback`/`O004`/`O010`), métricas e paridade C/Cranelift
-   do GenRef permanecem estritamente congeladas para a coleta de dados empíricos do TCC.
-   O restante do compilador evolui de forma independente sem bloqueio.
-5. Publicação de `0.1.0-rc.5` concluída (tag `v0.1.0-rc.5`, PR #26).
-6. Implementar `A2` (Effect System) antes de APIs de filesystem, processos,
-   plugins ou dependências externas.
-7. Entregar `SL_S-Host`: `std.path` e APIs de sistema com efeitos explícitos,
-   testes nativos, contenção por capacidades contra TOCTOU/symlink races ([RFC 0016](./rfcs/0016-capability-safe-filesystem-and-path-resolution.md))
-   e limites por plataforma.
-8. Implementar `SL_R` (runtime async) e só então o compiler service com sandbox
-   e site/editor remoto.
-9. Estabilizar a campanha de otimização AMIR descrita em 3.2: validar o O2
-   existente, introduzir análises cooperativas antes de novos passes de memória
-   e promover LICM/TCO somente após as regressões semânticas e estruturais
-   obrigatórias.
-10. Publicar `0.1.0-rc.6` como candidata otimizada, preservando o comportamento
-    e os contratos de `rc.5`, com melhorias de custo validadas por benchmark
-    antes/depois e sem inferir ganhos de hardware apenas da forma da AMIR.
-11. Avaliar templates `mixed`, `ffi`, `plugin` e `workspace` conforme ABI,
-    efeitos e distribuição amadureçam.
+**Próximo:** `0.1.8 — estabilização e consolidação`
+
+A 0.1.8 é uma versão de estabilização sem abertura de nova superfície grande de linguagem.
+O volume da 0.1.7 (71 commits, 609 arquivos) torna a consolidação obrigatória antes de avançar.
+
+**Escopo confirmado para 0.1.8:**
+
+1. **Documentação e verdade dos contratos:** alinhar notas de migração do RFC 0023
+   (`int = i32`, `uint = u32`, `isize`/`usize` para endereços; diagnóstico T038 para
+   literais acima de 32 bits sem sufixo). Async (`A3`) e effects (`A2`) permanecem
+   infra interna não anunciada: o AMIR coroutine splitting, frame allocation e codegen
+   completos pertencem ao marco SL_R (v0.3+); a superfície pública não muda.
+2. **Rodada de estabilização:** medir e classificar limitações conhecidas antes de
+   decidir quais bloqueiam a release. Itens monitorados:
+   - O2 permanece `experimental` sem promoção precipitada;
+   - `lower_amir` monolítico documentado como débito técnico aberto (RFC 0011, marco `0.3`);
+   - validação incremental em corpus de 50 módulos (`check-project-corpus` / `check-project-performance`);
+   - pressão da fila de resultados LSP (coalescência preservada, sem limite formal ainda).
+3. **SL_T soak:** o critério para promoção a `gold` (10 execuções verdes em ≥7 dias)
+   continua como limitação documentada, sem bloquear a entrega da 0.1.8.
+4. **CI e cache:** consolidar `shared-key` e `save-if` em todos os workflows;
+   pinagem universal em `ubuntu-24.04`; `CARGO_INCREMENTAL: 0`.
+5. **Preparação da release:** `cargo run --locked -p xtask -- prepare-release 0.1.8`,
+   validação do workspace completa e CI nativo verde em Linux, macOS e Windows.
+
+**Não entra na 0.1.8:** async runtime real (SL_R), effect system público, LLVM,
+closures, cache remoto, self-hosting nem qualquer nova superfície de linguagem.
+
+**Após 0.1.8:** avaliar Paralelismo Estruturado para `gold` (benchmark reproduzível
++ matriz nativa Windows/macOS), depois iniciar `SL_R` (async runtime) e `SL_S-Core.2`
+(anti-panic bloat). A ordem é preservada: runtime estável antes de APIs de sistema.
+
 
 ### Trilha incremental nativa — RFC 0011
 

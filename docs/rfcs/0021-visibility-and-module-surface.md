@@ -4,7 +4,7 @@
 - **Título:** Visibilidade Granular e Superfície de Módulo (`internal`, `sealed`, re-exports)
 - **Autor(es):** Bruno ([@arandu-lang](https://github.com/arandu-lang))
 - **Data de Início:** 2026-09-21
-- **Status:** `Draft`
+- **Status:** `Implemented`
 - **Área Principal:** `Frontend` / `Middle-end` / `Tooling`
 - **PR da RFC:** —
 - **Issue de Acompanhamento:** —
