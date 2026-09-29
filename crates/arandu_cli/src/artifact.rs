@@ -653,6 +653,8 @@ fn atomic_platform_replace(path: &Path, staging: &Path) -> Result<(), CliFailure
         .encode_wide()
         .chain(std::iter::once(0))
         .collect::<Vec<_>>();
+    let candidate =
+        fs::read(staging).map_err(|error| failure("read staged build state", staging, error))?;
     for attempt in 0..8 {
         // SAFETY: both paths are owned, NUL-terminated UTF-16 buffers that
         // remain alive for the duration of the Win32 call; optional pointers
@@ -675,23 +677,46 @@ fn atomic_platform_replace(path: &Path, staging: &Path) -> Result<(), CliFailure
         // Concurrent builds can publish identical state simultaneously. One
         // ReplaceFileW wins; treat the loser's failure as success if the
         // winner has already installed exactly our staged bytes.
-        let already_published = fs::read(path)
-            .and_then(|published| fs::read(staging).map(|candidate| published == candidate))
-            .unwrap_or(false);
+        let already_published = fs::read(path).is_ok_and(|published| published == candidate);
         if already_published {
             let _ = fs::remove_file(staging);
             return Ok(());
         }
 
+        // ReplaceFileW can report 1176 after removing the old destination but
+        // before moving the staged replacement. Restore the complete candidate
+        // into the now-empty destination instead of retrying against a missing
+        // path. If another writer wins this race, the next iteration compares
+        // the installed bytes and converges idempotently.
+        if error.raw_os_error() == Some(1176)
+            && fs::symlink_metadata(path)
+                .is_err_and(|metadata_error| metadata_error.kind() == std::io::ErrorKind::NotFound)
+        {
+            match fs::rename(staging, path) {
+                Ok(()) => return Ok(()),
+                Err(rename_error) if rename_error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if fs::read(path).is_ok_and(|published| published == candidate) {
+                        let _ = fs::remove_file(staging);
+                        return Ok(());
+                    }
+                }
+                Err(rename_error) if attempt == 7 => {
+                    let _ = fs::remove_file(staging);
+                    return Err(failure("publish build state", path, rename_error));
+                }
+                Err(_) => {}
+            }
+        }
+
         // Windows may temporarily refuse replacement while another build has
-        // the state file open. Retry only lock-related errors; surface other
-        // failures immediately and keep the total wait bounded (< 200 ms).
-        let transient_lock = matches!(error.raw_os_error(), Some(32 | 33 | 1175));
-        if !transient_lock || attempt == 7 {
+        // the state file open or while ReplaceFileW resolves a concurrent
+        // replacement. Retry only those bounded cases; surface other errors.
+        let retryable = matches!(error.raw_os_error(), Some(32 | 33 | 1175 | 1176));
+        if !retryable || attempt == 7 {
             let _ = fs::remove_file(staging);
             return Err(failure("publish build state", path, error));
         }
-        std::thread::sleep(std::time::Duration::from_millis(5 << attempt.min(4)));
+        std::thread::sleep(std::time::Duration::from_millis(5 << attempt.min(3)));
     }
     Err(failure(
         "publish build state",

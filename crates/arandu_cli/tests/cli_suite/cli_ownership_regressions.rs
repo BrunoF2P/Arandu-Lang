@@ -116,25 +116,7 @@ fn run_emitted_c_with_asan(c_source: &str, name: &str) {
     let mut command = Command::new(&binary);
     command.env("ASAN_OPTIONS", detect_leaks);
     if cfg!(windows) {
-        // Clang's Windows ASan runtime DLL is under its resource directory,
-        // which is not necessarily on PATH even when clang.exe itself is.
-        if let Ok(output) = Command::new("clang").arg("-print-resource-dir").output() {
-            if output.status.success() {
-                let resource_dir = String::from_utf8_lossy(&output.stdout);
-                let runtime_dir = std::path::PathBuf::from(resource_dir.trim())
-                    .join("lib")
-                    .join("windows");
-                if runtime_dir.is_dir() {
-                    let path = std::env::var_os("PATH").unwrap_or_default();
-                    let path = std::env::split_paths(&path)
-                        .chain(std::iter::once(runtime_dir))
-                        .collect::<Vec<_>>();
-                    if let Ok(path) = std::env::join_paths(path) {
-                        command.env("PATH", path);
-                    }
-                }
-            }
-        }
+        add_clang_asan_runtime_to_path(&mut command);
     }
     let execution = command
         .output()
@@ -148,6 +130,32 @@ fn run_emitted_c_with_asan(c_source: &str, name: &str) {
     );
     let _ = fs::remove_file(binary);
     let _ = fs::remove_file(c_file);
+}
+
+fn add_clang_asan_runtime_to_path(command: &mut Command) {
+    // Clang's Windows ASan runtime DLL is under its resource directory, which
+    // is not necessarily on PATH even when clang.exe itself is.
+    let Ok(output) = Command::new("clang").arg("-print-resource-dir").output() else {
+        return;
+    };
+    if !output.status.success() {
+        return;
+    }
+    let resource_dir = String::from_utf8_lossy(&output.stdout);
+    let runtime_dir = std::path::PathBuf::from(resource_dir.trim())
+        .join("lib")
+        .join("windows");
+    if !runtime_dir.is_dir() {
+        return;
+    }
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let path = std::env::split_paths(&path)
+        .chain(std::iter::once(runtime_dir))
+        .collect::<Vec<_>>();
+    let Ok(path) = std::env::join_paths(path) else {
+        return;
+    };
+    command.env("PATH", path);
 }
 
 #[test]

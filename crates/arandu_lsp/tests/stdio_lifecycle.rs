@@ -768,7 +768,13 @@ fn stdio_incremental_unicode_edits_compose_before_debounce() {
     let updated = lsp.wait_for(|message| {
         message.get("method").and_then(Value::as_str) == Some("textDocument/publishDiagnostics")
             && message.pointer("/params/uri").and_then(Value::as_str) == Some(uri.as_str())
+            && message.pointer("/params/version").and_then(Value::as_i64) == Some(3)
     });
+    assert_eq!(
+        updated.pointer("/params/version").and_then(Value::as_i64),
+        Some(3),
+        "the published diagnostic must describe the latest composed edit"
+    );
     assert_eq!(
         updated
             .pointer("/params/diagnostics")
