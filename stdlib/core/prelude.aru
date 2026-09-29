@@ -1,3 +1,28 @@
+//! Convenience re-exports of the most used stdlib utilities.
+//!
+//! ## Overview
+//!
+//! The prelude gathers the most used stdlib types and functions in a single
+//! import: `Option<T>` and `Result<T, E>`, raw `ptr<T>`, coroutine `Poll<T>`,
+//! `size_of`/`align_of` layout queries, `Ordering`, slices (`[]T`), strings
+//! (`str`), checked arithmetic via `std.core.num`, char and ASCII utilities,
+//! generic `Hash`/`Hasher` and `Iterator<T>`.
+//!
+//! Import it explicitly — nothing here is injected implicitly. The only names
+//! the compiler provides without `import` are the `io` and `err` builtins
+//! (`io.println`, `io.eprint`, `err.new`).
+//!
+//! ## Platform
+//! `native` · `wasm32` · `bare-metal`
+//!
+//! Available on every supported platform: it only re-exports.
+//!
+//! ## See also
+//!
+//! - `std.core.option` — `Option<T>` documentation
+//! - `std.core.result` — `Result<T, E>` documentation
+//! - `std.core.iter` — `Iterator<T>` documentation
+
 module std.core.prelude
 
 import std.core.option as option
@@ -16,3 +41,13 @@ import std.core.iter as iter
 import std.core.cell as cell
 import std.core.marker as marker
 import std.core.atomic as atomic
+
+// Canonical re-exports via RFC 0021
+public use std.core.option.{ Option }
+public use std.core.result.{ Result }
+public use std.core.future.{ Poll }
+public use std.core.num.{ checkedAdd, checkedSub, checkedMul, saturatingAdd, saturatingSub }
+public use std.core.cmp.{ Ordering }
+public use std.core.iter.{ Iterator }
+public use std.core.marker.{ Copy, Send, Sync, PhantomData, phantom }
+public use std.core.cell.{ Cell, UnsafeCell, cellNew, unsafeCellNew }

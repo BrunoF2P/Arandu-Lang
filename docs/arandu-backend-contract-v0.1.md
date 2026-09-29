@@ -55,7 +55,8 @@ exists, this contract does not claim Windows backend Gold.
 | Family | Representation | C | Cranelift host JIT |
 |---|---|---|---|
 | `bool`, bytes, chars, fixed integers | fixed-width scalar | Supported | Supported |
-| `int`, `uint` | target pointer-width scalar | Supported by selected layout | Supported at host width |
+| `int`, `uint` | fixed 32-bit scalar | Supported by selected layout | `I32` |
+| `isize`, `usize` | target pointer-width scalar | Supported by selected layout | Supported at host width |
 | `float`, `f32`, `f64` | IEEE scalar; language `float` is f64 | Supported | Supported |
 | pointers, references, borrows | pointer plus AMIR ownership rules | Supported after borrow lowering | Supported after borrow lowering |
 | arrays, slices, `str` | inline array or `{ptr,len}` fat pointer | Supported; target layout applies | Supported on host layout |
@@ -83,6 +84,14 @@ does not override language-phase status or promise a stable external ABI.
 5. C source is returned only after the entire translation succeeds. Cranelift
    returns a JIT module only after finalization or an object only after complete
    serialization; the CLI commits build provenance only after successful link.
+
+### C code quality and structuring model (RFC 0018)
+
+The implemented C backend currently emits the flat, canonical compiler form:
+explicit basic-block labels and `goto` edges used by AMIR parity tests against
+Cranelift. The proposed `--c-style=pretty` and explicit `--c-style=raw` CLI modes
+belong to RFC 0018 and are not implemented yet. Any future pretty emitter remains
+subject to the same `validate_amir_program` invariants and parity gates.
 
 ### What is required for real cross compilation
 

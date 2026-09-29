@@ -56,6 +56,14 @@ pub enum DiagCode {
     N013InvalidAnnotationTarget,
     N014InvalidAnnotationArguments,
     N015DuplicateAnnotation,
+    /// An internal declaration was imported from outside its package.
+    N016InternalOutsidePackage,
+    /// An implementation of a sealed interface is outside its package.
+    N017SealedImplOutsidePackage,
+    /// A re-export is more visible than its source declaration allows.
+    N018ReExportNarrowing,
+    /// A cycle in module re-exports prevents a stable public surface.
+    N019CyclicReExport,
 
     // ── Type Checker (T) ──
     T001CannotInferType,
@@ -101,6 +109,8 @@ pub enum DiagCode {
     T039UnsatisfiedEffect,
     /// Attempt to divide or calculate remainder with zero divisor.
     T040DivisionByZero,
+    /// Access to a private struct field outside its defining struct.
+    T041PrivateFieldAccess,
 
     // ── Lowering (L) ──
     L001LoweringUnresolvedSymbol,
@@ -192,6 +202,10 @@ impl DiagCode {
             N013InvalidAnnotationTarget,
             N014InvalidAnnotationArguments,
             N015DuplicateAnnotation,
+            N016InternalOutsidePackage,
+            N017SealedImplOutsidePackage,
+            N018ReExportNarrowing,
+            N019CyclicReExport,
             T001CannotInferType,
             T002IncompatibleAssignment,
             T003IncompatibleCallArg,
@@ -228,6 +242,7 @@ impl DiagCode {
             T038IntegerLiteralOutOfRange,
             T039UnsatisfiedEffect,
             T040DivisionByZero,
+            T041PrivateFieldAccess,
             L001LoweringUnresolvedSymbol,
             G001GenericInstantiationCycle,
             G002GenericInstantiationLimit,
@@ -326,6 +341,10 @@ impl DiagCode {
             DiagCode::N013InvalidAnnotationTarget => "N013",
             DiagCode::N014InvalidAnnotationArguments => "N014",
             DiagCode::N015DuplicateAnnotation => "N015",
+            DiagCode::N016InternalOutsidePackage => "N016",
+            DiagCode::N017SealedImplOutsidePackage => "N017",
+            DiagCode::N018ReExportNarrowing => "N018",
+            DiagCode::N019CyclicReExport => "N019",
             DiagCode::T001CannotInferType => "T001",
             DiagCode::T002IncompatibleAssignment => "T002",
             DiagCode::T003IncompatibleCallArg => "T003",
@@ -362,6 +381,7 @@ impl DiagCode {
             DiagCode::T038IntegerLiteralOutOfRange => "T038",
             DiagCode::T039UnsatisfiedEffect => "T039",
             DiagCode::T040DivisionByZero => "T040",
+            DiagCode::T041PrivateFieldAccess => "T041",
             DiagCode::L001LoweringUnresolvedSymbol => "L001",
             DiagCode::G001GenericInstantiationCycle => "G001",
             DiagCode::G002GenericInstantiationLimit => "G002",

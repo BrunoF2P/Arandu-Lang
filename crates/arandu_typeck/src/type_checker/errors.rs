@@ -4,6 +4,7 @@ use super::TypeInfo;
 use super::constraints::{Constraint, ConstraintOrigin};
 use super::provenance;
 use super::types::ArType;
+use arandu_parser::UnaryOp;
 
 // ── Flow-based error message generation ─────────────────────────────
 
@@ -152,6 +153,7 @@ pub fn constraint_to_diagnostic(
         }
 
         ConstraintOrigin::UnaryOp {
+            op,
             op_span,
             operand_span,
         } => {
@@ -162,7 +164,10 @@ pub fn constraint_to_diagnostic(
             )
             .with_label(*operand_span, format!("type '{found_str}'"));
 
-            if constraint.found.is_integer() && !constraint.found.is_signed() {
+            if *op == UnaryOp::Neg
+                && constraint.found.is_integer()
+                && !constraint.found.is_signed()
+            {
                 diag = diag.with_hint("unsigned integer types cannot be negated with `-`");
             }
             diag
@@ -250,6 +255,15 @@ pub fn constraint_to_diagnostic(
         )
         .with_label(*span, format!("this has type '{found_str}'"))
         .with_hint("use a `Result<T, E>` or `Option<T>` value here"),
+
+        ConstraintOrigin::TryReturnInvalid { span, return_span } => Diagnostic::error(
+            DiagCode::T016TryInvalid,
+            format!("the '?' operator cannot propagate into function return type '{found_str}'"),
+            *span,
+        )
+        .with_label(*span, "this may propagate an error or None")
+        .with_label(*return_span, format!("function returns '{found_str}'"))
+        .with_hint("return a compatible Result/Option or handle the value with match or catch"),
 
         ConstraintOrigin::AwaitInvalid { span } => Diagnostic::error(
             DiagCode::T032AwaitInvalid,
@@ -415,6 +429,27 @@ pub fn constraint_to_diagnostic(
             format!("expression ok type is '{expected_str}'"),
         )
         .with_label(*handler_span, format!("handler has type '{found_str}'")),
+
+        ConstraintOrigin::LiteralPromotion {
+            literal,
+            literal_span,
+            target_span,
+        } => {
+            let mut diag = Diagnostic::error(
+                DiagCode::T038IntegerLiteralOutOfRange,
+                format!("integer literal `{literal}` does not fit in `{expected_str}`"),
+                *literal_span,
+            )
+            .with_label(
+                *literal_span,
+                format!("value is outside the range of `{expected_str}`"),
+            )
+            .with_hint("use a wider integer type or change the literal value");
+            if target_span != literal_span {
+                diag = diag.with_label(*target_span, "promoted literal type demanded here");
+            }
+            diag
+        }
     }
 }
 

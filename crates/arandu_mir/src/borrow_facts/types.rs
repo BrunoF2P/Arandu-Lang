@@ -134,20 +134,6 @@ impl FuncBorrowFacts {
             .is_some_and(|s| s.maybe_shared(local))
     }
 
-    #[must_use]
-    pub fn maybe_exclusive_at_entry(&self, block: BlockId, local: LocalId) -> bool {
-        self.block_in
-            .get(block.as_usize())
-            .is_some_and(|s| s.maybe_exclusive(local))
-    }
-
-    #[must_use]
-    pub fn maybe_borrowed_at_entry(&self, block: BlockId, local: LocalId) -> bool {
-        self.block_in
-            .get(block.as_usize())
-            .is_some_and(|s| s.maybe_borrowed(local))
-    }
-
     /// F2.2: is `local` under any loan whose reference holder is live at `point`?
     ///
     /// Statement-level precision walks the block from entry, tracking which
@@ -157,16 +143,6 @@ impl FuncBorrowFacts {
     #[must_use]
     pub fn is_borrowed_at(&self, local: LocalId, point: ProgramPoint) -> bool {
         self.is_borrowed_kind_at(local, point, None)
-    }
-
-    #[must_use]
-    pub fn is_shared_borrowed_at(&self, local: LocalId, point: ProgramPoint) -> bool {
-        self.is_borrowed_kind_at(local, point, Some(LoanKind::Shared))
-    }
-
-    #[must_use]
-    pub fn is_exclusive_borrowed_at(&self, local: LocalId, point: ProgramPoint) -> bool {
-        self.is_borrowed_kind_at(local, point, Some(LoanKind::Exclusive))
     }
 
     fn is_borrowed_kind_at(
@@ -227,7 +203,7 @@ impl FuncBorrowFacts {
                     .and_then(|loans| loans.get(loan_index))
                     .is_some_and(|holders| holders.contains(l))
             });
-            if structurally_present && self.local_live_at(l, point) {
+            if structurally_present && self.local_live_at(loan, l, point) {
                 return true;
             }
         }
@@ -244,11 +220,31 @@ impl FuncBorrowFacts {
             || self.temp_live.live_out(point.block).contains(temp)
     }
 
-    fn local_live_at(&self, local: LocalId, point: ProgramPoint) -> bool {
-        if point.stmt_index == 0 {
-            return self.local_live.live_in(point.block).contains(local);
+    fn local_live_at(&self, loan: &Loan, local: LocalId, point: ProgramPoint) -> bool {
+        // A reference embedded in an aggregate currently participates in
+        // GenRef's stack-boundary fallback rather than a fully field-sensitive
+        // static loan window. Keep that established classification until
+        // aggregate-carrier liveness is modeled independently per projection.
+        let aggregate_carrier =
+            loan.holder_local_paths
+                .get(local.as_usize())
+                .is_some_and(|paths| {
+                    paths.iter().any(|path| {
+                        !path.0.is_empty()
+                            && path.0.iter().all(|projection| {
+                                matches!(
+                                    projection,
+                                    HolderProjection::Slot(_) | HolderProjection::NamedField { .. }
+                                )
+                            })
+                    })
+                });
+        if aggregate_carrier {
+            return self.local_live.live_in(point.block).contains(local)
+                || self.local_live.live_out(point.block).contains(local);
         }
-        self.local_live.live_in(point.block).contains(local)
-            || self.local_live.live_out(point.block).contains(local)
+        self.local_live
+            .live_before(point.block, point.stmt_index)
+            .is_some_and(|live| live.contains(local))
     }
 }

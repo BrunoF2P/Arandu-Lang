@@ -1,4 +1,4 @@
-//! C prelude detection, println, and string converter helpers.
+//! C prelude detection, standard I/O, and string converter helpers.
 
 use std::fmt::Write;
 
@@ -24,6 +24,40 @@ impl<'a> CEmitter<'a> {
             }
         }
         false
+    }
+
+    /// True if the program calls the prelude `io.eprint` function or its host alias.
+    pub(in crate::emitter) fn program_uses_eprint(&self) -> bool {
+        self.program.funcs.iter().any(|func| {
+            func.stmts.payloads.iter().any(|stmt| {
+                if let AmirStmt::Call {
+                    callee: AmirOperand::FunctionRef(symbol),
+                    ..
+                } = stmt
+                {
+                    self.symbols.try_get(*symbol).is_some_and(|definition| {
+                        definition.name == "eprint" || definition.name.ends_with(".eprint")
+                    })
+                } else {
+                    false
+                }
+            })
+        })
+    }
+
+    /// Emit the C name and the unqualified runtime alias used by the JIT ABI.
+    pub(in crate::emitter) fn emit_prelude_eprint(&mut self) {
+        let _ = writeln!(&mut self.output, "static void io__eprint(ArStr s) {{");
+        let _ = writeln!(
+            &mut self.output,
+            "    if (s.len > 0 && s.ptr) {{ fwrite(s.ptr, 1, (size_t)s.len, stderr); }}"
+        );
+        let _ = writeln!(&mut self.output, "    fflush(stderr);");
+        let _ = writeln!(&mut self.output, "}}\n");
+        let _ = writeln!(
+            &mut self.output,
+            "static void eprint(ArStr s) {{ io__eprint(s); }}\n"
+        );
     }
 
     /// Emit `io__println` matching sanitize_c_ident("io.println").

@@ -6,7 +6,7 @@ use arandu_middle::amir::{AmirConstant, AmirOperand, AmirProgram, AmirRvalue, Am
 use arandu_middle::layout::DataLayout;
 use arandu_middle::ops::BinaryOp;
 use arandu_semantics::{
-    CodegenBackend, OptLevel, TypeCheckResult, lower_to_amir, lower_to_hir,
+    CodegenBackend, OptLevel, TypeCheckResult, lower_to_amir_with_interfaces, lower_to_hir,
     optimize_amir_checked_with_level, resolve_for_test, type_check,
 };
 use std::env;
@@ -43,7 +43,7 @@ fn compile_src(src: &str) -> (AmirProgram, TypeCheckResult) {
     );
 
     let hir = lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
-    let amir = lower_to_amir(&tc, &hir, 64).expect("AMIR lowering failed");
+    let (amir, _) = lower_to_amir_with_interfaces(&mut tc, &hir, 64).expect("AMIR lowering failed");
     (amir, tc)
 }
 
@@ -511,6 +511,17 @@ fn test_execution_parity(name: &str, src: &str) {
     let _ = test_execution_result(name, src);
 }
 
+fn test_execution_parity_mono(name: &str, src: &str) {
+    let (amir, tc) = compile_src_mono(src);
+    let actual_result = execute_c(name, &amir, &tc);
+    let expected = execute_cranelift(&amir, &tc);
+    assert_eq!(
+        expected, actual_result,
+        "Execution mismatch for {}! Cranelift={}, C={}",
+        name, expected, actual_result
+    );
+}
+
 #[test]
 fn generated_test_registry_entrypoint_compiles_and_executes() {
     let (amir, tc) = compile_src("func smoke(): void {}");
@@ -622,6 +633,100 @@ fn c_backend_rejects_unsupported_len_without_partial_success() {
     .unwrap_err();
     assert_eq!(error.code, arandu_middle::DiagCode::ICEGEN001);
     assert!(error.message.contains("Len"));
+}
+
+#[test]
+fn c_backend_rejects_out_of_range_field_access_with_ice() {
+    let src = "struct Pair { left: int; right: int }\nfunc main(): int { let pair = Pair { left: 20, right: 22 }; return pair.left }";
+    let (mut amir, tc) = compile_src(src);
+    let field = amir
+        .funcs
+        .iter_mut()
+        .flat_map(|func| func.stmts.payloads.raw.iter_mut())
+        .find_map(|stmt| match stmt {
+            AmirStmt::Assign {
+                rhs: AmirRvalue::FieldAccess { field, .. },
+                ..
+            } => Some(field),
+            _ => None,
+        })
+        .expect("fixture must lower a field access rvalue");
+    *field = usize::MAX;
+
+    let error = arandu_backend_c::emit_c(
+        &amir,
+        tc.symbols.as_ref(),
+        tc.type_info.as_ref(),
+        &tc.type_info.type_interner,
+        DataLayout::host(),
+    )
+    .unwrap_err();
+    assert_eq!(error.code, arandu_middle::DiagCode::ICEGEN001);
+    assert!(error.message.contains("FieldAccess index"));
+}
+
+#[test]
+fn c_backend_rejects_unknown_struct_literal_field_with_ice() {
+    let src = "struct Pair { left: int; right: int }\nfunc main(): int { let pair = Pair { left: 20, right: 22 }; return pair.left }";
+    let (mut amir, tc) = compile_src(src);
+    let field_name = amir
+        .funcs
+        .iter_mut()
+        .flat_map(|func| func.stmts.payloads.raw.iter_mut())
+        .find_map(|stmt| match stmt {
+            AmirStmt::Assign {
+                rhs: AmirRvalue::StructLiteral { fields, .. },
+                ..
+            } => fields.first_mut().map(|(name, _)| name),
+            _ => None,
+        })
+        .expect("fixture must lower a struct literal");
+    *field_name = "missing".into();
+
+    let error = arandu_backend_c::emit_c(
+        &amir,
+        tc.symbols.as_ref(),
+        tc.type_info.as_ref(),
+        &tc.type_info.type_interner,
+        DataLayout::host(),
+    )
+    .unwrap_err();
+    assert_eq!(error.code, arandu_middle::DiagCode::ICEGEN001);
+    assert!(error.message.contains("unknown field `missing`"));
+}
+
+#[test]
+fn c_backend_rejects_unknown_place_field_symbol_with_ice() {
+    let src = "struct Pair { left: int; right: int }\nfunc main(): int { let mut pair = Pair { left: 20, right: 22 }; pair.left = 1; return pair.left }";
+    let (mut amir, tc) = compile_src(src);
+    let field = amir
+        .funcs
+        .iter_mut()
+        .flat_map(|func| func.stmts.payloads.raw.iter_mut())
+        .find_map(|stmt| match stmt {
+            AmirStmt::Store { lhs, .. } => {
+                lhs.projections
+                    .iter_mut()
+                    .find_map(|projection| match projection {
+                        arandu_middle::amir::AmirProjection::Field(field) => Some(field),
+                        _ => None,
+                    })
+            }
+            _ => None,
+        })
+        .expect("fixture must lower a projected field store");
+    *field = arandu_middle::SymbolId::DUMMY;
+
+    let error = arandu_backend_c::emit_c(
+        &amir,
+        tc.symbols.as_ref(),
+        tc.type_info.as_ref(),
+        &tc.type_info.type_interner,
+        DataLayout::host(),
+    )
+    .unwrap_err();
+    assert_eq!(error.code, arandu_middle::DiagCode::ICEGEN001);
+    assert!(error.message.contains("unknown field symbol"));
 }
 
 #[test]
@@ -831,6 +936,49 @@ fn parity_enum_layout() {
 }
 
 #[test]
+fn parity_generic_enum_payload_layout_and_match() {
+    let src = r#"
+    enum Option<T> { Some(T), None }
+
+    func value(option: Option<int>): int {
+        match option {
+            Option.Some(item) => { return item; }
+            Option.None => { return 0; }
+        }
+    }
+
+    func main(): int {
+        return value(Option.Some(42)) - 42
+    }
+    "#;
+    test_execution_parity("generic_enum_payload_layout", src);
+}
+
+#[test]
+fn parity_option_niche_ref() {
+    let src = r#"
+    func check_opt(opt: Option<ref int>): int {
+        match opt {
+            Some(r) => { return *r; }
+            None => { return -1; }
+        }
+    }
+
+    func main(): int {
+        let x: int = 42
+        let some_val: Option<ref int> = Option.Some(ref x)
+        let none_val: Option<ref int> = nil
+        let a = check_opt(some_val)
+        let b = check_opt(none_val)
+        if a != 42 { return 1 }
+        if b != -1 { return 2 }
+        return 0
+    }
+    "#;
+    test_execution_parity("option_niche_ref", src);
+}
+
+#[test]
 fn parity_ssa_pattern_bind() {
     let src = r#"
     enum Wrapper {
@@ -959,6 +1107,18 @@ fn parity_to_str_int_interp() {
 }
 
 #[test]
+fn reassigned_owned_string_never_frees_static_storage() {
+    let src = r#"
+    func main(): int {
+        let mut text = "owned=${1}"
+        text = "static"
+        return 0
+    }
+    "#;
+    test_execution_parity("reassigned_owned_string", src);
+}
+
+#[test]
 fn parity_io_println_to_str() {
     // Exercise the official `io.println` lowering. This parity harness compares
     // process status; stdout behavior has its own runtime contract tests.
@@ -971,6 +1131,23 @@ fn parity_io_println_to_str() {
     }
     "#;
     test_execution_parity("io_println_to_str", src);
+}
+
+#[test]
+fn parity_io_eprint_emits_the_runtime_alias() {
+    let src = r#"
+    import io
+    func main(): int {
+        io.eprint("stderr")
+        return 0
+    }
+    "#;
+    let (amir, tc) = compile_src(src);
+    let emitted = emit_c(&amir, &tc);
+
+    assert!(emitted.contains("static void io__eprint(ArStr s)"));
+    assert!(emitted.contains("static void eprint(ArStr s) { io__eprint(s); }"));
+    test_execution_parity("io_eprint_runtime_alias", src);
 }
 
 #[test]
@@ -1055,7 +1232,7 @@ fn c_emit_arstr_layout_32bit() {
     assert!(c.contains(
         "typedef struct { uint8_t *data; uint32_t len; uint32_t capacity; } ArOwnedStringRuntime;"
     ));
-    assert!(c.contains("static int32_t ar_str_len(ArStr s)"));
+    assert!(!c.contains("ar_str_len"));
 }
 
 #[test]
@@ -1098,7 +1275,7 @@ fn c_emit_extern_declaration_present() {
     let (amir, tc) = compile_src(src);
     let c = emit_c(&amir, &tc);
     assert!(
-        c.contains("int64_t my_custom_extern_func(int64_t);"),
+        c.contains("int32_t my_custom_extern_func(int32_t);"),
         "expected custom extern function declaration, got:\n{}",
         c
     );
@@ -1143,11 +1320,17 @@ fn coroutine_value_uses_pointer_abi_in_both_backends() {
     let result = test_execution_result(
         "coroutine_pointer_abi",
         r#"
-extern "C" { func ar_co_block_on_i64(state: ptr[u8]): int }
+extern "C" {
+    func ar_co_block_on_i64(state: ptr[u8]): i64
+    func ar_co_free(state: ptr[u8]): void
+}
 async func answer(): int { return 42 }
 func main(): int {
     let job = answer()
-    return unsafe { ar_co_block_on_i64(job as ptr[u8]) }
+    let p = unsafe { job as ptr[u8] }
+    let v = unsafe { ar_co_block_on_i64(p) as int }
+    unsafe { ar_co_free(p) }
+    return v
 }
 "#,
     );
@@ -1325,15 +1508,15 @@ fn generic_work_thunk_runs_identically_in_c_and_cranelift() {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C)]
 struct CountJobHost {
-    amount: i64,
+    amount: i32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C)]
 struct StatsHost {
-    code: i64,
-    comment: i64,
-    blank: i64,
+    code: i32,
+    comment: i32,
+    blank: i32,
 }
 
 /// Compile the generic thunk source and return the exact host name under which
@@ -1345,7 +1528,8 @@ fn compile_generic_work_thunk() -> (AmirProgram, TypeCheckResult, String) {
         .iter()
         .filter_map(|f| {
             let name = tc.symbols.host_func_name(tc.symbols.get(f.symbol));
-            name.contains("_A$dispatch$I_").then(|| name.to_string())
+            name.contains("_A$std.core.workthunk.dispatch$I_")
+                .then(|| name.to_string())
         })
         .next()
         .expect("monomorphized dispatch instance missing");
@@ -1376,7 +1560,7 @@ fn compile_src_mono(src: &str) -> (AmirProgram, TypeCheckResult) {
     let mut hir = lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
     let _specialized =
         arandu_semantics::monomorphize_program(&mut tc, &mut hir).expect("monomorphization failed");
-    let amir = lower_to_amir(&tc, &hir, 64).expect("AMIR lowering failed");
+    let (amir, _) = lower_to_amir_with_interfaces(&mut tc, &hir, 64).expect("AMIR lowering failed");
     (amir, tc)
 }
 
@@ -1499,6 +1683,7 @@ func StatsCombiner.combine(self: ref StatsCombiner, dest: mut ref Stats, partial
     dest.blank = dest.blank + partial.blank
 }
 
+@Repr("C")
 struct ChunkContext {
     subslice: []int,
     seed: Stats,
@@ -1629,7 +1814,7 @@ fn parallel_fold_sim_runs_identically_in_c_and_cranelift() {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C)]
 struct SliceDescriptorHost {
-    ptr: *const i64,
+    ptr: *const i32,
     len: u64,
 }
 
@@ -1637,8 +1822,7 @@ struct SliceDescriptorHost {
 #[repr(C)]
 struct ChunkContextHost {
     subslice: SliceDescriptorHost,
-    seed: *mut StatsHost,
-    _pad1: [u64; 2],
+    seed: StatsHost,
     stop_flag: *const i64,
 }
 
@@ -1670,13 +1854,13 @@ fn parallel_dispatch_chunk_executes_in_worker_pool_and_honors_cancellation() {
 
     let pool = arandu_runtime::worker_scheduler::WorkerPool::new(2, 4).unwrap();
 
-    let items: Vec<i64> = vec![10, 25, 15];
+    let items: Vec<i32> = vec![10, 25, 15];
     let desc = SliceDescriptorHost {
         ptr: items.as_ptr(),
         len: items.len() as u64,
     };
     let stop_flag: i64 = 0;
-    let mut stats = StatsHost {
+    let stats = StatsHost {
         code: 0,
         comment: 0,
         blank: 0,
@@ -1684,8 +1868,7 @@ fn parallel_dispatch_chunk_executes_in_worker_pool_and_honors_cancellation() {
 
     let ctx = ChunkContextHost {
         subslice: desc,
-        seed: &mut stats,
-        _pad1: [0; 2],
+        seed: stats,
         stop_flag: &stop_flag,
     };
 
@@ -1710,15 +1893,14 @@ fn parallel_dispatch_chunk_executes_in_worker_pool_and_honors_cancellation() {
 
     // 2. Cooperative cancellation via stop_flag (returns WORK_CANCELED = 2 -> WorkerError::Canceled)
     let canceled_flag: i64 = 1;
-    let mut cancel_stats = StatsHost {
+    let cancel_stats = StatsHost {
         code: 0,
         comment: 0,
         blank: 0,
     };
     let cancel_ctx = ChunkContextHost {
         subslice: desc,
-        seed: &mut cancel_stats,
-        _pad1: [0; 2],
+        seed: cancel_stats,
         stop_flag: &canceled_flag,
     };
     let cancel_task = unsafe {
@@ -1918,6 +2100,77 @@ int main(void) {
     );
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn c_backend_worker_pool_falls_back_when_thread_creation_is_partial() {
+    let (amir, tc) = compile_src("func main(): int { return 0 }");
+    let c_code = emit_c(&amir, &tc);
+    let harness = r#"
+#define main arandu_main
+__GENERATED_C__
+#undef main
+#include <errno.h>
+#include <unistd.h>
+
+static unsigned create_attempts = 0;
+int __real_pthread_create(pthread_t*, const pthread_attr_t*, void *(*)(void*), void*);
+int __wrap_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
+                          void *(*start)(void*), void *arg) {
+    if (create_attempts++ != 0) return EAGAIN;
+    return __real_pthread_create(thread, attr, start, arg);
+}
+
+static int32_t thunk_add_one(uint8_t *ctx, uint8_t *res) {
+    *(int64_t*)res = *(int64_t*)ctx + 1;
+    return 0;
+}
+
+int main(void) {
+    alarm(5); /* a regression must fail instead of hanging the test suite */
+    int64_t input[8] = {0, 1, 2, 3, 4, 5, 6, 7};
+    int64_t output[8] = {0};
+    uint8_t *contexts[8];
+    uint8_t *results[8];
+    for (int i = 0; i < 8; i++) {
+        contexts[i] = (uint8_t*)&input[i];
+        results[i] = (uint8_t*)&output[i];
+    }
+    if (ar_rt_parallel_fold_run(8, contexts, thunk_add_one, results, 4, NULL) != 0) return 1;
+    for (int i = 0; i < 8; i++) if (output[i] != input[i] + 1) return 2;
+    return 0;
+}
+"#;
+    let full_src = harness.replace("__GENERATED_C__", &c_code);
+    let out_dir = env::temp_dir().join("arandu_c_tests");
+    fs::create_dir_all(&out_dir).unwrap();
+    let c_file = out_dir.join("pool_partial_failure.c");
+    let exe_file = out_dir.join("pool_partial_failure.exe");
+    fs::write(&c_file, full_src).unwrap();
+
+    let cc = env::var("CC").unwrap_or_else(|_| "gcc".to_string());
+    let compile = c_compiler(&cc)
+        .arg(&c_file)
+        .arg("-o")
+        .arg(&exe_file)
+        .arg("-pthread")
+        .arg("-Wl,--wrap=pthread_create")
+        .arg("-lm")
+        .output()
+        .expect("compile partial worker creation harness");
+    assert!(
+        compile.status.success(),
+        "partial worker creation harness must compile: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(&exe_file)
+        .status()
+        .expect("run partial worker creation harness");
+    assert!(
+        run.success(),
+        "partial worker creation fallback failed: {run}"
+    );
+}
+
 #[test]
 fn parity_safe_mem_swap_and_replace() {
     let src = r#"
@@ -2010,6 +2263,71 @@ func main(): int {
     assert_eq!(c_res, 0, "C backend failed safe fmt test");
     let clif_res = execute_cranelift(&amir, &tc);
     assert_eq!(clif_res, 0, "Cranelift backend failed safe fmt test");
+}
+
+#[test]
+fn parity_string_bytes_intrinsic_preserves_fat_pointer_words() {
+    let src = r#"
+module std.core.str_bytes_parity
+
+extern "arandu-intrinsic" {
+    func strBytes(source: str): []u8
+}
+
+func main(): int {
+    let source = "abcd"
+    let bytes = unsafe { strBytes(source) }
+    if bytes[0] != (97 as u8) || bytes[1] != (98 as u8) || bytes[3] != (100 as u8) {
+        return 1
+    }
+    return 0
+}
+"#;
+    let (amir, tc) = compile_src(src);
+    let c_res = execute_c("str_bytes_parity", &amir, &tc);
+    assert_eq!(c_res, 0, "C backend failed strBytes parity test");
+    let clif_res = execute_cranelift(&amir, &tc);
+    assert_eq!(clif_res, 0, "Cranelift backend failed strBytes parity test");
+}
+
+#[test]
+fn parity_mut_ref_slice_preserves_data_and_length_words() {
+    let src = r#"
+module std.core.mut_slice_parity
+
+extern "arandu-intrinsic" {
+    func sliceFromRaw(owner: ptr[u8], data: ptr[u8], len: uint): []u8
+    func sliceLen<T>(source: []T): uint
+}
+
+func fill(buf: mut ref []u8): uint {
+    let len = unsafe { sliceLen<u8>(*buf) }
+    if len != 4 { return 99 }
+    buf[1] = 42 as u8
+    return len
+}
+
+func observedLen(buf: ref []u8): uint {
+    return unsafe { sliceLen<u8>(*buf) }
+}
+
+func main(): int {
+    let raw = alloc(4) as ptr[u8]
+    let mut bytes = unsafe { sliceFromRaw(raw, raw, 4 as uint) }
+    let len = fill(mut ref bytes)
+    if len != 4 || observedLen(ref bytes) != 4 || bytes[1] != (42 as u8) {
+        unsafe { free(raw) }
+        return 1
+    }
+    unsafe { free(raw) }
+    return 0
+}
+"#;
+    let (amir, tc) = compile_src(src);
+    let c_res = execute_c("mut_ref_slice_parity", &amir, &tc);
+    assert_eq!(c_res, 0, "C backend lost a mut-ref slice ABI word");
+    let clif_res = execute_cranelift(&amir, &tc);
+    assert_eq!(clif_res, 0, "Cranelift lost a mut-ref slice ABI word");
 }
 
 #[test]
@@ -2414,5 +2732,147 @@ func main(): int {
     assert_eq!(
         clif_res, 0,
         "Cranelift backend failed float determinism test"
+    );
+}
+
+#[test]
+fn parity_pointer_tag_enum() {
+    let src = r#"
+    enum Node {
+        Leaf(ref int)
+        Branch(ref int)
+        Empty
+    }
+
+    func eval_node(n: Node): int {
+        match n {
+            Node.Leaf(r) => { return *r; }
+            Node.Branch(r) => { return *r * 2; }
+            Node.Empty => { return 0; }
+        }
+    }
+
+    func main(): int {
+        let x: int = 15
+        let y: int = 25
+        let n1: Node = Node.Leaf(ref x)
+        let n2: Node = Node.Branch(ref y)
+        let n3: Node = Node.Empty
+        let r1 = eval_node(n1)
+        let r2 = eval_node(n2)
+        let r3 = eval_node(n3)
+        if r1 != 15 { return 1; }
+        if r2 != 50 { return 2; }
+        if r3 != 0 { return 3; }
+        return 0;
+    }
+    "#;
+    test_execution_parity("pointer_tag_enum", src);
+}
+
+#[test]
+fn c_backend_emits_native_trap_abort_model() {
+    let (amir, tc) = compile_src(
+        r#"
+        module std.core.abort_parity
+
+        extern "arandu-intrinsic" {
+            func abort(): void
+        }
+
+        func safe_or_abort(x: int): int {
+            if x < 0 {
+                unsafe {
+                    abort();
+                }
+            }
+            return x * 2;
+        }
+
+        func main(): int {
+            return safe_or_abort(21);
+        }
+        "#,
+    );
+    let emitted = emit_c(&amir, &tc);
+    assert!(emitted.contains("#define AR_ABORT() __builtin_trap()"));
+    assert!(emitted.contains("#define AR_UNREACHABLE() __builtin_trap()"));
+    assert!(emitted.contains("AR_ABORT();"));
+
+    test_execution_parity(
+        "abort_parity_safe_path",
+        r#"
+        module std.core.abort_parity
+
+        extern "arandu-intrinsic" {
+            func abort(): void
+        }
+
+        func safe_or_abort(x: int): int {
+            if x < 0 {
+                unsafe {
+                    abort();
+                }
+            }
+            return x * 2;
+        }
+
+        func main(): int {
+            return safe_or_abort(21);
+        }
+        "#,
+    );
+}
+
+#[test]
+fn parity_user_defined_alloc_and_free() {
+    test_execution_parity(
+        "parity_user_defined_alloc_and_free",
+        r#"
+        func alloc(size: int): int {
+            return size * 3
+        }
+
+        func free(value: int): int {
+            return value + 5
+        }
+
+        func main(): int {
+            let a = alloc(10)
+            let b = free(20)
+            return a + b
+        }
+        "#,
+    );
+}
+
+#[test]
+fn parity_user_defined_generic_option() {
+    test_execution_parity_mono(
+        "parity_user_defined_generic_option",
+        r#"
+        enum Option<T> {
+            Some(T),
+            None,
+        }
+
+        func unwrap_or(opt: Option<int>, default_val: int): int {
+            return match opt {
+                Option.Some(v) => v
+                Option.None => default_val
+            }
+        }
+
+        func wrap<T>(x: T): Option<T> {
+            return Option.Some(x)
+        }
+
+        func main(): int {
+            let a = Option.Some(42)
+            let b: Option<int> = Option.None
+            let c = wrap(15)
+            return unwrap_or(a, 0) + unwrap_or(b, 8) + unwrap_or(c, 0)
+        }
+        "#,
     );
 }

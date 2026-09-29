@@ -34,13 +34,16 @@ fn fat_slot_type() -> ValType {
 /// Number of slots a value of this type occupies.
 #[must_use]
 pub fn shape(ty: TypeId, interner: &TypeInterner, _layout: DataLayout) -> Shape {
+    if interner.slice_abi_element(ty).is_some() {
+        return Shape::Fat;
+    }
     interner.with_type(ty, |ar| match ar {
         ArType::Primitive(p) => match p {
             Primitive::Str => Shape::Fat,
             Primitive::Any => Shape::Empty,
             _ => Shape::Scalar,
         },
-        ArType::Slice(_) | ArType::Range(_) | ArType::GenRef => Shape::Fat,
+        ArType::Range(_) | ArType::GenRef => Shape::Fat,
         ArType::Void | ArType::Err | ArType::Error => Shape::Empty,
         _ => Shape::Scalar,
     })
@@ -93,7 +96,8 @@ fn primitive_scalar_valtype(p: Primitive, layout: DataLayout) -> Option<ValType>
         Primitive::I64 | Primitive::U64 => Some(ValType::I64),
         Primitive::F32 => Some(ValType::F32),
         Primitive::F64 => Some(ValType::F64),
-        Primitive::Int | Primitive::Uint => {
+        Primitive::Int | Primitive::Uint => Some(ValType::I32),
+        Primitive::ISize | Primitive::USize => {
             if layout.pointer_width() <= 4 {
                 Some(ValType::I32)
             } else {
@@ -107,13 +111,13 @@ fn primitive_scalar_valtype(p: Primitive, layout: DataLayout) -> Option<ValType>
 
 /// Compute the wasm value types for an [`ArType`].
 #[must_use]
-pub fn ar_type_valtypes(ty: &ArType, layout: DataLayout) -> Vec<ValType> {
+pub fn ar_type_valtypes(ty: &ArType, interner: &TypeInterner, layout: DataLayout) -> Vec<ValType> {
+    if ty.slice_abi_element(interner).is_some() {
+        return vec![ValType::I32, ValType::I32];
+    }
     match ty {
         ArType::Void | ArType::Err | ArType::Error | ArType::Primitive(Primitive::Any) => vec![],
-        ArType::Primitive(Primitive::Str)
-        | ArType::Slice(_)
-        | ArType::Range(_)
-        | ArType::GenRef => {
+        ArType::Primitive(Primitive::Str) | ArType::Range(_) | ArType::GenRef => {
             vec![ValType::I32, ValType::I32]
         }
         _ => match scalar_valtype(ty, layout) {
@@ -130,7 +134,12 @@ pub fn ar_is_unsigned(ty: TypeId, interner: &TypeInterner) -> bool {
         ArType::Primitive(p) => {
             matches!(
                 p,
-                Primitive::U8 | Primitive::U16 | Primitive::U32 | Primitive::U64 | Primitive::Uint
+                Primitive::U8
+                    | Primitive::U16
+                    | Primitive::U32
+                    | Primitive::U64
+                    | Primitive::Uint
+                    | Primitive::USize
             ) || *p == Primitive::Byte
         }
         _ => false,
@@ -149,6 +158,33 @@ pub fn ar_is_float(ty: TypeId, interner: &TypeInterner) -> bool {
     })
 }
 
+/// Whether a type has an integer scalar representation suitable for integer
+/// width conversion. Aggregates and pointers are intentionally excluded.
+#[must_use]
+pub fn ar_is_integer(ty: TypeId, interner: &TypeInterner) -> bool {
+    interner.with_type(ty, |ar| match ar {
+        ArType::IntLiteral => true,
+        ArType::Primitive(p) => matches!(
+            p,
+            Primitive::I8
+                | Primitive::U8
+                | Primitive::I16
+                | Primitive::U16
+                | Primitive::I32
+                | Primitive::U32
+                | Primitive::I64
+                | Primitive::U64
+                | Primitive::Int
+                | Primitive::Uint
+                | Primitive::ISize
+                | Primitive::USize
+                | Primitive::Byte
+                | Primitive::Char
+        ),
+        _ => false,
+    })
+}
+
 /// Whether the value is stored in a 64-bit wasm slot.
 #[must_use]
 pub fn ar_is_64bit(ty: TypeId, interner: &TypeInterner, layout: DataLayout) -> bool {
@@ -156,33 +192,6 @@ pub fn ar_is_64bit(ty: TypeId, interner: &TypeInterner, layout: DataLayout) -> b
         slot_valtype(ty, 0, interner, layout),
         Some(ValType::I64 | ValType::F64)
     )
-}
-
-/// Whether the value is an integer (including `Bool` and `Char`).
-#[must_use]
-pub fn ar_is_int(ty: TypeId, interner: &TypeInterner) -> bool {
-    interner.with_type(ty, |ar| match ar {
-        ArType::Primitive(p) => {
-            matches!(
-                p,
-                Primitive::Bool
-                    | Primitive::I8
-                    | Primitive::U8
-                    | Primitive::I16
-                    | Primitive::U16
-                    | Primitive::I32
-                    | Primitive::U32
-                    | Primitive::I64
-                    | Primitive::U64
-                    | Primitive::Int
-                    | Primitive::Uint
-                    | Primitive::Byte
-                    | Primitive::Char
-            )
-        }
-        ArType::IntLiteral => true,
-        _ => false,
-    })
 }
 
 /// Convenience: `ValType` of the primary slot of a scalar type.

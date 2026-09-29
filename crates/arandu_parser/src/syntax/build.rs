@@ -297,7 +297,31 @@ pub fn classify_item_kind(
         }
         if is_item_start_keyword(tok.kind) || is_soft_from_tok(source, tok) {
             return match tok.kind {
-                TokenKind::KwModule => SyntaxKind::MODULE_ITEM,
+                TokenKind::KwModule => {
+                    let mut is_submodule = false;
+                    let mut tok_idx = 0;
+                    while tok_idx < tokens.len() && tokens[tok_idx].start < tok.start {
+                        tok_idx += 1;
+                    }
+                    if tok_idx + 1 < tokens.len()
+                        && matches!(tokens[tok_idx + 1].kind, TokenKind::IdentValue)
+                    {
+                        let mut next = tok_idx + 2;
+                        while next < tokens.len()
+                            && matches!(tokens[next].kind, TokenKind::Semicolon)
+                        {
+                            next += 1;
+                        }
+                        if next < tokens.len() && matches!(tokens[next].kind, TokenKind::LBrace) {
+                            is_submodule = true;
+                        }
+                    }
+                    if is_submodule {
+                        SyntaxKind::SUBMODULE_ITEM
+                    } else {
+                        SyntaxKind::MODULE_ITEM
+                    }
+                }
                 TokenKind::KwImport | TokenKind::KwFrom => SyntaxKind::IMPORT_ITEM,
                 TokenKind::KwFunc | TokenKind::KwAsync => SyntaxKind::FUNC_ITEM,
                 TokenKind::KwStruct => SyntaxKind::STRUCT_ITEM,
@@ -728,10 +752,10 @@ pub fn map_token_kind(kind: TokenKind) -> SyntaxKind {
         IntDec | IntHex | IntBin | IntOct | Float => SyntaxKind::NUMBER,
         StringStart | StringText | StringEscape | InterpStart | InterpEnd | StringEnd
         | RawString | MultilineStringStart | MultilineStringEnd => SyntaxKind::STRING,
-        Char => SyntaxKind::CHAR,
-        TypeInt | TypeUint | TypeFloat | TypeI8 | TypeI16 | TypeI32 | TypeI64 | TypeU8
-        | TypeU16 | TypeU32 | TypeU64 | TypeF32 | TypeF64 | TypeBool | TypeByte | TypeChar
-        | TypeStr | TypeAny | TypeErr => SyntaxKind::TYPE_IDENT,
+        Char | ByteChar => SyntaxKind::CHAR,
+        TypeInt | TypeUint | TypeIsize | TypeUsize | TypeFloat | TypeI8 | TypeI16 | TypeI32
+        | TypeI64 | TypeU8 | TypeU16 | TypeU32 | TypeU64 | TypeF32 | TypeF64 | TypeBool
+        | TypeByte | TypeChar | TypeStr | TypeAny | TypeErr => SyntaxKind::TYPE_IDENT,
         BoolTrue | BoolFalse | Nil => SyntaxKind::KEYWORD,
         k if k.is_keyword() => SyntaxKind::KEYWORD,
         Error(_) => SyntaxKind::ERROR_TOKEN,

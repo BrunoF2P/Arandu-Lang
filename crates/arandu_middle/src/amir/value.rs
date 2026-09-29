@@ -15,7 +15,23 @@ pub struct AmirPlace {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AmirProjection {
     Field(SymbolId),
+    /// Select an enum discriminant during pattern-driven place projection.
+    /// It has no address offset; the next `Payload` projection selects a field.
+    Variant(usize),
+    /// Select one field from the active enum payload.
+    Payload {
+        variant_tag: usize,
+        index: usize,
+        field_ty: TypeId,
+        /// Present for multi-field enum payloads, whose storage is a tuple.
+        tuple_ty: Option<TypeId>,
+    },
+    /// Select one tuple element by its target-layout field index.
+    TupleField(usize),
     Index(AmirOperand),
+    /// Select a statically-known array element. Drop elaboration uses this to
+    /// materialize element cleanup without requiring a literal-pool context.
+    IndexConstant(usize),
     /// One level of indirection: base local holds a pointer (BC.4a heap/`ptr`).
     /// Address of place = value of local (+ later field/index offsets).
     Deref,
@@ -57,7 +73,11 @@ pub enum AmirRvalue {
     EnumPayload {
         value: AmirOperand,
         variant: SymbolId,
+        variant_tag: usize,
         index: usize,
+        field_ty: TypeId,
+        /// Present for multi-field payloads stored as a tuple aggregate.
+        tuple_ty: Option<TypeId>,
     },
     EnumConstruct {
         variant_tag: usize,
@@ -79,6 +99,10 @@ pub enum AmirRvalue {
         slice: AmirOperand,
         start: AmirOperand,
         len: AmirOperand,
+    },
+    /// Borrow a string's UTF-8 storage as a `[]u8` descriptor.
+    StrBytes {
+        source: AmirOperand,
     },
     /// Reinterpret the `String` owner prefix (`data`, `len`) as `ref str`.
     /// The owner operand is both the runtime address and borrow provenance.

@@ -1,6 +1,6 @@
 use super::CEmitter;
 use arandu_middle::amir::{AmirFunc, AmirOperand, AmirStmt, AmirTerminator, TempId};
-use arandu_middle::types::ArType;
+use arandu_middle::types::{ArType, Primitive};
 use std::fmt::Write;
 
 impl<'a> CEmitter<'a> {
@@ -26,7 +26,7 @@ impl<'a> CEmitter<'a> {
 
         match kind {
             Some(arandu_middle::IntrinsicKind::Abort) => {
-                let _ = writeln!(&mut self.output, "    abort();");
+                let _ = writeln!(&mut self.output, "    AR_ABORT();");
                 true
             }
             Some(arandu_middle::IntrinsicKind::PtrRead) => {
@@ -78,6 +78,7 @@ impl<'a> CEmitter<'a> {
                 }
                 true
             }
+            Some(arandu_middle::IntrinsicKind::DropInPlace) => false,
             _ => false,
         }
     }
@@ -86,6 +87,9 @@ impl<'a> CEmitter<'a> {
         match stmt {
             AmirStmt::Assign { lhs, rhs } => {
                 let lhs_ty = self.temp_ty(func, *lhs);
+                if matches!(lhs_ty, ArType::Void) {
+                    return;
+                }
                 let lhs_c_ty = self.format_type(&lhs_ty);
                 match rhs {
                     arandu_middle::amir::AmirRvalue::GenInsert {
@@ -247,8 +251,16 @@ impl<'a> CEmitter<'a> {
                 let _ = writeln!(&mut self.output, ");");
             }
             AmirStmt::Free(op) => {
+                let op_ty = self.operand_ty(func, op);
                 let op_str = self.format_operand(op, func);
-                let _ = writeln!(&mut self.output, "    free({});", op_str);
+                if matches!(op_ty, ArType::Primitive(Primitive::Str)) {
+                    let _ = writeln!(
+                        &mut self.output,
+                        "    if ({op_str}.ptr) {{ free((void*){op_str}.ptr); }}"
+                    );
+                } else {
+                    let _ = writeln!(&mut self.output, "    free({});", op_str);
+                }
             }
             AmirStmt::StorageLive(_) | AmirStmt::StorageDead(_) => {}
             AmirStmt::Destroy(place) => {
@@ -282,16 +294,48 @@ impl<'a> CEmitter<'a> {
                                 .unwrap_or("");
                             current_ty = self.instantiated_field_ty(&struct_ty, field_name);
                         }
-                        arandu_middle::amir::AmirProjection::Index(_) => {}
+                        arandu_middle::amir::AmirProjection::Variant(_) => {}
+                        arandu_middle::amir::AmirProjection::Payload { field_ty, .. } => {
+                            current_ty = self.interner.resolve(*field_ty);
+                        }
+                        arandu_middle::amir::AmirProjection::TupleField(index) => {
+                            current_ty = match &current_ty {
+                                ArType::Tuple(args) => self
+                                    .interner
+                                    .type_args(*args)
+                                    .get(*index)
+                                    .copied()
+                                    .map(|field_ty| self.interner.resolve(field_ty))
+                                    .unwrap_or(ArType::Error),
+                                _ => ArType::Error,
+                            };
+                        }
+                        arandu_middle::amir::AmirProjection::Index(_)
+                        | arandu_middle::amir::AmirProjection::IndexConstant(_) => {
+                            current_ty = match &current_ty {
+                                ArType::Array(_, inner)
+                                | ArType::Slice(inner)
+                                | ArType::ConstArray(_, inner) => self.interner.resolve(*inner),
+                                other => other.clone(),
+                            };
+                        }
                     }
                 }
-                let ty_id = self.interner.intern(current_ty.clone());
-                if let Some((_, destructor)) = self.gen_drop_glue(ty_id, &current_ty) {
-                    let destructor_symbol = self.symbols.get(destructor);
-                    let destructor =
-                        super::sanitize_c_ident(self.symbols.host_func_name(destructor_symbol));
+                if matches!(current_ty, ArType::Primitive(Primitive::Str)) {
                     let value = self.format_place(place, func);
-                    let _ = writeln!(&mut self.output, "    {destructor}({value});");
+                    let _ = writeln!(
+                        &mut self.output,
+                        "    if ({value}.ptr) {{ free((void*){value}.ptr); {value}.ptr = NULL; }}"
+                    );
+                } else {
+                    let ty_id = self.interner.intern(current_ty.clone());
+                    if let Some((_, destructor)) = self.gen_drop_glue(ty_id, &current_ty) {
+                        let destructor_symbol = self.symbols.get(destructor);
+                        let destructor =
+                            super::sanitize_c_ident(self.symbols.host_func_name(destructor_symbol));
+                        let value = self.format_place(place, func);
+                        let _ = writeln!(&mut self.output, "    {destructor}({value});");
+                    }
                 }
             }
             AmirStmt::Nop => {}

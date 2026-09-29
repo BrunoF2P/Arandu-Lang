@@ -1,14 +1,64 @@
 //! Host-JIT builder configuration and symbol table registration.
 
 use arandu_semantics::Diagnostic;
-use cranelift_jit::JITBuilder;
+use cranelift_jit::{ArenaMemoryProvider, JITBuilder};
 
 use super::isa::cached_host_isa;
 
 pub(crate) fn create_jit_builder() -> Result<JITBuilder, Diagnostic> {
+    create_jit_builder_with_io_println(crate::to_str_runtime::ar_jit_println as *const u8)
+}
+
+pub(crate) fn create_jit_builder_with_io_println(
+    io_println: *const u8,
+) -> Result<JITBuilder, Diagnostic> {
+    create_jit_builder_with_io_println_and_args_len(
+        io_println,
+        crate::os_runtime::ar_env_args_len as *const u8,
+    )
+}
+
+pub(crate) fn create_jit_builder_with_io_println_and_args_len(
+    io_println: *const u8,
+    args_len: *const u8,
+) -> Result<JITBuilder, Diagnostic> {
+    create_jit_builder_with_process_args(
+        io_println,
+        args_len,
+        crate::os_runtime::ar_env_arg as *const u8,
+    )
+}
+
+pub(crate) fn create_jit_builder_with_process_args(
+    io_println: *const u8,
+    args_len: *const u8,
+    args_arg: *const u8,
+) -> Result<JITBuilder, Diagnostic> {
+    create_jit_builder_with_io_and_process_args(
+        io_println,
+        crate::to_str_runtime::ar_jit_eprint as *const u8,
+        args_len,
+        args_arg,
+    )
+}
+
+pub(crate) fn create_jit_builder_with_io_and_process_args(
+    io_println: *const u8,
+    io_eprint: *const u8,
+    args_len: *const u8,
+    args_arg: *const u8,
+) -> Result<JITBuilder, Diagnostic> {
     let isa = cached_host_isa()?;
     let mut builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
-
+    // Keep generated functions in one address region. x86-64 direct calls use
+    // signed 32-bit PC-relative relocations; the default system provider may
+    // allocate separate functions more than 2 GiB apart on macOS/under ASLR.
+    // A modest arena keeps intra-module calls in range without relying on the
+    // host allocator's placement decisions.
+    let memory = ArenaMemoryProvider::new_with_size(16 * 1024 * 1024).map_err(|error| {
+        super::isa::codegen_ice(format!("failed to reserve Cranelift JIT arena: {error}"))
+    })?;
+    builder.memory_provider(Box::new(memory));
     // ToStr v0.1 host helpers (malloc-backed fat strings).
     builder.symbol(
         "ar_jit_i64_to_str",
@@ -31,12 +81,10 @@ pub(crate) fn create_jit_builder() -> Result<JITBuilder, Diagnostic> {
         crate::to_str_runtime::ar_jit_char_to_str as *const u8,
     );
 
-    // Prelude `io.println` (fat-pointer ABI: ptr + i64 len).
+    // Prelude string output uses the fat-pointer ABI: ptr + i64 len.
     builder.symbol("abort", std::process::abort as *const u8);
-    builder.symbol(
-        "io.println",
-        crate::to_str_runtime::ar_jit_println as *const u8,
-    );
+    builder.symbol("io.println", io_println);
+    builder.symbol("eprint", io_eprint);
     // Prelude `err.new(str) -> Err` (message handle = non-null ptr; fat-pointer str arg).
     builder.symbol(
         "err.new",
@@ -90,6 +138,7 @@ pub(crate) fn create_jit_builder() -> Result<JITBuilder, Diagnostic> {
         "ar_co_make_ready_i64",
         crate::poll_runtime::ar_co_make_ready_i64 as *const u8,
     );
+    builder.symbol("ar_co_free", crate::poll_runtime::ar_co_free as *const u8);
 
     // SL_R.0 cooperative runtime + SL_S path helpers
     builder.symbol(
@@ -125,24 +174,10 @@ pub(crate) fn create_jit_builder() -> Result<JITBuilder, Diagnostic> {
         "ar_path_file_name",
         crate::rt_runtime::ar_path_file_name as *const u8,
     );
-    builder.symbol("ar_str_len", crate::rt_runtime::ar_str_len as *const u8);
     builder.symbol(
         "ar_str_concat",
         crate::rt_runtime::ar_str_concat as *const u8,
     );
-    builder.symbol(
-        "ar_str_starts_with",
-        crate::rt_runtime::ar_str_starts_with as *const u8,
-    );
-    builder.symbol(
-        "ar_str_ends_with",
-        crate::rt_runtime::ar_str_ends_with as *const u8,
-    );
-    builder.symbol(
-        "ar_str_contains",
-        crate::rt_runtime::ar_str_contains as *const u8,
-    );
-    builder.symbol("ar_str_find", crate::rt_runtime::ar_str_find as *const u8);
     builder.symbol(
         "ar_str_split_last",
         crate::rt_runtime::ar_str_split_last as *const u8,
@@ -157,11 +192,8 @@ pub(crate) fn create_jit_builder() -> Result<JITBuilder, Diagnostic> {
         "ar_time_monotonic_ns",
         crate::os_runtime::ar_time_monotonic_ns as *const u8,
     );
-    builder.symbol(
-        "ar_env_args_len",
-        crate::os_runtime::ar_env_args_len as *const u8,
-    );
-    builder.symbol("ar_env_arg", crate::os_runtime::ar_env_arg as *const u8);
+    builder.symbol("ar_env_args_len", args_len);
+    builder.symbol("ar_env_arg", args_arg);
     builder.symbol(
         "ar_env_var_is_set",
         crate::os_runtime::ar_env_var_is_set as *const u8,
@@ -265,6 +297,14 @@ pub(crate) fn create_jit_builder() -> Result<JITBuilder, Diagnostic> {
     builder.symbol(
         "ar_rt_free_aligned",
         crate::vec_runtime::ar_rt_free_aligned as *const u8,
+    );
+    builder.symbol(
+        "ar_rt_raw_malloc",
+        crate::vec_runtime::ar_rt_raw_malloc as *const u8,
+    );
+    builder.symbol(
+        "ar_rt_raw_free",
+        crate::vec_runtime::ar_rt_raw_free as *const u8,
     );
     builder.symbol(
         "ar_path_join_owned",
@@ -415,4 +455,11 @@ pub(crate) fn create_jit_builder() -> Result<JITBuilder, Diagnostic> {
     );
 
     Ok(builder)
+}
+
+pub(crate) fn register_block_coverage_symbol(builder: &mut JITBuilder) {
+    builder.symbol(
+        "arandu_smith_record_block_hit",
+        super::block_coverage::record_block_hit as *const u8,
+    );
 }

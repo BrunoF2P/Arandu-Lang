@@ -8,7 +8,6 @@ use arandu_parser::{GenericParam, IndexRange};
 use crate::type_checker::TypeChecker;
 use crate::type_checker::types::{
     ArType, GenericSubst, LowerCtx, TypeId, TypeInterner, build_subst, substitute_type,
-    type_name_base,
 };
 use arandu_middle::types::lower::lower_type_expr_ctx;
 
@@ -130,6 +129,12 @@ pub fn expand_named_with_defaults(checker: &mut TypeChecker<'_>, ty: ArType) -> 
             let tid = checker.intern(expanded);
             ArType::Array(n, tid)
         }
+        ArType::ConstArray(param, inner) => {
+            let inner_ty = checker.resolve(inner);
+            let expanded = expand_named_with_defaults(checker, inner_ty);
+            let tid = checker.intern(expanded);
+            ArType::ConstArray(param, tid)
+        }
         ArType::Nullable(inner) => {
             let inner_ty = checker.resolve(inner);
             let expanded = expand_named_with_defaults(checker, inner_ty);
@@ -195,7 +200,10 @@ pub fn struct_fields_instantiated(
     if params.len() != generic_args.len() {
         return None;
     }
-    let span = checker.symbols.get(struct_id).span;
+    let span = checker
+        .symbols
+        .try_get(struct_id)
+        .map_or(arandu_lexer::Span::new(0, 0, 0), |s| s.span);
     super::interfaces::check_instantiation_constraints(checker, &params, &generic_args, span);
     let subst = build_subst(&params, &generic_args);
     let res: FxHashMap<String, ArType> = fields
@@ -224,7 +232,10 @@ pub fn struct_field_instantiated(
     if params.len() != generic_args.len() {
         return None;
     }
-    let span = checker.symbols.get(struct_id).span;
+    let span = checker
+        .symbols
+        .try_get(struct_id)
+        .map_or(arandu_lexer::Span::new(0, 0, 0), |s| s.span);
     super::interfaces::check_instantiation_constraints(checker, &params, &generic_args, span);
     let subst = build_subst(&params, &generic_args);
     let ty = checker.resolve(field_ty);
@@ -256,8 +267,12 @@ pub fn synth_generic_instantiation(
         .collect();
 
     if let ExprKind::TypePath { type_name, member } = checker.pool.expr(callee) {
-        let base_name = type_name_base(type_name);
-        if base_name == "Result" {
+        let type_symbol = checker
+            .resolved
+            .type_refs
+            .get(&type_name.span.into())
+            .copied();
+        if type_symbol.is_some_and(|symbol| checker.symbols.is_result_type(symbol)) {
             if arg_tys.len() != 1 {
                 let diag = crate::Diagnostic::error(
                     crate::DiagCode::T012WrongArgCount,
@@ -296,7 +311,9 @@ pub fn synth_generic_instantiation(
                 }
             };
         }
-        if base_name == "Option" && member == "Some" {
+        if type_symbol.is_some_and(|symbol| checker.symbols.is_option_type(symbol))
+            && member == "Some"
+        {
             if arg_tys.len() != 1 {
                 let diag = crate::Diagnostic::error(
                     crate::DiagCode::T012WrongArgCount,
@@ -409,7 +426,7 @@ fn resolve_generic_callee_symbol(
                 && path.len() == 1
                 && let Some(sym) = checker.symbols.lookup_module_member(&path[0], field)
             {
-                checker.resolved.expr_ref(callee, sym);
+                Arc::make_mut(&mut checker.resolved).expr_ref(callee, sym);
                 return Some(sym);
             }
             let base_ty_id = checker
@@ -553,6 +570,11 @@ fn expand_aliases_rec(checker: &mut TypeChecker<'_>, ty: ArType, depth: usize) -
             let expanded = expand_aliases_rec(checker, inner_ty, depth + 1);
             ArType::Array(len, checker.intern(expanded))
         }
+        ArType::ConstArray(param, inner) => {
+            let inner_ty = checker.resolve(inner);
+            let expanded = expand_aliases_rec(checker, inner_ty, depth + 1);
+            ArType::ConstArray(param, checker.intern(expanded))
+        }
         ArType::Ptr(inner) => {
             let inner_ty = checker.resolve(inner);
             let expanded = expand_aliases_rec(checker, inner_ty, depth + 1);
@@ -634,12 +656,14 @@ mod tests {
         let param1 = GenericParam {
             span: span1,
             name: "T".into(),
+            const_ty: None,
             constraints: smallvec::SmallVec::new(),
             default: None,
         };
         let param2 = GenericParam {
             span: span2,
             name: "U".into(),
+            const_ty: None,
             constraints: smallvec::SmallVec::new(),
             default: None,
         };
@@ -660,7 +684,7 @@ mod tests {
             kind: arandu_middle::SymbolKind::Struct,
             span: Span::new(0, 0, 0),
             scope: arandu_middle::ScopeId(0),
-            is_public: true,
+            visibility: arandu_parser::Visibility::Public,
             lang_item: None,
         };
         symbols.register_imported_symbol(struct_sym);

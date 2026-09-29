@@ -4,10 +4,11 @@
 //! allowing web browsers to compile and run Arandu code entirely client-side.
 
 pub mod diagnostics;
+pub mod stdlib_core;
 
 use arandu_middle::layout::DataLayout;
 use arandu_query::db::DatabaseImpl;
-use diagnostics::{WebDiagnostic, convert_diagnostic};
+use diagnostics::{WebDiagnostic, WebSeverity, convert_diagnostic};
 use serde::{Deserialize, Serialize};
 
 /// High-level compilation result.
@@ -27,6 +28,7 @@ pub fn compile_source(source: &str) -> WebCompileResult {
     let line_index = arandu_base::LineIndex::new(source);
     let mut db = DatabaseImpl::new();
     db.set_target_config(DataLayout::ptr_width(4));
+    stdlib_core::register_embedded_core(&mut db);
     let file = db.new_file("playground.aru".into(), source.into());
 
     // 1. Parser pass
@@ -130,9 +132,16 @@ pub fn compile_source(source: &str) -> WebCompileResult {
 pub fn completion_source(source: &str, offset: u32) -> Vec<arandu_ide::CompletionItem> {
     let mut host = arandu_query::AnalysisHost::new();
     host.db_mut().set_target_config(DataLayout::ptr_width(4));
+    stdlib_core::register_embedded_core(host.db_mut());
     let file = host.new_file("playground.aru".into(), source.into());
     let snapshot = host.snapshot();
     arandu_ide::completions(&snapshot, file, source, offset)
+}
+
+/// Format surface Arandu source code according to official formatter rules.
+#[must_use]
+pub fn format_source(source: &str) -> String {
+    arandu_fmt::format_source(source)
 }
 
 // ── C-ABI Exports for In-Browser WebAssembly Host ─────────────────────────────
@@ -177,14 +186,34 @@ pub unsafe extern "C" fn arandu_compile(
     source_ptr: *const u8,
     source_len: usize,
 ) -> *mut RawCompileResponse {
-    let source = if source_ptr.is_null() || source_len == 0 {
-        ""
-    } else {
-        let slice = unsafe { std::slice::from_raw_parts(source_ptr, source_len) };
-        std::str::from_utf8(slice).unwrap_or("")
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let source = if source_ptr.is_null() || source_len == 0 {
+            ""
+        } else {
+            let slice = unsafe { std::slice::from_raw_parts(source_ptr, source_len) };
+            std::str::from_utf8(slice).unwrap_or("")
+        };
+
+        compile_source(source)
+    }));
+
+    let result = match result {
+        Ok(res) => res,
+        Err(_) => WebCompileResult {
+            success: false,
+            wasm_bytes: None,
+            diagnostics: vec![WebDiagnostic {
+                line: 1,
+                column: 1,
+                length: 1,
+                severity: WebSeverity::Error,
+                code: Some("ICEGEN001".to_string()),
+                message: "Internal compiler error during WebAssembly compilation".to_string(),
+                notes: Vec::new(),
+            }],
+        },
     };
 
-    let result = compile_source(source);
     let json_str = serde_json::to_string(&result.diagnostics).unwrap_or_else(|_| "[]".to_string());
     let json_boxed = json_str.into_bytes().into_boxed_slice();
     let json_len = json_boxed.len();
@@ -216,17 +245,19 @@ pub unsafe extern "C" fn arandu_compile(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn arandu_free_response(resp_ptr: *mut RawCompileResponse) {
     if !resp_ptr.is_null() {
-        let resp = unsafe { Box::from_raw(resp_ptr) };
-        if resp.wasm_ptr != 0 && resp.wasm_len != 0 {
-            unsafe {
-                arandu_free(resp.wasm_ptr as *mut u8, resp.wasm_len);
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let resp = unsafe { Box::from_raw(resp_ptr) };
+            if resp.wasm_ptr != 0 && resp.wasm_len != 0 {
+                unsafe {
+                    arandu_free(resp.wasm_ptr as *mut u8, resp.wasm_len);
+                }
             }
-        }
-        if resp.json_ptr != 0 && resp.json_len != 0 {
-            unsafe {
-                arandu_free(resp.json_ptr as *mut u8, resp.json_len);
+            if resp.json_ptr != 0 && resp.json_len != 0 {
+                unsafe {
+                    arandu_free(resp.json_ptr as *mut u8, resp.json_len);
+                }
             }
-        }
+        }));
     }
 }
 
@@ -252,16 +283,20 @@ pub unsafe extern "C" fn arandu_complete(
     source_len: usize,
     offset: u32,
 ) -> *mut RawJsonResponse {
-    let source = if source_ptr.is_null() || source_len == 0 {
-        ""
-    } else {
-        let slice = unsafe { std::slice::from_raw_parts(source_ptr, source_len) };
-        std::str::from_utf8(slice).unwrap_or("")
-    };
+    let json_str = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let source = if source_ptr.is_null() || source_len == 0 {
+            ""
+        } else {
+            let slice = unsafe { std::slice::from_raw_parts(source_ptr, source_len) };
+            std::str::from_utf8(slice).unwrap_or("")
+        };
 
-    let items = completion_source(source, offset);
-    let json = serde_json::to_string(&items).unwrap_or_else(|_| "[]".to_string());
-    let json_boxed = json.into_bytes().into_boxed_slice();
+        let items = completion_source(source, offset);
+        serde_json::to_string(&items).unwrap_or_else(|_| "[]".to_string())
+    }))
+    .unwrap_or_else(|_| "[]".to_string());
+
+    let json_boxed = json_str.into_bytes().into_boxed_slice();
     let json_len = json_boxed.len();
     let json_ptr = Box::into_raw(json_boxed) as *mut u8 as usize;
 
@@ -274,15 +309,54 @@ pub unsafe extern "C" fn arandu_complete(
 /// Free the [`RawJsonResponse`] and its JSON buffer.
 ///
 /// # Safety
-/// `resp_ptr` must have been returned by [`arandu_complete`].
+/// `resp_ptr` must have been returned by [`arandu_complete`] or [`arandu_format`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn arandu_free_json(resp_ptr: *mut RawJsonResponse) {
     if !resp_ptr.is_null() {
-        let resp = unsafe { Box::from_raw(resp_ptr) };
-        if resp.ptr != 0 && resp.len != 0 {
-            unsafe {
-                arandu_free(resp.ptr as *mut u8, resp.len);
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let resp = unsafe { Box::from_raw(resp_ptr) };
+            if resp.ptr != 0 && resp.len != 0 {
+                unsafe {
+                    arandu_free(resp.ptr as *mut u8, resp.len);
+                }
             }
-        }
+        }));
     }
+}
+
+// ── C-ABI Export for Source Code Formatting ───────────────────────────────────
+
+/// Format source code passed from JavaScript and return a pointer to [`RawJsonResponse`].
+///
+/// The JSON payload is a serialized string containing the formatted source.
+/// Call [`arandu_free_json`] to release it.
+///
+/// # Safety
+/// `source_ptr` must point to `source_len` valid UTF-8 bytes in memory.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn arandu_format(
+    source_ptr: *const u8,
+    source_len: usize,
+) -> *mut RawJsonResponse {
+    let json_str = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let source = if source_ptr.is_null() || source_len == 0 {
+            ""
+        } else {
+            let slice = unsafe { std::slice::from_raw_parts(source_ptr, source_len) };
+            std::str::from_utf8(slice).unwrap_or("")
+        };
+
+        let formatted = format_source(source);
+        serde_json::to_string(&formatted).unwrap_or_else(|_| "\"\"".to_string())
+    }))
+    .unwrap_or_else(|_| "\"\"".to_string());
+
+    let json_boxed = json_str.into_bytes().into_boxed_slice();
+    let json_len = json_boxed.len();
+    let json_ptr = Box::into_raw(json_boxed) as *mut u8 as usize;
+
+    Box::into_raw(Box::new(RawJsonResponse {
+        ptr: json_ptr,
+        len: json_len,
+    }))
 }

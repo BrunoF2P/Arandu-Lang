@@ -244,15 +244,20 @@ pub fn splice_call(
     let mut new_blocks = Vec::with_capacity(total_new_blocks);
     let mut new_block_params_pool = Vec::new();
 
-    for b in 0..total_new_blocks {
+    for (b, ((stmts, params), terminator)) in all_stmts
+        .into_iter()
+        .zip(all_block_params)
+        .zip(all_terminators)
+        .enumerate()
+    {
         let stmt_start = new_stmt_table.len();
-        for stmt in all_stmts.remove(0) {
+        for stmt in stmts {
             new_stmt_table.push(stmt);
         }
         let stmt_range = DenseRange::new(stmt_start, new_stmt_table.len() - stmt_start);
 
         let param_start = new_block_params_pool.len();
-        for param in all_block_params.remove(0) {
+        for param in params {
             new_block_params_pool.push(param);
         }
         let param_range = DenseRange::new(param_start, new_block_params_pool.len() - param_start);
@@ -261,7 +266,7 @@ pub fn splice_call(
             id: BlockId::from_usize(b),
             params: param_range,
             statements: stmt_range,
-            terminator: all_terminators.remove(0),
+            terminator,
         });
     }
 
@@ -288,8 +293,18 @@ fn remap_place(place: &AmirPlace, temp_map: &[TempId], local_map: &[LocalId]) ->
     for proj in &place.projections {
         match proj {
             AmirProjection::Field(sym) => new_projections.push(AmirProjection::Field(*sym)),
+            AmirProjection::Variant(tag) => {
+                new_projections.push(AmirProjection::Variant(*tag));
+            }
+            projection @ AmirProjection::Payload { .. } => new_projections.push(*projection),
+            AmirProjection::TupleField(index) => {
+                new_projections.push(AmirProjection::TupleField(*index));
+            }
             AmirProjection::Index(op) => {
                 new_projections.push(AmirProjection::Index(remap_op(op, temp_map)))
+            }
+            AmirProjection::IndexConstant(index) => {
+                new_projections.push(AmirProjection::IndexConstant(*index));
             }
             AmirProjection::Deref => new_projections.push(AmirProjection::Deref),
         }
@@ -343,10 +358,16 @@ fn remap_rvalue(rv: &AmirRvalue, temp_map: &[TempId], local_map: &[LocalId]) -> 
             value,
             variant,
             index,
+            variant_tag,
+            field_ty,
+            tuple_ty,
         } => AmirRvalue::EnumPayload {
             value: remap_op(value, temp_map),
             variant: *variant,
+            variant_tag: *variant_tag,
             index: *index,
+            field_ty: *field_ty,
+            tuple_ty: *tuple_ty,
         },
         AmirRvalue::EnumConstruct {
             variant_tag,
@@ -366,6 +387,9 @@ fn remap_rvalue(rv: &AmirRvalue, temp_map: &[TempId], local_map: &[LocalId]) -> 
             slice: remap_op(slice, temp_map),
             start: remap_op(start, temp_map),
             len: remap_op(len, temp_map),
+        },
+        AmirRvalue::StrBytes { source } => AmirRvalue::StrBytes {
+            source: remap_op(source, temp_map),
         },
         AmirRvalue::StrView { owner } => AmirRvalue::StrView {
             owner: remap_op(owner, temp_map),

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
 use crate::SymbolId;
@@ -36,6 +36,8 @@ pub struct TypeInfo {
     pub return_borrow_summaries: FxHashMap<SymbolId, ReturnBorrowSummary>,
     /// Struct field table: declaration order + name index (type/symbol/index folded in).
     pub struct_fields: FxHashMap<SymbolId, Arc<StructFields>>,
+    /// Field symbols declared with `private` visibility.
+    pub private_fields: FxHashSet<SymbolId>,
     pub enum_variants: FxHashMap<SymbolId, (SymbolId, EnumPayloadShape)>,
     /// Pre-computed discriminant tag for each enum variant symbol.
     pub enum_variant_tags: FxHashMap<SymbolId, usize>,
@@ -58,6 +60,11 @@ pub struct TypeInfo {
     pub variant_instantiations: FxHashMap<(SymbolId, Vec<TypeId>), (Vec<TypeId>, TypeId)>,
     /// Declared and inferred effects per function symbol.
     pub function_effects: FxHashMap<SymbolId, arandu_middle::EffectFlags>,
+    /// Functions whose API contract requires callers to establish unsafe
+    /// preconditions in an explicit `unsafe` block (`@Unsafe`).
+    pub unsafe_functions: FxHashSet<SymbolId>,
+    /// Struct symbols that explicitly declare `@Repr("C")` / `#[repr(C)]`.
+    pub struct_repr_c: rustc_hash::FxHashSet<SymbolId>,
 }
 
 impl TypeInfo {
@@ -80,6 +87,7 @@ impl TypeInfo {
             decl_types: FxHashMap::default(),
             return_borrow_summaries: FxHashMap::default(),
             struct_fields: FxHashMap::default(),
+            private_fields: FxHashSet::default(),
             enum_variants: FxHashMap::default(),
             enum_variant_tags: FxHashMap::default(),
             destructors: FxHashMap::default(),
@@ -90,6 +98,8 @@ impl TypeInfo {
             interfaces: FxHashMap::default(),
             variant_instantiations: FxHashMap::default(),
             function_effects: FxHashMap::default(),
+            unsafe_functions: FxHashSet::default(),
+            struct_repr_c: rustc_hash::FxHashSet::default(),
         }
     }
 
@@ -131,33 +141,6 @@ impl TypeInfo {
         None
     }
 
-    /// Lookup struct field type by struct symbol and field name.
-    #[must_use]
-    pub fn get_struct_field_type(&self, struct_sym: SymbolId, field: &str) -> Option<TypeId> {
-        self.struct_fields
-            .get(&struct_sym)
-            .and_then(|s| s.get(field))
-            .map(|f| f.ty)
-    }
-
-    /// Lookup struct field symbol by struct symbol and field name.
-    #[must_use]
-    pub fn get_struct_field_symbol(&self, struct_sym: SymbolId, field: &str) -> Option<SymbolId> {
-        self.struct_fields
-            .get(&struct_sym)
-            .and_then(|s| s.get(field))
-            .and_then(|f| f.symbol)
-    }
-
-    /// Lookup struct field index by struct symbol and field name.
-    #[must_use]
-    pub fn get_struct_field_index(&self, struct_sym: SymbolId, field: &str) -> Option<usize> {
-        self.struct_fields
-            .get(&struct_sym)
-            .and_then(|s| s.get(field))
-            .map(|f| f.index)
-    }
-
     /// Whether values of this type may be used after "move" (copy semantics).
     ///
     /// # Rules (Minimal / big-tech POD)
@@ -190,6 +173,86 @@ impl TypeInfo {
         output.sort();
         output.dedup();
         Ok(output)
+    }
+
+    /// Whether a type structurally contains an explicit `ref`/`mut ref`.
+    /// Slice views are deliberately excluded: callers that need to reason
+    /// about their owner lifetime use the borrow-path contract instead.
+    #[must_use]
+    pub fn contains_explicit_reference(&self, id: TypeId) -> bool {
+        fn visit(info: &TypeInfo, id: TypeId, visiting: &mut Vec<TypeId>) -> bool {
+            if visiting.contains(&id) {
+                return false;
+            }
+            visiting.push(id);
+            let found = match info.type_interner.resolve(id) {
+                ArType::Ref(_) | ArType::RefMut(_) => true,
+                ArType::Tuple(items) => info
+                    .type_interner
+                    .type_args(items)
+                    .into_iter()
+                    .any(|item| visit(info, item, visiting)),
+                ArType::Option(inner)
+                | ArType::Nullable(inner)
+                | ArType::Array(_, inner)
+                | ArType::ConstArray(_, inner)
+                | ArType::Poll(inner)
+                | ArType::Coroutine(inner)
+                | ArType::Range(inner) => visit(info, inner, visiting),
+                ArType::Result(ok, err) => visit(info, ok, visiting) || visit(info, err, visiting),
+                ArType::Named(symbol, arguments) => {
+                    let args = info.type_interner.type_args(arguments);
+                    let substitution = info.generic_params.get(&symbol).and_then(|parameters| {
+                        (parameters.len() == args.len() && !parameters.is_empty())
+                            .then(|| build_subst_ids(parameters, &args, &info.type_interner))
+                    });
+                    let fields_contain_ref =
+                        info.struct_fields.get(&symbol).is_some_and(|fields| {
+                            fields.fields.iter().any(|field| {
+                                let field_ty =
+                                    substitution.as_ref().map_or(field.ty, |substitution| {
+                                        let field = info.type_interner.resolve(field.ty);
+                                        info.type_interner.intern(substitute_type(
+                                            &field,
+                                            substitution,
+                                            &info.type_interner,
+                                        ))
+                                    });
+                                visit(info, field_ty, visiting)
+                            })
+                        });
+                    fields_contain_ref
+                        || info.enum_variants.iter().any(|(_, (owner, payload))| {
+                            if *owner != symbol {
+                                return false;
+                            }
+                            let substitution = substitution.as_ref();
+                            match payload {
+                                EnumPayloadShape::Tuple(items) => items.iter().any(|item| {
+                                    let item_ty = substitution.map_or(*item, |substitution| {
+                                        let item = info.type_interner.resolve(*item);
+                                        info.type_interner.intern(substitute_type(
+                                            &item,
+                                            substitution,
+                                            &info.type_interner,
+                                        ))
+                                    });
+                                    visit(info, item_ty, visiting)
+                                }),
+                                EnumPayloadShape::Unit => false,
+                            }
+                        })
+                }
+                // `[]T` is a view with a separate owner-lifetime contract,
+                // not an embedded explicit reference for this diagnostic.
+                ArType::Slice(_) => false,
+                _ => false,
+            };
+            visiting.pop();
+            found
+        }
+
+        visit(self, id, &mut Vec::new())
     }
 
     fn collect_borrow_paths(
@@ -295,7 +358,7 @@ impl TypeInfo {
                     }
                 }
             }
-            ArType::Array(_, inner) => {
+            ArType::Array(_, inner) | ArType::ConstArray(_, inner) => {
                 prefix.push(BorrowPathSegment::ArrayElement);
                 self.collect_borrow_paths(inner, prefix, visiting, output)?;
                 prefix.pop();
@@ -328,6 +391,8 @@ impl TypeInfo {
                 output.push((BorrowPath(prefix.clone()), BorrowKind::Shared));
             }
             ArType::Primitive(_)
+            | ArType::Const(_)
+            | ArType::ConstParam(_)
             | ArType::Func(_, _)
             | ArType::Ptr(_)
             | ArType::GenRef
@@ -347,7 +412,8 @@ impl TypeInfo {
             return false;
         }
         visiting.insert(id, true);
-        let result = self.type_interner.with_type(id, |ty| match ty {
+        let ty = self.type_interner.resolve(id);
+        let result = match &ty {
             ArType::Named(sym, args) => {
                 let args = self.type_interner.type_args(*args);
                 self.is_named_struct_pod_copy(*sym, &args, visiting)
@@ -356,13 +422,15 @@ impl TypeInfo {
                 let elems = self.type_interner.type_args(*elems);
                 elems.iter().all(|&e| self.is_pod_component(e, visiting))
             }
-            ArType::Array(_, elem) => self.is_pod_component(*elem, visiting),
+            ArType::Array(_, elem) | ArType::ConstArray(_, elem) => {
+                self.is_pod_component(*elem, visiting)
+            }
             ArType::Option(inner) => self.is_pod_component(*inner, visiting),
             ArType::Result(ok, err) => {
                 self.is_pod_component(*ok, visiting) && self.is_pod_component(*err, visiting)
             }
             other => other.is_copy_v01(),
-        });
+        };
         visiting.insert(id, false);
         result
     }
@@ -372,7 +440,8 @@ impl TypeInfo {
         if visiting.get(&id).copied().unwrap_or(false) {
             return false;
         }
-        self.type_interner.with_type(id, |ty| match ty {
+        let ty = self.type_interner.resolve(id);
+        match &ty {
             ArType::Primitive(p) => {
                 p.is_numeric()
                     || matches!(
@@ -380,7 +449,7 @@ impl TypeInfo {
                         Primitive::Bool | Primitive::Char | Primitive::Byte | Primitive::Str
                     )
             }
-            ArType::IntLiteral | ArType::FloatLiteral | ArType::GenRef => true,
+            ArType::IntLiteral | ArType::FloatLiteral | ArType::GenRef | ArType::Const(_) => true,
             ArType::Named(sym, args) => {
                 let args = self.type_interner.type_args(*args);
                 self.is_named_struct_pod_copy(*sym, &args, visiting)
@@ -389,7 +458,9 @@ impl TypeInfo {
                 let elems = self.type_interner.type_args(*elems);
                 elems.iter().all(|&e| self.is_pod_component(e, visiting))
             }
-            ArType::Array(_, elem) => self.is_pod_component(*elem, visiting),
+            ArType::Array(_, elem) | ArType::ConstArray(_, elem) => {
+                self.is_pod_component(*elem, visiting)
+            }
             ArType::Option(inner) => self.is_pod_component(*inner, visiting),
             ArType::Result(ok, err) => {
                 self.is_pod_component(*ok, visiting) && self.is_pod_component(*err, visiting)
@@ -399,6 +470,7 @@ impl TypeInfo {
             // owner aggregate remain non-POD to avoid accidental double free.
             ArType::Ref(_) | ArType::Slice(_) => true,
             ArType::Ptr(_)
+            | ArType::ConstParam(_)
             | ArType::RefMut(_)
             | ArType::Nullable(_)
             | ArType::Func(_, _)
@@ -408,7 +480,7 @@ impl TypeInfo {
             | ArType::Err
             | ArType::Void
             | ArType::Error => false,
-        })
+        }
     }
 
     fn is_named_struct_pod_copy(
@@ -511,6 +583,14 @@ pub fn translate_type(ty: &ArType, from: &TypeInterner, to: &mut TypeInterner) -
             let new_inner = to.intern(translated);
             ArType::Array(*n, new_inner)
         }
+        ArType::ConstArray(param, inner) => {
+            let resolved = from.resolve(*inner);
+            let translated = translate_type(&resolved, from, to);
+            let new_inner = to.intern(translated);
+            ArType::ConstArray(*param, new_inner)
+        }
+        ArType::Const(value) => ArType::Const(*value),
+        ArType::ConstParam(param) => ArType::ConstParam(*param),
         ArType::Ptr(inner) => {
             let resolved = from.resolve(*inner);
             let translated = translate_type(&resolved, from, to);
@@ -587,18 +667,25 @@ pub fn translate_type(ty: &ArType, from: &TypeInterner, to: &mut TypeInterner) -
 
 impl TypeInfo {
     pub fn merge_from(&mut self, other: &TypeInfo) {
+        // Symbol safety contracts are independent of expression-type shards.
+        self.unsafe_functions
+            .extend(other.unsafe_functions.iter().copied());
+
         // Fast path: empty body shards / empty import stubs.
         if other.decl_types.is_empty()
             && other.return_borrow_summaries.is_empty()
             && other.struct_fields.is_empty()
+            && other.private_fields.is_empty()
             && other.enum_variants.is_empty()
             && other.enum_variant_tags.is_empty()
             && other.destructors.is_empty()
             && other.destructor_instances.is_empty()
             && other.generic_params.is_empty()
+            && other.unsafe_functions.is_empty()
             && other.generic_defaults.is_empty()
             && other.param_constraints.is_empty()
             && other.interfaces.is_empty()
+            && other.struct_repr_c.is_empty()
             && other.expr_types.iter().all(|s| s.is_none())
         {
             return;
@@ -632,6 +719,8 @@ impl TypeInfo {
                 }));
             self.struct_fields.insert(*symbol, Arc::new(translated));
         }
+        self.private_fields
+            .extend(other.private_fields.iter().copied());
         for (symbol, (enum_id, shape)) in &other.enum_variants {
             let translated_shape = match shape {
                 EnumPayloadShape::Unit => EnumPayloadShape::Unit,
@@ -703,10 +792,13 @@ impl TypeInfo {
                 *symbol,
                 types::InterfaceInfo {
                     self_param: interface_info.self_param,
+                    sealed: interface_info.sealed,
                     methods: translated_methods,
                 },
             );
         }
+        self.struct_repr_c.extend(&other.struct_repr_c);
+
         // Expr types (body typeck shards): re-intern TypeIds into `self`.
         // Signature-only TypeInfos leave this empty — skip the O(n) scan.
         if other.expr_types.iter().all(|s| s.is_none()) {
@@ -837,6 +929,10 @@ impl arandu_middle::layout::StructLayoutProvider for TypeInfo {
     fn destructor_for_type(&self, ty: TypeId) -> Option<SymbolId> {
         self.destructor_instances.get(&ty).copied()
     }
+
+    fn is_repr_c(&self, struct_id: SymbolId) -> bool {
+        self.struct_repr_c.contains(&struct_id)
+    }
 }
 
 #[cfg(test)]
@@ -881,6 +977,7 @@ mod borrow_shape_tests {
         );
 
         let paths = info.borrow_paths(record_type).expect("bounded shape");
+        assert!(info.contains_explicit_reference(record_type));
         assert_eq!(
             paths,
             vec![
@@ -931,6 +1028,16 @@ mod borrow_shape_tests {
             vec![(BorrowPath::root(), BorrowKind::Shared)]
         );
         assert!(info.is_copy(slice));
+        assert!(!info.contains_explicit_reference(slice));
+    }
+
+    #[test]
+    fn plain_str_does_not_claim_an_unconditional_borrow_origin() {
+        let info = TypeInfo::new();
+        let str_view = info.type_interner.intern(ArType::Primitive(Primitive::Str));
+
+        assert!(info.borrow_paths(str_view).expect("str shape").is_empty());
+        assert!(info.is_copy(str_view));
     }
 
     #[test]

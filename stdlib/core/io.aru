@@ -1,0 +1,312 @@
+//! Freestanding I/O error types and traits with no OS dependency.
+//!
+//! ## Overview
+//!
+//! `std.core.io` defines the I/O contracts that work on any platform,
+//! including bare-metal and WebAssembly: `CoreIoError`, `CoreIoErrorKind`,
+//! and the `Read` and `Write` interfaces for reading and writing memory slices.
+//!
+//! This module is deliberately minimal and OS-free. For filesystem, sockets
+//! and process handles, use `std.io` (which requires an OS). For buffered
+//! formatting, use `std.core.fmt`.
+//!
+//! ## Example
+//!
+//! ```arandu
+//! import std.core.io as coreio
+//!
+//! func writeInto(buf: []u8, source: []u8): uint {
+//!     let mut w = coreio.newSliceWriter(buf)
+//!     let _ = w.write(source)
+//!     return w.written()
+//! }
+//! ```
+//!
+//! ## Platform
+//! `native` · `wasm32` · `bare-metal`
+//!
+//! No syscalls involved on any supported platform.
+//!
+//! ## See also
+//!
+//! - `std.io` — full OS-backed I/O (files, sockets)
+//! - `std.core.fmt` — allocation-free fixed-buffer formatting
+
+module std.core.io
+
+import std.core.slice as slice
+
+/// Error kinds for freestanding in-memory I/O operations (RFC 0017 / SL_S-Core.4).
+public enum CoreIoErrorKind {
+    /// Input ended before the requested data was available.
+    UnexpectedEof,
+    /// The writer could not make progress.
+    WriteZero,
+    /// The supplied input is invalid.
+    InvalidInput,
+    /// An error outside the named categories.
+    Other,
+}
+
+/// Structured error for core I/O operations without OS dependencies.
+public struct CoreIoError {
+    /// Category of this in-memory I/O error.
+    kind: CoreIoErrorKind
+}
+
+/// Creates a new `CoreIoError`.
+public func newCoreIoError(kind: CoreIoErrorKind): CoreIoError {
+    return CoreIoError { kind: kind }
+}
+
+/// Enumeration of possible methods to seek within an I/O stream.
+public enum SeekFrom {
+    /// Offset measured from the beginning of the stream.
+    Start(usize),
+    /// Offset measured from the current position.
+    Current(int),
+    /// Offset measured from the end of the stream.
+    End(int),
+}
+
+/// Interface for reading bytes into a borrowed mutable buffer.
+public interface Reader {
+    func read(self: mut ref Self, buf: mut ref []u8): Result<usize, CoreIoError>
+}
+
+/// Interface for writing bytes from a borrowed buffer.
+public interface Writer {
+    func write(self: mut ref Self, buf: []u8): Result<usize, CoreIoError>
+    func flush(self: mut ref Self): Result<bool, CoreIoError>
+}
+
+/// Interface for seeking within a byte stream.
+public interface Seeker {
+    func seek(self: mut ref Self, pos: SeekFrom): Result<usize, CoreIoError>
+}
+
+/// An in-memory reader over a contiguous slice of bytes (`[]u8`).
+public struct SliceReader {
+    /// Borrowed source byte slice.
+    data: []u8
+    /// Current byte position.
+    pos: usize
+}
+
+/// Borrows `data` and creates a reader positioned at byte zero.
+///
+/// Reading or seeking does not copy the source slice or allocate. The source
+/// must remain valid for the lifetime of the reader.
+public func newSliceReader(data: []u8): SliceReader {
+    return SliceReader {
+        data: data,
+        pos: 0,
+    }
+}
+
+/// Returns the number of bytes from the current position to the slice's end.
+///
+/// Reaching the end yields zero; this query does not change the position.
+public func SliceReader.remaining(self: ref SliceReader): usize {
+    let total = slice.len<u8>(self.data)
+    if self.pos >= total {
+        return 0
+    }
+    return total - self.pos
+}
+
+/// Copies at most `buf.len` bytes from the current position into `buf`.
+///
+/// Returns `Ok(bytesRead)` and advances by that count. At end of input, it
+/// returns `Ok(0)`; an empty destination also reads zero bytes. A short read
+/// means fewer bytes remained than the destination could hold.
+public func SliceReader.read(self: mut ref SliceReader, buf: mut ref []u8): Result<usize, CoreIoError> {
+    let avail = self.remaining()
+    if avail == 0 {
+        return Result.Ok(0 as usize)
+    }
+    let buf_len = slice.len<u8>(*buf)
+    let mut to_read = avail
+    if to_read > buf_len {
+        to_read = buf_len
+    }
+
+    let mut i: usize = 0
+    while i < to_read {
+        buf[i] = self.data[self.pos + i]
+        i = i + 1
+    }
+
+    self.pos = self.pos + to_read
+    return Result.Ok(to_read)
+}
+
+/// An in-memory writer over a caller-owned contiguous byte buffer.
+public struct SliceWriter {
+    /// Caller-owned destination byte slice.
+    data: []u8
+    /// Current byte position.
+    pos: usize
+}
+
+/// Borrows `data` as a fixed-capacity destination, positioned at byte zero.
+///
+/// Writes change the caller's buffer in place and never grow or allocate it.
+public func newSliceWriter(data: []u8): SliceWriter {
+    return SliceWriter {
+        data: data,
+        pos: 0,
+    }
+}
+
+/// Returns the unwritten capacity of the destination buffer.
+public func SliceWriter.remaining(self: ref SliceWriter): usize {
+    let total = slice.len<u8>(self.data)
+    if self.pos >= total {
+        return 0
+    }
+    return total - self.pos
+}
+
+/// Returns the number of bytes written so far.
+public func SliceWriter.written(self: ref SliceWriter): usize {
+    return self.pos
+}
+
+/// Copies as many source bytes as fit, then advances the writer position.
+///
+/// A nonempty source with no remaining capacity returns `WriteZero` and
+/// writes nothing. Otherwise the result is `Ok(bytesWritten)`, which may be
+/// smaller than the source length. An empty source returns `Ok(0)`.
+public func SliceWriter.write(self: mut ref SliceWriter, buf: []u8): Result<usize, CoreIoError> {
+    let available = self.remaining()
+    let source_len = slice.len<u8>(buf)
+    if source_len > 0 && available == 0 {
+        return Result.Err(newCoreIoError(CoreIoErrorKind.WriteZero))
+    }
+    let mut to_write = source_len
+    if to_write > available {
+        to_write = available
+    }
+    let mut i: usize = 0
+    while i < to_write {
+        self.data[self.pos + i] = buf[i]
+        i = i + 1
+    }
+    self.pos = self.pos + to_write
+    return Result.Ok(to_write)
+}
+
+/// Returns `Ok(true)` without changing the writer or its buffer.
+///
+/// An in-memory slice has no pending output to flush.
+public func SliceWriter.flush(self: mut ref SliceWriter): Result<bool, CoreIoError> {
+    return Result.Ok(true)
+}
+
+/// Sets the write position relative to start, current position, or end.
+///
+/// Returns `InvalidInput` if the target falls outside `0..=buffer length`;
+/// otherwise returns the new byte position. Seeking changes where the next
+/// write lands but does not clear bytes already written.
+public func SliceWriter.seek(self: mut ref SliceWriter, pos: SeekFrom): Result<usize, CoreIoError> {
+    let total = slice.len<u8>(self.data)
+    let mut new_pos: usize = 0
+
+    match pos {
+        SeekFrom.Start(offset) => {
+            new_pos = offset
+        }
+        SeekFrom.Current(delta) => {
+            if self.pos > total {
+                return Result.Err(newCoreIoError(CoreIoErrorKind.InvalidInput))
+            }
+            if delta >= 0 {
+                let forward = delta as usize
+                if forward > total - self.pos {
+                    return Result.Err(newCoreIoError(CoreIoErrorKind.InvalidInput))
+                }
+                new_pos = self.pos + forward
+            } else {
+                let backward = (-(delta + 1)) as usize + 1
+                if backward > self.pos {
+                    return Result.Err(newCoreIoError(CoreIoErrorKind.InvalidInput))
+                }
+                new_pos = self.pos - backward
+            }
+        }
+        SeekFrom.End(delta) => {
+            if delta > 0 {
+                return Result.Err(newCoreIoError(CoreIoErrorKind.InvalidInput))
+            } else if delta == 0 {
+                new_pos = total
+            } else {
+                let backward = (-(delta + 1)) as usize + 1
+                if backward > total {
+                    return Result.Err(newCoreIoError(CoreIoErrorKind.InvalidInput))
+                }
+                new_pos = total - backward
+            }
+        }
+    }
+
+    if new_pos > total {
+        return Result.Err(newCoreIoError(CoreIoErrorKind.InvalidInput))
+    }
+    self.pos = new_pos
+    return Result.Ok(new_pos)
+}
+
+/// Sets the read position relative to start, current position, or end.
+///
+/// Returns `InvalidInput` for a target outside `0..=slice length` and leaves
+/// the position unchanged. Seeking to the end is valid; the next read then
+/// returns `Ok(0)`.
+public func SliceReader.seek(self: mut ref SliceReader, pos: SeekFrom): Result<usize, CoreIoError> {
+    let total = slice.len<u8>(self.data)
+    let mut new_pos: usize = 0
+
+    match pos {
+        SeekFrom.Start(offset) => {
+            new_pos = offset
+        }
+        SeekFrom.Current(delta) => {
+            if self.pos > total {
+                return Result.Err(newCoreIoError(CoreIoErrorKind.InvalidInput))
+            }
+            if delta >= 0 {
+                let forward = delta as usize
+                if forward > total - self.pos {
+                    return Result.Err(newCoreIoError(CoreIoErrorKind.InvalidInput))
+                }
+                new_pos = self.pos + forward
+            } else {
+                let backward = (-(delta + 1)) as usize + 1
+                if backward > self.pos {
+                    return Result.Err(newCoreIoError(CoreIoErrorKind.InvalidInput))
+                }
+                new_pos = self.pos - backward
+            }
+        }
+        SeekFrom.End(delta) => {
+            if delta > 0 {
+                return Result.Err(newCoreIoError(CoreIoErrorKind.InvalidInput))
+            } else if delta == 0 {
+                new_pos = total
+            } else {
+                let backward = (-(delta + 1)) as usize + 1
+                if backward > total {
+                    return Result.Err(newCoreIoError(CoreIoErrorKind.InvalidInput))
+                }
+                new_pos = total - backward
+            }
+        }
+    }
+
+    if new_pos > total {
+        return Result.Err(newCoreIoError(CoreIoErrorKind.InvalidInput))
+    }
+
+    self.pos = new_pos
+    return Result.Ok(new_pos)
+}

@@ -83,6 +83,7 @@ pub(crate) fn synth_place(checker: &mut TypeChecker<'_>, place: &arandu_parser::
                     },
                     _ => None,
                 };
+                let struct_owner = struct_info_opt.as_ref().map(|(id, _)| *id);
                 let field_from_struct = if let Some((struct_id, args)) = struct_info_opt {
                     let resolved_args: Vec<ArType> =
                         args.iter().map(|&a| interner.resolve(a)).collect();
@@ -106,6 +107,9 @@ pub(crate) fn synth_place(checker: &mut TypeChecker<'_>, place: &arandu_parser::
                 };
 
                 if let Some(field_ty) = field_from_struct {
+                    if let Some(struct_id) = struct_owner {
+                        checker.check_field_visibility(struct_id, name.as_str(), *span);
+                    }
                     current_ty_id = checker.intern(field_ty);
                 } else {
                     let err_id = checker.intern(ArType::Error);
@@ -152,7 +156,9 @@ pub(crate) fn synth_place(checker: &mut TypeChecker<'_>, place: &arandu_parser::
                     break;
                 }
                 match &actual_base_ty {
-                    ArType::Array(_, inner) | ArType::Slice(inner) => {
+                    ArType::Array(_, inner)
+                    | ArType::ConstArray(_, inner)
+                    | ArType::Slice(inner) => {
                         current_ty_id = *inner;
                     }
                     ArType::Named(_, args)

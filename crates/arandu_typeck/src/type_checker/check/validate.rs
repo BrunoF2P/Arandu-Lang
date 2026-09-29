@@ -13,6 +13,7 @@ const ANY_ERROR_MESSAGE: &str =
 
 pub(crate) fn contains_any(pool: &AstPool, ty: TypeExprId) -> Option<Span> {
     match pool.type_expr(ty) {
+        TypeExpr::Const { .. } => None,
         TypeExpr::Primitive { span, name } => {
             if name == "any" {
                 Some(*span)
@@ -231,6 +232,11 @@ fn validate_condition(checker: &mut TypeChecker<'_>, cond: &Condition) {
     match cond {
         Condition::Expr { expr, .. } => validate_expr(checker, *expr),
         Condition::Is { expr, .. } => validate_expr(checker, *expr),
+        Condition::And { conditions, .. } => {
+            for condition in conditions {
+                validate_condition(checker, condition);
+            }
+        }
     }
 }
 
@@ -387,10 +393,9 @@ pub(crate) fn validate_type_constraints_in_program(
     checker: &mut TypeChecker<'_>,
     program: &Program,
 ) {
-    for decl_id in &program.decls {
-        let decl = checker.pool.decl(*decl_id);
+    program.for_each_decl_recursive(|_decl_id, decl| {
         validate_decl_type_constraints(checker, decl);
-    }
+    });
 }
 
 fn validate_decl_type_constraints(checker: &mut TypeChecker<'_>, decl: &TopLevelDecl) {
@@ -506,7 +511,7 @@ fn validate_type_expr_constraints(
                 );
             }
         }
-        TypeExpr::Primitive { .. } => {}
+        TypeExpr::Const { .. } | TypeExpr::Primitive { .. } => {}
         TypeExpr::Nullable { inner, .. }
         | TypeExpr::Pointer { inner, .. }
         | TypeExpr::Ref { inner, .. }
@@ -574,7 +579,7 @@ fn type_contains_named_without_indirection(
             }
             false
         }
-        ArType::Array(_, inner) => {
+        ArType::Array(_, inner) | ArType::ConstArray(_, inner) => {
             let inner_ty = interner.resolve(*inner);
             type_contains_named_without_indirection(
                 &inner_ty, target_id, interner, provider, visited,

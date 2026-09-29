@@ -28,6 +28,7 @@ pub enum SyntaxKind {
     /// Generic top-level unit (unknown / recovery). Prefer typed `*_ITEM` kinds.
     ITEM,
     MODULE_ITEM,
+    SUBMODULE_ITEM,
     IMPORT_ITEM,
     FUNC_ITEM,
     STRUCT_ITEM,
@@ -70,6 +71,7 @@ impl SyntaxKind {
             self,
             Self::ITEM
                 | Self::MODULE_ITEM
+                | Self::SUBMODULE_ITEM
                 | Self::IMPORT_ITEM
                 | Self::FUNC_ITEM
                 | Self::STRUCT_ITEM

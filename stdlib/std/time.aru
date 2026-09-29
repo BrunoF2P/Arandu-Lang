@@ -1,18 +1,43 @@
+//! Monotonic instants and typed durations.
+//!
+//! ## Overview
+//!
+//! `Duration` represents nanosecond intervals and converts between time units. `Instant` represents a monotonic clock reading for elapsed-time measurements.
+//!
+//! ## Example
+//!
+//! ```arandu
+//! import std.time as time
+//!
+//! let delay = time.durationFromMillis(250)
+//! let nanos = delay.asNanos()
+//! ```
+//!
+//! ## Safety
+//! Use `Instant` for elapsed monotonic time, not wall-clock timestamps.
+//! Duration arithmetic uses signed nanoseconds; inspect the individual
+//! methods before relying on behavior near integer limits.
+//!
+//! ## Platform
+//! `native`
+
 module std.time
 
 /// Clocks and high-precision temporal measurements.
 ///
 /// Provides strongly-typed `Instant` (monotonic point in time) and `Duration`
-/// (time interval) representations, preventing unit confusion (seconds vs ms vs ns)
-/// without any heap allocation or object boxing.
+/// (time interval) representations, preventing unit confusion (seconds vs ms vs ns).
 
 extern "C" {
     /// Nanoseconds since an arbitrary process-local epoch.
-    func ar_time_monotonic_ns(): int
+    func ar_time_monotonic_ns(): i64
 }
 
-/// Steady-clock nanoseconds (non-decreasing within a process).
-public func monotonicNs(): int {
+/// Reads the host's monotonic clock in nanoseconds from an arbitrary origin.
+///
+/// Use differences between readings for elapsed time; the absolute value is
+/// not a calendar timestamp.
+public func monotonicNs(): i64 {
     unsafe {
         return ar_time_monotonic_ns()
     }
@@ -20,51 +45,63 @@ public func monotonicNs(): int {
 
 /// Represents a span of time with nanosecond precision.
 public struct Duration {
-    nanos: int
+    /// Length of this interval in nanoseconds.
+    nanos: i64
 }
 
-/// Creates a `Duration` from a raw number of nanoseconds.
-public func durationFromNanos(ns: int): Duration {
+/// Wraps a signed nanosecond count without changing its value.
+///
+/// Negative durations are representable.
+public func durationFromNanos(ns: i64): Duration {
     return Duration { nanos: ns }
 }
 
-/// Creates a `Duration` from a number of microseconds.
+/// Converts signed microseconds to nanoseconds by multiplying by 1,000.
+///
+/// The multiplication is widened to nanoseconds before it is performed.
 public func durationFromMicros(us: int): Duration {
-    return Duration { nanos: us * 1000 }
+    return Duration { nanos: (us as i64) * 1000 }
 }
 
-/// Creates a `Duration` from a number of milliseconds.
+/// Converts signed milliseconds to nanoseconds by multiplying by 1,000,000.
+///
+/// The multiplication is widened to nanoseconds before it is performed.
 public func durationFromMillis(ms: int): Duration {
-    return Duration { nanos: ms * 1000000 }
+    return Duration { nanos: (ms as i64) * 1000000 }
 }
 
-/// Creates a `Duration` from a number of seconds.
+/// Converts signed seconds to nanoseconds by multiplying by 1,000,000,000.
+///
+/// The multiplication is widened to nanoseconds before it is performed.
 public func durationFromSecs(s: int): Duration {
-    return Duration { nanos: s * 1000000000 }
+    return Duration { nanos: (s as i64) * 1000000000 }
 }
 
 /// Returns the total number of whole seconds in this duration.
-public func Duration.asSecs(self: ref Duration): int {
+public func Duration.asSecs(self: ref Duration): i64 {
     return self.nanos / 1000000000
 }
 
 /// Returns the total number of whole milliseconds in this duration.
-public func Duration.asMillis(self: ref Duration): int {
+public func Duration.asMillis(self: ref Duration): i64 {
     return self.nanos / 1000000
 }
 
 /// Returns the total number of whole microseconds in this duration.
-public func Duration.asMicros(self: ref Duration): int {
+public func Duration.asMicros(self: ref Duration): i64 {
     return self.nanos / 1000
 }
 
 /// Returns the total number of nanoseconds in this duration.
-public func Duration.asNanos(self: ref Duration): int {
+public func Duration.asNanos(self: ref Duration): i64 {
     return self.nanos
 }
 
-/// Returns the subsecond nanosecond part of this duration (0..999_999_999).
-public func Duration.subsecNanos(self: ref Duration): int {
+/// Returns `nanos % 1,000,000,000`.
+///
+/// For a negative duration the remainder can also be negative; callers
+/// requiring a nonnegative subsecond field must normalize it themselves.
+public func Duration.subsecNanos(self: ref Duration): i64 {
     return self.nanos % 1000000000
 }
 
@@ -73,12 +110,17 @@ public func Duration.isZero(self: ref Duration): bool {
     return self.nanos == 0
 }
 
-/// Adds two durations together.
+/// Adds the signed nanosecond counts and returns a new duration.
+///
+/// No overflow check is performed by this function.
 public func Duration.add(self: ref Duration, other: Duration): Duration {
     return Duration { nanos: self.nanos + other.nanos }
 }
 
-/// Subtracts `other` from `self`, saturating at zero if `other` is greater.
+/// Subtracts `other` from this duration, returning zero when `other` is larger.
+///
+/// Comparison uses signed nanosecond values. The subtraction itself has no
+/// overflow check.
 public func Duration.sub(self: ref Duration, other: Duration): Duration {
     if self.nanos < other.nanos {
         return Duration { nanos: 0 }
@@ -91,15 +133,22 @@ public func Duration.sub(self: ref Duration, other: Duration): Duration {
 /// Instants are opaque and only useful for calculating intervals with `elapsed`
 /// or `durationSince`.
 public struct Instant {
-    nanos: int
+    /// Monotonic clock reading in nanoseconds.
+    nanos: i64
 }
 
-/// Returns an `Instant` corresponding to "now".
+/// Captures the current monotonic clock reading as an `Instant`.
+///
+/// Its numeric value has no calendar meaning. Use `elapsed` or
+/// `durationSince` to obtain a duration.
 public func now(): Instant {
     return Instant { nanos: monotonicNs() }
 }
 
-/// Returns the amount of time elapsed since this instant was created.
+/// Reads the clock and returns the nonnegative time since this instant.
+///
+/// If the new reading is earlier than the stored one, the result is zero.
+/// This method makes a fresh clock call each time.
 public func Instant.elapsed(self: ref Instant): Duration {
     let current = monotonicNs()
     if current < self.nanos {
@@ -108,7 +157,10 @@ public func Instant.elapsed(self: ref Instant): Duration {
     return Duration { nanos: current - self.nanos }
 }
 
-/// Returns the amount of time elapsed from another instant to this one.
+/// Returns the nonnegative interval from `earlier` to this instant.
+///
+/// If this instant precedes `earlier`, the result is zero. This method only
+/// compares stored readings; it does not call the clock.
 public func Instant.durationSince(self: ref Instant, earlier: Instant): Duration {
     if self.nanos < earlier.nanos {
         return Duration { nanos: 0 }

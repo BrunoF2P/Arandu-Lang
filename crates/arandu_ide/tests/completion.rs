@@ -38,6 +38,43 @@ fn struct_fields_complete_after_receiver_dot() {
 }
 
 #[test]
+fn private_fields_complete_only_in_owner_methods() {
+    let external = concat!(
+        "struct Secret { private value: int, public visible: int }\n",
+        "func leak(s: Secret): int { return s. }\n",
+    );
+    let external_items = completions_at(external, "return s.");
+    let external_fields: Vec<&str> = external_items
+        .iter()
+        .filter(|item| item.kind == CompletionKind::Field)
+        .map(|item| item.label.as_str())
+        .collect();
+    assert!(
+        external_fields.contains(&"visible"),
+        "got {external_fields:?}"
+    );
+    assert!(
+        !external_fields.contains(&"value"),
+        "got {external_fields:?}"
+    );
+
+    let internal = concat!(
+        "struct Secret { private value: int, public visible: int }\n",
+        "public func Secret.read(self: ref Secret): int { return self. }\n",
+    );
+    let internal_items = completions_at(internal, "return self.");
+    let internal_fields: Vec<&str> = internal_items
+        .iter()
+        .filter(|item| item.kind == CompletionKind::Field)
+        .map(|item| item.label.as_str())
+        .collect();
+    assert!(
+        internal_fields.contains(&"value"),
+        "got {internal_fields:?}"
+    );
+}
+
+#[test]
 fn enum_variants_complete_after_receiver_dot() {
     let text = concat!(
         "enum Color { Red, Green, Blue }\n",

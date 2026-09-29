@@ -22,6 +22,7 @@ pub struct InterfaceMethod {
 #[derive(Debug, Clone)]
 pub struct InterfaceInfo {
     pub self_param: Option<SymbolId>,
+    pub sealed: bool,
     /// Method specifications for the interface.
     pub methods: Vec<InterfaceMethod>,
 }
@@ -31,8 +32,7 @@ pub fn collect_interfaces_and_constraints(
     checker: &mut TypeChecker,
     program: &arandu_parser::Program,
 ) {
-    for decl_id in &program.decls {
-        let decl = checker.pool.decl(*decl_id);
+    program.for_each_decl_recursive(|_decl_id, decl| {
         use arandu_parser::TopLevelDecl;
         match decl {
             TopLevelDecl::Interface(iface) => collect_interface(checker, iface),
@@ -106,7 +106,7 @@ pub fn collect_interfaces_and_constraints(
             }
             _ => {}
         }
-    }
+    });
 }
 
 fn collect_interface(checker: &mut TypeChecker, decl: &arandu_parser::InterfaceDecl) {
@@ -158,6 +158,7 @@ fn collect_interface(checker: &mut TypeChecker, decl: &arandu_parser::InterfaceD
         iface_sym,
         InterfaceInfo {
             self_param,
+            sealed: decl.sealed,
             methods,
         },
     );
@@ -182,7 +183,17 @@ fn lower_func_signature(checker: &mut TypeChecker, sig: &FuncSignature, scope: S
     let mut param_types = Vec::new();
     for param in &sig.params {
         let ty = lower_type_expr_ctx(param.ty, &ctx, &mut checker.type_info.type_interner);
-        param_types.push(checker.type_info.type_interner.intern(ty));
+        let bare = checker.type_info.type_interner.intern(ty);
+        let param_ty = match param.ownership {
+            Some(arandu_parser::Ownership::Shared) => {
+                checker.type_info.type_interner.intern(ArType::Ref(bare))
+            }
+            Some(arandu_parser::Ownership::Mut) => {
+                checker.type_info.type_interner.intern(ArType::RefMut(bare))
+            }
+            _ => bare,
+        };
+        param_types.push(param_ty);
     }
     let ret = if let Some(result) = &sig.result {
         lower_result_type_ctx(result, &ctx, &mut checker.type_info.type_interner)
@@ -223,6 +234,25 @@ fn collect_decl_constraints(
         let Some(&param_sym) = name_to_sym.get(&gp.name) else {
             continue;
         };
+        if let Some(const_ty) = gp.const_ty {
+            let ctx = LowerCtx {
+                pool: checker.pool,
+                symbols: &checker.symbols,
+                scope,
+                resolved: &checker.resolved,
+            };
+            let declared =
+                lower_type_expr_ctx(const_ty, &ctx, &mut checker.type_info.type_interner);
+            let declared_id = checker.type_info.type_interner.intern(declared.clone());
+            checker.type_info.record_decl_type(param_sym, declared_id);
+            if !matches!(&declared, ArType::Primitive(primitive) if primitive.is_integer()) {
+                checker.diagnostics.push(crate::Diagnostic::error(
+                    crate::DiagCode::T011GenericConstraintNotSatisfied,
+                    "const generic parameters require a scalar integer type".to_string(),
+                    checker.pool.type_expr_span(const_ty),
+                ));
+            }
+        }
         // T2.1: register default type arg for this type parameter.
         if let Some(def_ty_id) = gp.default {
             let ctx = LowerCtx {
@@ -294,11 +324,22 @@ fn resolve_interface_constraint(
     };
     let key = crate::NodeKey::from(name.span);
     let Some(sym) = checker.resolved.type_refs.get(&key).copied() else {
-        checker.diagnostics.push(crate::Diagnostic::error(
-            crate::DiagCode::N002UndefinedType,
-            format!("unknown constraint type '{}'", name.path.join(".")),
-            name.span,
-        ));
+        let unresolved_import = name
+            .path
+            .first()
+            .is_some_and(|root| checker.symbols.unresolved_module_aliases.contains(root));
+        if !unresolved_import
+            && !checker.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code == crate::DiagCode::M002UndefinedNamespaceMember
+                    && diagnostic.span == name.span
+            })
+        {
+            checker.diagnostics.push(crate::Diagnostic::error(
+                crate::DiagCode::N002UndefinedType,
+                format!("unknown constraint type '{}'", name.path.join(".")),
+                name.span,
+            ));
+        }
         return None;
     };
     if checker.symbols.get(sym).kind != SymbolKind::Interface {
@@ -337,6 +378,29 @@ pub(crate) fn check_instantiation_constraints(
     arg_types: &[ArType],
     span: Span,
 ) {
+    for (&param_sym, arg_ty) in param_symbols.iter().zip(arg_types) {
+        let Some(parameter) = checker.symbols.try_get(param_sym) else {
+            continue;
+        };
+        let valid_kind = match parameter.kind {
+            SymbolKind::ConstParam => matches!(arg_ty, ArType::Const(_) | ArType::ConstParam(_)),
+            SymbolKind::TypeParam => !matches!(arg_ty, ArType::Const(_) | ArType::ConstParam(_)),
+            _ => true,
+        };
+        if !valid_kind {
+            let expected = if parameter.kind == SymbolKind::ConstParam {
+                "a compile-time scalar value"
+            } else {
+                "a type"
+            };
+            checker.diagnostics.push(crate::Diagnostic::error(
+                crate::DiagCode::T011GenericConstraintNotSatisfied,
+                format!("generic parameter '{}' expects {expected}", parameter.name),
+                span,
+            ));
+        }
+    }
+
     // Bounds may reference another parameter of this declaration (J: Job<R>).
     // Instantiate that obligation in the caller's type environment before
     // comparing it with the caller's declared bounds. Build only when needed.
@@ -467,6 +531,21 @@ pub(crate) fn type_satisfies_interface(
     let Some(iface) = checker.type_info.interfaces.get(&iface_sym) else {
         return false;
     };
+    if iface.sealed {
+        let Some(type_id) = concrete_type_id(concrete) else {
+            return false;
+        };
+        // Sealed interfaces require an explicit `impl Type: Interface` edge.
+        // Structural conformance would otherwise let foreign types bypass the
+        // package boundary enforced by name resolution.
+        if !checker
+            .symbols
+            .interface_implementations
+            .contains(&(type_id, iface_sym))
+        {
+            return false;
+        }
+    }
     if let Some(
         capability @ (arandu_middle::symbol_table::LangItem::Send
         | arandu_middle::symbol_table::LangItem::Sync
@@ -498,7 +577,8 @@ pub(crate) fn type_satisfies_interface(
         let self_param = iface.self_param;
         let required_stripped =
             strip_interface_receiver(required_inst, checker, Some(concrete), self_param);
-        let provided_stripped = strip_impl_receiver(provided, checker);
+        let provided_inst = instantiate_impl_method(checker, type_id, concrete, &method, provided);
+        let provided_stripped = strip_impl_receiver(provided_inst, checker);
         if !method_types_compatible(&required_stripped, &provided_stripped, checker) {
             return false;
         }
@@ -557,12 +637,49 @@ fn missing_interface_methods(
         };
         let required_stripped =
             strip_interface_receiver(required_inst, checker, Some(concrete), self_param);
-        let provided_stripped = strip_impl_receiver(provided, checker);
+        let provided_inst = instantiate_impl_method(checker, type_id, concrete, &method, provided);
+        let provided_stripped = strip_impl_receiver(provided_inst, checker);
         if !method_types_compatible(&required_stripped, &provided_stripped, checker) {
             missing.push(format!("{method} (signature mismatch)"));
         }
     }
     missing
+}
+
+fn instantiate_impl_method(
+    checker: &TypeChecker<'_>,
+    type_id: SymbolId,
+    concrete: &ArType,
+    method_name: &str,
+    method_ty: ArType,
+) -> ArType {
+    let ArType::Named(cid, args) = concrete else {
+        return method_ty;
+    };
+    if *cid != type_id || args.len == 0 {
+        return method_ty;
+    }
+    let method_sym = checker
+        .symbols
+        .lookup_associated_member(type_id, method_name);
+    let arg_vec = checker.type_info.type_interner.type_args(*args);
+    let recv_args: Vec<ArType> = arg_vec.iter().map(|&a| checker.resolve(a)).collect();
+
+    let param_syms: Vec<SymbolId> = if let Some(sym) = method_sym
+        && let Some(gp) = checker.type_info.generic_params.get(&sym)
+    {
+        let n = recv_args.len().min(gp.len());
+        gp.iter().copied().take(n).collect()
+    } else if let Some(gp) = checker.type_info.generic_params.get(&type_id) {
+        gp.iter().copied().take(recv_args.len()).collect()
+    } else {
+        return method_ty;
+    };
+    if param_syms.len() != recv_args.len() {
+        return method_ty;
+    }
+    let subst = build_subst(&param_syms, &recv_args);
+    substitute_type(&method_ty, &subst, &checker.type_info.type_interner)
 }
 
 fn concrete_type_id(ty: &ArType) -> Option<SymbolId> {
@@ -783,6 +900,7 @@ mod tests {
             span: Span::new(0, 0, 0),
             module: None,
             imports: Vec::new(),
+            interface_impls: Vec::new(),
             decls: Vec::new(),
             docs: Vec::new(),
             pool: AstPool::default(),
@@ -804,7 +922,7 @@ mod tests {
             kind: SymbolKind::Interface,
             span: Span::new(0, 0, 0),
             scope: ScopeId(0),
-            is_public: true,
+            visibility: arandu_parser::Visibility::Public,
             lang_item: None,
         };
         symbols.register_imported_symbol(iface_symbol);
@@ -816,7 +934,7 @@ mod tests {
             kind: SymbolKind::Struct,
             span: Span::new(0, 0, 0),
             scope: ScopeId(0),
-            is_public: true,
+            visibility: arandu_parser::Visibility::Public,
             lang_item: None,
         };
         symbols.register_imported_symbol(struct_symbol);
@@ -828,7 +946,7 @@ mod tests {
             kind: SymbolKind::TypeParam,
             span: Span::new(0, 0, 0),
             scope: ScopeId(0),
-            is_public: true,
+            visibility: arandu_parser::Visibility::Public,
             lang_item: None,
         };
         symbols.register_imported_symbol(self_symbol);
@@ -840,7 +958,7 @@ mod tests {
             kind: SymbolKind::Func,
             span: Span::new(0, 0, 0),
             scope: ScopeId(0),
-            is_public: true,
+            visibility: arandu_parser::Visibility::Public,
             lang_item: None,
         };
         symbols.register_imported_symbol(method_symbol);
@@ -888,6 +1006,7 @@ mod tests {
 
         let iface_info = InterfaceInfo {
             self_param: Some(self_sym_id),
+            sealed: false,
             methods: vec![InterfaceMethod {
                 name: "read".into(),
                 sig_id: req_method_type_id,
@@ -905,7 +1024,33 @@ mod tests {
             Span::new(0, 0, 0)
         ));
 
-        checker.symbols.associated_members.clear();
+        checker
+            .type_info
+            .interfaces
+            .get_mut(&iface_sym)
+            .expect("interface collected")
+            .sealed = true;
+        assert!(!type_satisfies_interface(
+            &mut checker,
+            &concrete,
+            iface_sym,
+            &[],
+            Span::new(0, 0, 0)
+        ));
+        std::sync::Arc::make_mut(&mut checker.symbols)
+            .interface_implementations
+            .insert((struct_sym_id, iface_sym));
+        assert!(type_satisfies_interface(
+            &mut checker,
+            &concrete,
+            iface_sym,
+            &[],
+            Span::new(0, 0, 0)
+        ));
+
+        std::sync::Arc::make_mut(&mut checker.symbols)
+            .associated_members
+            .clear();
         assert!(!type_satisfies_interface(
             &mut checker,
             &concrete,

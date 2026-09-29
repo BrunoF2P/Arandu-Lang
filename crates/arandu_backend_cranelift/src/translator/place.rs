@@ -1,5 +1,5 @@
 use arandu_semantics::amir::{AmirPlace, AmirProjection};
-use arandu_semantics::passes::type_checker::types::{ArType, Primitive, is_vec_type};
+use arandu_semantics::passes::type_checker::types::{ArType, is_vec_type};
 use cranelift_codegen::ir::{InstBuilder, Value};
 
 use super::FunctionTranslator;
@@ -12,10 +12,16 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
     ///   (heap/`ptr` materialised — identity GEP root).
     /// - **Named/heap objects**: SSA local holds the object pointer.
     pub(super) fn translate_place_address_for_load(&mut self, place: &AmirPlace) -> (Value, i32) {
-        let through_ptr = place
-            .projections
-            .iter()
-            .any(|p| matches!(p, AmirProjection::Deref));
+        let base_is_ptr_like = !place.projections.is_empty()
+            && matches!(
+                self.local_ar_ty(place.local),
+                ArType::Ref(_) | ArType::RefMut(_) | ArType::Ptr(_) | ArType::Nullable(_)
+            );
+        let through_ptr = base_is_ptr_like
+            || place
+                .projections
+                .iter()
+                .any(|p| matches!(p, AmirProjection::Deref));
 
         let mut ptr_val = if !through_ptr {
             if let Some(&slot) = self.local_stack_slots.get(&place.local) {
@@ -35,6 +41,14 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
             // BC.4a: local holds the base pointer; do not take address of the stack slot.
             if let Some(&var) = self.local_map.get(&place.local) {
                 self.builder.use_var(var)
+            } else if let Some(&slot) = self.local_stack_slots.get(&place.local) {
+                let addr = self.builder.ins().stack_addr(self.ptr_type, slot, 0);
+                self.builder.ins().load(
+                    self.ptr_type,
+                    cranelift_codegen::ir::MemFlagsData::new(),
+                    addr,
+                    0,
+                )
             } else {
                 self.record_ice(
                     "BC.4a: heap/ptr borrow of undeclared local",
@@ -55,24 +69,19 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                 }
                 AmirProjection::Field(symbol_id) => {
                     let offset = self.translate_projection_offset(&mut current_ty, *symbol_id);
-                    if matches!(
-                        current_ty,
-                        ArType::Primitive(Primitive::Str) | ArType::Slice(_)
-                    ) {
-                        // Fat-pointer fields live inline as `{ data, len }`. A following
-                        // projection needs the descriptor address; loading here would
-                        // turn its data word into a descriptor and make the bounds check
-                        // read element bytes as the length.
-                        if offset != 0 {
-                            ptr_val = self.builder.ins().iadd_imm_s(ptr_val, i64::from(offset));
-                        }
-                    } else {
-                        ptr_val = self.builder.ins().load(
-                            self.ptr_type,
-                            cranelift_codegen::ir::MemFlagsData::new(),
-                            ptr_val,
-                            offset,
-                        );
+                    if offset != 0 {
+                        ptr_val = self.builder.ins().iadd_imm_s(ptr_val, i64::from(offset));
+                    }
+                }
+                AmirProjection::Variant(_) => {}
+                AmirProjection::Payload { .. } | AmirProjection::TupleField(_) => {
+                    let offset = self.translate_indexed_projection_offset(
+                        &mut current_ty,
+                        &projs[i],
+                        place.local,
+                    );
+                    if offset != 0 {
+                        ptr_val = self.builder.ins().iadd_imm_s(ptr_val, i64::from(offset));
                     }
                 }
                 AmirProjection::Index(op) => {
@@ -110,9 +119,10 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                         );
                     }
                     let inner_ty_id = match &current_ty {
-                        ArType::Ptr(inner) | ArType::Slice(inner) | ArType::Array(_, inner) => {
-                            *inner
-                        }
+                        ArType::Ptr(inner)
+                        | ArType::Slice(inner)
+                        | ArType::Array(_, inner)
+                        | ArType::ConstArray(_, inner) => *inner,
                         ArType::Ref(inner) | ArType::RefMut(inner) => *inner,
                         _ => {
                             self.record_ice(
@@ -129,6 +139,24 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                     let elem_size = self.builder.ins().iconst(self.ptr_type, layout.size as i64);
                     let offset_val = self.builder.ins().imul(idx_val, elem_size);
                     ptr_val = self.builder.ins().iadd(ptr_val, offset_val);
+                }
+                AmirProjection::IndexConstant(index) => {
+                    let inner_ty_id = match &current_ty {
+                        ArType::Array(_, inner) | ArType::ConstArray(_, inner) => *inner,
+                        _ => {
+                            self.record_ice(
+                                "constant indexing non-array type in codegen",
+                                self.local_span(place.local),
+                            );
+                            return (self.poison_i32(), 0);
+                        }
+                    };
+                    current_ty = self.type_info.resolve_type_id(inner_ty_id);
+                    let layout = self.checked_layout(&current_ty);
+                    let offset = layout.size.checked_mul(*index as u64).unwrap_or(0);
+                    if offset > 0 {
+                        ptr_val = self.builder.ins().iadd_imm_s(ptr_val, offset as i64);
+                    }
                 }
             }
         }
@@ -151,6 +179,15 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                     current_ty = unwrap_ptr_like(&current_ty, self);
                 }
                 let offset = self.translate_projection_offset(&mut current_ty, *symbol_id);
+                (ptr_val, offset)
+            }
+            AmirProjection::Variant(_) => (ptr_val, 0),
+            AmirProjection::Payload { .. } | AmirProjection::TupleField(_) => {
+                let offset = self.translate_indexed_projection_offset(
+                    &mut current_ty,
+                    last_proj,
+                    place.local,
+                );
                 (ptr_val, offset)
             }
             AmirProjection::Index(op) => {
@@ -202,7 +239,10 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                     );
                 }
                 let inner_ty_id = match &current_ty {
-                    ArType::Ptr(inner) | ArType::Slice(inner) | ArType::Array(_, inner) => *inner,
+                    ArType::Ptr(inner)
+                    | ArType::Slice(inner)
+                    | ArType::Array(_, inner)
+                    | ArType::ConstArray(_, inner) => *inner,
                     ArType::Ref(inner) | ArType::RefMut(inner) => *inner,
                     ArType::Named(_, args) if is_vec => {
                         self.type_info.type_interner.type_args(*args)[0]
@@ -224,6 +264,27 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                 let target_ptr = self.builder.ins().iadd(ptr_val, offset_val);
                 (target_ptr, 0)
             }
+            AmirProjection::IndexConstant(index) => {
+                let inner_ty_id = match &current_ty {
+                    ArType::Array(_, inner) | ArType::ConstArray(_, inner) => *inner,
+                    _ => {
+                        self.record_ice(
+                            "constant indexing non-array type in codegen",
+                            self.local_span(place.local),
+                        );
+                        return (self.poison_i32(), 0);
+                    }
+                };
+                current_ty = self.type_info.resolve_type_id(inner_ty_id);
+                let layout = self.checked_layout(&current_ty);
+                let offset = layout.size.checked_mul(*index as u64).unwrap_or(0);
+                let target_ptr = if offset > 0 {
+                    self.builder.ins().iadd_imm_s(ptr_val, offset as i64)
+                } else {
+                    ptr_val
+                };
+                (target_ptr, 0)
+            }
         }
     }
 
@@ -234,6 +295,7 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
         if lhs.projections.is_empty() {
             if let Some(&var) = self.local_map.get(&lhs.local) {
                 self.builder.def_var(var, val);
+                self.label_local_value(lhs.local, val);
             }
             if let Some(&slot) = self.local_stack_slots.get(&lhs.local) {
                 let addr = self.builder.ins().stack_addr(self.ptr_type, slot, 0);
@@ -250,6 +312,26 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
             }
         } else {
             let (base_ptr, offset) = self.translate_place_address_for_load(lhs);
+            let place_ty = self.place_ar_ty(lhs);
+            if self.is_inline_aggregate_ty(&place_ty) {
+                let dest = if offset == 0 {
+                    base_ptr
+                } else {
+                    self.builder.ins().iadd_imm_s(base_ptr, i64::from(offset))
+                };
+                let layout = self.checked_layout(&place_ty);
+                if layout.size > 0 {
+                    let Some(memmove_id) = self.memmove_func_id() else {
+                        return;
+                    };
+                    let memmove_ref = self
+                        .module
+                        .declare_func_in_func(memmove_id, self.builder.func);
+                    let size = self.builder.ins().iconst(self.ptr_type, layout.size as i64);
+                    self.builder.ins().call(memmove_ref, &[dest, val, size]);
+                }
+                return;
+            }
             self.builder.ins().store(
                 cranelift_codegen::ir::MemFlagsData::new(),
                 val,
@@ -290,7 +372,6 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
 
         let layout = self.checked_layout(&struct_ty);
         let offset = layout.field_offsets.get(field_idx).copied().unwrap_or(0) as i32;
-
         // Update current_ty to the field type for nested projections.
         if let Some(field) = arandu_semantics::layout::instantiated_field_type(
             &struct_ty,
@@ -303,6 +384,73 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
         }
         *current_ty = ArType::Error;
         offset
+    }
+
+    fn translate_indexed_projection_offset(
+        &mut self,
+        current_ty: &mut ArType,
+        projection: &AmirProjection,
+        local: arandu_semantics::amir::LocalId,
+    ) -> i32 {
+        let (offset, result_ty) = match projection {
+            AmirProjection::Payload {
+                index,
+                field_ty,
+                tuple_ty,
+                ..
+            } => {
+                let owner_ty = match &*current_ty {
+                    ArType::Ref(inner) | ArType::RefMut(inner) | ArType::Ptr(inner) => {
+                        self.type_info.resolve_type_id(*inner)
+                    }
+                    other => other.clone(),
+                };
+                let owner_layout = self.checked_layout(&owner_ty);
+                let mut offset = owner_layout.field_offsets.get(1).copied().unwrap_or(0);
+                if let Some(tuple_ty) = tuple_ty {
+                    let tuple = self.type_info.resolve_type_id(*tuple_ty);
+                    let tuple_layout = self.checked_layout(&tuple);
+                    offset = offset.saturating_add(
+                        tuple_layout.field_offsets.get(*index).copied().unwrap_or(0),
+                    );
+                }
+                (offset, self.type_info.resolve_type_id(*field_ty))
+            }
+            AmirProjection::TupleField(index) => {
+                let tuple_layout = self.checked_layout(current_ty);
+                let offset = tuple_layout.field_offsets.get(*index).copied().unwrap_or(0);
+                let result = match current_ty {
+                    ArType::Tuple(args) => self
+                        .type_info
+                        .type_interner
+                        .type_args(*args)
+                        .get(*index)
+                        .copied()
+                        .map(|id| self.type_info.resolve_type_id(id))
+                        .unwrap_or(ArType::Error),
+                    _ => ArType::Error,
+                };
+                (offset, result)
+            }
+            _ => {
+                self.record_ice(
+                    "non-indexed projection passed to payload offset",
+                    self.local_span(local),
+                );
+                return 0;
+            }
+        };
+        *current_ty = result_ty;
+        match i32::try_from(offset) {
+            Ok(offset) => offset,
+            Err(_) => {
+                self.record_ice(
+                    "AMIR place projection offset exceeds Cranelift displacement range",
+                    self.local_span(local),
+                );
+                0
+            }
+        }
     }
 
     pub(crate) fn place_ar_ty(&self, place: &AmirPlace) -> ArType {
@@ -332,7 +480,25 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                         return ArType::Error;
                     }
                 }
-                AmirProjection::Index(_) => {
+                AmirProjection::Variant(_) => {}
+                AmirProjection::Payload { field_ty, .. } => {
+                    current_ty = self.type_info.resolve_type_id(*field_ty);
+                }
+                AmirProjection::TupleField(index) => {
+                    if let ArType::Tuple(args) = &current_ty {
+                        current_ty = self
+                            .type_info
+                            .type_interner
+                            .type_args(*args)
+                            .get(*index)
+                            .copied()
+                            .map(|id| self.type_info.resolve_type_id(id))
+                            .unwrap_or(ArType::Error);
+                    } else {
+                        return ArType::Error;
+                    }
+                }
+                AmirProjection::Index(_) | AmirProjection::IndexConstant(_) => {
                     if matches!(
                         current_ty,
                         ArType::Ptr(_) | ArType::Ref(_) | ArType::RefMut(_) | ArType::Nullable(_)
@@ -341,9 +507,10 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                     }
                     let is_vec = is_vec_type(&current_ty, self.symbol_table);
                     let inner_ty_id = match &current_ty {
-                        ArType::Ptr(inner) | ArType::Slice(inner) | ArType::Array(_, inner) => {
-                            *inner
-                        }
+                        ArType::Ptr(inner)
+                        | ArType::Slice(inner)
+                        | ArType::Array(_, inner)
+                        | ArType::ConstArray(_, inner) => *inner,
                         ArType::Ref(inner) | ArType::RefMut(inner) => *inner,
                         ArType::Named(_, args) if is_vec => {
                             self.type_info.type_interner.type_args(*args)[0]

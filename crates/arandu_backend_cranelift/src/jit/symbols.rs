@@ -25,7 +25,7 @@ pub(crate) fn declare_runtime_imports<M: Module>(
     malloc_sig.params.push(AbiParam::new(ptr_type));
     malloc_sig.returns.push(AbiParam::new(ptr_type));
     let malloc_id = module
-        .declare_function("malloc", Linkage::Import, &malloc_sig)
+        .declare_function("ar_rt_raw_malloc", Linkage::Import, &malloc_sig)
         .map_err(|err| codegen_ice(format!("failed to declare malloc: {err:?}")))?;
     insert_sym(func_ids, "malloc", malloc_id);
 
@@ -33,22 +33,13 @@ pub(crate) fn declare_runtime_imports<M: Module>(
     let mut free_sig = Signature::new(default_call_conv);
     free_sig.params.push(AbiParam::new(ptr_type));
     let free_id = module
-        .declare_function("free", Linkage::Import, &free_sig)
+        .declare_function("ar_rt_raw_free", Linkage::Import, &free_sig)
         .map_err(|err| codegen_ice(format!("failed to declare free: {err:?}")))?;
     insert_sym(func_ids, "free", free_id);
 
-    // Declare abort as import
-    let abort_sig = Signature::new(default_call_conv);
-    let abort_id = module
-        .declare_function("abort", Linkage::Import, &abort_sig)
-        .map_err(|err| codegen_ice(format!("failed to declare abort: {err:?}")))?;
-    insert_sym(func_ids, "abort", abort_id);
-    insert_sym(func_ids, "std.core.intrinsics.abort", abort_id);
-    insert_sym(
-        func_ids,
-        "std.core.intrinsics.abortGenerationalMismatch",
-        abort_id,
-    );
+    // PAN / Invariant 5: `abort` and `abortGenerationalMismatch` are compiler intrinsics
+    // that lower directly to native hardware traps (UD2 on x86_64, BRK on AArch64)
+    // with zero unwinding metadata overhead, without importing libc abort.
 
     // SL_T.4 opaque optimization barriers. Signatures deliberately match
     // the machine representation selected by lowering.
@@ -252,37 +243,10 @@ pub(crate) fn declare_runtime_imports<M: Module>(
             .map_err(|err| codegen_ice(format!("failed to declare ar_path_file_name: {err:?}")))?;
         insert_sym(func_ids, "ar_path_file_name", id);
 
-        let mut len_sig = Signature::new(default_call_conv);
-        len_sig.params.push(AbiParam::new(ptr_type));
-        len_sig.params.push(AbiParam::new(ptr_type));
-        len_sig.returns.push(AbiParam::new(ptr_type));
-        let id = module
-            .declare_function("ar_str_len", Linkage::Import, &len_sig)
-            .map_err(|err| codegen_ice(format!("failed to declare ar_str_len: {err:?}")))?;
-        insert_sym(func_ids, "ar_str_len", id);
-
         let id = module
             .declare_function("ar_str_concat", Linkage::Import, &join_sig)
             .map_err(|err| codegen_ice(format!("failed to declare ar_str_concat: {err:?}")))?;
         insert_sym(func_ids, "ar_str_concat", id);
-
-        let mut pref_sig = Signature::new(default_call_conv);
-        for _ in 0..2 {
-            pref_sig.params.push(AbiParam::new(ptr_type));
-            pref_sig.params.push(AbiParam::new(ptr_type));
-        }
-        pref_sig.returns.push(AbiParam::new(ptr_type));
-        for name in [
-            "ar_str_starts_with",
-            "ar_str_ends_with",
-            "ar_str_contains",
-            "ar_str_find",
-        ] {
-            let id = module
-                .declare_function(name, Linkage::Import, &pref_sig)
-                .map_err(|err| codegen_ice(format!("failed to declare {name}: {err:?}")))?;
-            insert_sym(func_ids, name, id);
-        }
 
         let id = module
             .declare_function("ar_str_split_last", Linkage::Import, &join_sig)
@@ -618,7 +582,7 @@ pub(crate) fn declare_runtime_imports<M: Module>(
         }
     }
 
-    // Libc imports: fmod, memcpy, memcmp
+    // Libc imports: fmod, memcpy, memmove, memcmp
     let mut fmod_sig = Signature::new(default_call_conv);
     fmod_sig.params.push(AbiParam::new(F64));
     fmod_sig.params.push(AbiParam::new(F64));
@@ -637,6 +601,11 @@ pub(crate) fn declare_runtime_imports<M: Module>(
         .declare_function("memcpy", Linkage::Import, &memcpy_sig)
         .map_err(|err| codegen_ice(format!("failed to declare memcpy: {err:?}")))?;
     insert_sym(func_ids, "memcpy", memcpy_id);
+
+    let memmove_id = module
+        .declare_function("memmove", Linkage::Import, &memcpy_sig)
+        .map_err(|err| codegen_ice(format!("failed to declare memmove: {err:?}")))?;
+    insert_sym(func_ids, "memmove", memmove_id);
 
     let mut memcmp_sig = Signature::new(default_call_conv);
     memcmp_sig.params.push(AbiParam::new(ptr_type));

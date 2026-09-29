@@ -9,7 +9,9 @@ pub mod simd;
 
 pub use error::{LexError, LexErrorCode};
 pub use lexer::Lexer;
-pub use token::{Span, Token, TokenKind};
+pub use token::{
+    Span, Token, TokenKind, byte_literal, char_literal, decode_byte_content, decode_char_content,
+};
 
 /// Classify a complete source spelling as an identifier token.
 ///
@@ -84,6 +86,16 @@ mod tests {
     }
 
     #[test]
+    fn inner_doc_comment_lexes_as_doc_comment() {
+        let dump = lex_to_string("//! Module overview.").unwrap();
+        assert!(dump.contains("DOC_COMMENT"));
+        let dump = lex_to_string("/// Item docs.").unwrap();
+        assert!(dump.contains("DOC_COMMENT"));
+        let dump = lex_to_string("// Regular comment.").unwrap();
+        assert!(!dump.contains("DOC_COMMENT"));
+    }
+
+    #[test]
     fn identifier_kind_uses_the_language_lexer_contract() {
         assert_eq!(identifier_kind("value_2"), Some(TokenKind::IdentValue));
         assert_eq!(identifier_kind("Point"), Some(TokenKind::IdentType));
@@ -132,5 +144,46 @@ mod tests {
     fn reports_invalid_unicode_escape_in_char() {
         let err = lex("'\\u{}'").unwrap_err();
         assert_eq!(err.code, LexErrorCode::InvalidUnicodeEscape);
+    }
+
+    #[test]
+    fn character_literal_encoder_and_decoder_round_trip_scalars() {
+        for value in ['a', 'é', '中', '🦀', '\n', '\t', '\0', '\'', '\\', '"', '$'] {
+            let source = char_literal(value);
+            let token = lex(&source).expect("encoded char literal must lex").tokens[0];
+            assert_eq!(token.char_value(&source), Some(value), "{source:?}");
+        }
+        let token = lex("'\\u{1F980}'").expect("unicode escape must lex").tokens[0];
+        assert_eq!(token.char_value("'\\u{1F980}'"), Some('🦀'));
+    }
+
+    #[test]
+    fn rejects_surrogate_unicode_escapes_as_non_scalars() {
+        let error = lex("'\\u{D800}'").unwrap_err();
+        assert_eq!(error.code, LexErrorCode::InvalidUnicodeEscape);
+        let error = lex("\"\\u{D800}\"").unwrap_err();
+        assert_eq!(error.code, LexErrorCode::InvalidUnicodeEscape);
+    }
+
+    #[test]
+    fn byte_literal_lexing_and_decoding() {
+        for b in *b"/*#aZ0 \n\t\r\0'\\" {
+            let source = byte_literal(b);
+            let result = lex(&source).expect("encoded byte literal must lex");
+            assert_eq!(result.tokens[0].kind, TokenKind::ByteChar);
+            assert_eq!(result.tokens[0].byte_value(&source), Some(b), "{source:?}");
+        }
+
+        let hex = "b'\\x41'";
+        let res = lex(hex).expect("hex byte literal must lex");
+        assert_eq!(res.tokens[0].kind, TokenKind::ByteChar);
+        assert_eq!(res.tokens[0].byte_value(hex), Some(65));
+
+        assert_eq!(lex("b''").unwrap_err().code, LexErrorCode::EmptyChar);
+        assert_eq!(lex("b'ab'").unwrap_err().code, LexErrorCode::CharTooLong);
+        assert_eq!(
+            lex("b'open").unwrap_err().code,
+            LexErrorCode::UnterminatedChar
+        );
     }
 }

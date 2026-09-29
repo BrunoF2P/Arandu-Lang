@@ -8,9 +8,20 @@ pub struct HandCtx<'a> {
     pub pool: &'a mut AstPool,
     pub source: &'a str,
     pub file_id: u32,
+    pub depth: u32,
 }
 
-impl HandCtx<'_> {
+impl<'a> HandCtx<'a> {
+    #[must_use]
+    pub fn new(pool: &'a mut AstPool, source: &'a str, file_id: u32) -> Self {
+        Self {
+            pool,
+            source,
+            file_id,
+            depth: 0,
+        }
+    }
+
     #[inline]
     #[must_use]
     pub fn span(&self, start: u32, end: u32) -> Span {
@@ -54,12 +65,11 @@ pub fn stmt_tokens(tokens: &[Token], start: u32, end: u32) -> Vec<&Token> {
 
 /// Drop leading semis and trailing closers that belong to outer constructs.
 pub fn trim_stmt_token_slice(toks: &mut Vec<&Token>) {
-    while toks
-        .first()
-        .is_some_and(|t| matches!(t.kind, TokenKind::Semicolon))
-    {
-        toks.remove(0);
-    }
+    let start = toks
+        .iter()
+        .position(|t| !matches!(t.kind, TokenKind::Semicolon))
+        .unwrap_or(toks.len());
+    toks.drain(..start);
     // Drop trailing tokens once delimiter depth returns to 0 and we see an outer closer.
     let mut depth: i32 = 0;
     let mut cut = toks.len();
@@ -91,7 +101,7 @@ pub fn token_text<'a>(source: &'a str, t: &Token) -> Option<&'a str> {
 #[inline]
 #[must_use]
 pub fn token_span(file_id: u32, t: &Token) -> Span {
-    Span::new(file_id, t.start, t.start + t.len)
+    Span::new(file_id, t.start, t.end())
 }
 
 /// Lightweight cursor over a token slice.

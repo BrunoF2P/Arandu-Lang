@@ -17,12 +17,15 @@ mod terminator;
 
 use arandu_base::span::Span;
 use arandu_semantics::amir::{
-    AmirBasicBlock, AmirConstant, AmirFunc, AmirOperand, AmirStmt, AmirTerminator, BlockId,
-    InstrId, LocalId, TempId,
+    AmirBasicBlock, AmirConstant, AmirDebugBinding, AmirFunc, AmirOperand, AmirStmt,
+    AmirTerminator, BlockId, InstrId, LocalId, TempId,
 };
 use arandu_semantics::passes::type_checker::types::{ArType, Primitive};
 use arandu_semantics::{DiagCode, Diagnostic, SymbolTable};
-use cranelift_codegen::ir::{Block, InstBuilder, StackSlot, Type, Value};
+use cranelift_codegen::ir::{
+    Block, InstBuilder, RelSourceLoc, SourceLoc, StackSlot, Type, Value, ValueLabel,
+    ValueLabelAssignments, ValueLabelStart,
+};
 use cranelift_frontend::{FunctionBuilder, Variable};
 use cranelift_module::{FuncId, Module};
 use rustc_hash::FxHashMap;
@@ -61,6 +64,10 @@ pub struct FunctionTranslator<'a, 'b, M: Module> {
     pub literal_pool: &'b arandu_semantics::literal_pool::AmirLiteralPool,
     pub current_func: &'b AmirFunc,
     pub type_info: &'b arandu_semantics::TypeInfo,
+    block_coverage: Option<(FuncId, u32, i64)>,
+    pub(crate) debug_locations: Option<&'b mut Vec<Span>>,
+    debug_temp_locals: Option<FxHashMap<TempId, Vec<LocalId>>>,
+    current_debug_location: Option<u32>,
     pub(crate) error: Option<Diagnostic>,
 }
 
@@ -92,7 +99,22 @@ impl<'a, 'b, M: Module> FunctionTranslator<'a, 'b, M> {
         literal_pool: &'b arandu_semantics::literal_pool::AmirLiteralPool,
         current_func: &'b AmirFunc,
         type_info: &'b arandu_semantics::TypeInfo,
+        debug_locations: Option<&'b mut Vec<Span>>,
+        debug_bindings: &'b [AmirDebugBinding],
+        block_coverage: Option<(FuncId, u32, i64)>,
     ) -> Self {
+        let debug_temp_locals = debug_locations.as_ref().map(|_| {
+            let mut by_temp = FxHashMap::<TempId, Vec<LocalId>>::default();
+            for binding in debug_bindings {
+                if binding.function == current_func.symbol {
+                    let locals = by_temp.entry(binding.temp).or_default();
+                    if !locals.contains(&binding.local) {
+                        locals.push(binding.local);
+                    }
+                }
+            }
+            by_temp
+        });
         Self {
             builder,
             module,
@@ -108,7 +130,103 @@ impl<'a, 'b, M: Module> FunctionTranslator<'a, 'b, M> {
             literal_pool,
             current_func,
             type_info,
+            block_coverage,
+            debug_locations,
+            debug_temp_locals,
+            current_debug_location: None,
             error: None,
+        }
+    }
+
+    fn set_debug_span(&mut self, span: Span) {
+        let Some(locations) = &mut self.debug_locations else {
+            return;
+        };
+        let Ok(index) = u32::try_from(locations.len()) else {
+            self.record_ice("DWARF source-location table exceeds u32", span);
+            return;
+        };
+        locations.push(span);
+        self.builder.set_srcloc(SourceLoc::new(index));
+        self.current_debug_location = Some(index);
+    }
+
+    pub(crate) fn label_local_value(&mut self, local: LocalId, value: Value) {
+        let Some(location) = self.current_debug_location else {
+            return;
+        };
+        let Ok(label) = u32::try_from(local.as_usize()) else {
+            self.record_ice("DWARF local label exceeds u32", self.local_span(local));
+            return;
+        };
+        let from = RelSourceLoc::from_base_offset(
+            self.builder.func.params.base_srcloc(),
+            SourceLoc::new(location),
+        );
+        let Some(labels) = self.builder.func.dfg.values_labels.as_mut() else {
+            return;
+        };
+        let starts = labels
+            .entry(value)
+            .or_insert_with(|| ValueLabelAssignments::Starts(Vec::new()));
+        if let ValueLabelAssignments::Starts(starts) = starts {
+            starts.push(ValueLabelStart {
+                from,
+                label: ValueLabel::from_u32(label),
+            });
+        }
+    }
+
+    pub(crate) fn label_temp_value(&mut self, temp: TempId, value: Value) {
+        let count = self
+            .debug_temp_locals
+            .as_ref()
+            .and_then(|bindings| bindings.get(&temp))
+            .map_or(0, Vec::len);
+        for index in 0..count {
+            let local = self.debug_temp_locals.as_ref().and_then(|bindings| {
+                bindings
+                    .get(&temp)
+                    .and_then(|locals| locals.get(index))
+                    .copied()
+            });
+            if let Some(local) = local {
+                self.label_local_value(local, value);
+            }
+        }
+    }
+
+    fn operand_span(&self, operand: &AmirOperand) -> Span {
+        match operand {
+            AmirOperand::Copy(temp) | AmirOperand::Move(temp) => self.temp_span(*temp),
+            AmirOperand::FunctionRef(symbol) | AmirOperand::GlobalRef(symbol) => {
+                self.symbol_table.get(*symbol).span
+            }
+            AmirOperand::Constant(_) => self.func_span(),
+        }
+    }
+
+    fn stmt_span(&self, stmt: &AmirStmt) -> Span {
+        match stmt {
+            AmirStmt::Assign { lhs, .. } => self.temp_span(*lhs),
+            AmirStmt::Store { lhs, rhs } => {
+                let rhs_span = self.operand_span(rhs);
+                if rhs_span.start != rhs_span.end {
+                    rhs_span
+                } else {
+                    self.local_span(lhs.local)
+                }
+            }
+            AmirStmt::Call { lhs, callee, .. } => lhs
+                .map(|temp| self.temp_span(temp))
+                .unwrap_or_else(|| self.operand_span(callee)),
+            AmirStmt::Free(operand) => self.operand_span(operand),
+            AmirStmt::StorageLive(local)
+            | AmirStmt::StorageDead(local)
+            | AmirStmt::Destroy(arandu_semantics::amir::AmirPlace { local, .. }) => {
+                self.local_span(*local)
+            }
+            AmirStmt::Nop => self.func_span(),
         }
     }
 
@@ -141,6 +259,18 @@ impl<'a, 'b, M: Module> FunctionTranslator<'a, 'b, M> {
                     ClifType::Void => None,
                 }
             })
+    }
+
+    pub(crate) fn get_operand_clif_type(&self, operand: &AmirOperand) -> Option<Type> {
+        match operand {
+            AmirOperand::Copy(temp_id) | AmirOperand::Move(temp_id) => {
+                self.get_temp_clif_type(*temp_id)
+            }
+            _ => match clif_type(&self.get_operand_ar_type(operand), self.ptr_type) {
+                ClifType::Concrete(ty) => Some(ty),
+                ClifType::Void => None,
+            },
+        }
     }
 
     pub(crate) fn func_span(&self) -> Span {
@@ -180,28 +310,31 @@ impl<'a, 'b, M: Module> FunctionTranslator<'a, 'b, M> {
                     ),
                     self.func_span(),
                 );
-                arandu_semantics::layout::TypeLayout {
-                    size: 0,
-                    align: 1,
-                    field_offsets: Vec::new(),
-                }
+                arandu_semantics::layout::TypeLayout::simple(0, 1)
             }
             Err(error) => {
                 self.record_ice(
                     format!("Cranelift rejected an invalid type layout: {error}"),
                     self.func_span(),
                 );
-                arandu_semantics::layout::TypeLayout {
-                    size: 0,
-                    align: 1,
-                    field_offsets: Vec::new(),
-                }
+                arandu_semantics::layout::TypeLayout::simple(0, 1)
             }
         }
     }
 
+    pub(crate) fn classify_arg_abi(&mut self, ty: &ArType) -> arandu_semantics::layout::ArgAbi {
+        let triple = self.module.isa().triple();
+        let target_abi = crate::abi::target_abi_for_triple(triple);
+        let pointer_width = self.ptr_type.bytes() as u64;
+        let classifier =
+            arandu_semantics::layout::TargetAbiClassifier::new(target_abi, pointer_width);
+        classifier.classify_type(ty, &self.type_info.type_interner, self.type_info)
+    }
+
     pub(crate) fn poison_i32(&mut self) -> Value {
-        self.builder.ins().iconst(self.ptr_type, 0)
+        self.builder
+            .ins()
+            .iconst(cranelift_codegen::ir::types::I32, 0)
     }
 
     pub(crate) fn poison_value(&mut self, clif_ty: cranelift_codegen::ir::Type) -> Value {
@@ -280,6 +413,7 @@ impl<'a, 'b, M: Module> FunctionTranslator<'a, 'b, M> {
     #[tracing::instrument(level = "trace", target = "arandu_backend_cranelift", skip(self))]
 
     pub fn translate(&mut self) -> Result<(), Diagnostic> {
+        self.set_debug_span(self.func_span());
         for (idx, _block) in self.current_func.blocks.iter().enumerate() {
             let block_id = BlockId::from_usize(idx);
             let clif_block = self.builder.create_block();
@@ -292,8 +426,16 @@ impl<'a, 'b, M: Module> FunctionTranslator<'a, 'b, M> {
             if block_id.as_usize() > 0 {
                 for param in self.current_func.block_params(block.params) {
                     let pty = self.resolve_ty(param.ty);
-                    for &clif_ty in &clif_types(&pty, self.ptr_type) {
-                        self.builder.append_block_param(clif_block, clif_ty);
+                    match self.fat_operand_kind(&pty) {
+                        operand::FatOperandKind::Str | operand::FatOperandKind::Slice => {
+                            self.builder.append_block_param(clif_block, self.ptr_type);
+                            self.builder.append_block_param(clif_block, self.ptr_type);
+                        }
+                        operand::FatOperandKind::None => {
+                            for &clif_ty in &clif_types(&pty, self.ptr_type) {
+                                self.builder.append_block_param(clif_block, clif_ty);
+                            }
+                        }
                     }
                 }
             }
@@ -375,6 +517,15 @@ impl<'a, 'b, M: Module> FunctionTranslator<'a, 'b, M> {
         }
         Ok(())
     }
+
+    pub(crate) fn is_current_block_terminated(&self) -> bool {
+        if let Some(block) = self.builder.current_block()
+            && let Some(inst) = self.builder.func.layout.last_inst(block)
+        {
+            return self.builder.func.dfg.insts[inst].opcode().is_terminator();
+        }
+        false
+    }
 }
 
 impl<'a, 'b, M: Module> AmirVisitor for FunctionTranslator<'a, 'b, M> {
@@ -384,6 +535,33 @@ impl<'a, 'b, M: Module> AmirVisitor for FunctionTranslator<'a, 'b, M> {
         }
         let clif_block = self.block_map[&block.id];
         self.builder.switch_to_block(clif_block);
+        if let Some((coverage_func, function_index, session_id)) = self.block_coverage {
+            let Ok(block_index) = i64::try_from(block.id.as_usize()) else {
+                self.record_ice(
+                    "AMIR block index exceeds the JIT coverage ABI",
+                    self.func_span(),
+                );
+                return;
+            };
+            let func_ref = self
+                .module
+                .declare_func_in_func(coverage_func, self.builder.func);
+            let session_id = self
+                .builder
+                .ins()
+                .iconst(cranelift_codegen::ir::types::I64, session_id);
+            let function_index = self
+                .builder
+                .ins()
+                .iconst(cranelift_codegen::ir::types::I64, i64::from(function_index));
+            let block_index = self
+                .builder
+                .ins()
+                .iconst(cranelift_codegen::ir::types::I64, block_index);
+            self.builder
+                .ins()
+                .call(func_ref, &[session_id, function_index, block_index]);
+        }
 
         if block.id.as_usize() == 0 {
             for local in &self.current_func.locals {
@@ -436,7 +614,10 @@ impl<'a, 'b, M: Module> AmirVisitor for FunctionTranslator<'a, 'b, M> {
                         self.builder.def_var(var_ptr, ptr_val);
                         self.builder.def_var(var_len, len_val);
                     }
-                } else if matches!(&param_ty, ArType::Slice(_)) {
+                } else if matches!(
+                    self.fat_operand_kind(&param_ty),
+                    operand::FatOperandKind::Slice
+                ) {
                     let data = clif_params[clif_slot_idx];
                     let len = clif_params[clif_slot_idx + 1];
                     clif_slot_idx += 2;
@@ -444,12 +625,60 @@ impl<'a, 'b, M: Module> AmirVisitor for FunctionTranslator<'a, 'b, M> {
                     if let Some(&var) = self.temp_map.get(&param_temp_id) {
                         self.builder.def_var(var, descriptor);
                     }
+                } else if matches!(&param_ty, ArType::Named(_, _) | ArType::Tuple(_)) {
+                    let arg_abi = self.classify_arg_abi(&param_ty);
+                    match arg_abi {
+                        arandu_semantics::layout::ArgAbi::ZeroSized => {
+                            let null_ptr = self.builder.ins().iconst(self.ptr_type, 0);
+                            if let Some(&var) = self.temp_map.get(&param_temp_id) {
+                                self.builder.def_var(var, null_ptr);
+                            }
+                        }
+                        arandu_semantics::layout::ArgAbi::Direct(direct) => {
+                            let layout = self.checked_layout(&param_ty);
+                            let size = u32::try_from(layout.size.max(1)).unwrap_or(1);
+                            let align_shift = layout.align.max(1).trailing_zeros() as u8;
+                            let slot = self.builder.create_sized_stack_slot(
+                                cranelift_codegen::ir::StackSlotData {
+                                    kind: cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+                                    size,
+                                    align_shift,
+                                    key: None,
+                                },
+                            );
+                            let addr = self.builder.ins().stack_addr(self.ptr_type, slot, 0);
+                            for abi_slot in &direct.slots {
+                                let chunk_val = clif_params[clif_slot_idx];
+                                clif_slot_idx += 1;
+                                self.builder.ins().store(
+                                    cranelift_codegen::ir::MemFlagsData::new(),
+                                    chunk_val,
+                                    addr,
+                                    abi_slot.offset as i32,
+                                );
+                            }
+                            if let Some(&var) = self.temp_map.get(&param_temp_id) {
+                                self.builder.def_var(var, addr);
+                            }
+                        }
+                        arandu_semantics::layout::ArgAbi::Indirect => {
+                            let ptr_val = clif_params[clif_slot_idx];
+                            clif_slot_idx += 1;
+                            if let Some(&var) = self.temp_map.get(&param_temp_id) {
+                                self.builder.def_var(var, ptr_val);
+                            }
+                        }
+                    }
                 } else if let ClifType::Concrete(_) = clif_type(&param_ty, self.ptr_type) {
                     let val = clif_params[clif_slot_idx];
                     clif_slot_idx += 1;
                     if let Some(&var) = self.temp_map.get(&param_temp_id) {
                         self.builder.def_var(var, val);
                     }
+                }
+                if let Some(var) = self.temp_map.get(&param_temp_id).copied() {
+                    let value = self.builder.use_var(var);
+                    self.label_temp_value(param_temp_id, value);
                 }
             }
         } else {
@@ -465,7 +694,7 @@ impl<'a, 'b, M: Module> AmirVisitor for FunctionTranslator<'a, 'b, M> {
                         self.builder.def_var(var_ptr, ptr_val);
                         self.builder.def_var(var_len, len_val);
                     }
-                } else if matches!(pty, ArType::Slice(_)) {
+                } else if matches!(self.fat_operand_kind(&pty), operand::FatOperandKind::Slice) {
                     let data = clif_params[clif_slot_idx];
                     let len = clif_params[clif_slot_idx + 1];
                     clif_slot_idx += 2;
@@ -480,18 +709,28 @@ impl<'a, 'b, M: Module> AmirVisitor for FunctionTranslator<'a, 'b, M> {
                         self.builder.def_var(var, val);
                     }
                 }
+                if let Some(var) = self.temp_map.get(&param.id).copied() {
+                    let value = self.builder.use_var(var);
+                    self.label_temp_value(param.id, value);
+                }
             }
         }
 
         for stmt_id in block.statements.iter_ids::<InstrId>() {
             let stmt = self.current_func.stmt(stmt_id);
             self.visit_stmt(stmt);
+            if self.is_current_block_terminated() {
+                break;
+            }
         }
 
-        self.visit_terminator(&block.terminator);
+        if !self.is_current_block_terminated() {
+            self.visit_terminator(&block.terminator);
+        }
     }
 
     fn visit_stmt(&mut self, stmt: &AmirStmt) {
+        self.set_debug_span(self.stmt_span(stmt));
         self.translate_stmt(stmt);
     }
 

@@ -59,11 +59,6 @@ impl TypeCheckResult {
     pub fn symbols_mut(&mut self) -> &mut SymbolTable {
         Arc::make_mut(&mut self.symbols)
     }
-
-    /// Unique mutable access to resolved names.
-    pub fn resolved_mut(&mut self) -> &mut ResolvedNames {
-        Arc::make_mut(&mut self.resolved)
-    }
 }
 
 // ── Entry point ─────────────────────────────────────────────────────
@@ -119,11 +114,11 @@ pub fn check_bodies_only(
     program: &Program,
     target_info: TargetInfo,
 ) -> TypeCheckResult {
-    // PERF.5: Arc clone is O(1); unwrap_or_clone only deep-copies when this
-    // result is still shared with other Salsa consumers.
+    // PERF.5: Arc clone is O(1); the tables stay shared with `signatures`
+    // until the first `Arc::make_mut` mutation inside the body check.
     let mut checker = TypeChecker::new(
-        Arc::unwrap_or_clone(Arc::clone(&signatures.symbols)),
-        Arc::unwrap_or_clone(Arc::clone(&signatures.resolved)),
+        Arc::clone(&signatures.symbols),
+        Arc::clone(&signatures.resolved),
         signatures.diagnostics.clone(),
         &program.pool,
         target_info,
@@ -152,17 +147,19 @@ pub use check::program_items::{
 // ── TypeChecker state ───────────────────────────────────────────────
 
 pub struct TypeChecker<'a> {
-    pub symbols: SymbolTable,
-    pub resolved: ResolvedNames,
+    pub symbols: Arc<SymbolTable>,
+    pub resolved: Arc<ResolvedNames>,
     pub ctx: TyCtx,
     pub type_info: TypeInfo,
     pub diagnostics: Vec<Diagnostic>,
     solved_constraints: Vec<solver::SolvedConstraint>,
     /// Scope for lowering type expressions inside the current function body.
     type_scope_id: Option<ScopeId>,
+    current_owner_type: Option<SymbolId>,
     pub pool: &'a AstPool,
     pub target_info: TargetInfo,
     pub current_observed_effects: arandu_middle::EffectFlags,
+    pub literal_table: solver::LiteralTable,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -171,21 +168,37 @@ pub struct TargetInfo {
 }
 
 impl TargetInfo {
-    /// Maximum value representable by `uint` (native-unsigned-width).
+    /// Maximum value representable by `uint` (fixed 32-bit unsigned, RFC 0023).
     #[must_use]
     pub const fn uint_max(&self) -> u128 {
+        u32::MAX as u128
+    }
+
+    /// Minimum value representable by `int` (fixed 32-bit signed, RFC 0023).
+    #[must_use]
+    pub const fn int_min(&self) -> i128 {
+        i32::MIN as i128
+    }
+
+    /// Maximum value representable by `int` (fixed 32-bit signed, RFC 0023).
+    #[must_use]
+    pub const fn int_max(&self) -> i128 {
+        i32::MAX as i128
+    }
+
+    /// Maximum value representable by `usize` (native-unsigned pointer-width, RFC 0023).
+    #[must_use]
+    pub const fn usize_max(&self) -> u128 {
         match self.pointer_width {
             32 => u32::MAX as u128,
             64 => u64::MAX as u128,
-            // Unknown future width: keep the smallest tested range (32-bit) so
-            // the compiler never admits a value the target might reject.
             _ => u32::MAX as u128,
         }
     }
 
-    /// Minimum value representable by `int` (native-signed-width).
+    /// Minimum value representable by `isize` (native-signed pointer-width, RFC 0023).
     #[must_use]
-    pub const fn int_min(&self) -> i128 {
+    pub const fn isize_min(&self) -> i128 {
         match self.pointer_width {
             32 => i32::MIN as i128,
             64 => i64::MIN as i128,
@@ -193,9 +206,9 @@ impl TargetInfo {
         }
     }
 
-    /// Maximum value representable by `int` (native-signed-width).
+    /// Maximum value representable by `isize` (native-signed pointer-width, RFC 0023).
     #[must_use]
-    pub const fn int_max(&self) -> i128 {
+    pub const fn isize_max(&self) -> i128 {
         match self.pointer_width {
             32 => i32::MAX as i128,
             64 => i64::MAX as i128,
@@ -207,8 +220,8 @@ impl TargetInfo {
 impl<'a> TypeChecker<'a> {
     #[must_use]
     pub fn new(
-        symbols: SymbolTable,
-        resolved: ResolvedNames,
+        symbols: impl Into<Arc<SymbolTable>>,
+        resolved: impl Into<Arc<ResolvedNames>>,
         diagnostics: Vec<Diagnostic>,
         pool: &'a AstPool,
         target_info: TargetInfo,
@@ -225,24 +238,26 @@ impl<'a> TypeChecker<'a> {
 
     #[must_use]
     pub fn new_with_interner(
-        symbols: SymbolTable,
-        resolved: ResolvedNames,
+        symbols: impl Into<Arc<SymbolTable>>,
+        resolved: impl Into<Arc<ResolvedNames>>,
         diagnostics: Vec<Diagnostic>,
         pool: &'a AstPool,
         type_interner: TypeInterner,
         target_info: TargetInfo,
     ) -> Self {
         Self {
-            symbols,
-            resolved,
+            symbols: symbols.into(),
+            resolved: resolved.into(),
             ctx: TyCtx::new(),
             type_info: TypeInfo::with_interner(type_interner),
             diagnostics,
             solved_constraints: Vec::new(),
             type_scope_id: None,
+            current_owner_type: None,
             pool,
             target_info,
             current_observed_effects: arandu_middle::EffectFlags::NONE,
+            literal_table: solver::LiteralTable::new(),
         }
     }
 
@@ -273,20 +288,6 @@ impl<'a> TypeChecker<'a> {
     #[must_use]
     pub fn try_ok_type(&self, ty: &ArType) -> Option<ArType> {
         types::try_ok_type(ty, &self.type_info.type_interner)
-    }
-
-    #[must_use]
-    pub fn try_ok_type_id(&self, id: TypeId) -> Option<TypeId> {
-        match self.type_info.type_interner.resolve(id) {
-            ArType::Result(ok, _) => Some(ok),
-            ArType::Option(inner) => Some(inner),
-            _ => None,
-        }
-    }
-
-    #[must_use]
-    pub fn is_result_type_id(&self, id: TypeId) -> bool {
-        self.is_result_type(&self.resolve(id))
     }
 
     #[must_use]
@@ -413,6 +414,55 @@ impl TypeChecker<'_> {
         );
     }
 
+    pub(crate) fn check_field_visibility(
+        &mut self,
+        owner: SymbolId,
+        field: &str,
+        span: arandu_lexer::Span,
+    ) {
+        if self
+            .type_info
+            .struct_fields
+            .get(&owner)
+            .and_then(|fields| fields.get(field))
+            .and_then(|field| field.symbol)
+            .is_some_and(|field| self.type_info.private_fields.contains(&field))
+            && self.current_owner_type != Some(owner)
+        {
+            self.diagnostics.push(arandu_middle::Diagnostic::error(
+                arandu_middle::DiagCode::T041PrivateFieldAccess,
+                format!("field '{field}' is private to its struct"),
+                span,
+            ));
+        }
+    }
+
+    pub(crate) fn check_private_field_update(&mut self, owner: SymbolId, span: arandu_lexer::Span) {
+        if self.current_owner_type != Some(owner)
+            && let Some(field) = self
+                .type_info
+                .struct_fields
+                .iter()
+                .find(|(struct_id, _)| **struct_id == owner)
+                .and_then(|(_, fields)| {
+                    fields.iter().find(|field| {
+                        field
+                            .symbol
+                            .is_some_and(|symbol| self.type_info.private_fields.contains(&symbol))
+                    })
+                })
+        {
+            self.diagnostics.push(arandu_middle::Diagnostic::error(
+                arandu_middle::DiagCode::T041PrivateFieldAccess,
+                format!(
+                    "cannot use struct update syntax while field '{}' is private",
+                    field.name
+                ),
+                span,
+            ));
+        }
+    }
+
     pub fn add_subtype_constraint(
         &mut self,
         expected: impl Into<ArTypeOrId>,
@@ -486,8 +536,8 @@ impl TypeChecker<'_> {
     #[must_use]
     pub fn finish(self) -> TypeCheckResult {
         TypeCheckResult {
-            symbols: Arc::new(self.symbols),
-            resolved: Arc::new(self.resolved),
+            symbols: self.symbols,
+            resolved: self.resolved,
             type_info: Arc::new(self.type_info),
             diagnostics: self.diagnostics,
         }

@@ -161,11 +161,7 @@ impl<'a> FuncTranslator<'a> {
     fn layout_of(&self, ty: &arandu_middle::types::ArType) -> TypeLayout {
         self.layout_engine
             .layout_of_type(ty, self.interner, self.layout_provider)
-            .unwrap_or_else(|_| TypeLayout {
-                size: 0,
-                align: 1,
-                field_offsets: Vec::new(),
-            })
+            .unwrap_or_else(|_| TypeLayout::simple(0, 1))
     }
 
     /// Resolve a `TypeId` and compute its checked layout.
@@ -228,6 +224,27 @@ impl<'a> FuncTranslator<'a> {
 
             self.code.push(Instruction::LocalGet(self.scratch_b));
             self.code.push(Instruction::LocalSet(unpack.target_local));
+        }
+
+        // Allocate memory cells for address-taken locals (is_memory).
+        for local in &self.func.locals {
+            let ty = self.interner.resolve(local.ty);
+            let pointer_like = matches!(
+                ty,
+                arandu_middle::types::ArType::Ptr(_)
+                    | arandu_middle::types::ArType::Ref(_)
+                    | arandu_middle::types::ArType::RefMut(_)
+                    | arandu_middle::types::ArType::Nullable(_)
+                    | arandu_middle::types::ArType::Slice(_)
+            );
+            if local.is_memory && !pointer_like && !self.is_owned_aggregate(local.ty) {
+                let size = self.layout_of(&ty).size.max(1) as i32;
+                self.alloc_cell(size);
+                if let Some(slot) = self.local_slot(local.id) {
+                    self.code.push(Instruction::LocalGet(self.scratch));
+                    self.code.push(Instruction::LocalSet(slot));
+                }
+            }
         }
 
         // Walk the op stream.

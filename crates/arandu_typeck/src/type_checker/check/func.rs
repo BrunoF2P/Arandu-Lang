@@ -35,7 +35,12 @@ fn validate_method_receiver(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
     {
         let mut new_args = Vec::new();
         for &param_sym in struct_params.iter() {
-            let arg_ty = ArType::named(param_sym, &[], &checker.type_info.type_interner);
+            let arg_ty =
+                if checker.symbols.get(param_sym).kind == arandu_middle::SymbolKind::ConstParam {
+                    ArType::ConstParam(param_sym)
+                } else {
+                    ArType::named(param_sym, &[], &checker.type_info.type_interner)
+                };
             new_args.push(checker.intern(arg_ty));
         }
         recv_ty = ArType::named(struct_id, &new_args, &checker.type_info.type_interner);
@@ -49,6 +54,26 @@ fn validate_method_receiver(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
         ArType::Ref(inner) | ArType::RefMut(inner) => checker.resolve(inner),
         other => other,
     };
+    // The core algebraic types have intrinsic ArType variants even when their
+    // stdlib methods are declared in a module as `Option<T>` / `Result<T, E>`.
+    // The method owner (`Option.isSome`) lowers as a nominal, uninstantiated
+    // name, while the receiver type lowers to ArType::Option<T>. Once the
+    // owner symbol has been validated against the receiver kind, compare the
+    // intrinsic receiver with itself instead of reporting a false mismatch.
+    if let ArType::Named(owner, _) = recv_ty {
+        let intrinsic_receiver = match &self_ty {
+            ArType::Option(_) if checker.symbols.is_option_type(owner) => Some(self_ty.clone()),
+            ArType::Result(_, _) if checker.symbols.is_result_type(owner) => Some(self_ty.clone()),
+            ArType::Poll(_) if checker.symbols.is_poll_type(owner) => Some(self_ty.clone()),
+            ArType::Coroutine(_) if checker.symbols.is_coroutine_type(owner) => {
+                Some(self_ty.clone())
+            }
+            _ => None,
+        };
+        if let Some(intrinsic_receiver) = intrinsic_receiver {
+            recv_ty = intrinsic_receiver;
+        }
+    }
     if let ArType::Named(struct_id, ref args) = self_ty
         && args.is_empty()
         && let Some(struct_params) = checker.type_info.generic_params.get(&struct_id).cloned()
@@ -56,15 +81,24 @@ fn validate_method_receiver(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
     {
         let mut new_args = Vec::new();
         for &param_sym in struct_params.iter() {
-            let arg_ty = ArType::named(param_sym, &[], &checker.type_info.type_interner);
+            let arg_ty =
+                if checker.symbols.get(param_sym).kind == arandu_middle::SymbolKind::ConstParam {
+                    ArType::ConstParam(param_sym)
+                } else {
+                    ArType::named(param_sym, &[], &checker.type_info.type_interner)
+                };
             new_args.push(checker.intern(arg_ty));
         }
         self_ty = ArType::named(struct_id, &new_args, &checker.type_info.type_interner);
     }
     if !super::super::types::unify(&recv_ty, &self_ty, &checker.type_info.type_interner) {
+        // `lhs_span` points at the declared `self: T` type and `rhs_span` at
+        // the receiver name in `Type.method`, so `self_ty` is the declared
+        // (expected) type and `recv_ty` the found one. Passing them the other
+        // way round rendered a misleading T002 (labels swapped vs types).
         checker.add_constraint(
-            recv_ty,
             self_ty,
+            recv_ty,
             ConstraintOrigin::Assignment {
                 lhs_span: first.span,
                 rhs_span: receiver.span,
@@ -89,6 +123,21 @@ fn func_type_scope(checker: &TypeChecker<'_>, decl: &FuncDecl) -> crate::ScopeId
 
 #[tracing::instrument(level = "trace", target = "arandu_typeck", skip(checker, decl))]
 pub fn check_func_body(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
+    let old_owner = checker.current_owner_type;
+    checker.current_owner_type = match &decl.name {
+        arandu_parser::FuncName::Method { receiver, .. } => {
+            match checker.lower_named_type(
+                receiver.span,
+                receiver,
+                &[],
+                checker.symbols.global_scope(),
+            ) {
+                ArType::Named(symbol, _) => Some(symbol),
+                _ => None,
+            }
+        }
+        arandu_parser::FuncName::Free { .. } => None,
+    };
     if matches!(decl.name, arandu_parser::FuncName::Method { .. }) {
         validate_method_receiver(checker, decl);
     }
@@ -116,7 +165,13 @@ pub fn check_func_body(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
         {
             let mut new_args = Vec::new();
             for &param_sym in struct_params.iter() {
-                let arg_ty = ArType::named(param_sym, &[], &checker.type_info.type_interner);
+                let arg_ty = if checker.symbols.get(param_sym).kind
+                    == arandu_middle::SymbolKind::ConstParam
+                {
+                    ArType::ConstParam(param_sym)
+                } else {
+                    ArType::named(param_sym, &[], &checker.type_info.type_interner)
+                };
                 new_args.push(checker.intern(arg_ty));
             }
             param_ty = ArType::named(struct_id, &new_args, &checker.type_info.type_interner);
@@ -144,6 +199,7 @@ pub fn check_func_body(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
     super::block::check_block_tail(checker, checker.pool, &decl.body, Some(ret_id));
     checker.ctx.pop_return();
     checker.type_scope_id = None;
+    checker.finalize_literal_vars();
 
     if let Some(symbol_id) = func_symbol {
         let declared = checker.type_info.function_effects.get(&symbol_id).copied();
@@ -178,4 +234,5 @@ pub fn check_func_body(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
         checker.type_info.function_effects.insert(symbol_id, total);
     }
     checker.current_observed_effects = old_effects.union(checker.current_observed_effects);
+    checker.current_owner_type = old_owner;
 }

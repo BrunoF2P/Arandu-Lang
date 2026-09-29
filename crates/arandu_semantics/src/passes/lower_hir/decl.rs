@@ -277,7 +277,7 @@ pub(crate) fn lower_decl(
                 span: d.span,
             })))
         }
-        TopLevelDecl::Error(_) => Ok(None),
+        TopLevelDecl::Submodule(_) | TopLevelDecl::Error(_) => Ok(None),
     }
 }
 

@@ -16,8 +16,8 @@ use crate::{
     FieldInit, ForBinding, ForClause, FuncDecl, FuncName, FuncSignature, GenericParam, ImportDecl,
     ImportItem, InterfaceDecl, LambdaBody, LambdaParam, MatchArm, MatchArmBody, ModuleDecl,
     Ownership, Param, Pattern, Place, PlaceSuffix, Program, ResultType, SetOp, SimpleStmt, Stmt,
-    StringPart, StructDecl, TopLevelDecl, TypeAliasDecl, TypeExpr, TypeName, UnaryOp, Visibility,
-    WhereItem,
+    StringPart, StructDecl, SubmoduleDecl, TopLevelDecl, TypeAliasDecl, TypeExpr, TypeName,
+    UnaryOp, Visibility, WhereItem,
 };
 
 #[derive(Debug, Clone)]
@@ -93,6 +93,7 @@ pub fn parse_token_stream(
                 },
                 module: None,
                 imports: Vec::new(),
+                interface_impls: Vec::new(),
                 decls: Vec::new(),
                 docs: Vec::new(),
                 pool: std::mem::take(&mut parser.pool),
@@ -124,6 +125,7 @@ pub struct Parser<'a> {
     pos: usize,
     allow_block_calls: bool,
     pub(crate) docs: Vec<DocCommentAttachment>,
+    pub(crate) interface_impls: Vec<crate::InterfaceImplDecl>,
     pending_docs: Vec<PendingDoc>,
     pub pool: crate::ast::ast_pool::AstPool,
     pub(crate) diagnostics: Vec<ParseError>,
@@ -132,6 +134,7 @@ pub struct Parser<'a> {
     /// Optional event sink for green-tree construction (F1 event-driven CST).
     pub(crate) events: Option<Vec<crate::syntax::events::ParseEvent>>,
     pub(crate) split_gt: Option<Token>,
+    pub(crate) recursion_depth: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -149,6 +152,7 @@ impl<'a> Parser<'a> {
             pos: 0,
             allow_block_calls: true,
             docs: Vec::new(),
+            interface_impls: Vec::new(),
             pending_docs: Vec::new(),
             diagnostics: Vec::new(),
             pool: crate::ast::ast_pool::AstPool::new(),
@@ -156,6 +160,7 @@ impl<'a> Parser<'a> {
             suppression_window: 0,
             events: None,
             split_gt: None,
+            recursion_depth: 0,
         }
     }
 
@@ -232,6 +237,18 @@ impl<'a> Parser<'a> {
         }
     }
 
+    pub(crate) fn is_inline_submodule_at(&self, pos: usize) -> bool {
+        let mut i = pos + 1;
+        if i >= self.tokens.len() || !matches!(self.tokens[i].kind, TokenKind::IdentValue) {
+            return false;
+        }
+        i += 1;
+        while i < self.tokens.len() && matches!(self.tokens[i].kind, TokenKind::Semicolon) {
+            i += 1;
+        }
+        i < self.tokens.len() && matches!(self.tokens[i].kind, TokenKind::LBrace)
+    }
+
     /// Parses a full program, collecting recoverable errors in `self.diagnostics`.
     ///
     /// When event recording is enabled ([`Self::with_events`]), emits
@@ -246,7 +263,7 @@ impl<'a> Parser<'a> {
         let start = self.mark();
         self.skip_semicolons();
         self.collect_doc_comments();
-        let module = if self.at_kind_name("KW_MODULE") {
+        let module = if self.at_kind_name("KW_MODULE") && !self.is_inline_submodule_at(self.pos) {
             self.start_node(SyntaxKind::MODULE_ITEM);
             let m = self.parse_module();
             self.finish_node();
@@ -263,7 +280,13 @@ impl<'a> Parser<'a> {
             if self.at_kind_name("EOF") {
                 break;
             }
-            if self.at_kind_name("KW_IMPORT") || self.at_soft_keyword("from") {
+            let is_reexport = matches!(
+                self.current().kind,
+                TokenKind::KwPublic | TokenKind::KwInternal | TokenKind::KwPrivate
+            ) && self.tokens.get(self.pos + 1).is_some_and(|token| {
+                token.kind == TokenKind::IdentValue && token.lexeme(self.source) == "use"
+            });
+            if self.at_kind_name("KW_IMPORT") || self.at_soft_keyword("from") || is_reexport {
                 self.start_node(SyntaxKind::IMPORT_ITEM);
                 match self.parse_import() {
                     Ok(import) => {
@@ -297,6 +320,7 @@ impl<'a> Parser<'a> {
             span: self.span_from_mark(start),
             module,
             imports,
+            interface_impls: std::mem::take(&mut self.interface_impls),
             decls,
             docs: std::mem::take(&mut self.docs),
             pool: std::mem::take(&mut self.pool),
@@ -407,6 +431,23 @@ impl<'a> Parser<'a> {
                 self.source,
                 &["type identifier"],
             )),
+        }
+    }
+
+    pub(super) fn expect_member_name(&mut self) -> Result<SmolStr, ParseError> {
+        if self.current().kind.is_contextual_member_name() {
+            let name = SmolStr::new(self.current_text());
+            self.advance();
+            Ok(name)
+        } else {
+            Err(ParseError::expected(
+                ParseErrorCode::ExpectedToken,
+                "expected member name",
+                self.current(),
+                self.file_id,
+                self.source,
+                &["member name"],
+            ))
         }
     }
 
@@ -746,6 +787,8 @@ static TOKEN_INFO_TABLE: [TokenInfo; TokenKind::COUNT] = {
         let prim = match kind {
             TokenKind::TypeInt => Some("int"),
             TokenKind::TypeUint => Some("uint"),
+            TokenKind::TypeIsize => Some("isize"),
+            TokenKind::TypeUsize => Some("usize"),
             TokenKind::TypeFloat => Some("float"),
             TokenKind::TypeI8 => Some("i8"),
             TokenKind::TypeI16 => Some("i16"),
@@ -799,6 +842,8 @@ static TOKEN_INFO_TABLE: [TokenInfo; TokenKind::COUNT] = {
                 | TokenKind::KwFrom
                 | TokenKind::KwAs
                 | TokenKind::KwPublic
+                | TokenKind::KwInternal
+                | TokenKind::KwPrivate
                 | TokenKind::KwExtern
                 | TokenKind::KwUnsafe
                 | TokenKind::KwWhere
@@ -816,6 +861,8 @@ static TOKEN_INFO_TABLE: [TokenInfo; TokenKind::COUNT] = {
                 | TokenKind::KwLet
                 | TokenKind::TypeInt
                 | TokenKind::TypeUint
+                | TokenKind::TypeIsize
+                | TokenKind::TypeUsize
                 | TokenKind::TypeFloat
                 | TokenKind::TypeI8
                 | TokenKind::TypeI16
@@ -907,6 +954,8 @@ pub(super) fn token_expectation_names(name: &str) -> &'static [&'static str] {
         "KW_OWN" => &["own"],
         "KW_PTR" => &["ptr"],
         "KW_PUBLIC" => &["public"],
+        "KW_INTERNAL" => &["internal"],
+        "KW_PRIVATE" => &["private"],
         "KW_REF" => &["ref"],
         "KW_RETURN" => &["return"],
         "KW_SELF" => &["self"],

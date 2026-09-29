@@ -21,6 +21,7 @@ pub use arandu_middle::{
     validate_amir_program,
 };
 
+pub use arandu_middle::Visibility;
 pub use arandu_middle::ops::{BinaryOp, SetOp, UnaryOp};
 
 pub mod attributes;

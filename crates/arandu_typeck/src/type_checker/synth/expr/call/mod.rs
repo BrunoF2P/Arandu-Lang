@@ -6,6 +6,8 @@ mod instantiate;
 pub(crate) use arg::check_call_arg;
 pub(crate) use instantiate::infer_and_instantiate_func;
 
+use std::sync::Arc;
+
 use arandu_lexer::Span;
 use arandu_parser::CatchHandler;
 use arandu_parser::ast_pool::{ExprId, ExprKind};
@@ -31,6 +33,9 @@ pub(super) fn synth_call_expr(
     match kind {
         ExprKind::Path { path: _ } => {
             if let Some(symbol_id) = checker.resolved.expr_symbol(expr) {
+                if let Some(var_id) = checker.literal_table.var_for_symbol(symbol_id) {
+                    checker.literal_table.bind_expr(expr, var_id);
+                }
                 if let Some(ty_id) = checker.ctx.lookup(symbol_id) {
                     return Some(ty_id);
                 }
@@ -44,7 +49,12 @@ pub(super) fn synth_call_expr(
             // Bare `Result.Ok` / `Result.Err` as paths (not calls): build a
             // polymorphic-looking Func using expected `Result<T,E>` when present.
             // Actual calls are handled by `synth_result_ctor` (bidirectional).
-            if types::type_name_base(type_name) == "Result" {
+            let type_symbol = checker
+                .resolved
+                .type_refs
+                .get(&type_name.span.into())
+                .copied();
+            if type_symbol.is_some_and(|symbol| checker.symbols.is_result_type(symbol)) {
                 return Some(match member.as_str() {
                     "Ok" => {
                         let (ok_id, err_id) = match expected.map(|e| checker.resolve(e)) {
@@ -77,7 +87,7 @@ pub(super) fn synth_call_expr(
                     _ => checker.intern(ArType::Error),
                 });
             }
-            if types::type_name_base(type_name) == "Option" {
+            if type_symbol.is_some_and(|symbol| checker.symbols.is_option_type(symbol)) {
                 let inner_id = match expected.map(|e| checker.resolve(e)) {
                     Some(ArType::Option(inner)) => inner,
                     _ => checker.intern(ArType::Error),
@@ -94,7 +104,7 @@ pub(super) fn synth_call_expr(
                     _ => checker.intern(ArType::Error),
                 });
             }
-            if types::type_name_base(type_name) == "Poll" {
+            if type_symbol.is_some_and(|symbol| checker.symbols.is_poll_type(symbol)) {
                 let inner = match expected.map(|e| checker.resolve(e)) {
                     Some(ArType::Poll(inner)) => inner,
                     _ => checker.intern(ArType::Error),
@@ -116,7 +126,10 @@ pub(super) fn synth_call_expr(
                 let mut variant_symbol_opt = None;
                 for (&var_id, &(parent_id, _)) in &checker.type_info.enum_variants {
                     if parent_id == *enum_symbol_id {
-                        let var_name = &checker.symbols.get(var_id).name;
+                        let Some(var_sym) = checker.symbols.try_get(var_id) else {
+                            continue;
+                        };
+                        let var_name = &var_sym.name;
                         if var_name == member || var_name.ends_with(&format!(".{}", member)) {
                             variant_symbol_opt = Some(var_id);
                             break;
@@ -130,8 +143,14 @@ pub(super) fn synth_call_expr(
                         .get(&variant_symbol_id)
                         .cloned()
                 {
-                    let enum_ty =
-                        ArType::named(*enum_symbol_id, &[], &checker.type_info.type_interner);
+                    let enum_ty = match expected.map(|id| checker.resolve(id)) {
+                        Some(ArType::Named(expected_enum, args))
+                            if expected_enum == *enum_symbol_id =>
+                        {
+                            ArType::Named(expected_enum, args)
+                        }
+                        _ => ArType::named(*enum_symbol_id, &[], &checker.type_info.type_interner),
+                    };
                     match shape {
                         crate::type_checker::EnumPayloadShape::Unit => {
                             return Some(checker.intern(enum_ty));
@@ -204,6 +223,26 @@ pub(super) fn synth_call_expr(
             let inner_ty_id = synth_expr(checker, inner_id);
             let inner_ty = checker.resolve(inner_ty_id);
             Some(if let Some(ok_ty) = checker.try_ok_type(&inner_ty) {
+                let return_ty_id = checker.ctx.current_return();
+                let return_ty = return_ty_id.map(|id| checker.resolve(id));
+                let can_propagate = match (&inner_ty, return_ty.as_ref()) {
+                    (ArType::Result(_, inner_err), Some(ArType::Result(_, outer_err))) => {
+                        let inner_err = checker.resolve(*inner_err);
+                        let outer_err = checker.resolve(*outer_err);
+                        checker.is_assignable_return_type(&outer_err, &inner_err)
+                    }
+                    (ArType::Option(_), Some(ArType::Option(_))) => true,
+                    _ => false,
+                };
+                if !can_propagate {
+                    let found = return_ty_id.unwrap_or_else(|| checker.intern(ArType::Void));
+                    let return_span = checker.ctx.current_return_decl_span().unwrap_or(span);
+                    checker.add_constraint(
+                        ArType::Error,
+                        found,
+                        ConstraintOrigin::TryReturnInvalid { span, return_span },
+                    );
+                }
                 checker.intern(ok_ty)
             } else if inner_ty.is_error() {
                 checker.intern(ArType::Error)
@@ -275,6 +314,53 @@ pub(super) fn synth_call_expr(
         } => {
             let callee_id = *callee;
             let args_range = *args;
+            // Enum variant constructors inherit their generic parameters from
+            // the parent enum. They are not generic functions in the symbol
+            // table, so instantiate the variant signature against its parent
+            // before checking payload arguments.
+            if let Some(variant_id) = checker.resolved.expr_symbol(callee_id)
+                && let Some((enum_id, _)) = checker.type_info.enum_variants.get(&variant_id)
+                && let Some(type_params) = checker.type_info.generic_params.get(enum_id).cloned()
+                && !type_params.is_empty()
+                && let Some(ArType::Func(formals, ret)) = checker.decl_type(variant_id)
+            {
+                let formals = checker.type_info.type_interner.type_args(formals);
+                let arg_ids = checker.pool.expr_list(args_range).to_vec();
+                let arg_tys: Vec<TypeId> = arg_ids
+                    .iter()
+                    .copied()
+                    .map(|arg| synth_expr(checker, arg))
+                    .collect();
+                if let Some((params, ret)) = infer_and_instantiate_func(
+                    checker,
+                    &type_params,
+                    &formals,
+                    ret,
+                    &arg_tys,
+                    expected,
+                    span,
+                ) {
+                    let func_ty = ArType::func(&params, ret, &checker.type_info.type_interner);
+                    let func_ty_id = checker.intern(func_ty);
+                    checker.record_expr_type(callee_id, func_ty_id);
+                    for (index, arg) in arg_ids.iter().copied().enumerate() {
+                        if let Some(&param) = params.get(index) {
+                            let got = synth_expr_expected(checker, arg, Some(param));
+                            check_call_arg(
+                                checker,
+                                arg,
+                                param,
+                                got,
+                                span,
+                                checker.pool.expr_span(callee_id),
+                                checker.pool.expr_span(arg),
+                                index,
+                            );
+                        }
+                    }
+                    return Some(ret);
+                }
+            }
             if let Some(callee_sym) = checker.resolved.expr_symbol(callee_id) {
                 if let Some(&eff) = checker.type_info.function_effects.get(&callee_sym) {
                     checker.current_observed_effects = checker.current_observed_effects.union(eff);
@@ -284,7 +370,11 @@ pub(super) fn synth_call_expr(
                     checker.current_observed_effects = checker
                         .current_observed_effects
                         .union(arandu_middle::EffectFlags::FOREIGN);
-                    if !checker.ctx.is_in_unsafe() {
+                    // Intrinsics that only inspect already-valid fat-pointer descriptors
+                    // or produce compile-time constants are safe without `unsafe {}`.
+                    let is_safe_intrinsic = arandu_middle::IntrinsicKind::from_name(&sym.name)
+                        .is_some_and(|k| k.is_safe());
+                    if !is_safe_intrinsic && !checker.ctx.is_in_unsafe() {
                         checker.diagnostics.push(
                             crate::Diagnostic::error(
                                 crate::DiagCode::O013ExternRequiresUnsafe,
@@ -295,7 +385,7 @@ pub(super) fn synth_call_expr(
                         );
                     }
                 }
-                if Some(callee_sym) == checker.symbols.builtin_alloc {
+                if checker.symbols.is_alloc_func(callee_sym) {
                     checker.current_observed_effects = checker
                         .current_observed_effects
                         .union(arandu_middle::EffectFlags::HEAP);
@@ -309,7 +399,7 @@ pub(super) fn synth_call_expr(
                     checker.record_expr_type(expr, ptr_ty);
                     return Some(ptr_ty);
                 }
-                if Some(callee_sym) == checker.symbols.builtin_free {
+                if checker.symbols.is_free_func(callee_sym) {
                     checker.current_observed_effects = checker
                         .current_observed_effects
                         .union(arandu_middle::EffectFlags::HEAP);
@@ -348,7 +438,9 @@ pub(super) fn synth_call_expr(
             {
                 return Some(checker.intern(result_ty));
             }
-            if let Some(option_ty) = synth_option_ctor(checker, callee_id, args_range, span) {
+            if let Some(option_ty) =
+                synth_option_ctor(checker, callee_id, args_range, span, expected)
+            {
                 return Some(checker.intern(option_ty));
             }
             if let Some(poll_ty) = synth_poll_ctor(checker, callee_id, args_range, span) {
@@ -367,6 +459,25 @@ pub(super) fn synth_call_expr(
                 if let Some(ns_ty_id) =
                     resolve_namespace_field(checker, base_id, callee_id, &field_str, field_span)
                 {
+                    if let ExprKind::Path { path } = checker.pool.expr(base_id)
+                        && path.len() == 1
+                        && let Some(sym_id) =
+                            checker.symbols.lookup_module_member(&path[0], &field_str)
+                        && checker.type_info.unsafe_functions.contains(&sym_id)
+                        && !checker.ctx.is_in_unsafe()
+                    {
+                        checker.diagnostics.push(
+                            arandu_middle::Diagnostic::error(
+                                arandu_middle::DiagCode::O013ExternRequiresUnsafe,
+                                "call to an `@Unsafe` function requires an `unsafe` block",
+                                span,
+                            )
+                            .with_label(
+                                field_span,
+                                "the function's documented preconditions must be upheld by its caller",
+                            ),
+                        );
+                    }
                     let arg_ids = checker.pool.expr_list(args_range).to_vec();
                     let ns_ty = checker.resolve(ns_ty_id);
                     if let ArType::Func(params, ret) = ns_ty {
@@ -418,6 +529,7 @@ pub(super) fn synth_call_expr(
                             if let Some(param_id) = param_id {
                                 check_call_arg(
                                     checker,
+                                    arg_id,
                                     param_id,
                                     arg_ty_id,
                                     span,
@@ -472,14 +584,15 @@ pub(super) fn synth_call_expr(
                             let receiver_ty_id = params[0];
                             // Same auto-ref/auto-deref as synth_method_call: formal
                             // `shared`/`mut self` is `&T`/`&mut T`, receiver value is `T`.
-                            let receiver_ok = checker.unify_ids(receiver_ty_id, actual_base_ty_id)
+                            let receiver_ok = checker.is_assignable(base_ty_id, receiver_ty_id)
                                 || match checker.resolve(receiver_ty_id) {
                                     ArType::Ref(inner) | ArType::RefMut(inner) => {
-                                        checker.unify_ids(inner, actual_base_ty_id)
+                                        checker.is_assignable(base_ty_id, inner)
                                     }
-                                    _ => match checker.resolve(actual_base_ty_id) {
+                                    _ => match checker.resolve(base_ty_id) {
                                         ArType::Ref(inner) | ArType::RefMut(inner) => {
-                                            checker.unify_ids(receiver_ty_id, inner)
+                                            checker.type_info.is_copy(inner)
+                                                && checker.is_assignable(inner, receiver_ty_id)
                                         }
                                         _ => false,
                                     },
@@ -533,6 +646,7 @@ pub(super) fn synth_call_expr(
                                 if let Some(expected_id) = expected_id {
                                     check_call_arg(
                                         checker,
+                                        arg_id,
                                         expected_id,
                                         arg_ty_id,
                                         span,
@@ -565,7 +679,7 @@ pub(super) fn synth_call_expr(
                                     .symbols
                                     .lookup_associated_member(struct_id, &field_name)
                             {
-                                checker.resolved.value_ref(field_span, sym);
+                                Arc::make_mut(&mut checker.resolved).value_ref(field_span, sym);
                             }
                             return Some(ret);
                         }
@@ -594,6 +708,7 @@ pub(super) fn synth_call_expr(
                 let mut callee_func_sym = None;
                 match checker.pool.expr(current_callee) {
                     ExprKind::Path { .. } => {
+                        let mut found_direct = false;
                         if let Some(sym_id) = checker.resolved.expr_symbol(current_callee) {
                             let sym = checker.symbols.get(sym_id);
                             if matches!(
@@ -605,7 +720,17 @@ pub(super) fn synth_call_expr(
                             ) {
                                 is_direct = true;
                                 callee_func_sym = Some(sym_id);
+                                found_direct = true;
                             }
+                        }
+                        if !found_direct
+                            && let ExprKind::Path { path } = checker.pool.expr(current_callee)
+                            && let [module, member] = path.as_slice()
+                            && let Some(sym_id) =
+                                checker.symbols.lookup_module_member(module, member)
+                        {
+                            is_direct = true;
+                            callee_func_sym = Some(sym_id);
                         }
                     }
                     ExprKind::TypePath { .. } => {
@@ -621,8 +746,10 @@ pub(super) fn synth_call_expr(
                     ExprKind::Field { base, field } => {
                         if let ExprKind::Path { path } = checker.pool.expr(*base)
                             && path.len() == 1
-                            && let Some(sym_id) =
-                                checker.symbols.lookup_module_member(&path[0], field)
+                            && let Some(sym_id) = checker
+                                .resolved
+                                .expr_symbol(current_callee)
+                                .or_else(|| checker.symbols.lookup_module_member(&path[0], field))
                         {
                             let kind = checker.symbols.get(sym_id).kind;
                             if matches!(
@@ -633,17 +760,34 @@ pub(super) fn synth_call_expr(
                             ) {
                                 is_direct = true;
                                 callee_func_sym = Some(sym_id);
-                                checker.resolved.expr_ref(current_callee, sym_id);
+                                Arc::make_mut(&mut checker.resolved)
+                                    .expr_ref(current_callee, sym_id);
                             }
                         }
                     }
                     _ => {}
                 }
 
-                if let Some(sym_id) = callee_func_sym
-                    && let Some(&eff) = checker.type_info.function_effects.get(&sym_id)
-                {
-                    checker.current_observed_effects = checker.current_observed_effects.union(eff);
+                if let Some(sym_id) = callee_func_sym {
+                    if checker.type_info.unsafe_functions.contains(&sym_id)
+                        && !checker.ctx.is_in_unsafe()
+                    {
+                        checker.diagnostics.push(
+                            arandu_middle::Diagnostic::error(
+                                arandu_middle::DiagCode::O013ExternRequiresUnsafe,
+                                "call to an `@Unsafe` function requires an `unsafe` block",
+                                span,
+                            )
+                            .with_label(
+                                span,
+                                "the function's documented preconditions must be upheld by its caller",
+                            ),
+                        );
+                    }
+                    if let Some(&eff) = checker.type_info.function_effects.get(&sym_id) {
+                        checker.current_observed_effects =
+                            checker.current_observed_effects.union(eff);
+                    }
                 }
 
                 // Infer type args for bare `id(x)` (no `id<T>`): instantiate formal params
@@ -702,6 +846,7 @@ pub(super) fn synth_call_expr(
                     if let Some(param_id) = formal {
                         check_call_arg(
                             checker,
+                            arg_id,
                             param_id,
                             arg_ty_id,
                             span,

@@ -106,7 +106,12 @@ impl LowerCtx<'_> {
         let fields_slice = self.hir.pool.field_inits_list(fields);
         let mut field_ops = Vec::with_capacity(fields_slice.len());
         for f in fields_slice {
-            field_ops.push((f.name.clone(), self.lower_expr(f.value, None, symbols)?));
+            let value = self.lower_expr(f.value, None, symbols)?;
+            // A struct literal takes ownership of each non-Copy field value.
+            // Record that move before drop elaboration so the source local is
+            // not destroyed after its value has been installed in the result.
+            let value = self.consume_operand(value)?;
+            field_ops.push((f.name.clone(), value));
         }
         if let Some(struct_fields) = self.tc.type_info.struct_fields.get(&struct_symbol) {
             field_ops.sort_by_key(|(name, _)| {
@@ -136,6 +141,17 @@ impl LowerCtx<'_> {
         symbols: &SymbolTable,
     ) -> Result<AmirOperand, Diagnostic> {
         let val_op = self.lower_expr(value, None, symbols)?;
+        let val_op = if matches!(
+            variant,
+            ResultCtorVariant::Ok
+                | ResultCtorVariant::Err
+                | ResultCtorVariant::Some
+                | ResultCtorVariant::PollReady
+        ) {
+            self.consume_operand(val_op)?
+        } else {
+            val_op
+        };
         let dest = target.unwrap_or_else(|| self.new_temp_id(expr.ty));
         match variant {
             ResultCtorVariant::Ok => {

@@ -41,15 +41,13 @@ pub fn lower_to_hir(
     let mut decls = Vec::new();
     // Create a HirPool to seed HIR allocations for future ID-based lowering.
     let mut hir_pool = crate::hir::HirPool::new();
-    for decl_id in &program.decls {
-        let decl = program.pool.decl(*decl_id);
-        if let Some(hir_decl) =
-            decl::lower_decl(type_check, &program.pool, &mut hir_pool, decl).map_err(|e| vec![e])?
-        {
-            let hir_decl_id = hir_pool.alloc_decl(hir_decl);
-            decls.push(hir_decl_id);
-        }
-    }
+    lower_decls_recursive(
+        type_check,
+        &program.pool,
+        &mut hir_pool,
+        &program.decls,
+        &mut decls,
+    )?;
     let module = program.module.as_ref().map(|m| m.path.join("."));
     Ok(HirProgram {
         span: program.span,
@@ -57,6 +55,27 @@ pub fn lower_to_hir(
         decls,
         pool: hir_pool,
     })
+}
+
+fn lower_decls_recursive(
+    type_check: &mut TypeCheckResult,
+    pool: &arandu_parser::ast_pool::AstPool,
+    hir_pool: &mut crate::hir::HirPool,
+    decl_ids: &[arandu_parser::DeclId],
+    decls: &mut Vec<crate::hir::HirDeclId>,
+) -> Result<(), Vec<Diagnostic>> {
+    for decl_id in decl_ids {
+        let decl = pool.decl(*decl_id);
+        if let arandu_parser::TopLevelDecl::Submodule(submod) = decl {
+            lower_decls_recursive(type_check, pool, hir_pool, &submod.decls, decls)?;
+        } else if let Some(hir_decl) =
+            decl::lower_decl(type_check, pool, hir_pool, decl).map_err(|e| vec![e])?
+        {
+            let hir_decl_id = hir_pool.alloc_decl(hir_decl);
+            decls.push(hir_decl_id);
+        }
+    }
+    Ok(())
 }
 
 // population is done during decl lowering; no separate backfill required.

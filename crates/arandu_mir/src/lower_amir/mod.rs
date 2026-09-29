@@ -5,8 +5,8 @@
 //! SSA-like AMIR basic blocks. Aborts early if type-checking already failed.
 
 use crate::amir::{
-    AmirBasicBlock, AmirFunc, AmirLocal, AmirOperand, AmirProgram, AmirRvalue, AmirStmt,
-    AmirStmtTable, AmirTemp, BlockId, LocalId, TempId,
+    AmirBasicBlock, AmirDebugBinding, AmirDebugBlock, AmirFunc, AmirLocal, AmirOperand,
+    AmirProgram, AmirRvalue, AmirStmt, AmirStmtTable, AmirTemp, BlockId, LocalId, TempId,
 };
 use crate::diagnostics::{DiagCode, Diagnostic, Severity};
 use crate::hir::{HirBlock, HirDecl, HirFunc, HirProgram};
@@ -75,7 +75,17 @@ pub fn lower_to_amir_with_interfaces(
     let mut funcs = Vec::new();
     let mut diagnostics = Vec::new();
     let mut literal_pool = AmirLiteralPool::default();
+    let mut debug_bindings = Vec::new();
+    let mut debug_blocks = Vec::new();
     let mut no_fallback = FxHashMap::default();
+    let const_values: FxHashMap<SymbolId, crate::hir::HirExprId> = hir
+        .decls
+        .iter()
+        .filter_map(|&decl_id| match hir.pool.decl(decl_id) {
+            HirDecl::Const(decl) => Some((decl.symbol, decl.value)),
+            _ => None,
+        })
+        .collect();
     // Single post-mono table: receiver Shared/Mut/Own → Copy vs Move at call sites.
     let arg_modes = CalleeArgModes::from_hir(hir, &tc.type_info.type_interner);
 
@@ -97,12 +107,27 @@ pub fn lower_to_amir_with_interfaces(
                 *body,
                 tc,
                 hir,
+                &const_values,
                 &arg_modes,
                 &mut literal_pool,
                 &mut diagnostics,
                 pointer_width,
             ) {
-                Ok(amir_f) => {
+                Ok((amir_f, local_debug_bindings, block_spans)) => {
+                    debug_bindings.extend(local_debug_bindings.into_iter().map(|(temp, local)| {
+                        AmirDebugBinding {
+                            function: f.symbol,
+                            temp,
+                            local,
+                        }
+                    }));
+                    debug_blocks.extend(block_spans.into_iter().enumerate().map(
+                        |(index, span)| AmirDebugBlock {
+                            function: f.symbol,
+                            block: BlockId::from_usize(index),
+                            span,
+                        },
+                    ));
                     funcs.push(amir_f);
                 }
                 Err(diag) => diagnostics.push(diag),
@@ -135,6 +160,8 @@ pub fn lower_to_amir_with_interfaces(
             funcs,
             literal_pool,
             extern_funcs,
+            debug_bindings,
+            debug_blocks,
         };
 
         let solution =
@@ -152,10 +179,10 @@ pub fn lower_to_amir_with_interfaces(
                 no_fallback: no_fallback.get(&function.symbol).copied().unwrap_or(false),
                 return_borrow: solution.summaries.get(&function.symbol).cloned(),
             };
-            let escape_diagnostics = crate::escape_analysis::check_escapes(
+            let escape_diagnostics = crate::escape_analysis::check_escapes_with_type_info(
                 function,
                 &tc.symbols,
-                &tc.type_info.type_interner,
+                &tc.type_info,
                 options.clone(),
             );
             let already_reports_return = escape_diagnostics
@@ -206,9 +233,13 @@ pub fn lower_to_amir_with_interfaces(
 pub(crate) fn is_memory_type(ty: &ArType) -> bool {
     match ty {
         ArType::Primitive(p) => matches!(p, Primitive::Str | Primitive::Any),
-        ArType::IntLiteral | ArType::FloatLiteral | ArType::Void | ArType::Err | ArType::Error => {
-            false
-        }
+        ArType::IntLiteral
+        | ArType::FloatLiteral
+        | ArType::Const(_)
+        | ArType::ConstParam(_)
+        | ArType::Void
+        | ArType::Err
+        | ArType::Error => false,
         // Pointers and safe refs are scalar values (fat/thin pointers), not memory objects.
         ArType::Ptr(_)
         | ArType::Ref(_)
@@ -218,6 +249,7 @@ pub(crate) fn is_memory_type(ty: &ArType) -> bool {
         | ArType::Func(_, _)
         | ArType::Slice(_) => false,
         ArType::Array(_, _)
+        | ArType::ConstArray(_, _)
         | ArType::Named(_, _)
         | ArType::Tuple(_)
         | ArType::Option(_)
@@ -294,6 +326,7 @@ pub(crate) struct DeferFrame {
 pub(crate) struct LowerCtx<'a> {
     tc: &'a TypeCheckResult,
     hir: &'a HirProgram,
+    const_values: &'a FxHashMap<SymbolId, crate::hir::HirExprId>,
     /// Shared/mut/own modes for every callable (incl. mono specializations).
     arg_modes: &'a CalleeArgModes,
     func_return_type: crate::types::TypeId,
@@ -307,12 +340,23 @@ pub(crate) struct LowerCtx<'a> {
     /// Structural construction state (blocks, stmts, cursor, predecessors).
     builder: builder::AmirBuilder,
     symbol_map: FxHashMap<SymbolId, LocalId>,
-    /// (`continue_block`, `exit_block`, `defer_frame_depth_at_loop_entry`)
-    loop_stack: Vec<(BlockId, BlockId, usize)>,
+    /// Pattern bindings exposed as shared references only while evaluating a
+    /// match guard. Owned bindings are committed after the guard succeeds.
+    guard_borrows: FxHashMap<SymbolId, (LocalId, crate::types::TypeId)>,
+    /// (`continue_block`, `exit_block`, `defer_frame_depth`, `local_scope_depth`)
+    loop_stack: Vec<(BlockId, BlockId, usize, usize)>,
+    /// Lexical local scopes used to emit StorageDead on block exits and loop
+    /// control-flow edges. Drop elaboration turns these markers into cleanup.
+    local_scopes: Vec<Vec<LocalId>>,
     literal_pool: &'a mut AmirLiteralPool,
     defer_frames: Vec<DeferFrame>,
     temp_states: Vec<MoveState>,
     temp_origins: Vec<Option<LocalId>>,
+    /// Full source place for temps produced by `Load`; ownership moves and
+    /// match commits must retain field/payload projections.
+    temp_place_origins: Vec<Option<crate::amir::AmirPlace>>,
+    /// Cold typed mapping consumed only by native debug-info emission.
+    debug_bindings: Vec<(TempId, LocalId)>,
     local_states: Vec<MoveState>,
 
     // SSA builder fields (OSSA Braun et al.)
@@ -324,6 +368,8 @@ pub(crate) struct LowerCtx<'a> {
     current_span: Span,
     /// Target pointer width in bytes (drives `mem.sizeOf`/`alignOf` folding).
     pointer_width: u64,
+    /// Temporaries that hold freshly allocated heap string buffers (`ToStr` or `StringInterp`).
+    owned_string_temps: FxHashSet<TempId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

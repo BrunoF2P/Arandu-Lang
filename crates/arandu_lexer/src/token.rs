@@ -16,9 +16,15 @@ const _: () = assert!(std::mem::size_of::<Token>() == 12);
 const _: () = assert!(std::mem::size_of::<TokenKind>() == 2);
 
 impl Token {
+    #[inline]
+    #[must_use]
+    pub fn end(&self) -> u32 {
+        self.start.saturating_add(self.len)
+    }
+
     #[must_use]
     pub fn span(&self, file_id: u32) -> Span {
-        Span::new(file_id, self.start, self.start + self.len)
+        Span::new(file_id, self.start, self.end())
     }
 
     #[must_use]
@@ -26,7 +32,9 @@ impl Token {
         if self.inserted || matches!(self.kind, TokenKind::Error(_) | TokenKind::Eof) {
             return "";
         }
-        &source[self.start as usize..(self.start + self.len) as usize]
+        let start = self.start as usize;
+        let end = self.end() as usize;
+        source.get(start..end.min(source.len())).unwrap_or("")
     }
 
     #[must_use]
@@ -50,6 +58,27 @@ impl Token {
             .unwrap_or("")
     }
 
+    /// Decode the scalar value of a lexed character literal.
+    #[must_use]
+    pub fn char_value(&self, source: &str) -> Option<char> {
+        decode_char_content(self.char_content(source))
+    }
+
+    #[must_use]
+    pub fn byte_content<'a>(&self, source: &'a str) -> &'a str {
+        let lexeme = self.lexeme(source);
+        lexeme
+            .strip_prefix("b'")
+            .and_then(|text| text.strip_suffix('\''))
+            .unwrap_or("")
+    }
+
+    /// Decode the byte value of a lexed byte character literal.
+    #[must_use]
+    pub fn byte_value(&self, source: &str) -> Option<u8> {
+        decode_byte_content(self.byte_content(source))
+    }
+
     #[must_use]
     pub fn dump(&self, source: &str) -> String {
         if self.kind == TokenKind::Semicolon && self.inserted {
@@ -58,6 +87,97 @@ impl Token {
             self.kind.display_with(self, source)
         }
     }
+}
+
+/// Decode the contents between the quotes of a character literal.
+#[must_use]
+pub fn decode_char_content(content: &str) -> Option<char> {
+    if let Some(escaped) = content.strip_prefix('\\') {
+        return match escaped {
+            "n" => Some('\n'),
+            "t" => Some('\t'),
+            "r" => Some('\r'),
+            "0" => Some('\0'),
+            "\\" => Some('\\'),
+            "\"" => Some('"'),
+            "'" => Some('\''),
+            "$" => Some('$'),
+            unicode if unicode.starts_with("u{") && unicode.ends_with('}') => {
+                let digits = &unicode[2..unicode.len() - 1];
+                if digits.is_empty() {
+                    return None;
+                }
+                u32::from_str_radix(digits, 16)
+                    .ok()
+                    .and_then(char::from_u32)
+            }
+            _ => None,
+        };
+    }
+
+    let mut chars = content.chars();
+    let value = chars.next()?;
+    chars.next().is_none().then_some(value)
+}
+
+/// Encode a Unicode scalar as a valid Arandu character literal.
+#[must_use]
+pub fn char_literal(value: char) -> String {
+    let escaped = match value {
+        '\n' => "\\n",
+        '\t' => "\\t",
+        '\r' => "\\r",
+        '\0' => "\\0",
+        '\\' => "\\\\",
+        '\'' => "\\'",
+        '"' => "\\\"",
+        '$' => "\\$",
+        value => return format!("'{value}'"),
+    };
+    format!("'{escaped}'")
+}
+
+/// Decode the contents between the quotes of a byte literal.
+#[must_use]
+pub fn decode_byte_content(content: &str) -> Option<u8> {
+    if let Some(escaped) = content.strip_prefix('\\') {
+        return match escaped {
+            "n" => Some(b'\n'),
+            "t" => Some(b'\t'),
+            "r" => Some(b'\r'),
+            "0" => Some(b'\0'),
+            "\\" => Some(b'\\'),
+            "\"" => Some(b'"'),
+            "'" => Some(b'\''),
+            hex if hex.starts_with('x') && hex.len() == 3 => u8::from_str_radix(&hex[1..], 16).ok(),
+            _ => None,
+        };
+    }
+
+    if content.len() == 1 {
+        let b = content.as_bytes()[0];
+        if b.is_ascii() {
+            return Some(b);
+        }
+    }
+    None
+}
+
+/// Encode a byte as a valid Arandu byte character literal.
+#[must_use]
+pub fn byte_literal(value: u8) -> String {
+    let escaped = match value {
+        b'\n' => "\\n",
+        b'\t' => "\\t",
+        b'\r' => "\\r",
+        b'\0' => "\\0",
+        b'\\' => "\\\\",
+        b'\'' => "\\'",
+        b'"' => "\\\"",
+        b if b.is_ascii_graphic() || b == b' ' => return format!("b'{}'", b as char),
+        b => return format!("b'\\x{b:02x}'"),
+    };
+    format!("b'{escaped}'")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,6 +201,7 @@ pub enum TokenKind {
     MultilineStringStart,
     MultilineStringEnd,
     Char,
+    ByteChar,
     KwIf,
     KwElse,
     KwFor,
@@ -103,6 +224,8 @@ pub enum TokenKind {
     KwFrom,
     KwAs,
     KwPublic,
+    KwInternal,
+    KwPrivate,
     KwExtern,
     KwUnsafe,
     KwWhere,
@@ -123,6 +246,8 @@ pub enum TokenKind {
     KwImpl,
     TypeInt,
     TypeUint,
+    TypeIsize,
+    TypeUsize,
     TypeFloat,
     TypeI8,
     TypeI16,
@@ -208,7 +333,7 @@ impl fmt::Display for TokenKind {
 }
 
 impl TokenKind {
-    pub const COUNT: usize = 133;
+    pub const COUNT: usize = 138;
 
     /// Returns `true` if this token kind represents a language keyword.
     #[must_use]
@@ -237,6 +362,8 @@ impl TokenKind {
                 | TokenKind::KwFrom
                 | TokenKind::KwAs
                 | TokenKind::KwPublic
+                | TokenKind::KwInternal
+                | TokenKind::KwPrivate
                 | TokenKind::KwExtern
                 | TokenKind::KwUnsafe
                 | TokenKind::KwWhere
@@ -256,6 +383,15 @@ impl TokenKind {
                 | TokenKind::KwLet
                 | TokenKind::KwImpl
         )
+    }
+
+    /// Returns whether this token can name a member after `.` or `?.`.
+    ///
+    /// Keywords remain reserved in ordinary identifier positions, but become
+    /// contextual after member access (`value.set`, `Type.match`, ...).
+    #[must_use]
+    pub const fn is_contextual_member_name(self) -> bool {
+        matches!(self, TokenKind::IdentValue | TokenKind::IdentType) || self.is_keyword()
     }
 
     #[must_use]
@@ -301,6 +437,8 @@ impl TokenKind {
             TokenKind::KwFrom => 37,
             TokenKind::KwAs => 38,
             TokenKind::KwPublic => 39,
+            TokenKind::KwInternal => 135,
+            TokenKind::KwPrivate => 136,
             TokenKind::KwExtern => 40,
             TokenKind::KwUnsafe => 41,
             TokenKind::KwWhere => 42,
@@ -393,6 +531,9 @@ impl TokenKind {
             TokenKind::Ellipsis => 126,
             TokenKind::Arrow => 127,
             TokenKind::Eof => 128,
+            TokenKind::TypeIsize => 133,
+            TokenKind::TypeUsize => 134,
+            TokenKind::ByteChar => 137,
             TokenKind::Error(_) => 132,
         }
     }
@@ -440,6 +581,8 @@ impl TokenKind {
             37 => TokenKind::KwFrom,
             38 => TokenKind::KwAs,
             39 => TokenKind::KwPublic,
+            135 => TokenKind::KwInternal,
+            136 => TokenKind::KwPrivate,
             40 => TokenKind::KwExtern,
             41 => TokenKind::KwUnsafe,
             42 => TokenKind::KwWhere,
@@ -532,6 +675,9 @@ impl TokenKind {
             129 => TokenKind::KwLet,
             130 => TokenKind::KwRef,
             131 => TokenKind::KwImpl,
+            133 => TokenKind::TypeIsize,
+            134 => TokenKind::TypeUsize,
+            137 => TokenKind::ByteChar,
             _ => TokenKind::Error(crate::LexErrorCode::InvalidChar),
         }
     }
@@ -553,6 +699,7 @@ impl TokenKind {
                 format!("RAW_STRING({})", token.raw_string_content(source))
             }
             TokenKind::Char => format!("CHAR({})", token.char_content(source)),
+            TokenKind::ByteChar => format!("BYTE_CHAR({})", token.byte_content(source)),
             TokenKind::Error(code) => format!("ERROR({code:?})"),
             other => other.name().to_string(),
         }
@@ -587,6 +734,14 @@ impl TokenKind {
                     "character literal".to_string()
                 } else {
                     content.to_string()
+                }
+            }
+            TokenKind::ByteChar => {
+                let content = token.byte_content(source);
+                if content.is_empty() {
+                    "byte literal".to_string()
+                } else {
+                    format!("b'{content}'")
                 }
             }
             TokenKind::Eof => "end of file".to_string(),
@@ -625,6 +780,7 @@ impl TokenKind {
             TokenKind::MultilineStringStart => "MULTILINE_STRING_START",
             TokenKind::MultilineStringEnd => "MULTILINE_STRING_END",
             TokenKind::Char => "CHAR",
+            TokenKind::ByteChar => "BYTE_CHAR",
             TokenKind::KwIf => "KW_IF",
             TokenKind::KwElse => "KW_ELSE",
             TokenKind::KwFor => "KW_FOR",
@@ -647,6 +803,8 @@ impl TokenKind {
             TokenKind::KwFrom => "KW_FROM",
             TokenKind::KwAs => "KW_AS",
             TokenKind::KwPublic => "KW_PUBLIC",
+            TokenKind::KwInternal => "KW_INTERNAL",
+            TokenKind::KwPrivate => "KW_PRIVATE",
             TokenKind::KwExtern => "KW_EXTERN",
             TokenKind::KwUnsafe => "KW_UNSAFE",
             TokenKind::KwWhere => "KW_WHERE",
@@ -667,6 +825,8 @@ impl TokenKind {
             TokenKind::KwImpl => "KW_IMPL",
             TokenKind::TypeInt => "TYPE_INT",
             TokenKind::TypeUint => "TYPE_UINT",
+            TokenKind::TypeIsize => "TYPE_ISIZE",
+            TokenKind::TypeUsize => "TYPE_USIZE",
             TokenKind::TypeFloat => "TYPE_FLOAT",
             TokenKind::TypeI8 => "TYPE_I8",
             TokenKind::TypeI16 => "TYPE_I16",
@@ -774,6 +934,8 @@ static TOKEN_FLAGS_TABLE: [TokenFlags; TokenKind::COUNT] = {
                 | TokenKind::IdentType
                 | TokenKind::TypeInt
                 | TokenKind::TypeUint
+                | TokenKind::TypeIsize
+                | TokenKind::TypeUsize
                 | TokenKind::TypeFloat
                 | TokenKind::TypeI8
                 | TokenKind::TypeI16
@@ -800,6 +962,7 @@ static TOKEN_FLAGS_TABLE: [TokenFlags; TokenKind::COUNT] = {
                 | TokenKind::BoolFalse
                 | TokenKind::Nil
                 | TokenKind::Char
+                | TokenKind::ByteChar
                 | TokenKind::StringEnd
                 | TokenKind::RawString
                 | TokenKind::MultilineStringEnd

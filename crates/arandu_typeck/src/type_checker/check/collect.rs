@@ -23,8 +23,7 @@ pub(crate) fn apply_receiver_ownership(
 
 #[tracing::instrument(level = "trace", target = "arandu_typeck", skip(checker, program))]
 pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Program) {
-    for decl_id in &program.decls {
-        let decl = checker.pool.decl(*decl_id);
+    program.for_each_decl_recursive(|_decl_id, decl| {
         match decl {
             TopLevelDecl::Struct(struct_decl) => {
                 let mut field_entries: Vec<arandu_middle::layout::StructFieldInfo> = Vec::new();
@@ -34,6 +33,16 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
                     let field_tid = checker.intern(field_ty);
                     let field_key = crate::NodeKey::from(field.span);
                     let field_symbol = checker.resolved.definitions.get(&field_key).copied();
+                    if field.visibility == arandu_parser::Visibility::Private
+                        && let Some(field_symbol) = field_symbol
+                    {
+                        checker.type_info.private_fields.insert(field_symbol);
+                    }
+                    if field.visibility == arandu_parser::Visibility::Private
+                        && let Some(field_symbol) = field_symbol
+                    {
+                        checker.type_info.private_fields.insert(field_symbol);
+                    }
                     field_entries.push(arandu_middle::layout::StructFieldInfo {
                         name: field.name.clone(),
                         symbol: field_symbol,
@@ -43,6 +52,34 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
                 }
                 let struct_key = crate::NodeKey::from(struct_decl.span);
                 if let Some(symbol_id) = checker.resolved.definitions.get(&struct_key).copied() {
+                    let is_repr_c = struct_decl.attrs.iter().any(|attr| {
+                        if attr.name == "Repr" || attr.name == "repr" {
+                            attr.args
+                                .first()
+                                .is_some_and(|arg| match checker.pool.expr(*arg) {
+                                    arandu_parser::ExprKind::Path { path } => {
+                                        path.first().is_some_and(|s| s.eq_ignore_ascii_case("c"))
+                                    }
+                                    arandu_parser::ExprKind::InterpolatedString { parts } => {
+                                        let part_ids = checker.pool.string_part_list(*parts);
+                                        part_ids.first().is_some_and(|&id| {
+                                            match checker.pool.string_part(id) {
+                                                arandu_parser::StringPart::Text {
+                                                    text, ..
+                                                } => text.eq_ignore_ascii_case("c"),
+                                                _ => false,
+                                            }
+                                        })
+                                    }
+                                    _ => false,
+                                })
+                        } else {
+                            false
+                        }
+                    });
+                    if is_repr_c {
+                        checker.type_info.struct_repr_c.insert(symbol_id);
+                    }
                     checker.type_info.struct_fields.insert(
                         symbol_id,
                         std::sync::Arc::new(arandu_middle::layout::StructFields::from_entries(
@@ -65,7 +102,7 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
                 let enum_key = crate::NodeKey::from(enum_decl.span);
                 let Some(enum_symbol_id) = checker.resolved.definitions.get(&enum_key).copied()
                 else {
-                    continue;
+                    return;
                 };
                 let params = super::super::types::extract_generic_param_symbols(
                     checker,
@@ -175,7 +212,18 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
                 }
             }
             TopLevelDecl::Const(const_decl) => {
-                if let Some(ty_expr) = const_decl.ty {
+                // A cast gives an unannotated constant a statically knowable
+                // type. Publish it with signatures so sibling function bodies
+                // can type-check references before the constant's body shard is
+                // merged (e.g. a `uint` capacity bound used in a condition).
+                let declared_ty =
+                    const_decl
+                        .ty
+                        .or_else(|| match checker.pool.expr(const_decl.value) {
+                            arandu_parser::ExprKind::Cast { ty, .. } => Some(*ty),
+                            _ => None,
+                        });
+                if let Some(ty_expr) = declared_ty {
                     let const_ty = checker.lower_type_expr(ty_expr, checker.symbols.global_scope());
                     let const_key = crate::NodeKey::from(const_decl.span);
                     if let Some(symbol_id) = checker.resolved.definitions.get(&const_key).copied() {
@@ -224,13 +272,12 @@ pub(crate) fn collect_type_shapes(checker: &mut TypeChecker<'_>, program: &Progr
             }
             _ => {}
         }
-    }
+    });
 }
 
 #[tracing::instrument(level = "trace", target = "arandu_typeck", skip(checker, program))]
 pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &Program) {
-    for decl_id in &program.decls {
-        let decl = checker.pool.decl(*decl_id);
+    program.for_each_decl_recursive(|_decl_id, decl| {
         match decl {
             TopLevelDecl::Func(func_decl) => {
                 let mut ret_ty = if let Some(result) = &func_decl.result {
@@ -292,8 +339,13 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &P
                         {
                             let mut new_args = Vec::new();
                             for &param_sym in struct_params.iter() {
-                                let arg_ty =
-                                    ArType::named(param_sym, &[], &checker.type_info.type_interner);
+                                let arg_ty = if checker.symbols.get(param_sym).kind
+                                    == arandu_middle::SymbolKind::ConstParam
+                                {
+                                    ArType::ConstParam(param_sym)
+                                } else {
+                                    ArType::named(param_sym, &[], &checker.type_info.type_interner)
+                                };
                                 new_args.push(checker.intern(arg_ty));
                             }
                             let new_first_ty = ArType::named(
@@ -366,6 +418,14 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &P
                         ArType::func(&param_types, ret_id, &checker.type_info.type_interner);
                     let func_id = checker.intern(func_ty);
                     checker.record_decl_type(symbol_id, func_id);
+
+                    if func_decl
+                        .attrs
+                        .iter()
+                        .any(|attr| attr.name == "Unsafe" || attr.name == "unsafe")
+                    {
+                        checker.type_info.unsafe_functions.insert(symbol_id);
+                    }
 
                     // Drop Elaboration: Check for @Destructor attribute
                     let has_destructor_attr = func_decl
@@ -546,5 +606,5 @@ pub(crate) fn collect_signature_types(checker: &mut TypeChecker<'_>, program: &P
             }
             _ => {}
         }
-    }
+    });
 }

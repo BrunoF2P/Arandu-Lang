@@ -5,6 +5,14 @@ inputs:
   cache-key:
     description: Additional cache key for the job's compilation contract.
     required: true
+  shared-key:
+    description: Shared cache key across jobs on the same OS.
+    required: false
+    default: "core-rust-1.97.1"
+  save-if:
+    description: Condition for saving the cache.
+    required: false
+    default: "true"
 
 runs:
   using: composite
@@ -21,3 +29,5 @@ runs:
       uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       with:
         key: ${{ inputs.cache-key }}
+        shared-key: ${{ inputs.shared-key }}-${{ runner.os }}
+        save-if: ${{ inputs.save-if }}

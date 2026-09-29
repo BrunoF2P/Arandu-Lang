@@ -11,7 +11,7 @@
 //! cancel via `$/cancelRequest`, and saturation is answered with
 //! `ServerCancelled` instead of unbounded backlog.
 
-use crate::diagnostics::{publish_diagnostics, spawn_diagnostics, spawn_open_diagnostics};
+use crate::diagnostics::{publish_diagnostics, spawn_open_diagnostics};
 use crate::handlers;
 use crate::pool::{CancellationToken, JobKey, Priority, WorkerPool};
 use crate::state::{DocInfo, ServerState};
@@ -35,6 +35,14 @@ pub(crate) const LSP_SERVER_CANCELLED: i32 = -32802;
 pub(crate) const JSON_RPC_INTERNAL_ERROR: i32 = -32603;
 // Includes running jobs and results awaiting publication, unlike pool capacity.
 const MAX_PENDING_REQUESTS: usize = 64;
+/// Bound of the worker → event-loop result channel.
+///
+/// Producers far outnumber the single consumer under edit bursts; without a
+/// bound the queue grows with every superseded result. Workers send with
+/// blocking `send` (backpressure: the loop always drains), while the loop
+/// itself never sends into this channel — it stages rejections in
+/// [`ServerState::deferred_rejections`] instead.
+pub(crate) const JOB_RESULT_CAPACITY: usize = MAX_PENDING_REQUESTS;
 
 #[cfg(test)]
 mod tests;
@@ -112,6 +120,7 @@ pub(crate) fn event_loop(
     let mut workspace_done = false;
     loop {
         apply_deferred_reload(connection, state, pool, &job_tx)?;
+        drain_deferred_rejections(connection, state, pool, &job_tx)?;
         let timeout = state
             .vfs
             .next_deadline()
@@ -177,6 +186,12 @@ pub(crate) fn event_loop(
                 }
             }
             Event::Workspace(event) => match event {
+                Ok(WorkspaceEvent::Stdlib(stdlib)) => {
+                    for file in stdlib.files {
+                        crate::workspace::register_workspace_file(state, file);
+                    }
+                    state.host.db().set_stdlib_root(stdlib.root);
+                }
                 Ok(WorkspaceEvent::Project(project)) => {
                     let mut project = *project;
                     for file in project.module_files.drain(..) {
@@ -189,6 +204,14 @@ pub(crate) fn event_loop(
                 Ok(WorkspaceEvent::File(file)) => {
                     crate::workspace::register_workspace_file(state, file);
                 }
+                Ok(WorkspaceEvent::NoManifest) => {
+                    let message = if state.host.db().stdlib_root().is_some() {
+                        "No arandu.toml found; analyzing files with the toolchain stdlib. Run `arandu_cli init` in a package folder to enable package imports and tests."
+                    } else {
+                        "No arandu.toml found; single-file analysis is available, but the toolchain stdlib could not be located. Set ARANDU_STDLIB to its directory."
+                    };
+                    send_server_status(connection, "single-file", message)?;
+                }
                 Ok(WorkspaceEvent::Error(error)) => {
                     send_server_status(connection, "error", &error)?;
                 }
@@ -199,7 +222,14 @@ pub(crate) fn event_loop(
                         finish_workspace_progress(connection)?;
                         workspace_progress_started = false;
                     }
-                    send_server_status(connection, "ready", "Workspace ready")?;
+                    let message = if state.host.db().stdlib_root().is_none() {
+                        "Workspace indexed; toolchain stdlib unavailable"
+                    } else if state.package.is_some() {
+                        "Workspace ready"
+                    } else {
+                        "Single-file analysis ready; no arandu.toml found"
+                    };
+                    send_server_status(connection, "ready", message)?;
                     workspace_rx = never();
                 }
                 Err(_) => workspace_rx = never(),
@@ -209,8 +239,8 @@ pub(crate) fn event_loop(
                     pool.cancel_requests();
                 }
                 let committed = state.flush_due();
-                for (uri, doc_id) in committed {
-                    spawn_diagnostics(state, pool, &job_tx, uri, doc_id);
+                if !committed.is_empty() {
+                    spawn_open_diagnostics(state, pool, &job_tx);
                 }
             }
         }
@@ -273,8 +303,8 @@ pub(crate) fn flush_for_request(
         pool.cancel_requests();
     }
     let committed = state.flush_all();
-    for (uri, doc_id) in committed {
-        spawn_diagnostics(state, pool, job_tx, uri, doc_id);
+    if !committed.is_empty() {
+        spawn_open_diagnostics(state, pool, job_tx);
     }
 }
 
@@ -290,7 +320,7 @@ pub(crate) fn spawn_goto(
     uri: lsp_types::Uri,
     pos: lsp_types::Position,
 ) {
-    if reject_saturated_request(state, job_tx, &req_id) {
+    if reject_saturated_request(state, &req_id) {
         return;
     }
     let snap = state.snapshot();
@@ -354,7 +384,9 @@ pub(crate) fn spawn_goto(
         )
         .is_err()
     {
-        let _ = job_tx.send(JobResult::Rejected { id: rejected_id });
+        // Event-loop thread: stage instead of sending into the bounded
+        // channel it must also drain (see `JOB_RESULT_CAPACITY`).
+        state.deferred_rejections.push_back(rejected_id);
     } else {
         state.pending_requests.insert(rejected_id);
     }
@@ -370,7 +402,7 @@ pub(crate) fn spawn_json<F>(
 ) where
     F: FnOnce(&AnalysisSnapshot, &FxHashMap<String, DocInfo>) -> serde_json::Value + Send + 'static,
 {
-    if reject_saturated_request(state, job_tx, &req_id) {
+    if reject_saturated_request(state, &req_id) {
         return;
     }
     let snap = state.snapshot();
@@ -416,7 +448,7 @@ pub(crate) fn spawn_json<F>(
         )
         .is_err()
     {
-        let _ = job_tx.send(JobResult::Rejected { id: rejected_id });
+        state.deferred_rejections.push_back(rejected_id);
     } else {
         state.pending_requests.insert(rejected_id);
     }
@@ -437,7 +469,7 @@ pub(crate) fn spawn_json_result<F>(
         + Send
         + 'static,
 {
-    if reject_saturated_request(state, job_tx, &req_id) {
+    if reject_saturated_request(state, &req_id) {
         return;
     }
     let snap = state.snapshot();
@@ -491,7 +523,7 @@ pub(crate) fn spawn_json_result<F>(
         )
         .is_err()
     {
-        let _ = job_tx.send(JobResult::Rejected { id: rejected_id });
+        state.deferred_rejections.push_back(rejected_id);
     } else {
         state.pending_requests.insert(rejected_id);
     }
@@ -510,16 +542,31 @@ pub(crate) fn send_cancelled_if_needed(
     true
 }
 
-fn reject_saturated_request(
-    state: &ServerState,
-    job_tx: &Sender<JobResult>,
-    id: &RequestId,
-) -> bool {
+fn reject_saturated_request(state: &mut ServerState, id: &RequestId) -> bool {
     if state.pending_requests.len() < MAX_PENDING_REQUESTS {
         return false;
     }
-    let _ = job_tx.send(JobResult::Rejected { id: id.clone() });
+    // Event-loop thread: never send into the bounded job channel it drains
+    // itself; the rejection is delivered by `drain_deferred_rejections`.
+    state.deferred_rejections.push_back(id.clone());
     true
+}
+
+/// Delivers rejections staged by the event-loop thread.
+///
+/// Called at the top of every loop iteration so a saturated request still
+/// receives its terminal response without the loop ever blocking on its own
+/// bounded channel.
+pub(crate) fn drain_deferred_rejections(
+    connection: &Connection,
+    state: &mut ServerState,
+    pool: &WorkerPool,
+    job_tx: &Sender<JobResult>,
+) -> Result<(), Box<dyn Error + Sync + Send>> {
+    while let Some(id) = state.deferred_rejections.pop_front() {
+        handle_job_result(connection, state, pool, job_tx, JobResult::Rejected { id })?;
+    }
+    Ok(())
 }
 
 fn apply_deferred_reload(

@@ -46,7 +46,19 @@ impl LowerCtx<'_> {
 
     pub(crate) fn write_variable(&mut self, block: BlockId, local: LocalId, value: AmirOperand) {
         let value = self.materialize_nullable_const(local, value);
+        if let AmirOperand::Copy(temp) | AmirOperand::Move(temp) = value {
+            self.debug_bindings.push((temp, local));
+        }
         self.current_def.insert((block, local), value);
+    }
+
+    pub(crate) fn canonical_debug_temp(&self, temp: TempId) -> Option<TempId> {
+        match Self::resolve_operand(&self.redirected_temps, AmirOperand::Copy(temp)) {
+            AmirOperand::Copy(temp) | AmirOperand::Move(temp) => Some(temp),
+            AmirOperand::Constant(_) | AmirOperand::FunctionRef(_) | AmirOperand::GlobalRef(_) => {
+                None
+            }
+        }
     }
 
     /// Current basic block, or ICE diagnostic if lowering lost block context.
@@ -121,6 +133,10 @@ impl LowerCtx<'_> {
         });
         self.temp_states.push(MoveState::Available);
         self.temp_origins.push(Some(local));
+        self.temp_place_origins.push(Some(crate::amir::AmirPlace {
+            local,
+            projections: smallvec::SmallVec::new(),
+        }));
         // For `T?`, never redirect a non-Nil constant into the use site: bare
         // `0` would collapse with `nil` under `ne 0, nil`. Materialize via
         // Assign so codegen can box the scalar into a handle.
@@ -493,6 +509,9 @@ impl LowerCtx<'_> {
                 *slice = Self::resolve_operand(redirected_temps, *slice);
                 *start = Self::resolve_operand(redirected_temps, *start);
                 *len = Self::resolve_operand(redirected_temps, *len);
+            }
+            AmirRvalue::StrBytes { source } => {
+                *source = Self::resolve_operand(redirected_temps, *source);
             }
             AmirRvalue::StrView { owner } => {
                 *owner = Self::resolve_operand(redirected_temps, *owner);

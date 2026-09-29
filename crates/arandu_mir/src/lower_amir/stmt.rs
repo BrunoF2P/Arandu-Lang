@@ -105,6 +105,9 @@ impl LowerCtx<'_> {
                     let b = &bindings_slice[0];
                     let local_id = self.new_local_id(b.ty, b.symbol, b.span);
                     let val_op = self.lower_expr(*value, None, symbols)?;
+                    if let AmirOperand::Copy(t) | AmirOperand::Move(t) = &val_op {
+                        self.owned_string_temps.remove(t);
+                    }
                     let consumed = self.consume_operand(val_op)?;
                     self.write_variable_source(local_id, consumed)?;
                 } else if bindings_slice.len() == 2 {
@@ -276,33 +279,42 @@ impl LowerCtx<'_> {
             }
 
             HirStmtKind::Break => {
-                if let Some((_, exit_block, defer_depth)) = self.loop_stack.last().copied() {
+                if let Some((_, exit_block, defer_depth, scope_depth)) =
+                    self.loop_stack.last().copied()
+                {
                     self.exit_defer_frames_from(defer_depth, false, symbols)?;
+                    self.emit_local_scope_exit_from(scope_depth);
                     self.emit_goto(exit_block);
                     self.builder.current_block = None;
                 }
             }
             HirStmtKind::Continue => {
-                if let Some((cont_block, _, defer_depth)) = self.loop_stack.last().copied() {
+                if let Some((cont_block, _, defer_depth, scope_depth)) =
+                    self.loop_stack.last().copied()
+                {
                     self.exit_defer_frames_from(defer_depth, false, symbols)?;
+                    self.emit_local_scope_exit_from(scope_depth);
                     self.emit_goto(cont_block);
                     self.builder.current_block = None;
                 }
             }
             HirStmtKind::Expr(expr) => {
-                self.lower_expr(*expr, None, symbols)?;
+                self.lower_expr_stmt(*expr, symbols)?;
             }
             HirStmtKind::If {
                 condition,
                 then_block,
                 else_block,
             } => {
-                let cond_op = self.lower_condition(condition, symbols)?;
-                let bb_then = self.new_block();
-                let bb_else = self.new_block();
+                let bb_then = self.new_block_at(self.hir.pool.block(*then_block).span);
+                let bb_else = if let Some(block) = else_block {
+                    self.new_block_at(self.hir.pool.block(*block).span)
+                } else {
+                    self.new_block()
+                };
                 let bb_join = self.new_block();
 
-                self.set_bool_branch(cond_op, bb_then, bb_else);
+                self.lower_condition_branch(condition, bb_then, bb_else, symbols)?;
                 self.seal_block(bb_then);
                 self.seal_block(bb_else);
 
@@ -326,19 +338,20 @@ impl LowerCtx<'_> {
             }
             HirStmtKind::While { condition, body } => {
                 let bb_cond = self.new_block();
-                let bb_body = self.new_block();
+                let bb_body = self.new_block_at(self.hir.pool.block(*body).span);
                 let bb_exit = self.new_block();
 
                 self.emit_goto(bb_cond);
 
                 self.builder.current_block = Some(bb_cond);
-                let cond_op = self.lower_condition(condition, symbols)?;
-                self.set_bool_branch(cond_op, bb_body, bb_exit);
+                self.lower_condition_branch(condition, bb_body, bb_exit, symbols)?;
                 self.seal_block(bb_body);
                 self.seal_block(bb_exit);
 
                 let defer_depth = self.defer_frames.len();
-                self.loop_stack.push((bb_cond, bb_exit, defer_depth));
+                let scope_depth = self.local_scopes.len();
+                self.loop_stack
+                    .push((bb_cond, bb_exit, defer_depth, scope_depth));
                 self.builder.current_block = Some(bb_body);
                 self.lower_block(*body, symbols)?;
                 if self.builder.current_block.is_some() {
@@ -379,7 +392,7 @@ impl LowerCtx<'_> {
                     )?;
 
                     let bb_cond = self.new_block();
-                    let bb_body = self.new_block();
+                    let bb_body = self.new_block_at(self.hir.pool.block(*body).span);
                     let bb_step = self.new_block();
                     let bb_exit = self.new_block();
 
@@ -416,7 +429,10 @@ impl LowerCtx<'_> {
                     self.seal_block(bb_exit);
 
                     let defer_depth = self.defer_frames.len();
-                    self.loop_stack.push((bb_step, bb_exit, defer_depth));
+                    let scope_depth = self.local_scopes.len();
+                    self.begin_local_scope();
+                    self.loop_stack
+                        .push((bb_step, bb_exit, defer_depth, scope_depth));
                     self.builder.current_block = Some(bb_body);
 
                     let bindings_slice = self.hir.pool.for_bindings_list(*bindings);
@@ -450,6 +466,7 @@ impl LowerCtx<'_> {
                     }
 
                     self.lower_block(*body, symbols)?;
+                    self.end_local_scope();
                     if self.builder.current_block.is_some() {
                         self.emit_goto(bb_step);
                     }
@@ -497,7 +514,7 @@ impl LowerCtx<'_> {
                     }
 
                     let bb_cond = self.new_block();
-                    let bb_body = self.new_block();
+                    let bb_body = self.new_block_at(self.hir.pool.block(*body).span);
                     let bb_step = self.new_block();
                     let bb_exit = self.new_block();
 
@@ -514,7 +531,9 @@ impl LowerCtx<'_> {
                     self.seal_block(bb_exit);
 
                     let defer_depth = self.defer_frames.len();
-                    self.loop_stack.push((bb_step, bb_exit, defer_depth));
+                    let scope_depth = self.local_scopes.len();
+                    self.loop_stack
+                        .push((bb_step, bb_exit, defer_depth, scope_depth));
                     self.builder.current_block = Some(bb_body);
                     self.lower_block(*body, symbols)?;
                     if self.builder.current_block.is_some() {
@@ -575,6 +594,9 @@ impl LowerCtx<'_> {
                     let b = &bindings_slice[0];
                     let local_id = self.new_local_id(b.ty, b.symbol, b.span);
                     let val_op = self.lower_expr(*value, None, symbols)?;
+                    if let AmirOperand::Copy(t) | AmirOperand::Move(t) = &val_op {
+                        self.owned_string_temps.remove(t);
+                    }
                     let consumed = self.consume_operand(val_op)?;
                     self.write_variable_source(local_id, consumed)?;
                 } else if bindings_slice.len() == 2 {
@@ -624,8 +646,28 @@ impl LowerCtx<'_> {
                 self.lower_set_places(self.hir.pool.places_list(*places), op, &val_op, symbols)?;
             }
             HirSimpleStmt::Expr(expr) => {
-                self.lower_expr(*expr, None, symbols)?;
+                self.lower_expr_stmt(*expr, symbols)?;
             }
+        }
+        Ok(())
+    }
+
+    fn lower_expr_stmt(
+        &mut self,
+        expr_id: crate::hir::HirExprId,
+        symbols: &SymbolTable,
+    ) -> Result<(), Diagnostic> {
+        let start_owned = self.owned_string_temps.clone();
+        self.lower_expr(expr_id, None, symbols)?;
+        let to_free: Vec<TempId> = self
+            .owned_string_temps
+            .iter()
+            .copied()
+            .filter(|t| !start_owned.contains(t))
+            .collect();
+        for t in to_free {
+            self.owned_string_temps.remove(&t);
+            self.push_stmt(AmirStmt::Free(AmirOperand::Copy(t)));
         }
         Ok(())
     }
@@ -707,7 +749,16 @@ impl LowerCtx<'_> {
         let Some(&local_id) = self.symbol_map.get(&place.root_symbol) else {
             return Ok(());
         };
-        let projections: Result<Vec<_>, Diagnostic> = place
+        let root_ty = self.resolve_ty(self.locals[local_id.as_usize()].ty);
+        let mut projections = Vec::new();
+        let starts_with_named_field =
+            matches!(place.suffixes.first(), Some(HirPlaceSuffix::Field { .. }));
+        if starts_with_named_field
+            && matches!(root_ty, ArType::Ref(_) | ArType::RefMut(_) | ArType::Ptr(_))
+        {
+            projections.push(AmirProjection::Deref);
+        }
+        let suffix_projections: Result<Vec<_>, Diagnostic> = place
             .suffixes
             .iter()
             .map(|s| match s {
@@ -725,9 +776,10 @@ impl LowerCtx<'_> {
                 )),
             })
             .collect();
+        projections.extend(suffix_projections?);
         let amir_place = AmirPlace {
             local: local_id,
-            projections: projections?.into(),
+            projections: projections.into(),
         };
 
         // Projected stores address through the local's SSA value (e.g. `s.n = v`
@@ -805,6 +857,7 @@ impl LowerCtx<'_> {
         block: crate::hir::HirBlockId,
         symbols: &SymbolTable,
     ) -> Result<(), Diagnostic> {
+        self.begin_local_scope();
         self.defer_frames.push(DeferFrame {
             entries: Vec::new(),
         });
@@ -819,6 +872,7 @@ impl LowerCtx<'_> {
         if self.builder.current_block.is_some() {
             self.exit_current_defer_frame(false, symbols)?;
         }
+        self.end_local_scope();
         Ok(())
     }
 
@@ -851,6 +905,7 @@ impl LowerCtx<'_> {
         async_payload_ty: Option<crate::types::TypeId>,
         symbols: &SymbolTable,
     ) -> Result<(), Diagnostic> {
+        self.begin_local_scope();
         self.defer_frames.push(DeferFrame {
             entries: Vec::new(),
         });
@@ -877,6 +932,7 @@ impl LowerCtx<'_> {
             if self.builder.current_block.is_some() {
                 self.exit_current_defer_frame(false, symbols)?;
             }
+            self.end_local_scope();
             return Ok(());
         }
         let last_idx = statements_slice.len() - 1;
@@ -887,7 +943,9 @@ impl LowerCtx<'_> {
             let stmt = self.hir.pool.stmt(stmt_id);
             if i == last_idx {
                 if let HirStmtKind::Expr(expr) = stmt.kind {
-                    if let (Some(dest), Some(payload_ty)) = (target, async_payload_ty) {
+                    let start_owned = self.owned_string_temps.clone();
+                    let res_op = if let (Some(dest), Some(payload_ty)) = (target, async_payload_ty)
+                    {
                         let inner = self.lower_expr(expr, None, symbols)?;
                         self.emit_assign_temp(
                             dest,
@@ -897,8 +955,27 @@ impl LowerCtx<'_> {
                                 stack: false,
                             },
                         );
+                        AmirOperand::Copy(dest)
                     } else {
-                        self.lower_expr(expr, target, symbols)?;
+                        self.lower_expr(expr, target, symbols)?
+                    };
+                    let returned_temp = match res_op {
+                        AmirOperand::Copy(t) | AmirOperand::Move(t) => Some(t),
+                        _ => None,
+                    };
+                    let to_free: Vec<TempId> = self
+                        .owned_string_temps
+                        .iter()
+                        .copied()
+                        .filter(|t| {
+                            !start_owned.contains(t)
+                                && Some(*t) != returned_temp
+                                && Some(*t) != target
+                        })
+                        .collect();
+                    for t in to_free {
+                        self.owned_string_temps.remove(&t);
+                        self.push_stmt(AmirStmt::Free(AmirOperand::Copy(t)));
                     }
                 } else {
                     self.lower_stmt(stmt, symbols)?;
@@ -929,6 +1006,7 @@ impl LowerCtx<'_> {
         if self.builder.current_block.is_some() {
             self.exit_current_defer_frame(false, symbols)?;
         }
+        self.end_local_scope();
         Ok(())
     }
 }

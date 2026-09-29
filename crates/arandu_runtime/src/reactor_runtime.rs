@@ -481,11 +481,13 @@ pub unsafe extern "C" fn ar_rt_reactor_poll_ms(id: ReactorId, timeout_ms: i64) -
             std::thread::sleep(wait);
         }
         let mut guard = lock_reactors();
-        if let Some(Some(slot)) = guard.get_mut(id as usize) {
-            if slot.deadline.is_some_and(|d| Instant::now() >= d) {
-                slot.deadline = None;
-                return 1;
-            }
+        if let Some(Some(slot)) = guard.get_mut(id as usize)
+            && slot
+                .deadline
+                .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            slot.deadline = None;
+            return 1;
         }
         0
     }

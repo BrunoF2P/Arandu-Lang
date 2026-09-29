@@ -49,6 +49,14 @@ pub(super) fn parse_primary(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Opti
                     .alloc_expr(ExprKind::Char { value }, ctx.token_span(t)),
             )
         }
+        TokenKind::ByteChar => {
+            let value = t.byte_value(ctx.source).unwrap_or(0);
+            cur.bump();
+            Some(
+                ctx.pool
+                    .alloc_expr(ExprKind::Byte { value }, ctx.token_span(t)),
+            )
+        }
         TokenKind::Nil => {
             cur.bump();
             Some(ctx.pool.alloc_expr(ExprKind::Nil, ctx.token_span(t)))
@@ -111,6 +119,16 @@ pub(super) fn parse_primary(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Opti
                 ctx.pool
                     .alloc_expr(ExprKind::VariantSugar { name, args }, ctx.span(start, end)),
             )
+        }
+        TokenKind::IdentType if !ident_type_starts_type_led_expr(cur) => {
+            let text = ctx.text(t)?;
+            cur.bump();
+            Some(ctx.pool.alloc_expr(
+                ExprKind::Path {
+                    path: smallvec![SmolStr::new(text)],
+                },
+                ctx.token_span(t),
+            ))
         }
         TokenKind::IdentType => parse_type_led(ctx, cur, start),
         // type token as type-led (int is TypeInt etc.)
@@ -185,6 +203,53 @@ pub(super) fn parse_primary(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Opti
             ))
         }
         _ => None,
+    }
+}
+
+fn ident_type_starts_type_led_expr(cur: &Cursor<'_>) -> bool {
+    match cur.peek_at(1).map(|token| token.kind) {
+        Some(TokenKind::Dot) => true,
+        Some(TokenKind::LBrace) => match cur.peek_at(2).map(|token| token.kind) {
+            Some(TokenKind::RBrace) => true,
+            Some(TokenKind::IdentValue | TokenKind::IdentType) => {
+                cur.peek_at(3).is_some_and(|token| {
+                    matches!(
+                        token.kind,
+                        TokenKind::Colon | TokenKind::Comma | TokenKind::RBrace
+                    )
+                })
+            }
+            _ => false,
+        },
+        Some(TokenKind::Lt) => {
+            let mut depth = 0_u32;
+            let mut offset = 1;
+            while let Some(token) = cur.peek_at(offset) {
+                match token.kind {
+                    TokenKind::Lt => depth += 1,
+                    TokenKind::Gt => {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            return cur.peek_at(offset + 1).is_some_and(|next| {
+                                matches!(next.kind, TokenKind::LBrace | TokenKind::Dot)
+                            });
+                        }
+                    }
+                    TokenKind::ShiftRight => {
+                        depth = depth.saturating_sub(2);
+                        if depth == 0 {
+                            return cur.peek_at(offset + 1).is_some_and(|next| {
+                                matches!(next.kind, TokenKind::LBrace | TokenKind::Dot)
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+                offset += 1;
+            }
+            false
+        }
+        _ => false,
     }
 }
 

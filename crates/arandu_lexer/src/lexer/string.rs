@@ -271,11 +271,11 @@ impl<'a> Lexer<'a> {
                 let code_str = self.slice_from(start.pos);
                 let hex = &code_str[3..code_str.len() - 1];
                 let value = u32::from_str_radix(hex, 16).unwrap_or(u32::MAX);
-                if value > 0x10FFFF {
+                if char::from_u32(value).is_none() {
                     return Err(self.error_from(
                         start,
                         LexErrorCode::InvalidUnicodeEscape,
-                        "unicode escape must be a valid scalar value (<= 0x10FFFF)",
+                        "unicode escape must be a valid Unicode scalar value",
                     ));
                 }
             }
@@ -298,7 +298,8 @@ impl<'a> Lexer<'a> {
         }
         let mut count = 0;
         if self.peek() == Some('\\') {
-            self.consume_escape_sequence(start)?;
+            let escape_start = self.mark();
+            self.consume_escape_sequence(escape_start)?;
             count = 1;
         } else {
             while !self.is_at_end() && self.peek() != Some('\'') {
@@ -340,6 +341,104 @@ impl<'a> Lexer<'a> {
         }
         self.bump();
         self.push_token(TokenKind::Char, self.span_from(start), false);
+        Ok(())
+    }
+
+    pub(super) fn lex_byte_char(&mut self) -> Result<(), LexError> {
+        let start = self.mark();
+        self.bump(); // 'b'
+        self.bump(); // '\''
+        if self.peek() == Some('\'') {
+            return Err(self.error_from(start, LexErrorCode::EmptyChar, "empty byte literal"));
+        }
+        let mut count = 0;
+        if self.peek() == Some('\\') {
+            let escape_start = self.mark();
+            self.consume_byte_escape_sequence(escape_start)?;
+            count = 1;
+        } else {
+            while !self.is_at_end() && self.peek() != Some('\'') {
+                if matches!(self.peek(), Some('\n' | '\r')) {
+                    return Err(self.error_from(
+                        start,
+                        LexErrorCode::UnterminatedChar,
+                        "unterminated byte literal",
+                    ));
+                }
+                if let Some(ch) = self.peek()
+                    && is_bidi_control(ch)
+                {
+                    let err_start = self.mark();
+                    self.bump();
+                    return Err(self.error_from(
+                        err_start,
+                        LexErrorCode::BidiTrojanSource,
+                        "unescaped bidirectional Unicode control character (Trojan Source, CWE-1307)",
+                    ));
+                }
+                if let Some(ch) = self.peek()
+                    && !ch.is_ascii()
+                {
+                    let err_start = self.mark();
+                    self.bump();
+                    return Err(self.error_from(
+                        err_start,
+                        LexErrorCode::InvalidChar,
+                        "byte literal must be ASCII",
+                    ));
+                }
+                count += 1;
+                self.bump();
+            }
+        }
+        if self.is_at_end() || self.peek() != Some('\'') {
+            return Err(self.error_from(
+                start,
+                LexErrorCode::UnterminatedChar,
+                "unterminated byte literal",
+            ));
+        }
+        if count > 1 {
+            return Err(self.error_from(
+                start,
+                LexErrorCode::CharTooLong,
+                "byte literal contains more than one byte",
+            ));
+        }
+        self.bump();
+        self.push_token(TokenKind::ByteChar, self.span_from(start), false);
+        Ok(())
+    }
+
+    fn consume_byte_escape_sequence(&mut self, start: Mark) -> Result<(), LexError> {
+        self.bump();
+        match self.peek() {
+            Some('n' | 't' | 'r' | '0' | '\\' | '"' | '\'') => {
+                self.bump();
+            }
+            Some('x') => {
+                self.bump();
+                let mut digits = 0;
+                while digits < 2 && self.peek().is_some_and(|ch| ch.is_ascii_hexdigit()) {
+                    digits += 1;
+                    self.bump();
+                }
+                if digits != 2 {
+                    return Err(self.error_from(
+                        start,
+                        LexErrorCode::InvalidEscape,
+                        "hex escape in byte literal must have exactly 2 hex digits",
+                    ));
+                }
+            }
+            _ => {
+                return Err(self.error_from(
+                    start,
+                    LexErrorCode::InvalidEscape,
+                    "invalid escape sequence in byte literal",
+                ));
+            }
+        }
         Ok(())
     }
 

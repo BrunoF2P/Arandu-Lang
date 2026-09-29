@@ -515,6 +515,7 @@ fn merge_from_interfaces() {
         SymbolId::new(0, 0),
         InterfaceInfo {
             self_param: None,
+            sealed: false,
             methods: Vec::new(),
         },
     );
@@ -651,6 +652,7 @@ fn constraint_unary_op() {
         expected: ArType::Primitive(Primitive::Bool),
         found: ArType::Primitive(Primitive::Int),
         origin: ConstraintOrigin::UnaryOp {
+            op: arandu_parser::UnaryOp::Neg,
             op_span: dummy_span(),
             operand_span: dummy_span(),
         },
@@ -898,6 +900,7 @@ fn constraint_origin_debug() {
             right_span: dummy_span(),
         },
         ConstraintOrigin::UnaryOp {
+            op: arandu_parser::UnaryOp::Neg,
             op_span: dummy_span(),
             operand_span: dummy_span(),
         },
@@ -921,6 +924,10 @@ fn constraint_origin_debug() {
             target_span: dummy_span(),
         },
         ConstraintOrigin::TryInvalid { span: dummy_span() },
+        ConstraintOrigin::TryReturnInvalid {
+            span: dummy_span(),
+            return_span: dummy_span(),
+        },
         ConstraintOrigin::AwaitInvalid { span: dummy_span() },
         ConstraintOrigin::InvalidIndex {
             base_span: dummy_span(),
@@ -1040,6 +1047,7 @@ fn all_constraint_origins() -> Vec<ConstraintOrigin> {
             right_span: s,
         },
         ConstraintOrigin::UnaryOp {
+            op: arandu_parser::UnaryOp::Neg,
             op_span: s,
             operand_span: s,
         },
@@ -1063,6 +1071,10 @@ fn all_constraint_origins() -> Vec<ConstraintOrigin> {
             target_span: s,
         },
         ConstraintOrigin::TryInvalid { span: s },
+        ConstraintOrigin::TryReturnInvalid {
+            span: s,
+            return_span: s,
+        },
         ConstraintOrigin::AwaitInvalid { span: s },
         ConstraintOrigin::InvalidIndex {
             base_span: s,
@@ -1194,19 +1206,62 @@ fn test_contextual_literal_overflow_diagnostic() {
 
 #[test]
 fn test_contextual_literal_uint_overflow() {
+    // RFC 0023: uint is fixed 32-bit across all targets.
     let source = r#"
     module test;
     func take(x: uint): uint { return x; }
     func main(): uint {
         let a: uint = 4_000_000_000;
-        let b: uint = 4_000_000_001;
+        let b: uint = 4_294_967_295;
         return take(5_000_000_000);
     }
     "#;
     let program = arandu_parser::parse(source).unwrap();
     let res = arandu_resolve::resolve_for_test(0, &program);
 
-    // 64-bit target: todos os literais cabem em uint (< u64::MAX).
+    // 64-bit target: 5_000_000_000 exceeds 32-bit uint (RFC 0023).
+    let check_res = crate::type_check(res, &program, TargetInfo { pointer_width: 64 });
+    let overflow_diags: Vec<_> = check_res
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == crate::DiagCode::T038IntegerLiteralOutOfRange)
+        .collect();
+    assert_eq!(
+        overflow_diags.len(),
+        1,
+        "5_000_000_000 deve estourar uint mesmo em target de 64-bit (RFC 0023 uint = u32)"
+    );
+
+    // 32-bit target: comportamento idêntico ao 64-bit.
+    let res = arandu_resolve::resolve_for_test(0, &program);
+    let check_res = crate::type_check(res, &program, TargetInfo { pointer_width: 32 });
+    let overflow_diags: Vec<_> = check_res
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == crate::DiagCode::T038IntegerLiteralOutOfRange)
+        .collect();
+    assert_eq!(
+        overflow_diags.len(),
+        1,
+        "uint tem comportamento idêntico em 32-bit e 64-bit"
+    );
+}
+
+#[test]
+fn test_contextual_literal_usize_overflow() {
+    // RFC 0023: usize varies with target pointer width.
+    let source = r#"
+    module test;
+    func take(x: usize): usize { return x; }
+    func main(): usize {
+        let a: usize = 4_000_000_000;
+        return take(5_000_000_000);
+    }
+    "#;
+    let program = arandu_parser::parse(source).unwrap();
+    let res = arandu_resolve::resolve_for_test(0, &program);
+
+    // 64-bit target: 5_000_000_000 cabe em usize (< u64::MAX).
     let check_res = crate::type_check(res, &program, TargetInfo { pointer_width: 64 });
     let overflow_diags: Vec<_> = check_res
         .diagnostics
@@ -1216,20 +1271,10 @@ fn test_contextual_literal_uint_overflow() {
     assert_eq!(
         overflow_diags.len(),
         0,
-        "4_000_000_000 / 4_000_000_001 / 5_000_000_000 devem caber em uint 64-bit"
+        "5_000_000_000 cabe em usize 64-bit"
     );
 
-    // 32-bit target: valores acima de u32::MAX estouram uint.
-    let source = r#"
-    module test;
-    func take(x: uint): uint { return x; }
-    func main(): uint {
-        let a: uint = 4_294_967_296;
-        let b: uint = 7_000_000_000;
-        return take(8_000_000_000);
-    }
-    "#;
-    let program = arandu_parser::parse(source).unwrap();
+    // 32-bit target: valores acima de u32::MAX estouram usize.
     let res = arandu_resolve::resolve_for_test(0, &program);
     let check_res = crate::type_check(res, &program, TargetInfo { pointer_width: 32 });
     let overflow_diags: Vec<_> = check_res
@@ -1239,26 +1284,9 @@ fn test_contextual_literal_uint_overflow() {
         .collect();
     assert_eq!(
         overflow_diags.len(),
-        3,
-        "4_294_967_296 / 7_000_000_000 / 8_000_000_000 devem estourar uint 32-bit"
+        1,
+        "5_000_000_000 deve estourar usize em target 32-bit"
     );
-
-    // 32-bit target: valores <= u32::MAX continuam válidos.
-    let source = r#"
-    module test;
-    func main(): uint {
-        return 4_294_967_295;
-    }
-    "#;
-    let program = arandu_parser::parse(source).unwrap();
-    let res = arandu_resolve::resolve_for_test(0, &program);
-    let check_res = crate::type_check(res, &program, TargetInfo { pointer_width: 32 });
-    let overflow_diags: Vec<_> = check_res
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == crate::DiagCode::T038IntegerLiteralOutOfRange)
-        .collect();
-    assert_eq!(overflow_diags.len(), 0, "u32::MAX cabe em uint 32-bit");
 }
 
 #[test]
@@ -1302,6 +1330,34 @@ fn test_impl_multiple_methods() {
         check_res.diagnostics.len(),
         0,
         "impl with multiple methods should have zero diagnostics"
+    );
+}
+
+#[test]
+fn private_struct_fields_are_accessible_only_from_owner_methods() {
+    let source = r#"
+    module test;
+    struct Secret { private value: int }
+    impl Secret {
+        public func new(value: int): Secret { return Secret { value }; }
+        public func read(self: ref): int { return self.value; }
+    }
+    func leak(secret: Secret): int { return secret.value; }
+    "#;
+    let program = arandu_parser::parse(source).unwrap();
+    let resolution = arandu_resolve::resolve_for_test(0, &program);
+    let result = crate::type_check(resolution, &program, TargetInfo { pointer_width: 64 });
+
+    let private_errors: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == DiagCode::T041PrivateFieldAccess)
+        .collect();
+    assert_eq!(
+        private_errors.len(),
+        1,
+        "diagnostics: {:?}",
+        result.diagnostics
     );
 }
 
@@ -1422,6 +1478,45 @@ fn test_option_try_and_null_coalesce_typecheck() {
 }
 
 #[test]
+fn result_try_requires_a_compatible_enclosing_return_type() {
+    let source = r#"
+    module test;
+    func source(): Result<int, int> {
+        return Result.Ok(1);
+    }
+    func valid_wrapper(): Result<int, int> {
+        let value = source()?;
+        return Result.Ok(value);
+    }
+    func invalid_wrapper(): int {
+        let value = source()?;
+        return value;
+    }
+    func incompatible_error(): Result<int, str> {
+        let value = source()?;
+        return Result.Ok(value);
+    }
+    "#;
+    let program = arandu_parser::parse(source).unwrap();
+    let res = arandu_resolve::resolve_for_test(0, &program);
+    let check_res = crate::type_check(res, &program, TargetInfo { pointer_width: 64 });
+
+    let try_diags: Vec<_> = check_res
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == DiagCode::T016TryInvalid)
+        .collect();
+    assert_eq!(
+        try_diags.len(),
+        2,
+        "diagnostics: {:?}",
+        check_res.diagnostics
+    );
+    assert_eq!(check_res.diagnostics.len(), 2);
+    assert!(try_diags[0].message.contains("cannot propagate"));
+}
+
+#[test]
 fn test_range_slicing_typecheck() {
     let source = r#"
     module test;
@@ -1483,6 +1578,53 @@ fn test_struct_update_and_punning_typecheck() {
         check_res.diagnostics.len(),
         0,
         "Struct update and field punning should typecheck cleanly: {:?}",
+        check_res.diagnostics
+    );
+}
+
+#[test]
+fn test_cannot_call_own_method_on_borrowed_non_copy_receiver() {
+    let source = r#"
+    module test;
+    public struct Resource { handle: ptr[int]; }
+    public func Resource.consume(self: own Resource): void {}
+
+    public func test_call(r: mut ref Resource): void {
+        r.consume();
+    }
+    "#;
+    let program = arandu_parser::parse(source).unwrap();
+    let res = arandu_resolve::resolve_for_test(0, &program);
+    let check_res = crate::type_check(res, &program, TargetInfo { pointer_width: 64 });
+    assert!(
+        check_res
+            .diagnostics
+            .iter()
+            .any(|d| d.code == arandu_middle::DiagCode::T003IncompatibleCallArg),
+        "Calling consuming own method on a borrowed non-copy receiver must be rejected with T003: {:?}",
+        check_res.diagnostics
+    );
+}
+
+#[test]
+fn test_can_call_ref_methods_on_borrowed_receiver() {
+    let source = r#"
+    module test;
+    public struct Resource { handle: ptr[int]; }
+    public func Resource.inspect(self: ref Resource): void {}
+    public func Resource.modify(self: mut ref Resource): void {}
+
+    public func test_call(r: mut ref Resource): void {
+        r.modify();
+        r.inspect();
+    }
+    "#;
+    let program = arandu_parser::parse(source).unwrap();
+    let res = arandu_resolve::resolve_for_test(0, &program);
+    let check_res = crate::type_check(res, &program, TargetInfo { pointer_width: 64 });
+    assert!(
+        check_res.diagnostics.is_empty(),
+        "Calling ref / mut ref methods on a mut ref receiver must succeed: {:?}",
         check_res.diagnostics
     );
 }

@@ -10,6 +10,7 @@ impl<'a> Parser<'a> {
         &mut self,
         attrs: Vec<Attribute>,
         visibility: Visibility,
+        sealed: bool,
     ) -> Result<InterfaceDecl, ParseError> {
         let start = self.mark();
         self.expect_name("KW_INTERFACE")?;
@@ -37,6 +38,7 @@ impl<'a> Parser<'a> {
             span: self.span_from_mark(start),
             attrs: attrs.into(),
             visibility,
+            sealed,
             name,
             generic_params,
             where_clause,
@@ -49,6 +51,7 @@ impl<'a> Parser<'a> {
         _attrs: Vec<Attribute>,
         _visibility: Visibility,
     ) -> Result<Vec<TopLevelDecl>, ParseError> {
+        let impl_start = self.mark();
         self.expect_name("KW_IMPL")?;
         let impl_generic_params = self.parse_generic_params()?;
         let target_type_name = self.parse_type_name()?;
@@ -63,6 +66,11 @@ impl<'a> Parser<'a> {
         // nominal receiver remains `TypeName`; its declaration owns the
         // generic parameter symbols imported into every member scope.
         let _type_generic_args = type_generic_args;
+        let interface = if self.eat_name("COLON") {
+            Some(self.parse_type_name()?)
+        } else {
+            None
+        };
         let where_clause = self.parse_where_clause("LBRACE")?;
 
         self.start_node(crate::syntax::SyntaxKind::BLOCK);
@@ -139,7 +147,7 @@ impl<'a> Parser<'a> {
         self.expect_name("RBRACE")?;
         self.finish_node(); // BLOCK
 
-        if methods.is_empty() {
+        if methods.is_empty() && interface.is_none() {
             return Err(ParseError::new(
                 ParseErrorCode::ExpectedTopLevelDecl,
                 "an impl block must declare at least one function",
@@ -147,6 +155,13 @@ impl<'a> Parser<'a> {
                 self.file_id,
                 self.source,
             ));
+        }
+        if let Some(interface) = interface {
+            self.interface_impls.push(crate::InterfaceImplDecl {
+                span: self.span_from_mark(impl_start),
+                for_type: target_type_name,
+                interface,
+            });
         }
         Ok(methods.into_iter().map(TopLevelDecl::Func).collect())
     }

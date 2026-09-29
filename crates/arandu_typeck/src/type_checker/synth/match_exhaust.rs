@@ -79,10 +79,23 @@ pub fn check_match_exhaustiveness(
     match_span: Span,
 ) {
     let resolved_ty = checker.type_info.resolve_type_id(value_ty);
+    // Error-typed match values must not trigger exhaustiveness diagnostics;
+    // the guard has to run *before* the `Named` binding below, otherwise it
+    // is unreachable (`Error` is not `Named`).
+    if resolved_ty.is_error() {
+        return;
+    }
     let ArType::Named(enum_id, _) = resolved_ty else {
         return;
     };
-    if resolved_ty.is_error() {
+
+    if checker
+        .type_info
+        .interfaces
+        .get(&enum_id)
+        .is_some_and(|interface| interface.sealed)
+    {
+        check_sealed_interface_exhaustiveness(checker, enum_id, arms, match_span);
         return;
     }
 
@@ -103,7 +116,7 @@ pub fn check_match_exhaustiveness(
     // Build the covered set using SymbolId comparisons (integer equality,
     // no heap allocations on the hot path).
     let mut covered: FxHashSet<crate::SymbolId> = FxHashSet::default();
-    for arm in arms {
+    for arm in arms.iter().filter(|arm| arm.guard.is_none()) {
         if let Some(sym) = pattern_to_variant_symbol_id(checker, enum_id, arm.pattern) {
             covered.insert(sym);
         }
@@ -138,6 +151,62 @@ pub fn check_match_exhaustiveness(
         crate::DiagCode::T024NonExhaustiveMatch,
         format!(
             "non-exhaustive match: missing variant(s): {}",
+            missing.join(", ")
+        ),
+        match_span,
+    ));
+}
+
+fn check_sealed_interface_exhaustiveness(
+    checker: &mut TypeChecker<'_>,
+    interface: crate::SymbolId,
+    arms: &[MatchArm],
+    match_span: Span,
+) {
+    let implementations: FxHashSet<_> = checker
+        .symbols
+        .interface_implementations
+        .iter()
+        .filter_map(|&(concrete, implemented)| (implemented == interface).then_some(concrete))
+        .collect();
+    if implementations.is_empty() {
+        return;
+    }
+    if arms
+        .iter()
+        .any(|arm| arm.guard.is_none() && pattern_covers_all(checker.pool, arm.pattern))
+    {
+        return;
+    }
+
+    let global = checker.symbols.global_scope();
+    let mut covered = FxHashSet::default();
+    for arm in arms.iter().filter(|arm| arm.guard.is_none()) {
+        let type_name = match checker.pool.pattern(arm.pattern) {
+            Pattern::Struct { type_name, .. } => type_name.path.last(),
+            Pattern::TypeTuple { name, .. } => Some(name),
+            _ => None,
+        };
+        if let Some(concrete) = type_name.and_then(|name| checker.symbols.lookup_type(global, name))
+            && implementations.contains(&concrete)
+        {
+            covered.insert(concrete);
+        }
+    }
+
+    let mut missing: Vec<_> = implementations
+        .difference(&covered)
+        .filter_map(|symbol| checker.symbols.try_get(*symbol))
+        .map(|symbol| symbol.name.to_string())
+        .collect();
+    if missing.is_empty() {
+        return;
+    }
+    missing.sort_unstable();
+    checker.diagnostics.push(crate::Diagnostic::error(
+        crate::DiagCode::T024NonExhaustiveMatch,
+        format!(
+            "non-exhaustive match on sealed interface: missing implementer(s): {}",
             missing.join(", ")
         ),
         match_span,

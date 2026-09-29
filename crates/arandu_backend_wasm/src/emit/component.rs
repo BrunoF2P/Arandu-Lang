@@ -115,7 +115,7 @@ impl<'a> WasmModuleBuilder<'a> {
             let Some(sym) = self.symbols.try_get(func.symbol) else {
                 continue;
             };
-            if sym.is_public {
+            if sym.visibility == arandu_middle::Visibility::Public {
                 public_by_kebab.insert(crate::wit_gen::to_wit_ident(&sym.name), func.symbol);
                 if let Some(method) = crate::wit_gen::extract_method_name(&sym.name) {
                     public_by_kebab.insert(crate::wit_gen::to_wit_ident(method), func.symbol);

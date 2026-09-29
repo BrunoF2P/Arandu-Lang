@@ -64,11 +64,15 @@ where
 
     /// Queue or replace the value for `key` (resets quiet timer for that key).
     pub fn push(&mut self, key: K, value: V) {
+        self.push_at(key, value, Instant::now());
+    }
+
+    fn push_at(&mut self, key: K, value: V, now: Instant) {
         self.pending.insert(
             key,
             Pending {
                 value,
-                changed_at: Instant::now(),
+                changed_at: now,
             },
         );
     }
@@ -111,35 +115,28 @@ where
 
     /// Drain entries whose quiet window has elapsed.
     pub fn take_due(&mut self) -> Vec<(K, V)> {
-        let now = Instant::now();
-        let mut due = Vec::new();
-        let mut keep = HashMap::new();
-        for (k, p) in self.pending.drain() {
+        self.take_due_at(Instant::now())
+    }
+
+    fn take_due_at(&mut self, now: Instant) -> Vec<(K, V)> {
+        let mut due_keys = Vec::new();
+        for (k, p) in &self.pending {
             if p.changed_at + self.debounce <= now {
-                due.push((k, p.value));
-            } else {
-                keep.insert(k, p);
+                due_keys.push(k.clone());
             }
         }
-        self.pending = keep;
+        let mut due = Vec::with_capacity(due_keys.len());
+        for k in due_keys {
+            if let Some(p) = self.pending.remove(&k) {
+                due.push((k, p.value));
+            }
+        }
         due
     }
 
     /// Drain **all** pending entries immediately (save / shutdown / force flush).
     pub fn take_all(&mut self) -> Vec<(K, V)> {
         self.pending.drain().map(|(k, p)| (k, p.value)).collect()
-    }
-
-    /// True when every pending entry is still inside its quiet window.
-    #[must_use]
-    pub fn all_quiet(&self) -> bool {
-        if self.pending.is_empty() {
-            return true;
-        }
-        let now = Instant::now();
-        self.pending
-            .values()
-            .all(|p| p.changed_at + self.debounce > now)
     }
 }
 
@@ -166,5 +163,17 @@ mod tests {
         let mut m = DebouncedMap::with_debounce(Duration::from_secs(10));
         m.push("x", 9);
         assert_eq!(m.take_all(), vec![("x", 9)]);
+    }
+
+    #[test]
+    fn take_due_preserves_undue_items() {
+        let mut m = DebouncedMap::with_debounce(Duration::from_millis(50));
+        let start = Instant::now();
+        m.push_at("early", 1, start);
+        m.push_at("late", 2, start + Duration::from_millis(30));
+        let due = m.take_due_at(start + Duration::from_millis(51));
+        assert_eq!(due, vec![("early", 1)]);
+        assert_eq!(m.pending_count(), 1);
+        assert_eq!(m.get(&"late"), Some(&2));
     }
 }

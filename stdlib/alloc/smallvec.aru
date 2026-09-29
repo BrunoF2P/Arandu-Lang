@@ -1,11 +1,55 @@
+//! Vectors with four inline element slots.
+//!
+//! ## Overview
+//!
+//! `SmallVec4<T>` keeps up to four elements in its value and moves to heap storage when it grows beyond that capacity.
+//!
+//! ## Example
+//!
+//! ```arandu
+//! import std.alloc.smallvec as smallvec
+//!
+//! let mut values = smallvec.new<int>()
+//! values.push(1)
+//! let heap = values.isHeap()
+//! ```
+//!
+//! ## Allocations
+//! The first four elements stay inline. A fifth element moves storage to
+//! the heap; later growth may reallocate. `destroy` releases heap storage.
+//!
+//! ## Platform
+//! `native` · `wasm32`
+
 module std.alloc.smallvec
 
 import std.core.mem as mem
+import std.core.intrinsics as intrinsics
+import std.core.marker as marker
+import std.core.option as option
+import std.core.slice as slice
+
+const MAX_SMALLVEC_CAPACITY = 2147483647 as usize
+
+func allocationFailure(): void {
+    unsafe { intrinsics.abort() }
+}
+
+func allocationFits(capacity: usize, element_size: usize): bool {
+    if element_size == (0 as usize) {
+        return false
+    }
+    let max_bytes: usize = MAX_SMALLVEC_CAPACITY
+    return capacity <= max_bytes / element_size
+}
 
 extern "C" {
-    func ar_vec_malloc(size: uint): ptr[u8]
-    func ar_vec_buf_free(p: ptr[u8], size: uint): void
-    func ar_vec_realloc(p: ptr[u8], oldSize: uint, newSize: uint): ptr[u8]
+    /// Host allocator for a raw byte buffer.
+    func ar_vec_malloc(size: usize): ptr[u8]
+    /// Host deallocator for a raw byte buffer.
+    func ar_vec_buf_free(p: ptr[u8], size: usize): void
+    /// Host allocator that resizes a raw byte buffer.
+    func ar_vec_realloc(p: ptr[u8], oldSize: usize, newSize: usize): ptr[u8]
 }
 
 /// Small vector optimized for holding up to 4 elements inline on the stack without heap allocation.
@@ -14,36 +58,44 @@ extern "C" {
 /// - Uses inline buffer for <= 4 elements.
 /// - Spills to heap memory only when exceeding 4 elements.
 public struct SmallVec4<T> {
+    /// Pointer to heap elements when the vector has spilled.
     data: ptr[Option<T>]
-    len: uint
-    capacity: uint
+    /// Number of stored elements or valid bytes.
+    len: usize
+    /// Current element capacity; initially four inline slots.
+    capacity: usize
+    /// Whether the elements reside in heap storage.
     is_heap: bool
+    /// Four inline element slots.
     inline_buf: [4]Option<T>
 }
 
-/// Creates a new empty `SmallVec4<T>` with inline storage ready (capacity = 4).
+/// Creates an empty vector with capacity for four inline elements.
+///
+/// Construction does not allocate. Call `destroy` to release heap storage if
+/// a later `push` makes the vector spill.
 public func new<T>(): SmallVec4<T> {
     return SmallVec4<T> {
         data: nil,
-        len: 0,
-        capacity: 4,
+        len: 0 as usize,
+        capacity: 4 as usize,
         is_heap: false,
         inline_buf: [Option.None, Option.None, Option.None, Option.None],
     }
 }
 
 /// Returns the number of elements in the small vector.
-public func SmallVec4.len<T>(self: ref SmallVec4<T>): uint {
+public func SmallVec4.len<T>(self: ref SmallVec4<T>): usize {
     return self.len
 }
 
 /// Returns `true` if the small vector contains no elements.
 public func SmallVec4.isEmpty<T>(self: ref SmallVec4<T>): bool {
-    return self.len == 0
+    return self.len == (0 as usize)
 }
 
 /// Returns the current capacity (starts at 4 inline, grows geometrically on heap).
-public func SmallVec4.capacity<T>(self: ref SmallVec4<T>): uint {
+public func SmallVec4.capacity<T>(self: ref SmallVec4<T>): usize {
     return self.capacity
 }
 
@@ -56,111 +108,224 @@ public func SmallVec4.isHeap<T>(self: ref SmallVec4<T>): bool {
 ///
 /// If `len < 4`, writes into inline storage without heap allocation.
 /// If `len == capacity`, spills to or reallocates on the heap.
+/// The first spill gives capacity for eight elements; later growth doubles
+/// capacity. Capacity overflow or allocation failure aborts before any pointer
+/// write; this infallible API does not return an allocation error.
 public func SmallVec4.push<T>(self: mut ref SmallVec4<T>, val: T): void {
     if !self.is_heap {
-        if self.len == 0 {
+        if self.len == (0 as usize) {
             self.inline_buf[0] = Option.Some(val)
-            self.len = 1
+            self.len = 1 as usize
             return
         }
-        if self.len == 1 {
+        if self.len == (1 as usize) {
             self.inline_buf[1] = Option.Some(val)
-            self.len = 2
+            self.len = 2 as usize
             return
         }
-        if self.len == 2 {
+        if self.len == (2 as usize) {
             self.inline_buf[2] = Option.Some(val)
-            self.len = 3
+            self.len = 3 as usize
             return
         }
-        if self.len == 3 {
+        if self.len == (3 as usize) {
             self.inline_buf[3] = Option.Some(val)
-            self.len = 4
+            self.len = 4 as usize
             return
         }
-        let new_cap: uint = 8
+        let new_cap: usize = 8 as usize
         let elem_size = mem.sizeOf<Option<T>>()
+        if !allocationFits(new_cap, elem_size) {
+            allocationFailure()
+        }
         unsafe {
             let raw = ar_vec_malloc(new_cap * elem_size)
+            let nullp: ptr[u8] = nil
+            if raw == nullp {
+                allocationFailure()
+            }
             let heap_ptr = raw as ptr[Option<T>]
 
-            let p0 = mem.ptrOffset<Option<T>>(heap_ptr, 0)
-            mem.ptrWrite<Option<T>>(p0, self.inline_buf[0])
-            let p1 = mem.ptrOffset<Option<T>>(heap_ptr, 1)
-            mem.ptrWrite<Option<T>>(p1, self.inline_buf[1])
-            let p2 = mem.ptrOffset<Option<T>>(heap_ptr, 2)
-            mem.ptrWrite<Option<T>>(p2, self.inline_buf[2])
-            let p3 = mem.ptrOffset<Option<T>>(heap_ptr, 3)
-            mem.ptrWrite<Option<T>>(p3, self.inline_buf[3])
-            let p4 = mem.ptrOffset<Option<T>>(heap_ptr, 4)
+            let p0 = mem.ptrOffset<Option<T>>(heap_ptr, 0 as isize)
+            let source0 = intrinsics.addressOf<Option<T>>(mut ref self.inline_buf[0])
+            let inline0 = mem.ptrRead<Option<T>>(source0)
+            mem.ptrWrite<Option<T>>(source0, Option.None)
+            mem.ptrWrite<Option<T>>(p0, inline0)
+            let p1 = mem.ptrOffset<Option<T>>(heap_ptr, 1 as isize)
+            let source1 = intrinsics.addressOf<Option<T>>(mut ref self.inline_buf[1])
+            let inline1 = mem.ptrRead<Option<T>>(source1)
+            mem.ptrWrite<Option<T>>(source1, Option.None)
+            mem.ptrWrite<Option<T>>(p1, inline1)
+            let p2 = mem.ptrOffset<Option<T>>(heap_ptr, 2 as isize)
+            let source2 = intrinsics.addressOf<Option<T>>(mut ref self.inline_buf[2])
+            let inline2 = mem.ptrRead<Option<T>>(source2)
+            mem.ptrWrite<Option<T>>(source2, Option.None)
+            mem.ptrWrite<Option<T>>(p2, inline2)
+            let p3 = mem.ptrOffset<Option<T>>(heap_ptr, 3 as isize)
+            let source3 = intrinsics.addressOf<Option<T>>(mut ref self.inline_buf[3])
+            let inline3 = mem.ptrRead<Option<T>>(source3)
+            mem.ptrWrite<Option<T>>(source3, Option.None)
+            mem.ptrWrite<Option<T>>(p3, inline3)
+            let p4 = mem.ptrOffset<Option<T>>(heap_ptr, 4 as isize)
             mem.ptrWrite<Option<T>>(p4, Option.Some(val))
 
             self.data = heap_ptr
         }
         self.capacity = new_cap
-        self.len = 5
+        self.len = 5 as usize
         self.is_heap = true
         return
     }
 
     if self.len >= self.capacity {
-        let new_cap = self.capacity * 2
+        if self.capacity > (1073741823 as usize) {
+            allocationFailure()
+        }
+        let new_cap = self.capacity * (2 as usize)
         let elem_size = mem.sizeOf<Option<T>>()
+        if !allocationFits(new_cap, elem_size) {
+            allocationFailure()
+        }
         unsafe {
             let raw = ar_vec_realloc(self.data as ptr[u8], self.capacity * elem_size, new_cap * elem_size)
+            let nullp: ptr[u8] = nil
+            if raw == nullp {
+                allocationFailure()
+            }
             self.data = raw as ptr[Option<T>]
         }
         self.capacity = new_cap
     }
 
     unsafe {
-        let p = mem.ptrOffset<Option<T>>(self.data, self.len as i32)
+        let p = mem.ptrOffset<Option<T>>(self.data, self.len as isize)
         mem.ptrWrite<Option<T>>(p, Option.Some(val))
     }
-    self.len = self.len + 1
+    self.len = self.len + (1 as usize)
 }
 
-/// Retrieves an element at `index`, or `Option.None` if out of bounds.
-public func SmallVec4.get<T>(self: ref SmallVec4<T>, index: uint): Option<T> {
+/// Returns a copy of the `Copy` element at `index`, or `None` when out of bounds.
+///
+/// Reading an inline or heap element does not allocate or change the vector.
+public func get<Element: marker.Copy>(self: ref SmallVec4<Element>, index: usize): Option<Element> {
     if index >= self.len {
         return Option.None
     }
     if !self.is_heap {
-        if index == 0 {
+        if index == (0 as usize) {
             return self.inline_buf[0]
         }
-        if index == 1 {
+        if index == (1 as usize) {
             return self.inline_buf[1]
         }
-        if index == 2 {
+        if index == (2 as usize) {
             return self.inline_buf[2]
         }
         return self.inline_buf[3]
     }
     unsafe {
-        let p = mem.ptrOffset<Option<T>>(self.data, index as i32)
-        return mem.ptrRead<Option<T>>(p)
+        let p = mem.ptrOffset<Option<Element>>(self.data, index as isize)
+        return mem.ptrRead<Option<Element>>(p)
     }
 }
 
-/// Removes and returns the last element, or `Option.None` if empty.
-public func SmallVec4.pop<T>(self: mut ref SmallVec4<T>): Option<T> {
-    if self.len == 0 {
+/// Returns a shared reference to an element without copying it.
+///
+/// The reference borrows the small vector and becomes invalid if it spills,
+/// is cleared, or is destroyed. This works for both inline and heap storage.
+public func getRef<T>(self: ref SmallVec4<T>, index: usize): Option<ref T> {
+    if index >= self.len {
         return Option.None
     }
-    let last_idx = self.len - 1
-    let val = self.get(last_idx)
+    if self.is_heap {
+        unsafe {
+            let slots = intrinsics.sliceFromRaw<SmallVec4<T>, Option<T>>(
+                self,
+                self.data,
+                self.len,
+            )
+            match slice.get<Option<T>>(slots, index) {
+                Some(slot) => { return option.asRef(slot) }
+                None => { return Option.None }
+            }
+        }
+    }
+    if index == (0 as usize) {
+        return option.asRef(ref self.inline_buf[0])
+    }
+    if index == (1 as usize) {
+        return option.asRef(ref self.inline_buf[1])
+    }
+    if index == (2 as usize) {
+        return option.asRef(ref self.inline_buf[2])
+    }
+    return option.asRef(ref self.inline_buf[3])
+}
+
+/// Decreases the length and returns the former last element, or `None` if empty.
+///
+/// Heap storage remains allocated after popping, even when the length drops
+/// below four. Call `destroy` to release it.
+public func SmallVec4.pop<T>(self: mut ref SmallVec4<T>): Option<T> {
+    if self.len == (0 as usize) {
+        return Option.None
+    }
+    let last_idx = self.len - (1 as usize)
+    let mut val: Option<T> = Option.None
+    if self.is_heap {
+        unsafe {
+            let p = mem.ptrOffset<Option<T>>(self.data, last_idx as isize)
+            val = mem.ptrRead<Option<T>>(p)
+            mem.ptrWrite<Option<T>>(p, Option.None)
+        }
+    } else if last_idx == (0 as usize) {
+        val = self.inline_buf[0]
+        self.inline_buf[0] = Option.None
+    } else if last_idx == (1 as usize) {
+        val = self.inline_buf[1]
+        self.inline_buf[1] = Option.None
+    } else if last_idx == (2 as usize) {
+        val = self.inline_buf[2]
+        self.inline_buf[2] = Option.None
+    } else {
+        val = self.inline_buf[3]
+        self.inline_buf[3] = Option.None
+    }
     self.len = last_idx
     return val
 }
 
-/// Clears all elements from the small vector.
+/// Sets the length to zero while retaining the current storage and capacity.
+///
+/// In particular, a spilled vector stays on the heap. No deallocation occurs.
 public func SmallVec4.clear<T>(self: mut ref SmallVec4<T>): void {
-    self.len = 0
+    let mut i: usize = 0 as usize
+    while i < self.len {
+        if self.is_heap {
+            unsafe {
+                let p = mem.ptrOffset<Option<T>>(self.data, i as isize)
+                mem.dropInPlace<Option<T>>(p)
+            }
+        } else {
+            if i == (0 as usize) {
+                self.inline_buf[0] = Option.None
+            } else if i == (1 as usize) {
+                self.inline_buf[1] = Option.None
+            } else if i == (2 as usize) {
+                self.inline_buf[2] = Option.None
+            } else if i == (3 as usize) {
+                self.inline_buf[3] = Option.None
+            }
+        }
+        i = i + (1 as usize)
+    }
+    self.len = 0 as usize
 }
 
-/// Releases any allocated heap memory.
+/// Releases heap storage when present and resets a spilled vector to empty
+/// inline storage with capacity four. An inline vector needs no heap release.
 public func SmallVec4.destroy<T>(self: mut ref SmallVec4<T>): void {
+    self.clear()
     if self.is_heap {
         let elem_size = mem.sizeOf<Option<T>>()
         unsafe {
@@ -168,7 +333,7 @@ public func SmallVec4.destroy<T>(self: mut ref SmallVec4<T>): void {
         }
         self.data = nil
         self.is_heap = false
-        self.capacity = 4
-        self.len = 0
+        self.capacity = 4 as usize
+        self.len = 0 as usize
     }
 }

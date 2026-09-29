@@ -101,7 +101,11 @@ pub fn generate_wit(
     let public_funcs: Vec<_> = program
         .funcs
         .iter()
-        .filter(|f| symbols.try_get(f.symbol).is_some_and(|s| s.is_public))
+        .filter(|f| {
+            symbols
+                .try_get(f.symbol)
+                .is_some_and(|s| s.visibility == arandu_middle::Visibility::Public)
+        })
         .collect();
 
     if public_funcs.is_empty() {
@@ -122,7 +126,8 @@ pub fn generate_wit(
     // Check for explicit public interfaces in the symbol table
     let mut public_ifaces: Vec<&arandu_middle::symbol_table::Symbol> = Vec::new();
     for sym in symbols.iter() {
-        if sym.kind == SymbolKind::Interface && sym.is_public {
+        if sym.kind == SymbolKind::Interface && sym.visibility == arandu_middle::Visibility::Public
+        {
             public_ifaces.push(sym);
         }
     }

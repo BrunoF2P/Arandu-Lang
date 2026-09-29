@@ -8,9 +8,37 @@ pub struct Program {
     pub span: Span,
     pub module: Option<ModuleDecl>,
     pub imports: Vec<ImportDecl>,
+    pub interface_impls: Vec<InterfaceImplDecl>,
     pub decls: Vec<DeclId>,
     pub docs: Vec<DocCommentAttachment>,
     pub pool: super::AstPool,
+}
+
+impl Program {
+    pub fn for_each_decl_recursive<'a>(&'a self, mut f: impl FnMut(DeclId, &'a TopLevelDecl)) {
+        self.walk_decls_recursive(&self.decls, &mut f);
+    }
+
+    fn walk_decls_recursive<'a>(
+        &'a self,
+        decl_ids: &[DeclId],
+        f: &mut impl FnMut(DeclId, &'a TopLevelDecl),
+    ) {
+        for &id in decl_ids {
+            let decl = self.pool.decl(id);
+            f(id, decl);
+            if let TopLevelDecl::Submodule(submod) = decl {
+                self.walk_decls_recursive(&submod.decls, f);
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct InterfaceImplDecl {
+    pub span: Span,
+    pub for_type: TypeName,
+    pub interface: TypeName,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -40,6 +68,13 @@ pub enum ImportDecl {
         items: Vec<ImportItem>,
         path: SmallVec<[SmolStr; 3]>,
     },
+    /// `public use path.to.module.{ Item, Other }`
+    ReExport {
+        span: Span,
+        visibility: Visibility,
+        items: Vec<ImportItem>,
+        path: SmallVec<[SmolStr; 3]>,
+    },
     /// `from "external" import { Item }`
     ExternalNamed {
         span: Span,
@@ -60,6 +95,7 @@ impl ImportDecl {
         match self {
             ImportDecl::ModuleAlias { span, .. }
             | ImportDecl::Named { span, .. }
+            | ImportDecl::ReExport { span, .. }
             | ImportDecl::ExternalNamed { span, .. }
             | ImportDecl::ExternalAlias { span, .. } => *span,
         }
@@ -82,6 +118,7 @@ pub enum TopLevelDecl {
     Enum(EnumDecl),
     Interface(InterfaceDecl),
     Extern(ExternDecl),
+    Submodule(SubmoduleDecl),
     Error(Span),
 }
 
@@ -96,9 +133,19 @@ impl TopLevelDecl {
             TopLevelDecl::Enum(decl) => decl.span,
             TopLevelDecl::Interface(decl) => decl.span,
             TopLevelDecl::Extern(decl) => decl.span,
+            TopLevelDecl::Submodule(decl) => decl.span,
             TopLevelDecl::Error(span) => *span,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SubmoduleDecl {
+    pub span: Span,
+    pub attrs: SmallVec<[Attribute; 2]>,
+    pub visibility: Visibility,
+    pub name: SmolStr,
+    pub decls: Vec<DeclId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -114,6 +161,8 @@ pub struct Attribute {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Visibility {
     Private,
+    Module,
+    Internal,
     Public,
 }
 
@@ -121,6 +170,8 @@ pub enum Visibility {
 pub struct GenericParam {
     pub span: Span,
     pub name: SmolStr,
+    /// `Some(type)` for a scalar const parameter (`const N: uint`).
+    pub const_ty: Option<TypeExprId>,
     pub constraints: SmallVec<[TypeExprId; 2]>,
     /// T2.1: optional default type arg, e.g. `A = GlobalAllocator` in `Vec<T, A = GlobalAllocator>`.
     pub default: Option<TypeExprId>,
@@ -241,6 +292,7 @@ pub struct InterfaceDecl {
     pub span: Span,
     pub attrs: SmallVec<[Attribute; 2]>,
     pub visibility: Visibility,
+    pub sealed: bool,
     pub name: SmolStr,
     pub generic_params: SmallVec<[GenericParam; 2]>,
     pub where_clause: SmallVec<[WhereItem; 2]>,

@@ -486,8 +486,32 @@ pub fn catch_query_cancellation<T>(operation: impl FnOnce() -> T) -> Result<T, Q
 }
 
 impl arandu_middle::db::SourceDatabase for DatabaseImpl {
+    fn source_file_by_id(&self, file_id: FileId) -> Option<SourceFile> {
+        DatabaseImpl::source_file_by_id(self, file_id)
+    }
+
     fn exported_symbols(&self, file: SourceFile) -> Arc<arandu_middle::ExportedSymbolTable> {
         crate::passes::exported_symbols(self, file).clone()
+    }
+
+    fn internal_symbols(&self, file: SourceFile) -> Arc<arandu_middle::ExportedSymbolTable> {
+        crate::passes::internal_symbols(self, file).clone()
+    }
+
+    fn same_package(&self, current_file: FileId, imported_file: SourceFile) -> bool {
+        let Some(map) = self.package_module_map() else {
+            return false;
+        };
+        let bindings = map.bindings(self);
+        let current_package = bindings
+            .iter()
+            .find(|(_, binding)| *binding.file.file_id(self) == current_file)
+            .map(|(_, binding)| binding.package);
+        let imported_package = bindings
+            .iter()
+            .find(|(_, binding)| binding.file == imported_file)
+            .map(|(_, binding)| binding.package);
+        matches!((current_package, imported_package), (Some(a), Some(b)) if a == b)
     }
 
     fn symbol_span(&self, symbol_id: arandu_middle::SymbolId) -> arandu_base::Span {

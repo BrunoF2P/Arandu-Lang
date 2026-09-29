@@ -125,6 +125,11 @@ pub(super) fn rewrite_condition_calls<'bump>(
     match cond {
         HirCondition::Expr(e) => rewrite_expr_calls(hir, *e, specialized, tc, bump),
         HirCondition::Is { expr, .. } => rewrite_expr_calls(hir, *expr, specialized, tc, bump),
+        HirCondition::And(conditions) => {
+            for condition in conditions {
+                rewrite_condition_calls(hir, condition, specialized, tc, bump);
+            }
+        }
     }
 }
 
@@ -305,12 +310,8 @@ pub(super) fn try_rewrite_generic_call<'bump>(
                             ArType::Named(id, _) => Some(id),
                             _ => None,
                         },
-                        ArType::Result(_, _) => {
-                            tc.symbols.lookup_type(tc.symbols.global_scope(), "Result")
-                        }
-                        ArType::Option(_) => {
-                            tc.symbols.lookup_type(tc.symbols.global_scope(), "Option")
-                        }
+                        ArType::Result(_, _) => tc.symbols.builtins.result,
+                        ArType::Option(_) => tc.symbols.builtins.option,
                         _ => None,
                     };
                     let Some(type_id) = type_id else {

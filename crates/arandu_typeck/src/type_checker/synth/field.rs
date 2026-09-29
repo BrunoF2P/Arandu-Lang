@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use arandu_middle::types::TypeId;
 use arandu_parser::ast_pool::{ExprId, ExprKind};
 
@@ -49,7 +51,7 @@ pub(crate) fn resolve_namespace_field(
         return None;
     }
     let symbol_id = checker.symbols.lookup_module_member(&path[0], field)?;
-    checker.resolved.expr_ref(expr, symbol_id);
+    Arc::make_mut(&mut checker.resolved).expr_ref(expr, symbol_id);
     if let Some(ty_id) = checker.ctx.lookup(symbol_id) {
         return Some(ty_id);
     }
@@ -141,6 +143,7 @@ pub(crate) fn resolve_field(
             };
 
             if let Some(field_ty) = field_from_struct {
+                checker.check_field_visibility(struct_id, field, field_span);
                 field_ty
             } else {
                 if let Some(method_sym) = checker.symbols.lookup_associated_member(struct_id, field)
@@ -279,7 +282,7 @@ pub(crate) fn resolve_index(
     }
 
     let elem_ty_id = match &actual_base_ty {
-        ArType::Array(_, inner) | ArType::Slice(inner) => *inner,
+        ArType::Array(_, inner) | ArType::ConstArray(_, inner) | ArType::Slice(inner) => *inner,
         ArType::Named(_, args)
             if arandu_middle::types::is_vec_type(&actual_base_ty, &checker.symbols) =>
         {

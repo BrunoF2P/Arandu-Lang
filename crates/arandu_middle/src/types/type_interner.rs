@@ -229,6 +229,22 @@ impl TypeInterner {
         self.with_type(id, ArType::is_error)
     }
 
+    /// Returns the element type when `id` uses the two-word slice-view ABI.
+    /// This performs one interner read even for `ref []T` / `mut ref []T`, so
+    /// hot codegen paths do not clone types or recursively acquire the lock.
+    #[must_use]
+    pub fn slice_abi_element(&self, id: TypeId) -> Option<TypeId> {
+        let types = self.types.read().unwrap_or_else(|error| error.into_inner());
+        match &types[id.as_usize()] {
+            ArType::Slice(element) => Some(*element),
+            ArType::Ref(inner) | ArType::RefMut(inner) => match &types[inner.as_usize()] {
+                ArType::Slice(element) => Some(*element),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// Canonical id for [`ArType::Error`] in this interner (pre-interned in [`Self::new`]).
     #[must_use]
     pub fn error_type_id(&self) -> TypeId {
@@ -244,14 +260,6 @@ impl TypeInterner {
         use std::sync::OnceLock;
         static ID: OnceLock<TypeId> = OnceLock::new();
         *ID.get_or_init(|| TypeInterner::new().error_type_id())
-    }
-
-    /// Pre-interned [`ArType::Void`].
-    #[must_use]
-    pub fn preinterned_void_id() -> TypeId {
-        use std::sync::OnceLock;
-        static ID: OnceLock<TypeId> = OnceLock::new();
-        *ID.get_or_init(|| TypeInterner::new().intern(ArType::Void))
     }
 
     /// Pre-interned primitive id (same index for every [`Self::new`] interner).

@@ -243,6 +243,9 @@ pub enum ExprKind {
     Char {
         value: SmolStr,
     },
+    Byte {
+        value: u8,
+    },
     InterpolatedString {
         parts: IndexRange,
     }, // string_part_ids range
@@ -542,10 +545,6 @@ impl AstPool {
     #[must_use]
     pub fn decl(&self, id: DeclId) -> &TopLevelDecl {
         &self.decls[id.as_usize()]
-    }
-
-    pub fn decl_mut(&mut self, id: DeclId) -> &mut TopLevelDecl {
-        &mut self.decls[id.as_usize()]
     }
 
     #[must_use]

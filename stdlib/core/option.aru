@@ -1,3 +1,28 @@
+//! Optional values without null sentinels.
+//!
+//! ## Overview
+//!
+//! `Option<T>` represents `Some(T)` or `None`. Its methods inspect presence and choose a fallback; `expectOrAbort` terminates on `None`.
+//!
+//! ## Example
+//!
+//! ```arandu
+//! import std.core.option as option
+//!
+//! let value = option.Option.Some(42)
+//! let fallback = value.unwrapOr(0)
+//! ```
+//!
+//! ## Safety
+//! `expectOrAbort` traps when called on `None`. `unwrapOr` consumes the option
+//! and returns the provided default for `None`.
+//!
+//! ## Allocations
+//! `Option` itself has no heap allocation requirement.
+//!
+//! ## Platform
+//! `native` · `wasm32` · `bare-metal`
+
 module std.core.option
 
 import std.core.intrinsics as intrinsics
@@ -22,6 +47,20 @@ public enum Option<T> {
     None,
 }
 
+/// Borrows the payload when the option is `Some`, without copying or consuming it.
+///
+/// The returned reference remains tied to the borrow of `self` by the compiler.
+public func asRef<T>(value: ref Option<T>): Option<ref T> {
+    match value {
+        Some(value) => {
+            return Option.Some(value)
+        }
+        None => {
+            return Option.None
+        }
+    }
+}
+
 /// Returns `true` if the option is the `Some` variant.
 ///
 /// # Examples
@@ -32,7 +71,7 @@ public enum Option<T> {
 ///
 /// # Complexity
 /// Time: O(1) | Space: O(1)
-public func Option.isSome<T>(self: ref Option): bool {
+public func Option.isSome<T>(self: ref Option<T>): bool {
     match self {
         Some(_) => {
             return true
@@ -53,7 +92,7 @@ public func Option.isSome<T>(self: ref Option): bool {
 ///
 /// # Complexity
 /// Time: O(1) | Space: O(1)
-public func Option.isNone<T>(self: ref Option): bool {
+public func Option.isNone<T>(self: ref Option<T>): bool {
     match self {
         Some(_) => {
             return false
@@ -76,7 +115,7 @@ public func Option.isNone<T>(self: ref Option): bool {
 ///
 /// # Complexity
 /// Time: O(1) | Space: O(1)
-public func Option.unwrapOr<T>(self: own Option, defaultVal: T): T {
+public func Option.unwrapOr<T>(self: own Option<T>, defaultVal: T): T {
     match self {
         Some(v) => {
             return v
@@ -99,7 +138,7 @@ public func Option.unwrapOr<T>(self: own Option, defaultVal: T): T {
 ///
 /// # Complexity
 /// Time: O(1) | Space: O(1)
-public func Option.expectOrAbort<T>(self: own Option, reason: str): T {
+public func Option.expectOrAbort<T>(self: own Option<T>, reason: str): T {
     match self {
         Some(v) => {
             return v

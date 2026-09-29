@@ -65,9 +65,7 @@ fn parse_pattern_atom(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<Pat
         let name = SmolStr::new(ctx.text(start_tok)?);
         cur.bump();
         if cur.eat(TokenKind::Dot) {
-            let variant_tok = cur
-                .peek()
-                .filter(|t| matches!(t.kind, TokenKind::IdentType | TokenKind::IdentValue))?;
+            let variant_tok = cur.peek().filter(|t| t.kind.is_contextual_member_name())?;
             let variant = SmolStr::new(ctx.text(variant_tok)?);
             cur.bump();
             let (payload, end) = if cur.eat(TokenKind::LParen) {
@@ -216,6 +214,7 @@ fn parse_literal_expr(
         | TokenKind::BoolTrue
         | TokenKind::BoolFalse
         | TokenKind::Char
+        | TokenKind::ByteChar
         | TokenKind::StringStart
         | TokenKind::Nil => try_hand_lower_expr(ctx, cur, 100),
         _ => None,

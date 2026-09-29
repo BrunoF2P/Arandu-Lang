@@ -3,7 +3,9 @@
 
 use arandu_backend_cranelift::CraneliftBackend;
 use arandu_semantics::literal_pool::AmirLiteralEntry;
-use arandu_semantics::{DiagCode, lower_to_amir, lower_to_hir, resolve_for_test, type_check};
+use arandu_semantics::{
+    DiagCode, lower_to_amir_with_interfaces, lower_to_hir, resolve_for_test, type_check,
+};
 use std::sync::Arc;
 
 fn compile_src(
@@ -21,7 +23,32 @@ fn compile_src(
         arandu_semantics::TargetInfo { pointer_width: 64 },
     );
     let hir = lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
-    let amir = lower_to_amir(&tc, &hir, 64).expect("AMIR lowering failed");
+    let (amir, _) = lower_to_amir_with_interfaces(&mut tc, &hir, 64).expect("AMIR lowering failed");
+    (
+        amir,
+        Arc::unwrap_or_clone(tc.symbols),
+        Arc::unwrap_or_clone(tc.type_info),
+    )
+}
+
+fn compile_src_mono(
+    src: &str,
+) -> (
+    arandu_semantics::amir::AmirProgram,
+    arandu_semantics::SymbolTable,
+    arandu_semantics::TypeInfo,
+) {
+    let program = arandu_parser::parse(src).expect("parse failed");
+    let resolution = resolve_for_test(0, &program);
+    let mut tc = type_check(
+        resolution,
+        &program,
+        arandu_semantics::TargetInfo { pointer_width: 64 },
+    );
+    let mut hir = lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
+    let _ =
+        arandu_semantics::monomorphize_program(&mut tc, &mut hir).expect("monomorphization failed");
+    let (amir, _) = lower_to_amir_with_interfaces(&mut tc, &hir, 64).expect("AMIR lowering failed");
     (
         amir,
         Arc::unwrap_or_clone(tc.symbols),
@@ -54,8 +81,8 @@ fn jit_signed_negative_cast_preserves_sign() {
     let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
 
-    let result: i64 = unsafe {
-        let f: unsafe fn() -> i64 = module.get_fn("main").unwrap();
+    let result: i32 = unsafe {
+        let f: unsafe fn() -> i32 = module.get_fn("main").unwrap();
         f()
     };
     assert_eq!(result, -5);
@@ -208,8 +235,8 @@ fn jit_signed_mod() {
     let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
 
-    let result: i64 = unsafe {
-        let f: unsafe fn(i64, i64) -> i64 = module.get_fn("rem").unwrap();
+    let result: i32 = unsafe {
+        let f: unsafe fn(i32, i32) -> i32 = module.get_fn("rem").unwrap();
         f(-7, 3)
     };
     assert_eq!(result, -1);
@@ -227,7 +254,7 @@ fn jit_signed_comparison() {
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
 
     let result: bool = unsafe {
-        let f: unsafe fn(i64, i64) -> bool = module.get_fn("is_gt").unwrap();
+        let f: unsafe fn(i32, i32) -> bool = module.get_fn("is_gt").unwrap();
         f(-1, 0)
     };
     assert!(!result);
@@ -244,8 +271,8 @@ fn jit_signed_shift_right() {
     let backend = backend_for_test();
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
 
-    let result: i64 = unsafe {
-        let f: unsafe fn(i64) -> i64 = module.get_fn("shr").unwrap();
+    let result: i32 = unsafe {
+        let f: unsafe fn(i32) -> i32 = module.get_fn("shr").unwrap();
         f(-1)
     };
     // Arithmetic shift: -1 >> 1 = -1
@@ -745,18 +772,19 @@ fn jit_struct_field_access() {
     let module = backend.compile(&amir, &symbols, &type_info).unwrap();
     #[repr(C)]
     struct Point {
-        x: i64,
-        y: i64,
+        x: i32,
+        y: i32,
     }
     let p = Point { x: 10, y: 20 };
     let result: i32 = unsafe {
-        let f: unsafe fn(*const Point) -> i32 = module.get_fn("get_x").unwrap();
-        f(&p as *const Point)
+        let f: unsafe extern "C" fn(Point) -> i32 = module.get_fn("get_x").unwrap();
+        f(p)
     };
     assert_eq!(result, 10);
+    let p2 = Point { x: 10, y: 20 };
     let result: i32 = unsafe {
-        let f: unsafe fn(*const Point) -> i32 = module.get_fn("get_y").unwrap();
-        f(&p as *const Point)
+        let f: unsafe extern "C" fn(Point) -> i32 = module.get_fn("get_y").unwrap();
+        f(p2)
     };
     assert_eq!(result, 20);
 }
@@ -1069,9 +1097,9 @@ fn jit_enum_none_payload_never_read() {
 fn jit_enum_int_payload_uses_pointer_width() {
     let src = r#"
     enum Number {
-        Value(int),
+        Value(isize),
     }
-    func main(): int {
+    func main(): isize {
         return match Number.Value(4294967303) {
             Number.Value(value) => value
         }
@@ -1308,7 +1336,7 @@ fn jit_err_new_is_non_nil_handle() {
         }
 
         func main(): int {
-            let v = ok()?
+            let v = ok() catch 0
             let _, e = fail()
             if e != nil {
                 return v
@@ -1583,6 +1611,8 @@ fn jit_gen_insert_get_copy_tuple() {
         funcs: vec![func],
         literal_pool: pool,
         extern_funcs: Default::default(),
+        debug_bindings: Vec::new(),
+        debug_blocks: Vec::new(),
     };
     let type_info = arandu_semantics::TypeInfo {
         type_interner: interner,
@@ -1722,6 +1752,8 @@ fn jit_vec_legacy_handle_len_abi() {
         funcs: vec![func],
         literal_pool: pool,
         extern_funcs: Default::default(),
+        debug_bindings: Vec::new(),
+        debug_blocks: Vec::new(),
     };
     let type_info = arandu_semantics::TypeInfo {
         type_interner: interner,
@@ -1906,4 +1938,341 @@ func main(): int {
         f()
     };
     assert_eq!(result, 100 + 200 + 300 + 400 + 500);
+}
+
+#[test]
+fn jit_abi_struct_pass_and_return_by_value() {
+    let src = r#"
+    struct Point {
+        x: int
+        y: int
+    }
+
+    func add_points(a: Point, b: Point): Point {
+        return Point { x: a.x + b.x, y: a.y + b.y }
+    }
+
+    func main(): int {
+        let p1 = Point { x: 10, y: 20 }
+        let p2 = Point { x: 30, y: 40 }
+        let p3 = add_points(p1, p2)
+        return p3.x + p3.y
+    }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    let backend = backend_for_test();
+    let module = backend.compile(&amir, &symbols, &type_info).unwrap();
+
+    let result: i64 = unsafe {
+        let f: unsafe extern "C" fn() -> i64 = module.get_fn("main").unwrap();
+        f()
+    };
+    assert_eq!(result, (10 + 30) + (20 + 40));
+}
+
+#[test]
+fn jit_abi_mixed_int_float_by_value() {
+    let src = r#"
+    struct Particle {
+        id: int
+        speed: float
+    }
+
+    func accelerate(p: Particle, delta: float): Particle {
+        return Particle { id: p.id, speed: p.speed + delta }
+    }
+
+    func main(): int {
+        let p = Particle { id: 7, speed: 1.5 }
+        let p2 = accelerate(p, 2.5)
+        if p2.speed == 4.0 && p2.id == 7 {
+            return 42
+        }
+        return 0
+    }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    let backend = backend_for_test();
+    let module = backend.compile(&amir, &symbols, &type_info).unwrap();
+
+    let result: i64 = unsafe {
+        let f: unsafe extern "C" fn() -> i64 = module.get_fn("main").unwrap();
+        f()
+    };
+    assert_eq!(result, 42);
+}
+
+#[test]
+fn jit_abi_two_floats_sse_by_value() {
+    let src = r#"
+    struct Vec2 {
+        x: float
+        y: float
+    }
+
+    func add_vectors(a: Vec2, b: Vec2): Vec2 {
+        return Vec2 { x: a.x + b.x, y: a.y + b.y }
+    }
+
+    func main(): int {
+        let v1 = Vec2 { x: 1.25, y: 2.5 }
+        let v2 = Vec2 { x: 3.75, y: 1.5 }
+        let v3 = add_vectors(v1, v2)
+        if v3.x == 5.0 && v3.y == 4.0 {
+            return 100
+        }
+        return 0
+    }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    let backend = backend_for_test();
+    let module = backend.compile(&amir, &symbols, &type_info).unwrap();
+
+    let result: i64 = unsafe {
+        let f: unsafe extern "C" fn() -> i64 = module.get_fn("main").unwrap();
+        f()
+    };
+    assert_eq!(result, 100);
+}
+
+#[test]
+fn jit_abi_nested_struct_by_value() {
+    let src = r#"
+    struct Inner {
+        a: int
+        b: int
+    }
+
+    struct Outer {
+        in1: Inner
+    }
+
+    func inspect_outer(o: Outer): int {
+        return o.in1.a + o.in1.b
+    }
+
+    func main(): int {
+        let o = Outer { in1: Inner { a: 15, b: 25 } }
+        return inspect_outer(o)
+    }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    let backend = backend_for_test();
+    let module = backend.compile(&amir, &symbols, &type_info).unwrap();
+
+    let result: i64 = unsafe {
+        let f: unsafe extern "C" fn() -> i64 = module.get_fn("main").unwrap();
+        f()
+    };
+    assert_eq!(result, 40);
+}
+
+#[test]
+fn jit_abi_zst_struct() {
+    let src = r#"
+    struct Empty {}
+
+    func do_nothing(e: Empty): Empty {
+        return e
+    }
+
+    func main(): int {
+        let e = Empty {}
+        let e2 = do_nothing(e)
+        return 99
+    }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    let backend = backend_for_test();
+    let module = backend.compile(&amir, &symbols, &type_info).unwrap();
+
+    let result: i64 = unsafe {
+        let f: unsafe extern "C" fn() -> i64 = module.get_fn("main").unwrap();
+        f()
+    };
+    assert_eq!(result, 99);
+}
+
+#[test]
+fn jit_abi_struct_greater_than_16_bytes_indirect() {
+    let src = r#"
+    struct Big {
+        a: int
+        b: int
+        c: int
+    }
+
+    func sum_big(b: Big): int {
+        return b.a + b.b + b.c
+    }
+
+    func main(): int {
+        let b = Big { a: 10, b: 20, c: 30 }
+        return sum_big(b)
+    }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    let backend = backend_for_test();
+    let module = backend.compile(&amir, &symbols, &type_info).unwrap();
+
+    let result: i64 = unsafe {
+        let f: unsafe extern "C" fn() -> i64 = module.get_fn("main").unwrap();
+        f()
+    };
+    assert_eq!(result, 60);
+}
+
+#[test]
+fn jit_pointer_tag_enum() {
+    let src = r#"
+    enum Node {
+        Leaf(ref int),
+        Branch(ref int),
+        Empty,
+    }
+
+    func eval_node(n: Node): int {
+        return match n {
+            Node.Leaf(r) => *r
+            Node.Branch(r) => *r * 2
+            Node.Empty => 0
+        }
+    }
+
+    func main(): int {
+        let x: int = 15
+        let y: int = 25
+        let n1 = Node.Leaf(ref x)
+        let n2 = Node.Branch(ref y)
+        let n3 = Node.Empty
+        let r1 = eval_node(n1)
+        let r2 = eval_node(n2)
+        let r3 = eval_node(n3)
+        return r1 + r2 + r3
+    }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    let backend = backend_for_test();
+    let module = backend
+        .compile(&amir, &symbols, &type_info)
+        .expect("pointer tag enum should compile");
+
+    let result: i64 = unsafe {
+        let f: unsafe extern "C" fn() -> i64 = module.get_fn("main").unwrap();
+        f()
+    };
+    assert_eq!(result, 65);
+}
+
+#[test]
+fn jit_nested_aggregate_deep_projection_struct_array() {
+    let src = r#"
+    struct Point {
+        x: int
+        y: int
+    }
+
+    struct Line {
+        start: Point
+        end: Point
+    }
+
+    struct Shape {
+        id: int
+        origin: Point
+        lines: [2]Line
+    }
+
+    func inspect_shape(s: Shape): int {
+        let p_origin_x = s.origin.x
+        let p2_y = s.lines[1].end.y
+        let p0_x = s.lines[0].start.x
+        return s.id + p_origin_x + p2_y + p0_x
+    }
+
+    func main(): int {
+        let p1 = Point { x: 10, y: 20 }
+        let l0 = Line { start: Point { x: 1, y: 2 }, end: Point { x: 3, y: 4 } }
+        let l1 = Line { start: Point { x: 5, y: 6 }, end: Point { x: 7, y: 8 } }
+        let arr: [2]Line = [l0, l1]
+        let s = Shape { id: 100, origin: p1, lines: arr }
+        return inspect_shape(s)
+    }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    let backend = backend_for_test();
+    let module = backend.compile(&amir, &symbols, &type_info).unwrap();
+
+    let result: i64 = unsafe {
+        let f: unsafe extern "C" fn() -> i64 = module.get_fn("main").unwrap();
+        f()
+    };
+    // 100 + 10 (p_origin_x) + 8 (p2_y) + 1 (p0_x) = 119
+    assert_eq!(result, 119);
+}
+
+#[test]
+fn jit_user_defined_alloc_and_free_execute_successfully() {
+    let src = r#"
+    func alloc(size: int): int {
+        return size * 3
+    }
+
+    func free(value: int): int {
+        return value + 5
+    }
+
+    func main(): int {
+        let a = alloc(10)
+        let b = free(20)
+        return a + b
+    }
+    "#;
+    let (amir, symbols, type_info) = compile_src(src);
+    let backend = backend_for_test();
+    let module = backend.compile(&amir, &symbols, &type_info).unwrap();
+
+    let result: i64 = unsafe {
+        let f: unsafe extern "C" fn() -> i64 = module.get_fn("main").unwrap();
+        f()
+    };
+    // alloc(10) = 30, free(20) = 25 -> 55
+    assert_eq!(result, 55);
+}
+
+#[test]
+fn jit_user_defined_generic_option_executes_successfully() {
+    let src = r#"
+    enum Option<T> {
+        Some(T),
+        None,
+    }
+
+    func unwrap_or(opt: Option<int>, default_val: int): int {
+        return match opt {
+            Option.Some(v) => v
+            Option.None => default_val
+        }
+    }
+
+    func wrap<T>(x: T): Option<T> {
+        return Option.Some(x)
+    }
+
+    func main(): int {
+        let a = Option.Some(42)
+        let b: Option<int> = Option.None
+        let c = wrap(15)
+        return unwrap_or(a, 0) + unwrap_or(b, 8) + unwrap_or(c, 0)
+    }
+    "#;
+    let (amir, symbols, type_info) = compile_src_mono(src);
+    let backend = backend_for_test();
+    let module = backend.compile(&amir, &symbols, &type_info).unwrap();
+
+    let result: i64 = unsafe {
+        let f: unsafe extern "C" fn() -> i64 = module.get_fn("main").unwrap();
+        f()
+    };
+    assert_eq!(result, 65);
 }

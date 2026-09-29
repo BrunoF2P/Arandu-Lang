@@ -33,6 +33,8 @@ pub(super) fn sanitize_c_ident(name: &str) -> String {
         "rename" => return "ar_rename".to_string(),
         "abort" => return "ar_abort".to_string(),
         "exit" => return "ar_exit".to_string(),
+        "free" => return "ar_user_free".to_string(),
+        "alloc" => return "ar_user_alloc".to_string(),
         _ => {}
     }
     let mut out = String::with_capacity(name.len() + 4);
@@ -106,6 +108,41 @@ impl<'a> CEmitter<'a> {
         self.interner.resolve(func.locals[local.as_usize()].ty)
     }
 
+    #[inline]
+    pub(super) fn operand_ty(
+        &self,
+        func: &AmirFunc,
+        op: &arandu_middle::amir::AmirOperand,
+    ) -> ArType {
+        match op {
+            arandu_middle::amir::AmirOperand::Copy(t)
+            | arandu_middle::amir::AmirOperand::Move(t) => self.temp_ty(func, *t),
+            arandu_middle::amir::AmirOperand::Constant(c) => match c {
+                arandu_middle::amir::AmirConstant::Pool(id) => {
+                    match self.program.literal_pool.get(*id) {
+                        arandu_middle::literal_pool::AmirLiteralEntry::Str(_) => {
+                            ArType::Primitive(arandu_middle::types::Primitive::Str)
+                        }
+                        arandu_middle::literal_pool::AmirLiteralEntry::Int(_) => {
+                            ArType::Primitive(arandu_middle::types::Primitive::Int)
+                        }
+                        arandu_middle::literal_pool::AmirLiteralEntry::Float(_) => {
+                            ArType::Primitive(arandu_middle::types::Primitive::Float)
+                        }
+                        arandu_middle::literal_pool::AmirLiteralEntry::Char(_) => {
+                            ArType::Primitive(arandu_middle::types::Primitive::Char)
+                        }
+                    }
+                }
+                arandu_middle::amir::AmirConstant::Bool(_) => {
+                    ArType::Primitive(arandu_middle::types::Primitive::Bool)
+                }
+                arandu_middle::amir::AmirConstant::Nil => ArType::Void,
+            },
+            _ => ArType::Error,
+        }
+    }
+
     /// Resolve a field through the concrete arguments of a named type.
     ///
     /// Layout already substitutes generic parameters, so code generation must
@@ -145,11 +182,7 @@ impl<'a> CEmitter<'a> {
                         Span::new(0, 0, 0),
                     ));
                 }
-                arandu_middle::layout::TypeLayout {
-                    size: 0,
-                    align: 1,
-                    field_offsets: Vec::new(),
-                }
+                arandu_middle::layout::TypeLayout::simple(0, 1)
             }
         }
     }
@@ -159,14 +192,18 @@ impl<'a> CEmitter<'a> {
     pub fn emit(mut self) -> Result<String, Diagnostic> {
         let needs_str = self.program_uses_str();
         let needs_println = self.program_uses_println();
-        // println requires ArStr runtime even if no string literals.
-        let needs_str = needs_str || needs_println;
+        let needs_eprint = self.program_uses_eprint();
+        // I/O prelude functions require the ArStr runtime even without literals.
+        let needs_str = needs_str || needs_println || needs_eprint;
         self.emit_headers(needs_str);
         if needs_str {
             self.emit_str_literals();
         }
         if needs_println {
             self.emit_prelude_println();
+        }
+        if needs_eprint {
+            self.emit_prelude_eprint();
         }
 
         for func in &self.program.funcs {
@@ -195,12 +232,7 @@ impl<'a> CEmitter<'a> {
                     | "ar_vec_malloc"
                     | "ar_vec_buf_free"
                     | "ar_vec_realloc"
-                    | "ar_str_len"
                     | "ar_str_concat"
-                    | "ar_str_starts_with"
-                    | "ar_str_ends_with"
-                    | "ar_str_contains"
-                    | "ar_str_find"
                     | "ar_str_split_last"
                     | "ar_string_push_str"
                     | "exists"
@@ -218,6 +250,8 @@ impl<'a> CEmitter<'a> {
                     | "ar_rt_join_i64"
                     | "ar_rt_cancel_i64"
                     | "ar_rt_parallel_fold_run"
+                    | "io__eprint"
+                    | "eprint"
             ) {
                 continue;
             }

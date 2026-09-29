@@ -6,6 +6,8 @@ use std::fmt;
 pub enum Primitive {
     Int,
     Uint,
+    ISize,
+    USize,
     Float,
     I8,
     I16,
@@ -31,6 +33,8 @@ impl Primitive {
             self,
             Primitive::Int
                 | Primitive::Uint
+                | Primitive::ISize
+                | Primitive::USize
                 | Primitive::Float
                 | Primitive::I8
                 | Primitive::I16
@@ -52,6 +56,8 @@ impl Primitive {
             self,
             Primitive::Int
                 | Primitive::Uint
+                | Primitive::ISize
+                | Primitive::USize
                 | Primitive::I8
                 | Primitive::I16
                 | Primitive::I32
@@ -74,6 +80,7 @@ impl Primitive {
         matches!(
             self,
             Primitive::Int
+                | Primitive::ISize
                 | Primitive::I8
                 | Primitive::I16
                 | Primitive::I32
@@ -89,6 +96,8 @@ impl Primitive {
         match self {
             Primitive::Int => "int",
             Primitive::Uint => "uint",
+            Primitive::ISize => "isize",
+            Primitive::USize => "usize",
             Primitive::Float => "float",
             Primitive::I8 => "i8",
             Primitive::I16 => "i16",
@@ -114,6 +123,8 @@ impl Primitive {
         match name {
             "int" => Some(Primitive::Int),
             "uint" => Some(Primitive::Uint),
+            "isize" => Some(Primitive::ISize),
+            "usize" => Some(Primitive::USize),
             "float" => Some(Primitive::Float),
             "i8" => Some(Primitive::I8),
             "i16" => Some(Primitive::I16),
@@ -149,6 +160,8 @@ mod tests {
     fn is_numeric_int() {
         assert!(Primitive::Int.is_numeric());
         assert!(Primitive::Uint.is_numeric());
+        assert!(Primitive::ISize.is_numeric());
+        assert!(Primitive::USize.is_numeric());
         assert!(Primitive::Float.is_numeric());
         assert!(Primitive::I8.is_numeric());
         assert!(Primitive::I16.is_numeric());
@@ -175,6 +188,8 @@ mod tests {
     fn is_integer() {
         assert!(Primitive::Int.is_integer());
         assert!(Primitive::Uint.is_integer());
+        assert!(Primitive::ISize.is_integer());
+        assert!(Primitive::USize.is_integer());
         assert!(Primitive::I8.is_integer());
         assert!(Primitive::U8.is_integer());
         assert!(!Primitive::Float.is_integer());
@@ -195,6 +210,7 @@ mod tests {
     #[test]
     fn is_signed() {
         assert!(Primitive::Int.is_signed());
+        assert!(Primitive::ISize.is_signed());
         assert!(Primitive::I8.is_signed());
         assert!(Primitive::I16.is_signed());
         assert!(Primitive::I32.is_signed());
@@ -203,6 +219,7 @@ mod tests {
         assert!(Primitive::F32.is_signed());
         assert!(Primitive::F64.is_signed());
         assert!(!Primitive::Uint.is_signed());
+        assert!(!Primitive::USize.is_signed());
         assert!(!Primitive::U8.is_signed());
         assert!(!Primitive::Bool.is_signed());
     }
@@ -211,6 +228,8 @@ mod tests {
     fn as_str_all_primitives() {
         assert_eq!(Primitive::Int.as_str(), "int");
         assert_eq!(Primitive::Uint.as_str(), "uint");
+        assert_eq!(Primitive::ISize.as_str(), "isize");
+        assert_eq!(Primitive::USize.as_str(), "usize");
         assert_eq!(Primitive::Float.as_str(), "float");
         assert_eq!(Primitive::I8.as_str(), "i8");
         assert_eq!(Primitive::I16.as_str(), "i16");
@@ -233,6 +252,8 @@ mod tests {
     fn from_name_all_valid() {
         assert_eq!(Primitive::from_name("int"), Some(Primitive::Int));
         assert_eq!(Primitive::from_name("uint"), Some(Primitive::Uint));
+        assert_eq!(Primitive::from_name("isize"), Some(Primitive::ISize));
+        assert_eq!(Primitive::from_name("usize"), Some(Primitive::USize));
         assert_eq!(Primitive::from_name("float"), Some(Primitive::Float));
         assert_eq!(Primitive::from_name("i8"), Some(Primitive::I8));
         assert_eq!(Primitive::from_name("i16"), Some(Primitive::I16));

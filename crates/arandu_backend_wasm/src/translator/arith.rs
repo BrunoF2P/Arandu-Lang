@@ -1,7 +1,7 @@
 use arandu_middle::amir::value::AmirOperand;
 use arandu_middle::ops::{BinaryOp, UnaryOp};
 use arandu_middle::types::{ArType, Primitive, TypeId};
-use wasm_encoder::Instruction;
+use wasm_encoder::{BlockType, Instruction, ValType};
 
 use super::FuncTranslator;
 use crate::types;
@@ -15,12 +15,53 @@ impl<'a> FuncTranslator<'a> {
         right: &AmirOperand,
         result_ty: TypeId,
     ) {
-        let is_unsigned = types::ar_is_unsigned(result_ty, self.interner);
-        let is_float = types::ar_is_float(result_ty, self.interner);
-        let is_64 = types::ar_is_64bit(result_ty, self.interner, self.layout_engine.data_layout);
+        let left_ty = self.operand_arity_ty(left);
+        let right_ty = self.operand_arity_ty(right);
+        let is_str =
+            |ty: TypeId| matches!(self.interner.resolve(ty), ArType::Primitive(Primitive::Str));
+        if (is_str(left_ty) || is_str(right_ty))
+            && matches!(op, BinaryOp::Equal | BinaryOp::NotEqual)
+        {
+            let operand_ty = if is_str(left_ty) { left_ty } else { right_ty };
+            self.emit_string_equality(op, left, right, operand_ty);
+            return;
+        }
 
-        self.emit_operand(left, result_ty);
-        self.emit_operand(right, result_ty);
+        let is_empty = |ty: TypeId| {
+            types::shape(ty, self.interner, self.layout_engine.data_layout) == types::Shape::Empty
+        };
+
+        // Comparisons return `bool`, but the instruction and operand stack
+        // type comes from their operands. Selecting an opcode from `result_ty`
+        // would emit an i32 comparison for f64/i64 values and produce an
+        // invalid Wasm module. For Nil / empty operands, select the sibling's
+        // type so nil compares as a zero of matching width, or fall back to
+        // i32 if both are empty (e.g. nil == nil).
+        let operation_ty = if matches!(
+            op,
+            BinaryOp::Equal
+                | BinaryOp::NotEqual
+                | BinaryOp::Lt
+                | BinaryOp::Gt
+                | BinaryOp::LtEqual
+                | BinaryOp::GtEqual
+        ) {
+            if !is_empty(left_ty) {
+                left_ty
+            } else if !is_empty(right_ty) {
+                right_ty
+            } else {
+                self.interner.intern(ArType::Primitive(Primitive::Int))
+            }
+        } else {
+            result_ty
+        };
+        let is_unsigned = types::ar_is_unsigned(operation_ty, self.interner);
+        let is_float = types::ar_is_float(operation_ty, self.interner);
+        let is_64 = types::ar_is_64bit(operation_ty, self.interner, self.layout_engine.data_layout);
+
+        self.emit_operand(left, operation_ty);
+        self.emit_operand(right, operation_ty);
 
         if is_float {
             match op {
@@ -151,6 +192,88 @@ impl<'a> FuncTranslator<'a> {
         }
     }
 
+    /// Compare string contents by byte length and then byte value.
+    ///
+    /// The Wasm ABI lowers `str` to `(ptr, len)`. Comparing only one I32 slot
+    /// leaves values on the operand stack and can also treat distinct strings
+    /// with equal contents as unequal. Pointer locals advance together, while
+    /// the left length is used as a bounded loop counter.
+    fn emit_string_equality(
+        &mut self,
+        op: BinaryOp,
+        left: &AmirOperand,
+        right: &AmirOperand,
+        operand_ty: TypeId,
+    ) {
+        self.emit_operand(left, operand_ty);
+        self.emit_operand(right, operand_ty);
+        // Stack: left_ptr, left_len, right_ptr, right_len.
+        self.code.push(Instruction::LocalSet(self.scratch_d));
+        self.code.push(Instruction::LocalSet(self.scratch_c));
+        self.code.push(Instruction::LocalSet(self.scratch_b));
+        self.code.push(Instruction::LocalSet(self.scratch));
+
+        self.code
+            .push(Instruction::Block(BlockType::Result(ValType::I32)));
+        self.code.push(Instruction::LocalGet(self.scratch_b));
+        self.code.push(Instruction::LocalGet(self.scratch_d));
+        self.code.push(Instruction::I32Ne);
+        self.code.push(Instruction::If(BlockType::Empty));
+        self.code.push(Instruction::I32Const(0));
+        self.code.push(Instruction::Br(1));
+        self.code.push(Instruction::End);
+
+        self.code.push(Instruction::Loop(BlockType::Empty));
+        self.code.push(Instruction::LocalGet(self.scratch_b));
+        self.code.push(Instruction::I32Eqz);
+        self.code.push(Instruction::If(BlockType::Empty));
+        self.code.push(Instruction::I32Const(1));
+        self.code.push(Instruction::Br(2));
+        self.code.push(Instruction::End);
+
+        self.code.push(Instruction::LocalGet(self.scratch));
+        self.code.push(Instruction::I32Load8U(wasm_encoder::MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }));
+        self.code.push(Instruction::LocalGet(self.scratch_c));
+        self.code.push(Instruction::I32Load8U(wasm_encoder::MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }));
+        self.code.push(Instruction::I32Ne);
+        self.code.push(Instruction::If(BlockType::Empty));
+        self.code.push(Instruction::I32Const(0));
+        self.code.push(Instruction::Br(2));
+        self.code.push(Instruction::End);
+
+        self.code.push(Instruction::LocalGet(self.scratch));
+        self.code.push(Instruction::I32Const(1));
+        self.code.push(Instruction::I32Add);
+        self.code.push(Instruction::LocalSet(self.scratch));
+        self.code.push(Instruction::LocalGet(self.scratch_c));
+        self.code.push(Instruction::I32Const(1));
+        self.code.push(Instruction::I32Add);
+        self.code.push(Instruction::LocalSet(self.scratch_c));
+        self.code.push(Instruction::LocalGet(self.scratch_b));
+        self.code.push(Instruction::I32Const(1));
+        self.code.push(Instruction::I32Sub);
+        self.code.push(Instruction::LocalSet(self.scratch_b));
+        self.code.push(Instruction::Br(0));
+        self.code.push(Instruction::End);
+        // The structured validator permits a loop to fall through even though
+        // this body always branches back or exits the outer block. Keep a
+        // fallback value for that structurally reachable path.
+        self.code.push(Instruction::I32Const(0));
+        self.code.push(Instruction::End);
+
+        if op == BinaryOp::NotEqual {
+            self.code.push(Instruction::I32Eqz);
+        }
+    }
+
     /// Emit a unary operation.
     pub(super) fn emit_unary(&mut self, op: UnaryOp, operand: &AmirOperand, result_ty: TypeId) {
         match op {
@@ -182,16 +305,31 @@ impl<'a> FuncTranslator<'a> {
             }
             UnaryOp::BitNot => {
                 self.emit_operand(operand, result_ty);
-                self.code.push(Instruction::I32Const(-1));
-                self.code.push(Instruction::I32Xor);
+                if types::ar_is_64bit(result_ty, self.interner, self.layout_engine.data_layout) {
+                    self.code.push(Instruction::I64Const(-1));
+                    self.code.push(Instruction::I64Xor);
+                } else {
+                    self.code.push(Instruction::I32Const(-1));
+                    self.code.push(Instruction::I32Xor);
+                }
             }
             UnaryOp::Await => {
                 let ptr_ty = self.interner.intern(ArType::Primitive(Primitive::Int));
                 self.emit_operand(operand, ptr_ty);
                 self.emit_load_value_at(result_ty, 8);
             }
+            UnaryOp::Deref => {
+                let operand_ty = self.operand_arity_ty(operand);
+                if self.interner.slice_abi_element(operand_ty).is_some() {
+                    self.emit_operand(operand, result_ty);
+                } else {
+                    let ptr_ty = self.interner.intern(ArType::Primitive(Primitive::Int));
+                    self.emit_operand(operand, ptr_ty);
+                    self.emit_load_value_at(result_ty, 0);
+                }
+            }
             _ => {
-                // Ref, RefMut, Deref: identity.
+                // Ref, RefMut: identity.
                 self.emit_operand(operand, result_ty);
             }
         }

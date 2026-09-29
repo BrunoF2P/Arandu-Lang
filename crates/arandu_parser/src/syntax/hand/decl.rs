@@ -82,8 +82,12 @@ pub(super) fn token_bounds_span(file_id: u32, toks: &[&Token]) -> Option<Span> {
 pub(super) fn parse_visibility(cur: &mut Cursor<'_>) -> Visibility {
     if cur.eat(TokenKind::KwPublic) {
         Visibility::Public
-    } else {
+    } else if cur.eat(TokenKind::KwInternal) {
+        Visibility::Internal
+    } else if cur.eat(TokenKind::KwPrivate) {
         Visibility::Private
+    } else {
+        Visibility::Module
     }
 }
 
@@ -171,6 +175,7 @@ pub(super) fn parse_generic_params(
     let mut params = SmallVec::new();
     if !cur.at_gt() {
         loop {
+            let is_const = cur.eat(TokenKind::KwConst);
             let name_tok = cur.peek()?;
             if !matches!(name_tok.kind, TokenKind::IdentType | TokenKind::IdentValue) {
                 return None;
@@ -180,7 +185,15 @@ pub(super) fn parse_generic_params(
             cur.bump();
             let mut constraints = SmallVec::new();
             let mut p_end = name_tok.start + name_tok.len;
-            if cur.eat(TokenKind::Colon) {
+            let const_ty = if is_const {
+                cur.expect(TokenKind::Colon)?;
+                let ty = super::ty::parse_type(ctx, cur)?;
+                p_end = ctx.pool.type_expr_span(ty).end;
+                Some(ty)
+            } else {
+                None
+            };
+            if !is_const && cur.eat(TokenKind::Colon) {
                 loop {
                     let ty = super::ty::parse_type(ctx, cur)?;
                     p_end = ctx.pool.type_expr_span(ty).end;
@@ -192,7 +205,7 @@ pub(super) fn parse_generic_params(
                 }
             }
             // T2.1: `T = DefaultType` after optional constraints.
-            let default = if cur.eat(TokenKind::Equal) {
+            let default = if !is_const && cur.eat(TokenKind::Equal) {
                 let ty = super::ty::parse_type(ctx, cur)?;
                 p_end = ctx.pool.type_expr_span(ty).end;
                 Some(ty)
@@ -202,6 +215,7 @@ pub(super) fn parse_generic_params(
             params.push(GenericParam {
                 span: ctx.span(p_start, p_end),
                 name,
+                const_ty,
                 constraints,
                 default,
             });
@@ -271,11 +285,7 @@ pub fn try_hand_lower_module(
         return None;
     }
     let mut throwaway = AstPool::new();
-    let ctx = HandCtx {
-        pool: &mut throwaway,
-        source,
-        file_id,
-    };
+    let ctx = HandCtx::new(&mut throwaway, source, file_id);
     let mut cur = Cursor::new(&toks);
     cur.expect(TokenKind::KwModule)?;
     let path = parse_dotted_ident_path(&ctx, &mut cur)?;
@@ -356,11 +366,7 @@ pub fn try_hand_lower_import(
         return None;
     }
     let mut pool = AstPool::new();
-    let mut ctx = HandCtx {
-        pool: &mut pool,
-        source,
-        file_id,
-    };
+    let mut ctx = HandCtx::new(&mut pool, source, file_id);
     let mut cur = Cursor::new(&toks);
     let span = token_bounds_span(file_id, &toks)?;
 
@@ -479,11 +485,7 @@ fn try_hand_lower_const(
     file_id: u32,
 ) -> Option<ConstDecl> {
     let toks = item_tokens(tokens, item);
-    let mut ctx = HandCtx {
-        pool,
-        source,
-        file_id,
-    };
+    let mut ctx = HandCtx::new(pool, source, file_id);
     let mut cur = Cursor::new(&toks);
     skip_leading_doc_comments(&mut cur);
     let attrs = parse_attributes(&mut ctx, &mut cur)?;
@@ -523,11 +525,7 @@ fn try_hand_lower_type_alias(
     file_id: u32,
 ) -> Option<TypeAliasDecl> {
     let toks = item_tokens(tokens, item);
-    let mut ctx = HandCtx {
-        pool,
-        source,
-        file_id,
-    };
+    let mut ctx = HandCtx::new(pool, source, file_id);
     let mut cur = Cursor::new(&toks);
     skip_leading_doc_comments(&mut cur);
     let attrs = parse_attributes(&mut ctx, &mut cur)?;
@@ -563,15 +561,17 @@ fn try_hand_lower_interface(
     file_id: u32,
 ) -> Option<InterfaceDecl> {
     let toks = item_tokens(tokens, item);
-    let mut ctx = HandCtx {
-        pool,
-        source,
-        file_id,
-    };
+    let mut ctx = HandCtx::new(pool, source, file_id);
     let mut cur = Cursor::new(&toks);
     skip_leading_doc_comments(&mut cur);
     let attrs = parse_attributes(&mut ctx, &mut cur)?;
     let visibility = parse_visibility(&mut cur);
+    if cur
+        .peek()
+        .is_some_and(|token| ctx.text(token) == Some("sealed"))
+    {
+        cur.bump();
+    }
     cur.expect(TokenKind::KwInterface)?;
     let name_tok = cur
         .peek()
@@ -604,6 +604,10 @@ fn try_hand_lower_interface(
         span: token_bounds_span(file_id, &toks)?,
         attrs: attrs.into(),
         visibility,
+        sealed: item
+            .children_with_tokens()
+            .filter_map(rowan::NodeOrToken::into_token)
+            .any(|token| token.text() == "sealed"),
         name,
         generic_params,
         where_clause,
@@ -619,11 +623,7 @@ fn try_hand_lower_extern(
     file_id: u32,
 ) -> Option<ExternDecl> {
     let toks = item_tokens(tokens, item);
-    let mut ctx = HandCtx {
-        pool,
-        source,
-        file_id,
-    };
+    let mut ctx = HandCtx::new(pool, source, file_id);
     let mut cur = Cursor::new(&toks);
     skip_leading_doc_comments(&mut cur);
     let attrs = parse_attributes(&mut ctx, &mut cur)?;
@@ -649,7 +649,7 @@ fn try_hand_lower_extern(
         .find(|t| matches!(t.kind, TokenKind::KwExtern))
         .map(|t| t.start)
         .or_else(|| toks.first().map(|t| t.start))?;
-    let end = toks.last().map(|t| t.start + t.len)?;
+    let end = toks.last().map(|t| t.end())?;
     Some(ExternDecl {
         span: Span::new(file_id, start, end),
         attrs: attrs.into(),

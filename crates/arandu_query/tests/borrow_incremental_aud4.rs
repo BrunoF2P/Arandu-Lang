@@ -227,7 +227,7 @@ fn move_source(with_live_borrow: bool) -> String {
         ""
     };
     let use_borrow = if with_live_borrow {
-        "let observed = (*borrowed).handle\n    return result"
+        "return result + observe(borrowed)"
     } else {
         "return result"
     };
@@ -236,6 +236,10 @@ fn move_source(with_live_borrow: bool) -> String {
 
 func consume(value: Resource): int {{
     return 42
+}}
+
+func observe(value: ref Resource): int {{
+    return 1
 }}
 
 func main(): int {{

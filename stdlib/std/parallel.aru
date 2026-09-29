@@ -1,0 +1,585 @@
+//! Chunked parallel folds over shared slices.
+//!
+//! ## Overview
+//!
+//! A `ParallelJob` processes a chunk, `Combine` merges results, and optional accumulator initialization supplies each worker state. The fold APIs report `ParallelError`.
+//!
+//! ## Complexity
+//! Work is divided into chunks controlled by the requested grain size.
+//! Combining chunk results still requires the caller's `Combine<R>` logic.
+//!
+//! ## Safety
+//! The input element type must satisfy `Sync`; worker jobs and result values
+//! must satisfy their declared `Copy` and `Send` bounds. A canceled worker
+//! reports `ParallelError.Canceled` instead of a partial result.
+//!
+//! ## Platform
+//! `native`
+
+module std.parallel
+
+import std.core.intrinsics as intrinsics
+import std.core.marker as marker
+import std.core.mem as mem
+import std.core.slice as slice
+
+/// A job that processes elements of type `T` into an accumulator of type `R`.
+public interface ParallelJob<T, R> {
+    func run(self: ref Self, item: ref T, state: mut ref R): void
+}
+
+/// An associative operator with the caller-provided `identity` as its neutral value.
+/// The operator must be stable under the fixed regrouping used by `parallelFold`.
+public interface Combine<R> {
+    func combine(self: ref Self, dest: mut ref R, partial: ref R): void
+}
+
+/// Factory providing an independent initial state for chunk-level accumulators.
+/// Allows parallel folds over types that are `Send` but not `Copy`.
+public interface AccumulatorInit<R> {
+    func init(self: ref Self): R
+}
+
+/// Identity factory for `Copy` types that clones the identity value.
+public struct CopyIdentity<R> {
+    /// Identity value copied into each fold accumulator.
+    public value: R
+}
+
+/// Copies the stored identity value for an independent chunk accumulator.
+///
+/// No heap allocation is added by this factory itself.
+public func CopyIdentity.init<R: marker.Copy>(self: ref CopyIdentity<R>): R {
+    return self.value
+}
+
+/// Completion status when a parallel operation does not produce a value.
+public enum ParallelError {
+    /// A parallel worker failed.
+    Failed(int)
+    /// The parallel operation was canceled.
+    Canceled
+}
+
+/// Granularity threshold in elements below which input is folded sequentially
+/// without pool scheduling.
+public func granularityCutoff(): usize {
+    return 1024 as usize
+}
+
+/// Transport context for one chunk folding operation across the worker boundary.
+public struct ChunkContext<T, J> {
+    /// Input assigned to this chunk.
+    public subslice: []T
+    /// Job that processes this chunk.
+    public job: J
+    /// Shared cancellation flag observed by the worker.
+    public stop_flag: ptr[int]
+}
+
+/// Compiler-shaped WorkThunk for folding one chunk into a result buffer.
+///
+/// Status codes:
+/// - 0: `WORK_COMPLETED` (result initialized)
+/// - 1: `WORK_FAILED` (result uninitialized)
+/// - 2: `WORK_CANCELED` (result uninitialized)
+public func dispatchChunk<T: marker.Sync, R: marker.Copy + marker.Send, J: marker.Copy + marker.Send + ParallelJob<T, R>>(
+    context: ptr[ChunkContext<T, J>],
+    result_dest: ptr[R]
+): i32 {
+    let ctx: ChunkContext<T, J> = unsafe { mem.ptrRead<ChunkContext<T, J>>(context) }
+    let count = slice.len<T>(ctx.subslice)
+    let mut i: usize = 0 as usize
+    while i < count {
+        let nullp: ptr[int] = nil
+        if ctx.stop_flag != nullp {
+            let flag_val: int = unsafe { mem.ptrRead<int>(ctx.stop_flag) }
+            if flag_val != 0 {
+                return 2
+            }
+        }
+        unsafe { ctx.job.run(ref ctx.subslice[i], mut ref *result_dest) }
+        i = i + (1 as usize)
+    }
+    return 0
+}
+
+/// Transport context for one chunk folding operation with an accumulator factory.
+public struct ChunkContextWithInit<T, J, I> {
+    /// Input assigned to this chunk.
+    public subslice: []T
+    /// Job that processes this chunk.
+    public job: J
+    /// Factory for the chunk's initial accumulator.
+    public init: I
+    /// Shared cancellation flag observed by the worker.
+    public stop_flag: ptr[int]
+}
+
+/// Folds one chunk into an accumulator created by `init`.
+///
+/// Returns `0` after writing a completed result or `2` if the cancellation
+/// flag is observed. A canceled result buffer is not initialized.
+public func dispatchChunkWithInit<T: marker.Sync, R: marker.Send, J: marker.Copy + marker.Send + ParallelJob<T, R>, I: marker.Copy + marker.Send + AccumulatorInit<R>>(
+    context: ptr[ChunkContextWithInit<T, J, I>],
+    result_dest: ptr[R]
+): i32 {
+    let ctx: ChunkContextWithInit<T, J, I> = unsafe { mem.ptrRead<ChunkContextWithInit<T, J, I>>(context) }
+    let count = slice.len<T>(ctx.subslice)
+    let mut state: R = ctx.init.init()
+    let mut i: usize = 0 as usize
+    while i < count {
+        let nullp: ptr[int] = nil
+        if ctx.stop_flag != nullp {
+            let flag_val: int = unsafe { mem.ptrRead<int>(ctx.stop_flag) }
+            if flag_val != 0 {
+                return 2
+            }
+        }
+        ctx.job.run(ref ctx.subslice[i], mut ref state)
+        i = i + (1 as usize)
+    }
+    unsafe { mem.ptrWrite<R>(result_dest, state) }
+    return 0
+}
+
+/// Calls `job.run` once per element in order, starting from `seed`.
+///
+/// Returns the final accumulator. This function does not create chunks or
+/// schedule workers; any allocation depends on the caller's `job`.
+public func foldSequential<T, R, J: ParallelJob<T, R>>(
+    data: []T,
+    seed: R,
+    job: J
+): R {
+    let total_len = slice.len<T>(data)
+    let mut acc = seed
+    let mut i: usize = 0 as usize
+    while i < total_len {
+        job.run(ref data[i], mut ref acc)
+        i = i + (1 as usize)
+    }
+    return acc
+}
+
+extern "C" {
+    /// Host copy bridge for initializing a worker result buffer.
+    func ar_rt_copy_value<T>(dest: ptr[T], source: ref T, size: usize): void
+    /// Host allocator for an aligned worker buffer.
+    func ar_rt_alloc_aligned(size: usize, align: usize): ptr[u8]
+    /// Host deallocator for an aligned worker buffer.
+    func ar_rt_free_aligned(pointer: ptr[u8], size: usize, align: usize): void
+    /// Host dispatcher for parallel fold workers.
+    func ar_rt_parallel_fold_run(
+        num_chunks: u64,
+        contexts: ptr[ptr[u8]],
+        thunk: ptr[u8],
+        results: ptr[ptr[u8]],
+        workers: u64,
+        stop_flag: ptr[int]
+    ): i32
+}
+
+/// Folds `data` using fixed partition bounds and up to `workers` workers.
+///
+/// Delegates to `parallelFoldWithGrain` with target chunk size `64` and
+/// maximum `1024` chunks. Inputs at or below the granularity cutoff use a
+/// sequential fold. Worker failure or cancellation returns `ParallelError`.
+public func parallelFold<T: marker.Sync, R: marker.Copy + marker.Send, J: marker.Copy + marker.Send + ParallelJob<T, R>, C: Combine<R>>(
+    data: []T,
+    seed: R,
+    identity: ref R,
+    job: J,
+    combine: C,
+    workers: uint
+): Result<R, ParallelError> {
+    return parallelFoldWithGrain<T, R, J, C>(
+        data,
+        seed,
+        identity,
+        job,
+        combine,
+        workers,
+        64,
+        1024
+    )
+}
+
+/// Folds `data` with explicit deterministic partition bounds, combining
+/// partial results strictly in ordinal order.
+///
+/// Guarantees:
+/// 1. Structured scope: blocks until all chunks finish (or cancel).
+/// 2. Deterministic combination: chunk boundaries and ordinal reduction do not
+///    depend on `workers`; `target_chunk_size` and `max_chunks` are semantic
+///    policy inputs and must remain fixed when comparing worker counts.
+/// 3. Memory safety: disjoint contiguous slices with read-only loans;
+///    `R: Copy` ensures zero cross-thread allocation or drop glue for partials.
+/// 4. Granularity cutoff: at or below `granularityCutoff()` items, runs a
+///    strictly sequential fold without allocation or pool scheduling.
+///
+/// Equality with `foldSequential` requires `job`/`combine` to obey the identity
+/// and regrouping contract. Ordinary floating-point addition does not provide
+/// that guarantee because reassociation can change rounding.
+public func parallelFoldWithGrain<T: marker.Sync, R: marker.Copy + marker.Send, J: marker.Copy + marker.Send + ParallelJob<T, R>, C: Combine<R>>(
+    data: []T,
+    seed: R,
+    identity: ref R,
+    job: J,
+    combine: C,
+    workers: uint,
+    target_chunk_size: uint,
+    max_chunks: uint
+): Result<R, ParallelError> {
+    let total_len = slice.len<T>(data)
+    if total_len == (0 as usize) {
+        return Result.Ok(seed)
+    }
+    if target_chunk_size == 0 || max_chunks == 0 {
+        return Result.Err(ParallelError.Failed(-3))
+    }
+    if total_len <= granularityCutoff() {
+        let out = foldSequential<T, R, J>(data, seed, job)
+        return Result.Ok(out)
+    }
+
+    // Partition solely from the input length. `workers` controls execution,
+    // never the reduction tree, so scheduler configuration is not semantic.
+    let target_chunk = target_chunk_size as usize
+    let max_c = max_chunks as usize
+    let mut chunk_count = (1 as usize) + (total_len - (1 as usize)) / target_chunk
+    if chunk_count > max_c {
+        chunk_count = max_c
+    }
+    if chunk_count > total_len {
+        chunk_count = total_len
+    }
+
+    let base_chunk_size = total_len / chunk_count
+
+    let ctx_elem_size = mem.sizeOf<ChunkContext<T, J>>()
+    let res_elem_size = mem.sizeOf<R>()
+    let ctx_align = mem.alignOf<ChunkContext<T, J>>()
+    let res_align = mem.alignOf<R>()
+    let ptr_elem_size = mem.sizeOf<ptr[u8]>()
+    let ptr_align = mem.alignOf<ptr[u8]>()
+
+    // `ptrOffset` accepts an isize byte displacement after casting the slabs to
+    // bytes. Reject layouts that cannot be represented before multiplying.
+    let max_buffer: usize = 2147483647 as usize
+    if ctx_elem_size == (0 as usize) || ctx_align == (0 as usize)
+        || res_elem_size == (0 as usize) || res_align == (0 as usize)
+        || ptr_elem_size == (0 as usize) || ptr_align == (0 as usize)
+        || ctx_elem_size > max_buffer / chunk_count
+        || res_elem_size > max_buffer / chunk_count
+        || ptr_elem_size > max_buffer / chunk_count {
+        return Result.Err(ParallelError.Failed(-3))
+    }
+
+    let ctx_buf_size = chunk_count * ctx_elem_size
+    let res_buf_size = chunk_count * res_elem_size
+    let ptr_buf_size = chunk_count * ptr_elem_size
+    let ctx_buf = unsafe { ar_rt_alloc_aligned(ctx_buf_size, ctx_align) }
+    let null_raw: ptr[u8] = nil
+    if ctx_buf == null_raw {
+        return Result.Err(ParallelError.Failed(-4))
+    }
+    let res_buf = unsafe { ar_rt_alloc_aligned(res_buf_size, res_align) }
+    if res_buf == null_raw {
+        unsafe { ar_rt_free_aligned(ctx_buf, ctx_buf_size, ctx_align) }
+        return Result.Err(ParallelError.Failed(-4))
+    }
+    let ctx_ptrs_raw = unsafe { ar_rt_alloc_aligned(ptr_buf_size, ptr_align) }
+    if ctx_ptrs_raw == null_raw {
+        unsafe {
+            ar_rt_free_aligned(ctx_buf, ctx_buf_size, ctx_align)
+            ar_rt_free_aligned(res_buf, res_buf_size, res_align)
+        }
+        return Result.Err(ParallelError.Failed(-4))
+    }
+    let ctx_ptrs = ctx_ptrs_raw as ptr[ptr[u8]]
+    let null_ptrs: ptr[ptr[u8]] = nil
+    let res_ptrs_raw = unsafe { ar_rt_alloc_aligned(ptr_buf_size, ptr_align) }
+    let res_ptrs = res_ptrs_raw as ptr[ptr[u8]]
+    if res_ptrs == null_ptrs {
+        unsafe {
+            ar_rt_free_aligned(ctx_buf, ctx_buf_size, ctx_align)
+            ar_rt_free_aligned(res_buf, res_buf_size, res_align)
+            ar_rt_free_aligned(ctx_ptrs_raw, ptr_buf_size, ptr_align)
+        }
+        return Result.Err(ParallelError.Failed(-4))
+    }
+
+    let mut c: usize = 0 as usize
+    while c + (1 as usize) < chunk_count {
+        let chunk_offset = c * base_chunk_size
+        let ctx_byte_offset = c * ctx_elem_size
+        let res_byte_offset = c * res_elem_size
+        let ctx_raw = mem.ptrOffset<u8>(ctx_buf, ctx_byte_offset as isize)
+        let res_raw = mem.ptrOffset<u8>(res_buf, res_byte_offset as isize)
+        let chunk_slice = unsafe { intrinsics.sliceSubslice<T>(data, chunk_offset, base_chunk_size) }
+        let null_flag: ptr[int] = nil
+        let chunk_ctx = ChunkContext<T, J> {
+            subslice: chunk_slice,
+            job: job,
+            stop_flag: null_flag,
+        }
+        let ctx_p = ctx_raw as ptr[ChunkContext<T, J>]
+        unsafe {
+            mem.ptrWrite<ChunkContext<T, J>>(ctx_p, chunk_ctx)
+            ar_rt_copy_value<R>(res_raw as ptr[R], identity, res_elem_size)
+            mem.ptrWrite<ptr[u8]>(mem.ptrOffset<ptr[u8]>(ctx_ptrs, c as isize), ctx_raw)
+            mem.ptrWrite<ptr[u8]>(mem.ptrOffset<ptr[u8]>(res_ptrs, c as isize), res_raw)
+        }
+        c = c + (1 as usize)
+    }
+    let final_offset = (chunk_count - (1 as usize)) * base_chunk_size
+    let final_count = total_len - final_offset
+    let final_ctx_offset = c * ctx_elem_size
+    let final_res_offset = c * res_elem_size
+    let final_ctx_raw = mem.ptrOffset<u8>(ctx_buf, final_ctx_offset as isize)
+    let final_res_raw = mem.ptrOffset<u8>(res_buf, final_res_offset as isize)
+    let final_slice = unsafe { intrinsics.sliceSubslice<T>(data, final_offset, final_count) }
+    let null_flag: ptr[int] = nil
+    let final_ctx = ChunkContext<T, J> {
+        subslice: final_slice,
+        job: job,
+        stop_flag: null_flag,
+    }
+    unsafe {
+        mem.ptrWrite<ChunkContext<T, J>>(final_ctx_raw as ptr[ChunkContext<T, J>], final_ctx)
+        ar_rt_copy_value<R>(final_res_raw as ptr[R], identity, res_elem_size)
+        mem.ptrWrite<ptr[u8]>(mem.ptrOffset<ptr[u8]>(ctx_ptrs, c as isize), final_ctx_raw)
+        mem.ptrWrite<ptr[u8]>(mem.ptrOffset<ptr[u8]>(res_ptrs, c as isize), final_res_raw)
+    }
+
+    let thunk_fn = dispatchChunk<T, R, J> as ptr[u8]
+    let status = unsafe {
+        ar_rt_parallel_fold_run(
+            chunk_count as u64,
+            ctx_ptrs,
+            thunk_fn,
+            res_ptrs,
+            workers as u64,
+            null_flag
+        )
+    }
+
+    if status != 0 {
+        unsafe {
+            ar_rt_free_aligned(ctx_buf, ctx_buf_size, ctx_align)
+            ar_rt_free_aligned(res_buf, res_buf_size, res_align)
+            ar_rt_free_aligned(ctx_ptrs_raw, ptr_buf_size, ptr_align)
+            ar_rt_free_aligned(res_ptrs_raw, ptr_buf_size, ptr_align)
+        }
+        if status == 2 {
+            return Result.Err(ParallelError.Canceled)
+        }
+        return Result.Err(ParallelError.Failed(status as int))
+    }
+
+    let mut acc = seed
+    let mut i: usize = 0 as usize
+    while i < chunk_count {
+        let res_slot = mem.ptrOffset<ptr[u8]>(res_ptrs, i as isize)
+        let res_raw = unsafe { mem.ptrRead<ptr[u8]>(res_slot) }
+        let res_p = res_raw as ptr[R]
+        let partial = unsafe { mem.ptrRead<R>(res_p) }
+        combine.combine(mut ref acc, ref partial)
+        i = i + (1 as usize)
+    }
+
+    unsafe {
+        ar_rt_free_aligned(ctx_buf, ctx_buf_size, ctx_align)
+        ar_rt_free_aligned(res_buf, res_buf_size, res_align)
+        ar_rt_free_aligned(ctx_ptrs_raw, ptr_buf_size, ptr_align)
+        ar_rt_free_aligned(res_ptrs_raw, ptr_buf_size, ptr_align)
+    }
+
+    return Result.Ok(acc)
+}
+
+/// Folds `data` across up to `workers` chunks using an `AccumulatorInit` factory
+/// to initialize each chunk's accumulator independently, supporting non-`Copy` types.
+///
+/// Guarantees:
+/// 1. Structured scope: blocks until all chunks finish (or cancel).
+/// 2. Deterministic combination: chunk boundaries and ordinal reduction do not
+///    depend on `workers`; changing only worker count cannot change the result.
+/// 3. Memory safety: each chunk initializes its own accumulator independently
+///    via `init.init()`, avoiding bitwise aliasing of identity buffers across threads.
+/// 4. Granularity cutoff: at or below `granularityCutoff()` items, runs a
+///    strictly sequential fold without allocation or pool scheduling.
+public func parallelFoldWithInit<
+    T: marker.Sync,
+    R: marker.Send,
+    J: marker.Copy + marker.Send + ParallelJob<T, R>,
+    I: marker.Copy + marker.Send + AccumulatorInit<R>,
+    C: Combine<R>
+>(
+    data: []T,
+    seed: R,
+    init: I,
+    job: J,
+    combine: C,
+    workers: uint
+): Result<R, ParallelError> {
+    let total_len = slice.len<T>(data)
+    if total_len == (0 as usize) {
+        return Result.Ok(seed)
+    }
+    if total_len <= granularityCutoff() {
+        let out = foldSequential<T, R, J>(data, seed, job)
+        return Result.Ok(out)
+    }
+
+    let target_chunk_size: usize = 64 as usize
+    let mut chunk_count = (1 as usize) + (total_len - (1 as usize)) / target_chunk_size
+    if chunk_count > (1024 as usize) {
+        chunk_count = 1024 as usize
+    }
+    if chunk_count > total_len {
+        chunk_count = total_len
+    }
+
+    let base_chunk_size = total_len / chunk_count
+
+    let ctx_elem_size = mem.sizeOf<ChunkContextWithInit<T, J, I>>()
+    let res_elem_size = mem.sizeOf<R>()
+    let ctx_align = mem.alignOf<ChunkContextWithInit<T, J, I>>()
+    let res_align = mem.alignOf<R>()
+    let ptr_elem_size = mem.sizeOf<ptr[u8]>()
+    let ptr_align = mem.alignOf<ptr[u8]>()
+
+    let max_buffer: usize = 2147483647 as usize
+    if ctx_elem_size == (0 as usize) || ctx_align == (0 as usize)
+        || res_elem_size == (0 as usize) || res_align == (0 as usize)
+        || ptr_elem_size == (0 as usize) || ptr_align == (0 as usize)
+        || ctx_elem_size > max_buffer / chunk_count
+        || res_elem_size > max_buffer / chunk_count
+        || ptr_elem_size > max_buffer / chunk_count {
+        return Result.Err(ParallelError.Failed(-3))
+    }
+
+    let ctx_buf_size = chunk_count * ctx_elem_size
+    let res_buf_size = chunk_count * res_elem_size
+    let ptr_buf_size = chunk_count * ptr_elem_size
+    let ctx_buf = unsafe { ar_rt_alloc_aligned(ctx_buf_size, ctx_align) }
+    let null_raw: ptr[u8] = nil
+    if ctx_buf == null_raw {
+        return Result.Err(ParallelError.Failed(-4))
+    }
+    let res_buf = unsafe { ar_rt_alloc_aligned(res_buf_size, res_align) }
+    if res_buf == null_raw {
+        unsafe { ar_rt_free_aligned(ctx_buf, ctx_buf_size, ctx_align) }
+        return Result.Err(ParallelError.Failed(-4))
+    }
+    let ctx_ptrs_raw = unsafe { ar_rt_alloc_aligned(ptr_buf_size, ptr_align) }
+    if ctx_ptrs_raw == null_raw {
+        unsafe {
+            ar_rt_free_aligned(ctx_buf, ctx_buf_size, ctx_align)
+            ar_rt_free_aligned(res_buf, res_buf_size, res_align)
+        }
+        return Result.Err(ParallelError.Failed(-4))
+    }
+    let ctx_ptrs = ctx_ptrs_raw as ptr[ptr[u8]]
+    let null_ptrs: ptr[ptr[u8]] = nil
+    let res_ptrs_raw = unsafe { ar_rt_alloc_aligned(ptr_buf_size, ptr_align) }
+    let res_ptrs = res_ptrs_raw as ptr[ptr[u8]]
+    if res_ptrs == null_ptrs {
+        unsafe {
+            ar_rt_free_aligned(ctx_buf, ctx_buf_size, ctx_align)
+            ar_rt_free_aligned(res_buf, res_buf_size, res_align)
+            ar_rt_free_aligned(ctx_ptrs_raw, ptr_buf_size, ptr_align)
+        }
+        return Result.Err(ParallelError.Failed(-4))
+    }
+
+    let mut c: usize = 0 as usize
+    while c + (1 as usize) < chunk_count {
+        let chunk_offset = c * base_chunk_size
+        let ctx_byte_offset = c * ctx_elem_size
+        let res_byte_offset = c * res_elem_size
+        let ctx_raw = mem.ptrOffset<u8>(ctx_buf, ctx_byte_offset as isize)
+        let res_raw = mem.ptrOffset<u8>(res_buf, res_byte_offset as isize)
+        let chunk_slice = unsafe { intrinsics.sliceSubslice<T>(data, chunk_offset, base_chunk_size) }
+        let null_flag: ptr[int] = nil
+        let chunk_ctx = ChunkContextWithInit<T, J, I> {
+            subslice: chunk_slice,
+            job: job,
+            init: init,
+            stop_flag: null_flag,
+        }
+        let ctx_p = ctx_raw as ptr[ChunkContextWithInit<T, J, I>]
+        unsafe {
+            mem.ptrWrite<ChunkContextWithInit<T, J, I>>(ctx_p, chunk_ctx)
+            mem.ptrWrite<ptr[u8]>(mem.ptrOffset<ptr[u8]>(ctx_ptrs, c as isize), ctx_raw)
+            mem.ptrWrite<ptr[u8]>(mem.ptrOffset<ptr[u8]>(res_ptrs, c as isize), res_raw)
+        }
+        c = c + (1 as usize)
+    }
+    let final_offset = (chunk_count - (1 as usize)) * base_chunk_size
+    let final_count = total_len - final_offset
+    let final_ctx_offset = c * ctx_elem_size
+    let final_res_offset = c * res_elem_size
+    let final_ctx_raw = mem.ptrOffset<u8>(ctx_buf, final_ctx_offset as isize)
+    let final_res_raw = mem.ptrOffset<u8>(res_buf, final_res_offset as isize)
+    let final_slice = unsafe { intrinsics.sliceSubslice<T>(data, final_offset, final_count) }
+    let null_flag: ptr[int] = nil
+    let final_ctx = ChunkContextWithInit<T, J, I> {
+        subslice: final_slice,
+        job: job,
+        init: init,
+        stop_flag: null_flag,
+    }
+    unsafe {
+        mem.ptrWrite<ChunkContextWithInit<T, J, I>>(final_ctx_raw as ptr[ChunkContextWithInit<T, J, I>], final_ctx)
+        mem.ptrWrite<ptr[u8]>(mem.ptrOffset<ptr[u8]>(ctx_ptrs, c as isize), final_ctx_raw)
+        mem.ptrWrite<ptr[u8]>(mem.ptrOffset<ptr[u8]>(res_ptrs, c as isize), final_res_raw)
+    }
+
+    let thunk_fn = dispatchChunkWithInit<T, R, J, I> as ptr[u8]
+    let status = unsafe {
+        ar_rt_parallel_fold_run(
+            chunk_count as u64,
+            ctx_ptrs,
+            thunk_fn,
+            res_ptrs,
+            workers as u64,
+            null_flag
+        )
+    }
+
+    if status != 0 {
+        unsafe {
+            ar_rt_free_aligned(ctx_buf, ctx_buf_size, ctx_align)
+            ar_rt_free_aligned(res_buf, res_buf_size, res_align)
+            ar_rt_free_aligned(ctx_ptrs_raw, ptr_buf_size, ptr_align)
+            ar_rt_free_aligned(res_ptrs_raw, ptr_buf_size, ptr_align)
+        }
+        if status == 2 {
+            return Result.Err(ParallelError.Canceled)
+        }
+        return Result.Err(ParallelError.Failed(status as int))
+    }
+
+    let mut acc = seed
+    let mut i: usize = 0 as usize
+    while i < chunk_count {
+        let res_slot = mem.ptrOffset<ptr[u8]>(res_ptrs, i as isize)
+        let res_raw = unsafe { mem.ptrRead<ptr[u8]>(res_slot) }
+        let res_p = res_raw as ptr[R]
+        let partial = unsafe { mem.ptrRead<R>(res_p) }
+        combine.combine(mut ref acc, ref partial)
+        i = i + (1 as usize)
+    }
+
+    unsafe {
+        ar_rt_free_aligned(ctx_buf, ctx_buf_size, ctx_align)
+        ar_rt_free_aligned(res_buf, res_buf_size, res_align)
+        ar_rt_free_aligned(ctx_ptrs_raw, ptr_buf_size, ptr_align)
+        ar_rt_free_aligned(res_ptrs_raw, ptr_buf_size, ptr_align)
+    }
+
+    return Result.Ok(acc)
+}

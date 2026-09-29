@@ -41,6 +41,7 @@ pub fn ar_type_is_unsigned_integer(ty: &ArType) -> bool {
         ArType::Primitive(p) if matches!(
             p,
             Primitive::Uint
+                | Primitive::USize
                 | Primitive::U8
                 | Primitive::U16
                 | Primitive::U32
@@ -80,7 +81,8 @@ pub fn clif_type(ty: &ArType, ptr_type: Type) -> ClifType {
 pub fn clif_type_with_float(ty: &ArType, ptr_type: Type, float_type: Type) -> ClifType {
     match ty {
         ArType::Primitive(p) => match p {
-            Primitive::Int | Primitive::Uint => ClifType::Concrete(ptr_type),
+            Primitive::Int | Primitive::Uint => ClifType::Concrete(I32),
+            Primitive::ISize | Primitive::USize => ClifType::Concrete(ptr_type),
             Primitive::Float => ClifType::Concrete(float_type),
             Primitive::I8 | Primitive::U8 | Primitive::Byte => ClifType::Concrete(I8),
             Primitive::I16 | Primitive::U16 => ClifType::Concrete(I16),
@@ -102,13 +104,14 @@ pub fn clif_type_with_float(ty: &ArType, ptr_type: Type, float_type: Type) -> Cl
         | ArType::RefMut(_)
         | ArType::Nullable(_)
         | ArType::Slice(_)
-        | ArType::Array(_, _) => ClifType::Concrete(ptr_type),
+        | ArType::Array(_, _)
+        | ArType::ConstArray(_, _) => ClifType::Concrete(ptr_type),
         // Packed GenRef: always 8-byte {u32,u32} (I64 on all hosts we JIT).
         ArType::GenRef => ClifType::Concrete(I64),
         // `Err` is a message handle (pointer to UTF-8 buffer from `err.new`).
         ArType::Err => ClifType::Concrete(ptr_type),
-        ArType::Void | ArType::Error => ClifType::Void,
-        ArType::IntLiteral => ClifType::Concrete(ptr_type),
+        ArType::Void | ArType::Error | ArType::Const(_) | ArType::ConstParam(_) => ClifType::Void,
+        ArType::IntLiteral => ClifType::Concrete(I32),
         ArType::FloatLiteral => ClifType::Concrete(float_type),
         ArType::Named(_, _) => {
             // TODO: Named types (structs, enums) should use a proper multi-value ABI.

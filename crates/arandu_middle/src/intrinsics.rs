@@ -7,6 +7,8 @@ pub enum IntrinsicKind {
     PtrRead,
     /// Write value to raw pointer (`ptrWrite` / `ptr_write`).
     PtrWrite,
+    /// Erase an exclusive reference to a raw address (`addressOf`).
+    AddressOf,
     /// Offset raw pointer by elements (`ptrOffset` / `ptr_offset`).
     PtrOffset,
     /// Size of type in bytes (`sizeOf` / `size_of`).
@@ -25,11 +27,39 @@ pub enum IntrinsicKind {
     SliceLen,
     /// Extract data pointer of slice (`sliceData` / `slicePtr`).
     SliceData,
-    /// View string as byte slice / view (`strView`).
+    /// Borrow UTF-8 storage as a byte slice (`strBytes`).
+    StrBytes,
+    /// View an owned string prefix as a borrowed string (`strView`).
     StrView,
+    /// Runs the destructor of the value pointed to by raw pointer (`dropInPlace` / `drop_in_place`).
+    DropInPlace,
 }
 
 impl IntrinsicKind {
+    /// Returns `true` for intrinsics that are safe to call without an `unsafe` block.
+    ///
+    /// ## Criteria
+    ///
+    /// An intrinsic qualifies as safe when **all** of the following hold:
+    ///
+    /// 1. It only reads a fat-pointer descriptor (`ptr` + `len`) that the
+    ///    type-checker has already validated — it never dereferences the element
+    ///    data, nor does it write to or expose raw pointers.
+    /// 2. It produces no side-effects observable by the Arandu memory model
+    ///    (no I/O, no heap allocation, no mutation through a foreign pointer).
+    /// 3. It is either a **compile-time constant** (`SizeOf`, `AlignOf`) or a
+    ///    **pure fat-pointer projection** (`SliceLen`, `StrBytes`).
+    ///
+    /// `SliceSubslice`, `SliceData`, `SliceFromRaw`, `StrView`, `PtrRead`,
+    /// `PtrWrite`, `PtrOffset`, `AddressOf`, `Abort` and `BlackBox` remain `unsafe`.
+    #[must_use]
+    pub fn is_safe(self) -> bool {
+        matches!(
+            self,
+            Self::SliceLen | Self::SizeOf | Self::AlignOf | Self::StrBytes
+        )
+    }
+
     /// Classifies an identifier or qualified name into an intrinsic kind.
     #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
@@ -37,6 +67,7 @@ impl IntrinsicKind {
         match bare {
             "ptrRead" | "ptr_read" | "refRead" | "ref_read" => Some(Self::PtrRead),
             "ptrWrite" | "ptr_write" | "refWrite" | "ref_write" => Some(Self::PtrWrite),
+            "addressOf" | "address_of" => Some(Self::AddressOf),
             "ptrOffset" | "ptr_offset" => Some(Self::PtrOffset),
             "sizeOf" | "size_of" => Some(Self::SizeOf),
             "alignOf" | "align_of" => Some(Self::AlignOf),
@@ -48,7 +79,9 @@ impl IntrinsicKind {
             s if s.starts_with("sliceSubslice") => Some(Self::SliceSubslice),
             s if s.starts_with("sliceLen") => Some(Self::SliceLen),
             s if s.starts_with("sliceData") || s.starts_with("slicePtr") => Some(Self::SliceData),
+            s if s.starts_with("strBytes") => Some(Self::StrBytes),
             s if s.starts_with("strView") => Some(Self::StrView),
+            "dropInPlace" | "drop_in_place" => Some(Self::DropInPlace),
             _ => None,
         }
     }

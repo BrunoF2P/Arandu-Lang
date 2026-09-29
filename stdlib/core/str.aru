@@ -1,14 +1,43 @@
+//! Operations over immutable borrowed UTF-8 strings (`str`).
+//!
+//! ## Overview
+//!
+//! `str` is Arandu's primitive string type: a slice of valid immutable UTF-8
+//! bytes. `std.core.str` provides the fundamental allocation-free operations
+//! over it — byte length, comparison, search, byte slicing and
+//! prefix/suffix checks.
+//!
+//! For mutable growable strings that require the heap, use
+//! `std.alloc.string.String`. For allocation-free formatting into a fixed
+//! buffer, use `std.core.fmt.Formatter`.
+//!
+//! ## Example
+//!
+//! ```arandu
+//! import std.core.str as strings
+//!
+//! let s = "hello, world"
+//! strings.isEmpty(s)              // false
+//! strings.lenBytes(s)             // 12
+//! strings.startsWith(s, "hello")  // true
+//! strings.contains(s, "world")    // true
+//! ```
+//!
+//! ## Platform
+//! `native` · `wasm32` · `bare-metal`
+//!
+//! No allocation involved on any supported platform.
+//!
+//! ## See also
+//!
+//! - `std.alloc.string` — heap-allocated mutable `String`
+//! - `std.core.fmt` — allocation-free fixed-buffer formatting
+//! - `std.core.char` — Unicode codepoint operations
+
 module std.core.str
 
-import std.core.option as option
-
-extern "C" {
-    func ar_str_len(s: str): uint
-    func ar_str_starts_with(s: str, prefix: str): int
-    func ar_str_ends_with(s: str, suffix: str): int
-    func ar_str_contains(s: str, needle: str): int
-    func ar_str_find(s: str, needle: str): int
-}
+import std.core.intrinsics as intrinsics
+import std.core.slice as slice
 
 /// Returns `true` if the string is empty (`len == 0`).
 ///
@@ -26,6 +55,8 @@ public func isEmpty(s: str): bool {
 
 /// Returns the byte length of the string when encoded as UTF-8.
 ///
+/// Note: this counts UTF-8 **bytes**, not Unicode characters. For codepoint
+/// counting, use `std.core.char`.
 /// # Examples
 /// ```arandu
 /// str.lenBytes("abc") // 3
@@ -34,13 +65,14 @@ public func isEmpty(s: str): bool {
 ///
 /// # Complexity
 /// Time: O(1) | Space: O(1)
-public func lenBytes(s: str): uint {
-    unsafe {
-        return ar_str_len(s)
-    }
+public func lenBytes(s: str): usize {
+    let bytes = intrinsics.strBytes(s)
+    return slice.len<u8>(bytes)
 }
 
 /// Returns `true` if the string `s` starts with `prefix`.
+/// An empty prefix matches every string. Comparison is bytewise and does not
+/// allocate.
 ///
 /// # Examples
 /// ```arandu
@@ -51,12 +83,26 @@ public func lenBytes(s: str): uint {
 /// # Complexity
 /// Time: O(M) where M is prefix length | Space: O(1)
 public func startsWith(s: str, prefix: str): bool {
-    unsafe {
-        return ar_str_starts_with(s, prefix) != 0
+    let source = intrinsics.strBytes(s)
+    let expected = intrinsics.strBytes(prefix)
+    let source_len = slice.len<u8>(source)
+    let expected_len = slice.len<u8>(expected)
+    if expected_len > source_len {
+        return false
     }
+    let mut i: usize = 0
+    while i < expected_len {
+        if source[i] != expected[i] {
+            return false
+        }
+        i = i + 1
+    }
+    return true
 }
 
 /// Returns `true` if the string `s` ends with `suffix`.
+/// An empty suffix matches every string. Comparison is bytewise and does not
+/// allocate.
 ///
 /// # Examples
 /// ```arandu
@@ -67,12 +113,27 @@ public func startsWith(s: str, prefix: str): bool {
 /// # Complexity
 /// Time: O(M) where M is suffix length | Space: O(1)
 public func endsWith(s: str, suffix: str): bool {
-    unsafe {
-        return ar_str_ends_with(s, suffix) != 0
+    let source = intrinsics.strBytes(s)
+    let expected = intrinsics.strBytes(suffix)
+    let source_len = slice.len<u8>(source)
+    let expected_len = slice.len<u8>(expected)
+    if expected_len > source_len {
+        return false
     }
+    let offset = source_len - expected_len
+    let mut i: usize = 0
+    while i < expected_len {
+        if source[offset + i] != expected[i] {
+            return false
+        }
+        i = i + 1
+    }
+    return true
 }
 
 /// Returns `true` if the string `s` contains the substring `needle`.
+/// An empty needle is always contained, including in an empty source.
+/// This delegates to `find` and does not allocate.
 ///
 /// # Examples
 /// ```arandu
@@ -83,12 +144,19 @@ public func endsWith(s: str, suffix: str): bool {
 /// # Complexity
 /// Time: O(N * M) | Space: O(1)
 public func contains(s: str, needle: str): bool {
-    unsafe {
-        return ar_str_contains(s, needle) != 0
+    match find(s, needle) {
+        Option.Some(_) => {
+            return true
+        }
+        Option.None => {
+            return false
+        }
     }
 }
 
 /// Returns the first byte index of `needle` in `s`, or `Option.None` if not found.
+/// An empty needle matches at index zero. The returned offset counts UTF-8
+/// bytes, not characters; use it as a byte position when slicing.
 ///
 /// # Examples
 /// ```arandu
@@ -98,12 +166,28 @@ public func contains(s: str, needle: str): bool {
 ///
 /// # Complexity
 /// Time: O(N * M) | Space: O(1)
-public func find(s: str, needle: str): Option<uint> {
-    unsafe {
-        let idx = ar_str_find(s, needle)
-        if idx < 0 {
-            return Option.None
-        }
-        return Option.Some(idx as uint)
+public func find(s: str, needle: str): Option<usize> {
+    let source = intrinsics.strBytes(s)
+    let expected = intrinsics.strBytes(needle)
+    let source_len = slice.len<u8>(source)
+    let expected_len = slice.len<u8>(expected)
+    if expected_len == 0 {
+        return Option.Some(0)
     }
+    if expected_len > source_len {
+        return Option.None
+    }
+    let last = source_len - expected_len
+    let mut start: usize = 0
+    while start <= last {
+        let mut i: usize = 0
+        while i < expected_len && source[start + i] == expected[i] {
+            i = i + 1
+        }
+        if i == expected_len {
+            return Option.Some(start)
+        }
+        start = start + 1
+    }
+    return Option.None
 }

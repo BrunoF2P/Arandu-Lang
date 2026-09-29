@@ -29,6 +29,8 @@ pub fn primitive_type_token_name(kind: TokenKind) -> Option<&'static str> {
     match kind {
         TokenKind::TypeInt => Some("int"),
         TokenKind::TypeUint => Some("uint"),
+        TokenKind::TypeIsize => Some("isize"),
+        TokenKind::TypeUsize => Some("usize"),
         TokenKind::TypeFloat => Some("float"),
         TokenKind::TypeI8 => Some("i8"),
         TokenKind::TypeI16 => Some("i16"),
@@ -57,11 +59,7 @@ pub fn try_hand_lower_type(
     t: &Token,
     file_id: u32,
 ) -> Option<TypeExprId> {
-    let mut ctx = HandCtx {
-        pool,
-        source,
-        file_id,
-    };
+    let mut ctx = HandCtx::new(pool, source, file_id);
     let toks = [t];
     let mut cur = Cursor::new(&toks);
     let ty = parse_type(&mut ctx, &mut cur)?;
@@ -135,7 +133,12 @@ pub fn parse_type(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<TypeExp
         let size_tok = cur.peek()?;
         if !matches!(
             size_tok.kind,
-            TokenKind::IntDec | TokenKind::IntHex | TokenKind::IntBin | TokenKind::IntOct
+            TokenKind::IntDec
+                | TokenKind::IntHex
+                | TokenKind::IntBin
+                | TokenKind::IntOct
+                | TokenKind::IdentValue
+                | TokenKind::IdentType
         ) {
             return None;
         }
@@ -147,6 +150,7 @@ pub fn parse_type(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<TypeExp
         return Some(ctx.pool.alloc_type_expr(TypeExpr::Array {
             span: ctx.span(start, end),
             size,
+            size_span: ctx.token_span(size_tok),
             elem,
         }));
     }
@@ -218,7 +222,7 @@ fn parse_named_or_primitive_type(
                 let text = ctx.text(t)?;
                 let path = smallvec![SmolStr::new(text)];
                 let name = TypeName {
-                    span: ctx.span(start, t.start + t.len),
+                    span: ctx.span(start, t.end()),
                     path,
                 };
                 let (args, args_end) = if cur.peek_kind() == Some(TokenKind::Lt) {
@@ -234,7 +238,7 @@ fn parse_named_or_primitive_type(
             }
             TokenKind::IdentValue => {
                 let mut path = smallvec![SmolStr::new(ctx.text(t)?)];
-                let mut end = t.start + t.len;
+                let mut end = t.end();
                 // module segments: value.value...
                 while cur.peek_kind() == Some(TokenKind::Dot)
                     && cur
@@ -296,7 +300,16 @@ fn parse_generic_type_args(
     let mut args = Vec::new();
     if !cur.at_gt() {
         loop {
-            args.push(parse_type(ctx, cur)?);
+            if cur.peek_kind() == Some(TokenKind::IntDec) {
+                let token = cur.bump()?;
+                let value = SmolStr::new(ctx.text(token)?);
+                args.push(ctx.pool.alloc_type_expr(TypeExpr::Const {
+                    span: ctx.token_span(token),
+                    value,
+                }));
+            } else {
+                args.push(parse_type(ctx, cur)?);
+            }
             if cur.eat(TokenKind::Comma) {
                 continue;
             }

@@ -73,6 +73,36 @@ pub struct WasmModuleBuilder<'a> {
 }
 
 impl<'a> WasmModuleBuilder<'a> {
+    /// Names a host export without conflating an associated method with a
+    /// same-named free function. Internal calls continue to use SymbolIds; this
+    /// name is only the external core-module surface.
+    fn host_export_name(&self, symbol: &arandu_middle::symbol_table::Symbol) -> String {
+        if let Some(((owner, method), _)) = self
+            .symbols
+            .associated_members
+            .iter()
+            .filter(|(_, member_id)| **member_id == symbol.id)
+            .min_by_key(|((owner, method), _)| (owner.file_id, owner.local_id.0, method.as_str()))
+        {
+            let module_prefix = self
+                .symbols
+                .host_func_name(symbol)
+                .rsplit_once('.')
+                .map_or("", |(module, _)| module);
+            let owner_name = self
+                .symbols
+                .try_get(*owner)
+                .map_or("type", |owner| owner.name.as_str());
+            if module_prefix.is_empty() {
+                format!("{owner_name}.{method}")
+            } else {
+                format!("{module_prefix}.{owner_name}.{method}")
+            }
+        } else {
+            self.symbols.host_func_name(symbol).to_owned()
+        }
+    }
+
     #[must_use]
     pub fn new(
         program: &'a AmirProgram,
@@ -300,6 +330,9 @@ impl<'a> WasmModuleBuilder<'a> {
             let Some(sym) = self.symbols.try_get(sym_id) else {
                 continue;
             };
+            if arandu_middle::IntrinsicKind::from_name(&sym.name).is_some() {
+                continue;
+            }
             let (module, field) = match style {
                 ExportStyle::Component(_) => {
                     if let Some((m, f)) = sym.name.split_once('.') {
@@ -325,9 +358,13 @@ impl<'a> WasmModuleBuilder<'a> {
 
             let mut wasm_params = Vec::new();
             for p in params {
-                wasm_params.extend(crate::types::ar_type_valtypes(p, self.layout));
+                wasm_params.extend(crate::types::ar_type_valtypes(
+                    p,
+                    self.interner,
+                    self.layout,
+                ));
             }
-            let wasm_results = crate::types::ar_type_valtypes(ret, self.layout);
+            let wasm_results = crate::types::ar_type_valtypes(ret, self.interner, self.layout);
 
             import_infos.push(WasmImportInfo {
                 symbol: sym_id,
@@ -338,9 +375,9 @@ impl<'a> WasmModuleBuilder<'a> {
             });
         }
 
-        // Detect prelude functions (e.g. `io.println`) called in the program
-        // but not declared in `program.extern_funcs`.
-        let mut called_prelude_symbols: Vec<SymbolId> = Vec::new();
+        // Detect prelude functions called in the program but not declared as
+        // externs. Their host imports are supplied by the runtime.
+        let mut called_prelude_symbols: Vec<(SymbolId, &'static str)> = Vec::new();
         for func in &self.program.funcs {
             for stmt in func.stmts.payloads.iter() {
                 if let AmirStmt::Call {
@@ -349,27 +386,37 @@ impl<'a> WasmModuleBuilder<'a> {
                 } = stmt
                     && !self.program.extern_funcs.contains_key(sym)
                     && !self.program.funcs.iter().any(|f| f.symbol == *sym)
-                    && !called_prelude_symbols.contains(sym)
                     && let Some(sym_def) = self.symbols.try_get(*sym)
-                    && sym_def.name == "io.println"
+                    && let Some(field) = match sym_def.name.as_str() {
+                        "io.println" => Some("println"),
+                        "io.eprint" => Some("eprint"),
+                        _ => None,
+                    }
+                    && !called_prelude_symbols
+                        .iter()
+                        .any(|(existing, _)| existing == sym)
                 {
-                    called_prelude_symbols.push(*sym);
+                    called_prelude_symbols.push((*sym, field));
                 }
             }
         }
-        called_prelude_symbols.sort_by_key(|sym| (sym.file_id, sym.local_id.0));
-        for sym_id in called_prelude_symbols {
+        called_prelude_symbols.sort_by_key(|(sym, _)| (sym.file_id, sym.local_id.0));
+        for (sym_id, field) in called_prelude_symbols {
             let str_ty =
                 arandu_middle::types::ArType::Primitive(arandu_middle::types::Primitive::Str);
             let void_ty = arandu_middle::types::ArType::Void;
             let mut wasm_params = Vec::new();
-            wasm_params.extend(crate::types::ar_type_valtypes(&str_ty, self.layout));
-            let wasm_results = crate::types::ar_type_valtypes(&void_ty, self.layout);
+            wasm_params.extend(crate::types::ar_type_valtypes(
+                &str_ty,
+                self.interner,
+                self.layout,
+            ));
+            let wasm_results = crate::types::ar_type_valtypes(&void_ty, self.interner, self.layout);
 
             import_infos.push(WasmImportInfo {
                 symbol: sym_id,
                 module: SmolStr::new("io"),
-                field: SmolStr::new("println"),
+                field: SmolStr::new(field),
                 params: wasm_params,
                 results: wasm_results,
             });
@@ -475,7 +522,7 @@ impl<'a> WasmModuleBuilder<'a> {
                     continue;
                 };
                 let name: std::borrow::Cow<'_, str> = match style {
-                    ExportStyle::Host => std::borrow::Cow::Borrowed(sym.name.as_str()),
+                    ExportStyle::Host => std::borrow::Cow::Owned(self.host_export_name(sym)),
                     ExportStyle::Component(names) => names
                         .get(&func.symbol)
                         .map(|(mangled, _)| std::borrow::Cow::Borrowed(mangled.as_str()))

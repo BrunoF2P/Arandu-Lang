@@ -67,7 +67,20 @@ fn analyse<'bump>(
     // RPO once – covers all statically reachable blocks.
     let rpo = crate::amir::reverse_post_order(func);
 
+    // Theoretical bound on monotone lattice changes + CFG reachability:
+    // each temp changes at most twice (Undefined -> Constant -> Overdefined)
+    // and each block changes reachability at most once (false -> true).
+    let max_iters = n_blocks
+        .saturating_mul(n_temps)
+        .saturating_mul(2)
+        .saturating_add(crate::analysis_limits::DATAFLOW_FIXPOINT_HEADROOM);
+    let mut iters = 0usize;
+
     loop {
+        iters += 1;
+        if iters > max_iters {
+            break;
+        }
         let mut changed = false;
 
         for &bid in &rpo {
@@ -557,7 +570,11 @@ fn fold_binary(
                 BinaryOp::ShiftLeft if (0..128).contains(&rv) => {
                     checked_int(lv.checked_shl(rv as u32), pool)
                 }
-                BinaryOp::ShiftRight if (0..128).contains(&rv) => {
+                // Constants do not carry their Arandu signedness here. A
+                // negative i128 bit pattern may represent either a negative
+                // `int` or a high-bit `uint`; arithmetic and logical right
+                // shifts differ for that case, so leave it for the backend.
+                BinaryOp::ShiftRight if lv >= 0 && (0..128).contains(&rv) => {
                     checked_int(lv.checked_shr(rv as u32), pool)
                 }
                 BinaryOp::Equal => Some(AmirConstant::Bool(lv == rv)),
@@ -626,6 +643,18 @@ mod tests {
             is_nullable: false,
             span: arandu_lexer::Span::new(0, 0, 0),
         }
+    }
+
+    #[test]
+    fn negative_right_shift_is_not_folded_without_signedness() {
+        let mut pool = AmirLiteralPool::default();
+        let minus_one = AmirConstant::Pool(pool.intern_int("-1"));
+        let one = AmirConstant::Pool(pool.intern_int("1"));
+
+        assert_eq!(
+            fold_binary(BinaryOp::ShiftRight, minus_one, one, &mut pool),
+            None
+        );
     }
 
     #[test]

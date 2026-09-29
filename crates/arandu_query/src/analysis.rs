@@ -5,6 +5,7 @@
 //! buffer handle; dense compiler IDs stay dense.
 
 use crate::db::{DatabaseImpl, SourceFile};
+use crate::explain::RebuildLog;
 use crate::manifest::{register_manifest, ManifestData, ProjectManifest};
 use crate::vfs::{DirectoryListing, ModuleRoots};
 use crate::{ModuleBinding, PackageModuleMap};
@@ -68,12 +69,6 @@ impl AnalysisSnapshot {
             db: db.clone(),
         }
     }
-
-    /// True if `other` is still the same analysis generation as this snapshot.
-    #[must_use]
-    pub fn is_current(&self, other: AnalysisRevision) -> bool {
-        self.revision == other
-    }
 }
 
 /// Symbol handle valid only for a specific [`AnalysisRevision`].
@@ -129,12 +124,20 @@ impl AnalysisHost {
         }
     }
 
+    /// Analysis host with Salsa query execution logging enabled.
+    ///
+    /// This is intended for tests and compiler tooling that need to verify
+    /// incremental invalidation contracts without accessing Salsa setters.
     #[must_use]
-    pub fn with_db(db: DatabaseImpl) -> Self {
-        Self {
-            db,
-            revision: AnalysisRevision::new(0),
-        }
+    pub fn with_rebuild_log() -> (Self, Arc<RebuildLog>) {
+        let (db, log) = DatabaseImpl::with_rebuild_log();
+        (
+            Self {
+                db,
+                revision: AnalysisRevision::new(0),
+            },
+            log,
+        )
     }
 
     #[must_use]

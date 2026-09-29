@@ -34,6 +34,12 @@ impl LowerCtx<'_> {
         let expr = self.hir.pool.expr(expr_id);
         match &expr.kind {
             HirExprKind::Path { symbol } => {
+                if let Some(&(local_id, _)) = self.guard_borrows.get(symbol) {
+                    return Ok(AmirPlace {
+                        local: local_id,
+                        projections: smallvec::smallvec![AmirProjection::Deref],
+                    });
+                }
                 if let Some(&local_id) = self.symbol_map.get(symbol) {
                     return Ok(AmirPlace {
                         local: local_id,
@@ -70,6 +76,9 @@ impl LowerCtx<'_> {
             HirExprKind::Field { base, field } | HirExprKind::SafeField { base, field } => {
                 let mut place = self.lower_expr_to_place(*base, symbols)?;
                 let base_ty = self.resolve_ty(self.hir.pool.expr(*base).ty);
+                if matches!(base_ty, ArType::Ref(_) | ArType::RefMut(_) | ArType::Ptr(_)) {
+                    place.projections.push(AmirProjection::Deref);
+                }
                 let field_sym = self
                     .resolve_field_symbol(&base_ty, field.as_str())
                     .ok_or_else(|| {
@@ -85,8 +94,17 @@ impl LowerCtx<'_> {
             HirExprKind::Index { base, index } => {
                 let mut place = self.lower_expr_to_place(*base, symbols)?;
                 let base_ty = self.resolve_ty(self.hir.pool.expr(*base).ty);
-                let is_vec = arandu_middle::types::is_vec_type(&base_ty, symbols);
-                if !matches!(base_ty, ArType::Array(_, _) | ArType::Slice(_)) && !is_vec {
+                let container_ty = match &base_ty {
+                    ArType::Ref(inner) | ArType::RefMut(inner) | ArType::Ptr(inner) => {
+                        self.tc.type_info.type_interner.resolve(*inner)
+                    }
+                    _ => base_ty.clone(),
+                };
+                let is_vec = arandu_middle::types::is_vec_type(&container_ty, symbols);
+                if matches!(base_ty, ArType::Ref(_) | ArType::RefMut(_) | ArType::Ptr(_)) {
+                    place.projections.push(AmirProjection::Deref);
+                }
+                if !matches!(container_ty, ArType::Array(_, _) | ArType::Slice(_)) && !is_vec {
                     return Err(self.move_diag(
                         "can only borrow an indexed place from an array, slice, or vector",
                     ));
@@ -160,10 +178,40 @@ impl LowerCtx<'_> {
         target: Option<TempId>,
         symbols: &SymbolTable,
     ) -> Result<AmirOperand, Diagnostic> {
+        if let Ok(mut place) = self.lower_expr_to_place(base, symbols) {
+            let base_ty = self.resolve_ty(self.hir.pool.expr(base).ty);
+            let root_ty = self.resolve_ty(self.locals[place.local.as_usize()].ty);
+            let through_shared_borrow = matches!(root_ty, ArType::Ref(_));
+            if through_shared_borrow
+                && crate::drop_elaborate::type_needs_drop(expr_ty, &self.tc.type_info)
+            {
+                return Err(Diagnostic::error(
+                    crate::DiagCode::O002MoveWhileBorrowed,
+                    "cannot move a non-Copy field out through a borrowed place",
+                    self.diag_span(self.current_span),
+                )
+                .with_note("use an ownership-taking operation on the owner instead"));
+            }
+            if matches!(base_ty, ArType::Ref(_) | ArType::RefMut(_) | ArType::Ptr(_)) {
+                place.projections.push(AmirProjection::Deref);
+            }
+            if let Some(field_sym) = self.resolve_field_symbol(&base_ty, field) {
+                place.projections.push(AmirProjection::Field(field_sym));
+                if !self.tc.type_info.is_copy(expr_ty) {
+                    self.mark_local_materialized(place.local);
+                    let dest = target.unwrap_or_else(|| self.new_temp_id(expr_ty));
+                    self.emit_assign_temp(dest, AmirRvalue::Load(place));
+                    return Ok(AmirOperand::Copy(dest));
+                }
+            }
+        }
+
+        // Fields on temporary rvalues are not addressable source places. Keep
+        // the value projection for those expressions; named places take the
+        // path above so the move checker can invalidate the selected field.
         let base_op = self.lower_expr(base, None, symbols)?;
         let dest = target.unwrap_or_else(|| self.new_temp_id(expr_ty));
-        let base_expr = self.hir.pool.expr(base);
-        let base_ty = self.resolve_ty(base_expr.ty);
+        let base_ty = self.resolve_ty(self.hir.pool.expr(base).ty);
         let field_idx = self.resolve_field_index(&base_ty, field);
         self.emit_assign_temp(
             dest,
@@ -183,6 +231,41 @@ impl LowerCtx<'_> {
         target: Option<TempId>,
         symbols: &SymbolTable,
     ) -> Result<AmirOperand, Diagnostic> {
+        if let Ok(mut place) = self.lower_expr_to_place(base, symbols) {
+            let base_ty = self.resolve_ty(self.hir.pool.expr(base).ty);
+            let root_ty = self.resolve_ty(self.locals[place.local.as_usize()].ty);
+            let through_shared_borrow = matches!(root_ty, ArType::Ref(_));
+            if through_shared_borrow
+                && crate::drop_elaborate::type_needs_drop(expr_ty, &self.tc.type_info)
+            {
+                return Err(Diagnostic::error(
+                    crate::DiagCode::O002MoveWhileBorrowed,
+                    "cannot move a non-Copy indexed value out through a borrowed place",
+                    self.diag_span(self.current_span),
+                )
+                .with_note("use an ownership-taking operation on the owner instead"));
+            }
+            if matches!(base_ty, ArType::Ref(_) | ArType::RefMut(_) | ArType::Ptr(_)) {
+                place.projections.push(AmirProjection::Deref);
+            }
+            let container_ty = match base_ty {
+                ArType::Ref(inner) | ArType::RefMut(inner) | ArType::Ptr(inner) => {
+                    self.tc.type_info.type_interner.resolve(inner)
+                }
+                _ => base_ty,
+            };
+            let is_vec = arandu_middle::types::is_vec_type(&container_ty, symbols);
+            if matches!(container_ty, ArType::Array(_, _) | ArType::Slice(_)) || is_vec {
+                let idx = self.lower_expr(index, None, symbols)?;
+                place.projections.push(AmirProjection::Index(idx));
+                if !self.tc.type_info.is_copy(expr_ty) {
+                    self.mark_local_materialized(place.local);
+                    let dest = target.unwrap_or_else(|| self.new_temp_id(expr_ty));
+                    self.emit_assign_temp(dest, AmirRvalue::Load(place));
+                    return Ok(AmirOperand::Copy(dest));
+                }
+            }
+        }
         let base_op = self.lower_expr(base, None, symbols)?;
         let idx_op = self.lower_expr(index, None, symbols)?;
         let dest = target.unwrap_or_else(|| self.new_temp_id(expr_ty));

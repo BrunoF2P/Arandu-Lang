@@ -1,19 +1,43 @@
+//! ASCII byte classification and case conversion.
+//!
+//! ## Overview
+//!
+//! Classify ASCII letters, digits, and whitespace, or change the case of ASCII letters. Functions operate on bytes and leave nonmatching bytes unchanged.
+//!
+//! ## Example
+//!
+//! ```arandu
+//! import std.core.ascii as ascii
+//!
+//! let digit = ascii.isAsciiDigit(b'7')
+//! let lower = ascii.toAsciiLower(b'A')
+//! ```
+//!
+//! ## Complexity
+//! Every operation takes O(1) time and O(1) space.
+//!
+//! ## Allocations
+//! None. Non-ASCII bytes pass through case conversion unchanged.
+//!
+//! ## Platform
+//! `native` · `wasm32` · `bare-metal`
+
 module std.core.ascii
 
 /// Returns `true` if the byte represents an ASCII alphabetic character (`a-z` or `A-Z`).
 ///
 /// # Examples
 /// ```arandu
-/// ascii.isAsciiAlpha('a' as u8) // true
-/// ascii.isAsciiAlpha('Z' as u8) // true
-/// ascii.isAsciiAlpha('9' as u8) // false
+/// ascii.isAsciiAlpha(b'a') // true
+/// ascii.isAsciiAlpha(b'Z') // true
+/// ascii.isAsciiAlpha(b'9') // false
 /// ```
 ///
 /// # Complexity
 /// Time: O(1) | Space: O(1)
 public func isAsciiAlpha(b: u8): bool {
-    let lower = (b >= 97 as u8) && (b <= 122 as u8)
-    let upper = (b >= 65 as u8) && (b <= 90 as u8)
+    let lower = (b >= b'a') && (b <= b'z')
+    let upper = (b >= b'A') && (b <= b'Z')
     return lower || upper
 }
 
@@ -21,23 +45,23 @@ public func isAsciiAlpha(b: u8): bool {
 ///
 /// # Examples
 /// ```arandu
-/// ascii.isAsciiDigit('5' as u8) // true
-/// ascii.isAsciiDigit('a' as u8) // false
+/// ascii.isAsciiDigit(b'5') // true
+/// ascii.isAsciiDigit(b'a') // false
 /// ```
 ///
 /// # Complexity
 /// Time: O(1) | Space: O(1)
 public func isAsciiDigit(b: u8): bool {
-    return (b >= 48 as u8) && (b <= 57 as u8)
+    return (b >= b'0') && (b <= b'9')
 }
 
 /// Returns `true` if the byte represents an ASCII alphanumeric character (`a-z`, `A-Z`, or `0-9`).
 ///
 /// # Examples
 /// ```arandu
-/// ascii.isAsciiAlphanumeric('A' as u8) // true
-/// ascii.isAsciiAlphanumeric('3' as u8) // true
-/// ascii.isAsciiAlphanumeric('$' as u8) // false
+/// ascii.isAsciiAlphanumeric(b'A') // true
+/// ascii.isAsciiAlphanumeric(b'3') // true
+/// ascii.isAsciiAlphanumeric(b'$') // false
 /// ```
 ///
 /// # Complexity
@@ -51,15 +75,15 @@ public func isAsciiAlphanumeric(b: u8): bool {
 ///
 /// # Examples
 /// ```arandu
-/// ascii.isAsciiWhitespace(' ' as u8)  // true
-/// ascii.isAsciiWhitespace('\n' as u8) // true
-/// ascii.isAsciiWhitespace('a' as u8)  // false
+/// ascii.isAsciiWhitespace(b' ')  // true
+/// ascii.isAsciiWhitespace(b'\n') // true
+/// ascii.isAsciiWhitespace(b'a')  // false
 /// ```
 ///
 /// # Complexity
 /// Time: O(1) | Space: O(1)
 public func isAsciiWhitespace(b: u8): bool {
-    return b == 32 as u8 || b == 9 as u8 || b == 10 as u8 || b == 13 as u8
+    return b == b' ' || b == b'\t' || b == b'\n' || b == b'\r'
 }
 
 /// Converts an ASCII uppercase byte (`A-Z`) to its corresponding lowercase form (`a-z`).
@@ -67,16 +91,16 @@ public func isAsciiWhitespace(b: u8): bool {
 ///
 /// # Examples
 /// ```arandu
-/// ascii.toAsciiLower('A' as u8) // 'a' as u8 (97)
-/// ascii.toAsciiLower('a' as u8) // 'a' as u8 (97)
-/// ascii.toAsciiLower('1' as u8) // '1' as u8 (49)
+/// ascii.toAsciiLower(b'A') // b'a' (97)
+/// ascii.toAsciiLower(b'a') // b'a' (97)
+/// ascii.toAsciiLower(b'1') // b'1' (49)
 /// ```
 ///
 /// # Complexity
 /// Time: O(1) | Space: O(1)
 public func toAsciiLower(b: u8): u8 {
-    if (b >= 65 as u8) && (b <= 90 as u8) {
-        return b + 32 as u8
+    if (b >= b'A') && (b <= b'Z') {
+        return b + 32
     }
     return b
 }
@@ -86,16 +110,16 @@ public func toAsciiLower(b: u8): u8 {
 ///
 /// # Examples
 /// ```arandu
-/// ascii.toAsciiUpper('a' as u8) // 'A' as u8 (65)
-/// ascii.toAsciiUpper('A' as u8) // 'A' as u8 (65)
-/// ascii.toAsciiUpper('!' as u8) // '!' as u8 (33)
+/// ascii.toAsciiUpper(b'a') // b'A' (65)
+/// ascii.toAsciiUpper(b'A') // b'A' (65)
+/// ascii.toAsciiUpper(b'!') // b'!' (33)
 /// ```
 ///
 /// # Complexity
 /// Time: O(1) | Space: O(1)
 public func toAsciiUpper(b: u8): u8 {
-    if (b >= 97 as u8) && (b <= 122 as u8) {
-        return b - 32 as u8
+    if (b >= b'a') && (b <= b'z') {
+        return b - 32
     }
     return b
 }

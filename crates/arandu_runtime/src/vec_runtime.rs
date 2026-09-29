@@ -231,6 +231,38 @@ pub unsafe extern "C" fn ar_rt_free_aligned(pointer: *mut u8, size: usize, align
     }
 }
 
+/// Raw heap allocation for runtime hooks.
+///
+/// # Safety
+/// Returned pointer must be freed with [`ar_rt_raw_free`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ar_rt_raw_malloc(size: usize) -> *mut u8 {
+    let size = size.max(1);
+    unsafe {
+        unsafe extern "C" {
+            fn malloc(size: usize) -> *mut std::ffi::c_void;
+        }
+        malloc(size).cast()
+    }
+}
+
+/// Raw heap deallocation for runtime hooks.
+///
+/// # Safety
+/// `pointer` must be null or obtained from [`ar_rt_raw_malloc`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ar_rt_raw_free(pointer: *mut u8) {
+    if pointer.is_null() {
+        return;
+    }
+    unsafe {
+        unsafe extern "C" {
+            fn free(ptr: *mut std::ffi::c_void);
+        }
+        free(pointer.cast());
+    }
+}
+
 /// Free buffer from [`ar_vec_malloc`].
 ///
 /// # Safety
@@ -305,6 +337,21 @@ pub unsafe extern "C" fn ar_string_push_str(
     if required > i32::MAX as usize {
         return 0;
     }
+    let source_offset = if value_len > 0 && !string.data.is_null() {
+        let buffer_start = string.data as usize;
+        let source_start = value as usize;
+        buffer_start
+            .checked_add(string.capacity)
+            .filter(|&buffer_end| source_start >= buffer_start && source_start < buffer_end)
+            .map(|_| source_start - buffer_start)
+    } else {
+        None
+    };
+    if source_offset
+        .is_some_and(|offset| offset > string.len || value_len > string.len.saturating_sub(offset))
+    {
+        return 0;
+    }
     if required > string.capacity {
         let mut capacity = string.capacity.max(8);
         while capacity < required {
@@ -325,8 +372,12 @@ pub unsafe extern "C" fn ar_string_push_str(
         string.capacity = capacity;
     }
     if value_len > 0 {
+        let source = source_offset.map_or(value, |offset| unsafe { string.data.add(offset) });
         unsafe {
-            std::ptr::copy_nonoverlapping(value, string.data.add(string.len), value_len);
+            // `value` may be a borrowed view into this same String. `copy`
+            // handles overlap, while `source_offset` rebases that view if
+            // the preceding reallocation moved the owned buffer.
+            std::ptr::copy(source, string.data.add(string.len), value_len);
         }
     }
     string.len = required;
@@ -379,6 +430,27 @@ mod tests {
             );
             assert_eq!((string.data, string.len, string.capacity), before);
 
+            ar_vec_buf_free(string.data, string.capacity);
+        }
+    }
+
+    #[test]
+    fn string_push_str_supports_appending_its_own_buffer_across_growth() {
+        unsafe {
+            let mut string = ArOwnedString {
+                data: ar_vec_malloc(3),
+                len: 3,
+                capacity: 3,
+            };
+            assert!(!string.data.is_null());
+            std::ptr::copy_nonoverlapping(b"abc".as_ptr(), string.data, 3);
+
+            let source = string.data;
+            assert_eq!(ar_string_push_str(&mut string, source, 3), 1);
+            assert_eq!(
+                std::slice::from_raw_parts(string.data, string.len),
+                b"abcabc"
+            );
             ar_vec_buf_free(string.data, string.capacity);
         }
     }

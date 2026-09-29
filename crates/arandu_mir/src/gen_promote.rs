@@ -11,7 +11,9 @@ use crate::amir::{
     AmirConstant, AmirFunc, AmirOperand, AmirRvalue, AmirStmt, AmirTemp, GenArenaDomain, TempId,
 };
 use crate::borrow_facts::analyze_borrow_facts;
-use crate::escape_analysis::{EscapeCheckOptions, EscapeKind, find_escapes};
+use crate::escape_analysis::{
+    EscapeCheckOptions, EscapeKind, find_escapes, find_escapes_with_type_info,
+};
 use crate::ops::UnaryOp;
 use crate::types::{ArType, Primitive};
 use arandu_lexer::Span;
@@ -23,7 +25,7 @@ pub fn apply_gen_promotion(
     interner: &crate::types::TypeInterner,
     opts: EscapeCheckOptions,
 ) {
-    apply_gen_promotion_impl(func, interner, opts, |ty| {
+    apply_gen_promotion_impl(func, interner, None, opts, |ty| {
         is_supported_scalar_payload(interner, ty)
     });
 }
@@ -35,14 +37,19 @@ pub fn apply_gen_promotion_with_type_info(
     type_info: &arandu_typeck::TypeInfo,
     opts: EscapeCheckOptions,
 ) {
-    apply_gen_promotion_impl(func, &type_info.type_interner, opts, |ty| {
-        type_info.is_copy(ty)
-    });
+    apply_gen_promotion_impl(
+        func,
+        &type_info.type_interner,
+        Some(type_info),
+        opts,
+        |ty| type_info.is_copy(ty),
+    );
 }
 
 fn apply_gen_promotion_impl(
     func: &mut AmirFunc,
     interner: &crate::types::TypeInterner,
+    type_info: Option<&arandu_typeck::TypeInfo>,
     opts: EscapeCheckOptions,
     is_supported_payload: impl Fn(crate::types::TypeId) -> bool,
 ) {
@@ -50,7 +57,10 @@ fn apply_gen_promotion_impl(
         return;
     }
 
-    let events = find_escapes(func, interner);
+    let events = type_info.map_or_else(
+        || find_escapes(func, interner),
+        |type_info| find_escapes_with_type_info(func, type_info),
+    );
     let promote_locals: FxHashSet<_> = events
         .into_iter()
         .filter(|e| e.kind == EscapeKind::HeapStore)
@@ -129,14 +139,24 @@ fn apply_gen_promotion_impl(
     // phi-like block parameters propagated by borrow facts, so loop/backedge
     // order cannot affect the result.
     for temp in &gen_temps {
-        if let Some(info) = func.temps.get_mut(temp.as_usize()) {
+        if let Some(info) = func.temps.get_mut(temp.as_usize())
+            && matches!(
+                interner.resolve(info.ty),
+                ArType::Ref(_) | ArType::RefMut(_)
+            )
+        {
             info.ty = gen_ty;
             info.is_copy = true;
         }
     }
     for block in &func.blocks {
         for param in &mut func.block_params[block.params.as_range()] {
-            if gen_temps.contains(&param.id) {
+            if gen_temps.contains(&param.id)
+                && matches!(
+                    interner.resolve(param.ty),
+                    ArType::Ref(_) | ArType::RefMut(_)
+                )
+            {
                 param.ty = gen_ty;
             }
         }
@@ -449,6 +469,7 @@ mod tests {
         let int_ty = interner.intern(ArType::Primitive(Primitive::Int));
         let bool_ty = interner.intern(ArType::Primitive(Primitive::Bool));
         let ref_ty = interner.intern(ArType::Ref(int_ty));
+        let sink_ref_ty = interner.intern(ArType::RefMut(int_ty));
         let gen_ty = interner.intern(ArType::GenRef);
         let mut stmts = AmirStmtTable::new();
         stmts.push(AmirStmt::Assign {
@@ -479,7 +500,7 @@ mod tests {
         stmts.push(AmirStmt::Store {
             lhs: AmirPlace {
                 local: local(1),
-                projections: Default::default(),
+                projections: smallvec::smallvec![AmirProjection::Deref],
             },
             rhs: AmirOperand::Copy(temp(5)),
         });
@@ -543,8 +564,8 @@ mod tests {
                 AmirLocal {
                     id: local(1),
                     symbol: None,
-                    ty: int_ty,
-                    is_memory: true,
+                    ty: sink_ref_ty,
+                    is_memory: false,
                     span: Span::new(0, 12, 13),
                     use_span: None,
                 },
@@ -712,6 +733,7 @@ mod tests {
         let interner = TypeInterner::new();
         let int_ty = interner.intern(ArType::Primitive(Primitive::Int));
         let ref_ty = interner.intern(ArType::Ref(int_ty));
+        let sink_ref_ty = interner.intern(ArType::RefMut(int_ty));
         let gen_ty = interner.intern(ArType::GenRef);
         let root = AmirPlace {
             local: local(0),
@@ -719,7 +741,7 @@ mod tests {
         };
         let sink = AmirPlace {
             local: local(1),
-            projections: Default::default(),
+            projections: smallvec::smallvec![AmirProjection::Deref],
         };
         let mut stmts = AmirStmtTable::new();
         stmts.push(AmirStmt::Store {
@@ -775,8 +797,8 @@ mod tests {
                 AmirLocal {
                     id: local(1),
                     symbol: None,
-                    ty: int_ty,
-                    is_memory: true,
+                    ty: sink_ref_ty,
+                    is_memory: false,
                     span: Span::new(0, 3, 4),
                     use_span: None,
                 },

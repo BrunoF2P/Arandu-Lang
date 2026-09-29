@@ -130,8 +130,8 @@ const KEYWORDS: &[(&str, &str)] = &[
 
 /// Primitive/contextual type names accepted in type position.
 const PRIMITIVE_TYPES: &[&str] = &[
-    "int", "uint", "float", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64",
-    "bool", "byte", "char", "str", "any", "void", "Err",
+    "int", "uint", "isize", "usize", "float", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64",
+    "f32", "f64", "bool", "byte", "char", "str", "any", "void", "Err",
 ];
 
 /// Known top-level stdlib path roots for import completion (T3 tokens).
@@ -220,7 +220,7 @@ fn value_kind(kind: SymbolKind) -> CompletionKind {
     match kind {
         SymbolKind::Func | SymbolKind::ExternFunc => CompletionKind::Function,
         SymbolKind::AssociatedFunc => CompletionKind::Method,
-        SymbolKind::Const => CompletionKind::Constant,
+        SymbolKind::Const | SymbolKind::ConstParam => CompletionKind::Constant,
         SymbolKind::Local | SymbolKind::Param => CompletionKind::Variable,
         SymbolKind::EnumVariant => CompletionKind::EnumMember,
         SymbolKind::Field => CompletionKind::Field,
@@ -530,7 +530,15 @@ fn member_completions(
     if owner_kind == Some(SymbolKind::Struct)
         && let Some(fields) = tc.type_info.struct_fields.get(&parent)
     {
+        let private_access = has_owner_method_at(snap, source, receiver_start, tc, parent);
         for field in fields.iter() {
+            if !private_access
+                && field
+                    .symbol
+                    .is_some_and(|symbol| tc.type_info.private_fields.contains(&symbol))
+            {
+                continue;
+            }
             if !accepted(prefix, prefix_l, field.name.as_str()) {
                 continue;
             }
@@ -595,6 +603,36 @@ fn member_completions(
         return None;
     }
     Some(finish_ranked(items))
+}
+
+fn has_owner_method_at(
+    snap: &AnalysisSnapshot,
+    source: SourceFile,
+    offset: u32,
+    tc: &TypeCheckResult,
+    owner: arandu_middle::SymbolId,
+) -> bool {
+    let tree = arandu_query::passes::syntax_tree(&snap.db, source);
+    let output = arandu_parser::syntax::lower_syntax_to_program_recovering(
+        tree.value.as_ref(),
+        *source.file_id(&snap.db),
+    );
+    output.program.decls.iter().any(|decl_id| {
+        let arandu_parser::TopLevelDecl::Func(func) = output.program.pool.decl(*decl_id) else {
+            return false;
+        };
+        if !(func.span.start <= offset && offset <= func.span.end) {
+            return false;
+        }
+        let arandu_parser::FuncName::Method { receiver, .. } = &func.name else {
+            return false;
+        };
+        receiver
+            .path
+            .last()
+            .and_then(|name| tc.symbols.lookup_type(tc.symbols.global_scope(), name))
+            == Some(owner)
+    })
 }
 
 fn module_member_completions(
@@ -716,6 +754,9 @@ fn annotation_completions(text: &str, offset: u32, prefix: &str) -> Vec<Completi
                     Some(format!("{}(\"${{1:library}}\")", spec.canonical_name)),
                     true,
                 ),
+                attrs::AnnotationArguments::OneStringOrIdent => {
+                    (Some(format!("{}(\"${{1:C}}\")", spec.canonical_name)), true)
+                }
                 attrs::AnnotationArguments::EffectList => {
                     (Some(format!("{}(${{1:Pure}})", spec.canonical_name)), true)
                 }

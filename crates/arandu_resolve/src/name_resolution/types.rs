@@ -18,7 +18,7 @@ impl<'a> Resolver<'a> {
 
     pub(crate) fn resolve_type_expr(&mut self, scope: ScopeId, ty: TypeExprId) {
         match self.pool.type_expr(ty) {
-            TypeExpr::Primitive { .. } => {}
+            TypeExpr::Const { .. } | TypeExpr::Primitive { .. } => {}
             TypeExpr::Named { name, args, .. } => {
                 self.resolve_type_name(scope, name);
                 for arg in self.pool.type_expr_list(*args) {
@@ -31,7 +31,21 @@ impl<'a> Resolver<'a> {
             | TypeExpr::RefMut { inner, .. }
             | TypeExpr::Slice { inner, .. }
             | TypeExpr::Group { inner, .. } => self.resolve_type_expr(scope, *inner),
-            TypeExpr::Array { elem, .. } => self.resolve_type_expr(scope, *elem),
+            TypeExpr::Array {
+                size,
+                size_span,
+                elem,
+                ..
+            } => {
+                if size.parse::<u64>().is_err() {
+                    let name = TypeName {
+                        span: *size_span,
+                        path: smallvec::smallvec![size.clone()],
+                    };
+                    self.resolve_type_name(scope, &name);
+                }
+                self.resolve_type_expr(scope, *elem);
+            }
             TypeExpr::Func { params, result, .. } => {
                 for param in self.pool.type_expr_list(*params) {
                     self.resolve_type_expr(scope, *param);
@@ -48,6 +62,13 @@ impl<'a> Resolver<'a> {
             return false;
         };
         if name.path.len() > 1 && self.is_namespace(scope, root) {
+            if self.failed_import_aliases.contains(root) {
+                // The module import failed (M001 reports it); keep the alias
+                // marked as used and skip the member lookup so the diagnostic
+                // surface stays at the root failure instead of cascading.
+                let _ = self.lookup_and_record_module(scope, root);
+                return false;
+            }
             let _ = self.lookup_and_record_module(scope, root);
             let namespace_parts = &name.path[0..name.path.len() - 1];
             let namespace = namespace_parts.join(".");
@@ -89,12 +110,11 @@ impl<'a> Resolver<'a> {
             ));
             return false;
         }
-        if self
-            .symbols
-            .lookup_type(self.symbols.global_scope(), root)
-            .is_some()
-            || matches!(root.as_str(), "void" | "Err")
-        {
+        if let Some(symbol) = self.symbols.lookup_type(self.symbols.global_scope(), root) {
+            self.record_type_ref(name.span, symbol);
+            return true;
+        }
+        if matches!(root.as_str(), "void" | "Err") {
             return true;
         }
         let mut diagnostic = Diagnostic::error(

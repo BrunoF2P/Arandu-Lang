@@ -15,6 +15,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
 
 jobs:
   # Keep this classifier inside the required workflow. Workflow-level path
@@ -22,7 +23,7 @@ jobs:
   scope:
     name: Change scope
     if: github.event_name != 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       code: ${{ steps.classify.outputs.code }}
       distribution: ${{ steps.classify.outputs.distribution }}
@@ -42,7 +43,7 @@ jobs:
   preflight:
     name: Policy and architecture
     if: github.event_name != 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -50,6 +51,8 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           cache-key: preflight-rust-1.97.1
+          shared-key: core-rust-1.97.1
+          save-if: "true"
       - name: Canonical UTF-8/LF repository text
         run: cargo run --locked -p xtask -- check-line-endings
       - name: Compiler architecture boundaries
@@ -71,7 +74,7 @@ jobs:
     name: Rust core (${{ matrix.shard }})
     if: needs.scope.outputs.code == 'true'
     needs: scope
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -91,6 +94,8 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           cache-key: core-rust-1.97.1-${{ matrix.shard }}
+          shared-key: core-rust-1.97.1
+          save-if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
       - name: Test ${{ matrix.shard }} shard
         run: cargo test --locked ${{ matrix.crates }}
       - name: SL_T portable JUnit contract
@@ -123,6 +128,8 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           cache-key: windows-portability-rust-1.97.1
+          shared-key: core-rust-1.97.1
+          save-if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
       - name: Test full workspace (host-sensitive changes)
         if: needs.scope.outputs.host_sensitive == 'true'
         run: cargo test --workspace --locked
@@ -142,6 +149,8 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           cache-key: macos-portability-rust-1.97.1
+          shared-key: core-rust-1.97.1
+          save-if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
       - name: Test full workspace (host-sensitive changes)
         if: needs.scope.outputs.host_sensitive == 'true'
         run: cargo test --workspace --locked
@@ -153,7 +162,7 @@ jobs:
     name: Diagnostic determinism
     if: needs.scope.outputs.code == 'true'
     needs: scope
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -161,6 +170,8 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           cache-key: determinism-rust-1.97.1
+          shared-key: core-rust-1.97.1
+          save-if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
       - name: Typeck library (1 vs 8 threads)
         run: bash scripts/check-diag-determinism.sh arandu_typeck 8
       - name: Semantics type checker (1 vs 8 threads)
@@ -195,7 +206,7 @@ jobs:
     name: VS Code extension
     if: needs.scope.outputs.editor == 'true'
     needs: scope
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -203,6 +214,8 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           cache-key: editor-rust-1.97.1
+          shared-key: core-rust-1.97.1
+          save-if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
       - name: Build Extension Host server binary
         run: cargo build --locked -p arandu_lsp -p arandu_cli
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -222,7 +235,7 @@ jobs:
     name: Distribution smoke
     if: needs.scope.outputs.distribution == 'true'
     needs: scope
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -230,6 +243,8 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           cache-key: distribution-rust-1.97.1
+          shared-key: core-rust-1.97.1
+          save-if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
       - name: Reproducible release archive
         run: bash scripts/check-package-reproducibility.sh
       - name: Install outside the checkout and reject tampering
@@ -266,7 +281,7 @@ jobs:
             evidence: rust-core
           - os: windows-latest
             evidence: windows-portability
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Require native recovery evidence when code changed
         shell: bash
@@ -305,7 +320,7 @@ jobs:
             evidence: rust-core
           - os: windows-latest
             evidence: windows-portability
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Require PR endurance regressions when code changed
         shell: bash
@@ -343,7 +358,7 @@ jobs:
       - distribution
       - s1-recovery-status
       - s2-pr-status
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Require every applicable PR contract
         shell: bash
@@ -405,7 +420,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-24.04, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -414,6 +429,7 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           cache-key: s2-endurance-${{ matrix.os }}-rust-1.97.1
+          shared-key: core-rust-1.97.1
       - name: Validate project corpus and clean-rebuild oracle
         run: cargo run --locked -p xtask -- check-project-corpus
       - name: Stress module churn, identities and stale workers
@@ -457,7 +473,7 @@ jobs:
     name: Future stable (advisory)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     continue-on-error: true
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

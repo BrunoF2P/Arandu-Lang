@@ -13,6 +13,11 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
         self.materialize_slice_descriptor(data, len)
     }
 
+    pub(super) fn translate_str_bytes(&mut self, source: &AmirOperand) -> Value {
+        let (data, len) = self.translate_str_operand(source);
+        self.materialize_slice_descriptor(data, len)
+    }
+
     pub(super) fn translate_slice_subslice(
         &mut self,
         slice: &AmirOperand,
@@ -33,7 +38,13 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                 let element = self.type_info.type_interner.resolve(*inner);
                 self.checked_layout(&element).size
             }
-            _ => 1,
+            _ => match self.get_operand_ar_type(slice) {
+                ArType::Slice(inner) => {
+                    let element = self.type_info.type_interner.resolve(inner);
+                    self.checked_layout(&element).size
+                }
+                _ => 1,
+            },
         };
         let width = self.builder.ins().iconst(self.ptr_type, elem_size as i64);
         let offset = self.builder.ins().imul(start, width);
@@ -83,10 +94,13 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
             }
         } else {
             let (base_ptr, offset) = self.translate_place_address_for_load(place);
-            if matches!(expected_ar_type, Some(ArType::Slice(_))) {
-                // Projected slices are inline fat descriptors. Their value in
-                // the single-slot JIT representation is the descriptor address,
-                // not the first (`data`) word.
+            let place_ty = expected_ar_type
+                .cloned()
+                .unwrap_or_else(|| self.place_ar_ty(place));
+            if self.is_inline_aggregate_ty(&place_ty) {
+                // Projected inline aggregates and slices are stored inline. Their value in
+                // the single-slot JIT representation is the address of the sub-aggregate,
+                // not the first scalar word.
                 return if offset == 0 {
                     base_ptr
                 } else {
@@ -137,25 +151,30 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
             );
 
         if is_memory_backed {
-            let (base_ptr, offset) = self.translate_place_address_for_load(place);
-            // Named aggregates use a pointer representation in the JIT.
-            // A projected struct field therefore contains the aggregate
-            // pointer; borrowing that field passes the pointer value, not
-            // the address of the field slot that stores it. Scalar fields
-            // still borrow their slot address.
-            if matches!(borrowed_ty, ArType::Named(_, _))
+            // Aggregates are represented by a pointer value in the JIT. Their stack
+            // home stores that pointer, so `&aggregate` must pass the stored value —
+            // not the address of the stack slot containing it. The latter adds an
+            // unintended level of indirection and corrupts field/index projection.
+            if place.projections.is_empty()
                 && matches!(
-                    place.projections.last(),
-                    Some(arandu_semantics::amir::AmirProjection::Field(_))
+                    borrowed_ty,
+                    ArType::Named(_, _) | ArType::Array(_, _) | ArType::Tuple(_) | ArType::Slice(_)
                 )
             {
-                return self.builder.ins().load(
-                    self.ptr_type,
-                    cranelift_codegen::ir::MemFlagsData::new(),
-                    base_ptr,
-                    offset,
-                );
+                if let Some(&slot) = self.local_stack_slots.get(&place.local) {
+                    let slot_addr = self.builder.ins().stack_addr(self.ptr_type, slot, 0);
+                    return self.builder.ins().load(
+                        self.ptr_type,
+                        cranelift_codegen::ir::MemFlagsData::new(),
+                        slot_addr,
+                        0,
+                    );
+                }
+                if let Some(&var) = self.local_map.get(&place.local) {
+                    return self.builder.use_var(var);
+                }
             }
+            let (base_ptr, offset) = self.translate_place_address_for_load(place);
             if offset == 0 {
                 base_ptr
             } else {
@@ -187,7 +206,10 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                 let (_, len_val) = self.translate_str_operand(op);
                 self.cast_int_width(len_val, result_ty)
             }
-            ArType::Slice(_) => {
+            _ if op_ty
+                .slice_abi_element(&self.type_info.type_interner)
+                .is_some() =>
+            {
                 // Slice fat pointer in memory: {ptr @0, len @pointer_width}.
                 let base = self.translate_operand(op, Some(self.ptr_type));
                 let len_off = self.ptr_type.bytes() as i32;
@@ -219,6 +241,8 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
             .module
             .declare_func_in_func(malloc_id, self.builder.func);
         let call = self.builder.ins().call(malloc_ref, &[size_val]);
-        self.builder.inst_results(call)[0]
+        let ptr = self.builder.inst_results(call)[0];
+        self.trap_if_null_for_nonzero_size(ptr, size_val);
+        ptr
     }
 }

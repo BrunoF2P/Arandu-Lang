@@ -6,20 +6,28 @@ use crate::hir::{HirBlockId, HirFunc, HirProgram};
 use crate::literal_pool::AmirLiteralPool;
 use rustc_hash::{FxHashMap, FxHashSet};
 
+type LoweredFunction = (
+    AmirFunc,
+    Vec<(TempId, crate::amir::LocalId)>,
+    Vec<arandu_lexer::Span>,
+);
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn lower_func(
     f: &HirFunc,
     body: HirBlockId,
     tc: &TypeCheckResult,
     hir: &HirProgram,
+    const_values: &FxHashMap<crate::SymbolId, crate::hir::HirExprId>,
     arg_modes: &CalleeArgModes,
     literal_pool: &mut AmirLiteralPool,
     func_diagnostics: &mut Vec<Diagnostic>,
     pointer_width: u64,
-) -> Result<AmirFunc, Diagnostic> {
+) -> Result<LoweredFunction, Diagnostic> {
     let mut ctx = LowerCtx {
         tc,
         hir,
+        const_values,
         arg_modes,
         func_return_type: f.return_type,
         func_is_async: f.is_async,
@@ -28,11 +36,15 @@ pub(crate) fn lower_func(
         temps: Vec::new(),
         builder: super::builder::AmirBuilder::new(),
         symbol_map: FxHashMap::default(),
+        guard_borrows: FxHashMap::default(),
         loop_stack: Vec::new(),
+        local_scopes: Vec::new(),
         literal_pool,
         defer_frames: Vec::new(),
         temp_states: Vec::new(),
         temp_origins: Vec::new(),
+        temp_place_origins: Vec::new(),
+        debug_bindings: Vec::new(),
         local_states: Vec::new(),
         sealed_blocks: FxHashSet::default(),
         current_def: FxHashMap::default(),
@@ -40,6 +52,7 @@ pub(crate) fn lower_func(
         redirected_temps: FxHashMap::default(),
         current_span: arandu_lexer::Span::new(0, 0, 0),
         pointer_width,
+        owned_string_temps: FxHashSet::default(),
     };
 
     // Return register is TempId(0) — span is the function header.
@@ -58,11 +71,13 @@ pub(crate) fn lower_func(
     });
     ctx.temp_states.push(MoveState::Available);
     ctx.temp_origins.push(None);
+    ctx.temp_place_origins.push(None);
 
     let mut params = Vec::new();
     let mut receiver = None;
 
-    // Start with bb0 so we can emit parameter store instructions there
+    // Start with bb0 so we can emit parameter store instructions there.
+    ctx.current_span = f.span;
     let bb0 = ctx.new_block();
     ctx.sealed_blocks.insert(bb0);
     ctx.builder.current_block = Some(bb0);
@@ -167,6 +182,13 @@ pub(crate) fn lower_func(
     ctx.prune_eliminated_parameters();
     ctx.rewrite_all_operands();
 
+    let mut debug_bindings = std::mem::take(&mut ctx.debug_bindings)
+        .into_iter()
+        .filter_map(|(temp, local)| ctx.canonical_debug_temp(temp).map(|temp| (temp, local)))
+        .collect::<Vec<_>>();
+    debug_bindings.sort_unstable_by_key(|(temp, local)| (temp.as_usize(), local.as_usize()));
+    debug_bindings.dedup();
+
     let cfg = crate::cfg::compute_cfg_edges(&ctx.builder.blocks);
     let amir_block_params = ctx.builder.materialize_block_params();
     let mut amir_f = AmirFunc {
@@ -203,7 +225,8 @@ pub(crate) fn lower_func(
 
     promote_escaped_coroutines(&mut amir_f);
 
-    Ok(amir_f)
+    let debug_block_spans = std::mem::take(&mut ctx.builder.debug_block_spans);
+    Ok((amir_f, debug_bindings, debug_block_spans))
 }
 
 fn promote_escaped_coroutines(func: &mut AmirFunc) {

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::method::contains_generic_params;
 use arandu_lexer::Span;
 use arandu_parser::TypeName;
@@ -23,14 +25,12 @@ pub(crate) fn synth_result_ctor(
     expected: Option<TypeId>,
 ) -> Option<ArType> {
     let (type_name, member) = type_path_member(checker.pool, callee)?;
-    let global_scope = checker.symbols.global_scope();
-    let result_sym = checker.symbols.lookup_type(global_scope, "Result")?;
-    let resolved_sym = checker
+    let is_result = checker
         .resolved
         .type_refs
         .get(&type_name.span.into())
-        .copied()?;
-    if resolved_sym != result_sym {
+        .is_some_and(|symbol| checker.symbols.is_result_type(*symbol));
+    if !is_result {
         return None;
     }
     let arg_ids = checker.pool.expr_list(args).to_vec();
@@ -120,19 +120,23 @@ pub(crate) fn synth_option_ctor(
     callee: ExprId,
     args: IndexRange,
     span: Span,
+    expected: Option<TypeId>,
 ) -> Option<ArType> {
     let (type_name, member) = type_path_member(checker.pool, callee)?;
-    let global_scope = checker.symbols.global_scope();
-    let option_sym = checker.symbols.lookup_type(global_scope, "Option")?;
-    let resolved_sym = checker
+    let is_option = checker
         .resolved
         .type_refs
         .get(&type_name.span.into())
-        .copied()?;
-    if resolved_sym != option_sym {
+        .is_some_and(|symbol| checker.symbols.is_option_type(*symbol));
+    if !is_option {
         return None;
     }
     let arg_ids = checker.pool.expr_list(args).to_vec();
+    let expected_inner = expected.and_then(|id| match checker.resolve(id) {
+        ArType::Option(inner) => Some(inner),
+        _ => None,
+    });
+
     match member {
         "Some" => {
             if arg_ids.len() != 1 {
@@ -146,7 +150,39 @@ pub(crate) fn synth_option_ctor(
                 checker.diagnostics.push(diag);
                 return Some(ArType::Error);
             }
-            let inner_id = synth_expr(checker, arg_ids[0]);
+            if let Some(exp_inner) = expected_inner {
+                let got = synth_expr(checker, arg_ids[0]);
+                if !checker.unify_ids(exp_inner, got) {
+                    checker.add_constraint(
+                        exp_inner,
+                        got,
+                        ConstraintOrigin::CallArg {
+                            call_span: span,
+                            param_span: span,
+                            arg_span: checker.pool.expr_span(arg_ids[0]),
+                            arg_index: 0,
+                        },
+                    );
+                }
+                Some(ArType::Option(exp_inner))
+            } else {
+                let inner_id = synth_expr(checker, arg_ids[0]);
+                Some(ArType::Option(inner_id))
+            }
+        }
+        "None" => {
+            if !arg_ids.is_empty() {
+                let diag = crate::Diagnostic::error(
+                    crate::DiagCode::T012WrongArgCount,
+                    format!("Option.None expects 0 arguments, found {}", arg_ids.len()),
+                    span,
+                )
+                .with_label(checker.pool.expr_span(callee), "call target is here")
+                .with_label(span, format!("{} arguments provided", arg_ids.len()));
+                checker.diagnostics.push(diag);
+                return Some(ArType::Error);
+            }
+            let inner_id = expected_inner.unwrap_or_else(|| checker.intern(ArType::Error));
             Some(ArType::Option(inner_id))
         }
         _ => None,
@@ -342,8 +378,9 @@ pub(crate) fn synth_variant_sugar(
                 return checker.intern(ArType::Error);
             };
             // Record resolution for HIR (same as TypePath member).
-            checker.resolved.value_ref(span, variant_sym);
-            checker.resolved.expr_ref(expr, variant_sym);
+            let resolved = Arc::make_mut(&mut checker.resolved);
+            resolved.value_ref(span, variant_sym);
+            resolved.expr_ref(expr, variant_sym);
 
             // Get variant constructor signature with expected generic parameters substituted.
             let cache_key = (variant_sym, expected_args.clone());
@@ -467,14 +504,12 @@ pub(crate) fn synth_poll_ctor(
     span: Span,
 ) -> Option<ArType> {
     let (type_name, member) = type_path_member(checker.pool, callee)?;
-    let global_scope = checker.symbols.global_scope();
-    let poll_sym = checker.symbols.lookup_type(global_scope, "Poll")?;
     let resolved_sym = checker
         .resolved
         .type_refs
         .get(&type_name.span.into())
         .copied()?;
-    if resolved_sym != poll_sym {
+    if !checker.symbols.is_poll_type(resolved_sym) {
         return None;
     }
     let arg_ids = checker.pool.expr_list(args).to_vec();

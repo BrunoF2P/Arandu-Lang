@@ -33,6 +33,36 @@ func main(): int {
 }
 
 #[test]
+fn surface_bitwise_not_uses_the_operand_width() {
+    let bytes = compile_source(
+        r#"
+func main(): int {
+    let inverted: u64 = ~(0 as u64)
+    if inverted >> 1 == 9223372036854775807 as u64 { return 0 }
+    return 1
+}
+"#,
+    );
+    assert_eq!(run_main_i32(&bytes), 0);
+}
+
+#[test]
+fn surface_string_equality_compares_contents_not_pointer_identity() {
+    let bytes = compile_source(
+        r#"
+func main(): int {
+    let left: str = (42).to_str()
+    let same_contents: str = (42).to_str()
+    let different_contents: str = (43).to_str()
+    if left == same_contents && left != different_contents { return 0 }
+    return 1
+}
+"#,
+    );
+    assert_eq!(run_main_i32(&bytes), 0);
+}
+
+#[test]
 fn surface_if_else_branch_executes() {
     let bytes = compile_source(
         r#"
@@ -84,6 +114,44 @@ func main(): int {
 "#,
     );
     assert_eq!(run_main_i32(&bytes), 42);
+}
+
+#[test]
+fn surface_mut_ref_slice_preserves_data_and_length_words() {
+    let bytes = compile_source(
+        r#"
+module std.core.mut_slice_wasm
+
+extern "arandu-intrinsic" {
+    func sliceFromRaw(owner: ptr[u8], data: ptr[u8], len: uint): []u8
+    func sliceLen<T>(source: []T): uint
+}
+
+func fill(buf: mut ref []u8): uint {
+    let len = unsafe { sliceLen<u8>(*buf) }
+    if len != 4 { return 99 }
+    buf[1] = 42 as u8
+    return len
+}
+
+func observedLen(buf: ref []u8): uint {
+    return unsafe { sliceLen<u8>(*buf) }
+}
+
+func main(): int {
+    let raw = alloc(4) as ptr[u8]
+    let mut view = unsafe { sliceFromRaw(raw, raw, 4 as uint) }
+    let len = fill(mut ref view)
+    if len != 4 || observedLen(ref view) != 4 || view[1] != (42 as u8) {
+        unsafe { free(raw) }
+        return 1
+    }
+    unsafe { free(raw) }
+    return 0
+}
+"#,
+    );
+    assert_eq!(run_main_i32(&bytes), 0);
 }
 
 #[test]
@@ -275,6 +343,39 @@ func main(): int {
 "#,
     );
     assert_eq!(run_main_i32(&bytes), 2);
+}
+
+#[test]
+fn surface_enum_payload_first_variant_condition() {
+    let bytes = compile_source(
+        r#"
+enum Choice { Left(int), Right(int) }
+func main(): int {
+    let selected = Choice.Left(11)
+    if selected is Choice.Left(value) { return value } else { return 20 }
+}
+"#,
+    );
+    assert_eq!(run_main_i32(&bytes), 11);
+}
+
+#[test]
+fn surface_enum_payload_match_returns_first_matching_payload() {
+    let source = r#"
+enum Choice {
+    Left(int),
+    Right(int),
+}
+func main(): int {
+    let selected = Choice.Left(11)
+    return match selected {
+        Choice.Left(value) => value
+        Choice.Right(value) => value
+    }
+}
+"#;
+    let bytes = compile_source(source);
+    assert_eq!(run_main_i32(&bytes), 11);
 }
 
 #[test]

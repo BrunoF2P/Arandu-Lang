@@ -38,7 +38,7 @@ env:
 jobs:
   vsix:
     name: SL_T / Package VSIX
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -71,7 +71,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             archive: tar.gz
           - os: macos-latest
@@ -176,7 +176,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             archive: tar.gz
           - os: macos-latest
@@ -264,7 +264,7 @@ jobs:
     name: SL_T / Harness
     if: always()
     needs: [vsix, sdk, integration]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Require the complete native matrix
         env:

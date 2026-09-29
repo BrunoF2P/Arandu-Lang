@@ -116,6 +116,16 @@ impl<'a> Resolver<'a> {
         if !self.is_namespace(scope, namespace) {
             return false;
         }
+        if let Some(root) = namespace.split('.').next()
+            && self.failed_import_aliases.contains(root)
+        {
+            // The import failed to resolve (M001 already reports that), but
+            // the alias is still referenced by this member path. Mark it used
+            // so the unused-import pass does not double-report W007, then
+            // short-circuit the member lookup to avoid an M002 cascade.
+            let _ = self.lookup_and_record_module(scope, root);
+            return true;
+        }
         let _ = self.lookup_and_record_module(scope, namespace);
         let expanded = self.expand_namespace_alias(namespace);
         if let Some(symbol) = self.symbols.lookup_module_member(&expanded, member) {
@@ -137,21 +147,25 @@ impl<'a> Resolver<'a> {
         kind: SymbolKind,
         span: Span,
     ) -> Option<crate::SymbolId> {
-        self.define_vis(scope, name, kind, span, false)
+        self.define_with_visibility(scope, name, kind, span, arandu_parser::Visibility::Module)
     }
 
-    pub(crate) fn define_vis(
+    pub(crate) fn define_with_visibility(
         &mut self,
         scope: ScopeId,
         name: &str,
         kind: SymbolKind,
-        span: Span,
-        is_public: bool,
+        span: arandu_lexer::Span,
+        visibility: arandu_parser::Visibility,
     ) -> Option<crate::SymbolId> {
-        // A name is reserved if it is already defined in the prelude (ScopeId(0))
-        // and we are currently not inside the prelude/std.* itself.
-        let is_reserved =
-            scope != ScopeId(0) && self.symbols.find_in_scope(ScopeId(0), name).is_some();
+        // Compiler lang items have special semantics by symbol identity, not
+        // because their spelling is globally reserved. Let a local declaration
+        // or an explicit stdlib import shadow the ambient compatibility binding.
+        let is_reserved = scope != ScopeId(0)
+            && self
+                .symbols
+                .find_in_scope(ScopeId(0), name)
+                .is_some_and(|id| self.symbols.get(id).lang_item.is_none());
         if is_reserved {
             let is_std = self
                 .current_module
@@ -167,7 +181,10 @@ impl<'a> Resolver<'a> {
                 return None;
             }
         }
-        match self.symbols.define_vis(scope, name, kind, span, is_public) {
+        match self
+            .symbols
+            .define_with_visibility(scope, name, kind, span, visibility)
+        {
             Ok(symbol) => {
                 self.resolved.define(span, symbol);
                 Some(symbol)

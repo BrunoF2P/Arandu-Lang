@@ -35,16 +35,56 @@ fn infer_struct_type_args(
             if !matches_param {
                 continue;
             }
-            let val_tid = synth_expr(checker, field.value);
-            if checker.resolve(val_tid).is_error() {
+            let Some(val_tid) = peek_value_type(checker, field.value) else {
                 continue;
-            }
+            };
             found = Some(val_tid);
             break;
         }
         out.push(found?);
     }
     Some(out)
+}
+
+/// Side-effect-free type peek for a struct-literal field value, used only to
+/// infer missing generic type arguments.
+///
+/// Unlike `synth_expr`, this never allocates literal variables, registers
+/// constraints or emits diagnostics: the real field synthesis (which checks
+/// field values against the instantiated struct type) runs exactly once in
+/// the field loop below. Resolving the peek through the full synthesizer
+/// caused every matching field to be synthesized twice — duplicated
+/// diagnostics from erroneous sub-expressions and orphaned literal variables.
+fn peek_value_type(checker: &mut TypeChecker<'_>, value: ExprId) -> Option<TypeId> {
+    let pool = checker.pool;
+    match pool.expr(value) {
+        ExprKind::Int { .. } => Some(checker.intern(ArType::IntLiteral)),
+        ExprKind::Float { .. } => Some(checker.intern(ArType::FloatLiteral)),
+        ExprKind::Bool { .. } => Some(checker.intern(ArType::Primitive(Primitive::Bool))),
+        ExprKind::Char { .. } => Some(checker.intern(ArType::Primitive(Primitive::Char))),
+        ExprKind::Byte { .. } => Some(checker.intern(ArType::Primitive(Primitive::U8))),
+        ExprKind::InterpolatedString { .. } => {
+            Some(checker.intern(ArType::Primitive(Primitive::Str)))
+        }
+        ExprKind::Group { expr } => peek_value_type(checker, *expr),
+        ExprKind::Unary {
+            op: arandu_parser::UnaryOp::Neg,
+            expr,
+        } => peek_value_type(checker, *expr),
+        // A plain path resolves to a declared/looked-up type without any
+        // side effects — mirroring how the value-Path arm synthesizes. This
+        // covers function-valued generic fields (`Job { callback: count }`
+        // where `count` is a `func(int) int`), which a returning
+        // `synth_expr` preserved.
+        ExprKind::Path { .. } => {
+            let symbol_id = checker.resolved.expr_symbol(value)?;
+            checker
+                .ctx
+                .lookup(symbol_id)
+                .or_else(|| checker.decl_type_id(symbol_id))
+        }
+        _ => None,
+    }
 }
 
 /// Stricter than `unify` for array literals: int and float literals must not mix.
@@ -62,10 +102,10 @@ pub(super) fn array_element_types_compatible(
     types::unify(a, b, interner)
 }
 
-#[tracing::instrument(level = "trace", target = "arandu_typeck", skip(checker, _expr))]
+#[tracing::instrument(level = "trace", target = "arandu_typeck", skip(checker, expr))]
 pub(super) fn synth_literal_expr(
     checker: &mut TypeChecker<'_>,
-    _expr: ExprId,
+    expr: ExprId,
     kind: &ExprKind,
     span: Span,
     expected: Option<TypeId>,
@@ -87,8 +127,13 @@ pub(super) fn synth_literal_expr(
                         Primitive::I32 => (i32::MIN as i128..=i32::MAX as i128).contains(&parsed),
                         Primitive::I64 => (i64::MIN as i128..=i64::MAX as i128).contains(&parsed),
                         Primitive::Int => {
-                            // int é pointer-width signed; o range depende do target.
+                            // int is fixed 32-bit signed (RFC 0023).
                             (checker.target_info.int_min()..=checker.target_info.int_max())
+                                .contains(&parsed)
+                        }
+                        Primitive::ISize => {
+                            // isize is pointer-width signed (RFC 0023).
+                            (checker.target_info.isize_min()..=checker.target_info.isize_max())
                                 .contains(&parsed)
                         }
                         Primitive::U8 | Primitive::Byte => (0..=u8::MAX as i128).contains(&parsed),
@@ -96,8 +141,12 @@ pub(super) fn synth_literal_expr(
                         Primitive::U32 => (0..=u32::MAX as i128).contains(&parsed),
                         Primitive::U64 => parsed >= 0 && (parsed as u128 <= u64::MAX as u128),
                         Primitive::Uint => {
-                            // uint é pointer-width unsigned; o range depende do target.
+                            // uint is fixed 32-bit unsigned (RFC 0023).
                             parsed >= 0 && (parsed as u128 <= checker.target_info.uint_max())
+                        }
+                        Primitive::USize => {
+                            // usize is pointer-width unsigned (RFC 0023).
+                            parsed >= 0 && (parsed as u128 <= checker.target_info.usize_max())
                         }
                         _ => true,
                     };
@@ -124,19 +173,38 @@ pub(super) fn synth_literal_expr(
                     return Some(exp_id);
                 }
             }
+            let var_id = checker.literal_table.alloc(
+                crate::type_checker::solver::LiteralKind::Int,
+                Some(crate::type_checker::solver::LiteralOccurrence {
+                    expr,
+                    span,
+                    raw: value.to_string(),
+                }),
+            );
+            checker.literal_table.bind_expr(expr, var_id);
             Some(checker.intern(ArType::IntLiteral))
         }
-        ExprKind::Float { .. } => {
+        ExprKind::Float { value, .. } => {
             if let Some(exp_id) = expected
                 && let ArType::Primitive(p) = checker.resolve(exp_id)
                 && p.is_float()
             {
                 return Some(exp_id);
             }
+            let var_id = checker.literal_table.alloc(
+                crate::type_checker::solver::LiteralKind::Float,
+                Some(crate::type_checker::solver::LiteralOccurrence {
+                    expr,
+                    span,
+                    raw: value.to_string(),
+                }),
+            );
+            checker.literal_table.bind_expr(expr, var_id);
             Some(checker.intern(ArType::FloatLiteral))
         }
         ExprKind::Bool { .. } => Some(checker.intern(ArType::Primitive(Primitive::Bool))),
         ExprKind::Char { .. } => Some(checker.intern(ArType::Primitive(Primitive::Char))),
+        ExprKind::Byte { .. } => Some(checker.intern(ArType::Primitive(Primitive::U8))),
         ExprKind::InterpolatedString { parts } => {
             // ToStr v0.1: formatable primitives are accepted; lower inserts
             // AmirRvalue::ToStr. Non-formatable types get T034 (not silent Any).
@@ -149,7 +217,13 @@ pub(super) fn synth_literal_expr(
                 {
                     let part_ty_id = synth_expr(checker, *inner_expr);
                     let part_ty = checker.resolve(part_ty_id);
-                    if part_ty.is_error() || part_ty.is_to_str_v01() {
+                    let is_ref_str = match &part_ty {
+                        ArType::Ref(inner) | ArType::RefMut(inner) => {
+                            matches!(checker.resolve(*inner), ArType::Primitive(Primitive::Str))
+                        }
+                        _ => false,
+                    };
+                    if part_ty.is_error() || part_ty.is_to_str_v01() || is_ref_str {
                         continue;
                     }
                     let interner = &checker.type_info.type_interner;
@@ -270,6 +344,7 @@ pub(super) fn synth_literal_expr(
                         let field = checker.pool.field_init(*fid);
                         if field.name == ".." {
                             has_update_base = true;
+                            checker.check_private_field_update(symbol_id, field.span);
                             let base_ty_id = super::super::synth_expr_expected(
                                 checker,
                                 field.value,
@@ -295,6 +370,7 @@ pub(super) fn synth_literal_expr(
                             }
                             continue;
                         }
+                        checker.check_field_visibility(symbol_id, field.name.as_str(), field.span);
                         let defined_field_ty_opt = fields_def.get(field.name.as_str()).cloned();
                         // `nil` in a field needs the field's expected type (`ptr[T]`, `T?`),
                         // not the enclosing function return (which produced bogus `int?` /
@@ -316,6 +392,19 @@ pub(super) fn synth_literal_expr(
                                 )
                             };
                         if let Some(defined_field_ty) = defined_field_ty_opt {
+                            if let Some(var_id) = checker.literal_table.var_for_expr(field.value) {
+                                let exp_id = checker.intern(defined_field_ty.clone());
+                                checker.constrain_literal_var(
+                                    var_id,
+                                    exp_id,
+                                    ConstraintOrigin::FieldInit {
+                                        struct_span: span,
+                                        field_name: field.name.to_string(),
+                                        field_span: field.span,
+                                        value_span: checker.pool.expr_span(field.value),
+                                    },
+                                );
+                            }
                             let field_val_ty = checker.resolve(field_val_ty_id);
                             if !types::unify(
                                 &defined_field_ty,
@@ -388,20 +477,81 @@ pub(super) fn synth_literal_expr(
                 _ => None,
             });
             let error_id = checker.intern(ArType::Error);
-            let mut elem_ty_id = expected_elem_id.unwrap_or(error_id);
             let item_ids = checker.pool.expr_list(items_range).to_vec();
-            for (i, item_id) in item_ids.iter().copied().enumerate() {
-                let item_ty_id = super::synth_expr_expected(checker, item_id, expected_elem_id);
-                if checker.resolve(elem_ty_id).is_error() {
-                    elem_ty_id = item_ty_id;
-                } else {
-                    let elem_ty = checker.resolve(elem_ty_id);
-                    let item_ty = checker.resolve(item_ty_id);
-                    if !array_element_types_compatible(
-                        &elem_ty,
-                        &item_ty,
-                        &checker.type_info.type_interner,
-                    ) {
+
+            if item_ids.is_empty() {
+                let elem_id = expected_elem_id.unwrap_or(error_id);
+                return Some(checker.intern(ArType::Array(0, elem_id)));
+            }
+
+            // Pass 1: synthesize each element with expected_elem_id (or discovered concrete type).
+            let mut item_ty_ids = Vec::with_capacity(item_ids.len());
+            let mut discovered_concrete =
+                expected_elem_id.filter(|&id| !checker.resolve(id).is_literal());
+
+            for &item_id in &item_ids {
+                let item_ty_id = super::synth_expr_expected(checker, item_id, discovered_concrete);
+                let item_ty = checker.resolve(item_ty_id);
+                if discovered_concrete.is_none() && !item_ty.is_literal() && !item_ty.is_error() {
+                    discovered_concrete = Some(item_ty_id);
+                }
+                item_ty_ids.push(item_ty_id);
+            }
+
+            // Unify literal variables across array elements
+            let mut first_var: Option<crate::type_checker::solver::TypeVarId> = None;
+            // Set when merging the groups widens a promoted integer literal to
+            // float; the compatibility pass below must not report the same
+            // int/float mismatch again as T002.
+            let mut reported_widening = false;
+            for &item_id in &item_ids {
+                if let Some(var_id) = checker.literal_table.var_for_expr(item_id) {
+                    if let Some(fv) = first_var {
+                        let item_span = checker.pool.expr_span(item_id);
+                        if checker.report_promoted_widening(fv, var_id, item_span) {
+                            reported_widening = true;
+                        }
+                        first_var = Some(checker.literal_table.unify(fv, var_id));
+                    } else {
+                        first_var = Some(var_id);
+                    }
+                }
+            }
+            if let Some(var_id) = first_var
+                && let Some(concrete_id) = discovered_concrete
+            {
+                checker.constrain_literal_var(
+                    var_id,
+                    concrete_id,
+                    ConstraintOrigin::ArrayLiteral {
+                        array_span: span,
+                        item_span: span,
+                        item_index: 0,
+                    },
+                );
+            }
+
+            // Determine element type and validate compatibility
+            let target_elem_id = discovered_concrete.unwrap_or_else(|| item_ty_ids[0]);
+            let mut elem_ty_id = target_elem_id;
+
+            for (i, (&item_id, &item_ty_id)) in item_ids.iter().zip(&item_ty_ids).enumerate() {
+                let elem_ty = checker.resolve(elem_ty_id);
+                let item_ty = checker.resolve(item_ty_id);
+                if !array_element_types_compatible(
+                    &elem_ty,
+                    &item_ty,
+                    &checker.type_info.type_interner,
+                ) {
+                    // A promoted int/float pair was already reported as an
+                    // implicit widening when the literal groups were merged.
+                    let already_reported = reported_widening
+                        && matches!(
+                            (&elem_ty, &item_ty),
+                            (ArType::IntLiteral, ArType::FloatLiteral)
+                                | (ArType::FloatLiteral, ArType::IntLiteral)
+                        );
+                    if !already_reported {
                         checker.add_constraint(
                             elem_ty_id,
                             item_ty_id,
@@ -411,10 +561,11 @@ pub(super) fn synth_literal_expr(
                                 item_index: i,
                             },
                         );
-                        elem_ty_id = error_id;
                     }
+                    elem_ty_id = error_id;
                 }
             }
+
             Some(checker.intern(ArType::Array(items_range.len as u64, elem_ty_id)))
         }
         _ => None,

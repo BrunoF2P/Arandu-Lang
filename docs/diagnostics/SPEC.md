@@ -233,6 +233,10 @@ Abaixo estão listados todos os diagnósticos mapeados para o compilador Arandu.
 | **N013** | `annotation '@{name}' cannot be applied to a {target}` | Error | `0.1.0` | Anotação conhecida aplicada a uma categoria de declaração fora de seus alvos explícitos. |
 | **N014** | `annotation '@{name}' expects {arguments}` | Error | `0.1.0` | Lista ou forma dos argumentos não corresponde ao contrato da anotação. |
 | **N015** | `annotation '@{name}' cannot be repeated` | Error | `0.1.0` | Uma anotação de cardinalidade única aparece mais de uma vez no mesmo alvo. |
+| **N016** | `'{name}' is internal and cannot be imported from outside its package` | Error | `0.1.0` | Importação explícita de símbolo `internal` por módulo de outro pacote. |
+| **N017** | `cannot implement sealed interface '{name}' outside its package` | Error | `0.1.0` | Implementação de interface selada fora do pacote que a declara. |
+| **N018** | `re-export visibility exceeds source visibility` | Error | `0.1.0` | Re-export tenta ampliar a visibilidade de uma declaração de origem. |
+| **N019** | `cyclic re-export` | Error | `0.1.0` | A superfície exportada depende de um ciclo de re-exports. |
 
 ---
 
@@ -255,7 +259,7 @@ Abaixo estão listados todos os diagnósticos mapeados para o compilador Arandu.
 | **T013** | `unknown named argument: '{name}'` | Error | `0.1.0` | Passagem de parâmetro nomeado que não corresponde a nenhum argumento na assinatura do método. |
 | **T014** | `invalid variadic type: expected '{expected}', found '{found}'` | Error | `0.1.0` | Passagem incorreta de argumentos para uma assinatura de função variádica. |
 | **T015** | `implicit widening of '{from_ty}' to '{to_ty}' is not allowed` | Warning | `0.1.0` | Tentativa de realizar coerção implícita que pode causar perda de precisão ou overflow (ex: `i32` para `i16`). |
-| **T016** | `try operator '?' cannot be used on type '{type}'` | Error | `0.1.0` | O operador de desempacotamento seguro `?` foi aplicado a um tipo que não é `Result` ou `Option`. |
+| **T016** | `the '?' operator can only be applied to Result<T,E> or Option<T>` / `the '?' operator cannot propagate into function return type '{type}'` | Error | `0.1.0` | O operador `?` exige um operando `Result`/`Option` e um tipo de retorno de função capaz de propagar o erro ou a ausência. |
 | **T017** | `cannot index type '{type}' with index of type '{index_ty}'` | Error | `0.1.0` | Tentativa de indexar um array ou coleção com um tipo não inteiro. |
 | **T018** | `no field '{field}' on type '{type}'` | Error | `0.1.0` | Acesso a um campo inexistente em uma instância de struct ou união. **Diferença de N010**: Ocorre na verificação de tipos após o receptor ser resolvido para um tipo concreto específico. |
 | **T019** | *[Movido → W006]* | - | `0.1.0` | *Código de resultado não tratado movido para a categoria de warnings e lints.* |
@@ -280,6 +284,7 @@ Abaixo estão listados todos os diagnósticos mapeados para o compilador Arandu.
 | **T038** | `integer literal does not fit in the expected type` | Error | `0.1.0` | Um literal inteiro contextual excede o intervalo representável pelo tipo inteiro esperado. |
 | **T039** | `function performs undeclared or denied effect '{effect}'` | Error | `0.1.0` | A função executa um efeito não declarado em `@Effects(...)` ou proibido pela política de efeitos do manifesto. |
 | **T040** | `attempt to divide by zero` | Error | `0.1.0` | Tentativa de realizar divisão ou cálculo de resto (`%`) com divisor zero em tempo de compilação. |
+| **T041** | `field '{name}' is private to its struct` | Error | `0.1.0` | Acesso a campo `private` fora de um método declarado no tipo proprietário. |
 
 ---
 
@@ -299,7 +304,7 @@ Abaixo estão listados todos os diagnósticos mapeados para o compilador Arandu.
 | **O010** | `escape of borrowed value: returning reference to local variable '{name}'` | Error | `0.1.0` | Retorno de uma referência para um objeto alocado na pilha local da função corrente, o que causaria memória corrompida. |
 | **O011** | `free requires pointer type: cannot free expression of type '{type}'` | Error | `0.1.0` | O comando de desalocação explícita `free` foi chamado em uma variável que não é um ponteiro bruto (`*mut` ou `*const`). (Antigo `T023`). |
 | **O012** | `` `alloc` requires an `unsafe` block `` | Error | `0.1.0` | Alocação direta de memória bruta na heap via `alloc` exige contexto explícito `unsafe`. |
-| **O013** | `` call to extern function requires an `unsafe` block `` | Error | `0.1.0` | Chamadas para funções externas de FFI (`extern "C"`) exigem bloco `unsafe`. |
+| **O013** | `` call to extern function requires an `unsafe` block `` | Error | `0.1.0` | Chamadas para funções `extern` e funções anotadas com `@Unsafe` exigem bloco `unsafe`. |
 | **O014** | `` `free` requires an `unsafe` block `` | Error | `0.1.0` | Desalocação manual de memória via `free` é operação insegura e exige bloco `unsafe`. |
 
 

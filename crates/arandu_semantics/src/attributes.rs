@@ -17,6 +17,7 @@ pub enum AnnotationId {
     Forbid,
     NoFallback,
     Destructor,
+    Unsafe,
     Effects,
     NoSuspend,
     Specialize,
@@ -65,6 +66,7 @@ impl AnnotationTarget {
 pub enum AnnotationArguments {
     None,
     OneString,
+    OneStringOrIdent,
     EffectList,
 }
 
@@ -74,6 +76,7 @@ impl AnnotationArguments {
         match self {
             Self::None => "no arguments",
             Self::OneString => "one string argument",
+            Self::OneStringOrIdent => "one string or identifier argument",
             Self::EffectList => "one or more effect identifiers or strings",
         }
     }
@@ -198,6 +201,16 @@ pub static BUILTIN_ANNOTATIONS: &[AnnotationSpec] = &[
         summary: "Associates one consuming cleanup method with its receiver type.",
     },
     AnnotationSpec {
+        id: AnnotationId::Unsafe,
+        canonical_name: "Unsafe",
+        legacy_aliases: &["unsafe"],
+        targets: FUNCTION,
+        arguments: AnnotationArguments::None,
+        repeatable: false,
+        availability: AnnotationAvailability::Implemented,
+        summary: "Requires callers to uphold documented preconditions in an unsafe block.",
+    },
+    AnnotationSpec {
         id: AnnotationId::Effects,
         canonical_name: "Effects",
         legacy_aliases: &["effects"],
@@ -232,9 +245,9 @@ pub static BUILTIN_ANNOTATIONS: &[AnnotationSpec] = &[
         canonical_name: "Repr",
         legacy_aliases: &["repr"],
         targets: STRUCT_OR_ENUM,
-        arguments: AnnotationArguments::OneString,
+        arguments: AnnotationArguments::OneStringOrIdent,
         repeatable: false,
-        availability: AnnotationAvailability::Planned,
+        availability: AnnotationAvailability::Implemented,
         summary: "Selects a representation contract for a data type.",
     },
 ];
@@ -294,6 +307,15 @@ fn arguments_match(spec: &AnnotationSpec, attr: &Attribute, pool: &AstPool) -> b
             attr.args.len() == 1
                 && attr.args.first().is_some_and(|arg| {
                     matches!(pool.expr(*arg), ExprKind::InterpolatedString { .. })
+                })
+        }
+        AnnotationArguments::OneStringOrIdent => {
+            attr.args.len() == 1
+                && attr.args.first().is_some_and(|arg| {
+                    matches!(
+                        pool.expr(*arg),
+                        ExprKind::Path { .. } | ExprKind::InterpolatedString { .. }
+                    )
                 })
         }
         AnnotationArguments::EffectList => {
@@ -395,6 +417,29 @@ pub fn validate_attributes(
                 }
             }
             if has_invalid_effect {
+                continue;
+            }
+        }
+        if spec.id == AnnotationId::Repr {
+            let repr_val = attr.args.first().and_then(|arg| match pool.expr(*arg) {
+                ExprKind::Path { path } => path.first().map(|s| s.as_str()),
+                ExprKind::InterpolatedString { parts } => {
+                    let part_ids = pool.string_part_list(*parts);
+                    part_ids.first().and_then(|&id| match pool.string_part(id) {
+                        arandu_parser::StringPart::Text { text, .. } => Some(text.as_str()),
+                        _ => None,
+                    })
+                }
+                _ => None,
+            });
+            if let Some(val) = repr_val
+                && !val.eq_ignore_ascii_case("c")
+            {
+                out.diagnostics.push(Diagnostic::error(
+                    DiagCode::N014InvalidAnnotationArguments,
+                    format!("unsupported representation '{val}' in @Repr; expected 'C'"),
+                    attr.span,
+                ));
                 continue;
             }
         }
@@ -531,6 +576,11 @@ pub fn validate_decl_attributes(decl: &TopLevelDecl, pool: &AstPool) -> Validate
                 }
             }
         }
+        TopLevelDecl::Submodule(d) => {
+            for &inner_id in &d.decls {
+                append(validate_decl_attributes(pool.decl(inner_id), pool));
+            }
+        }
         TopLevelDecl::Error(_) => {}
     }
     combined
@@ -599,6 +649,39 @@ mod tests {
         assert!(!result.contains(AnnotationId::Destructor));
         assert_eq!(
             result.diagnostics[0].code,
+            DiagCode::N013InvalidAnnotationTarget
+        );
+    }
+
+    #[test]
+    fn repr_c_string_and_ident_are_accepted() {
+        let result_str = validate("@Repr(\"C\")\nstruct Point { x: i32, y: i32 }\n");
+        assert!(result_str.contains(AnnotationId::Repr));
+        assert!(result_str.diagnostics.is_empty());
+
+        let result_ident = validate("@Repr(C)\nstruct Point { x: i32, y: i32 }\n");
+        assert!(result_ident.contains(AnnotationId::Repr));
+        assert!(result_ident.diagnostics.is_empty());
+
+        let result_legacy = validate("@repr(\"C\")\nstruct Point { x: i32, y: i32 }\n");
+        assert!(result_legacy.contains(AnnotationId::Repr));
+        assert_eq!(result_legacy.diagnostics.len(), 1);
+        assert_eq!(
+            result_legacy.diagnostics[0].code,
+            DiagCode::W008LegacyAnnotationName
+        );
+
+        let result_invalid_repr = validate("@Repr(\"Rust\")\nstruct Point { x: i32, y: i32 }\n");
+        assert!(!result_invalid_repr.contains(AnnotationId::Repr));
+        assert_eq!(
+            result_invalid_repr.diagnostics[0].code,
+            DiagCode::N014InvalidAnnotationArguments
+        );
+
+        let result_invalid_target = validate("@Repr(\"C\")\nfunc foo(): void {}\n");
+        assert!(!result_invalid_target.contains(AnnotationId::Repr));
+        assert_eq!(
+            result_invalid_target.diagnostics[0].code,
             DiagCode::N013InvalidAnnotationTarget
         );
     }

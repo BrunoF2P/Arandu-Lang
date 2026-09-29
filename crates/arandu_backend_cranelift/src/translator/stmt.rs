@@ -1,6 +1,6 @@
-use arandu_semantics::amir::AmirStmt;
+use arandu_semantics::amir::{AmirStmt, LocalId};
 use arandu_semantics::passes::type_checker::types::{ArType, Primitive};
-use cranelift_codegen::ir::InstBuilder;
+use cranelift_codegen::ir::{InstBuilder, Value};
 
 use super::FunctionTranslator;
 use crate::types::{ClifType, clif_type};
@@ -16,6 +16,9 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                 let lhs_ty = self.temp_ar_ty(*lhs);
                 if matches!(&lhs_ty, ArType::Primitive(Primitive::Str)) {
                     let (ptr_val, len_val) = self.translate_str_rvalue(rhs);
+                    if self.error.is_some() {
+                        return;
+                    }
                     if let Some(&(var_ptr, var_len)) = self.str_temp_map.get(lhs) {
                         self.builder.def_var(var_ptr, ptr_val);
                         self.builder.def_var(var_len, len_val);
@@ -25,9 +28,16 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                     let lhs_ar = self.temp_ar_ty(*lhs);
                     let expected_ar_type = Some(&lhs_ar);
                     let val = self.translate_rvalue(rhs, expected_ty, expected_ar_type);
+                    if self.error.is_some() {
+                        return;
+                    }
                     if let Some(&var) = self.temp_map.get(lhs) {
                         self.builder.def_var(var, val);
                     }
+                }
+                if let Some(var) = self.temp_map.get(lhs).copied() {
+                    let value = self.builder.use_var(var);
+                    self.label_temp_value(*lhs, value);
                 }
             }
             AmirStmt::Store { lhs, rhs } => {
@@ -92,47 +102,90 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                 lhs, callee, args, ..
             } => {
                 self.translate_call(lhs, callee, args);
+                if let Some(lhs) = lhs
+                    && let Some(var) = self.temp_map.get(lhs).copied()
+                {
+                    let value = self.builder.use_var(var);
+                    self.label_temp_value(*lhs, value);
+                }
             }
             AmirStmt::Free(op) => {
-                let ptr_val = self.translate_operand(op, Some(self.ptr_type));
+                let op_ty = self.get_operand_ar_type(op);
+                let ptr_val = if matches!(op_ty, ArType::Primitive(Primitive::Str)) {
+                    self.translate_str_operand(op).0
+                } else {
+                    self.translate_operand(op, Some(self.ptr_type))
+                };
                 self.emit_free_ptr(ptr_val);
             }
             AmirStmt::StorageLive(_) | AmirStmt::StorageDead(_) => {}
             AmirStmt::Destroy(place) => {
                 let ty = self.place_ar_ty(place);
-                let ty_id = self.type_info.type_interner.intern(ty.clone());
-                if let ArType::Named(_, _) = ty
-                    && let Some(destructor) = self.type_info.destructor_instances.get(&ty_id)
-                {
-                    let symbol = self.symbol_table.get(*destructor);
-                    let host_name = self.symbol_table.host_func_name(symbol);
-                    if let Some(&id) = self.func_ids.get(host_name) {
-                        let ptr_val = if place.projections.is_empty() {
-                            if let Some(&var) = self.local_map.get(&place.local) {
-                                self.builder.use_var(var)
-                            } else {
-                                self.translate_place_address_for_load(place).0
-                            }
-                        } else {
-                            let (addr, offset) = self.translate_place_address_for_load(place);
-                            self.builder.ins().load(
-                                self.ptr_type,
-                                cranelift_codegen::ir::MemFlagsData::new(),
-                                addr,
-                                offset,
-                            )
-                        };
-                        let function = self.module.declare_func_in_func(id, self.builder.func);
-                        self.builder.ins().call(function, &[ptr_val]);
-                    } else {
-                        self.record_ice(
-                            format!("missing @Destructor function '{}'", symbol.name),
-                            self.local_span(place.local),
-                        );
+                if matches!(ty, ArType::Primitive(Primitive::Str)) {
+                    if let Some(&(var_ptr, _)) = self.str_local_map.get(&place.local) {
+                        let ptr_val = self.builder.use_var(var_ptr);
+                        self.emit_free_ptr(ptr_val);
                     }
+                } else {
+                    let ptr_val = if place.projections.is_empty() {
+                        if let Some(&var) = self.local_map.get(&place.local) {
+                            self.builder.use_var(var)
+                        } else {
+                            self.translate_place_address_for_load(place).0
+                        }
+                    } else {
+                        let (addr, offset) = self.translate_place_address_for_load(place);
+                        if offset != 0 {
+                            self.builder.ins().iadd_imm_s(addr, i64::from(offset))
+                        } else {
+                            addr
+                        }
+                    };
+                    self.emit_destroy_value(&ty, ptr_val, place.local);
                 }
             }
             AmirStmt::Nop => {}
+        }
+    }
+
+    pub(super) fn emit_destroy_value(&mut self, ty: &ArType, ptr_val: Value, local: LocalId) {
+        if let ArType::Named(_, _) = ty {
+            let ty_id = self.type_info.type_interner.intern(ty.clone());
+            if let Some(destructor) = self.type_info.destructor_instances.get(&ty_id) {
+                let symbol = self.symbol_table.get(*destructor);
+                let host_name = self.symbol_table.host_func_name(symbol);
+                if let Some(&id) = self.func_ids.get(host_name) {
+                    let function = self.module.declare_func_in_func(id, self.builder.func);
+                    let arg_abi = self.classify_arg_abi(ty);
+                    match arg_abi {
+                        arandu_semantics::layout::ArgAbi::ZeroSized => {
+                            self.builder.ins().call(function, &[]);
+                        }
+                        arandu_semantics::layout::ArgAbi::Direct(direct) => {
+                            let mut args = Vec::with_capacity(direct.slots.len());
+                            for abi_slot in &direct.slots {
+                                let chunk_ty = crate::abi::abi_scalar_to_clif(abi_slot.scalar);
+                                let chunk_val = self.builder.ins().load(
+                                    chunk_ty,
+                                    cranelift_codegen::ir::MemFlagsData::new(),
+                                    ptr_val,
+                                    abi_slot.offset as i32,
+                                );
+                                args.push(chunk_val);
+                            }
+                            self.builder.ins().call(function, &args);
+                        }
+                        arandu_semantics::layout::ArgAbi::Indirect => {
+                            self.builder.ins().call(function, &[ptr_val]);
+                        }
+                    }
+                } else {
+                    self.record_ice(
+                        format!("missing @Destructor function '{}'", symbol.name),
+                        self.local_span(local),
+                    );
+                }
+            }
         }
     }
 }

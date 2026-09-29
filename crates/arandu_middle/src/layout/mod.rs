@@ -1,5 +1,7 @@
+pub mod abi;
 mod data_layout;
 
+pub use abi::{AbiScalar, AbiSlot, ArgAbi, DirectAbi, TargetAbi, TargetAbiClassifier};
 pub use data_layout::{DataLayout, SizeAlign};
 
 use crate::SymbolId;
@@ -84,12 +86,75 @@ impl<I: IdIndex> Iterator for DenseRangeIds<I> {
     }
 }
 
+/// Discriminant tag encoding strategy for enums and sum types.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TagEncoding {
+    /// Explicit discriminant tag stored at `tag_offset` with size `tag_size`.
+    Direct { tag_size: u64, payload_offset: u64 },
+    /// Niche optimization: discriminant tag is elided by using an invalid bit-pattern
+    /// (e.g. null pointer 0x0) of the payload at `niche_offset`.
+    Niche {
+        niche_offset: u64,
+        niche_size: u64,
+        niche_value: u64,
+        untagged_variant: usize, // e.g. 1 for Option::Some
+        tagged_variant: usize,   // e.g. 0 for Option::None
+    },
+    /// Pointer tagging optimization: discriminant tag is encoded in the lowest `tag_bits`
+    /// of an aligned pointer/reference payload.
+    PointerTag {
+        tag_bits: u8,
+        tag_mask: u64,
+        pointer_offset: u64,
+    },
+}
+
+/// Maximum inline byte capacity for Small Object Optimization (SOO).
+///
+/// Matches the 24-byte footprint (3 words on 64-bit) of `Vec` `{ data, len, capacity }`.
+pub const SOO_MAX_INLINE_BYTES: u64 = 24;
+
+/// Small Object Optimization (SOO) layout metadata.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SooLayout {
+    /// Maximum inline bytes available in the container (24 bytes).
+    pub max_inline_bytes: u64,
+    /// Number of elements of the given type that fit inline.
+    pub inline_capacity: usize,
+    /// Whether the type is eligible to be stored inline (size <= 24 bytes).
+    pub is_inline_eligible: bool,
+}
+
+impl SooLayout {
+    #[must_use]
+    pub const fn new(inline_capacity: usize, is_inline_eligible: bool) -> Self {
+        Self {
+            max_inline_bytes: SOO_MAX_INLINE_BYTES,
+            inline_capacity,
+            is_inline_eligible,
+        }
+    }
+}
+
 /// Physical memory layout metadata for a resolved type.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TypeLayout {
     pub size: u64,               // Total size in bytes (including trailing padding)
     pub align: u64,              // Alignment required in bytes (power of 2)
     pub field_offsets: Vec<u64>, // Field offsets (populated for structs, tuples, etc.)
+    pub tag_encoding: Option<TagEncoding>,
+}
+
+impl TypeLayout {
+    #[must_use]
+    pub fn simple(size: u64, align: u64) -> Self {
+        Self {
+            size,
+            align,
+            field_offsets: Vec::new(),
+            tag_encoding: None,
+        }
+    }
 }
 
 /// Target-derived runtime contract for a promoted GenRef payload.
@@ -123,6 +188,7 @@ pub enum LayoutError {
     InvalidAlignment {
         align: u64,
     },
+    UnresolvedConst,
 }
 
 impl std::fmt::Display for LayoutError {
@@ -134,6 +200,9 @@ impl std::fmt::Display for LayoutError {
             ),
             Self::InvalidAlignment { align } => {
                 write!(f, "invalid type alignment {align}; expected a power of two")
+            }
+            Self::UnresolvedConst => {
+                f.write_str("const generic reached layout before monomorphization")
             }
         }
     }
@@ -230,6 +299,12 @@ pub trait StructLayoutProvider {
     fn destructor_for_type(&self, _ty: TypeId) -> Option<SymbolId> {
         None
     }
+
+    /// Whether the struct is marked with `#[repr(C)]` / `@Repr("C")` and must
+    /// preserve declaration field order for ABI compatibility.
+    fn is_repr_c(&self, _struct_id: SymbolId) -> bool {
+        false
+    }
 }
 
 /// The physical memory layout engine.
@@ -280,7 +355,113 @@ impl LayoutEngine {
             size: w * 2,
             align,
             field_offsets: vec![0, w],
+            tag_encoding: None,
         }
+    }
+
+    /// Checks whether `ty` has a null niche (i.e. invalid bit-pattern 0x0 of pointer width at offset 0).
+    /// Safe references (`ref T`, `mut ref T`), function pointers (`Func`), and error handles (`Err`)
+    /// are never null. A struct whose first physical field has a null niche also provides a null niche.
+    #[must_use]
+    pub fn has_null_niche(
+        &self,
+        ty: &ArType,
+        interner: &TypeInterner,
+        provider: &dyn StructLayoutProvider,
+    ) -> bool {
+        match ty {
+            ArType::Ref(_) | ArType::RefMut(_) | ArType::Func(_, _) | ArType::Err => true,
+            ArType::Named(sym, args) => {
+                if let Some(fields_def) = provider.get_struct_fields(*sym)
+                    && let Ok(layout) = self.layout_of_type(ty, interner, provider)
+                {
+                    for f in fields_def.iter() {
+                        if layout.field_offsets.get(f.index) == Some(&0) {
+                            let generic_params = provider.get_generic_params(*sym).unwrap_or(&[]);
+                            let arg_ids = interner.type_args(*args);
+                            let subst: FxHashMap<SymbolId, TypeId> = generic_params
+                                .iter()
+                                .copied()
+                                .zip(arg_ids.iter().copied())
+                                .collect();
+                            let field_ty = interner.resolve(f.ty);
+                            let substituted = substitute(&field_ty, &subst, interner);
+                            return self.has_null_niche(&substituted, interner, provider);
+                        }
+                    }
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
+    /// Returns the alignment of the pointed-to object if `ty` is a reference or pointer,
+    /// or a single-field struct wrapping one.
+    pub fn ref_pointee_align(
+        &self,
+        ty: &ArType,
+        interner: &TypeInterner,
+        provider: &dyn StructLayoutProvider,
+    ) -> Option<u64> {
+        match ty {
+            ArType::Ref(inner) | ArType::RefMut(inner) | ArType::Ptr(inner) => {
+                let inner_ty = interner.resolve(*inner);
+                self.layout_of_type(&inner_ty, interner, provider)
+                    .ok()
+                    .map(|l| l.align)
+            }
+            ArType::Named(sym, args) => {
+                if let Some(fields_def) = provider.get_struct_fields(*sym)
+                    && fields_def.len() == 1
+                {
+                    let field = &fields_def.fields[0];
+                    let generic_params = provider.get_generic_params(*sym).unwrap_or(&[]);
+                    let arg_ids = interner.type_args(*args);
+                    let subst: FxHashMap<SymbolId, TypeId> = generic_params
+                        .iter()
+                        .copied()
+                        .zip(arg_ids.iter().copied())
+                        .collect();
+                    let field_ty = interner.resolve(field.ty);
+                    let substituted = substitute(&field_ty, &subst, interner);
+                    self.ref_pointee_align(&substituted, interner, provider)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Returns the [`SooLayout`] for an element type `ty`, calculating how many
+    /// elements fit inline within [`SOO_MAX_INLINE_BYTES`] (24 bytes).
+    pub fn soo_layout_for_type(
+        &self,
+        ty: &ArType,
+        interner: &TypeInterner,
+        provider: &dyn StructLayoutProvider,
+    ) -> Result<SooLayout, LayoutError> {
+        let layout = self.layout_of_type(ty, interner, provider)?;
+        let size = layout.size;
+        let is_inline_eligible = size <= SOO_MAX_INLINE_BYTES;
+        let inline_capacity = SOO_MAX_INLINE_BYTES
+            .checked_div(size)
+            .map_or(usize::MAX, |cap| cap as usize);
+        Ok(SooLayout::new(inline_capacity, is_inline_eligible))
+    }
+
+    /// Checks whether `ty` is eligible for Small Object Optimization (size <= 24 bytes).
+    #[must_use]
+    pub fn is_soo_eligible(
+        &self,
+        ty: &ArType,
+        interner: &TypeInterner,
+        provider: &dyn StructLayoutProvider,
+    ) -> bool {
+        self.layout_of_type(ty, interner, provider)
+            .map(|l| l.size <= SOO_MAX_INLINE_BYTES)
+            .unwrap_or(false)
     }
 
     /// Byte offset of the `len` field in a fat pointer (`str` / slice).
@@ -345,126 +526,73 @@ impl LayoutEngine {
     ) -> Result<TypeLayout, LayoutError> {
         Ok(match ty {
             ArType::Primitive(p) => match p {
-                Primitive::I8 | Primitive::U8 | Primitive::Byte | Primitive::Bool => TypeLayout {
-                    size: 1,
-                    align: 1,
-                    field_offsets: Vec::new(),
-                },
-                Primitive::I16 | Primitive::U16 => TypeLayout {
-                    size: 2,
-                    align: 2,
-                    field_offsets: Vec::new(),
-                },
-                Primitive::I32 | Primitive::U32 | Primitive::F32 => TypeLayout {
-                    size: 4,
-                    align: 4,
-                    field_offsets: Vec::new(),
-                },
-                Primitive::Char => TypeLayout {
-                    size: 4,
-                    align: 4,
-                    field_offsets: Vec::new(),
-                },
+                Primitive::I8 | Primitive::U8 | Primitive::Byte | Primitive::Bool => {
+                    TypeLayout::simple(1, 1)
+                }
+                Primitive::I16 | Primitive::U16 => TypeLayout::simple(2, 2),
+                Primitive::I32 | Primitive::U32 | Primitive::F32 => TypeLayout::simple(4, 4),
+                Primitive::Char => TypeLayout::simple(4, 4),
                 Primitive::Float => {
                     let f = self.data_layout.float;
-                    TypeLayout {
-                        size: f.size,
-                        align: f.abi_align,
-                        field_offsets: Vec::new(),
-                    }
+                    TypeLayout::simple(f.size, f.abi_align)
                 }
                 Primitive::I64 | Primitive::U64 => {
                     let t = self.data_layout.i64;
-                    TypeLayout {
-                        size: t.size,
-                        align: t.abi_align,
-                        field_offsets: Vec::new(),
-                    }
+                    TypeLayout::simple(t.size, t.abi_align)
                 }
                 Primitive::F64 => {
                     let t = self.data_layout.f64;
-                    TypeLayout {
-                        size: t.size,
-                        align: t.abi_align,
-                        field_offsets: Vec::new(),
-                    }
+                    TypeLayout::simple(t.size, t.abi_align)
                 }
-                Primitive::Int | Primitive::Uint => {
+                Primitive::Int | Primitive::Uint => TypeLayout::simple(4, 4),
+                Primitive::ISize | Primitive::USize => {
                     let p = self.data_layout.pointer;
-                    TypeLayout {
-                        size: p.size,
-                        align: p.abi_align,
-                        field_offsets: Vec::new(),
-                    }
+                    TypeLayout::simple(p.size, p.abi_align)
                 }
                 Primitive::Str => self.fat_pointer_layout(),
                 Primitive::Any => {
-                    // Any is dynamic box pointer
                     let p = self.data_layout.pointer;
-                    TypeLayout {
-                        size: p.size,
-                        align: p.abi_align,
-                        field_offsets: Vec::new(),
-                    }
+                    TypeLayout::simple(p.size, p.abi_align)
                 }
             },
-            ArType::IntLiteral => {
-                let p = self.data_layout.pointer;
-                TypeLayout {
-                    size: p.size,
-                    align: p.abi_align,
-                    field_offsets: Vec::new(),
-                }
-            }
+            ArType::IntLiteral => TypeLayout::simple(4, 4),
             ArType::FloatLiteral => {
                 let f = self.data_layout.float;
-                TypeLayout {
-                    size: f.size,
-                    align: f.abi_align,
-                    field_offsets: Vec::new(),
-                }
+                TypeLayout::simple(f.size, f.abi_align)
             }
             // `Err` is a non-null message handle (pointer to a NUL-terminated
             // UTF-8 buffer allocated by `err.new`). Not a ZST — payload of
             // `Result<T, Err>` must be distinguishable from nil.
             ArType::Err => {
                 let p = self.data_layout.pointer;
-                TypeLayout {
-                    size: p.size,
-                    align: p.abi_align,
-                    field_offsets: Vec::new(),
-                }
+                TypeLayout::simple(p.size, p.abi_align)
             }
-            ArType::Void | ArType::Error => TypeLayout {
-                size: 0,
-                align: 1,
-                field_offsets: Vec::new(),
-            },
+            ArType::Void | ArType::Error => TypeLayout::simple(0, 1),
+            ArType::Ref(inner) | ArType::RefMut(inner)
+                if interner.with_type(*inner, |inner| matches!(inner, ArType::Slice(_))) =>
+            {
+                // References to dynamically-sized slices carry both data and
+                // length. Borrow kind is erased after ownership validation.
+                self.fat_pointer_layout()
+            }
             ArType::Ptr(_) | ArType::Ref(_) | ArType::RefMut(_) => {
-                // Safe refs and raw pointers are single machine pointers (fat types later).
+                // References to sized values and raw pointers are one word.
                 let p = self.data_layout.pointer;
-                TypeLayout {
-                    size: p.size,
-                    align: p.abi_align,
-                    field_offsets: Vec::new(),
-                }
+                TypeLayout::simple(p.size, p.abi_align)
             }
             // F2.3: GenRef = {u32 index, u32 generation} — always 8 bytes.
             ArType::GenRef => TypeLayout {
                 size: 8,
                 align: 4,
                 field_offsets: vec![0, 4],
+                tag_encoding: None,
             },
             ArType::Nullable(_) => {
                 // Nullable is always a null-or-pointer handle (box for scalars;
                 // heap object pointer for Named/etc.). Never stores the payload
                 // inline — avoids `int? = 0` colliding with `nil`.
                 let p = self.data_layout.pointer;
-                TypeLayout {
-                    size: p.size,
-                    align: p.abi_align,
-                    field_offsets: Vec::new(),
-                }
+                TypeLayout::simple(p.size, p.abi_align)
             }
             ArType::Slice(_) => self.fat_pointer_layout(),
             ArType::Array(len, inner) => {
@@ -477,7 +605,11 @@ impl LayoutEngine {
                     )?,
                     align: inner_layout.align,
                     field_offsets: Vec::new(),
+                    tag_encoding: None,
                 }
+            }
+            ArType::ConstArray(_, _) | ArType::Const(_) | ArType::ConstParam(_) => {
+                return Err(LayoutError::UnresolvedConst);
             }
             ArType::Tuple(tys) => {
                 let ty_ids = interner.type_args(*tys).to_vec();
@@ -505,16 +637,11 @@ impl LayoutEngine {
                     size: total_size,
                     align: max_align,
                     field_offsets,
+                    tag_encoding: None,
                 }
             }
             ArType::Named(symbol_id, generic_args) => {
                 if let Some(fields_def) = provider.get_struct_fields(*symbol_id) {
-                    // Field entries already carry their index; keep the sort to
-                    // stay robust against out-of-order table construction.
-                    let mut fields_with_indices: Vec<(usize, TypeId)> =
-                        fields_def.iter().map(|f| (f.index, f.ty)).collect();
-                    fields_with_indices.sort_by_key(|x| x.0);
-
                     let generic_params = provider.get_generic_params(*symbol_id).unwrap_or(&[]);
                     let arg_ids = interner.type_args(*generic_args);
                     let subst: FxHashMap<SymbolId, TypeId> = generic_params
@@ -523,24 +650,53 @@ impl LayoutEngine {
                         .zip(arg_ids.iter().copied())
                         .collect();
 
-                    let mut current_offset = 0;
-                    let mut max_align = 1;
-                    let mut field_offsets = Vec::with_capacity(fields_with_indices.len());
+                    struct FieldItem {
+                        orig_index: usize,
+                        layout: TypeLayout,
+                    }
 
-                    for (_, tid) in fields_with_indices {
-                        let ty = interner.resolve(tid);
+                    let mut items = Vec::with_capacity(fields_def.len());
+                    for f in fields_def.iter() {
+                        let ty = interner.resolve(f.ty);
                         let substituted = substitute(&ty, &subst, interner);
                         let layout = self.layout_of_type(&substituted, interner, provider)?;
-                        max_align = max_align.max(layout.align);
+                        items.push(FieldItem {
+                            orig_index: f.index,
+                            layout,
+                        });
+                    }
+
+                    if provider.is_repr_c(*symbol_id) {
+                        items.sort_by_key(|item| item.orig_index);
+                    } else {
+                        // A4.0: Sort by descending alignment, then descending size,
+                        // with original declaration index as a deterministic tie-breaker.
+                        items.sort_by_key(|item| {
+                            (
+                                std::cmp::Reverse(item.layout.align),
+                                std::cmp::Reverse(item.layout.size),
+                                item.orig_index,
+                            )
+                        });
+                    }
+
+                    let mut current_offset = 0;
+                    let mut max_align = 1;
+                    let mut field_offsets = vec![0u64; items.len()];
+
+                    for item in items {
+                        max_align = max_align.max(item.layout.align);
                         current_offset = self.align_up(
                             current_offset,
-                            layout.align,
+                            item.layout.align,
                             LayoutOperation::FieldOffset,
                         )?;
-                        field_offsets.push(current_offset);
+                        if item.orig_index < field_offsets.len() {
+                            field_offsets[item.orig_index] = current_offset;
+                        }
                         current_offset = self.checked_add(
                             current_offset,
-                            layout.size,
+                            item.layout.size,
                             LayoutOperation::FieldOffset,
                         )?;
                     }
@@ -555,47 +711,119 @@ impl LayoutEngine {
                         size: total_size,
                         align: max_align,
                         field_offsets,
+                        tag_encoding: None,
                     }
-                } else if let Some(variants) = provider.get_enum_variants(*symbol_id) {
-                    let tag_size = self.pointer_width();
-                    let mut max_payload_size = 0;
-                    let mut max_payload_align = 1;
-                    for variant in variants {
+                } else if let Some(mut variants) = provider.get_enum_variants(*symbol_id) {
+                    // Enum payload declarations are stored using the enum's
+                    // generic parameters, just like generic struct fields.
+                    // Substitute the concrete arguments before computing the
+                    // layout of `Enum<T>` so `Enum<int>` includes its payload.
+                    let generic_params = provider.get_generic_params(*symbol_id).unwrap_or(&[]);
+                    let arg_ids = interner.type_args(*generic_args);
+                    if !generic_params.is_empty() && !arg_ids.is_empty() {
+                        let subst: FxHashMap<SymbolId, TypeId> = generic_params
+                            .iter()
+                            .copied()
+                            .zip(arg_ids.iter().copied())
+                            .collect();
+                        for variant in &mut variants {
+                            let Some(payload_id) = variant.payload_ty else {
+                                continue;
+                            };
+                            let payload_ty = interner.resolve(payload_id);
+                            let substituted = substitute(&payload_ty, &subst, interner);
+                            variant.payload_ty = Some(interner.intern(substituted));
+                        }
+                    }
+                    let num_variants = variants.len();
+                    let max_tag_bits: u32 = if self.pointer_width() >= 8 { 3 } else { 2 };
+                    let mut all_payloads_eligible = true;
+                    let mut min_payload_align = u64::MAX;
+                    let mut non_unit_count = 0;
+
+                    for variant in &variants {
                         if let Some(payload_ty_id) = variant.payload_ty {
-                            let payload_layout =
-                                self.layout_of(payload_ty_id, interner, provider)?;
-                            if payload_layout.size > max_payload_size {
-                                max_payload_size = payload_layout.size;
-                            }
-                            if payload_layout.align > max_payload_align {
-                                max_payload_align = payload_layout.align;
+                            non_unit_count += 1;
+                            let payload_ty = interner.resolve(payload_ty_id);
+                            if let Some(align) =
+                                self.ref_pointee_align(&payload_ty, interner, provider)
+                            {
+                                if align < min_payload_align {
+                                    min_payload_align = align;
+                                }
+                            } else {
+                                all_payloads_eligible = false;
+                                break;
                             }
                         }
                     }
-                    let max_align = max_payload_align.max(tag_size);
-                    let payload_end =
-                        self.checked_add(tag_size, max_payload_size, LayoutOperation::EnumPayload)?;
-                    let size =
-                        self.align_up(payload_end, max_align, LayoutOperation::AggregatePadding)?;
-                    TypeLayout {
-                        size,
-                        align: max_align,
-                        field_offsets: vec![0, tag_size],
+
+                    let k = if all_payloads_eligible && non_unit_count > 0 && min_payload_align >= 2
+                    {
+                        let tz = min_payload_align.trailing_zeros();
+                        tz.min(max_tag_bits)
+                    } else {
+                        0
+                    };
+
+                    if k >= 1 && num_variants <= (1usize << k) {
+                        let tag_bits = k as u8;
+                        let tag_mask = (1u64 << k) - 1;
+                        let size = self.pointer_width();
+                        let align = self.pointer_width();
+                        TypeLayout {
+                            size,
+                            align,
+                            field_offsets: vec![0],
+                            tag_encoding: Some(TagEncoding::PointerTag {
+                                tag_bits,
+                                tag_mask,
+                                pointer_offset: 0,
+                            }),
+                        }
+                    } else {
+                        let tag_size = self.pointer_width();
+                        let mut max_payload_size = 0;
+                        let mut max_payload_align = 1;
+                        for variant in variants {
+                            if let Some(payload_ty_id) = variant.payload_ty {
+                                let payload_layout =
+                                    self.layout_of(payload_ty_id, interner, provider)?;
+                                if payload_layout.size > max_payload_size {
+                                    max_payload_size = payload_layout.size;
+                                }
+                                if payload_layout.align > max_payload_align {
+                                    max_payload_align = payload_layout.align;
+                                }
+                            }
+                        }
+                        let max_align = max_payload_align.max(tag_size);
+                        let payload_end = self.checked_add(
+                            tag_size,
+                            max_payload_size,
+                            LayoutOperation::EnumPayload,
+                        )?;
+                        let size = self.align_up(
+                            payload_end,
+                            max_align,
+                            LayoutOperation::AggregatePadding,
+                        )?;
+                        TypeLayout {
+                            size,
+                            align: max_align,
+                            field_offsets: vec![0, tag_size],
+                            tag_encoding: Some(TagEncoding::Direct {
+                                tag_size,
+                                payload_offset: tag_size,
+                            }),
+                        }
                     }
                 } else {
-                    TypeLayout {
-                        size: 0,
-                        align: 1,
-                        field_offsets: Vec::new(),
-                    }
+                    TypeLayout::simple(0, 1)
                 }
             }
 
-            ArType::Func(_, _) => TypeLayout {
-                size: self.pointer_width(),
-                align: self.pointer_width(),
-                field_offsets: Vec::new(),
-            },
+            ArType::Func(_, _) => TypeLayout::simple(self.pointer_width(), self.pointer_width()),
             ArType::Result(ok, err) => {
                 let ok_layout = self.layout_of(*ok, interner, provider)?;
                 let err_layout = self.layout_of(*err, interner, provider)?;
@@ -618,32 +846,54 @@ impl LayoutEngine {
                     size: total_size,
                     align: max_align,
                     field_offsets: vec![tag_offset, payload_offset],
+                    tag_encoding: Some(TagEncoding::Direct {
+                        tag_size: self.pointer_width(),
+                        payload_offset,
+                    }),
                 }
             }
             ArType::Option(inner) | ArType::Poll(inner) => {
+                let inner_ty = interner.resolve(*inner);
                 let inner_layout = self.layout_of(*inner, interner, provider)?;
-                let max_align = inner_layout.align.max(self.pointer_width());
-                let tag_offset = 0;
-                let payload_offset = self.pointer_width();
-                let payload_end = self.checked_add(
-                    payload_offset,
-                    inner_layout.size,
-                    LayoutOperation::OptionPayload,
-                )?;
-                let total_size =
-                    self.align_up(payload_end, max_align, LayoutOperation::AggregatePadding)?;
+                if matches!(ty, ArType::Option(_))
+                    && self.has_null_niche(&inner_ty, interner, provider)
+                {
+                    TypeLayout {
+                        size: inner_layout.size,
+                        align: inner_layout.align,
+                        field_offsets: vec![0, 0],
+                        tag_encoding: Some(TagEncoding::Niche {
+                            niche_offset: 0,
+                            niche_size: self.pointer_width(),
+                            niche_value: 0,
+                            untagged_variant: 1,
+                            tagged_variant: 0,
+                        }),
+                    }
+                } else {
+                    let max_align = inner_layout.align.max(self.pointer_width());
+                    let tag_offset = 0;
+                    let payload_offset = self.pointer_width();
+                    let payload_end = self.checked_add(
+                        payload_offset,
+                        inner_layout.size,
+                        LayoutOperation::OptionPayload,
+                    )?;
+                    let total_size =
+                        self.align_up(payload_end, max_align, LayoutOperation::AggregatePadding)?;
 
-                TypeLayout {
-                    size: total_size,
-                    align: max_align,
-                    field_offsets: vec![tag_offset, payload_offset],
+                    TypeLayout {
+                        size: total_size,
+                        align: max_align,
+                        field_offsets: vec![tag_offset, payload_offset],
+                        tag_encoding: Some(TagEncoding::Direct {
+                            tag_size: self.pointer_width(),
+                            payload_offset,
+                        }),
+                    }
                 }
             }
-            ArType::Coroutine(_) => TypeLayout {
-                size: self.pointer_width(),
-                align: self.pointer_width(),
-                field_offsets: Vec::new(),
-            },
+            ArType::Coroutine(_) => TypeLayout::simple(self.pointer_width(), self.pointer_width()),
             ArType::Range(inner) => {
                 let inner_layout = self.layout_of(*inner, interner, provider)?;
                 let align = inner_layout.align;
@@ -658,6 +908,7 @@ impl LayoutEngine {
                     size: total_size,
                     align,
                     field_offsets: vec![start_offset, end_offset],
+                    tag_encoding: None,
                 }
             }
         })
@@ -780,6 +1031,18 @@ fn substitute(ty: &ArType, subst: &FxHashMap<SymbolId, TypeId>, interner: &TypeI
             let new_inner = interner.lookup(&substituted_inner).unwrap_or(*inner);
             ArType::Array(*len, new_inner)
         }
+        ArType::ConstArray(param, inner) => {
+            let inner_ty = interner.resolve(*inner);
+            let substituted_inner = substitute(&inner_ty, subst, interner);
+            let new_inner = interner.intern(substituted_inner);
+            match subst.get(param).map(|&id| interner.resolve(id)) {
+                Some(ArType::Const(length)) => ArType::Array(length, new_inner),
+                _ => ArType::ConstArray(*param, new_inner),
+            }
+        }
+        ArType::ConstParam(param) => subst
+            .get(param)
+            .map_or_else(|| ty.clone(), |&id| interner.resolve(id)),
         ArType::Ptr(inner) => {
             let inner_ty = interner.resolve(*inner);
             let substituted_inner = substitute(&inner_ty, subst, interner);

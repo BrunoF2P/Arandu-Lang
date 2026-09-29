@@ -28,6 +28,7 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
             .iconst(self.ptr_type, layout.size.max(1) as i64);
         let call = self.builder.ins().call(malloc_ref, &[size]);
         let ptr = self.builder.inst_results(call)[0];
+        self.trap_if_null(ptr);
         self.builder
             .ins()
             .store(cranelift_codegen::ir::MemFlagsData::new(), val, ptr, 0);
@@ -99,7 +100,25 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
             }
         }
 
-        self.translate_rvalue_inner(rvalue, expected_ty, expected_ar_type)
+        let mut val = self.translate_rvalue_inner(rvalue, expected_ty, expected_ar_type);
+        if let Some(target_ty) = expected_ty {
+            let val_ty = self.builder.func.dfg.value_type(val);
+            if val_ty != target_ty && val_ty.is_int() && target_ty.is_int() {
+                if val_ty.bits() < target_ty.bits() {
+                    let is_unsigned = expected_ar_type
+                        .map(crate::types::ar_type_is_unsigned_integer)
+                        .unwrap_or(false);
+                    if is_unsigned {
+                        val = self.builder.ins().uextend(target_ty, val);
+                    } else {
+                        val = self.builder.ins().sextend(target_ty, val);
+                    }
+                } else if val_ty.bits() > target_ty.bits() {
+                    val = self.builder.ins().ireduce(target_ty, val);
+                }
+            }
+        }
+        val
     }
 
     fn translate_rvalue_inner(
@@ -116,7 +135,9 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
             AmirRvalue::Use(op) => {
                 let val = self.translate_operand(op, expected_ty);
                 let op_ty = self.get_operand_ar_type(op);
-                if matches!(op, AmirOperand::Copy(_)) && self.is_named_struct_ty(&op_ty) {
+                if matches!(op, AmirOperand::Copy(_) | AmirOperand::Move(_))
+                    && self.is_inline_aggregate_ty(&op_ty)
+                {
                     return self.materialize_ptr_read_copy(val, &op_ty).unwrap_or(val);
                 }
                 val
@@ -126,6 +147,7 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                 self.translate_slice_subslice(slice, start, len, expected_ar_type)
             }
             AmirRvalue::SliceData(slice) => self.translate_slice_data(slice),
+            AmirRvalue::StrBytes { source } => self.translate_str_bytes(source),
             AmirRvalue::StrView { owner } => self.translate_operand(owner, Some(self.ptr_type)),
             AmirRvalue::BlackBox { value, .. } => {
                 let input = self.translate_operand(value, expected_ty);
@@ -193,7 +215,9 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                 value,
                 variant,
                 index,
-            } => self.translate_enum_payload(value, variant, *index, expected_ty),
+                variant_tag,
+                ..
+            } => self.translate_enum_payload(value, variant, *variant_tag, *index, expected_ty),
             AmirRvalue::IndexAccess { base, index } => {
                 self.translate_index_access(base, index, expected_ty)
             }

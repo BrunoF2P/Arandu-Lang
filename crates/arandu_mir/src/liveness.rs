@@ -19,6 +19,9 @@ use crate::{BitMatrix, BitSet};
 pub struct LocalLiveness {
     live_in: Vec<BitSet<LocalId>>,
     live_out: Vec<BitSet<LocalId>>,
+    /// Locals live immediately before each statement and the terminator.
+    /// The final slot in each block is the point before its terminator.
+    live_before: Vec<Vec<BitSet<LocalId>>>,
 }
 
 impl LocalLiveness {
@@ -32,6 +35,15 @@ impl LocalLiveness {
     #[must_use]
     pub fn live_out(&self, block: BlockId) -> &BitSet<LocalId> {
         &self.live_out[block.as_usize()]
+    }
+
+    /// Returns the locals live immediately before a statement, or before the
+    /// terminator when `stmt_index` equals the block's statement count.
+    #[must_use]
+    pub fn live_before(&self, block: BlockId, stmt_index: usize) -> Option<&BitSet<LocalId>> {
+        self.live_before
+            .get(block.as_usize())
+            .and_then(|points| points.get(stmt_index))
     }
 }
 
@@ -68,6 +80,11 @@ pub fn analyze_local_liveness(func: &AmirFunc) -> LocalLiveness {
         return LocalLiveness {
             live_in: vec![BitSet::new(); num_blocks],
             live_out: vec![BitSet::new(); num_blocks],
+            live_before: func
+                .blocks
+                .iter()
+                .map(|block| vec![BitSet::new(); func.block_stmts(block.id).count() + 1])
+                .collect(),
         };
     }
     let mut block_uses = BitMatrix::<BlockId, LocalId>::new(num_blocks, num_locals);
@@ -136,7 +153,41 @@ pub fn analyze_local_liveness(func: &AmirFunc) -> LocalLiveness {
         }
     }
 
-    LocalLiveness { live_in, live_out }
+    let mut live_before = Vec::with_capacity(num_blocks);
+    for block in &func.blocks {
+        let stmts = func.block_stmts(block.id).collect::<Vec<_>>();
+        let mut points = vec![BitSet::<LocalId>::with_capacity(num_locals); stmts.len() + 1];
+        let mut live = live_out[block.id.as_usize()].clone();
+        let empty_defined = BitSet::<LocalId>::with_capacity(num_locals);
+        let mut uses = BitMatrix::<BlockId, LocalId>::new(1, num_locals);
+        let mut defs = BitMatrix::<BlockId, LocalId>::new(1, num_locals);
+        let mut stmt_defs = BitSet::<LocalId>::with_capacity(num_locals);
+        collect_terminator_uses(
+            &block.terminator,
+            &empty_defined,
+            &mut uses,
+            BlockId::from_usize(0),
+        );
+        live.union_with(&uses.row_set(BlockId::from_usize(0)));
+        points[stmts.len()].clone_from(&live);
+        for (index, stmt) in stmts.iter().enumerate().rev() {
+            uses.clear_row(BlockId::from_usize(0));
+            defs.clear_row(BlockId::from_usize(0));
+            stmt_defs.clear();
+            collect_stmt_uses(stmt, &empty_defined, &mut uses, BlockId::from_usize(0));
+            collect_stmt_defs(stmt, &mut stmt_defs, &mut defs, BlockId::from_usize(0));
+            live.difference_with(&defs.row_set(BlockId::from_usize(0)));
+            live.union_with(&uses.row_set(BlockId::from_usize(0)));
+            points[index].clone_from(&live);
+        }
+        live_before.push(points);
+    }
+
+    LocalLiveness {
+        live_in,
+        live_out,
+        live_before,
+    }
 }
 
 /// Backward dataflow: which SSA temps are live-in / live-out per block (F2.2).
@@ -348,6 +399,9 @@ fn collect_stmt_defs(
     {
         defined.insert(lhs.local);
         defs.insert(block, lhs.local);
+    } else if let AmirStmt::StorageDead(local) = stmt {
+        defined.insert(*local);
+        defs.insert(block, *local);
     }
 }
 

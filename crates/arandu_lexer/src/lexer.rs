@@ -110,6 +110,14 @@ impl<'a> Lexer<'a> {
                 if remaining >= 3 && bytes[self.pos + 1] == b'/' && bytes[self.pos + 2] == b'/' {
                     return self.lex_line_doc_comment();
                 } else if remaining >= 3
+                    && bytes[self.pos + 1] == b'/'
+                    && bytes[self.pos + 2] == b'!'
+                {
+                    // Inner doc comment (`//!`): documents the enclosing module
+                    // instead of the following item. Stripped by
+                    // `clean_doc_line` like `///`.
+                    return self.lex_line_doc_comment();
+                } else if remaining >= 3
                     && bytes[self.pos + 1] == b'*'
                     && bytes[self.pos + 2] == b'*'
                 {
@@ -118,6 +126,11 @@ impl<'a> Lexer<'a> {
                     return self.skip_line_comment();
                 } else if remaining >= 2 && bytes[self.pos + 1] == b'*' {
                     return self.skip_block_comment();
+                }
+            }
+            b'b' => {
+                if remaining >= 2 && bytes[self.pos + 1] == b'\'' {
+                    return self.lex_byte_char();
                 }
             }
             b'r' => {
@@ -166,14 +179,38 @@ impl<'a> Lexer<'a> {
         let (newlines, skipped, last_nl) = match self.backend {
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
             SimdBackendKind::Avx2 => unsafe {
+                // SAFETY: `self.backend` is assigned only in `Lexer::new` from
+                // `SimdBackendKind::detect()`, which returns `Avx2` solely after
+                // `is_x86_feature_detected!("avx2")` succeeded on this CPU, so the
+                // callee's AVX2 instructions are supported. The argument is a valid
+                // `&[u8]` subslice of `self.source` (`self.pos <= self.source.len()`
+                // is maintained by the lexer), and the callee bounds every unaligned
+                // 32-byte load with `i + 32 <= bytes.len()`, delegating the tail to
+                // safe scalar code.
                 crate::simd::avx2::skip_whitespace(&self.source.as_bytes()[self.pos..])
             },
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
             SimdBackendKind::Sse2 => unsafe {
+                // SAFETY: `self.backend` is assigned only in `Lexer::new` from
+                // `SimdBackendKind::detect()`, which returns `Sse2` solely after
+                // `is_x86_feature_detected!("sse2")` succeeded on this CPU, so the
+                // callee's SSE2 instructions are supported. The argument is a valid
+                // `&[u8]` subslice of `self.source` (`self.pos <= self.source.len()`
+                // is maintained by the lexer), and the callee bounds every unaligned
+                // 16-byte load with `i + 16 <= bytes.len()`, delegating the tail to
+                // safe scalar code.
                 crate::simd::sse2::skip_whitespace(&self.source.as_bytes()[self.pos..])
             },
             #[cfg(target_arch = "aarch64")]
             SimdBackendKind::Neon => unsafe {
+                // SAFETY: `self.backend` is assigned only in `Lexer::new` from
+                // `SimdBackendKind::detect()`, which returns `Neon` solely after
+                // `is_aarch64_feature_detected!("neon")` succeeded on this CPU, so
+                // the callee's Neon instructions are supported. The argument is a
+                // valid `&[u8]` subslice of `self.source`
+                // (`self.pos <= self.source.len()` is maintained by the lexer), and
+                // the callee bounds every `vld1q_u8` 16-byte load with
+                // `i + 16 <= bytes.len()`, delegating the tail to safe scalar code.
                 crate::simd::neon::skip_whitespace(&self.source.as_bytes()[self.pos..])
             },
             _ => crate::simd::scalar::skip_whitespace(&self.source.as_bytes()[self.pos..]),
@@ -250,14 +287,38 @@ impl<'a> Lexer<'a> {
         let len = match self.backend {
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
             SimdBackendKind::Avx2 => unsafe {
+                // SAFETY: `self.backend` is assigned only in `Lexer::new` from
+                // `SimdBackendKind::detect()`, which returns `Avx2` solely after
+                // `is_x86_feature_detected!("avx2")` succeeded on this CPU, so the
+                // callee's AVX2 instructions are supported. The argument is a valid
+                // `&[u8]` subslice of `self.source` (`self.pos <= self.source.len()`
+                // is maintained by the lexer), the callee bounds every unaligned
+                // 32-byte load with `i + 32 <= bytes.len()`, and it returns a length
+                // `<= bytes.len()`.
                 crate::simd::avx2::scan_identifier(&self.source.as_bytes()[self.pos..])
             },
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
             SimdBackendKind::Sse2 => unsafe {
+                // SAFETY: `self.backend` is assigned only in `Lexer::new` from
+                // `SimdBackendKind::detect()`, which returns `Sse2` solely after
+                // `is_x86_feature_detected!("sse2")` succeeded on this CPU, so the
+                // callee's SSE2 instructions are supported. The argument is a valid
+                // `&[u8]` subslice of `self.source` (`self.pos <= self.source.len()`
+                // is maintained by the lexer), the callee bounds every unaligned
+                // 16-byte load with `i + 16 <= bytes.len()`, and it returns a length
+                // `<= bytes.len()`.
                 crate::simd::sse2::scan_identifier(&self.source.as_bytes()[self.pos..])
             },
             #[cfg(target_arch = "aarch64")]
             SimdBackendKind::Neon => unsafe {
+                // SAFETY: `self.backend` is assigned only in `Lexer::new` from
+                // `SimdBackendKind::detect()`, which returns `Neon` solely after
+                // `is_aarch64_feature_detected!("neon")` succeeded on this CPU, so
+                // the callee's Neon instructions are supported. The argument is a
+                // valid `&[u8]` subslice of `self.source`
+                // (`self.pos <= self.source.len()` is maintained by the lexer), the
+                // callee bounds every `vld1q_u8` 16-byte load with
+                // `i + 16 <= bytes.len()`, and it returns a length `<= bytes.len()`.
                 crate::simd::neon::scan_identifier(&self.source.as_bytes()[self.pos..])
             },
             _ => crate::simd::scalar::scan_identifier(&self.source.as_bytes()[self.pos..]),

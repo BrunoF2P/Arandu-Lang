@@ -30,6 +30,17 @@ pub enum ArType {
     /// Fixed-size array: `[4]float`
     Array(u64, TypeId),
 
+    /// Fixed-size array whose length is a scalar const parameter before
+    /// monomorphization (`[N]T`). Backends must only observe the substituted
+    /// [`Self::Array`] form.
+    ConstArray(SymbolId, TypeId),
+
+    /// Concrete scalar const generic argument.
+    Const(u64),
+
+    /// Reference to a scalar const generic parameter inside a generic type.
+    ConstParam(SymbolId),
+
     /// Pointer type: `ptr[Vec2]` — raw, unsafe to deref without `unsafe`
     Ptr(TypeId),
 
@@ -83,6 +94,35 @@ pub enum ArType {
 }
 
 impl ArType {
+    /// Returns the element type when this value uses the slice-view ABI.
+    ///
+    /// A shared or exclusive borrow of a slice denotes a borrow of the
+    /// dynamically-sized sequence, not a pointer to a `{ data, len }`
+    /// descriptor. Consequently `[]T`, `ref []T`, and `mut ref []T` all use
+    /// the same two-word ABI; ownership and exclusivity remain compile-time
+    /// facts.
+    #[must_use]
+    pub fn slice_abi_element(&self, interner: &TypeInterner) -> Option<TypeId> {
+        match self {
+            Self::Slice(element) => Some(*element),
+            Self::Ref(inner) | Self::RefMut(inner) => interner.with_type(*inner, |inner| {
+                if let Self::Slice(element) = inner {
+                    Some(*element)
+                } else {
+                    None
+                }
+            }),
+            _ => None,
+        }
+    }
+
+    /// Whether this is specifically a borrowed slice view (`ref []T` or
+    /// `mut ref []T`), excluding an ordinary `[]T` value.
+    #[must_use]
+    pub fn is_borrowed_slice_abi(&self, interner: &TypeInterner) -> bool {
+        matches!(self, Self::Ref(_) | Self::RefMut(_)) && self.slice_abi_element(interner).is_some()
+    }
+
     /// Construct a `Named` type, pushing generic args into the interner's pool.
     pub fn named(sym: SymbolId, args: &[TypeId], interner: &TypeInterner) -> Self {
         let range = interner.push_type_args(args);
@@ -231,6 +271,66 @@ impl ArType {
         )
     }
 
+    #[must_use]
+    pub fn is_u8_or_byte(&self) -> bool {
+        matches!(self, ArType::Primitive(Primitive::U8 | Primitive::Byte))
+    }
+
+    /// Exhaustively visit every direct child `TypeId` contained in this type.
+    ///
+    /// This method matches every `ArType` variant explicitly (no wildcard) so that
+    /// adding any new variant to `ArType` immediately alerts the compiler to update
+    /// all type hierarchy visitors.
+    pub fn visit_child_type_ids<F>(&self, interner: &TypeInterner, mut f: F)
+    where
+        F: FnMut(TypeId),
+    {
+        match self {
+            ArType::Primitive(_)
+            | ArType::GenRef
+            | ArType::Err
+            | ArType::Void
+            | ArType::IntLiteral
+            | ArType::FloatLiteral
+            | ArType::Error
+            | ArType::Const(_)
+            | ArType::ConstParam(_) => {}
+            ArType::Named(_, args) => {
+                for arg in interner.type_args(*args) {
+                    f(arg);
+                }
+            }
+            ArType::Func(params, ret) => {
+                for param in interner.type_args(*params) {
+                    f(param);
+                }
+                f(*ret);
+            }
+            ArType::Nullable(inner)
+            | ArType::Slice(inner)
+            | ArType::Array(_, inner)
+            | ArType::ConstArray(_, inner)
+            | ArType::Ptr(inner)
+            | ArType::Ref(inner)
+            | ArType::RefMut(inner)
+            | ArType::Option(inner)
+            | ArType::Coroutine(inner)
+            | ArType::Poll(inner)
+            | ArType::Range(inner) => {
+                f(*inner);
+            }
+            ArType::Tuple(args) => {
+                for arg in interner.type_args(*args) {
+                    f(arg);
+                }
+            }
+            ArType::Result(ok, err) => {
+                f(*ok);
+                f(*err);
+            }
+        }
+    }
+
     /// Produce a human-readable name for this type.
     #[must_use]
     pub fn display(&self, symbols: &SymbolTable, interner: &TypeInterner) -> String {
@@ -276,6 +376,19 @@ impl ArType {
                 let inner_str = interner.resolve(*inner).display(symbols, interner);
                 format!("[{}]{}", size, inner_str)
             }
+            ArType::ConstArray(param, inner) => {
+                let name = symbols
+                    .try_get(*param)
+                    .map(|symbol| symbol.name.as_str())
+                    .unwrap_or("?");
+                let inner = interner.resolve(*inner).display(symbols, interner);
+                format!("[{name}]{inner}")
+            }
+            ArType::Const(value) => value.to_string(),
+            ArType::ConstParam(param) => symbols
+                .try_get(*param)
+                .map(|symbol| symbol.name.to_string())
+                .unwrap_or_else(|| "?".to_string()),
             ArType::Ptr(inner) => {
                 let inner_str = interner.resolve(*inner).display(symbols, interner);
                 format!("ptr[{}]", inner_str)
@@ -370,6 +483,7 @@ impl ArType {
             }
             ArType::IntLiteral
             | ArType::FloatLiteral
+            | ArType::Const(_)
             | ArType::Ptr(_)
             | ArType::Nullable(_)
             | ArType::Ref(_)
@@ -380,6 +494,8 @@ impl ArType {
             ArType::Named(_, _)
             | ArType::Func(_, _)
             | ArType::Array(_, _)
+            | ArType::ConstArray(_, _)
+            | ArType::ConstParam(_)
             | ArType::Tuple(_)
             | ArType::Result(_, _)
             | ArType::Option(_)
@@ -814,5 +930,19 @@ mod tests {
         let s = ty.display(&empty, &i);
         assert!(s.contains('?'), "got {s}");
         assert!(s.contains("int"), "got {s}");
+    }
+
+    #[test]
+    fn test_visit_child_type_ids_exhaustive() {
+        let i = new_interner();
+        let int_tid = i.intern(ArType::Primitive(Primitive::Int));
+        let bool_tid = i.intern(ArType::Primitive(Primitive::Bool));
+        let mut visited = Vec::new();
+        ArType::Result(int_tid, bool_tid).visit_child_type_ids(&i, |tid| visited.push(tid));
+        assert_eq!(visited, vec![int_tid, bool_tid]);
+
+        let mut visited_arr = Vec::new();
+        ArType::Array(5, int_tid).visit_child_type_ids(&i, |tid| visited_arr.push(tid));
+        assert_eq!(visited_arr, vec![int_tid]);
     }
 }
