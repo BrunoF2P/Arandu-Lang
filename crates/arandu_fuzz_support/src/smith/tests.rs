@@ -1037,6 +1037,14 @@ fn independent_output_oracle_rejects_wrong_stderr() {
 }
 
 #[test]
+fn c_output_normalization_removes_crlf_translation_only() {
+    assert_eq!(
+        normalize_captured_output(b"first\r\r\nsecond\nthird\r".to_vec()),
+        b"first\r\nsecond\nthird\r"
+    );
+}
+
+#[test]
 fn generic_owned_value_can_be_returned_and_used_by_every_backend() {
     let source = r#"
 import std.alloc.vec as vec

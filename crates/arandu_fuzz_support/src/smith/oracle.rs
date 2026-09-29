@@ -1299,9 +1299,25 @@ fn execute_c(
     let result = parse_backend_result(&result_bytes, false, "generated C result channel")?;
     Ok(BackendObservation {
         result,
-        stdout: execution.stdout,
-        stderr: execution.stderr,
+        stdout: normalize_captured_output(execution.stdout),
+        stderr: normalize_captured_output(execution.stderr),
     })
+}
+
+/// Windows' C runtime translates LF to CRLF for text-mode stdout/stderr.
+/// Smith compares language-level output across backends, so canonicalize that
+/// transport-level difference while preserving standalone carriage returns.
+pub(super) fn normalize_captured_output(bytes: Vec<u8>) -> Vec<u8> {
+    let mut normalized = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'\r' && bytes.get(index + 1) == Some(&b'\n') {
+            index += 1;
+        }
+        normalized.push(bytes[index]);
+        index += 1;
+    }
+    normalized
 }
 
 fn execute_wasm(
