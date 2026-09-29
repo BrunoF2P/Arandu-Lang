@@ -22,6 +22,36 @@ void test('TextMate grammar delegates colors to the active theme', () => {
     }
 });
 
+void test('TextMate grammar highlights current Arandu keywords and primitive types', () => {
+    const grammarPath = path.resolve(__dirname, '..', '..', '..', 'syntaxes', 'arandu.tmLanguage.json');
+    const grammar = JSON.parse(fs.readFileSync(grammarPath, 'utf8')) as {
+        repository?: Record<string, { patterns?: Array<{ match?: string }> }>;
+    };
+    const keywordPatterns = grammar.repository?.keywords?.patterns ?? [];
+    const primitivePatterns = grammar.repository?.types?.patterns ?? [];
+    const keywordRegex = keywordPatterns.map(pattern => pattern.match ?? '').join('|');
+    const typeRegex = primitivePatterns.map(pattern => pattern.match ?? '').join('|');
+
+    for (const keyword of ['impl', 'internal', 'private', 'ptr', 'alloc', 'free']) {
+        assert.match(keywordRegex, new RegExp(`\\b${keyword}\\b`, 'u'));
+    }
+    for (const type of ['void', 'isize', 'usize']) {
+        assert.match(typeRegex, new RegExp(`\\b${type}\\b`, 'u'));
+    }
+});
+
+void test('block indentation includes impl, defer, and unsafe bodies', () => {
+    const configPath = path.resolve(__dirname, '..', '..', '..', 'language-configuration.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
+        indentationRules?: { increaseIndentPattern?: string };
+    };
+    const increase = new RegExp(config.indentationRules?.increaseIndentPattern ?? '', 'u');
+
+    for (const line of ['impl Printable for Item {', 'defer {', 'unsafe {']) {
+        assert.match(line, increase, `Enter after '${line}' should indent the next line`);
+    }
+});
+
 void test('annotation semantic tokens use the TextMate annotation fallback', () => {
     const manifestPath = path.resolve(__dirname, '..', '..', '..', 'package.json');
     const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as {
@@ -82,5 +112,19 @@ void test('arandu snippets are registered in manifest and define core constructs
     ]) {
         assert.ok(snippets[expectedKey], `Snippet '${expectedKey}' must be present in snippets/arandu.json`);
     }
+    const testBody = snippets['Test Function']?.body;
+    assert.ok(Array.isArray(testBody));
+    assert.equal(testBody[0], '@Test', 'the test snippet must use the compiler-recognized attribute');
 });
 
+void test('package initialization is discoverable and manifest workspaces activate the extension', () => {
+    const manifestPath = path.resolve(__dirname, '..', '..', '..', 'package.json');
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as {
+        activationEvents?: string[];
+        contributes?: { commands?: Array<{ command: string; title: string }> };
+    };
+    assert.ok(manifest.activationEvents?.includes('workspaceContains:**/arandu.toml'));
+    assert.ok(manifest.activationEvents?.includes('workspaceContains:**/Arandu.toml'));
+    assert.ok(manifest.contributes?.commands?.some(command =>
+        command.command === 'arandu.initializePackage' && command.title === 'Arandu: Initialize Package'));
+});

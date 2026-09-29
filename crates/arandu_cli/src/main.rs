@@ -26,11 +26,30 @@ fn main() {
     let use_color = color_choice.should_color_stderr();
 
     let _ = miette::set_hook(Box::new(move |_| {
+        let chars = miette::ThemeCharacters {
+            ltop: '┌',
+            mtop: '┬',
+            rtop: '┐',
+            lbot: '└',
+            mbot: '┴',
+            rbot: '┘',
+            lcross: '├',
+            rcross: '┤',
+            ..miette::ThemeCharacters::unicode()
+        };
+        let theme = miette::GraphicalTheme {
+            characters: chars,
+            styles: if use_color {
+                miette::ThemeStyles::ansi()
+            } else {
+                miette::ThemeStyles::none()
+            },
+        };
         Box::new(
             miette::MietteHandlerOpts::new()
                 .color(use_color)
                 .terminal_links(use_color)
-                .unicode(true)
+                .graphical_theme(theme)
                 .context_lines(2)
                 .tab_width(4)
                 .build(),

@@ -8,11 +8,27 @@
 export interface WebDiagnostic {
   line: number;
   column: number;
+  endLine: number;
+  endColumn: number;
   length: number;
+  fileId: number;
   severity: "error" | "warning" | "info";
   code?: string;
   message: string;
+  primaryLabel?: string | null;
+  labels: WebDiagnosticLabel[];
   notes: string[];
+}
+
+export interface WebDiagnosticLabel {
+  fileId: number;
+  start: number;
+  end: number;
+  line: number | null;
+  column: number | null;
+  endLine: number | null;
+  endColumn: number | null;
+  message: string;
 }
 
 export interface CompileResult {
@@ -83,10 +99,15 @@ export class AranduCompiler {
           {
             line: 1,
             column: 1,
+            endLine: 1,
+            endColumn: 2,
             length: 1,
+            fileId: 0,
             severity: "error",
             code: "ICE001",
             message: "Fatal: internal compiler failure",
+            primaryLabel: null,
+            labels: [],
             notes: []
           }
         ]

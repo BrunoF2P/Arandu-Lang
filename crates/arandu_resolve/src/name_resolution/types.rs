@@ -121,7 +121,8 @@ impl<'a> Resolver<'a> {
             DiagCode::N002UndefinedType,
             format!("type '{root}' is not declared"),
             name.span,
-        );
+        )
+        .with_primary_label(format!("type `{root}` not found"));
         if let Some(suggestion) = self.suggest_type(scope, root) {
             diagnostic = diagnostic.with_hint(format!("did you mean '{suggestion}'?"));
         }

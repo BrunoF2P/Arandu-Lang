@@ -107,7 +107,7 @@
                 },
                 {
                     "name": "keyword.declaration.arandu",
-                    "match": "\\b(func|async|await|struct|enum|interface|const|type|module|import|from|as|public|extern|unsafe|let|mut|set|own|shared|ref)\\b"
+                    "match": "\\b(func|async|await|struct|enum|interface|const|type|module|import|from|as|public|internal|private|extern|unsafe|impl|let|mut|set|own|shared|ref|ptr|alloc|free)\\b"
                 }
             ]
         },
@@ -115,7 +115,7 @@
             "patterns": [
                 {
                     "name": "support.type.primitive.arandu",
-                    "match": "\\b(int|uint|float|i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|bool|byte|char|str|any|err)\\b"
+                    "match": "\\b(void|int|uint|isize|usize|float|i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|bool|byte|char|str|any|err)\\b"
                 },
                 {
                     "name": "entity.name.type.arandu",

@@ -51,6 +51,29 @@ fn parse_error_reports_expected_tokens_and_found_token() {
 }
 
 #[test]
+fn parser_diagnostics_use_clear_user_facing_messages() {
+    let cases = [
+        ("ss", "Expected a declaration here, but found `ss`."),
+        (
+            "module tests.syntax\nfunc main() {\n    let value = 1 + }\n",
+            "Expected an expression here, but found `}`.",
+        ),
+        (
+            "module tests.syntax\nfunc main(): ",
+            "Expected a type here, but found the end of the file.",
+        ),
+    ];
+
+    for (source, expected) in cases {
+        let parse_error = parse(source).expect_err("source should be rejected");
+        let diagnostic: arandu_diagnostics::Diagnostic = parse_error.into();
+        assert_eq!(diagnostic.message, expected);
+        assert!(!diagnostic.message.contains("(found "));
+        assert!(!diagnostic.message.contains("top-level"));
+    }
+}
+
+#[test]
 fn import_aliases_reject_reserved_keywords() {
     let alias = "module tests.alias\nimport std.core.char as if\nfunc main(): void {}\n";
     assert!(

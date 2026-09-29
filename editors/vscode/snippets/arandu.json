@@ -189,6 +189,7 @@
     "Test Function": {
         "prefix": ["test", "testfunc"],
         "body": [
+            "@Test",
             "func test_${1:feature}(): void {",
             "\t$0",
             "}"

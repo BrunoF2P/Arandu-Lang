@@ -59,6 +59,25 @@ function format(source) {
   return formatted;
 }
 
+console.log('Testing browser diagnostic payloads and related labels...');
+const syntaxDiagnostic = compile('unexpected_token').diagnostics[0];
+if (
+  !syntaxDiagnostic ||
+  syntaxDiagnostic.message !== 'Expected a declaration here, but found `unexpected_token`.' ||
+  typeof syntaxDiagnostic.endLine !== 'number' ||
+  typeof syntaxDiagnostic.endColumn !== 'number' ||
+  typeof syntaxDiagnostic.fileId !== 'number' ||
+  !Array.isArray(syntaxDiagnostic.labels)
+) {
+  throw new Error(`Unexpected parser diagnostic payload: ${JSON.stringify(syntaxDiagnostic)}`);
+}
+
+const typedDiagnostic = compile('public func main(): i32 { return "wrong" }')
+  .diagnostics.find((diagnostic) => diagnostic.code === 'T004');
+if (!typedDiagnostic || typedDiagnostic.labels.length === 0) {
+  throw new Error(`Type diagnostic did not retain its related labels: ${JSON.stringify(typedDiagnostic)}`);
+}
+
 console.log('Testing in-browser formatter WebAssembly...');
 const unformatted = 'public func main():i32{return 42;}';
 const formatted = format(unformatted);

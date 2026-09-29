@@ -158,11 +158,16 @@ pub(crate) fn compute_diagnostics(
                 })
                 .collect();
             let data = ide::DiagnosticData {
+                primary_label: d.primary_label.as_deref().map(str::to_owned),
                 notes: d.notes.clone(),
                 hints: d.hints.iter().map(|hint| hint.message.clone()).collect(),
                 fixes,
             };
             let mut message = d.message.clone();
+            if let Some(primary_label) = d.primary_label.as_deref() {
+                message.push_str("\n\n");
+                message.push_str(primary_label);
+            }
             for note in &d.notes {
                 message.push_str("\n\nnote: ");
                 message.push_str(note);

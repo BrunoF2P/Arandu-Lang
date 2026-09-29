@@ -27,6 +27,7 @@ pub struct DiagnosticFixData {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiagnosticData {
+    pub primary_label: Option<String>,
     pub notes: Vec<String>,
     pub hints: Vec<String>,
     pub fixes: Vec<DiagnosticFixData>,

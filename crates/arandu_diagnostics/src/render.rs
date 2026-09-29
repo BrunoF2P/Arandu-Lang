@@ -103,7 +103,7 @@ impl miette::Diagnostic for Diagnostic {
 
     fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
         let primary = std::iter::once(miette::LabeledSpan::new_primary_with_span(
-            None,
+            self.primary_label.as_deref().cloned(),
             miette::SourceSpan::new(
                 (self.span.start as usize).into(),
                 (self.span.end.saturating_sub(self.span.start)) as usize,
@@ -145,5 +145,43 @@ impl miette::Diagnostic for Diagnostic {
                 self.code.as_str()
             )))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{DiagCode, Span};
+
+    #[test]
+    fn miette_uses_a_short_primary_label_and_preserves_secondary_labels() {
+        let diagnostic = Diagnostic::error(
+            DiagCode::P001UnexpectedToken,
+            "Expected an expression here, but found `}`.",
+            Span::new(1, 4, 5),
+        )
+        .with_primary_label("unexpected token here")
+        .with_label(Span::new(1, 0, 3), "expression starts here");
+
+        let labels = miette::Diagnostic::labels(&diagnostic)
+            .expect("diagnostic should expose source labels")
+            .collect::<Vec<_>>();
+        assert_eq!(labels[0].label(), Some("unexpected token here"));
+        assert_ne!(labels[0].label(), Some(diagnostic.message.as_str()));
+        assert_eq!(labels[1].label(), Some("expression starts here"));
+    }
+
+    #[test]
+    fn miette_leaves_unannotated_primary_spans_without_inline_text() {
+        let diagnostic = Diagnostic::error(
+            DiagCode::P001UnexpectedToken,
+            "Expected an expression here, but found `}`.",
+            Span::new(1, 4, 5),
+        );
+
+        let label = miette::Diagnostic::labels(&diagnostic)
+            .and_then(|mut labels| labels.next())
+            .expect("diagnostic should expose the primary source span");
+        assert_eq!(label.label(), None);
     }
 }

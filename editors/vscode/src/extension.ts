@@ -13,7 +13,7 @@ import { discoverServer } from './serverDiscovery';
 import { CrashRestartPolicy } from './serverLifecycle';
 import { registerRunnableCodeLens } from './runnableLens';
 import { checkServerVersion } from './serverVersion';
-import { TestingIntegration, createTestingIntegration } from './testing';
+import { TestingIntegration, createTestingIntegration, discoverCli } from './testing';
 
 const STOP_TIMEOUT_MS = 2_000;
 
@@ -85,11 +85,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<Arandu
     context.subscriptions.push(vscode.commands.registerCommand('arandu.initializePackage', () => {
         const folder = vscode.workspace.workspaceFolders?.find(candidate => candidate.uri.scheme === 'file');
         if (!folder) {
+            void vscode.window.showErrorMessage('Open a folder before initializing an Arandu package.');
+            return;
+        }
+        const cli = discoverCli(context, folder.uri.fsPath);
+        if (!cli) {
+            void vscode.window.showErrorMessage('Could not find the Arandu CLI. Configure arandu.cli.path.');
             return;
         }
         const terminal = vscode.window.createTerminal({ name: 'Arandu: Initialize Package', cwd: folder.uri.fsPath });
         terminal.show();
-        terminal.sendText('arandu_cli init', false);
+        terminal.sendText(`${quoteCommand(cli)} init`);
     }));
 
     testingIntegration = createTestingIntegration(context, fileWatcher, traceOutputChannel);
@@ -213,9 +219,9 @@ async function startLanguageServer(
                 singleFileNoticeShown = true;
                 void vscode.window.showInformationMessage(
                     status.message ?? 'No arandu.toml found. Arandu is analyzing files individually.',
-                    'Prepare package initialization'
+                    'Initialize Package'
                 ).then(action => {
-                    if (action === 'Prepare package initialization') {
+                    if (action === 'Initialize Package') {
                         void vscode.commands.executeCommand('arandu.initializePackage');
                     }
                 });
@@ -329,8 +335,9 @@ function setStatus(
     }
     switch (state) {
         case 'starting':
-            statusBarItem.text = '$(sync~spin) Arandu';
+            statusBarItem.text = '$(sync~spin) Arandu: Starting';
             statusBarItem.tooltip = 'Arandu Language Server: Starting';
+            statusBarItem.command = 'arandu.showServerLogs';
             break;
         case 'ready':
             statusBarItem.text = '$(check) Arandu';
@@ -339,25 +346,36 @@ function setStatus(
             break;
         case 'single-file':
             statusBarItem.text = '$(warning) Arandu';
-            statusBarItem.tooltip = `${detail ?? 'Single-file analysis'} Click to prepare arandu_cli init.`;
+            statusBarItem.tooltip = `${detail ?? 'Single-file analysis'} Click to initialize an Arandu package.`;
             statusBarItem.command = 'arandu.initializePackage';
             break;
         case 'indexing':
-            statusBarItem.text = '$(sync~spin) Arandu';
+            statusBarItem.text = '$(sync~spin) Arandu: Indexing';
             statusBarItem.tooltip = detail ?? 'Arandu Language Server: Indexing';
+            statusBarItem.command = 'arandu.showServerLogs';
             break;
         case 'restarting':
-            statusBarItem.text = '$(sync~spin) Arandu';
+            statusBarItem.text = '$(sync~spin) Arandu: Restarting';
             statusBarItem.tooltip = detail ?? 'Arandu Language Server: Restarting';
+            statusBarItem.command = 'arandu.showServerLogs';
             break;
         case 'missing':
             statusBarItem.text = '$(warning) Arandu';
             statusBarItem.tooltip = detail ?? 'Arandu Language Server: Executable not found';
+            statusBarItem.command = 'arandu.showServerLogs';
             break;
         case 'stopped':
             statusBarItem.text = '$(error) Arandu';
             statusBarItem.tooltip = detail ?? 'Arandu Language Server: Stopped';
+            statusBarItem.command = 'arandu.restartServer';
             break;
     }
     statusBarItem.show();
+}
+
+function quoteCommand(value: string): string {
+    if (/^[A-Za-z0-9_./:=@+-]+$/.test(value)) {
+        return value;
+    }
+    return `"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
 }

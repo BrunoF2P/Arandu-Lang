@@ -72,6 +72,17 @@ export async function run(): Promise<void> {
         assert.equal(unresolved.source, 'arandu');
         assert.ok(unresolved.range.end.isAfter(unresolved.range.start));
 
+        const validUri = vscode.Uri.joinPath(workspace.uri, 'project', 'entry.aru');
+        const validDiagnosticsChanged = waitForDiagnosticsChange(validUri);
+        const validDocument = await vscode.workspace.openTextDocument(validUri);
+        await vscode.window.showTextDocument(validDocument);
+        const validDiagnostics = await validDiagnosticsChanged;
+        assert.deepEqual(
+            validDiagnostics,
+            [],
+            `valid Arandu project source must not produce false diagnostics: ${validUri.fsPath}`
+        );
+
         const runnableTitles = await poll(async () => {
             const lenses = await vscode.commands.executeCommand<readonly vscode.CodeLens[]>(
                 'vscode.executeCodeLensProvider',
@@ -238,6 +249,23 @@ async function verifyNavigationAndRename(workspace: vscode.WorkspaceFolder): Pro
 function diagnosticCode(diagnostic: vscode.Diagnostic): string | number | undefined {
     const code = diagnostic.code;
     return typeof code === 'object' ? code.value : code;
+}
+
+function waitForDiagnosticsChange(uri: vscode.Uri): Promise<readonly vscode.Diagnostic[]> {
+    return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+            subscription.dispose();
+            reject(new Error(`Timed out waiting for diagnostics for ${uri.fsPath}`));
+        }, TIMEOUT_MS);
+        const subscription = vscode.languages.onDidChangeDiagnostics(event => {
+            if (!event.uris.some(changed => changed.toString() === uri.toString())) {
+                return;
+            }
+            clearTimeout(timeout);
+            subscription.dispose();
+            resolve(vscode.languages.getDiagnostics(uri));
+        });
+    });
 }
 
 function completionItemLabel(item: vscode.CompletionItem): string {

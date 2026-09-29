@@ -106,10 +106,13 @@ async function runTestFromLens(
     }
     try {
         const status = await testing.runTestById(uri, functionName);
-        const suffix = status === 'passed' || status === 'skipped'
-            ? status
-            : `${status} — see the Test Explorer for details`;
-        vscode.window.showInformationMessage(`Arandu test ${suffix}`);
+        if (status === 'passed' || status === 'skipped') {
+            void vscode.window.showInformationMessage(`Arandu test ${functionName} ${status}.`);
+        } else {
+            await vscode.window.showErrorMessage(
+                `Arandu test ${functionName} ${status} — see the Test Explorer for details.`
+            );
+        }
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
         output.error(`Test execution failed: ${message}`);
