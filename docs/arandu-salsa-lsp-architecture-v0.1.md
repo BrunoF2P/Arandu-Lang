@@ -27,23 +27,61 @@ impedem o LSP de publicar resultados de buffers/revisões obsoletos.
 | Query | Estado |
 |-------|--------|
 | `parse`, `resolve`, `module_signatures`, `type_check`, `lower_amir` | Reais |
+| `declaration_signatures` | Assinaturas declarativas; imports não solicitam contratos derivados de corpos nem MIR final |
+| `item_typing` / `file_typing` | Checker canônico contra declarações; sem dependência dos contratos de fluxo |
+| `prepare_hir` / `borrow_interfaces` | HIR/mono compartilhados; projeção de contratos antes da validação final |
 | `local_symbols`, `exported_symbols`, `func_amir` | Reais |
-| `ctfe_func_amir` / `ctfe_eval` | Internas, escalares locais não genéricas; imports ainda não staged |
+| `ctfe_func_amir` / `ctfe_eval` | Internas, escalares não genéricas; chamadas importadas rastreadas por unidade |
 | `liveness_facts` | Real (`arandu_mir::liveness`) |
 | `block_dataflow_facts` | live/init/moved/stmt counts por bloco |
 | `func_analysis_diags` / `block_diagnostics` / `file_ide_diagnostics` | F4 — diags IDE memoizados |
 | DX.5 `RebuildLog` | Opt-in (`-Zexplain-rebuild`) |
 
 `func_amir` de runtime projeta sobre `lower_amir` program-wide. O caminho
-interno CTFE é distinto: `item_source_input` e `item_body_typeck`, com
-`module_signatures`/alvo, alimentam o lowering HIR canônico de apenas uma
+interno CTFE é distinto: `item_source_input` e `item_typing`, com
+`declaration_signatures`/alvo, alimentam o lowering HIR canônico de apenas uma
 função; sua AMIR possui pool próprio e descritores escalares resolvidos.
 `ctfe_eval` rastreia unidades chamadas sob demanda, argumentos e orçamento.
 Valor igual permite cutoff downstream; cancelamento usa unwind Salsa, não um
 erro cacheado. Essa fronteira não completa granularidade por instância de
-runtime nem habilita `comptime` no LSP. Imports são rejeitados porque a cadeia
-atual de assinaturas/interfaces de empréstimo pode pedir lowering final;
-separá-la é requisito do staging público, não algo a mascarar nesta query.
+runtime nem habilita `comptime` no LSP. Chamadas diretas a funções importadas
+escalares não genéricas são admitidas, inclusive aliases/imports transitivos,
+sem pedir interfaces de empréstimo, HIR global ou MIR final. Imports ausentes
+ou cíclicos são rejeitados; a VM mantém seus limites e rejeições de efeitos.
+
+`declaration_signatures` é a fronteira inicial dessa separação: importa somente
+as assinaturas declarativas, reutilizando o checker e os inputs existentes.
+Contratos inferíveis da própria declaração continuam presentes, mas não são
+substitutos da análise de fluxo. `module_signatures` mantém a visão compatível
+usada pelos consumidores de ownership: compõe as declarações com
+`borrow_interfaces` dos imports. `item_body_typeck` compartilha o memo de
+`item_typing` e recompõe essa metadata, sem rodar outro checker. A recuperação
+IDE preserva a composição. Uma mudança somente na origem retornada recompõe
+ownership, mas não retipa o caller se os tipos declarados continuarem iguais.
+A validação de atributos/testes também consulta somente declarações, para não
+reintroduzir indiretamente a dependência de fluxo em `file_typing`.
+
+`borrow_interfaces` não chama mais `lower_amir`. Usa `prepare_hir`, cuja HIR
+canônica e monomorphização são compartilhadas por Arc com o caminho final.
+`arandu_mir::lower_borrow_interfaces` baixa apenas funções com retorno que pode
+carregar empréstimos e usa o mesmo solver de ponto fixo. Não executa a validação
+interprocedural final nem a promoção de escapes. Módulos sem candidatos não
+precisam de body typing/HIR para publicar seus contratos declarados/herdados.
+O caminho final continua baixando e validando todas as funções, inclusive as
+que a projeção dispensou. Produzir um contrato não certifica segurança do corpo.
+
+O estágio HIR ainda é program-wide. Seu fingerprint conservador cobre fontes
+tipadas vinculadas, resultado de tipos e diagnósticos; não usa `Debug` ou
+endereços como identidade. Cutoff semântico continua na projeção dos contratos.
+Funções emprestadas são baixadas novamente pelo caminho final para obter AMIR
+owned/validada; não há deep-clone de HIR ou `AmirProgram`. Reuso completo de
+unidades/pools e granularidade por instância permanecem para o marco 0.3.
+Testes de staging provam ausência de body typecheck/lowering ao consultar
+declarações, cutoff independente de mudanças na origem do empréstimo,
+invalidação por mudança de tipo declarado, ciclos e preservação de ownership
+por imports transitivos/recuperação sintática, equivalência dos contratos
+projetados/finais em recursão e monomorphização, reuso do estágio HIR e rejeição
+final de um sibling inseguro dispensado pela projeção.
 
 ### I/O de fonte
 

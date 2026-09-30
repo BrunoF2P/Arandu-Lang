@@ -108,7 +108,7 @@ a única autoridade para ordem e status.
 | CT.1 — alvo e layout | `planned` | Configuração explícita validada e contrato compartilhado com `LayoutEngine`; comprovar larguras, alinhamentos e rejeição de combinações sem backend real. |
 | CT.2 — VM AMIR pura | `in progress`; VM escalar limitada interna | CFG, chamadas diretas, locais, fuel compartilhado, limites de frames/slots e cancelamento implementados. Completar efeitos, contexto de falha, paridade e agregados sem recursos de runtime. |
 | CT.3 — superfície e especialização | `planned` | Entregas sucessivas de expressão/bloco, parâmetros compatíveis, seleção `comptime if` e expansão finita `comptime for`; produzir AMIR residual válida para os três backends. |
-| CT.4 — Salsa e editor | `in progress`; recorte interno local não genérico | `ctfe_func_amir` baixa só o item; queries provam cutoff de irmãos/consumidores e cancelamento sem memoizar falha. Imports/instâncias, staging público e LSP responsivo com diagnóstico estruturado permanecem pendentes. |
+| CT.4 — Salsa e editor | `in progress`; recorte interno escalar não genérico com imports | `ctfe_func_amir` baixa só o item e rastreia callees importados; queries provam cutoff de irmãos/consumidores, equivalência ao clean e cancelamento sem memoizar falha. Instâncias, staging público e LSP responsivo com diagnóstico estruturado permanecem pendentes. |
 | CT.5 — layout público e release | `planned` | `@sizeOf`/`@alignOf` compartilham a semântica de `mem.sizeOf<T>()`/`mem.alignOf<T>()`; corpus real, Smith, matriz nativa, playground e extensão validados. |
 
 **Primeira entrega executável:** uma chamada pura com argumentos constantes,
@@ -129,8 +129,14 @@ continuam fora deste núcleo, com desenho próprio.
 **Dívida preservada:** O2 continua `experimental`; granularidade completa do
 lowering permanece no marco `0.3` da RFC 0011. CTFE exige um caminho tipado sem
 ciclos para suas unidades, não a reescrita de todo o pipeline incremental AOT.
-`ctfe_func_amir` adianta um recorte local não genérico do lowering por função;
+`ctfe_func_amir` adianta um recorte escalar não genérico do lowering por função;
 não muda `func_amir` de runtime nem comprova o gate completo de 0.3.
+`declaration_signatures` separa a consulta declarativa dos contratos derivados
+de corpos: consultar imports nessa fronteira não pede MIR final. A visão
+`module_signatures` preserva a composição usada pelo ownership. O produtor
+`borrow_interfaces` agora projeta retornos emprestados antes da validação final,
+sobre HIR/mono compartilhados; não chama `lower_amir`. Esse estágio continua
+program-wide, e unidades/pools por instância ainda precisam de desacoplamento.
 A pressão de resultados LSP e o soak SL_T (10 execuções verdes em ≥7 dias)
 continuam classificados em suas trilhas; async/effects públicos, LLVM,
 closures, cache remoto e self-hosting não são pré-requisitos desta campanha.

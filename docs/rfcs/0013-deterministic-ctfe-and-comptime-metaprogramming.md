@@ -51,7 +51,7 @@ um valor isolado antes do backend.
 
 O projeto já tem componentes que ajudam — AMIR, queries Salsa, `DataLayout` e
 const generics escalares. A campanha atual acrescentou uma VM escalar limitada
-interna e queries de lowering/avaliação locais não genéricas; isso ainda não
+interna e queries de lowering/avaliação escalares não genéricas com imports; isso ainda não
 constitui a superfície pública `comptime` nem um modelo completo de alvo.
 O [plano da campanha](../campaigns/0.1.9-comptime-core.md) delimita o contrato
 efetivamente implementado. Em particular:
@@ -62,8 +62,12 @@ efetivamente implementado. Em particular:
 - const generics atualmente aceitam tipos inteiros escalares;
 - `func_amir` é uma projeção sobre o lowering program-wide, não uma cadeia real
   de lowering incremental por instância.
-- `ctfe_func_amir` baixa apenas o corpo selecionado, sem lowering global, mas
-  ainda rejeita arquivos com imports e funções genéricas por falta de staging.
+- `ctfe_func_amir` baixa apenas o corpo selecionado, sem lowering global,
+  e consulta callees importados sob demanda; funções genéricas ainda são rejeitadas.
+- `declaration_signatures` já permite consultar imports sem baixar corpos;
+  a visão compatível `module_signatures` compõe contratos de empréstimo
+  projetados antes da validação final. O produtor compartilha HIR/mono, mas esse
+  estágio continua program-wide; granularidade completa por instância é pendente.
 
 Essas limitações orientam a divisão em etapas. Não se deve prometer que CTFE
 evitará toda reexecução incremental: Salsa pode cortar propagação quando uma
