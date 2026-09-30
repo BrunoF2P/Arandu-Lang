@@ -32,12 +32,14 @@ impedem o LSP de publicar resultados de buffers/revisões obsoletos.
 | `prepare_hir` / `borrow_interfaces` | HIR/mono compartilhados; projeção de contratos antes da validação final |
 | `local_symbols`, `exported_symbols`, `func_amir` | Reais |
 | `ctfe_func_amir` / `ctfe_eval` | Internas, escalares não genéricas; chamadas importadas rastreadas por unidade |
+| `declaration_hir` / `function_hir` / `instance_hir` | Produtor interno de um corpo concreto; callees são assinaturas sem corpo |
+| `runtime_raw_unit` / `instance_contracts` / `runtime_unit` | Lowering, convergência de contratos e validação separados por instância; ainda não são o caminho da CLI/CGU |
 | `liveness_facts` | Real (`arandu_mir::liveness`) |
 | `block_dataflow_facts` | live/init/moved/stmt counts por bloco |
 | `func_analysis_diags` / `block_diagnostics` / `file_ide_diagnostics` | F4 — diags IDE memoizados |
 | DX.5 `RebuildLog` | Opt-in (`-Zexplain-rebuild`) |
 
-`func_amir` de runtime projeta sobre `lower_amir` program-wide. O caminho
+`func_amir` de compatibilidade ainda projeta sobre `lower_amir` program-wide. O caminho
 interno CTFE é distinto: `item_source_input` e `item_typing`, com
 `declaration_signatures`/alvo, alimentam o lowering HIR canônico de apenas uma
 função; sua AMIR possui pool próprio e descritores escalares resolvidos.
@@ -70,7 +72,7 @@ precisam de body typing/HIR para publicar seus contratos declarados/herdados.
 O caminho final continua baixando e validando todas as funções, inclusive as
 que a projeção dispensou. Produzir um contrato não certifica segurança do corpo.
 
-O estágio HIR ainda é program-wide. Seu fingerprint conservador cobre fontes
+O estágio HIR de compatibilidade ainda é program-wide. Seu fingerprint conservador cobre fontes
 tipadas vinculadas, resultado de tipos e diagnósticos; não usa `Debug` ou
 endereços como identidade. Cutoff semântico continua na projeção dos contratos.
 Funções emprestadas são baixadas novamente pelo caminho final para obter AMIR
@@ -82,6 +84,47 @@ invalidação por mudança de tipo declarado, ciclos e preservação de ownershi
 por imports transitivos/recuperação sintática, equivalência dos contratos
 projetados/finais em recursão e monomorphização, reuso do estágio HIR e rejeição
 final de um sibling inseguro dispensado pela projeção.
+
+### Produtor interno de runtime por instância
+
+`function_hir` combina o item tipado com `declaration_hir` dos módulos
+registrados. Apenas o corpo selecionado é baixado; a mesma rotina canônica de
+declarações produz assinaturas, constantes, modos de parâmetros/receptor e
+metadata nominal sem ler corpos irmãos. Não há outro parser ou checker.
+
+`FunctionInstance` preserva o `SymbolId` composto da definição e argumentos
+`TypeShape` estruturais. `TypeId` e ranges de argumentos são locais ao interner,
+nunca identidades entre unidades. A leitura/escrita estrutural é limitada a
+128 níveis e 4096 nós, incluindo expansão de DAGs; IDs/ranges inválidos falham.
+O hash inclui filhos, variantes e o valor completo de argumentos constantes.
+
+`instance_hir` especializa somente o corpo solicitado usando a máquina de
+substituição existente. Callees genéricos ganham apenas assinaturas concretas
+e um mapa de símbolos locais para chaves estruturais; suas AMIRs não são
+dependências do lowering do caller. `runtime_raw_unit` conserva contexto de
+tipos/símbolos, literais e metadata de debug próprios. Não certifica segurança.
+
+`instance_contracts` percorre a closure de chamadas com retorno emprestado,
+limitada a 4096 unidades e com cancelamento entre unidades/transferências.
+Resolve contratos por ponto fixo usando a transferência canônica do MIR em
+cada domínio de tipos. SCCs começam sem origens inferidas: compatibilidade de
+assinatura não demonstra que uma recursão devolve empréstimo de um formal.
+Os summaries publicados usam caminhos/índices formais, sem IDs de interner.
+`runtime_unit` compartilha a AMIR bruta memoizada e produz uma cópia owned da
+função para anotar chamadas e aplicar a mesma validação M2/escape/promoção do
+caminho global. Não copia `AmirProgram` nem corpos de outras funções.
+
+Testes exigem cutoff do lowering do caller ao editar um callee, atualização da
+origem emprestada sem rebaixar o caller, recursão com origens reais, rejeição de
+recursão sem prova e O010 para retorno local. A especialização visita também
+init/step de loops C-style. Pools são compostos pela rotina MIR compartilhada;
+visitors mutáveis incluem projeções e todos os argumentos de terminadores.
+
+**Limite de integração:** estes produtores ainda não substituem `lower_amir`,
+`func_amir`, a descoberta global de instâncias ou a composição de metadata
+consumida pelos backends/CGUs. O remapeamento global de tipos/símbolos e os
+gates clean/incremental, paridade de backends e CPU/RSS continuam pendentes.
+Validar uma unidade não certifica seus callees nem um programa completo.
 
 ### I/O de fonte
 

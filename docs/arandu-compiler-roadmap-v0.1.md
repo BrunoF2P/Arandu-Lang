@@ -136,7 +136,11 @@ de corpos: consultar imports nessa fronteira não pede MIR final. A visão
 `module_signatures` preserva a composição usada pelo ownership. O produtor
 `borrow_interfaces` agora projeta retornos emprestados antes da validação final,
 sobre HIR/mono compartilhados; não chama `lower_amir`. Esse estágio continua
-program-wide, e unidades/pools por instância ainda precisam de desacoplamento.
+program-wide. Há agora produtores internos `function_hir`, `instance_hir`,
+`runtime_raw_unit`, `instance_contracts` e `runtime_unit`, com um corpo por
+instância e contratos convergidos sem HIR/MIR global. Eles ainda não substituem
+o compositor CLI/CGU: remapeamento global de tipos/símbolos/pools, migração dos
+consumidores e gates de paridade/performance continuam pendentes.
 A pressão de resultados LSP e o soak SL_T (10 execuções verdes em ≥7 dias)
 continuam classificados em suas trilhas; async/effects públicos, LLVM,
 closures, cache remoto e self-hosting não são pré-requisitos desta campanha.
