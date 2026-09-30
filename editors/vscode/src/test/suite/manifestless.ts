@@ -33,7 +33,7 @@ export async function run(): Promise<void> {
 
         const extension = vscode.extensions.getExtension('arandu.arandu-lang');
         assert.ok(extension, 'Arandu extension was not installed in the Extension Host');
-        await extension.activate();
+        await withTimeout(extension.activate(), 'Arandu manifestless extension activation');
         const api = extension.exports as AranduExtensionApi;
         await poll(() => api.getRuntimeState().state === 'single-file' ? true : undefined);
 
@@ -90,12 +90,45 @@ function waitForDiagnosticsChange(uri: vscode.Uri): Promise<readonly vscode.Diag
 
 async function poll<T>(read: () => T | undefined | Promise<T | undefined>): Promise<T> {
     const deadline = Date.now() + TIMEOUT_MS;
+    let lastError: unknown;
     while (Date.now() < deadline) {
-        const value = await read();
-        if (value !== undefined) {
-            return value;
+        try {
+            const value = await withTimeout(
+                Promise.resolve().then(read),
+                'polled manifestless Extension Host operation',
+                deadline - Date.now()
+            );
+            if (value !== undefined) {
+                return value;
+            }
+        } catch (error: unknown) {
+            lastError = error;
         }
         await new Promise(resolve => setTimeout(resolve, 50));
     }
-    throw new Error('Timed out waiting for the manifestless Arandu language server');
+    const detail = lastError instanceof Error ? `: ${lastError.message}` : '';
+    throw new Error(`Timed out waiting for the manifestless Arandu language server${detail}`);
+}
+
+async function withTimeout<T>(
+    operation: PromiseLike<T>,
+    label: string,
+    timeoutMs = TIMEOUT_MS
+): Promise<T> {
+    let timeout: NodeJS.Timeout | undefined;
+    try {
+        return await Promise.race([
+            Promise.resolve(operation),
+            new Promise<never>((_resolve, reject) => {
+                timeout = setTimeout(
+                    () => reject(new Error(`${label} did not finish within ${timeoutMs}ms`)),
+                    timeoutMs
+                );
+            })
+        ]);
+    } finally {
+        if (timeout) {
+            clearTimeout(timeout);
+        }
+    }
 }

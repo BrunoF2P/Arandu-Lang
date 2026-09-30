@@ -25,7 +25,11 @@ async function main(): Promise<void> {
     const aranduCliPath = process.env.ARANDU_CLI_TEST_PATH
         ? path.resolve(process.env.ARANDU_CLI_TEST_PATH)
         : path.join(repositoryRoot, 'target', 'debug', cliName);
-    const profileRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'arandu-vscode-installed-'));
+    // VS Code's macOS IPC socket includes the user-data path and has a short
+    // Unix-domain socket limit. Keep the profile under /tmp with a short name
+    // instead of inheriting the long per-user /var/folders path.
+    const profileBase = process.platform === 'darwin' ? '/tmp' : os.tmpdir();
+    const profileRoot = fs.mkdtempSync(path.join(profileBase, 'av-'));
     const userDataPath = path.join(profileRoot, 'user-data');
     const extensionsPath = path.join(profileRoot, 'extensions');
 
@@ -38,6 +42,16 @@ async function main(): Promise<void> {
     if (!fs.existsSync(aranduCliPath)) {
         throw new Error(`Arandu CLI test binary missing: ${aranduCliPath}`);
     }
+
+    // The workspace manifest activates the VSIX as soon as the window opens.
+    // Provide the installed SDK paths before startup so activation cannot wait
+    // on a missing-server prompt or accidentally select the bundled server.
+    const settingsPath = path.join(userDataPath, 'User', 'settings.json');
+    fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+    fs.writeFileSync(settingsPath, JSON.stringify({
+        'arandu.server.path': serverPath,
+        'arandu.cli.path': aranduCliPath
+    }, null, 2));
 
     const vscodeExecutablePath = await downloadAndUnzipVSCode(VSCODE_VERSION);
     const [cliPath, ...cliArgs] = resolveCliArgsFromVSCodeExecutablePath(vscodeExecutablePath);

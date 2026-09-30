@@ -148,13 +148,13 @@ async function startLanguageServer(
         for (const candidate of result.failure.checked) {
             traceOutputChannel?.debug(`Checked ${candidate}`);
         }
-        await reportMissingServer(result.failure.message);
+        reportMissingServer(result.failure.message);
         return;
     }
 
     const version = await checkServerVersion(result.resolution.command);
     if (!version.ok) {
-        await reportMissingServer(
+        reportMissingServer(
             `The Arandu Language Server found at ${result.resolution.command} (via ${result.resolution.source}) does not respond to --version. The binary may be damaged or not be arandu-lsp.`
         );
         return;
@@ -312,17 +312,32 @@ async function handleCrashLoopAction(
     }
 }
 
-async function reportMissingServer(message: string): Promise<void> {
+function reportMissingServer(message: string): void {
     setStatus('missing', message);
     traceOutputChannel?.error(message);
-    const action = await vscode.window.showErrorMessage(message, 'Install SDK', 'Open Settings');
-    if (action === 'Install SDK') {
-        await vscode.env.openExternal(
-            vscode.Uri.parse('https://github.com/arandu-lang/arandu#readme')
-        );
-    } else if (action === 'Open Settings') {
-        await vscode.commands.executeCommand('workbench.action.openSettings', 'arandu.server.path');
-    }
+    // Activation must not wait for a user to dismiss the notification. Keeping
+    // this UI action detached lets VS Code finish activation and exposes the
+    // `missing` state to callers and tests immediately.
+    void vscode.window.showErrorMessage(message, 'Install SDK', 'Open Settings').then(
+        async action => {
+            try {
+                if (action === 'Install SDK') {
+                    await vscode.env.openExternal(
+                        vscode.Uri.parse('https://github.com/arandu-lang/arandu#readme')
+                    );
+                } else if (action === 'Open Settings') {
+                    await vscode.commands.executeCommand('workbench.action.openSettings', 'arandu.server.path');
+                }
+            } catch (error: unknown) {
+                const detail = error instanceof Error ? error.message : String(error);
+                traceOutputChannel?.error(`Failed to handle missing-server action: ${detail}`);
+            }
+        },
+        (error: unknown) => {
+            const detail = error instanceof Error ? error.message : String(error);
+            traceOutputChannel?.error(`Failed to handle missing-server action: ${detail}`);
+        }
+    );
 }
 
 function setStatus(
