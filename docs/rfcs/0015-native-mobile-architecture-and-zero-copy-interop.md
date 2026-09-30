@@ -327,7 +327,7 @@ Como a query depende estritamente da árvore semântica exportada (`exported_sym
 
 1. **Early-Cutoff de Queries Salsa**: A query `mobile_bindings_for_file` utiliza hashing estrutural. Adições de linhas, comentários ou refatorações de código privado em arquivos Arandu produzem a mesma saída hash-estável, impedindo recompilações em cascata no Gradle ou Xcode.
 2. **Pureza e Determinismo Estritos**: A geração de bindings é 100% pura: sem I/O de disco, sem `fs::write` no hot-path de análise e sem dependência de variáveis de ambiente não rastreadas.
-3. **Integridade de `SymbolId` e `TargetInfo`**: A exportação móvel respeita o layout exato de `TargetInfo::aarch64_apple_darwin()` e `TargetInfo::aarch64_linux_android()`. Alinhamentos de struct, tamanhos de ponteiro (64 bits) e preenchimento de campos obedecem estritamente às especificações da plataforma de destino.
+3. **Integridade de `SymbolId` e configuração de alvo**: a implementação deverá validar a plataforma e usar o `DataLayout` correspondente para alinhamento, tamanho de ponteiros e preenchimento de campos. Os construtores de alvo AArch64 citados em versões anteriores desta proposta não existem ainda; o descritor canônico de triple/ABI precisa ser definido antes de esta RFC poder exigir esses detalhes.
 4. **Recuperação Resiliente sem Pânico**: Declarações com uso incorreto de `@mobile` (por exemplo, exportação de tipos que contêm ponteiros crus sem garantia de confinamento) emitem diagnósticos formais (`N...` ou `T...`) com sugestões de correção estruturadas, sem nunca executar `unwrap()` ou `panic!`.
 
 ### 5.2. Desvantagens e Custos de Complexidade

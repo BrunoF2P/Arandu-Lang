@@ -132,6 +132,13 @@ pub struct Diagnostic {
     pub message: String,
     /// Primary source location that the message refers to.
     pub span: Span,
+    /// Short annotation shown directly on the primary span in the source view.
+    ///
+    /// When `None`, the primary span is underlined without any inline text.
+    /// Use this for specific, concise context (e.g. `` "unexpected `ss`" ``,
+    /// `"value moved here"`). Avoid repeating the top-level `message`.
+    /// The box keeps this frequently returned error type compact.
+    pub primary_label: Option<Box<String>>,
     /// Secondary annotated spans for additional context.
     pub labels: Vec<Label>,
     /// Free-form explanatory notes appended after the main message.
@@ -149,6 +156,7 @@ impl Diagnostic {
             kind: DiagnosticKind::User,
             message: message.into(),
             span,
+            primary_label: None,
             labels: Vec::new(),
             notes: Vec::new(),
             hints: Vec::new(),
@@ -163,6 +171,7 @@ impl Diagnostic {
             kind: DiagnosticKind::User,
             message: message.into(),
             span,
+            primary_label: None,
             labels: Vec::new(),
             notes: Vec::new(),
             hints: Vec::new(),
@@ -177,6 +186,7 @@ impl Diagnostic {
             kind: DiagnosticKind::User,
             message: message.into(),
             span,
+            primary_label: None,
             labels: Vec::new(),
             notes: Vec::new(),
             hints: Vec::new(),
@@ -191,6 +201,7 @@ impl Diagnostic {
             kind: DiagnosticKind::User,
             message: message.into(),
             span,
+            primary_label: None,
             labels: Vec::new(),
             notes: Vec::new(),
             hints: Vec::new(),
@@ -214,10 +225,29 @@ impl Diagnostic {
             kind: DiagnosticKind::InternalCompilerError,
             message: message.into(),
             span,
+            primary_label: None,
             labels: Vec::new(),
             notes: Vec::new(),
             hints: Vec::new(),
         }
+    }
+
+    /// Sets a short annotation shown directly on the primary span in the source view.
+    ///
+    /// Keep it concise — the full error is already in the top-level message.
+    /// Good: `` "unexpected `ss`" ``, `"value moved here"`.
+    /// Avoid repeating the top-level message.
+    #[must_use]
+    pub fn with_primary_label(mut self, label: impl Into<String>) -> Self {
+        self.primary_label = Some(Box::new(label.into()));
+        self
+    }
+
+    /// Sets the primary label only when `label` is `Some`.
+    #[must_use]
+    pub fn with_primary_label_opt(mut self, label: Option<String>) -> Self {
+        self.primary_label = label.map(Box::new);
+        self
     }
 
     /// Attaches a secondary source label to this diagnostic.

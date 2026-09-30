@@ -45,17 +45,17 @@ Uma RFC evolui através dos seguintes estados formais:
 | [0010](0010-cst-resilient-ide-typeck.md) | Pipeline CST-First Resiliente e Typeck Incremental | Frontend / IDE | `Implemented` | 2026-07-20 |
 | [0011](0011-incremental-partitioned-aot-and-in-process-linker.md) | Pipeline AOT Incremental, Codegen Particionado e Linker In-Process | Backend / Incremental | `Draft` | 2026-09-12 |
 | [0012](0012-scientific-computing-and-data-architecture.md) | Arquitetura da Stack de Computação Científica, Numérica e de Dados | Ecosystem (Out-of-Tree) | `Draft` | 2026-09-12 |
-| [0013](0013-deterministic-ctfe-and-comptime-metaprogramming.md) | Metaprogramação Determinística em Tempo de Compilação (CTFE & Comptime) via AMIR VM | Frontend / Middle-end | `Draft` | 2026-09-12 |
+| [0013](0013-deterministic-ctfe-and-comptime-metaprogramming.md) | CTFE determinístico e `comptime` core via AMIR | Frontend / Middle-end / Incrementalidade | `Draft` | 2026-09-12 |
 | [0014](0014-native-wasm-component-model-and-runtime.md) | Backend WebAssembly Nativo com Component Model (WIT), Compilação Incremental e Paralelismo Determinístico | Backend | `Draft` | 2026-09-13 |
 | [0015](0015-native-mobile-architecture-and-zero-copy-interop.md) | Arquitetura Mobile Nativa, Interoperabilidade Zero-Copy e Pipeline de Bindings Multiplataforma | Backend / Tooling | `Draft` | 2026-09-13 |
 | [0016](0016-capability-safe-filesystem-and-path-resolution.md) | Sistema de Arquivos Orientado a Capacidades e Resolução Segura de Caminhos | Stdlib / Runtime / Tooling | `Draft` | 2026-09-19 |
 | [0017](0017-lean-freestanding-core-architecture.md) | Arquitetura Fundamental do `arandu_core` — Camada Freestanding e Zero-Heap | Stdlib / Core / Embedded | `Draft` | 2026-09-19 |
 | [0018](0018-pretty-idiomatic-c-codegen.md) | Emissor C Idiomático, Estruturado e Legível (*Pretty & Idiomatic C Codegen*) | Backend / Codegen | `Draft` | 2026-09-19 |
 | [0019](0019-zero-bloat-target-and-shared-cache.md) | Arquitetura de Cache Global Compartilhado e Prevenção de Inchaço de Build (*Zero-Bloat Target*) | Tooling / Build / Storage | `Draft` | 2026-09-19 |
-| [0020](0020-native-packaging-and-python-eradication.md) | Empacotamento Nativo, Validação de Arquivos e Erradicação de Python via `xtask` e CLI | Tooling / Distribution / CI | `Draft` | 2026-09-20 |
-| [0021](0021-visibility-and-module-surface.md) | Visibilidade Granular e Superfície de Módulo (`internal`, `sealed`, re-exports) | Frontend / Middle-end / Tooling | `Draft` | 2026-09-21 |
-| [0022](0022-holistic-synthesis-differential-fuzzing.md) | Síntese Holística de Programas, Testes Diferenciais Multi-Backend e Fuzzing Incremental (`AranduSmith`) | Tooling / Middle-end / Backend | `Draft` | 2026-09-22 |
-| [0023](0023-portable-default-integer-model.md) | Modelo Portável de Inteiros Padrão e Tipos de Largura do Alvo | Frontend / Middle-end / Backend / Stdlib | `Draft` | 2026-09-24 |
+| [0020](0020-native-packaging-and-python-eradication.md) | Empacotamento Nativo, Validação de Arquivos e Erradicação de Python via `xtask` e CLI | Tooling / Distribution / CI | `Implemented` | 2026-09-20 |
+| [0021](0021-visibility-and-module-surface.md) | Visibilidade Granular e Superfície de Módulo (`internal`, `sealed`, re-exports) | Frontend / Middle-end / Tooling | `Implemented` | 2026-09-21 |
+| [0022](0022-holistic-synthesis-differential-fuzzing.md) | Síntese Holística de Programas, Testes Diferenciais Multi-Backend e Fuzzing Incremental (`AranduSmith`) | Tooling / Middle-end / Backend | `Implemented` | 2026-09-22 |
+| [0023](0023-portable-default-integer-model.md) | Modelo Portável de Inteiros Padrão e Tipos de Largura do Alvo | Frontend / Middle-end / Backend / Stdlib | `Implemented` | 2026-09-24 |
 
 ---
 

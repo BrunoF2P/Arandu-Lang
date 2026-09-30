@@ -45,8 +45,13 @@ impl<'a> Resolver<'a> {
             DiagCode::N001UndefinedValue,
             format!("value '{name}' is not declared"),
             span,
-        );
-        if let Some(suggestion) = self.suggest_value(scope, name) {
+        )
+        .with_primary_label(format!("`{name}` not found"));
+        if super::PRELUDE_MODULES.contains(&name) {
+            diagnostic = diagnostic.with_hint(format!(
+                "add `import {name}` at the top of this file to use this standard-library module"
+            ));
+        } else if let Some(suggestion) = self.suggest_value(scope, name) {
             diagnostic = diagnostic.with_hint(format!("did you mean '{suggestion}'?"));
         }
         self.diagnostics.push(diagnostic);

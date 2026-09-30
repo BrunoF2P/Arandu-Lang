@@ -2,7 +2,7 @@
     "name": "arandu-lang",
     "displayName": "Arandu Language Support",
     "description": "VS Code support for the Arandu Programming Language",
-    "version": "0.1.7",
+    "version": "0.1.8",
     "publisher": "arandu",
     "license": "MIT",
     "preview": true,
@@ -35,7 +35,9 @@
     ],
     "main": "./out/extension.js",
     "activationEvents": [
-        "onLanguage:arandu"
+        "onLanguage:arandu",
+        "workspaceContains:**/arandu.toml",
+        "workspaceContains:**/Arandu.toml"
     ],
     "contributes": {
         "languages": [
@@ -108,6 +110,10 @@
             }
         },
         "commands": [
+            {
+                "command": "arandu.initializePackage",
+                "title": "Arandu: Initialize Package"
+            },
             {
                 "command": "arandu.restartServer",
                 "title": "Arandu: Restart Language Server"

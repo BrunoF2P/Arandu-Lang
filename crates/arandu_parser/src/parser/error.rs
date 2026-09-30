@@ -112,9 +112,83 @@ impl From<ParseError> for arandu_diagnostics::Diagnostic {
                 arandu_diagnostics::DiagCode::P001UnexpectedToken
             }
         };
-        let msg = format!("{} (found {})", err.message, err.found);
+        let msg = user_facing_message(&err);
+        let primary_label =
+            if err.code != ParseErrorCode::Lex && err.code != ParseErrorCode::InvalidResultReturn {
+                let found = if err.found.as_ref() == "end of file" {
+                    "end of file".to_string()
+                } else {
+                    format!("`{}`", err.found)
+                };
+                Some(format!("unexpected {found}"))
+            } else {
+                None
+            };
         arandu_diagnostics::Diagnostic::error(diag_code, msg, err.span)
+            .with_primary_label_opt(primary_label)
     }
+}
+
+fn user_facing_message(err: &ParseError) -> String {
+    if err.code == ParseErrorCode::Lex || err.code == ParseErrorCode::InvalidResultReturn {
+        return err.message.to_string();
+    }
+
+    if err.code == ParseErrorCode::ExpectedTopLevelDecl
+        && err.message.as_ref() != "expected top-level declaration"
+    {
+        return err.message.to_string();
+    }
+
+    let expectation = match err.code {
+        ParseErrorCode::ExpectedTopLevelDecl => "a declaration".to_string(),
+        ParseErrorCode::ExpectedExpression if err.message.as_ref() == "expected expression" => {
+            "an expression".to_string()
+        }
+        ParseErrorCode::ExpectedExpression
+            if err.message.as_ref() == "expected type-qualified expression or struct literal" =>
+        {
+            "an expression or struct literal".to_string()
+        }
+        ParseErrorCode::ExpectedExpression => {
+            err.message.trim_start_matches("expected ").to_string()
+        }
+        ParseErrorCode::ExpectedType if err.message.as_ref() == "expected type" => {
+            "a type".to_string()
+        }
+        ParseErrorCode::ExpectedType => err.message.trim_start_matches("expected ").to_string(),
+        ParseErrorCode::ExpectedPlace => {
+            "a variable, field, or indexed value on the left side of an assignment".to_string()
+        }
+        ParseErrorCode::ExpectedToken => match err.message.as_ref() {
+            "expected identifier" => "a name".to_string(),
+            "expected value identifier" => "a variable or function name".to_string(),
+            "expected type identifier" => "a type name".to_string(),
+            "expected member name" => "a member name".to_string(),
+            "expected module path segment" => "a module name".to_string(),
+            "expected static ABI string" => "a string literal naming the ABI".to_string(),
+            "expected assignment operator" => "an assignment operator".to_string(),
+            "expected array size" => "an array size".to_string(),
+            "expected string part" => "a string segment".to_string(),
+            "expected string content" => "string content".to_string(),
+            "expected import identifier" => "an imported name".to_string(),
+            message => {
+                let phrase = message.trim_start_matches("expected ");
+                if err.expected.len() == 1 && err.expected[0] == phrase {
+                    format!("`{phrase}`")
+                } else {
+                    phrase.to_string()
+                }
+            }
+        },
+        ParseErrorCode::Lex | ParseErrorCode::InvalidResultReturn => err.message.to_string(),
+    };
+    let found = if err.found.as_ref() == "end of file" {
+        "the end of the file".to_string()
+    } else {
+        format!("`{}`", err.found)
+    };
+    format!("Expected {expectation} here, but found {found}.")
 }
 
 impl fmt::Display for ParseError {

@@ -5,6 +5,7 @@ pub mod bench;
 pub mod build;
 pub mod doc;
 pub mod doctor;
+pub mod fmt;
 pub mod hash;
 pub mod project;
 pub mod run;
@@ -17,6 +18,39 @@ use crate::args::{self, parse_benchmark_percentage, parse_benchmark_seconds, usa
 use crate::cli_error::{CliResult, CliSuccess};
 use crate::pipeline::{fail_usage, is_project_target};
 use crate::test_runner;
+
+/// Canonical commands used by dispatch validation and shell completions.
+pub const COMMAND_NAMES: &[&str] = &[
+    "run",
+    "build",
+    "check",
+    "test",
+    "bench",
+    "doc",
+    "new",
+    "init",
+    "watch",
+    "clean",
+    "tree",
+    "audit",
+    "vendor",
+    "verify",
+    "update",
+    "fmt",
+    "doctor",
+    "cache",
+    "lex",
+    "parse",
+    "hir",
+    "amir",
+    "graph",
+    "emit-c",
+    "emit-wasm",
+    "emit-component",
+    "hash-file",
+    "completions",
+    "archive",
+];
 
 pub fn run(raw_args: Vec<String>) -> CliResult {
     let inv = args::parse_invocation(raw_args);
@@ -36,10 +70,37 @@ pub fn run(raw_args: Vec<String>) -> CliResult {
     if inv.args.len() < 2 {
         usage_and_exit();
     }
+    if matches!(inv.args.get(1).map(String::as_str), Some("-h" | "--help")) {
+        println!("{}", args::global_help());
+        return Ok(CliSuccess::Done);
+    }
 
     let command = inv.args[1].as_str();
+    if args::command_help(command).is_some()
+        && inv.args[2..]
+            .iter()
+            .any(|arg| matches!(arg.as_str(), "-h" | "--help"))
+    {
+        println!("{}", args::command_help(command).unwrap_or_default());
+        return Ok(CliSuccess::Done);
+    }
     if !inv.program_args.is_empty() && command != "run" {
         fail_usage("arguments after `--` are supported only by `arandu run`");
+    }
+    if inv.watch && command != "check" {
+        fail_usage(
+            "--watch is currently supported by 'arandu check'; use 'arandu watch' for the package watch command",
+        );
+    }
+    if inv.watch
+        && inv
+            .args
+            .get(2)
+            .is_some_and(|path| !is_project_target(Some(path)))
+    {
+        fail_usage(
+            "'arandu check --watch' requires a package directory or Arandu.toml, not a single .aru file",
+        );
     }
     if inv.project_flags.accept_lock && command != "update" {
         fail_usage("--accept is valid only with 'arandu update'");
@@ -47,10 +108,34 @@ pub fn run(raw_args: Vec<String>) -> CliResult {
 
     // ── Project / environment commands (no mandatory .aru path) ──────────
     match command {
+        "completions" => {
+            if inv.args.len() != 3 {
+                fail_usage("usage: arandu completions <bash|zsh|fish|powershell>");
+            }
+            print_completions(&inv.args[2]);
+            return Ok(CliSuccess::Done);
+        }
+        "fmt" => {
+            let mut check_only = false;
+            let mut paths = Vec::new();
+            for arg in &inv.args[2..] {
+                if arg == "--check" {
+                    check_only = true;
+                } else if arg.starts_with('-') {
+                    fail_usage(format!("unknown option for fmt: {arg}"));
+                } else {
+                    paths.push(PathBuf::from(arg));
+                }
+            }
+            if paths.is_empty() {
+                paths.push(PathBuf::from("."));
+            }
+            return fmt::cmd_format_paths(&paths, check_only, inv.quiet);
+        }
         "archive" => return archive::cmd_archive(&inv.args),
         "doc" => return doc::cmd_doc(&inv.args, &inv.project_flags, inv.data_layout),
-        "new" => return project::cmd_new(&inv.args),
-        "init" => return project::cmd_init(&inv.args),
+        "new" => return project::cmd_new(&inv.args, inv.quiet),
+        "init" => return project::cmd_init(&inv.args, inv.quiet),
         "doctor" => {
             if inv.args.len() != 2 {
                 fail_usage("usage: arandu_cli doctor [--stdlib-path=<dir>] [-v]");
@@ -78,7 +163,7 @@ pub fn run(raw_args: Vec<String>) -> CliResult {
             } else {
                 env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
             };
-            return project::cmd_clean(&start);
+            return project::cmd_clean(&start, inv.quiet);
         }
         "tree" | "verify" | "audit" | "vendor" | "update" => {
             let start = if inv.args.len() >= 3 {
@@ -362,6 +447,9 @@ pub fn run(raw_args: Vec<String>) -> CliResult {
                 env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
             };
             if command == "check" {
+                if inv.watch {
+                    return crate::watch::cmd_watch(&start, &inv.project_flags, inv.data_layout);
+                }
                 return run::cmd_project_check(
                     &start,
                     &inv.project_flags,
@@ -383,6 +471,21 @@ pub fn run(raw_args: Vec<String>) -> CliResult {
         _ => {}
     }
 
+    if !COMMAND_NAMES.contains(&command) {
+        let suggestion = COMMAND_NAMES
+            .iter()
+            .map(|candidate| (*candidate, edit_distance(command, candidate)))
+            .filter(|(_, distance)| *distance <= 2)
+            .min_by_key(|(_, distance)| *distance)
+            .map(|(candidate, _)| candidate);
+        match suggestion {
+            Some(candidate) => fail_usage(format!(
+                "error: unknown command '{command}'. Did you mean '{candidate}'?"
+            )),
+            None => fail_usage(format!("error: unknown command '{command}'")),
+        }
+    }
+
     // ── Legacy single-path commands ──────────────────────────────────────
     if inv.args.len() != 3 {
         usage_and_exit();
@@ -400,11 +503,75 @@ pub fn run(raw_args: Vec<String>) -> CliResult {
             | "emit-wasm"
             | "emit-component"
             | "graph"
-            | "fmt"
     ) {
         usage_and_exit();
     }
 
     let target_path = Path::new(&inv.args[2]);
     run::cmd_single_file_dispatch(command, target_path, &inv)
+}
+
+fn print_completions(shell: &str) {
+    let commands = COMMAND_NAMES.join(" ");
+    match shell {
+        "bash" => println!(
+            "_arandu() {{\n  local cur=\"${{COMP_WORDS[COMP_CWORD]}}\"\n  COMPREPLY=( $(compgen -W \"{commands} --help --version --release --target --layout --quiet --verbose\" -- \"$cur\") )\n}}\ncomplete -F _arandu arandu arandu_cli"
+        ),
+        "zsh" => println!(
+            "#compdef arandu arandu_cli\n_arguments '1:command:({commands})' '*:argument: '"
+        ),
+        "fish" => {
+            for binary in ["arandu", "arandu_cli"] {
+                for command in COMMAND_NAMES {
+                    println!("complete -c {binary} -n '__fish_use_subcommand' -a '{command}'");
+                }
+            }
+            for binary in ["arandu", "arandu_cli"] {
+                println!("complete -c {binary} -l help -s h -d 'Show help'");
+                println!("complete -c {binary} -l version -s V -d 'Show version'");
+                println!("complete -c {binary} -l quiet -s q -d 'Suppress status output'");
+            }
+        }
+        "powershell" => {
+            let mut output = String::from(
+                "Register-ArgumentCompleter -CommandName arandu,arandu_cli -ScriptBlock {",
+            );
+            output.push('\n');
+            output.push_str(
+                "  param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)",
+            );
+            output.push('\n');
+            output.push_str("  $commands = @(");
+            for command in COMMAND_NAMES {
+                output.push('\'');
+                output.push_str(command);
+                output.push_str("',");
+            }
+            output.push_str(
+                "'--help','--version','--release','--target','--layout','--quiet','--verbose')",
+            );
+            output.push('\n');
+            output.push_str("  $commands | Where-Object { $_ -like ($wordToComplete + '*') } | ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }");
+            output.push('\n');
+            output.push('}');
+            println!("{output}");
+        }
+        other => fail_usage(format!(
+            "unsupported shell '{other}'; expected bash, zsh, fish, or powershell"
+        )),
+    }
+}
+
+fn edit_distance(left: &str, right: &str) -> usize {
+    let mut previous: Vec<usize> = (0..=right.chars().count()).collect();
+    for (row, left_char) in left.chars().enumerate() {
+        let mut current = vec![row + 1; previous.len()];
+        for (column, right_char) in right.chars().enumerate() {
+            current[column + 1] = (previous[column + 1] + 1)
+                .min(current[column] + 1)
+                .min(previous[column] + usize::from(left_char != right_char));
+        }
+        previous = current;
+    }
+    previous.last().copied().unwrap_or_default()
 }

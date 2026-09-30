@@ -28,7 +28,13 @@ pub fn cmd_project_run(
         ));
     }
     ensure_host_jit_layout(data_layout)?;
-    let (mut db, rebuild_log) = arandu_query::DatabaseImpl::with_rebuild_log();
+    let explain_rebuild = arandu_base::EXPLAIN_REBUILD.load(std::sync::atomic::Ordering::Relaxed);
+    let (mut db, rebuild_log) = if flags.verbose || explain_rebuild {
+        let (db, log) = arandu_query::DatabaseImpl::with_rebuild_log();
+        (db, Some(log))
+    } else {
+        (arandu_query::DatabaseImpl::new(), None)
+    };
     db.set_target_config(data_layout);
     let ctx = match project::load_project(&mut db, start, flags) {
         Ok(c) => c,
@@ -43,7 +49,11 @@ pub fn cmd_project_run(
     let mut registry = arandu_base::SourceRegistry::default();
     let (file, filepath) = open_entry_file(&db, &mut registry, &ctx.entry_path);
     let artifacts = pipeline_lower(&db, file, &filepath);
-    eprintln!("{}", rebuild_log.status_line());
+    if !flags.quiet
+        && let Some(log) = &rebuild_log
+    {
+        eprintln!("{}", log.status_line());
+    }
 
     let type_check = &artifacts.type_check;
     let mut amir_owned = if opt {
@@ -183,40 +193,6 @@ pub fn cmd_single_file_dispatch(
         );
     }
 
-    if command == "fmt" {
-        let mut changed = 0usize;
-        for p in &paths {
-            let src = match fs::read_to_string(p) {
-                Ok(s) => s,
-                Err(err) => {
-                    fail_operational("failed to read", Some(p.clone()), err.to_string());
-                }
-            };
-            if src.len() > arandu_fmt::MAX_FORMAT_SOURCE_BYTES {
-                fail_operational(
-                    "format source",
-                    Some(p.clone()),
-                    format!(
-                        "source exceeds the formatter limit of {} bytes",
-                        arandu_fmt::MAX_FORMAT_SOURCE_BYTES
-                    ),
-                );
-            }
-            let formatted = arandu_fmt::format_source(&src);
-            if formatted != src {
-                if let Err(err) = fs::write(p, &formatted) {
-                    fail_operational("failed to write", Some(p.clone()), err.to_string());
-                }
-                changed += 1;
-                eprintln!("formatted {}", p.display());
-            }
-        }
-        if changed == 0 {
-            eprintln!("already formatted ({} file(s))", paths.len());
-        }
-        return Ok(CliSuccess::Done);
-    }
-
     let use_parallel = parallel || paths.len() > 1;
     if use_parallel && command != "check" {
         fail_operational(
@@ -230,7 +206,7 @@ pub fn cmd_single_file_dispatch(
     }
 
     let explain = arandu_base::EXPLAIN_REBUILD.load(std::sync::atomic::Ordering::Relaxed);
-    let want_status = command == "run" || explain;
+    let want_status = project_flags.verbose || explain;
     let (mut db, rebuild_log) = if want_status {
         let (db, log) = arandu_query::db::DatabaseImpl::with_rebuild_log();
         (db, Some(log))
@@ -296,14 +272,20 @@ pub fn cmd_single_file_dispatch(
                 "Compilation verified successfully — no errors found for {}",
                 filepath
             );
-            println!("ok {}", filepath);
+            if !project_flags.quiet {
+                println!("ok {}", filepath);
+            }
         }
 
-        if let Some(log) = rebuild_log {
-            let explain = arandu_base::EXPLAIN_REBUILD.load(std::sync::atomic::Ordering::Relaxed);
-            if explain {
-                eprint!("{}", log.format_chain(true));
-            }
+        if !project_flags.quiet
+            && project_flags.verbose
+            && let Some(log) = &rebuild_log
+        {
+            eprintln!("{}", log.status_line());
+        }
+
+        if explain && let Some(log) = rebuild_log {
+            eprint!("{}", log.format_chain(true));
         }
         return Ok(CliSuccess::Done);
     }
@@ -335,6 +317,12 @@ pub fn cmd_single_file_dispatch(
             },
             "check" => {
                 let artifacts = pipeline_lower(&db, source_file, &filepath);
+                if !project_flags.quiet
+                    && (project_flags.verbose || explain)
+                    && let Some(log) = db.rebuild_log()
+                {
+                    eprintln!("{}", log.status_line());
+                }
                 if genref_report {
                     print_genref_report(&filepath, &artifacts);
                 }
@@ -342,7 +330,9 @@ pub fn cmd_single_file_dispatch(
                     "Compilation verified successfully — no errors found for {}",
                     filepath
                 );
-                println!("ok {}", filepath);
+                if !project_flags.quiet {
+                    println!("ok {}", filepath);
+                }
             }
             "hir" => {
                 let mut checked = parse_and_check(&db, source_file, &filepath);
@@ -413,7 +403,9 @@ pub fn cmd_single_file_dispatch(
                 }
                 tracing::info!("AMIR lowering completed (Salsa: single pipeline)");
 
-                if let Some(log) = db.rebuild_log() {
+                if !project_flags.quiet
+                    && let Some(log) = db.rebuild_log()
+                {
                     eprintln!("{}", log.status_line());
                 }
 
@@ -645,11 +637,8 @@ pub fn cmd_single_file_dispatch(
         process_file(source_file, filepath, source, db.clone());
     }
 
-    if let Some(log) = rebuild_log {
-        let explain = arandu_base::EXPLAIN_REBUILD.load(std::sync::atomic::Ordering::Relaxed);
-        if explain {
-            eprint!("{}", log.format_chain(true));
-        }
+    if explain && let Some(log) = rebuild_log {
+        eprint!("{}", log.format_chain(true));
     }
 
     Ok(CliSuccess::Done)
@@ -662,7 +651,13 @@ pub fn cmd_project_check(
     _debug: bool,
     data_layout: DataLayout,
 ) -> CliResult {
-    let (mut db, rebuild_log) = arandu_query::DatabaseImpl::with_rebuild_log();
+    let explain_rebuild = arandu_base::EXPLAIN_REBUILD.load(std::sync::atomic::Ordering::Relaxed);
+    let (mut db, rebuild_log) = if flags.verbose || explain_rebuild {
+        let (db, log) = arandu_query::DatabaseImpl::with_rebuild_log();
+        (db, Some(log))
+    } else {
+        (arandu_query::DatabaseImpl::new(), None)
+    };
     db.set_target_config(data_layout);
     let ctx = match project::load_project(&mut db, start, flags) {
         Ok(c) => c,
@@ -677,7 +672,16 @@ pub fn cmd_project_check(
     let mut registry = arandu_base::SourceRegistry::default();
     let (file, filepath) = open_entry_file(&db, &mut registry, &ctx.entry_path);
     let _ = pipeline_lower(&db, file, &filepath);
-    eprintln!("{}", rebuild_log.status_line());
-    println!("ok {} ({}/{})", filepath, ctx.name, ctx.version);
+    if !flags.quiet
+        && let Some(log) = &rebuild_log
+    {
+        eprintln!("{}", log.status_line());
+    }
+    if explain_rebuild && let Some(log) = &rebuild_log {
+        eprint!("{}", log.format_chain(true));
+    }
+    if !flags.quiet {
+        println!("ok {} ({}/{})", filepath, ctx.name, ctx.version);
+    }
     Ok(CliSuccess::Done)
 }

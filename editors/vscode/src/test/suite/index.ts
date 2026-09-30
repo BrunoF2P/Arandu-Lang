@@ -47,7 +47,7 @@ export async function run(): Promise<void> {
                 `test loaded a development extension instead of the installed VSIX: ${extension.extensionPath}`
             );
         }
-        await extension.activate();
+        await withTimeout(extension.activate(), 'Arandu extension activation');
         const api = extension.exports as AranduExtensionApi;
         await poll(() => api.getRuntimeState().state === 'ready' ? true : undefined);
 
@@ -57,7 +57,10 @@ export async function run(): Promise<void> {
         assert.ok(commands.includes('arandu.refreshTests'));
         assert.ok(commands.includes('arandu.runBenchmark'));
         await poll(() => api.getDiscoveredTestCount() > 0 ? true : undefined);
-        assert.equal(await api.testRunFirstDiscovered(), 'passed');
+        assert.equal(
+            await withTimeout(api.testRunFirstDiscovered(), 'installed Arandu test execution'),
+            'passed'
+        );
 
         const uri = vscode.Uri.joinPath(workspace.uri, 'main.aru');
         const document = await vscode.workspace.openTextDocument(uri);
@@ -71,6 +74,17 @@ export async function run(): Promise<void> {
         assert.ok(unresolved, 'Problems must retain the compiler diagnostic code');
         assert.equal(unresolved.source, 'arandu');
         assert.ok(unresolved.range.end.isAfter(unresolved.range.start));
+
+        const validUri = vscode.Uri.joinPath(workspace.uri, 'project', 'entry.aru');
+        const validDiagnosticsChanged = waitForDiagnosticsChange(validUri);
+        const validDocument = await vscode.workspace.openTextDocument(validUri);
+        await vscode.window.showTextDocument(validDocument);
+        const validDiagnostics = await validDiagnosticsChanged;
+        assert.deepEqual(
+            validDiagnostics,
+            [],
+            `valid Arandu project source must not produce false diagnostics: ${validUri.fsPath}`
+        );
 
         const runnableTitles = await poll(async () => {
             const lenses = await vscode.commands.executeCommand<readonly vscode.CodeLens[]>(
@@ -158,7 +172,7 @@ export async function run(): Promise<void> {
         assert.ok(afterRestart.items.some(item => completionItemLabel(item) === 'func'));
 
         const crashesBefore = api.getRuntimeState().observedCrashCount;
-        await api.testCrashServer();
+        await withTimeout(api.testCrashServer(), 'language server crash hook');
         await poll(() => api.getRuntimeState().observedCrashCount > crashesBefore ? true : undefined);
         await poll(() => api.getRuntimeState().state === 'ready' ? true : undefined);
         const afterCrashRecovery = await poll(() =>
@@ -240,6 +254,23 @@ function diagnosticCode(diagnostic: vscode.Diagnostic): string | number | undefi
     return typeof code === 'object' ? code.value : code;
 }
 
+function waitForDiagnosticsChange(uri: vscode.Uri): Promise<readonly vscode.Diagnostic[]> {
+    return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+            subscription.dispose();
+            reject(new Error(`Timed out waiting for diagnostics for ${uri.fsPath}`));
+        }, TIMEOUT_MS);
+        const subscription = vscode.languages.onDidChangeDiagnostics(event => {
+            if (!event.uris.some(changed => changed.toString() === uri.toString())) {
+                return;
+            }
+            clearTimeout(timeout);
+            subscription.dispose();
+            resolve(vscode.languages.getDiagnostics(uri));
+        });
+    });
+}
+
 function completionItemLabel(item: vscode.CompletionItem): string {
     const label = item.label;
     return typeof label === 'string' ? label : label.label;
@@ -291,7 +322,11 @@ async function poll<T>(operation: () => T | undefined | PromiseLike<T | undefine
     let lastError: unknown;
     while (Date.now() < deadline) {
         try {
-            const result = await operation();
+            const result = await withTimeout(
+                Promise.resolve().then(operation),
+                'polled Extension Host operation',
+                deadline - Date.now()
+            );
             if (result !== undefined) {
                 return result;
             }
@@ -302,4 +337,27 @@ async function poll<T>(operation: () => T | undefined | PromiseLike<T | undefine
     }
     const detail = lastError instanceof Error ? `: ${lastError.message}` : '';
     throw new Error(`Extension Host operation timed out${detail}`);
+}
+
+async function withTimeout<T>(
+    operation: PromiseLike<T>,
+    label: string,
+    timeoutMs = TIMEOUT_MS
+): Promise<T> {
+    let timeout: NodeJS.Timeout | undefined;
+    try {
+        return await Promise.race([
+            Promise.resolve(operation),
+            new Promise<never>((_resolve, reject) => {
+                timeout = setTimeout(
+                    () => reject(new Error(`${label} did not finish within ${timeoutMs}ms`)),
+                    timeoutMs
+                );
+            })
+        ]);
+    } finally {
+        if (timeout) {
+            clearTimeout(timeout);
+        }
+    }
 }

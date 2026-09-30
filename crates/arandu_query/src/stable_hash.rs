@@ -110,6 +110,12 @@ fn hash_diag(hasher: &mut Hasher, d: &Diagnostic) {
     hasher.update(&u32_le(d.span.start));
     hasher.update(&u32_le(d.span.end));
     hash_str(hasher, &d.message);
+    if let Some(primary_label) = &d.primary_label {
+        hasher.update(&[1]);
+        hash_str(hasher, primary_label);
+    } else {
+        hasher.update(&[0]);
+    }
     hasher.update(&u64_le(d.labels.len() as u64));
     for label in &d.labels {
         hasher.update(&u32_le(label.span.file_id));
@@ -1575,6 +1581,12 @@ impl StableHash for crate::dataflow::IdeDiagnostic {
         h.update(self.code.as_bytes());
         h.update(&[self.severity]);
         h.update(self.message.as_bytes());
+        if let Some(primary_label) = &self.primary_label {
+            h.update(&[1]);
+            hash_str(&mut h, primary_label);
+        } else {
+            h.update(&[0]);
+        }
         h.update(&u32_le(self.file_id));
         h.update(&u32_le(self.start));
         h.update(&u32_le(self.end));

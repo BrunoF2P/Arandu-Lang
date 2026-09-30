@@ -4,7 +4,7 @@
 - **Título:** Modelo Portável de Inteiros Padrão e Tipos de Largura do Alvo
 - **Autor(es):** Equipe do Compilador Arandu
 - **Data de Início:** 2026-09-24
-- **Status:** `Draft`
+- **Status:** `Implemented`
 - **Área Principal:** `Frontend` / `Middle-end` / `Backend` / `Stdlib`
 - **PR da RFC:** N/A (In-Tree RFC)
 - **Issue de Acompanhamento:** N/A

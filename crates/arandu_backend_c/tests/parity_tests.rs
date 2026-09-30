@@ -1360,8 +1360,7 @@ func main(): int {
 
 #[test]
 fn cooperative_cancel_before_join_recovers_slot_in_c() {
-    let result = test_execution_result(
-        "rt_task_cancel",
+    let (amir, tc) = compile_src(
         r#"
 extern "C" {
     func ar_rt_spawn_i64(state: ptr[u8]): int
@@ -1379,6 +1378,36 @@ func main(): int {
         return 1
     }
     return unsafe { ar_rt_join_i64(handle2) }
+}
+"#,
+    );
+    // The C fixture runs in its own process, so no unrelated test can claim
+    // the released slot between cancel and spawn. Keep the exact reuse check
+    // here rather than in the Cranelift parity fixture, whose runtime table is
+    // shared by concurrently running tests.
+    assert_eq!(execute_c("rt_task_cancel_slot_reuse", &amir, &tc), 42);
+}
+
+#[test]
+fn cooperative_cancel_before_join_matches_across_backends() {
+    let result = test_execution_result(
+        "rt_task_cancel_parity",
+        r#"
+extern "C" {
+    func ar_rt_spawn_i64(state: ptr[u8]): int
+    func ar_rt_join_i64(handle: int): int
+    func ar_rt_cancel_i64(handle: int): void
+}
+async func answer(): int { return 42 }
+func main(): int {
+    let job = answer()
+    let handle = unsafe { ar_rt_spawn_i64(job as ptr[u8]) }
+    unsafe { ar_rt_cancel_i64(handle) }
+    let job2 = answer()
+    let handle2 = unsafe { ar_rt_spawn_i64(job2 as ptr[u8]) }
+    let result = unsafe { ar_rt_join_i64(handle2) }
+    unsafe { ar_rt_cancel_i64(handle2) }
+    return result
 }
 "#,
     );

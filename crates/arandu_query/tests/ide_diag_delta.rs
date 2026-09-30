@@ -104,6 +104,13 @@ fn parse_failure_reports_syntax_diagnostics_in_ide() {
         "parse failure must surface syntax diagnostics, got {:?}",
         **diagnostics
     );
+    assert!(
+        diagnostics.iter().any(|diagnostic| diagnostic
+            .primary_label
+            .as_deref()
+            .is_some_and(|label| label.starts_with("unexpected "))),
+        "syntax diagnostics should preserve their contextual primary label"
+    );
 
     // Repeating a request without an edit preserves the diagnostic fingerprint.
     let fp1 = ide_diags_fingerprint(diagnostics);
@@ -204,6 +211,14 @@ fn ide_diagnostic_preserves_labels_hints_and_replacements() {
     assert_eq!(replacement.new_text, "mut value");
 
     let fingerprint = ide_diags_fingerprint(diagnostics);
+    let mut changed_label = diagnostics.iter().cloned().collect::<Vec<_>>();
+    changed_label
+        .iter_mut()
+        .find(|diagnostic| diagnostic.code == "T026")
+        .expect("mutable cloned diagnostic")
+        .primary_label = Some("new primary context".into());
+    assert_ne!(fingerprint, ide_diags_fingerprint(&changed_label));
+
     let mut changed = diagnostics.iter().cloned().collect::<Vec<_>>();
     changed
         .iter_mut()

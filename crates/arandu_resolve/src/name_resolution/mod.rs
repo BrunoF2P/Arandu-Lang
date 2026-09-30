@@ -536,7 +536,11 @@ pub fn resolve_imports_and_bodies_with_poll(
                                         item.name
                                     ),
                                     item.span,
-                                );
+                                )
+                                .with_primary_label(format!(
+                                    "`{}` is unavailable from this module",
+                                    item.name
+                                ));
                                 let mut candidates: Vec<&str> =
                                     exports.symbols.keys().map(String::as_str).collect();
                                 candidates.sort_unstable();
@@ -577,11 +581,14 @@ pub fn resolve_imports_and_bodies_with_poll(
                     arandu_parser::ImportDecl::ExternalAlias { source, .. }
                     | arandu_parser::ImportDecl::ExternalNamed { source, .. } => source.to_string(),
                 };
-                resolver.diagnostics.push(arandu_middle::Diagnostic::error(
-                    arandu_middle::DiagCode::M001UnresolvedImport,
-                    format!("unresolved import: `{}`", import_name),
-                    import.span(),
-                ));
+                resolver.diagnostics.push(
+                    arandu_middle::Diagnostic::error(
+                        arandu_middle::DiagCode::M001UnresolvedImport,
+                        format!("unresolved import: `{}`", import_name),
+                        import.span(),
+                    )
+                    .with_primary_label("module could not be found"),
+                );
             }
         } else if db.missing_import_is_error() {
             if let arandu_parser::ImportDecl::ModuleAlias { alias, .. }
@@ -596,11 +603,14 @@ pub fn resolve_imports_and_bodies_with_poll(
                 arandu_parser::ImportDecl::ExternalAlias { source, .. }
                 | arandu_parser::ImportDecl::ExternalNamed { source, .. } => source.to_string(),
             };
-            resolver.diagnostics.push(arandu_middle::Diagnostic::error(
-                arandu_middle::DiagCode::M001UnresolvedImport,
-                format!("unresolved import: `{}`", import_name),
-                import.span(),
-            ));
+            resolver.diagnostics.push(
+                arandu_middle::Diagnostic::error(
+                    arandu_middle::DiagCode::M001UnresolvedImport,
+                    format!("unresolved import: `{}`", import_name),
+                    import.span(),
+                )
+                .with_primary_label("module could not be found"),
+            );
         }
     }
 

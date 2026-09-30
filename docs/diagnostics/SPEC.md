@@ -1,7 +1,7 @@
 ---
 version: 0.0.1
 last_revised: 2026-06
-compiler_version: arandu 0.1.7
+compiler_version: arandu 0.1.8
 ---
 
 # Especificação e Catálogo de Diagnósticos de Erro do Arandu
@@ -193,11 +193,11 @@ Abaixo estão listados todos os diagnósticos mapeados para o compilador Arandu.
 
 | Código | Mensagem Principal no Compilador | Severidade Padrão | Introduzido em | Descrição e Contexto |
 | :--- | :--- | :--- | :--- | :--- |
-| **P001** |  `'{expectation}' (found '{found}')` no formato `expected … (found …)` | Error | `0.1.0` | Erro geral do parser Pratt indicando que um token específico era esperado mas outro foi encontrado. A mensagem usa grafia voltada ao usuário (ex: `expected = (found Mensagem)`), nunca nomes internos de tokens (`EQUAL`/`IDENT_TYPE`). |
+| **P001** | `Expected {expectation} here, but found {token}.` | Error | `0.1.0` | Erro de sintaxe com expectativa descrita em linguagem voltada ao usuário; tokens são mostrados por sua grafia-fonte e o fim do arquivo é nomeado explicitamente. |
 | **P002** | `unclosed block: expected '}', found EOF` | Error | `0.1.0` | Um bloco `{ ... }` ou escopo de função foi aberto mas nunca fechado no final do arquivo. |
 | **P003** | `invalid assignment operator: '{op}'` | Error | `0.1.0` | Uso de operador de atribuição inválido ou malformado na gramática. |
-| **P004** | `expected identifier, found '{token}'` | Error | `0.1.0` | O parser esperava encontrar um nome (identificador de variável/função) mas encontrou uma palavra-chave ou símbolo. |
-| **P005** | `expected expression, found '{token}'` | Error | `0.1.0` | O parser Pratt falhou ao tentar iniciar a análise de uma expressão devido a um token inesperado. |
+| **P004** | `Expected a name here, but found {token}.` | Error | `0.1.0` | O parser esperava um nome de variável, função, membro ou tipo, mas encontrou outra coisa. |
+| **P005** | `Expected an expression here, but found {token}.` | Error | `0.1.0` | O parser esperava uma expressão iniciada por um valor, identificador, operador prefixo ou parêntese. |
 | **P006** | `malformed attribute: '@{name}'` | Error | `0.1.0` | Um atributo ou anotação especial da linguagem foi declarado de forma inválida ou sem os parâmetros obrigatórios. |
 
 ---

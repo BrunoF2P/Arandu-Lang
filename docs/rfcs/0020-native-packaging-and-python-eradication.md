@@ -4,7 +4,7 @@
 - **Título:** Empacotamento Nativo, Validação de Arquivos e Erradicação de Dependências Python via `xtask` e CLI (*Native Packaging, Archive Validation & Zero-Python Toolchain*)
 - **Autor(es):** Bruno e Equipe do Compilador Arandu
 - **Data de Início:** 2026-09-20
-- **Status:** `Draft`
+- **Status:** `Implemented`
 - **Área Principal:** `Tooling` / `Distribution` / `CI` (`xtask`, `arandu_cli`, `scripts`)
 - **Documentos Relacionados:**
   - `docs/arandu-distribution-contract-v0.1.md`

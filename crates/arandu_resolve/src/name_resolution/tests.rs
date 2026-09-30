@@ -570,6 +570,28 @@ fn resolve_value_name_undefined() {
     r.resolve_value_name(ScopeId(0), "nonexistent", expr, dummy_span());
     assert_eq!(r.diagnostics.len(), 1);
     assert_eq!(r.diagnostics[0].code, DiagCode::N001UndefinedValue);
+    assert_eq!(
+        r.diagnostics[0]
+            .primary_label
+            .as_deref()
+            .map(String::as_str),
+        Some("`nonexistent` not found")
+    );
+}
+
+#[test]
+fn undefined_prelude_module_suggests_the_import_that_fixes_it() {
+    let mut pool = new_pool();
+    let expr = pool.alloc_expr(arandu_parser::ExprKind::Nil, dummy_span());
+    let mut r = make_resolver(&pool);
+    r.resolve_value_name(ScopeId(0), "io", expr, dummy_span());
+
+    let diagnostic = &r.diagnostics[0];
+    assert_eq!(diagnostic.code, DiagCode::N001UndefinedValue);
+    assert_eq!(
+        diagnostic.hints[0].message,
+        "add `import io` at the top of this file to use this standard-library module"
+    );
 }
 
 #[test]

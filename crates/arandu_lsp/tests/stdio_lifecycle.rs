@@ -395,7 +395,7 @@ fn stdio_workspace_index_reports_standard_progress_and_status() {
 fn stdio_manifestless_folder_resolves_toolchain_stdlib() {
     let fixture = FixtureDir::new();
     let document = fixture.path().join("main.aru");
-    let source = "import std.alloc.vec as vec\nfunc size(): uint { let values = vec.new<int>(); return values.len() }\n";
+    let source = "import std.alloc.vec as vec\nfunc size(): usize { let values = vec.new<int>(); return values.len() }\n";
     fs::write(&document, source).expect("write standalone source");
     let uri = file_uri(&document);
     let mut lsp = LspProcess::spawn();
@@ -423,13 +423,100 @@ fn stdio_manifestless_folder_resolves_toolchain_stdlib() {
         .and_then(Value::as_array)
         .expect("diagnostic array");
     assert!(
-        items.iter().all(|item| {
-            !matches!(
-                item.pointer("/code").and_then(Value::as_str),
-                Some("M001" | "M002")
-            )
-        }),
-        "stdlib import must resolve without a manifest: {diagnostics}"
+        items.is_empty(),
+        "valid single-file source with a stdlib import must have no diagnostics without a manifest: {diagnostics}"
+    );
+    lsp.shutdown(2);
+}
+
+#[test]
+fn stdio_diagnostic_message_includes_primary_label_for_editor_clients() {
+    let fixture = FixtureDir::new();
+    let document = fixture.path().join("main.aru");
+    let source = "func main(): void {}\nss\n";
+    fs::write(&document, source).expect("write source with unexpected token");
+    let uri = file_uri(&document);
+    let mut lsp = LspProcess::spawn();
+    lsp.initialize(fixture.path(), 1);
+    lsp.send(&json!({
+        "jsonrpc": "2.0", "method": "textDocument/didOpen",
+        "params": { "textDocument": {
+            "uri": uri, "languageId": "arandu", "version": 1, "text": source
+        }}
+    }));
+    let diagnostics = lsp.wait_for(|message| {
+        message.get("method").and_then(Value::as_str) == Some("textDocument/publishDiagnostics")
+            && message.pointer("/params/uri").and_then(Value::as_str) == Some(uri.as_str())
+    });
+    let parser_diagnostic = diagnostics
+        .pointer("/params/diagnostics")
+        .and_then(Value::as_array)
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|item| item.get("code") == Some(&json!("P001")))
+        })
+        .expect("unexpected-token parser diagnostic");
+    assert!(
+        parser_diagnostic
+            .get("message")
+            .and_then(Value::as_str)
+            .is_some_and(|message| message.contains("unexpected `ss`")),
+        "VS Code displays the standard LSP message, so the primary label must be included there: {parser_diagnostic}"
+    );
+    assert_eq!(
+        parser_diagnostic
+            .pointer("/data/primaryLabel")
+            .and_then(Value::as_str),
+        Some("unexpected `ss`")
+    );
+    lsp.shutdown(2);
+}
+
+#[test]
+fn stdio_manifestless_folder_does_not_guess_local_module_aliases() {
+    let fixture = FixtureDir::new();
+    let document = fixture.path().join("main.aru");
+    let helper = fixture.path().join("helper.aru");
+    let source = "import helper as helper\nfunc main(): int { return helper.answer() }\n";
+    fs::write(&document, source).expect("write standalone source");
+    fs::write(&helper, "public func answer(): int { return 42 }\n")
+        .expect("write unconfigured local module");
+
+    let uri = file_uri(&document);
+    let mut lsp = LspProcess::spawn();
+    lsp.initialize(fixture.path(), 1);
+    let ready = lsp.wait_for(|message| {
+        message.get("method").and_then(Value::as_str) == Some("arandu/status")
+            && message.pointer("/params/state").and_then(Value::as_str) == Some("ready")
+    });
+    assert_eq!(
+        ready.pointer("/params/message").and_then(Value::as_str),
+        Some("Single-file analysis ready; no arandu.toml found")
+    );
+    lsp.send(&json!({
+        "jsonrpc": "2.0", "method": "textDocument/didOpen",
+        "params": { "textDocument": {
+            "uri": uri, "languageId": "arandu", "version": 1, "text": source
+        }}
+    }));
+    let diagnostics = lsp.wait_for(|message| {
+        message.get("method").and_then(Value::as_str) == Some("textDocument/publishDiagnostics")
+            && message.pointer("/params/uri").and_then(Value::as_str) == Some(uri.as_str())
+    });
+    let items = diagnostics
+        .pointer("/params/diagnostics")
+        .and_then(Value::as_array)
+        .expect("diagnostic array");
+    assert_eq!(
+        items.len(),
+        1,
+        "an unconfigured local import should produce only its primary diagnostic: {diagnostics}"
+    );
+    assert_eq!(
+        items[0].pointer("/code").and_then(Value::as_str),
+        Some("M001"),
+        "without a package manifest the local module namespace is intentionally unknown: {diagnostics}"
     );
     lsp.shutdown(2);
 }

@@ -22,7 +22,13 @@ pub fn cmd_project_build(
     data_layout: DataLayout,
 ) -> CliResult {
     let backend = project::BackendChoice::from_release_flag(flags.release);
-    let (mut db, rebuild_log) = arandu_query::DatabaseImpl::with_rebuild_log();
+    let explain_rebuild = arandu_base::EXPLAIN_REBUILD.load(std::sync::atomic::Ordering::Relaxed);
+    let (mut db, rebuild_log) = if flags.verbose || explain_rebuild {
+        let (db, log) = arandu_query::DatabaseImpl::with_rebuild_log();
+        (db, Some(log))
+    } else {
+        (arandu_query::DatabaseImpl::new(), None)
+    };
     db.set_target_config(data_layout);
     let ctx = {
         arandu_base::time_pass!("project-load");
@@ -107,14 +113,16 @@ pub fn cmd_project_build(
             } else {
                 backend.label()
             };
-            println!(
-                "built {} v{} (backend={}, entry={}, artifact={}, incremental: up-to-date)",
-                ctx.name,
-                ctx.version,
-                backend_name,
-                ctx.entry_rel,
-                artifact_path.display()
-            );
+            if !flags.quiet {
+                println!(
+                    "built {} v{} (backend={}, entry={}, artifact={}, incremental: up-to-date)",
+                    ctx.name,
+                    ctx.version,
+                    backend_name,
+                    ctx.entry_rel,
+                    artifact_path.display()
+                );
+            }
             return Ok(CliSuccess::Done);
         }
         crate::incremental::IncrementalCheck::NeedsRebuild {
@@ -131,7 +139,15 @@ pub fn cmd_project_build(
     let mut registry = arandu_base::SourceRegistry::default();
     let (file, filepath) = open_entry_file(&db, &mut registry, &ctx.entry_path);
     let artifacts = pipeline_lower(&db, file, &filepath);
-    eprintln!("{}", rebuild_log.status_line());
+    if !flags.quiet
+        && (flags.verbose || explain_rebuild)
+        && let Some(log) = &rebuild_log
+    {
+        eprintln!("{}", log.status_line());
+    }
+    if explain_rebuild && let Some(log) = &rebuild_log {
+        eprint!("{}", log.format_chain(true));
+    }
 
     let compiler_artifact_layout = if is_wasm {
         artifact::layout_for_target(&ctx.root, profile.directory(), wasm_triple)
@@ -234,14 +250,16 @@ pub fn cmd_project_build(
         } else {
             "wasm-core"
         };
-        println!(
-            "built {} v{} (backend={}, entry={}, artifact={})",
-            ctx.name,
-            ctx.version,
-            backend_label,
-            ctx.entry_rel,
-            artifact.path.display()
-        );
+        if !flags.quiet {
+            println!(
+                "built {} v{} (backend={}, entry={}, artifact={})",
+                ctx.name,
+                ctx.version,
+                backend_label,
+                ctx.entry_rel,
+                artifact.path.display()
+            );
+        }
         return Ok(CliSuccess::Done);
     }
 
@@ -424,14 +442,16 @@ pub fn cmd_project_build(
                 reusable_input_fingerprints,
             )?;
         }
-        println!(
-            "built {} v{} (backend={}, entry={}, artifact={})",
-            ctx.name,
-            ctx.version,
-            linker_label,
-            ctx.entry_rel,
-            artifact.path.display()
-        );
+        if !flags.quiet {
+            println!(
+                "built {} v{} (backend={}, entry={}, artifact={})",
+                ctx.name,
+                ctx.version,
+                linker_label,
+                ctx.entry_rel,
+                artifact.path.display()
+            );
+        }
         return Ok(CliSuccess::Done);
     }
 
@@ -498,14 +518,16 @@ pub fn cmd_project_build(
                     reusable_input_fingerprints,
                 )?;
             }
-            println!(
-                "built {} v{} (backend={}, entry={}, artifact={})",
-                ctx.name,
-                ctx.version,
-                backend.label(),
-                ctx.entry_rel,
-                artifact.path.display()
-            );
+            if !flags.quiet {
+                println!(
+                    "built {} v{} (backend={}, entry={}, artifact={})",
+                    ctx.name,
+                    ctx.version,
+                    backend.label(),
+                    ctx.entry_rel,
+                    artifact.path.display()
+                );
+            }
             Ok(CliSuccess::Done)
         }
         Err(diag) => print_diagnostics_and_exit(std::iter::once(diag), &filepath),

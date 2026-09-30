@@ -89,7 +89,7 @@ pub fn cmd_watch(start: &Path, flags: &ProjectFlags, data_layout: DataLayout) ->
         });
 
     // Initial check.
-    print_check(&db, &rebuild_log, entry, "initial");
+    print_check(&db, &rebuild_log, entry, "initial", flags);
 
     let (tx, rx) = mpsc::channel::<DebounceEventResult>();
     let mut debouncer = match new_debouncer(DEFAULT_DEBOUNCE, None, tx) {
@@ -107,11 +107,13 @@ pub fn cmd_watch(start: &Path, flags: &ProjectFlags, data_layout: DataLayout) ->
     debouncer
         .watch(&ctx.root, RecursiveMode::Recursive)
         .map_err(|e| CliFailure::operational("watch", Some(ctx.root.clone()), e.to_string()))?;
-    eprintln!(
-        "watching {} (package `{}`) — Ctrl-C to stop",
-        ctx.root.display(),
-        ctx.name
-    );
+    if !flags.quiet {
+        eprintln!(
+            "watching {} (package `{}`) — Ctrl-C to stop",
+            ctx.root.display(),
+            ctx.name
+        );
+    }
 
     loop {
         // Wait for debounced events (or timeout to flush WatchBuffer if nested debounce).
@@ -159,7 +161,7 @@ pub fn cmd_watch(start: &Path, flags: &ProjectFlags, data_layout: DataLayout) ->
                 })
                 .unwrap_or(entry);
             rebuild_log.clear();
-            print_check(&db, &rebuild_log, entry, "rebuild");
+            print_check(&db, &rebuild_log, entry, "rebuild", flags);
         }
     }
 }
@@ -219,13 +221,19 @@ fn print_check(
     rebuild_log: &std::sync::Arc<arandu_query::RebuildLog>,
     entry: arandu_query::SourceFile,
     tag: &str,
+    flags: &ProjectFlags,
 ) {
     let _ = arandu_query::passes::type_check(db, entry);
     let diags = arandu_query::passes::type_check::accumulated::<
         arandu_middle::db::DiagnosticsAccumulator,
     >(db, entry);
 
-    eprintln!("{}", rebuild_log.status_line());
+    if !flags.quiet
+        && (flags.verbose
+            || arandu_base::EXPLAIN_REBUILD.load(std::sync::atomic::Ordering::Relaxed))
+    {
+        eprintln!("{}", rebuild_log.status_line());
+    }
     let mut errors = 0usize;
     for d in &diags {
         let severity = d.0.severity;
@@ -235,7 +243,9 @@ fn print_check(
         eprintln!("  {}: {}", d.0.code, d.0.message);
     }
     if errors == 0 {
-        eprintln!("ok ({tag}) — no errors");
+        if !flags.quiet {
+            eprintln!("ok ({tag}) — no errors");
+        }
     } else {
         eprintln!("failed ({tag}) — {errors} error(s)");
     }
