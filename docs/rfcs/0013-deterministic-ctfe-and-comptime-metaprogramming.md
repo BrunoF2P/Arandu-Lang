@@ -1,313 +1,294 @@
-# RFC 0013: Metaprogramação Determinística em Tempo de Compilação (CTFE & Comptime) via AMIR VM
+# RFC 0013: CTFE determinístico e `comptime` core via AMIR
 
 - **Número da RFC:** 0013
-- **Título:** Metaprogramação Determinística em Tempo de Compilação (CTFE & Comptime) via AMIR VM
+- **Título:** CTFE determinístico e `comptime` core via AMIR
 - **Autor(es):** Bruno e Equipe do Compilador Arandu
 - **Data de Início:** 2026-09-12
 - **Status:** `Draft`
-- **Área Principal:** `Frontend` / `Middle-end` / `Runtime`
+- **Área Principal:** `Frontend` / `Middle-end` / `Incrementalidade`
 - **PR da RFC:** N/A (In-Tree RFC)
 - **Issue de Acompanhamento:** N/A
 
----
-
-## 1. Resumo (Summary)
-
-Esta RFC define a arquitetura formal, as extensões de sintaxe, o modelo de memória virtual e o contrato de integração com o motor incremental Salsa para o sistema de **Metaprogramação em Tempo de Compilação e Execução de Funções em Compile-Time (CTFE)** do Arandu.
-
-A proposta elimina a necessidade histórica de linguagens de macro separadas (como o `macro_rules!` do Rust) e o peso de bibliotecas procedurais externas compiladas dinamicamente (`proc-macros`), adotando a filosofia de **"Mesma Linguagem, Sem Macros Secundárias"** inspirada no **Zig (`comptime`)**, combinada com a segurança e precisão semântica do **Miri (Rust)** sobre representações intermediárias.
-
-Os pilares deste design são:
-1. **Unificação Sintática (`comptime`)**: Expressões, parâmetros, blocos e condicionais executam código Arandu padrão em tempo de compilação sem dialetos paralelos.
-2. **Reflexão Estática de Tipos (`std.core.meta`)**: Introspecção completa de tipos, campos, métodos e anotações em tempo de compilação, eliminando 90% dos casos de uso de macros tradicionais (derivação de serialização, debug, clone, hash e igualdade) através de laços desdobrados (`comptime for`) e acesso indexado a campos (`val.@field(name)`).
-3. **Quasiquoting Higiênico (`quote { ... }`)**: Mecanismo de citação e injeção de código tipado com splicing `${expr}` para os 10% restantes de metaprogramação (geração de novas estruturas, interfaces e DSLs embutidas).
-4. **Execução Segura em AMIR VM (Estilo Miri)**: O interpretador de compile-time opera sobre o grafo SSA/OSSA da **AMIR**, com modelo de memória virtual rastreado, checagem estrita de bounds e detecção precoce de *use-after-free*, alinhado à ABI exata do alvo de compilação (`TargetInfo`).
-5. **Integração Salsa-First & Imunidade a Travamentos no LSP**: Cada execução de comptime é uma query pura e memoizada com *early-cutoff*. A execução roda sob um orçamento estrito de passos (*fuel budget*) com cancelamento cooperativo assíncrono, garantindo que código incompleto ou laços infinitos digitados no editor jamais travem a thread do servidor LSP.
+> Esta RFC continua sendo uma proposta. Exemplos de sintaxe são ilustrativos
+> até a seção de gramática ser revisada e a RFC ser aceita. Nenhuma capacidade
+> descrita aqui é apresentada como já implementada.
 
 ---
 
-## 2. Motivação (Motivation)
+## 1. Resumo
 
-A metaprogramação em linguagens modernas sofre de três vícios arquiteturais consolidados:
+Esta proposta define uma primeira etapa de avaliação de expressões Arandu em
+tempo de compilação (CTFE), executadas sobre AMIR e integradas ao grafo
+incremental. O objetivo é permitir que código puro e explicitamente requerido
+em compilação produza valores constantes, sem introduzir uma linguagem de macro
+separada nem efeitos ocultos no compilador.
 
-1. **O Modelo Dual do Rust (`macro_rules!` e `proc-macro`)**:
-   - **Dupla sintaxe**: Obriga o desenvolvedor a aprender uma linguagem de casamento de padrões sintáticos completamente diferente (`$($x:expr),*`) para macros declarativas.
-   - **Overhead severo de compilação**: Procedural macros exigem crates dedicados (`proc-macro = true`), que precisam ser compilados em código de máquina para o host, linkados em bibliotecas dinâmicas (`.so`/`.dylib`/`.dll`) e carregados via `dlopen`. Bibliotecas utilitárias de parsing de tokens (como `syn` e `quote`) frequentemente respondem por uma fração massiva do tempo total de compilação de projetos Rust.
-   - **Cegueira de Tipos**: Procedural macros executam antes da resolução de nomes e antes do type checking, operando sobre uma sequência cega de tokens (`TokenStream`). Elas não conseguem saber o tipo real de um campo ou se um tipo implementa uma interface sem que o usuário forneça dicas redundantes.
-2. **O Modelo de Macro de Texto em C/C++ (`#define`)**:
-   - Falta absoluta de higiene léxica, ausência de segurança de tipos, poluição global de escopos e depuração caótica.
-3. **As Invalidações em Cascata do Zig Comptime**:
-   - O modelo do Zig é brilhante em ergonomia, mas sua execução de comptime sobre árvores sintáticas cedo demais causa dores de cabeça para compiladores incrementais: uma pequena alteração em uma função comptime frequentemente causa invalidação em cascata em grande escala por falta de um grafo de dependências estrito com early-cutoff.
+O candidato a escopo da 0.1.9 é deliberadamente menor que uma plataforma completa
+de metaprogramação:
 
-O Arandu resolve esses problemas combinando seu sistema de queries Salsa, seu backend incremental e o layout de dados denso da AMIR:
-- Metaprogramação usa a **própria linguagem Arandu**.
-- Não há crates separados de macro nem compilação de bibliotecas dinâmicas no host.
-- A reflexão ocorre com **tipos completos conhecidos**.
-- A execução na **AMIR VM** garante que o código execute exatamente as mesmas instruções lógicas e regras de ABI do binário compilado.
+1. Um domínio canônico de valores CTFE e um interpretador determinístico de um
+   subconjunto documentado da AMIR.
+2. `comptime` em expressões e blocos, `comptime if` e iteração finita sobre
+   valores conhecidos em compilação.
+3. Integração de parâmetros de valor com os const generics escalares já
+   existentes, evitando mecanismos independentes e preservando compatibilidade.
+4. Intrínsecos de layout como `@sizeOf` e `@alignOf`, calculados para o layout
+   configurado do alvo suportado.
+5. Memoização no Salsa, orçamento de execução, cancelamento cooperativo e
+   diagnósticos estruturados.
 
----
+`@typeInfo` estrutural amplo, introspecção de OS/arquitetura/capabilities,
+modelo de memória virtual geral, `quote`, splicing, `@Derive`, geração de items,
+inclusão de arquivos e JIT não fazem parte do primeiro núcleo. Cada um depende
+de contratos adicionais e deve ser avaliado em etapa ou RFC própria.
 
-## 3. Explicação em Nível de Guia (Guide-Level Explanation)
+## 2. Motivação
 
-### 3.1. A Palavra-Chave `comptime`
+CTFE pode sustentar avaliação de constantes, especialização limitada por valores,
+validação estática e, posteriormente, reflexão e geração de código. Seu valor
+arquitetural está em reutilizar a semântica tipada da linguagem e não em compilar
+um valor isolado antes do backend.
 
-A palavra-chave `comptime` instrui o compilador Arandu a avaliar uma expressão, bloco ou parâmetro durante o pipeline de compilação:
+O projeto já tem componentes que ajudam — AMIR, queries Salsa, `DataLayout` e
+const generics escalares —, mas eles não constituem ainda uma VM CTFE nem um
+modelo completo de alvo. Em particular:
+
+- `TargetInfo` do type checker atualmente expressa apenas a largura de ponteiro;
+- `TargetConfig` no middle-end guarda `DataLayout`, não um triple canônico com
+  OS, arquitetura, ABI e capabilities;
+- const generics atualmente aceitam tipos inteiros escalares;
+- `func_amir` é uma projeção sobre o lowering program-wide, não uma cadeia real
+  de lowering incremental por instância.
+
+Essas limitações orientam a divisão em etapas. Não se deve prometer que CTFE
+evitará toda reexecução incremental: Salsa pode cortar propagação quando uma
+saída permanece igual, mas a query de avaliação pode precisar rodar novamente
+quando uma dependência semântica muda.
+
+## 3. Guia proposto
+
+Os exemplos abaixo demonstram a intenção da feature, não congelam a gramática.
+
+### 3.1. Expressões e blocos
 
 ```arandu
-// 1. Expressão avaliada em tempo de compilação:
-let max_buffer: usize = comptime calculateOptimalBufferSize()
+let table_size: usize = comptime choose_table_size()
 
-// 2. Bloco comptime com asserções estáticas:
 comptime {
-    let size = @sizeOf(Particle)
-    assert(size <= 64, "Particle excede uma linha de cache L1!")
+    assert(table_size > 0)
 }
+```
 
-// 3. Condicional estática (código do branch falso é fisicamente descartado do AST/AMIR):
-comptime if (target.arch == .X86_64) {
-    applyAvx2Optimization()
+Uma avaliação CTFE só pode chamar operações e funções admitidas pelo subconjunto
+de execução. Chamadas com I/O, efeitos de runtime ou acesso ambiental ao sistema
+de arquivos são rejeitadas; não são executadas parcialmente.
+
+### 3.2. Decisões e iteração estáticas
+
+```arandu
+comptime if (TABLE_SIZE <= 256) {
+    use_small_table()
 } else {
-    applyGenericScalarFallback()
+    use_large_table()
+}
+
+comptime for index in 0..TABLE_SIZE {
+    initialize_entry(index)
 }
 ```
 
----
+`comptime for` começa limitado a intervalos e agregados finitos conhecidos pelo
+interpretador. Fuel limita também a expansão resultante; não há iteração
+arbitrária ou permissão para travar o compilador.
 
-### 3.2. Parâmetros Comptime & Const Generics
-
-`comptime` é o mecanismo canônico para fornecer parâmetros conhecidos estaticamente para funções e tipos, unificando genéricos de tipos e genéricos de constantes:
+### 3.3. Parâmetros de valor
 
 ```arandu
-// Matriz com dimensões na stack conhecidas estaticamente (RFC 0012):
-struct StaticMatrix<T, comptime M: usize, comptime N: usize> {
-    data: [T; M * N]
-}
-
-// Função especializada por parâmetros de compilação:
-func unrolledMultiply<comptime FACTOR: i32>(value: i32): i32 {
-    comptime if (FACTOR == 0) {
-        0
-    } else comptime if (FACTOR == 1) {
-        value
-    } else comptime if (FACTOR == 2) {
-        value + value
-    } else {
-        value * FACTOR
-    }
+func matrix<T, comptime ROWS: usize, comptime COLS: usize>() {
+    // dimensões conhecidas durante a instanciação
 }
 ```
 
----
+A forma exata da sintaxe permanece em aberto. A semântica deve se integrar aos
+const generics escalares existentes e não criar uma segunda representação de
+argumentos constantes. Mudanças à sintaxe atual exigem plano de compatibilidade.
 
-### 3.3. Reflexão Estática de Tipos (`std.core.meta`)
-
-Em vez de gerar código de texto através de macros para derivar interfaces comuns, o Arandu expõe o módulo puro `std.core.meta`. O compilador fornece a função intrínseca `@typeInfo(T)` que devolve uma estrutura de reflexão estática completa:
+### 3.4. Layout do alvo
 
 ```arandu
-import std.core.meta as meta
-
-struct User {
-    id: i64,
-    name: String,
-    active: bool,
-}
-
-// Exemplo: Serialização genérica sem NENHUMA macro!
-func serializeJson<T>(val: &T, writer: &mut JsonWriter): Result<(), Error> {
-    writer.beginObject()?
-
-    // comptime for desdobra o laço em tempo de compilação para cada campo:
-    comptime for field in meta.TypeInfo::of::<T>().fields() {
-        // Acesso a campos por identificador dinâmico em tempo de compilação:
-        let field_value = val.@field(field.name)
-        writer.writeField(field.name, field_value)?
-    }
-
-    writer.endObject()
-}
+const bytes = @sizeOf(MyStruct)
+const alignment = @alignOf(MyStruct)
 ```
 
-#### O que é eliminado com essa abordagem:
-- Elimina-se a macro `#[derive(Serialize)]`.
-- Elimina-se a macro `#[derive(Debug)]`.
-- Elimina-se a macro `#[derive(PartialEq, Eq, Hash)]`.
-- Elimina-se a macro `#[derive(Clone)]`.
+Esses intrínsecos usam somente o layout do alvo selecionado e suportado pelo
+backend. A sintaxe `target.os`, `target.arch`, `target.abi` ou
+`target.has(feature)` não é definida nesta etapa: requer uma identidade de alvo
+validada, além do layout.
 
-Tudo isso se torna código Arandu genérico e transparente, com desdobramento estático de laços e zero overhead em tempo de execução.
+## 4. Desenho e etapas propostas
 
----
+### 4.1. CT.0 — decisões necessárias antes da implementação
 
-### 3.4. Quasiquoting Higiênico para Injeção de Código (`quote { ... }`)
+Antes de mudar lexer/parser ou iniciar a VM, a RFC precisa fechar:
 
-Quando uma biblioteca precisa **declarar novos itens** no escopo (como implementar uma interface formal ou gerar novas structs), ela utiliza blocos `quote`:
+1. O domínio de `ConstValue`, incluindo representabilidade, igualdade, hashing e
+   serialização determinística para os tipos aceitos.
+2. Quais rvalues, operações, chamadas e instruções AMIR podem ser interpretados.
+3. A política para overflow, divisão inválida, recursão, alocação e valores não
+   inicializados.
+4. Como parâmetros de valor interagem com const generics, monomorphização e
+   inferência, sem quebrar programas existentes.
+5. O modelo de alvo inicial e as operações de layout válidas para cada backend.
+6. Chaves e dependências da query de avaliação, incluindo os limites reais do
+   `lower_amir` program-wide atual.
+7. Orçamento padrão, cancelamento, contexto CLI/LSP e diagnósticos públicos.
 
-```arandu
-import std.core.meta as meta
+Se uma decisão exigir suporte que não existe, o item fica fora do núcleo até
+essa dependência ser entregue; não deve ser simulado com dados do host.
 
-// Anotação customizada de derivação:
-@meta.DeriveHandler
-comptime func deriveToString(target: meta.TypeInfo): meta.Code {
-    quote {
-        impl Display for ${target.name} {
-            func toString(&self): String {
-                let mut buf = String::new()
-                buf.pushStr(${target.name.literal()})
-                buf.pushStr(" { ")
-                comptime for field in ${target}.fields() {
-                    buf.pushStr(field.name)
-                    buf.pushStr(": ")
-                    buf.pushStr(self.@field(field.name).toString())
-                    buf.pushStr(", ")
-                }
-                buf.pushStr("}")
-                buf
-            }
-        }
-    }
-}
-```
+### 4.2. CT.1 — valores e interpretador
 
-Uso pelo desenvolvedor:
-```arandu
-@Derive(ToString)
-struct Point {
-    x: f32,
-    y: f32,
-}
-```
+O interpretador é uma função pura da AMIR, argumentos constantes, configuração
+de alvo e orçamento. O conjunto inicial deve ser pequeno, explicitamente
+enumerado e alinhado ao que a AMIR representa sem efeitos observáveis. O ponto de
+partida recomendado é valores escalares e agregados imutáveis suportados pela
+AMIR; ponteiros arbitrários, chamadas externas e efeitos ficam excluídos.
 
-#### Regras de Higiene de Código:
-1. **Identificadores Locais**: Variáveis criadas dentro do bloco `quote` recebem `SymbolId`s novos e isolados, impedindo conflito acidental de nomes com o escopo do usuário (*variable capture*).
-2. **Splicing Tipado**: `${expr}` insere expressões da AST ou identificadores avaliados na fase comptime, usando a mesma sintaxe de interpolação já familiar aos desenvolvedores Arandu.
+Uma operação não suportada retorna um erro CTFE estruturado com span; nunca
+causa panic no compilador nem é silenciosamente tratada como constante.
+Implementar um modelo completo de memória virtual à maneira de Miri não é
+pré-requisito para esse subconjunto e não deve ser introduzido sem necessidade
+demonstrada.
 
----
+### 4.3. CT.2 — superfície de linguagem
 
-### 3.5. Inclusão Determinística de Recursos Externos via Salsa
+Após o domínio de valores e a semântica de execução estarem testados, adicionar
+as formas aprovadas de `comptime` em expressão/bloco, `comptime if` e iteração
+finita. O type checker precisa rejeitar no ponto de origem construções que não
+possam ser avaliadas com segurança, sem depender de falha tardia no backend.
 
-Para embutir arquivos estáticos (shaders, schemas JSON, imagens ou certificados) no binário em tempo de compilação, o Arandu fornece primitivas que respeitam o grafo Salsa:
+Parâmetros `comptime` reutilizam a representação dos const generics atuais para
+inteiros escalares no primeiro passo. Ampliação para tipos como argumentos,
+valores arbitrários ou políticas é uma decisão futura, não implícita nesta RFC.
 
-```arandu
-// Carrega arquivo como fatia imutável de bytes em compile-time:
-const SHADER_BYTES: []u8 = comptime meta.embedBytes("shaders/vertex.spv")
+### 4.4. CT.3 — alvo, layout e reflexão mínima
 
-// Carrega arquivo como string UTF-8 validada estaticamente:
-const CONFIG_SCHEMA: String = comptime meta.embedString("schemas/config.json")
-```
+O banco recebe uma descrição canônica e validada do alvo antes das queries
+semânticas que dependem dela. A primeira superfície de introspecção limita-se a
+operações de layout cujo resultado o compilador já calcula de forma confiável,
+como `@sizeOf` e `@alignOf`.
 
-> [!IMPORTANT]
-> **Invariante de I/O Salsa**: A função `meta.embedBytes(path)` **não** executa uma chamada crua a `std::fs::read` no compilador. Ela registra o arquivo no motor Salsa como um input tracked (`FileId` / `InputBlob`). Se o arquivo externo for modificado no disco, o Salsa invalida cirurgicamente apenas as queries dependentes. Se o conteúdo for idêntico, o *early-cutoff* suprime qualquer recompilação!
+O descritor deve separar identidade de alvo e `DataLayout`; ambos são dados de
+entrada semânticos. OS, arquitetura, ABI e capabilities só podem ser expostos
+quando forem obtidos de uma configuração explícita suportada — nunca inferidos
+do host durante a avaliação.
 
----
+Um `@typeInfo` amplo com campos, métodos, atributos ou acesso dinâmico por nome
+fica para uma etapa posterior, com contrato próprio para identidade e visibilidade
+de tipos.
 
-## 4. Explicação em Nível de Referência (Reference-Level Explanation)
+### 4.5. CT.4 — Salsa, fuel e LSP
 
-### 4.1. Arquitetura da AMIR VM (O Interpretador CTFE)
+A avaliação é memoizada por query pura em `arandu_query`; crates de typeck, MIR e
+backends não passam a possuir Salsa. A query deve depender de entradas
+semânticas explícitas e retornar resultado estável e comparável.
 
-A execução em tempo de compilação não ocorre na AST crua, mas sobre o grafo SSA da **AMIR** (Fase 3 do compilador):
+Garantias exigidas:
 
-```text
-Código Fonte (AST)
-       │
-       ▼
-Resolução de Nomes & Typeck Inicial
-       │
-       ▼
-Lowering para AMIR (SSA, CFG, Places, Borrow Info)
-       │
-       ▼
-AMIR VM (Interpretador de Bytecode Seguro)
- ├── Virtual Memory Engine (Slots tipados, Bounds Check, Miri Model)
- ├── TargetInfo / DataLayout (Tamanho de ponteiro e padding do alvo)
- ├── Fuel Counter (Orçamento de passos contra loops infinitos)
- └── Salsa Memoization Cache
-       │
-       ▼
-ConstValue / AST Injected Code
-```
+- determinismo para as mesmas AMIR, argumentos, layout e configuração;
+- limite de passos aplicado em cada operação/salto/chamada relevante;
+- cancelamento cooperativo, especialmente durante análise interativa do LSP;
+- nenhum I/O ou efeito global dentro da query;
+- early-cutoff testado sobre o resultado, sem prometer que mudanças em
+  dependências não reexecutam o interpretador;
+- preservar a correção mesmo enquanto `func_amir` dependa do lowering
+  program-wide. Granularidade por instância é melhoria arquitetural separada.
 
-#### Características da AMIR VM:
-- **Tabela de Instruções Linear**: Interpreta diretamente as estruturas densas `AmirStmtTable` e `DenseRange` de **A5**, alcançando máxima localidade de cache L1.
-- **Memória Virtual Alocada em Arena**: A VM gerencia um espaço de endereçamento virtual isolado. Cada bloco alocado por `comptime` carrega um `AllocId` e uma geração. Acesso fora de limites (*out-of-bounds*) ou desreferenciamento de ponteiro pendente (*dangling pointer*) em tempo de compilação gera um diagnóstico imediato e estruturado (`ICE` ou erro de tipo `Txxx`), em vez de causar *Segmentation Fault* no compilador.
-- **Consciência Estrita do Alvo (Target-Awareness)**: Se o compilador estiver rodando em Linux x86_64 compilando para um microcontrolador ARM Cortex-M0 de 32 bits (little-endian), a VM calcula `@sizeOf`, alinhamento e offsets de structs conforme a ABI do alvo de 32 bits.
+Fuel, defaults CLI/LSP e opções de configuração só são congelados após benchmark
+e testes de responsividade; os números apresentados em versões anteriores desta
+proposta eram exemplos, não contrato.
 
----
+### 4.6. Critérios de saída do núcleo
 
-### 4.2. Integração com Salsa & Resiliência do LSP
+O núcleo não está pronto para release até que haja testes que demonstrem:
 
-Toda avaliação de comptime é expressa como uma query pura no banco de dados Salsa:
+1. Semântica e diagnósticos estáveis para todos os casos suportados e rejeitados.
+2. Equivalência entre análise incremental e clean para os valores CTFE.
+3. Resultados determinísticos entre execuções e hosts; resultados dependentes de
+   layout variam conforme o layout-alvo selecionado, não o host.
+4. Cancelamento e fuel funcionando sem bloquear indefinidamente CLI ou LSP.
+5. Paridade com execução de runtime para o subconjunto puro compartilhado, onde
+   ambos os modos forem definidos.
+6. Regressões de invalidation/cutoff que comprovem quais queries são refeitas e
+   quais consumidores downstream são preservados.
+7. Diagnósticos novos registrados em `DiagCode`, catálogo e documentação de
+   erros conforme as regras do workspace.
 
-```rust
-#[salsa::query(eval_comptime_query)]
-fn eval_comptime(
-    db: &dyn SourceDatabase,
-    target_func: AmirFuncId,
-    args: Vec<ConstValue>,
-) -> Result<Arc<ConstValue>, ComptimeError>;
-```
+## 5. O que não faz parte desta RFC de núcleo
 
-#### 1. Early-Cutoff Automático
-Se o desenvolvedor alterar a implementação de uma função utilitária `comptime`, mas a saída para uma determinada chamada for idêntica (ex: `ConstValue::U64(1024)`), o Salsa corta a propagação da invalidação (*early-cutoff*), impedindo a re-emissão de código nos backends e preservando a reatividade instantânea.
+Os itens seguintes permanecem possibilidades futuras e exigem desenho separado:
 
-#### 2. Proteção do Servidor LSP (Fuel Budget)
-Para evitar que erros de digitação comuns (como laços `while (true)` não intencionais) congelem o IDE:
-- Cada invocação de query recebe um orçamento estrito de passos (*fuel*):
-  - **No CLI (Build normal)**: Padrão de `1.000.000` de passos de AMIR (configurável via `-Zcomptime-fuel=N`).
-  - **No LSP (Modo interativo)**: Padrão reduzido para `100.000` passos.
-- A cada salto básico (`Branch`, `Goto`) e chamada de função, a VM desconta o contador. Se o fuel zerar, a execução aborta cooperativamente e emite um diagnóstico rico no editor:
-  ```text
-  error[T045]: limite de passos de execução em tempo de compilação excedido (fuel exhausted)
-    --> src/main.aru:14:5
-     |
-  14 |     while (i < 10) { // loop não convergiu após 100.000 passos
-     |     ^^^^^^^^^^^^^^
-     = note: possível laço infinito em código de compilação
-     = help: use -Zcomptime-fuel=<N> para aumentar o limite se esta computação for legítima
-  ```
+- `quote`, `${...}`, geração de declarações, `@Derive` e DSLs;
+- reflexão estrutural completa e `val.@field(name)`;
+- APIs de target OS/arch/ABI/capabilities além do descritor suportado;
+- inclusão de assets, `embedBytes`/`embedString` ou acesso indireto a arquivos;
+- interpretação geral de ponteiros, memória virtual completa ou equivalência
+  integral com Miri;
+- execução JIT de CTFE.
 
----
+Geração de itens precisa resolver higiene, atribuição de `SymbolId`, resolução de
+nomes, re-typecheck, ciclos e invalidação; não é uma extensão pequena do avaliador
+de constantes.
 
-## 5. Invariantes de Arquitetura e Desvantagens (Drawbacks & Invariants)
+## 6. Invariantes e custos
 
-### Invariantes Preservados
-1. **Pureza das Queries**: A AMIR VM proíbe sumariamente operações de I/O cru, chamadas de rede e leitura arbitrária de filesystem. O acesso a assets estáticos é intermediado estritamente por inputs tipados do Salsa.
-2. **Determinismo Byte-a-Byte**: Avaliar a mesma expressão comptime em diferentes sistemas operacionais hospedeiros (Windows, Linux, macOS) produz exatamente a mesma representação de bytes para `ConstValue`.
-3. **Ausência de Estado Global Mutável**: A VM não possui variáveis globais ou ponteiros compartilhados entre threads de análise.
+1. A execução é determinística e não usa estado global mutável.
+2. Queries são puras, não fazem I/O e permanecem em `arandu_query`.
+3. Valores dependentes de layout usam dados explícitos do alvo e nunca o host.
+4. Fuel/cancelamento são obrigatórios antes de habilitar CTFE no LSP.
+5. A AMIR VM não pode divergir silenciosamente da semântica das instruções que
+   interpreta; o subconjunto suportado fica documentado e testado.
+6. O escopo da VM cresce por necessidade comprovada, sem antecipar alocadores,
+   virtual memory ou otimizações específicas de desempenho.
 
-### Desvantagens e Custos
-- **Pressão sobre o Type Checker**: Executar código no meio da checagem de tipos introduz uma dependência de intercalação entre typeck, lowering de AMIR e avaliação. Isso é gerenciado através do isolamento de queries Salsa em grão fino.
-- **Complexidade do Compilador**: A inclusão de um interpretador de bytecode SSA tipado (estilo Miri) exige testes rigorosos de conformidade semântica para garantir que a VM nunca discorde do código gerado pelo backend Cranelift ou C.
+O custo principal é manter o interpretador coerente com typeck, AMIR, layout,
+ownership e incrementalidade. O ganho de ergonomia não justifica enfraquecer
+diagnósticos, aumentar invalidações sem medição ou criar uma segunda linguagem de
+metaprogramação antes do núcleo estar estável.
 
----
+## 7. Alternativas consideradas
 
-## 6. Racional e Alternativas (Rationale & Alternatives)
+| Alternativa | Vantagem | Custo/risco | Situação |
+| --- | --- | --- | --- |
+| Avaliar AST diretamente | Começo aparentemente simples | Duplica semântica e precede contratos tipados/AMIR | Não recomendada como arquitetura final |
+| Reutilizar somente folding atual | Escopo pequeno | Não executa blocos ou chamadas CTFE | Adequado como etapa de preparação, insuficiente como núcleo |
+| VM geral com memória virtual desde o início | Base para ponteiros e programas mais ricos | Grande superfície de segurança antes de haver casos que a exijam | Adiada até necessidade demonstrada |
+| Macros/geração de código na primeira entrega | Maior expressividade inicial | Higiene, resolução, ciclos e expansão complexos | Fora do núcleo |
 
-| Opção | Vantagens | Desvantagens | Veredito |
-| :--- | :--- | :--- | :--- |
-| **Rust Proc-Macros (`syn`/`quote`)** | Familiar para desenvolvedores Rust. | Tempo de compilação terrível; exige compilar DLLs no host; cegueira completa de tipos. | **Rejeitado** |
-| **Rust `macro_rules!`** | Leve e sem crates dinâmicas. | Sintaxe paralela bizarra; difícil de manter; propensa a erros complexos de recursão. | **Rejeitado** |
-| **Zig Comptime Puro** | Uma única linguagem; sem macros. | Executa cedo demais na AST; difícil de orquestrar com Salsa incremental e early-cutoff sem bugs de invalidação. | **Aprimorado (Zig Comptime + AMIR SSA)** |
-| **C++ Preprocessor (`#define`)** | Simples de implementar. | Zero segurança; falta de higiene; bugs grotescos de substituição textual. | **Rejeitado** |
+## 8. Arte prévia
 
----
+Zig, Rust/Miri, Rust procedural macros, Circle C++ e D oferecem experiências
+relevantes para avaliar ergonomia, interpretação, reflexão e expansão. Esta RFC
+não afirma superioridade sobre essas abordagens nem quantifica substituição de
+macros; comparações futuras precisam de workloads e critérios reproduzíveis.
 
-## 7. Arte Prévia (Prior Art)
+## 9. Questões em aberto
 
-- **Zig**: Pioneiro no paradigma de "comptime como única linguagem de metaprogramação", provando que 90% das macros podem ser substituídas por reflexão de tipos e laços desdobrados.
-- **Miri (Rust)**: O padrão de ouro em interpretação de representação intermediária (MIR) com detecção de comportamentos indefinidos e layout de memória virtual estrito.
-- **Circle C++ (Sean Baxter)**: Demonstrou o poder de extensão de sintaxe com `@meta` tipado e injeção de código diretamente em compiladores industriais de sistemas.
-- **D Language**: Demonstrou a viabilidade prática de CTFE industrial e introspecção estática com `__traits` desde a década de 2000.
-- **Mojo**: Demonstrou o uso de metaprogramação integrada com representações MLIR/SSA para otimização extrema de código científico.
+1. Qual é o conjunto inicial exato de tipos e operações de `ConstValue`?
+2. `comptime` marca expressão/bloco/param, ou os const generics existentes
+   continuam com sintaxe própria e apenas compartilham semântica?
+3. Quais loops e chamadas são aceitos no primeiro interpretador e como o fuel é
+   contabilizado de forma previsível?
+4. Qual formato representa o triple e quais alvos têm codegen real suportado?
+5. Quais consultas devem depender do resultado CTFE e como provar cutoff sem
+   supor que a query não será reexecutada?
+6. Quais intrínsecos mínimos oferecem valor sem comprometer estabilidade de
+   `@typeInfo`?
 
----
+## 10. Possibilidades futuras
 
-## 8. Questões em Aberto (Unresolved Questions)
-
-1. **Recursão de Derivações**: Qual o limite ideal de profundidade quando um atributo `@Derive` injeta uma interface cujo corpo invoca outra avaliação `comptime`?
-2. **Gramática de Splicing em Nível de Itens**: A notação `${target.name}` é suficiente para declarações, ou precisaremos de marcadores adicionais para splicing de parâmetros e blocos inteiros?
-
----
-
-## 9. Possibilidades Futuras (Future Possibilities)
-
-- **DSLs Estáticas Compiladas para AMIR**: Validação e compilação em tempo de compilação de consultas SQL tipadas (`sql!("SELECT id, name FROM users")`), expressões regulares compiladas diretamente para autômatos finitos determinísticos (DFA) na memória constante, e formatadores de string verificados com zero overhead.
-- **Compilação JIT de Comptime Pesado**: Para funções de tempo de compilação extremamente longas (ex: geração de tabelas trigonométricas gigantes ou pré-processamento de datasets), a AMIR VM poderá utilizar o próprio backend Cranelift para compilar a função em código de máquina nativo e executá-la com aceleração de hardware.
+Após o núcleo demonstrar semântica, segurança e incrementalidade, podem ser
+propostas RFCs para reflexão estrutural, capabilities por alvo, inclusão
+determinística de recursos e geração higiênica de itens. O avanço de cada etapa
+depende de casos de uso concretos e de contratos específicos; nada disso é
+prometido pela candidata 0.1.9.

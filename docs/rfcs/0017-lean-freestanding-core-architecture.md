@@ -29,7 +29,7 @@ O `arandu_core` é projetado sob o princípio da **"Física Fundamental da Lingu
 2. **Prevenção de "Panic Bloat"**: Eliminação de tabelas complexas de formatação de strings e vtables em situações de erro irrecuperável, adotando traps/aborts de uma única instrução de máquina de hardware (`UD2`, `BKPT`, `EBREAK`) com código escalar de 32 bits;
 3. **Fatias e Views como Primitivas de Primeira Classe (`[]T`, `str`)**: Todo processamento de sequências opera sobre *fat pointers* determinísticos `(ptr, len)`, garantindo zero cópias e verificação estática de limites;
 4. **Universalidade de Alvos**: Execução idêntica e sem atritos em microcontroladores de baixíssimo consumo (ARM Cortex-M0/M3/M4, RISC-V de 4 KB a 16 KB de RAM), WebAssembly puro sem WASI (`wasm32-unknown-unknown`), kernels de sistemas operacionais, engines gráficas 3D de 120 FPS e nós de computação de alta densidade;
-5. **Comptime Nativo (CTFE / RFC 0013)**: A pureza do `core` define a superfície que a VM determinística deverá avaliar em tempo de compilação quando a RFC 0013 estiver implementada.
+5. **Compatibilidade futura com CTFE (RFC 0013, Draft)**: a pureza do `core` pode facilitar avaliações em compilação, mas não implica que todas as APIs serão interpretáveis. Só o subconjunto explicitamente suportado e aceito pela RFC 0013 poderá ser avaliado.
 
 ### 1.1 Estado da implementação (2026-09-20)
 
@@ -188,7 +188,7 @@ Qualquer módulo que resida em `arandu_core` deve satisfazer formalmente estes 6
 3. **Invariante 3 — Zero Threading de Kernel**: Não há primitivas de criação de threads de sistema operacional (`pthread_create`, `CreateThread`). A concorrência no `core` restringe-se a operações atômicas de hardware (`std.core.atomic`), interrupções de hardware e corrotinas cooperativas.
 4. **Invariante 4 — Zero DWARF / Zero Exception Unwinding**: O modelo de erro é puramente baseado em valores escalares em registradores. Nenhum metadado de propagação de exceção é emitido no binário.
 5. **Invariante 5 — Zero Panic Text Bloat**: Asserções de integridade em código de produção compilam para traps de hardware diretos (`UD2` em x86_64, `BKPT`/`UDF` em ARM, `EBREAK` em RISC-V), com um identificador de 32 bits (`TrapCode`) repassado via registrador da ABI.
-6. **Invariante 6 — 100% Comptime-Friendly (CTFE)**: Todas as funções puras de `arandu_core` devem permanecer interpretáveis pela futura máquina virtual determinística da AMIR (conforme [RFC 0013](0013-deterministic-ctfe-and-comptime-metaprogramming.md)); o executor CTFE completo ainda não integra a toolchain.
+6. **Invariante 6 — Compatibilidade com o subconjunto CTFE**: funções de `arandu_core` destinadas a uso em compilação devem permanecer interpretáveis pelo subconjunto documentado da AMIR (conforme a proposta [RFC 0013](0013-deterministic-ctfe-and-comptime-metaprogramming.md)). Pureza, por si só, não garante suporte do interpretador; o executor CTFE ainda não integra a toolchain.
 
 ### 4.2 Topologia de Módulos do `arandu_core`
 

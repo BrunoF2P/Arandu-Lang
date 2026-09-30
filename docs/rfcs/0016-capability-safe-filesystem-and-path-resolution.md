@@ -351,6 +351,6 @@ Quando negado, uma biblioteca dependente **só pode acessar os diretórios que o
 
 ## 9. Possibilidades Futuras (Future Possibilities)
 
-1. **Sandboxing de CTFE e Comptime (RFC 0013)**: Quando macros e metaprogramação em tempo de compilação forem introduzidas no Arandu, todo acesso a arquivos durante a compilação será estritamente mediado por instâncias de `Dir` virtuais gerenciadas pelo VFS do Salsa, tornando impossível que uma dependência maliciosa roube dados do host durante `arandu build`.
+1. **Acesso a arquivos por CTFE (possibilidade futura)**: a RFC 0013 (Draft) não inclui leitura de assets nem acesso a arquivos. Se uma etapa futura propuser essa capacidade, ela deverá ter RFC própria e inputs explícitos no grafo do compilador; a integração com `Dir`/VFS e os limites de autoridade precisarão ser definidos antes de qualquer implementação. CTFE puro não recebe acesso ambiental ao filesystem.
 2. **FS Transacional e Copy-on-Write**: Extensão da abstração de `Dir` para suportar transações temporárias isoladas e snapshots em memória para o harness de testes (`std.testing`).
 3. **Controle Fino de Direitos (Estilo Capsicum/FreeBSD)**: Capacidade de limitar os direitos de um `DirDescriptor` em tempo de execução através de flags de restrição irreversíveis (`dir.limitRights(ReadOnly)`).

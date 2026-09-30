@@ -45,7 +45,7 @@ Uma RFC evolui através dos seguintes estados formais:
 | [0010](0010-cst-resilient-ide-typeck.md) | Pipeline CST-First Resiliente e Typeck Incremental | Frontend / IDE | `Implemented` | 2026-07-20 |
 | [0011](0011-incremental-partitioned-aot-and-in-process-linker.md) | Pipeline AOT Incremental, Codegen Particionado e Linker In-Process | Backend / Incremental | `Draft` | 2026-09-12 |
 | [0012](0012-scientific-computing-and-data-architecture.md) | Arquitetura da Stack de Computação Científica, Numérica e de Dados | Ecosystem (Out-of-Tree) | `Draft` | 2026-09-12 |
-| [0013](0013-deterministic-ctfe-and-comptime-metaprogramming.md) | Metaprogramação Determinística em Tempo de Compilação (CTFE & Comptime) via AMIR VM | Frontend / Middle-end | `Draft` | 2026-09-12 |
+| [0013](0013-deterministic-ctfe-and-comptime-metaprogramming.md) | CTFE determinístico e `comptime` core via AMIR | Frontend / Middle-end / Incrementalidade | `Draft` | 2026-09-12 |
 | [0014](0014-native-wasm-component-model-and-runtime.md) | Backend WebAssembly Nativo com Component Model (WIT), Compilação Incremental e Paralelismo Determinístico | Backend | `Draft` | 2026-09-13 |
 | [0015](0015-native-mobile-architecture-and-zero-copy-interop.md) | Arquitetura Mobile Nativa, Interoperabilidade Zero-Copy e Pipeline de Bindings Multiplataforma | Backend / Tooling | `Draft` | 2026-09-13 |
 | [0016](0016-capability-safe-filesystem-and-path-resolution.md) | Sistema de Arquivos Orientado a Capacidades e Resolução Segura de Caminhos | Stdlib / Runtime / Tooling | `Draft` | 2026-09-19 |

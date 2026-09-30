@@ -1,4 +1,4 @@
-# Arandu Compiler Architecture — Master Roadmap (v0.1 → v0.4)
+# Arandu Compiler — Roadmap Mestre
 
 > **Fonte única de planejamento.** Itens marcados como concluídos abaixo são
 > decisões consolidadas, não tarefas pendentes. Os documentos técnicos ligados
@@ -103,7 +103,7 @@ O volume da 0.1.7 (71 commits, 609 arquivos) torna a consolidação obrigatória
    (`int = i32`, `uint = u32`, `isize`/`usize` para endereços; diagnóstico T038 para
    literais acima de 32 bits sem sufixo). Async (`A3`) e effects (`A2`) permanecem
    infra interna não anunciada: o AMIR coroutine splitting, frame allocation e codegen
-   completos pertencem ao marco SL_R (v0.3+); a superfície pública não muda.
+   completos pertencem ao marco futuro SL_R; a superfície pública não muda.
 2. **Rodada de estabilização:** medir e classificar limitações conhecidas antes de
    decidir quais bloqueiam a release. Itens monitorados:
    - O2 permanece `experimental` sem promoção precipitada;
@@ -120,9 +120,53 @@ O volume da 0.1.7 (71 commits, 609 arquivos) torna a consolidação obrigatória
 **Não entra na 0.1.8:** async runtime real (SL_R), effect system público, LLVM,
 closures, cache remoto, self-hosting nem qualquer nova superfície de linguagem.
 
-**Após 0.1.8:** avaliar Paralelismo Estruturado para `gold` (benchmark reproduzível
-+ matriz nativa Windows/macOS), depois iniciar `SL_R` (async runtime) e `SL_S-Core.2`
-(anti-panic bloat). A ordem é preservada: runtime estável antes de APIs de sistema.
+### Proposta de sequência após 0.1.8
+
+**Candidata a 0.1.9: CTFE & Comptime Core (RFC 0013, ainda Draft).** Esta é uma
+direção de planejamento, não um escopo aprovado: a RFC precisa ser revisada e
+aceita antes de iniciar implementação. A 0.1.8 continua sendo a campanha ativa.
+
+O núcleo deve ser implementado como uma sequência de gates, e não como uma
+promessa de entregar toda a metaprogramação de uma vez:
+
+1. **CT.0 — fechar o contrato:** definir domínio de `ConstValue`, operações e
+   efeitos permitidos, integração com os const generics escalares existentes,
+   semântica de erros e limites de execução. Preservar a sintaxe existente até
+   haver uma migração explícita; evitar dois mecanismos independentes para
+   valores conhecidos em compilação.
+2. **CT.1 — alvo e layout:** tornar explícita a identidade/layout do alvo na
+   configuração semântica. `@sizeOf` e `@alignOf` só podem refletir layouts
+   realmente suportados pelo backend. Não expor `target.os`, `target.arch`, ABI
+   ou capabilities enquanto o compilador não tiver um descritor canônico e
+   validado para esses alvos.
+3. **CT.2 — avaliação determinística:** implementar o interpretador sobre AMIR
+   para um subconjunto puro, documentado e testado; começar por valores escalares
+   e agregados suportados. Sem I/O, acesso ambiental ao filesystem, ponteiros
+   arbitrários ou efeitos de runtime nesta etapa.
+4. **CT.3 — superfície inicial:** `comptime` em expressão/bloco, `comptime if`,
+   parâmetros de valor compatíveis com os const generics atuais e `comptime for`
+   apenas sobre domínios finitos e conhecidos estaticamente. Sintaxe e conversões
+   permanecem sujeitas à aceitação da RFC.
+5. **CT.4 — editor e incrementalidade:** avaliação memoizada em Salsa, fuel,
+   cancelamento cooperativo e diagnósticos estruturados. A garantia inicial é
+   determinismo, correção e cutoff do resultado; não prometer que uma mudança na
+   implementação nunca reexecutará a avaliação. `func_amir` ainda projeta sobre
+   `lower_amir` program-wide; granularidade real por instância continua no marco
+   de lowering incremental correspondente.
+6. **CT.5 — reflexão mínima e gate de release:** começar por operações de layout
+   como `@sizeOf`/`@alignOf`. Ampliar `@typeInfo` somente com contrato estável para
+   tipos e campos. Exigir paridade incremental/clean, determinismo entre hosts,
+   testes de fuel/cancelamento e equivalência com execução de runtime no
+   subconjunto compartilhado.
+
+**Depois do núcleo:** reflexão estrutural mais ampla e capabilities por alvo
+precisam de RFC/etapa própria. `quote`, splicing, `@Derive`, geração de items,
+DSLs, inclusão de arquivos e JIT ficam fora da primeira entrega; só devem avançar
+com decisões específicas para higiene, resolução, re-typecheck e invalidação.
+
+**Outras trilhas:** manter o gate de `gold` do Paralelismo Estruturado e a
+estabilização de runtime como trabalho independente. Não os encadear como
+pré-requisitos de CTFE nem deslocar a estabilização da 0.1.8.
 
 
 ### Trilha incremental nativa — RFC 0011
@@ -249,7 +293,7 @@ Fase 1 — Estabilização Semântica (v0.1) · [CONCLUÍDA]
 [x] M1     Move checker básico (O001, O005, O007) com spans reais (BUG-01)
 [x] O1     Constant folding + DCE com bitset denso O(1) (SCALE-02)
 
-Fase 2 — A Construção da Infraestrutura & Execução (v0.2) · [FECHADA no checklist de infra]
+Fase 2 — A Construção da Infraestrutura & Execução (marco histórico) · [FECHADA no checklist de infra]
                   · Residual de produto em Fase 3 (F2 OSSA, A3 compiler model) tratado abaixo.
 [x] INF2.1 Refatoração para InternPool (AstPool & TypeInterner centralizado)
 [x] HIR Pool-first migration — structural HIR nodes (blocks, stmts, expr-blocks) stored in `HirPool` and referenced via `HirBlockId` (lowering, monomorphize, pretty-print, AMIR lowering and tests updated)
@@ -269,7 +313,6 @@ Fase 2 — A Construção da Infraestrutura & Execução (v0.2) · [FECHADA no c
    └─ [x] A10.d  AnalysisRevision / LspSymbolId — stale-safety de análise por revisão de snapshot
                   (não generation em SymbolId); ver `arandu_query::analysis`
 [x] A11    Token & String Storage Engine (packed tokens, SSO via smol_str, string interning)
-[ ] A12    Deterministic CTFE & Comptime Metaprogramming (AMIR VM, Salsa queries, RFC 0013)
 [x] BC     Backend Cranelift (Dev/Debug com compilador em memória)
    ├─ [x] BC.1   Fat Pointer String JIT (tratar String como ptr + len na convenção de chamadas do Cranelift)
    ├─ [x] BC.1a  Fechar ownership de buffers produzidos por `ToStr`, interpolação
@@ -300,7 +343,7 @@ Fase 2 — A Construção da Infraestrutura & Execução (v0.2) · [FECHADA no c
            de compilação; não equivale ao contrato público Gold de `SL_S-Core`
 [x] DOC1   docs/ossa-virtual-anchoring.md — RFC retroativo documentando a técnica de âncoras virtuais + poda
 
-Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [PARCIAL; vários marcos concluídos]
+Fase 3 — OSSA Avançado, Semântica e OS Runtime (marco histórico) · [PARCIAL; vários marcos concluídos]
 [x] A1     Query System (Incremental Semantic Database, Salsa-like O(1) invalidation)
    ├─ [x] A1.1   Salsa Integration / CompilerDatabase migration (`CompileSession` removido)
    ├─ [x] A1.2   O(1) FileId lookup em DatabaseImpl (índice reverso FileId→SourceFile via FxHashMap)
@@ -430,7 +473,7 @@ Fase 3 — OSSA Avançado, Semântica e OS Runtime (v0.3) · [PARCIAL; vários m
            implementação, SDK/VSIX e matriz nativa concluídos; soak operacional
            permanece como único requisito para promoção formal a Gold
 
-Fase 4 — Expressividade de Linguagem e Tipagem (v0.35) · [PARCIAL; superfície inicial integrada]
+Fase 4 — Expressividade de Linguagem e Tipagem (marco histórico) · [PARCIAL; superfície inicial integrada]
 [x] SYN.1  Retorno implícito: última `Expr` do body → valor de retorno (typeck + AMIR; async wrap A3)
 [x] SYN.2  Interpolação: `$name` + `${expr}` (lexer → StringInterp/ToStr; e2e CLI)
 [x] SYN.3  Opcionais: `nil` → Option.None (contexto); match Some/None no AMIR; `T?` permanece Nullable (§2.1)
@@ -446,7 +489,7 @@ Fase 4 — Expressividade de Linguagem e Tipagem (v0.35) · [PARCIAL; superfíci
    └─ [x] TYP.3.3  Unificação de Restrições Tardias no Solver (`TypeVar` de literais não resolvidos; resolução retroativa sem fallback arbitrário `i32`)
 [x] TYP.4  Const Generics em Parâmetros de Tipo: suporte a parâmetros inteiros/escalares em structs e aliases (`struct StaticMatrix<T, const M: uint, const N: uint>`), unificando matrizes de stack e buffers de tamanho fixo sem duplicação de tipos dedicados
 
-Fase 5 — Otimização Global, CodeGen & Ecossistema (v0.4+) · [NÃO INICIADA]
+Fase 5 — Otimização Global, CodeGen & Ecossistema (marco histórico) · [NÃO INICIADA]
 [ ] LLVM   Backend LLVM (Release Optimizer, LTO, PGO profile-guided optimization pipeline)
 [ ] REG    Register Allocation (Linear Scan para Cranelift, Graph Coloring para LLVM)
 [ ] GEN    Adaptive Monomorphization (Witness tables para cold paths vs Lazy Monomorphization para loops)
@@ -597,9 +640,13 @@ Source (.aru)
 
 ## 🚀 Fases e Detalhamento de Subsistemas
 
-### Fase A — Compiler Infrastructure & Core Subsystems (v0.2)
+> **Nota sobre fases:** as fases abaixo preservam o histórico arquitetural e não
+> definem versões de release. A fila executiva de releases e suas dependências
+> fica na seção “Fila de execução” acima.
 
-Antes de expandir as capacidades de otimização, o compilador do Arandu constrói sua fundação infraestrutural. A Fase A cubre tanto a semântica e efeitos da linguagem (A1–A4) quanto a **arquitetura de execução** do compilador em si (A5–A12).
+### Fase A — Compiler Infrastructure & Core Subsystems (marco histórico)
+
+Antes de expandir as capacidades de otimização, o compilador do Arandu constrói sua fundação infraestrutural. A Fase A cobre tanto a semântica e efeitos da linguagem (A1–A4) quanto a **arquitetura de execução** do compilador em si (A5–A11).
 
 #### A1 — Query System (Incremental Semantic Database via Salsa)
 
@@ -616,7 +663,7 @@ Inspirado por Salsa e o request-evaluator do Swift, o compilador é estruturado 
 3. Queries de name resolution e type-check → queries Salsa com dependências finas entre arquivos
 4. Cancelamento automático de queries obsoletas em edições LSP
 
-#### A2 — Effect System (v0.3)
+#### A2 — Effect System (marco histórico)
 
 Um sistema de efeitos estrito e rastreável pelo compilador. Effects são
 **inferidos transitivamente** a partir do código resolvido e tipado; anotações
@@ -664,7 +711,7 @@ Propriedades semânticas iniciais:
 7. enforcement por sandbox para autoridade — análise estática não substitui
    isolamento de código nativo.
 
-#### A3 — Modelo Async Semântico e Colorless (v0.3)
+#### A3 — Modelo Async Semântico e Colorless (marco histórico)
 
 O Arandu resolve o "Color Problem" das linguagens modernas (onde funções síncronas e assíncronas não se misturam facilmente) através de uma semântica flexível e de baixo nível no compilador:
 
@@ -698,9 +745,9 @@ Um subsistema dedicado a rearranjar dados na pilha e na memória física para ga
 
 ---
 
-### Fase A (cont.) — Execution Architecture (A5–A12)
+### Fase A (cont.) — Execution Architecture (A5–A11)
 
-Os subsistemas A5–A12 definem **como o compilador em si executa**: como os dados fluem pela CPU, como evitar stalls de pipeline, como paralelismo escala e como cada traversal acontece. Isso é o que separa um compilador acadêmico de um compilador industrial.
+Os subsistemas A5–A11 definem **como o compilador em si executa**: como os dados fluem pela CPU, como evitar stalls de pipeline, como paralelismo escala e como cada traversal acontece. CTFE foi retirado desta fase histórica e está proposto separadamente na fila de releases.
 
 #### A5 — Data-Oriented Layout Engine
 
@@ -852,40 +899,12 @@ O frontend textual evita alocações individuais de tokens e strings, tratando o
 | **Small-String Optimization (SSO)** | Identificadores ≤ 23 bytes armazenados inline sem alocação heap | ~95% dos identificadores reais cabem inline |
 | **Buffer Reuse** | Buffers temporários de diagnósticos e formatação são arenas scratch reutilizadas | Zero pressão sobre o alocador global |
 
-#### A12 — Deterministic CTFE & Comptime Metaprogramming (AMIR VM, RFC 0013)
+#### CTFE & Comptime — proposta separada (RFC 0013)
 
-O Arandu formaliza em sua [RFC 0013](./rfcs/0013-deterministic-ctfe-and-comptime-metaprogramming.md) o modelo canônico de **Compile-Time Function Execution (CTFE)** e metaprogramação de primeira classe via **interpretador de AMIR desacoplado e determinístico**, superando as limitações históricas de **Miri (Rust)**, **Zig Comptime** e **Rust Procedural Macros**.
-
-**Status:** `planned` (v0.3/v0.4); especificado normativamente pela RFC 0013.
-
-##### 1. O que aproveitamos de melhor (Miri, Zig, Circle e D)
-* **De Miri (Rust):**
-  * Execução sobre a representação intermediária (**AMIR**) em vez de AST bruta, garantindo que o código em tempo de compilação siga exatamente a mesma semântica (CFG, SSA, tipos densos) do runtime.
-  * Modelo de memória virtual tipada e segura com detecção rigorosa de bounds checking, *use-after-free* e *out-of-bounds* durante a compilação.
-* **Do Zig Comptime:**
-  * **Mesma Linguagem, Sem Macros Secundárias:** O usuário programa metaprogramação usando a sintaxe e tipos regulares do Arandu (`comptime expr`, `comptime param: Type`), eliminando a necessidade de uma linguagem de macro separada ou compilação de crates externos (`proc-macros`).
-  * Introspecção e reflexão de tipos em tempo de compilação (`std.core.meta`) eliminando 90% das macros através de laços desdobrados (`comptime for`) e acesso a campos por nome (`val.@field(name)`).
-* **De Circle C++ e D Language:**
-  * Quasiquoting higiênico (`quote { ... }`) com splicing `${expr}` para os 10% restantes de metaprogramação (geração declarativa de novas estruturas, interfaces e anotações `@Derive`).
-
-##### 2. Onde superamos o Miri e o Zig
-* **Salsa-First & Early-Cutoff (Superando o Zig):**
-  * O Zig sofre com invalidações em cascata que reexecutam o comptime desnecessariamente.
-  * No Arandu, toda avaliação é uma **query Salsa pura e memoizada** (`eval_comptime(db, amir_func_id, args) -> Arc<ConstValue>`). Se a edição não alterar o valor resultante, o *early-cutoff* do Salsa impede a re-emissão de código downstream.
-* **Desempenho Orientado a Dados (Superando o Miri):**
-  * O Miri no `rustc` é pesado devido a camadas de abstração e rastreamento exaustivo de aliasing.
-  * A VM de AMIR do Arandu aproveita o layout denso de **A5** (`AmirStmtTable`, `DenseRange`, IDs inteiros contíguos), permitindo um interpretador *cache-aware* com dispatch por tabela O(1) e alocação via arena scratch.
-* **LSP & IDE Immunity (Resiliência contra Travamentos):**
-  * Toda execução de comptime roda sob um **orçamento estrito de passos (*fuel budget*)** e suporte a cancelamento cooperativo assíncrono. Laços infinitos em código incompleto digitado no editor são interrompidos com diagnósticos claros, sem nunca travar a thread do LSP.
-* **Cross-Compilation Exata:**
-  * A VM consulta o `DataLayout` e `TargetInfo` do alvo configurado (tamanho de ponteiro, endianness, padding de structs) e não o host onde o compilador roda.
-* **Inclusão de Arquivos Pura via Salsa:**
-  * Primitivas como `meta.embedBytes(path)` registram o arquivo como input Salsa (`FileId`), proibindo `fs::read` direto no hot path e mantendo a pureza do compilador.
-
-##### 3. Invariantes de Arquitetura
-1. **Pureza Absoluta:** O interpretador de AMIR proíbe I/O de rede, mutação global e acesso não sandboxado ao sistema de arquivos do host.
-2. **Determinismo Byte-a-Byte:** Executar o mesmo código comptime em Windows, Linux ou macOS produz idêntico `ConstValue`.
-3. **Erros Estruturados:** Falhas de execução viram diagnósticos `Txxx` reportáveis com spans precisos do código fonte.
+CTFE não pertence à fase histórica A5–A11 nem está especificado normativamente.
+A RFC 0013 permanece `Draft`; o recorte candidato à 0.1.9, dependências e gates
+estão descritos na [fila de execução](#fila-de-execução) e na
+[RFC 0013](./rfcs/0013-deterministic-ctfe-and-comptime-metaprogramming.md).
 
 ---
 
@@ -958,7 +977,7 @@ Ambientes de longa execução como IDEs e Language Servers (LSPs) exigem persist
 
 ---
 
-### Fase 3 — Otimização Baseada em Fatos Semânticos (v0.3)
+### Fase 3 — Otimização Baseada em Fatos Semânticos (marco histórico)
 
 #### 3.1 Polimorfismo Híbrido Adaptativo (Adaptive Monomorphization)
 
@@ -1136,7 +1155,7 @@ mantém apenas a ordem e os gates de entrega.
 
 ---
 
-### Fase 4 — Geração e Execução Multitarget (v0.4+)
+### Fase 4 — Geração e Execução Multitarget (marco histórico)
 
 #### 4.1 Pipeline de Duplo Backend
 
@@ -1315,7 +1334,7 @@ Flags internas ativadas em compilações debug/nightly para inspeção microarqu
 
 ---
 
-### Geração de Código de Máquina & Perfilamento (Fase 4)
+### Geração de Código de Máquina & Perfilamento (trilha histórica)
 
 #### PGO — Profile-Guided Optimization Pipeline
 
@@ -1509,7 +1528,7 @@ Analisador estático avançado de uso de memória e desempenho.
 | 2026-09 | Codex | **Ownership sensível a campos na rc.5**: `Loan` e o M1 passaram a preservar caminhos compactos de campos do `AmirPlace`. Campos com `SymbolId` distintos não produzem O003/O001 falsos; roots/prefixes continuam sobrepostos, e índices/dereferences permanecem conservadores. O join distingue campo movido em todos ou apenas alguns predecessores, store reinicializa o subpath exato e drop glue ignora só o campo transferido. Extração parcial de tipos com `@Destructor` explícito é rejeitada porque o destrutor exige o valor completo. Matrizes tipadas cobrem shared/exclusive, paths aninhados, moves, reinicialização e CFG linear/diamond. |
 | 2026-09 | Codex | **Trilha RFC 0011 tornada executável**: a fundação batch verificável permanece funcional no 0.1; o 0.2 recebe o serviço de build quente sem persistir Salsa e o 0.3 recebe lowering/CGU realmente por instância, com gates explícitos de equivalência clean, determinismo e p95 em host documentado. |
 | 2026-09 | Antigravity | **Stack Científica e de Dados (RFC 0012)**: inclusão formal dos marcos SCI.1–SCI.4; arrays/views strided sem cópia, separação de matrizes stack/heap, destination-passing style, scratch arenas reutilizáveis, formato colunar Arrow, motor lazy em batches e álgebra de grafos sobre semirings GraphBLAS. |
-| 2026-09 | Antigravity | **Metaprogramação Comptime & CTFE (RFC 0013)**: especificação formal do subsistema A12; unificação sintática em `comptime`, reflexão estática de tipos (`std.core.meta`), eliminação de 90% das macros via `comptime for` e `@field`, quasiquoting higiênico com `${expr}`, AMIR VM determinística estilo Miri, fuel budget e queries Salsa puras com early-cutoff. |
+| 2026-09 | Antigravity | **Proposta de CTFE & Comptime (RFC 0013, Draft)**: registrada como direção de pesquisa. O escopo foi separado em núcleo incremental e possibilidades futuras; não representa especificação aceita nem implementação existente. |
 | 2026-09 | Antigravity | **Ergonomia de Sintaxe e Tipagem (SYN.4.1, SYN.4.2, SYN.5, TYP.4)**: inclusão formal dos débitos técnicos de ergonomia identificados na SCI.1; desconstrução qualificada de enums do prelude em patterns, condições compostas com múltiplos padrões is, palavras-chave contextuais como membros e const generics escalares em structs. |
 | 2026-09 | Antigravity | **Filesystem Seguro e Resolução por Capacidades (RFC 0016)**: especificação formal do subsistema de segurança de I/O (`SL_S-Host.1–5`); abstração `std.fs.Dir` eliminando autoridade ambiente em mutações, motor nativo imune a TOCTOU e symlink races (`openat2` com `RESOLVE_BENEATH` no Linux, `O_NOFOLLOW` no Darwin/BSD e `FILE_FLAG_OPEN_REPARSE_POINT` no Windows NT), hardening de limites do VFS em `arandu_query::vfs` e distinção formal de efeitos (`FileRead/Write` vs `AmbientFsRead/Write`). |
 | 2026-09 | Antigravity | **Arquitetura Fundamental do `arandu_core` Freestanding (RFC 0017)**: especificação formal do núcleo irreduzível da linguagem (`SL_S-Core.1–4`); garantia estrita de Zero OS, Zero Heap Global e Zero Threads, erradicação de "panic formatting bloat" via traps de 1 instrução (`UD2`/`BKPT`/`EBREAK`) com código numérico de 32 bits, matemática de ponto fixo (`Q16.16`), fatias e views canônicas `[]T`, I/O puro em memória (`Reader`/`Writer`) e compatibilidade universal do Cortex-M0 ao WebAssembly e AArch64. |
