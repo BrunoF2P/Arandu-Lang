@@ -92,6 +92,8 @@ pub struct CliInvocation {
     pub genref_report: bool,
     pub cfg: bool,
     pub ascii: bool,
+    pub quiet: bool,
+    pub watch: bool,
     pub args: Vec<String>,
     /// Arguments following `--`, forwarded verbatim to an executed program.
     pub program_args: Vec<String>,
@@ -108,6 +110,8 @@ pub fn parse_invocation(raw_args: impl IntoIterator<Item = String>) -> CliInvoca
     let mut genref_report = false;
     let mut cfg = false;
     let mut ascii = false;
+    let mut quiet = false;
+    let mut watch = false;
     let mut color = ColorChoice::Auto;
     let mut args = Vec::new();
     let mut program_args = Vec::new();
@@ -136,6 +140,8 @@ pub fn parse_invocation(raw_args: impl IntoIterator<Item = String>) -> CliInvoca
             "--genref-report" => genref_report = true,
             "--cfg" => cfg = true,
             "--ascii" => ascii = true,
+            "-q" | "--quiet" => quiet = true,
+            "--watch" => watch = true,
             "--no-color" => {
                 color = ColorChoice::Never;
                 raw_project_flags.push(arg.clone());
@@ -187,7 +193,24 @@ pub fn parse_invocation(raw_args: impl IntoIterator<Item = String>) -> CliInvoca
                 z_flags.push("-Zno-generational-fallback".into());
             }
             s if s.starts_with("-Z") => z_flags.push(arg.clone()),
+            "--layout" => {
+                i += 1;
+                if i < raw_args_vec.len() {
+                    layout_flags.push(format!("--layout={}", raw_args_vec[i]));
+                } else {
+                    fail_usage("--layout requires host, ptr4, ptr8, or i686");
+                }
+            }
             s if s.starts_with("--layout=") => layout_flags.push(arg.clone()),
+            "--stdlib-path" | "--cache-dir" => {
+                raw_project_flags.push(arg.clone());
+                i += 1;
+                if i < raw_args_vec.len() {
+                    raw_project_flags.push(raw_args_vec[i].clone());
+                } else {
+                    fail_usage(format!("{arg} requires a path argument"));
+                }
+            }
             // Collect project flags even before we know the subcommand.
             s if s.starts_with("--stdlib-path")
                 || s.starts_with("--cache-dir")
@@ -215,10 +238,12 @@ pub fn parse_invocation(raw_args: impl IntoIterator<Item = String>) -> CliInvoca
         i += 1;
     }
     let mut data_layout = parse_data_layout(&layout_flags);
+    let args = normalize_equals_flags(args);
     let (mut project_flags, extra_positional) = project::parse_project_flags(&raw_project_flags)
         .unwrap_or_else(|message| fail_usage(format!("error: {message}")));
     let _ = extra_positional;
     project_flags.color = color;
+    project_flags.quiet = quiet;
     if layout_flags.is_empty()
         && project_flags
             .target
@@ -235,12 +260,47 @@ pub fn parse_invocation(raw_args: impl IntoIterator<Item = String>) -> CliInvoca
         genref_report,
         cfg,
         ascii,
+        quiet,
+        watch,
         args,
         program_args,
         z_flags,
         data_layout,
         project_flags,
     }
+}
+
+fn normalize_equals_flags(args: Vec<String>) -> Vec<String> {
+    const VALUE_FLAGS: &[&str] = &[
+        "--format",
+        "--filter",
+        "--exact",
+        "--jobs",
+        "--timeout",
+        "--seed",
+        "--output",
+        "--warmup",
+        "--measurement-time",
+        "--samples",
+        "--save-baseline",
+        "--compare",
+        "--baseline",
+        "--max-regression",
+        "--noise-threshold",
+        "--out-dir",
+    ];
+    let mut normalized = Vec::with_capacity(args.len());
+    for arg in args {
+        if let Some((name, value)) = arg.split_once('=')
+            && VALUE_FLAGS.contains(&name)
+        {
+            normalized.push(name.to_owned());
+            normalized.push(value.to_owned());
+        } else {
+            normalized.push(arg);
+        }
+    }
+    normalized
 }
 
 pub fn parse_data_layout(flags: &[String]) -> DataLayout {
@@ -279,42 +339,42 @@ pub fn parse_benchmark_percentage(value: Option<&String>, usage: &str) -> f64 {
 }
 
 pub fn usage_and_exit() -> ! {
-    let message = concat!(
+    finish(Err(CliFailure::usage(global_help())))
+}
+
+#[must_use]
+pub fn global_help() -> &'static str {
+    concat!(
         "The Arandu Programming Language Compiler\n\n",
         "usage:\n",
         "  arandu <command> [options] [package-path | file]\n",
         "  arandu_cli <command> [options] [package-path | file]\n\n",
-        "Build & Execution Commands:\n",
+        "Commands:\n",
         "  run        Compile and execute a package or file via Cranelift JIT\n",
-        "  build      Compile package to native executable or library\n",
-        "  check      Type-check and validate without code generation\n",
+        "  build      Compile a package to a native executable or library\n",
+        "  check      Type-check and validate a package or source file\n",
         "  test       Execute unit and integration test suites\n",
-        "  bench      Run benchmarks and compare baseline metrics\n\n",
-        "Project & Package Management:\n",
-        "  new        Create a new Arandu project directory [--bin|--lib] [--vcs=auto|git|none]\n",
-        "  init       Initialize an Arandu package in current directory [--bin|--lib]\n",
-        "  watch      Watch filesystem and re-check package incrementally\n",
-        "  clean      Remove project build artifacts and scratch cache\n",
-        "  doc        Generate package documentation [--format=html|json|md] [--open]\n\n",
-        "Dependencies & Supply-Chain:\n",
-        "  tree       Display canonical resolved dependency graph\n",
+        "  bench      Run benchmarks and compare baseline metrics\n",
+        "  doc        Generate package documentation\n\n",
+        "Project & Dependency Management:\n",
+        "  new        Create a new Arandu project\n",
+        "  init       Initialize an Arandu package in the current directory\n",
+        "  tree       Display the resolved dependency graph\n",
         "  audit      Audit locked provenance and security policies\n",
-        "  vendor     Create verified offline source snapshot\n",
-        "  verify     Verify offline cache integrity against lockfile\n",
-        "  update     Review and publish remote graph update (--accept)\n\n",
-        "Plumbing & Inspection Commands:\n",
-        "  lex        Dump concrete syntax tokens\n",
-        "  parse      Dump concrete syntax tree (Rowan CST / AST)\n",
-        "  hir        Dump High-Level Intermediate Representation\n",
-        "  amir       Dump Arandu Mid-Level IR (SSA/OSSA) [--cfg] [--ascii] [--opt]\n",
-        "  graph      Emit module dependency graph in Graphviz DOT format\n",
-        "  emit-c     Emit portable C source code\n",
-        "  emit-wasm  Emit WebAssembly binary (wasm32; use --layout=ptr4) [--opt]\n",
-        "  emit-component  Emit WebAssembly Component (WIT-wrapped) [--opt]\n",
-        "  fmt        Format source files according to canonical style rules\n",
-        "  doctor     Inspect compiler toolchain, environment, and stdlib paths\n",
-        "  cache      Inspect, prune, and verify compiler cache <dir|inspect|verify|prune>\n",
-        "  hash-file  Compute BLAKE3 checksum for packaging\n\n",
+        "  vendor     Create a verified offline source snapshot\n",
+        "  verify     Verify offline cache integrity\n",
+        "  update     Review and publish a dependency graph update\n",
+        "  watch      Watch files and check the package incrementally\n",
+        "  clean      Remove project build artifacts and scratch cache\n\n",
+        "Developer Tools:\n",
+        "  fmt        Format one or more source files or directories\n",
+        "  completions Generate shell completion definitions\n",
+        "  doctor     Inspect compiler toolchain and environment\n",
+        "  cache      Inspect, prune, and verify compiler caches\n\n",
+        "Compiler Inspection (advanced):\n",
+        "  lex, parse, hir, amir, graph, emit-c, emit-wasm, emit-component\n",
+        "  hash-file  Compute a BLAKE3 checksum for packaging\n",
+        "  archive    Validate a package archive\n\n",
         "Target & Toolchain Options:\n",
         "  --release                  Build with speed optimizations (Cranelift + AMIR O2)\n",
         "  --stdlib-path <dir>        Override path to standard library\n",
@@ -325,8 +385,10 @@ pub fn usage_and_exit() -> ! {
         "  --no-color                 Disable ANSI color output (respects https://no-color.org)\n",
         "  --vcs=auto|git|none        VCS initialization mode for new projects\n",
         "  -v, --verbose              Enable detailed progress and timing logs\n",
+        "  -q, --quiet                Suppress non-error status and progress output\n",
+        "      --watch                Repeat package checks after source changes (check only)\n",
         "  -V, --version              Print compiler version and exit\n",
-        "  -h, --help                 Print this help message\n\n",
+        "  -h, --help                 Print this help message (or command-specific help)\n\n",
         "Generational Memory Safety (GenRef):\n",
         "  --no-generational-fallback Reject runtime generational promotion (promote O004 to error)\n",
         "  --genref-report            Print per-module/function promotion and check counts on stderr\n\n",
@@ -348,6 +410,147 @@ pub fn usage_and_exit() -> ! {
         "  backend: build → Cranelift baseline; build --release → Cranelift speed + AMIR O2\n",
         "  stdlib:  --stdlib-path > ARANDU_STDLIB > relative to binary (never cwd)\n",
         "  cache:   --cache-dir > ARANDU_CACHE_DIR > platform-native user cache"
-    );
-    finish(Err(CliFailure::usage(message)))
+    )
+}
+
+/// Help text for commands with distinct option surfaces.
+#[must_use]
+pub fn command_help(command: &str) -> Option<&'static str> {
+    match command {
+        "run" => Some(
+            "Usage: arandu run [path] [-- program-args...]\n\nCompile and execute a package or .aru file with the Cranelift JIT.\n\nOptions:\n  --opt             Optimize AMIR before execution\n  --parallel        Check multiple source files where supported\n  --stdlib-path DIR Override the standard library path\n  -v, --verbose     Show progress and incremental status\n  -q, --quiet       Suppress non-error status output\n\nExamples:\n  arandu run\n  arandu run src/main.aru -- hello\n",
+        ),
+        "build" => Some(
+            "Usage: arandu build [path] [options]\n\nCompile a package to a native executable or library.\n\nOptions:\n  --release            Build with speed optimizations\n  --target TRIPLE      Select a compilation target\n  --layout LAYOUT      Select host, ptr4, ptr8, or i686 layout\n  --locked             Require the lockfile to be current\n  --offline            Resolve from the local cache only\n  -v, --verbose        Show detailed build progress\n  -q, --quiet          Suppress non-error status output\n",
+        ),
+        "check" => Some(
+            "Usage: arandu check [path] [options]\n\nType-check a package or source file without code generation.\n\nOptions:\n  --parallel       Check source files in parallel\n  --target TRIPLE  Select a compilation target\n  --watch          Repeat checks after source changes\n  -v, --verbose    Show progress and incremental status\n  -q, --quiet      Suppress success and status output\n",
+        ),
+        "test" => Some(
+            "Usage: arandu test [package-path] [options]\n\nOptions:\n  --list                  List tests without running them\n  --doc                   Include documentation tests\n  --filter TEXT           Select tests containing this literal text\n  --exact ID              Select one canonical test id\n  --jobs N                Run up to N tests concurrently\n  --timeout SECONDS       Set the per-test timeout\n  --seed N                Set the deterministic test seed\n  --format FORMAT         human, json, or junit\n  --output PATH           Write structured output to a file\n  --fail-fast             Stop after the first failure\n\nExamples:\n  arandu test\n  arandu test --filter parser\n  arandu test --format=json --output results.json\n",
+        ),
+        "bench" => Some(
+            "Usage: arandu bench [package-path] [options]\n\nOptions:\n  --list                    List benchmarks\n  --filter TEXT             Select benchmarks by literal substring\n  --exact ID                Select a canonical benchmark id\n  --warmup SECONDS          Set warmup duration\n  --measurement-time SEC    Set measurement duration\n  --samples N               Set sample count (10..10000)\n  --format FORMAT           human or json\n  --save-baseline NAME      Save a named baseline\n  --compare NAME            Compare with a named baseline\n  --strict                  Fail on policy regressions (requires --compare)\n",
+        ),
+        "doc" => Some(
+            "Usage: arandu doc [path] [options]\n\nOptions:\n  --format FORMAT  html, json, or md (also accepts --format=FORMAT)\n  --out-dir DIR    Output directory\n  --open           Open the generated HTML documentation\n\nExamples:\n  arandu doc\n  arandu doc stdlib --format json --out-dir docs\n",
+        ),
+        "fmt" => Some(
+            "Usage: arandu fmt [--check] <file-or-directory>...\n\nFormat one or more .aru files. Directories are searched recursively.\nBy default files are updated in place; --check reports differences without writing.\n\nExamples:\n  arandu fmt src/main.aru\n  arandu fmt src/ tests/\n  arandu fmt --check src/main.aru src/lib.aru\n",
+        ),
+        "completions" => Some(
+            "Usage: arandu completions <bash|zsh|fish|powershell>\n\nPrint shell completion definitions to standard output.\n\nExamples:\n  arandu completions zsh > _arandu\n  arandu completions bash > arandu.bash\n",
+        ),
+        "new" => Some(
+            "Usage: arandu new <name> [--bin|--lib] [--vcs=auto|git|none]\n\nCreate a new Arandu package directory.\n",
+        ),
+        "init" => Some(
+            "Usage: arandu init [path] [--bin|--lib]\n\nInitialize a package in the current directory or at path.\n",
+        ),
+        "watch" => Some(
+            "Usage: arandu watch [path]\n\nWatch package source files and run incremental checks after edits.\n",
+        ),
+        "clean" => Some(
+            "Usage: arandu clean [path]\n\nRemove generated project build artifacts and scratch cache.\n",
+        ),
+        "tree" => Some(
+            "Usage: arandu tree [path] [--locked] [--offline]\n\nDisplay the canonical resolved dependency graph.\n",
+        ),
+        "audit" => Some(
+            "Usage: arandu audit [path]\n\nAudit locked package provenance and security policies.\n",
+        ),
+        "vendor" => Some(
+            "Usage: arandu vendor [path]\n\nCreate a verified offline snapshot of the locked source graph.\n",
+        ),
+        "verify" => Some(
+            "Usage: arandu verify [path]\n\nVerify the local package cache and lockfile integrity.\n",
+        ),
+        "update" => Some(
+            "Usage: arandu update [path] [--accept]\n\nReview dependency graph changes; --accept publishes the reviewed graph.\n",
+        ),
+        "doctor" => Some(
+            "Usage: arandu doctor [--stdlib-path DIR] [-v]\n\nInspect the compiler toolchain, runtime, and standard library.\n",
+        ),
+        "cache" => Some(
+            "Usage: arandu cache <dir|inspect|verify|prune> [options]\n\nInspect or maintain the compiler cache.\n",
+        ),
+        "lex" => Some(
+            "Usage: arandu lex <file.aru>\n\nPrint the source token stream (compiler inspection tool).\n",
+        ),
+        "parse" => Some(
+            "Usage: arandu parse <file.aru>\n\nPrint the syntax tree (compiler inspection tool).\n",
+        ),
+        "hir" => Some(
+            "Usage: arandu hir <file.aru> [--debug]\n\nPrint the lowered High-level IR (compiler inspection tool).\n",
+        ),
+        "amir" => Some(
+            "Usage: arandu amir <file.aru> [--cfg] [--ascii] [--opt]\n\nPrint Arandu Mid-level IR (compiler inspection tool).\n",
+        ),
+        "graph" => Some(
+            "Usage: arandu graph <file.aru>\n\nEmit a Graphviz dependency graph (compiler inspection tool).\n",
+        ),
+        "emit-c" => Some(
+            "Usage: arandu emit-c <file.aru> [--opt]\n\nEmit portable C source (compiler inspection tool).\n",
+        ),
+        "emit-wasm" => Some(
+            "Usage: arandu emit-wasm <file.aru> [--layout ptr4] [--opt]\n\nEmit a WebAssembly module (compiler inspection tool).\n",
+        ),
+        "emit-component" => Some(
+            "Usage: arandu emit-component <file.aru> [--opt]\n\nEmit a WebAssembly Component (compiler inspection tool).\n",
+        ),
+        "hash-file" => {
+            Some("Usage: arandu hash-file <path>\n\nCompute a BLAKE3 checksum for packaging.\n")
+        }
+        "archive" => Some(
+            "Usage: arandu archive validate <archive>\n\nValidate an Arandu package archive.\n",
+        ),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn global_help_mentions_every_registered_command() {
+        let help = global_help();
+        for command in crate::commands::COMMAND_NAMES {
+            assert!(help.contains(command), "global help omits {command}");
+            assert!(
+                command_help(command).is_some(),
+                "registered command {command} has no command-specific help"
+            );
+        }
+    }
+
+    #[test]
+    fn equals_form_value_flags_are_normalized_for_command_parsers() {
+        assert_eq!(
+            normalize_equals_flags(vec![
+                "test".to_string(),
+                "--format=json".to_string(),
+                "--filter=parser".to_string(),
+                "--quiet".to_string(),
+                "--watch".to_string(),
+            ]),
+            [
+                "test", "--format", "json", "--filter", "parser", "--quiet", "--watch"
+            ]
+        );
+    }
+
+    #[test]
+    fn separated_layout_and_quiet_options_are_global() {
+        let invocation = parse_invocation([
+            "arandu".to_string(),
+            "build".to_string(),
+            "--layout".to_string(),
+            "ptr4".to_string(),
+            "--quiet".to_string(),
+        ]);
+        assert_eq!(invocation.data_layout.pointer_width(), 4);
+        assert!(invocation.quiet);
+        assert!(invocation.project_flags.quiet);
+    }
 }

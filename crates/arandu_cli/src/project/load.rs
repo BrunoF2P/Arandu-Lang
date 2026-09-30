@@ -75,6 +75,7 @@ pub struct ProjectFlags {
     pub accept_lock: bool,
     pub color: crate::args::ColorChoice,
     pub target: Option<String>,
+    pub quiet: bool,
 }
 
 /// Parse `--stdlib-path=…` / `--stdlib-path …` / `--release` / `-v` from leftover args.

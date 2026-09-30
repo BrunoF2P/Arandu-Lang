@@ -118,7 +118,7 @@ fn new_scaffolds_package_and_check_run() {
     assert!(!lock_bytes.contains(&b'\r'));
     assert!(String::from_utf8_lossy(&lock_bytes).contains("version = 2"));
 
-    let run = run_cli_in(&project, &["run"]);
+    let run = run_cli_in(&project, &["run", "--verbose"]);
     assert!(
         run.status.success(),
         "project run failed: stdout={} stderr={}",
@@ -855,7 +855,7 @@ func main(): int {
 "#,
     )
     .unwrap();
-    let out = run_cli(&["run", &file.to_string_lossy()]);
+    let out = run_cli(&["run", &file.to_string_lossy(), "--verbose"]);
     assert!(
         out.status.success(),
         "run failed: {}",

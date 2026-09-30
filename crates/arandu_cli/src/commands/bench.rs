@@ -169,7 +169,7 @@ pub fn cmd_project_bench(
     }
 
     let (manifest, c_source) = artifact::publish_benchmark_harness(&ctx.root, &registry)?;
-    if !runner.format_json {
+    if !runner.format_json && !flags.quiet {
         eprintln!(
             "benchmark harness: {} cases (manifest={}, c={})",
             cases.len(),

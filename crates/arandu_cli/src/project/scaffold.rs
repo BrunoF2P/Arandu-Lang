@@ -73,7 +73,7 @@ pub fn parse_scaffold_options(args: &[String]) -> Result<ScaffoldOptions, String
     Ok(options)
 }
 
-pub fn cmd_new(name: &str, options: ScaffoldOptions) -> CliResult {
+pub fn cmd_new(name: &str, options: ScaffoldOptions, quiet: bool) -> CliResult {
     if name.is_empty() || name.contains('/') || name.contains('\\') || name == "." || name == ".." {
         return Err(CliFailure::usage(format!(
             "invalid project name `{name}` (use a single path segment)"
@@ -113,11 +113,11 @@ pub fn cmd_new(name: &str, options: ScaffoldOptions) -> CliResult {
         CliFailure::operational("publish project", Some(root.clone()), error.to_string())
     })?;
 
-    print_created(name, options.kind);
+    print_created(name, options.kind, quiet);
     Ok(CliSuccess::Done)
 }
 
-pub fn cmd_init(root: &Path, name: &str, options: ScaffoldOptions) -> CliResult {
+pub fn cmd_init(root: &Path, name: &str, options: ScaffoldOptions, quiet: bool) -> CliResult {
     if !root.is_dir() {
         return Err(CliFailure::operational(
             "initialize project",
@@ -169,7 +169,7 @@ pub fn cmd_init(root: &Path, name: &str, options: ScaffoldOptions) -> CliResult 
         return Err(error);
     }
     let _ = fs::remove_dir_all(&staging);
-    print_created(name, options.kind);
+    print_created(name, options.kind, quiet);
     Ok(CliSuccess::Done)
 }
 
@@ -392,7 +392,10 @@ deny = ["UnknownCapability"]
     Ok(CliSuccess::Done)
 }
 
-fn print_created(name: &str, kind: ScaffoldKind) {
+fn print_created(name: &str, kind: ScaffoldKind, quiet: bool) {
+    if quiet {
+        return;
+    }
     println!(
         "created {name} ({})",
         if kind == ScaffoldKind::Binary {

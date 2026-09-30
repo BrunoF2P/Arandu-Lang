@@ -9,17 +9,29 @@ use crate::project::ProjectFlags;
 use arandu_middle::layout::DataLayout;
 use arandu_query::db::DatabaseImpl;
 
-pub fn cmd_doc(args: &[String], _flags: &ProjectFlags, data_layout: DataLayout) -> CliResult {
+pub fn cmd_doc(args: &[String], flags: &ProjectFlags, data_layout: DataLayout) -> CliResult {
     let mut format = "html";
     let mut out_dir = PathBuf::from("doc");
     let mut open = false;
     let mut target_path: Option<PathBuf> = None;
 
-    for arg in &args[2..] {
+    let mut arguments = args[2..].iter();
+    while let Some(arg) = arguments.next() {
         if let Some(fmt) = arg.strip_prefix("--format=") {
             format = fmt;
+        } else if arg == "--format" {
+            format = arguments
+                .next()
+                .map(String::as_str)
+                .unwrap_or_else(|| fail_usage("--format requires html, json, or md"));
         } else if let Some(dir) = arg.strip_prefix("--out-dir=") {
             out_dir = PathBuf::from(dir);
+        } else if arg == "--out-dir" {
+            out_dir = PathBuf::from(
+                arguments
+                    .next()
+                    .unwrap_or_else(|| fail_usage("--out-dir requires a directory")),
+            );
         } else if arg == "--open" {
             open = true;
         } else if !arg.starts_with('-') && target_path.is_none() {
@@ -156,15 +168,19 @@ pub fn cmd_doc(args: &[String], _flags: &ProjectFlags, data_layout: DataLayout) 
             )
         })?;
 
-        println!(
-            "Documentado `{}` -> {}",
-            module_doc.name,
-            out_file_path.display()
-        );
+        if !flags.quiet {
+            println!(
+                "Documentado `{}` -> {}",
+                module_doc.name,
+                out_file_path.display()
+            );
+        }
     }
 
     if open && let Some(html_path) = first_html_path {
-        println!("Abrindo {}", html_path.display());
+        if !flags.quiet {
+            println!("Abrindo {}", html_path.display());
+        }
         #[cfg(target_os = "linux")]
         let _ = std::process::Command::new("xdg-open")
             .arg(html_path)

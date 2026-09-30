@@ -10,16 +10,16 @@ use crate::project::{self, ProjectFlags};
 use crate::watch;
 use arandu_middle::layout::DataLayout;
 
-pub fn cmd_new(args: &[String]) -> CliResult {
+pub fn cmd_new(args: &[String], quiet: bool) -> CliResult {
     if args.len() < 3 {
         fail_usage("usage: arandu_cli new <project-name> [--bin|--lib] [--vcs=auto|git|none]");
     }
     let options = project::parse_scaffold_options(&args[3..])
         .unwrap_or_else(|error| fail_usage(format!("error: {error}")));
-    project::cmd_new(&args[2], options)
+    project::cmd_new(&args[2], options, quiet)
 }
 
-pub fn cmd_init(args: &[String]) -> CliResult {
+pub fn cmd_init(args: &[String], quiet: bool) -> CliResult {
     let options = project::parse_scaffold_options(&args[2..])
         .unwrap_or_else(|error| fail_usage(format!("error: {error}")));
     let root = env::current_dir().unwrap_or_else(|error| {
@@ -29,10 +29,10 @@ pub fn cmd_init(args: &[String]) -> CliResult {
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or_else(|| fail_usage("current directory has no valid UTF-8 package name"));
-    project::cmd_init(&root, name, options)
+    project::cmd_init(&root, name, options, quiet)
 }
 
-pub fn cmd_clean(start: &Path) -> CliResult {
+pub fn cmd_clean(start: &Path, quiet: bool) -> CliResult {
     let discovery = crate::manifest_io::find_manifest(start)
         .unwrap_or_else(|error| {
             fail_operational(
@@ -57,10 +57,12 @@ pub fn cmd_clean(start: &Path) -> CliResult {
     });
     let root = discovery.path.parent().unwrap_or_else(|| Path::new("."));
     let removed = artifact::clean(root).unwrap_or_else(|error| finish(Err(error)));
-    if removed {
-        println!("removed target");
-    } else {
-        println!("already clean");
+    if !quiet {
+        if removed {
+            println!("removed target");
+        } else {
+            println!("already clean");
+        }
     }
     Ok(CliSuccess::Done)
 }
@@ -70,7 +72,9 @@ pub fn cmd_update(start: &Path, flags: &ProjectFlags) -> CliResult {
     let ctx = project::load_project(&mut db, start, flags).unwrap_or_else(|e| {
         fail_operational("review dependency graph", Some(start.to_path_buf()), e)
     });
-    println!("accepted graph {}", ctx.lockfile.manifest_fingerprint);
+    if !flags.quiet {
+        println!("accepted graph {}", ctx.lockfile.manifest_fingerprint);
+    }
     Ok(CliSuccess::Done)
 }
 
@@ -86,7 +90,9 @@ pub fn cmd_vendor(start: &Path, flags: &ProjectFlags) -> CliResult {
     });
     let path = arandu_package::vendor::materialize(&ctx.root, &ctx.cache, &ctx.lockfile)
         .unwrap_or_else(|e| fail_operational("publish verified vendor", Some(ctx.root.clone()), e));
-    println!("vendored locked graph at {}", path.display());
+    if !flags.quiet {
+        println!("vendored locked graph at {}", path.display());
+    }
     Ok(CliSuccess::Done)
 }
 

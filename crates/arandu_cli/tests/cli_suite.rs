@@ -39,6 +39,9 @@ mod cli_core_foundation;
 #[path = "cli_suite/cli_doc_stdlib_types.rs"]
 mod cli_doc_stdlib_types;
 
+#[path = "cli_suite/cli_ergonomics.rs"]
+mod cli_ergonomics;
+
 #[path = "cli_suite/cli_elf_in_place_linker.rs"]
 mod cli_elf_in_place_linker;
 
