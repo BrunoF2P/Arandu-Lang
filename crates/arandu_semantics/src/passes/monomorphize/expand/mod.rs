@@ -37,6 +37,203 @@ mod rewrite;
 use clone::clone_block;
 use rewrite::rewrite_block_calls;
 
+/// Concrete root plus unit-local symbols for the signatures of its callees.
+/// Their structural keys, not those incidental symbols, cross unit boundaries.
+#[derive(Debug)]
+pub struct InstantiatedFunction {
+    pub function: SymbolId,
+    pub instances: Vec<(SymbolId, arandu_middle::types::FunctionInstance)>,
+}
+
+/// Specialize only the selected body. Callees are represented by concrete HIR
+/// signatures; their bodies are never read or expanded by this producer.
+pub fn instantiate_function(
+    tc: &mut TypeCheckResult,
+    hir: &mut HirProgram,
+    instance: &arandu_middle::types::FunctionInstance,
+) -> Result<InstantiatedFunction, Vec<Diagnostic>> {
+    use arandu_middle::types::TypeShape;
+    let failure = |message: &str| {
+        vec![Diagnostic::error(
+            DiagCode::G002GenericInstantiationLimit,
+            message,
+            hir.span,
+        )]
+    };
+    let arguments = instance
+        .arguments
+        .iter()
+        .map(|shape| shape.intern(&tc.type_info.type_interner))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| failure("instance type arguments exceed the structural type bounds"))?;
+    if !instance_args_fully_concrete(tc, &arguments) {
+        return Err(failure(
+            "function instance retains unresolved type arguments",
+        ));
+    }
+    let bump = bumpalo::Bump::new();
+    let root = hir
+        .decls
+        .iter()
+        .enumerate()
+        .find_map(|(index, &id)| match hir.pool.decl(id) {
+            HirDecl::Func(function)
+                if function.symbol == instance.definition && function.body.is_some() =>
+            {
+                Some((index, function.body))
+            }
+            _ => None,
+        })
+        .ok_or_else(|| {
+            vec![Diagnostic::ice(
+                DiagCode::ICEL001,
+                "instance definition has no typed body",
+                hir.span,
+            )]
+        })?;
+    // Preserve the original static generic-cycle guard before removing the
+    // template body from the instance's executable declaration list.
+    super::collect::analyze_instantiations(tc, hir, &bump)?;
+    let key = InstantiationKey {
+        symbol: instance.definition,
+        type_args: bump.alloc_slice_copy(&arguments),
+    };
+    let mut specialized = FxHashMap::default();
+    let (function, body) = if tc
+        .type_info
+        .generic_params
+        .contains_key(&instance.definition)
+    {
+        let templates = FxHashMap::from_iter([(instance.definition, root.0)]);
+        let (symbol, body) =
+            specialize_func(tc, hir, &key, &templates, true, true).map_err(|error| vec![error])?;
+        let Some(body) = body else {
+            return Err(vec![Diagnostic::ice(
+                DiagCode::ICEL001,
+                "concrete instance lost its body",
+                hir.span,
+            )]);
+        };
+        specialized.insert(key, symbol);
+        for &id in &hir.decls {
+            if let Some(HirDecl::Func(template)) = hir.pool.decls.get_mut(id)
+                && template.symbol == instance.definition
+            {
+                template.body = None;
+            }
+        }
+        (symbol, body)
+    } else {
+        if !arguments.is_empty() {
+            return Err(vec![Diagnostic::error(
+                DiagCode::G002GenericInstantiationLimit,
+                "non-generic function cannot have instance arguments",
+                hir.span,
+            )]);
+        }
+        let Some(body) = root.1 else {
+            return Err(vec![Diagnostic::ice(
+                DiagCode::ICEL001,
+                "typed function lost its body",
+                hir.span,
+            )]);
+        };
+        (instance.definition, body)
+    };
+    let templates = hir
+        .decls
+        .iter()
+        .enumerate()
+        .filter_map(|(index, &id)| match hir.pool.decl(id) {
+            HirDecl::Func(function)
+                if tc.type_info.generic_params.contains_key(&function.symbol) =>
+            {
+                Some((function.symbol, index))
+            }
+            _ => None,
+        })
+        .collect::<FxHashMap<_, _>>();
+    let graph = super::collect::analyze_instantiations(tc, hir, &bump)?;
+    let mut keys = graph.iter().map(|node| node.key).collect::<Vec<_>>();
+    // Compiler-inserted drops have no source Call. Discover concrete nominal
+    // receiver types from this unit's own typed HIR, never another body.
+    let observed = hir
+        .pool
+        .exprs
+        .iter()
+        .map(|expr| expr.ty)
+        .chain(hir.pool.params.iter().map(|parameter| parameter.ty))
+        .collect::<Vec<_>>();
+    for ty in observed {
+        let ArType::Named(nominal, arguments) = tc.type_info.type_interner.resolve(ty) else {
+            continue;
+        };
+        let Some(&destructor) = tc.type_info.destructors.get(&nominal) else {
+            continue;
+        };
+        if arguments.is_empty() || !templates.contains_key(&destructor) {
+            continue;
+        }
+        let arguments = tc.type_info.type_interner.type_args(arguments);
+        if !instance_args_fully_concrete(tc, &arguments) {
+            continue;
+        }
+        let key = InstantiationKey {
+            symbol: destructor,
+            type_args: bump.alloc_slice_copy(&arguments),
+        };
+        if !keys.contains(&key) {
+            keys.push(key);
+        }
+    }
+    let mut instances = Vec::new();
+    if function != instance.definition {
+        instances.push((function, instance.clone()));
+    }
+    for key in keys {
+        if specialized.contains_key(&key)
+            || !templates.contains_key(&key.symbol)
+            || is_identity_instantiation(tc, key.symbol, key.type_args)
+        {
+            continue;
+        }
+        if !instance_args_fully_concrete(tc, key.type_args) {
+            return Err(vec![Diagnostic::error(
+                DiagCode::G002GenericInstantiationLimit,
+                "function instance retains unresolved type arguments",
+                hir.span,
+            )]);
+        }
+        let (callee, _) =
+            specialize_func(tc, hir, &key, &templates, false, true).map_err(|error| vec![error])?;
+        let arguments = key
+            .type_args
+            .iter()
+            .map(|&ty| TypeShape::from_id(ty, &tc.type_info.type_interner))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| {
+                vec![Diagnostic::error(
+                    DiagCode::G002GenericInstantiationLimit,
+                    "callee instance type arguments exceed the structural type bounds",
+                    hir.span,
+                )]
+            })?;
+        instances.push((
+            callee,
+            arandu_middle::types::FunctionInstance {
+                definition: key.symbol,
+                arguments,
+            },
+        ));
+        specialized.insert(key, callee);
+    }
+    rewrite_block_calls(hir, body, &specialized, tc, &bump);
+    Ok(InstantiatedFunction {
+        function,
+        instances,
+    })
+}
+
 /// Expand free-function and method specializations; rewrite call sites in-place.
 ///
 /// Returns the number of specialized functions appended to `hir`.
@@ -464,14 +661,63 @@ fn type_arg_still_param(tc: &TypeCheckResult, tid: TypeId) -> bool {
             .type_info
             .generic_params
             .values()
-            .any(|ps| ps.contains(&id)),
+            .any(|params| params.contains(&id)),
         ArType::ConstParam(id) => tc
             .type_info
             .generic_params
             .values()
-            .any(|ps| ps.contains(&id)),
+            .any(|params| params.contains(&id)),
         _ => false,
     }
+}
+
+/// New independent units must not publish nested free parameters as concrete
+/// keys. Keep the legacy program-wide admission policy unchanged until its
+/// composer is migrated and its bounds/compatibility gate is exercised.
+fn instance_args_fully_concrete(tc: &TypeCheckResult, type_args: &[TypeId]) -> bool {
+    use arandu_middle::types::TypeShape;
+    fn unresolved(tc: &TypeCheckResult, shape: &TypeShape) -> bool {
+        match shape {
+            TypeShape::Named(id, args) => {
+                tc.symbols.try_get(*id).is_none()
+                    || tc
+                        .type_info
+                        .generic_params
+                        .values()
+                        .any(|params| params.contains(id))
+                    || args.iter().any(|arg| unresolved(tc, arg))
+            }
+            TypeShape::ConstArray(_, _)
+            | TypeShape::ConstParam(_)
+            | TypeShape::Error
+            | TypeShape::IntLiteral
+            | TypeShape::FloatLiteral => true,
+            TypeShape::Func(args, ret) => {
+                args.iter().any(|arg| unresolved(tc, arg)) || unresolved(tc, ret)
+            }
+            TypeShape::Tuple(args) => args.iter().any(|arg| unresolved(tc, arg)),
+            TypeShape::Nullable(inner)
+            | TypeShape::Slice(inner)
+            | TypeShape::Array(_, inner)
+            | TypeShape::Ptr(inner)
+            | TypeShape::Ref(inner)
+            | TypeShape::RefMut(inner)
+            | TypeShape::Option(inner)
+            | TypeShape::Coroutine(inner)
+            | TypeShape::Poll(inner)
+            | TypeShape::Range(inner) => unresolved(tc, inner),
+            TypeShape::Result(ok, error) => unresolved(tc, ok) || unresolved(tc, error),
+            TypeShape::Primitive(_)
+            | TypeShape::Const(_)
+            | TypeShape::GenRef
+            | TypeShape::Err
+            | TypeShape::Void => false,
+        }
+    }
+    type_args.iter().all(|&tid| {
+        arandu_middle::types::TypeShape::from_id(tid, &tc.type_info.type_interner)
+            .is_ok_and(|shape| !unresolved(tc, &shape))
+    })
 }
 
 fn type_args_fully_concrete(tc: &TypeCheckResult, type_args: &[TypeId]) -> bool {
@@ -484,6 +730,24 @@ fn specialize_free_func(
     key: &InstantiationKey<'_>,
     template_funcs: &FxHashMap<SymbolId, usize>,
 ) -> Result<(SymbolId, HirBlockId), Diagnostic> {
+    let (symbol, body) = specialize_func(tc, hir, key, template_funcs, true, false)?;
+    body.map(|body| (symbol, body)).ok_or_else(|| {
+        Diagnostic::ice(
+            DiagCode::ICEL001,
+            "concrete function specialization lost its body",
+            Span::new(0, 0, 0),
+        )
+    })
+}
+
+fn specialize_func(
+    tc: &mut TypeCheckResult,
+    hir: &mut HirProgram,
+    key: &InstantiationKey<'_>,
+    template_funcs: &FxHashMap<SymbolId, usize>,
+    body_required: bool,
+    private_scope: bool,
+) -> Result<(SymbolId, Option<HirBlockId>), Diagnostic> {
     let &decl_idx = template_funcs.get(&key.symbol).ok_or_else(|| {
         Diagnostic::error(
             DiagCode::G001GenericInstantiationCycle,
@@ -502,13 +766,14 @@ fn specialize_free_func(
             ));
         }
     };
-    let body_id = template.body.ok_or_else(|| {
-        Diagnostic::error(
+    if body_required && template.body.is_none() {
+        return Err(Diagnostic::error(
             DiagCode::G001GenericInstantiationCycle,
             "monomorphize: template has no body".to_string(),
             template.span,
-        )
-    })?;
+        ));
+    }
+    let body_id = template.body;
 
     let params_list = tc
         .type_info
@@ -539,11 +804,16 @@ fn specialize_free_func(
     let mangled = super::demangle::mangle_symbol(key, &tc.type_info.type_interner, &tc.symbols);
 
     let global = tc.symbols.global_scope();
+    let allocation_scope = if private_scope {
+        tc.symbols_mut().new_scope(global)
+    } else {
+        global
+    };
     // Idempotent: same mangling may appear via dual keys (rare); reuse symbol.
     let new_func_sym =
         match tc
             .symbols_mut()
-            .define(global, &mangled, SymbolKind::Func, template.span)
+            .define(allocation_scope, &mangled, SymbolKind::Func, template.span)
         {
             Ok(s) => s,
             Err(existing) => {
@@ -554,7 +824,7 @@ fn specialize_free_func(
                         && f.symbol == existing
                         && let Some(b) = f.body
                     {
-                        return Ok((existing, b));
+                        return Ok((existing, Some(b)));
                     }
                 }
                 return Ok((existing, body_id));
@@ -582,11 +852,10 @@ fn specialize_free_func(
         let new_ty = substitute_type_id(p.ty, &subst, &tc.type_info.type_interner);
         param_tids.push(new_ty);
         let pname = format!("${i}_{}", tc.symbols.get(p.symbol).name);
-        let global = tc.symbols.global_scope();
         let new_sym = tc
             .symbols_mut()
             .define(
-                global,
+                allocation_scope,
                 &format!("{mangled}{pname}"),
                 SymbolKind::Param,
                 p.span,
@@ -628,13 +897,19 @@ fn specialize_free_func(
     }
 
     let new_params_range = hir.pool.alloc_param_list(&new_params);
-    let new_body = clone_block(hir, body_id, &subst, &mut symbol_map, tc, &mangled)?;
+    let new_body = if body_required {
+        body_id
+            .map(|body| clone_block(hir, body, &subst, &mut symbol_map, tc, &mangled))
+            .transpose()?
+    } else {
+        None
+    };
 
     let specialized = HirFunc {
         symbol: new_func_sym,
         params: new_params_range,
         return_type: ret_ty,
-        body: Some(new_body),
+        body: new_body,
         span: template.span,
         is_async: template.is_async,
         no_fallback: template.no_fallback,

@@ -82,7 +82,7 @@ fn hash_borrow_path(hasher: &mut Hasher, path: &arandu_middle::types::BorrowPath
     }
 }
 
-fn hash_return_borrow_summary(
+pub(crate) fn hash_return_borrow_summary(
     hasher: &mut Hasher,
     summary: &arandu_middle::types::ReturnBorrowSummary,
 ) {

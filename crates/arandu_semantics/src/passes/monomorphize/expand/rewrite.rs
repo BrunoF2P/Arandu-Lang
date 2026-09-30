@@ -4,7 +4,8 @@
 
 use arandu_middle::hir::{
     HirBlockId, HirCatchHandler, HirCondition, HirExpr, HirExprId, HirExprKind, HirForClause,
-    HirLambdaBody, HirMatchArmBody, HirPlaceSuffix, HirProgram, HirStmtKind, HirStringPart,
+    HirLambdaBody, HirMatchArmBody, HirPlaceSuffix, HirProgram, HirSimpleStmt, HirStmtKind,
+    HirStringPart,
 };
 use arandu_middle::symbol_table::SymbolId;
 use arandu_middle::types::ArType;
@@ -87,9 +88,20 @@ pub(super) fn rewrite_stmt_calls<'bump>(
                 HirForClause::In { iterable, .. } => {
                     rewrite_expr_calls(hir, iterable, specialized, tc, bump);
                 }
-                HirForClause::CStyle { condition, .. } => {
+                HirForClause::CStyle {
+                    init,
+                    condition,
+                    step,
+                    ..
+                } => {
+                    if let Some(init) = init {
+                        rewrite_simple_stmt_calls(hir, &init, specialized, tc, bump);
+                    }
                     if let Some(c) = condition {
                         rewrite_expr_calls(hir, c, specialized, tc, bump);
+                    }
+                    if let Some(step) = step {
+                        rewrite_simple_stmt_calls(hir, &step, specialized, tc, bump);
                     }
                 }
             }
@@ -113,6 +125,35 @@ pub(super) fn rewrite_stmt_calls<'bump>(
         }
         HirStmtKind::Break | HirStmtKind::Continue | HirStmtKind::Error => {}
     }
+}
+
+fn rewrite_simple_stmt_calls<'bump>(
+    hir: &mut HirProgram,
+    statement: &HirSimpleStmt,
+    specialized: &FxHashMap<InstantiationKey<'bump>, SymbolId>,
+    tc: &TypeCheckResult,
+    bump: &'bump bumpalo::Bump,
+) {
+    let value = match statement {
+        HirSimpleStmt::VarDecl { value, .. } | HirSimpleStmt::Expr(value) => *value,
+        HirSimpleStmt::Set { places, value, .. } => {
+            let indices = hir
+                .pool
+                .places_list(*places)
+                .iter()
+                .flat_map(|place| &place.suffixes)
+                .filter_map(|suffix| match suffix {
+                    HirPlaceSuffix::Index { expr, .. } => Some(*expr),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            for index in indices {
+                rewrite_expr_calls(hir, index, specialized, tc, bump);
+            }
+            *value
+        }
+    };
+    rewrite_expr_calls(hir, value, specialized, tc, bump);
 }
 
 pub(super) fn rewrite_condition_calls<'bump>(

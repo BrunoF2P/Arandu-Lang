@@ -20,6 +20,25 @@ pub(crate) fn lower_decl(
     hir_pool: &mut crate::hir::HirPool,
     decl: &TopLevelDecl,
 ) -> Result<Option<HirDecl>, Diagnostic> {
+    lower_decl_with_body(type_check, pool, hir_pool, decl, true)
+}
+
+pub(crate) fn lower_declaration(
+    type_check: &mut TypeCheckResult,
+    pool: &AstPool,
+    hir_pool: &mut crate::hir::HirPool,
+    decl: &TopLevelDecl,
+) -> Result<Option<HirDecl>, Diagnostic> {
+    lower_decl_with_body(type_check, pool, hir_pool, decl, false)
+}
+
+fn lower_decl_with_body(
+    type_check: &mut TypeCheckResult,
+    pool: &AstPool,
+    hir_pool: &mut crate::hir::HirPool,
+    decl: &TopLevelDecl,
+    include_body: bool,
+) -> Result<Option<HirDecl>, Diagnostic> {
     match decl {
         TopLevelDecl::Const(d) => {
             let symbol = require_def_symbol(&type_check.resolved, d.span)?;
@@ -160,9 +179,13 @@ pub(crate) fn lower_decl(
                 symbol,
                 params,
                 return_type,
-                body: Some(super::stmt::lower_block(
-                    type_check, pool, hir_pool, &d.body,
-                )?),
+                body: if include_body {
+                    Some(super::stmt::lower_block(
+                        type_check, pool, hir_pool, &d.body,
+                    )?)
+                } else {
+                    None
+                },
                 span: d.span,
                 is_async: d.is_async,
                 no_fallback,

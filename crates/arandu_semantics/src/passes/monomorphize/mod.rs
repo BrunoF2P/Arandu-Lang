@@ -5,7 +5,7 @@ mod graph;
 
 pub use collect::analyze_instantiations;
 pub use demangle::{demangle_symbol, mangle_symbol};
-pub use expand::expand_specializations;
+pub use expand::{InstantiatedFunction, expand_specializations, instantiate_function};
 pub use graph::{
     InstantiationGraph, InstantiationKey, InstantiationNode, InstantiationNodeId, MonoError,
 };

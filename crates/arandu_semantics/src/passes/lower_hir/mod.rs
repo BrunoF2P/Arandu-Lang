@@ -17,6 +17,44 @@ mod stmt;
 
 pub use link::link_hir_module;
 
+/// Canonical HIR declaration context, including call modes and destructor
+/// associations, but without lowering any function body. Constants must have
+/// been typed by the caller through their ordinary item checker.
+pub fn lower_declarations_to_hir(
+    type_check: &mut TypeCheckResult,
+    program: &Program,
+) -> Result<HirProgram, Vec<Diagnostic>> {
+    if type_check
+        .diagnostics
+        .iter()
+        .any(|d| d.severity == Severity::Error)
+    {
+        return Err(type_check.diagnostics.clone());
+    }
+    let mut pool = crate::hir::HirPool::new();
+    let mut decls = Vec::new();
+    let mut failure = None;
+    program.for_each_decl_recursive(|_, declaration| {
+        if failure.is_some() {
+            return;
+        }
+        match decl::lower_declaration(type_check, &program.pool, &mut pool, declaration) {
+            Ok(Some(declaration)) => decls.push(pool.alloc_decl(declaration)),
+            Ok(None) => {}
+            Err(diagnostic) => failure = Some(diagnostic),
+        }
+    });
+    if let Some(diagnostic) = failure {
+        return Err(vec![diagnostic]);
+    }
+    Ok(HirProgram {
+        span: program.span,
+        module: program.module.as_ref().map(|module| module.path.join(".")),
+        decls,
+        pool,
+    })
+}
+
 /// Lowers a type-checked AST into a [`HirProgram`].
 ///
 /// Returns `Err` immediately if `type_check` already contains any

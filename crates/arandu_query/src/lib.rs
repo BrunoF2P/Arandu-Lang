@@ -15,6 +15,7 @@ pub mod manifest;
 pub mod package_graph;
 pub mod passes;
 pub mod rename;
+pub mod runtime;
 pub mod stable_hash;
 pub mod stdlib;
 pub mod testing;
