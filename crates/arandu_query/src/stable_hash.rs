@@ -750,6 +750,145 @@ impl StableHash for crate::passes::LowerAmirArtifacts {
     }
 }
 
+impl StableHash for crate::ctfe::CtfeLowering {
+    fn stable_hash(&self) -> blake3::Hash {
+        use crate::ctfe::BuildFailure;
+        let mut hash = Hasher::new();
+        hash.update(b"CtfeLowering/v1");
+        match &self.result {
+            Ok(unit) => {
+                hash.update(&[0]);
+                hash.update(unit.function().stable_hash().as_bytes());
+                for bytes in unit.scalar_type_bytes() {
+                    hash.update(&bytes);
+                }
+                // All literal spellings/kinds belong to this function's pool.
+                for entry in &unit.literals().entries {
+                    let (tag, text) = match entry {
+                        arandu_middle::literal_pool::AmirLiteralEntry::Int(text) => (0, text),
+                        arandu_middle::literal_pool::AmirLiteralEntry::Float(text) => (1, text),
+                        arandu_middle::literal_pool::AmirLiteralEntry::Str(text) => (2, text),
+                        arandu_middle::literal_pool::AmirLiteralEntry::Char(text) => (3, text),
+                    };
+                    hash.update(&[tag]);
+                    hash_str(&mut hash, text);
+                }
+                // The whole explicit layout is part of the unit, even when no
+                // pointer-sized integer happens to occur in this function.
+                for class in [
+                    unit.layout().pointer,
+                    unit.layout().float,
+                    unit.layout().i64,
+                    unit.layout().f64,
+                ] {
+                    hash.update(&class.size.to_le_bytes());
+                    hash.update(&class.abi_align.to_le_bytes());
+                }
+            }
+            Err(BuildFailure::MissingFunction) => {
+                hash.update(&[1]);
+            }
+            Err(BuildFailure::GenericFunction) => {
+                hash.update(&[2]);
+            }
+            Err(BuildFailure::ImportsNotStaged) => {
+                hash.update(&[5]);
+            }
+            Err(BuildFailure::Diagnostics(diagnostics)) => {
+                hash.update(&[3]);
+                hash.update(diagnostics.stable_hash().as_bytes());
+            }
+            Err(BuildFailure::Evaluation(error)) => {
+                hash.update(&[4]);
+                hash_ctfe_error(&mut hash, error);
+            }
+        }
+        finish(hash)
+    }
+}
+
+fn hash_ctfe_error(hash: &mut Hasher, error: &arandu_mir::ctfe::EvalErrorKind) {
+    use arandu_middle::ctfe::ConstValueError as V;
+    use arandu_mir::ctfe::{EvalErrorKind as E, ScalarEvalError as S};
+    let tag = match error {
+        E::Cancelled => 0,
+        E::FuelExhausted => 1,
+        E::FrameLimit => 2,
+        E::ValueLimit => 3,
+        E::AllocationFailed => 4,
+        E::MissingFunction(_) => 5,
+        E::UnavailableFunction(_) => 6,
+        E::UnsupportedType(_) => 7,
+        E::UnsupportedOperation => 8,
+        E::InvalidIr => 9,
+        E::Uninitialized => 10,
+        E::TypeMismatch => 11,
+        E::InvalidLiteral => 12,
+        E::TargetMismatch => 13,
+        E::Arithmetic(_) => 14,
+        E::Value(_) => 15,
+    };
+    hash.update(&[tag]);
+    match error {
+        E::MissingFunction(symbol) | E::UnavailableFunction(symbol) => {
+            hash_symbol_id(hash, *symbol)
+        }
+        E::UnsupportedType(id) => hash_id(hash, id.as_usize()),
+        E::Arithmetic(error) => match error {
+            S::TypeMismatch => {
+                hash.update(&[0]);
+            }
+            S::Overflow(ty) => {
+                hash.update(&[1]);
+                hash.update(&ty.canonical_bytes());
+            }
+            S::DivisionByZero => {
+                hash.update(&[2]);
+            }
+            S::InvalidShift { amount, bit_width } => {
+                hash.update(&[3, *bit_width]);
+                hash.update(&amount.to_le_bytes());
+            }
+            S::UnsupportedBinary(op) => {
+                hash.update(&[4, op.stable_tag()]);
+            }
+            S::UnsupportedUnary(op) => {
+                hash.update(&[5, op.stable_tag()]);
+            }
+        },
+        E::Value(error) => match error {
+            V::UnsupportedIntegerType(primitive) => {
+                hash.update(&[0]);
+                hash_ar_type(hash, &arandu_middle::types::ArType::Primitive(*primitive));
+            }
+            V::UnsupportedPointerWidth(width) => {
+                hash.update(&[1]);
+                hash.update(&width.to_le_bytes());
+            }
+            V::OutOfRange { ty, value } => {
+                hash.update(&[2]);
+                hash.update(&ty.canonical_bytes());
+                hash.update(&value.to_le_bytes());
+            }
+            V::NegativeConstGeneric(value) => {
+                hash.update(&[3]);
+                hash.update(&value.to_le_bytes());
+            }
+        },
+        E::Cancelled
+        | E::FuelExhausted
+        | E::FrameLimit
+        | E::ValueLimit
+        | E::AllocationFailed
+        | E::UnsupportedOperation
+        | E::InvalidIr
+        | E::Uninitialized
+        | E::TypeMismatch
+        | E::InvalidLiteral
+        | E::TargetMismatch => {}
+    }
+}
+
 impl StableHash for crate::passes::BorrowInterfaces {
     fn stable_hash(&self) -> blake3::Hash {
         let mut hasher = Hasher::new();

@@ -57,6 +57,49 @@ pub fn lower_to_hir(
     })
 }
 
+/// Lower only the selected function using the canonical declaration/body
+/// lowering. The caller supplies its item typecheck result and owns any later
+/// specialization. No sibling body or AST pool is cloned or lowered here.
+pub fn lower_function_to_hir(
+    type_check: &mut TypeCheckResult,
+    program: &Program,
+    symbol: crate::SymbolId,
+) -> Result<Option<HirProgram>, Vec<Diagnostic>> {
+    if type_check
+        .diagnostics
+        .iter()
+        .any(|d| d.severity == Severity::Error)
+    {
+        return Err(type_check.diagnostics.clone());
+    }
+    let mut selected = None;
+    program.for_each_decl_recursive(|_, item| {
+        if matches!(item, arandu_parser::TopLevelDecl::Func(_))
+            && crate::primary_def_key(item)
+                .and_then(|key| type_check.resolved.definitions.get(&key))
+                == Some(&symbol)
+        {
+            selected = Some(item);
+        }
+    });
+    let Some(item) = selected else {
+        return Ok(None);
+    };
+    let mut pool = crate::hir::HirPool::new();
+    let Some(declaration) = decl::lower_decl(type_check, &program.pool, &mut pool, item)
+        .map_err(|error| vec![error])?
+    else {
+        return Ok(None);
+    };
+    let declaration = pool.alloc_decl(declaration);
+    Ok(Some(HirProgram {
+        span: crate::item_source_span(item),
+        module: program.module.as_ref().map(|module| module.path.join(".")),
+        decls: vec![declaration],
+        pool,
+    }))
+}
+
 fn lower_decls_recursive(
     type_check: &mut TypeCheckResult,
     pool: &arandu_parser::ast_pool::AstPool,

@@ -3,6 +3,7 @@ pub mod borrow_audit;
 pub mod borrow_check;
 pub mod borrow_facts;
 pub mod borrow_interface;
+pub mod ctfe;
 pub(crate) mod dce;
 pub mod definite_init;
 pub mod drop_elaborate;
