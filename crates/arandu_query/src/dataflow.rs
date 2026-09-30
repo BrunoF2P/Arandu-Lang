@@ -362,22 +362,22 @@ pub fn item_attribute_validation(
         }
         let annotations =
             arandu_semantics::attributes::validate_decl_attributes(decl, &program.pool);
+        // Attribute/test signatures depend only on declarations. Consulting
+        // flow contracts here would reintroduce a borrow-interface edge into
+        // declaration-based body staging through file_typing's attribute pass.
+        let signatures = crate::passes::declaration_signatures(db, file);
         let test_validation = arandu_semantics::testing::validate_test_case(
             decl,
             &annotations,
             item_sym,
-            crate::passes::module_signatures(db, file)
-                .type_info
-                .as_ref(),
+            signatures.type_info.as_ref(),
         );
         let benchmark_validation = arandu_semantics::testing::validate_benchmark_case(
             decl,
             &annotations,
             item_sym,
-            crate::passes::module_signatures(db, file)
-                .type_info
-                .as_ref(),
-            crate::passes::module_signatures(db, file).symbols.as_ref(),
+            signatures.type_info.as_ref(),
+            signatures.symbols.as_ref(),
         );
         diagnostics.extend(annotations.diagnostics);
         diagnostics.extend(test_validation.diagnostics);

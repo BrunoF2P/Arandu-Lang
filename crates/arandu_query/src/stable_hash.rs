@@ -750,6 +750,18 @@ impl StableHash for crate::passes::LowerAmirArtifacts {
     }
 }
 
+impl StableHash for crate::passes::PreparedHir {
+    fn stable_hash(&self) -> blake3::Hash {
+        let mut hash = Hasher::new();
+        hash.update(b"PreparedHir/v1");
+        hash.update(self.source_fingerprint.as_bytes());
+        hash.update(self.type_check.stable_hash().as_bytes());
+        hash.update(self.diagnostics.stable_hash().as_bytes());
+        hash.update(&[u8::from(self.hir.is_some())]);
+        hash.finalize()
+    }
+}
+
 impl StableHash for crate::ctfe::CtfeLowering {
     fn stable_hash(&self) -> blake3::Hash {
         use crate::ctfe::BuildFailure;
@@ -790,9 +802,6 @@ impl StableHash for crate::ctfe::CtfeLowering {
             }
             Err(BuildFailure::GenericFunction) => {
                 hash.update(&[2]);
-            }
-            Err(BuildFailure::ImportsNotStaged) => {
-                hash.update(&[5]);
             }
             Err(BuildFailure::Diagnostics(diagnostics)) => {
                 hash.update(&[3]);

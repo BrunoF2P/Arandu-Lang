@@ -18,7 +18,7 @@ fn budget() -> Budget {
 }
 
 fn symbol(db: &DatabaseImpl, file: SourceFile, name: &str) -> SymbolId {
-    arandu_query::passes::module_signatures(db, file)
+    arandu_query::passes::declaration_signatures(db, file)
         .symbols
         .iter()
         .find(|symbol| symbol.name == name)
@@ -59,7 +59,8 @@ fn evaluates_a_real_call_without_whole_program_lowering_or_sibling_typeck() {
     );
     assert_eq!(log.count_executions_matching("lower_amir"), 0);
     assert_eq!(log.count_executions_matching("ctfe_func_amir"), 2);
-    assert_eq!(log.count_executions_matching("item_body_typeck"), 2);
+    assert_eq!(log.count_executions_matching("item_typing"), 2);
+    assert_eq!(log.count_executions_matching("item_body_typeck"), 0);
     let lowered = ctfe_func_amir(&db, file, foo);
     assert_eq!(
         lowered.result.as_ref().expect("unit").function().symbol,
@@ -308,7 +309,7 @@ fn literal_pool_changes_invalidate_even_when_the_amir_ids_are_identical() {
 }
 
 #[test]
-fn imports_are_explicitly_pending_without_a_backdoor_into_global_lowering() {
+fn missing_import_is_rejected_without_a_backdoor_into_global_lowering() {
     let (mut db, log) = DatabaseImpl::with_rebuild_log();
     let file = db.new_file(
         "imports.aru".into(),
@@ -325,10 +326,198 @@ fn imports_are_explicitly_pending_without_a_backdoor_into_global_lowering() {
     log.clear();
     assert!(matches!(
         ctfe_func_amir(&db, file, foo).result,
-        Err(BuildFailure::ImportsNotStaged)
+        Err(BuildFailure::Diagnostics(_))
     ));
     assert_eq!(log.count_executions_matching("lower_amir"), 0);
     assert_eq!(log.count_executions_matching("item_body_typeck"), 0);
+}
+
+#[test]
+fn imported_callees_are_staged_on_demand_and_preserve_value_cutoff() {
+    let (mut db, log) = DatabaseImpl::with_rebuild_log();
+    let library_source = |body: &str, sibling: &str| {
+        format!(
+        "module math\npublic func add(a: int, b: int): int {{ {body} }}\nfunc unused(): int {{ {sibling} }}"
+    )
+    };
+    let library = db.new_file(
+        "math.aru".into(),
+        library_source("return a + b", "return missing"),
+    );
+    let file = db.new_file(
+        "caller.aru".into(),
+        "module caller\nimport math\nfunc foo(): int { return math.add(20, 22) }".into(),
+    );
+    let foo = symbol(&db, file, "foo");
+    log.clear();
+    assert_eq!(number(consume(&db, file, foo).expect("imported call")), 42);
+    assert_eq!(log.count_executions_matching("ctfe_func_amir"), 2);
+    assert_eq!(log.count_executions_matching("item_typing"), 2);
+    for forbidden in [
+        "lower_amir",
+        "prepare_hir",
+        "borrow_interfaces",
+        "item_body_typeck",
+    ] {
+        assert_eq!(
+            log.count_executions_matching(forbidden),
+            0,
+            "{forbidden}: {}",
+            log.format_chain(true)
+        );
+    }
+    log.clear();
+    library
+        .set_text(&mut db)
+        .to(Arc::from(library_source("return a + b", "return 999")));
+    assert_eq!(
+        number(consume(&db, file, foo).expect("unused sibling edit")),
+        42
+    );
+    // Removing a resolution diagnostic changes the module signature view.
+    // The called unit may be revalidated, but identical IR cuts off evaluation.
+    assert_eq!(log.count_executions_matching("ctfe_func_amir"), 1);
+    assert_eq!(log.count_executions_matching("ctfe_eval"), 0);
+    log.clear();
+    library
+        .set_text(&mut db)
+        .to(Arc::from(library_source("return a + b", "return 998")));
+    assert_eq!(
+        number(consume(&db, file, foo).expect("body-only sibling edit")),
+        42
+    );
+    assert_eq!(log.count_executions_matching("ctfe_func_amir"), 0);
+    assert_eq!(log.count_executions_matching("ctfe_eval"), 0);
+    log.clear();
+    library
+        .set_text(&mut db)
+        .to(Arc::from(library_source("return a + b + 0", "return 999")));
+    assert_eq!(
+        number(consume(&db, file, foo).expect("same imported value")),
+        42
+    );
+    assert_eq!(log.count_executions_matching("ctfe_func_amir"), 1);
+    assert_eq!(log.count_executions_matching("consumer"), 0);
+    log.clear();
+    library
+        .set_text(&mut db)
+        .to(Arc::from(library_source("return a + b + 1", "return 999")));
+    assert_eq!(
+        number(consume(&db, file, foo).expect("changed imported value")),
+        43
+    );
+    assert_eq!(log.count_executions_matching("ctfe_func_amir"), 1);
+    assert_eq!(log.count_executions_matching("consumer"), 1);
+    let mut clean = DatabaseImpl::new();
+    let clean_file = clean.new_file("caller.aru".into(), file.text(&db).to_string());
+    let _ = clean.new_file("math.aru".into(), library.text(&db).to_string());
+    assert_eq!(
+        consume(&db, file, foo),
+        run(
+            &clean,
+            clean_file,
+            symbol(&clean, clean_file, "foo"),
+            vec![],
+            budget()
+        )
+    );
+}
+
+#[test]
+fn transitive_imports_use_each_defining_function_pool() {
+    let (mut db, log) = DatabaseImpl::with_rebuild_log();
+    let _ = db.new_file(
+        "leaf.aru".into(),
+        "module leaf\npublic func value(): int { return 21 }".into(),
+    );
+    let _ = db.new_file(
+        "middle.aru".into(),
+        "module middle\nimport leaf as base\npublic func double(): int { return base.value() * 2 }"
+            .into(),
+    );
+    let file = db.new_file(
+        "root.aru".into(),
+        "module root\nfrom middle import { double }\nfunc foo(): int { return double() }".into(),
+    );
+    let foo = symbol(&db, file, "foo");
+    log.clear();
+    assert_eq!(
+        number(run(&db, file, foo, vec![], budget()).expect("transitive CTFE")),
+        42
+    );
+    assert_eq!(log.count_executions_matching("ctfe_func_amir"), 3);
+    assert_eq!(log.count_executions_matching("prepare_hir"), 0);
+    assert_eq!(log.count_executions_matching("borrow_interfaces"), 0);
+}
+
+#[test]
+fn imported_callee_failures_recover_and_share_the_callers_frame_budget() {
+    let (mut db, log) = DatabaseImpl::with_rebuild_log();
+    let library = db.new_file(
+        "math.aru".into(),
+        "module math\npublic func answer(): int { return missing }".into(),
+    );
+    let file = db.new_file(
+        "caller.aru".into(),
+        "module caller\nimport math\nfunc foo(): int { return math.answer() }".into(),
+    );
+    let foo = symbol(&db, file, "foo");
+    let answer = symbol(&db, library, "answer");
+    assert_eq!(
+        run(&db, file, foo, vec![], budget())
+            .expect_err("invalid callee")
+            .kind,
+        EvalErrorKind::UnavailableFunction(answer)
+    );
+    library.set_text(&mut db).to(Arc::from(
+        "module math\npublic func answer(): int { return 42 }",
+    ));
+    assert_eq!(
+        number(run(&db, file, foo, vec![], budget()).expect("recovered imported callee")),
+        42
+    );
+    let mut limited = budget();
+    limited.frames = 1;
+    assert_eq!(
+        run(&db, file, foo, vec![], limited)
+            .expect_err("shared frame limit")
+            .kind,
+        EvalErrorKind::FrameLimit
+    );
+    limited.frames = 2;
+    assert_eq!(
+        number(run(&db, file, foo, vec![], limited).expect("root and imported frame")),
+        42
+    );
+    for forbidden in [
+        "lower_amir",
+        "prepare_hir",
+        "borrow_interfaces",
+        "item_body_typeck",
+    ] {
+        assert_eq!(log.count_executions_matching(forbidden), 0);
+    }
+}
+
+#[test]
+fn cyclic_imports_are_rejected_before_ctfe_execution() {
+    let mut db = DatabaseImpl::new();
+    let file = db.new_file(
+        "a.aru".into(),
+        "module a\nimport b\nfunc foo(): int { return 42 }".into(),
+    );
+    let _ = db.new_file(
+        "b.aru".into(),
+        "module b\nimport a\npublic func bar(): int { return 1 }".into(),
+    );
+    let foo = arandu_query::passes::local_symbols(&db, file)
+        .symbols
+        .iter()
+        .find(|symbol| symbol.name == "foo")
+        .expect("local function")
+        .id;
+    assert!(matches!(&ctfe_func_amir(&db, file, foo).result,
+        Err(BuildFailure::Diagnostics(diagnostics)) if diagnostics.iter().any(|d| d.code == arandu_middle::DiagCode::N006ImportConflict)));
 }
 
 #[test]

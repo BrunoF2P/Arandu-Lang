@@ -17,11 +17,12 @@ pub struct ModuleSignatures {
 
 impl ModuleSignatures {
     fn new(value: TypeCheckResult) -> Self {
+        Self::from_arc(Arc::new(value))
+    }
+
+    fn from_arc(value: Arc<TypeCheckResult>) -> Self {
         let hash = crate::stable_hash::type_signature_hash(&value);
-        Self {
-            value: Arc::new(value),
-            hash,
-        }
+        Self { value, hash }
     }
 }
 
@@ -443,8 +444,9 @@ pub fn resolve(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<ResolutionR
 
 /// Signature-level type-check over an explicit program + resolution result.
 ///
-/// Shared by [`module_signatures`] and [`ide_type_check`] so the imported
-/// interface merge stays single-sourced across the strict and IDE paths.
+/// Shared by [`declaration_signatures`] and [`ide_type_check`]. Only declaration
+/// contracts cross imports here: no body check, borrow-interface solve or final
+/// lowering may be requested from this staging boundary.
 fn signatures_from_program(
     db: &dyn ArandCompilerDb,
     file: SourceFile,
@@ -465,14 +467,14 @@ fn signatures_from_program(
     );
 
     // Merge imported type info (path rewrite shared with resolve).
-    // Each `module_signatures` is Salsa-memoized; merge_from is the cold cost.
+    // Each `declaration_signatures` is Salsa-memoized; merge_from is the cold cost.
     for import in &program.imports {
         if let Some(path) = arandu_resolve::canonicalize_import_path(import) {
             if let Some(imported_file) = db.as_source_db().resolve_module_path(&path) {
                 if exported_symbols(db, imported_file).is_cycle {
                     continue;
                 }
-                let imported_sigs = module_signatures(db, imported_file);
+                let imported_sigs = declaration_signatures(db, imported_file);
                 tracing::debug!(
                     target: "arandu_query",
                     %path,
@@ -549,24 +551,6 @@ fn signatures_from_program(
                     }
                 }
 
-                // Body-derived contracts cross the module boundary
-                // through their own HashEq query. A dependency body
-                // edit therefore stops here when the public relation is
-                // unchanged, while a changed relation invalidates the
-                // importing item's checks.
-                let recovered_cycle = imported_sigs
-                    .diagnostics
-                    .iter()
-                    .any(|diagnostic| diagnostic.message.contains("cyclic"));
-                if !recovered_cycle {
-                    let imported_interfaces = borrow_interfaces(db, imported_file);
-                    for (symbol, summary) in &imported_interfaces.entries {
-                        checker
-                            .type_info
-                            .return_borrow_summaries
-                            .insert(*symbol, summary.clone());
-                    }
-                }
                 for diag in &imported_sigs.diagnostics {
                     if diag.message.contains("cyclic") {
                         checker.diagnostics.push(diag.clone());
@@ -578,6 +562,44 @@ fn signatures_from_program(
 
     arandu_semantics::check_signatures(&mut checker, program);
     checker.finish()
+}
+
+/// Compose body-derived contracts only for consumers that perform ordinary
+/// body/ownership checks. Keeping this edge out of declaration signatures is
+/// essential for later CTFE staging; missing contracts must not silently weaken
+/// the existing runtime or recovering IDE paths.
+fn merge_imported_borrow_interfaces(
+    db: &dyn ArandCompilerDb,
+    program: &Program,
+    result: &mut Arc<TypeCheckResult>,
+) {
+    for import in &program.imports {
+        db.unwind_if_revision_cancelled();
+        let Some(path) = arandu_resolve::canonicalize_import_path(import) else {
+            continue;
+        };
+        let Some(imported_file) = db.as_source_db().resolve_module_path(&path) else {
+            continue;
+        };
+        if exported_symbols(db, imported_file).is_cycle {
+            continue;
+        }
+        let signatures = declaration_signatures(db, imported_file);
+        if signatures
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("cyclic"))
+        {
+            continue;
+        }
+        let interfaces = borrow_interfaces(db, imported_file);
+        for (symbol, summary) in &interfaces.entries {
+            let checked = Arc::make_mut(result);
+            Arc::make_mut(&mut checked.type_info)
+                .return_borrow_summaries
+                .insert(*symbol, summary.clone());
+        }
+    }
 }
 
 pub fn cycle_recover_module_signatures(
@@ -666,12 +688,15 @@ fn module_graph_fingerprint(db: &dyn ArandCompilerDb, file: SourceFile) -> blake
     hasher.finalize()
 }
 
+/// Declaration-only staging boundary. Imports recurse through this same query,
+/// never through [`module_signatures`] or [`borrow_interfaces`]. Signature-
+/// inferred borrow contracts remain available, but body-derived ones do not.
 #[salsa::tracked(cycle_result = cycle_recover_module_signatures)]
 #[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
-    query = "module_signatures",
+    query = "declaration_signatures",
     file = ?file.file_id(db),
 ))]
-pub fn module_signatures(db: &dyn ArandCompilerDb, file: SourceFile) -> ModuleSignatures {
+pub fn declaration_signatures(db: &dyn ArandCompilerDb, file: SourceFile) -> ModuleSignatures {
     let _ = module_graph_fingerprint(db, file);
     let program_res = parse(db, file);
     let resolved_arc = resolve(db, file);
@@ -694,6 +719,29 @@ pub fn module_signatures(db: &dyn ArandCompilerDb, file: SourceFile) -> ModuleSi
     };
 
     ModuleSignatures::new(res)
+}
+
+/// Compatibility/body-checking view: declarations plus imported flow-derived
+/// borrow contracts. Its callers retain their existing ownership guarantees;
+/// only staged consumers may deliberately request declaration signatures alone.
+#[salsa::tracked(cycle_result = cycle_recover_module_signatures)]
+#[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
+    query = "module_signatures",
+    file = ?file.file_id(db),
+))]
+pub fn module_signatures(db: &dyn ArandCompilerDb, file: SourceFile) -> ModuleSignatures {
+    let declarations = declaration_signatures(db, file);
+    let program = parse(db, file);
+    let Ok(program) = &**program else {
+        return declarations.clone();
+    };
+    let mut checked = Arc::clone(&declarations.value);
+    merge_imported_borrow_interfaces(db, program, &mut checked);
+    if Arc::ptr_eq(&checked, &declarations.value) {
+        declarations.clone()
+    } else {
+        ModuleSignatures::from_arc(checked)
+    }
 }
 
 /// Collect explicit sealed-interface edges from every module in the current
@@ -900,8 +948,32 @@ pub fn item_body_typeck(
     file: SourceFile,
     item_sym: arandu_middle::SymbolId,
 ) -> HashEq<TypeCheckResult> {
-    let body_in = item_source_input(db, file, item_sym);
+    let typed = item_typing(db, file, item_sym);
     let signatures = module_signatures(db, file);
+    if signatures.type_info.return_borrow_summaries == typed.type_info.return_borrow_summaries {
+        return HashEq::share(typed);
+    }
+    // The checker only needs declared types. Compose flow metadata here so the
+    // existing ownership/IDE consumers retain their contract-sensitive cutoff.
+    let mut result = (**typed).clone();
+    result.type_info_mut().return_borrow_summaries =
+        signatures.type_info.return_borrow_summaries.clone();
+    HashEq::new(result)
+}
+
+/// Canonical body typing against declarations, without requesting callee flow.
+/// The compatibility view above shares this memo instead of checking again.
+#[salsa::tracked]
+#[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
+    query = "item_typing", file = ?file.file_id(db), item = ?item_sym,
+))]
+pub fn item_typing(
+    db: &dyn ArandCompilerDb,
+    file: SourceFile,
+    item_sym: arandu_middle::SymbolId,
+) -> HashEq<TypeCheckResult> {
+    let body_in = item_source_input(db, file, item_sym);
+    let signatures = declaration_signatures(db, file);
     let res = arandu_semantics::check_item_body_only(
         signatures,
         body_in.program.as_ref(),
@@ -920,8 +992,29 @@ pub fn item_body_typeck(
     file = ?file.file_id(db),
 ))]
 pub fn file_typeck_view(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<TypeCheckResult> {
+    compose_file_typing(db, file, false)
+}
+
+/// Declaration-based body memos composed before borrow-interface inference.
+#[salsa::tracked]
+#[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
+    query = "file_typing", file = ?file.file_id(db),
+))]
+pub fn file_typing(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<TypeCheckResult> {
+    compose_file_typing(db, file, true)
+}
+
+fn compose_file_typing(
+    db: &dyn ArandCompilerDb,
+    file: SourceFile,
+    declarations_only: bool,
+) -> HashEq<TypeCheckResult> {
     let program_res = parse(db, file);
-    let signatures = module_signatures(db, file);
+    let signatures = if declarations_only {
+        declaration_signatures(db, file)
+    } else {
+        module_signatures(db, file)
+    };
 
     let Ok(program) = &**program_res else {
         return HashEq::from_arc(Arc::clone(&signatures.value));
@@ -934,7 +1027,12 @@ pub fn file_typeck_view(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<Ty
     let mut diagnostics = signatures.diagnostics.clone();
 
     for &item_sym in &item_syms {
-        let item = item_body_typeck(db, file, item_sym);
+        db.unwind_if_revision_cancelled();
+        let item = if declarations_only {
+            item_typing(db, file, item_sym)
+        } else {
+            item_body_typeck(db, file, item_sym)
+        };
         Arc::make_mut(&mut merged_info).merge_from(item.type_info.as_ref());
         diagnostics.extend(item.diagnostics.iter().cloned());
         diagnostics.extend(
@@ -998,7 +1096,8 @@ pub fn type_check(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<TypeChec
 ///
 /// It lowers the already-built CST with the recovering lowerer, runs the same
 /// pure resolver and per-item body checks, and merges imported signatures
-/// through [`signatures_from_program`]. No diagnostics are accumulated: the IDE
+/// through [`signatures_from_program`], then restores imported flow-derived
+/// contracts before checking bodies. No diagnostics are accumulated: the IDE
 /// surfaces recovering-parse diagnostics separately.
 #[salsa::tracked]
 #[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
@@ -1022,7 +1121,8 @@ pub fn ide_type_check(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<Type
         || db.unwind_if_revision_cancelled(),
     );
 
-    let signatures = signatures_from_program(db, file, &program, &resolved);
+    let mut signatures = Arc::new(signatures_from_program(db, file, &program, &resolved));
+    merge_imported_borrow_interfaces(db, &program, &mut signatures);
 
     // Mirror `file_typeck_view` without per-item memos: this is a transient
     // fallback for malformed buffers, not the incremental hot path.
@@ -1077,6 +1177,17 @@ pub struct LowerAmirArtifacts {
     pub type_check: TypeCheckResult,
 }
 
+/// Shared canonical HIR/monomorphization stage. Its conservative fingerprint
+/// records the typed source inputs, not Debug output or incidental addresses.
+/// Narrow public projections (`borrow_interfaces`) provide semantic cutoff.
+#[derive(Debug)]
+pub struct PreparedHir {
+    pub hir: Option<arandu_middle::hir::HirProgram>,
+    pub type_check: TypeCheckResult,
+    pub diagnostics: Vec<Diagnostic>,
+    pub(crate) source_fingerprint: blake3::Hash,
+}
+
 /// Canonical borrow contracts isolated from the function bodies that proved
 /// them. Consumers use this narrow query so Salsa can cut propagation when an
 /// implementation edit leaves the public dependency relation unchanged.
@@ -1090,14 +1201,14 @@ pub struct BorrowInterfaces {
 
 /// Collect transitive imports of `root`, lower each to HIR, and link into `hir`.
 ///
-/// ## Why `file_typeck_view` (not `type_check`)
+/// ## Why `file_typing` (not `type_check`)
 ///
 /// Salsa accumulators bubble: calling `type_check` on an import from inside
 /// `lower_amir(entry)` would re-accumulate the import's body diagnostics into
 /// `lower_amir::accumulated(entry)`, so `check` of a clean entry would fail on
 /// unrelated stdlib residuals (e.g. `std.alloc`). Body typeck for the link path
-/// must not accumulate — [`file_typeck_view`] returns the same `TypeCheckResult`
-/// without the DiagnosticsAccumulator side effect.
+/// must not accumulate or request callee flow contracts: [`file_typing`] uses
+/// the same canonical body checker, without the compatibility composition.
 ///
 /// Skips cycles, missing modules (prelude-only), parse failures, and modules
 /// that cannot lower (`lower_to_hir` error). Import body errors stay on that
@@ -1107,6 +1218,7 @@ fn link_imported_hir_modules(
     root: SourceFile,
     type_check_result: &mut TypeCheckResult,
     hir: &mut arandu_semantics::hir::HirProgram,
+    fingerprint: &mut blake3::Hasher,
 ) {
     let mut visited = std::collections::HashSet::new();
     visited.insert(*root.file_id(db));
@@ -1117,6 +1229,7 @@ fn link_imported_hir_modules(
         visited: &mut std::collections::HashSet<u32>,
         type_check_result: &mut TypeCheckResult,
         hir: &mut arandu_semantics::hir::HirProgram,
+        fingerprint: &mut blake3::Hasher,
     ) {
         let program_res = parse(db, file);
         let Ok(program) = &**program_res else {
@@ -1124,6 +1237,7 @@ fn link_imported_hir_modules(
         };
 
         for import in &program.imports {
+            db.unwind_if_revision_cancelled();
             let Some(path) = arandu_resolve::canonicalize_import_path(import) else {
                 continue;
             };
@@ -1137,15 +1251,24 @@ fn link_imported_hir_modules(
             }
 
             // Depth-first: link dependencies of the import first (post-order-ish).
-            walk(db, imported_file, visited, type_check_result, hir);
+            walk(
+                db,
+                imported_file,
+                visited,
+                type_check_result,
+                hir,
+                fingerprint,
+            );
 
             let imported_parse = parse(db, imported_file);
+            fingerprint.update(crate::StableHash::stable_hash(&**imported_parse).as_bytes());
             let Ok(imported_program) = &**imported_parse else {
                 continue;
             };
 
             // Full body typeck without accumulating diags into the entry pipeline.
-            let imported_tc_arc = file_typeck_view(db, imported_file);
+            let imported_tc_arc = file_typing(db, imported_file);
+            fingerprint.update(crate::StableHash::stable_hash(&**imported_tc_arc).as_bytes());
             // Skip modules with hard type errors — signatures already merged via
             // module_signatures; codegen for those bodies is not required for
             // entry check when the entry only references public signatures.
@@ -1189,29 +1312,24 @@ fn link_imported_hir_modules(
         }
     }
 
-    walk(db, root, &mut visited, type_check_result, hir);
+    walk(db, root, &mut visited, type_check_result, hir, fingerprint);
 }
 
 #[salsa::tracked]
 #[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
-    query = "lower_amir",
-    file = ?file.file_id(db),
+    query = "prepare_hir", file = ?file.file_id(db),
 ))]
-pub fn lower_amir(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<LowerAmirArtifacts> {
+pub fn prepare_hir(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<PreparedHir> {
     let program_res = parse(db, file);
-    let type_check_result_arc = type_check(db, file);
+    let type_check_result_arc = file_typing(db, file);
+    let mut fingerprint = blake3::Hasher::new();
+    fingerprint.update(b"PreparedHir/sources/v1");
+    fingerprint.update(crate::StableHash::stable_hash(&**program_res).as_bytes());
+    fingerprint.update(crate::StableHash::stable_hash(&**type_check_result_arc).as_bytes());
 
     // Clone for mutation: lower_to_hir / monomorphize update symbols + type_info.
     // Arc fields are O(1); mono may Arc::make_mut type_info once.
     let mut type_check_result = (**type_check_result_arc).clone();
-
-    let empty_amir = || AmirProgram {
-        funcs: vec![],
-        literal_pool: arandu_middle::literal_pool::AmirLiteralPool::default(),
-        extern_funcs: Default::default(),
-        debug_bindings: Vec::new(),
-        debug_blocks: Vec::new(),
-    };
 
     let mut hir = {
         arandu_base::time_pass!("lower-hir");
@@ -1219,19 +1337,20 @@ pub fn lower_amir(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<LowerAmi
             Ok(program) => match arandu_semantics::lower_to_hir(&mut type_check_result, program) {
                 Ok(h) => h,
                 Err(diags) => {
-                    for diag in diags {
-                        arandu_middle::db::DiagnosticsAccumulator(diag).accumulate(db);
-                    }
-                    return HashEq::new(LowerAmirArtifacts {
-                        amir: empty_amir(),
+                    return HashEq::new(PreparedHir {
+                        hir: None,
                         type_check: type_check_result,
+                        diagnostics: diags,
+                        source_fingerprint: fingerprint.finalize(),
                     });
                 }
             },
             Err(_) => {
-                return HashEq::new(LowerAmirArtifacts {
-                    amir: empty_amir(),
+                return HashEq::new(PreparedHir {
+                    hir: None,
                     type_check: type_check_result,
+                    diagnostics: Vec::new(),
+                    source_fingerprint: fingerprint.finalize(),
                 });
             }
         }
@@ -1241,31 +1360,77 @@ pub fn lower_amir(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<LowerAmi
     // monomorphize + codegen see real definitions (not just merged signatures).
     {
         arandu_base::time_pass!("link-hir-imports");
-        link_imported_hir_modules(db, file, &mut type_check_result, &mut hir);
+        link_imported_hir_modules(db, file, &mut type_check_result, &mut hir, &mut fingerprint);
     }
 
     {
         arandu_base::time_pass!("monomorphize");
+        db.unwind_if_revision_cancelled();
         if let Err(diags) = arandu_semantics::passes::monomorphize::monomorphize_program(
             &mut type_check_result,
             &mut hir,
         ) {
-            for diag in diags {
-                arandu_middle::db::DiagnosticsAccumulator(diag).accumulate(db);
-            }
-            return HashEq::new(LowerAmirArtifacts {
-                amir: empty_amir(),
+            return HashEq::new(PreparedHir {
+                hir: None,
                 type_check: type_check_result,
+                diagnostics: diags,
+                source_fingerprint: fingerprint.finalize(),
             });
         }
     }
+    db.unwind_if_revision_cancelled();
+
+    HashEq::new(PreparedHir {
+        hir: Some(hir),
+        type_check: type_check_result,
+        diagnostics: Vec::new(),
+        source_fingerprint: fingerprint.finalize(),
+    })
+}
+
+#[salsa::tracked]
+#[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
+    query = "lower_amir", file = ?file.file_id(db),
+))]
+pub fn lower_amir(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<LowerAmirArtifacts> {
+    // Keep diagnostics/ownership clients on the enriched view. Canonical HIR
+    // and monomorphization are shared with the contract producer via an Arc.
+    let checked = type_check(db, file);
+    let prepared = prepare_hir(db, file);
+    let mut type_check_result = prepared.type_check.clone();
+    type_check_result
+        .type_info_mut()
+        .return_borrow_summaries
+        .extend(
+            checked
+                .type_info
+                .return_borrow_summaries
+                .iter()
+                .map(|(symbol, summary)| (*symbol, summary.clone())),
+        );
+    let empty_amir = || AmirProgram {
+        funcs: vec![],
+        literal_pool: arandu_middle::literal_pool::AmirLiteralPool::default(),
+        extern_funcs: Default::default(),
+        debug_bindings: Vec::new(),
+        debug_blocks: Vec::new(),
+    };
+    for diagnostic in &prepared.diagnostics {
+        arandu_middle::db::DiagnosticsAccumulator(diagnostic.clone()).accumulate(db);
+    }
+    let Some(hir) = &prepared.hir else {
+        return HashEq::new(LowerAmirArtifacts {
+            amir: empty_amir(),
+            type_check: type_check_result,
+        });
+    };
 
     let amir = {
         arandu_base::time_pass!("lower-amir-body");
         let pointer_width = db.target_config().data_layout(db).pointer_width();
         match arandu_semantics::lower_to_amir_with_interfaces(
             &mut type_check_result,
-            &hir,
+            hir,
             pointer_width,
         ) {
             Ok((a, diags)) => {
@@ -1294,11 +1459,68 @@ pub fn lower_amir(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<LowerAmi
     file = ?file.file_id(db),
 ))]
 pub fn borrow_interfaces(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<BorrowInterfaces> {
-    let lowered = lower_amir(db, file);
-    let mut entries = lowered
-        .type_check
-        .type_info
-        .return_borrow_summaries
+    let declarations = declaration_signatures(db, file);
+    let parsed = parse(db, file);
+    let needs_flow = parsed.as_ref().as_ref().is_ok_and(|program| {
+        arandu_semantics::body_item_symbols(program, &declarations.resolved)
+            .iter()
+            .any(|symbol| {
+                declarations.type_info.generic_params.contains_key(symbol)
+                    || declarations
+                        .type_info
+                        .decl_types
+                        .get(symbol)
+                        .is_some_and(
+                            |ty| match declarations.type_info.type_interner.resolve(*ty) {
+                                arandu_middle::types::ArType::Func(_, ret) => declarations
+                                    .type_info
+                                    .borrow_paths(ret)
+                                    .map_or(true, |paths| !paths.is_empty()),
+                                _ => false,
+                            },
+                        )
+            })
+    });
+    if !needs_flow {
+        // Scalar-only modules need no body at all to publish contracts. Keep
+        // inherited/external declaration contracts without a whole-module HIR.
+        return canonical_borrow_interfaces(
+            &module_signatures(db, file)
+                .type_info
+                .return_borrow_summaries,
+        );
+    }
+    let prepared = prepare_hir(db, file);
+    let summaries = prepared.hir.as_ref().and_then(|hir| {
+        db.unwind_if_revision_cancelled();
+        arandu_mir::lower_borrow_interfaces(
+            &prepared.type_check,
+            hir,
+            db.target_config().data_layout(db).pointer_width(),
+        )
+        .ok()
+        .map(|solution| solution.summaries)
+    });
+    db.unwind_if_revision_cancelled();
+    match summaries {
+        Some(summaries) => canonical_borrow_interfaces(&summaries),
+        // Preserve the previous declaration/import fallback for invalid code.
+        // The final path still owns and reports the failed validation.
+        None => canonical_borrow_interfaces(
+            &module_signatures(db, file)
+                .type_info
+                .return_borrow_summaries,
+        ),
+    }
+}
+
+fn canonical_borrow_interfaces(
+    summaries: &rustc_hash::FxHashMap<
+        arandu_middle::SymbolId,
+        arandu_middle::types::ReturnBorrowSummary,
+    >,
+) -> HashEq<BorrowInterfaces> {
+    let mut entries = summaries
         .iter()
         .map(|(symbol, summary)| (*symbol, summary.clone()))
         .collect::<Vec<_>>();

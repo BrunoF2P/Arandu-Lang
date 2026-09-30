@@ -1,6 +1,7 @@
 //! Narrow CTFE lowering/evaluation queries. General runtime `func_amir` remains
 //! a projection of whole-program lowering; this path admits scalar, non-generic
-//! functions only and never calls that final lowering query.
+//! functions (including direct imported callees) only and never calls that
+//! final lowering query or the body-derived borrow-interface producer.
 
 use std::sync::Arc;
 
@@ -13,7 +14,6 @@ use arandu_mir::ctfe::{Budget, CtfeFunction, EvalError, EvalErrorKind, FunctionP
 #[derive(Debug, Clone)]
 pub enum BuildFailure {
     MissingFunction,
-    ImportsNotStaged,
     GenericFunction,
     Diagnostics(Vec<Diagnostic>),
     Evaluation(EvalErrorKind),
@@ -39,13 +39,6 @@ pub fn ctfe_func_amir(
         });
     }
     let body = crate::passes::item_source_input(db, file, symbol);
-    // Imported signatures currently obtain borrow interfaces through final,
-    // program-wide lowering. Do not smuggle that dependency into CTFE staging.
-    if !body.program.imports.is_empty() {
-        return HashEq::new(CtfeLowering {
-            result: Err(BuildFailure::ImportsNotStaged),
-        });
-    }
     let layout = *db.target_config().data_layout(db);
     if let Err(error) =
         arandu_middle::ctfe::IntegerType::new(arandu_middle::types::Primitive::USize, layout)
@@ -54,8 +47,27 @@ pub fn ctfe_func_amir(
             result: Err(BuildFailure::Evaluation(EvalErrorKind::Value(error))),
         });
     }
-    let item = crate::passes::item_body_typeck(db, file, symbol);
-    let signatures = crate::passes::module_signatures(db, file);
+    let signatures = crate::passes::declaration_signatures(db, file);
+    let import_errors = signatures
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.severity == arandu_middle::Severity::Error
+                && matches!(
+                    diagnostic.code,
+                    arandu_middle::DiagCode::M001UnresolvedImport
+                        | arandu_middle::DiagCode::N006ImportConflict
+                        | arandu_middle::DiagCode::N019CyclicReExport
+                )
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if !import_errors.is_empty() {
+        return HashEq::new(CtfeLowering {
+            result: Err(BuildFailure::Diagnostics(import_errors)),
+        });
+    }
+    let item = crate::passes::item_typing(db, file, symbol);
     let build = || -> Result<Arc<CtfeFunction>, BuildFailure> {
         if item.type_info.generic_params.contains_key(&symbol) {
             return Err(BuildFailure::GenericFunction);
@@ -82,8 +94,12 @@ pub fn ctfe_func_amir(
                 .iter()
                 .filter(|diagnostic| {
                     diagnostic.span.file_id == span.file_id
-                        && diagnostic.span.start >= span.start
-                        && diagnostic.span.end <= span.end
+                        && ((diagnostic.span.start >= span.start
+                            && diagnostic.span.end <= span.end)
+                            || body.program.imports.iter().any(|import| {
+                                diagnostic.span.start >= import.span().start
+                                    && diagnostic.span.end <= import.span().end
+                            }))
                 })
                 .cloned(),
         );

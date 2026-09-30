@@ -68,6 +68,52 @@ pub fn lower_to_amir_with_interfaces(
     hir: &HirProgram,
     pointer_width: u64,
 ) -> Result<(AmirProgram, Vec<Diagnostic>), Vec<Diagnostic>> {
+    let (mut program, mut diagnostics, no_fallback) =
+        lower_program(tc, hir, pointer_width, LoweringPurpose::Runtime)?;
+    let solution = crate::borrow_interface::solve_borrow_interfaces(&mut program, &tc.type_info);
+    tc.type_info_mut().return_borrow_summaries = solution.summaries.clone();
+
+    validate_borrowed_program(tc, &mut program, &solution, &no_fallback, &mut diagnostics);
+    if diagnostics.iter().any(|d| d.severity == Severity::Error) {
+        Err(diagnostics)
+    } else {
+        Ok((program, diagnostics))
+    }
+}
+
+/// Project flow contracts from typed, monomorphized HIR before final borrow
+/// validation/promotion. Only functions with borrow-bearing returns contribute
+/// to this fixpoint; other bodies cannot introduce a return dependency.
+///
+/// This is not a certificate that the program is safe to execute. Runtime
+/// lowering still validates every function with the converged call contracts.
+pub fn lower_borrow_interfaces(
+    tc: &TypeCheckResult,
+    hir: &HirProgram,
+    pointer_width: u64,
+) -> Result<crate::borrow_interface::BorrowInterfaceSolution, Vec<Diagnostic>> {
+    let (mut program, _, _) =
+        lower_program(tc, hir, pointer_width, LoweringPurpose::ReturnInterfaces)?;
+    Ok(crate::borrow_interface::solve_borrow_interfaces(
+        &mut program,
+        &tc.type_info,
+    ))
+}
+
+type LoweredProgram = (AmirProgram, Vec<Diagnostic>, FxHashMap<SymbolId, bool>);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LoweringPurpose {
+    Runtime,
+    ReturnInterfaces,
+}
+
+fn lower_program(
+    tc: &TypeCheckResult,
+    hir: &HirProgram,
+    pointer_width: u64,
+    purpose: LoweringPurpose,
+) -> Result<LoweredProgram, Vec<Diagnostic>> {
     if tc.diagnostics.iter().any(|d| d.severity == Severity::Error) {
         return Err(tc.diagnostics.clone());
     }
@@ -100,6 +146,14 @@ pub fn lower_to_amir_with_interfaces(
             // Skip generic templates — only monomorphized specializations (and
             // non-generic functions) are lowered to AMIR.
             if tc.type_info.generic_params.contains_key(&f.symbol) {
+                continue;
+            }
+            if purpose == LoweringPurpose::ReturnInterfaces
+                && tc
+                    .type_info
+                    .borrow_paths(f.return_type)
+                    .is_ok_and(|paths| paths.is_empty())
+            {
                 continue;
             }
             match lower_func(
@@ -156,7 +210,7 @@ pub fn lower_to_amir_with_interfaces(
                 }
             }
         }
-        let mut program = AmirProgram {
+        let program = AmirProgram {
             funcs,
             literal_pool,
             extern_funcs,
@@ -164,42 +218,48 @@ pub fn lower_to_amir_with_interfaces(
             debug_blocks,
         };
 
-        let solution =
-            crate::borrow_interface::solve_borrow_interfaces(&mut program, &tc.type_info);
-        {
-            let info = tc.type_info_mut();
-            info.return_borrow_summaries = solution.summaries.clone();
-        }
+        Ok((program, diagnostics, no_fallback))
+    } else {
+        Err(diagnostics)
+    }
+}
 
-        for function in &mut program.funcs {
-            // M2 and escape validation intentionally run only after calls carry
-            // the converged interprocedural interface.
-            diagnostics.extend(crate::borrow_check::check_borrows(function, &tc.symbols));
-            let options = crate::escape_analysis::EscapeCheckOptions {
-                no_fallback: no_fallback.get(&function.symbol).copied().unwrap_or(false),
-                return_borrow: solution.summaries.get(&function.symbol).cloned(),
-            };
-            let escape_diagnostics = crate::escape_analysis::check_escapes_with_type_info(
-                function,
-                &tc.symbols,
-                &tc.type_info,
-                options.clone(),
-            );
-            let already_reports_return = escape_diagnostics
+fn validate_borrowed_program(
+    tc: &TypeCheckResult,
+    program: &mut AmirProgram,
+    solution: &crate::borrow_interface::BorrowInterfaceSolution,
+    no_fallback: &FxHashMap<SymbolId, bool>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    for function in &mut program.funcs {
+        // M2 and escape validation intentionally run only after calls carry
+        // the converged interprocedural interface.
+        diagnostics.extend(crate::borrow_check::check_borrows(function, &tc.symbols));
+        let options = crate::escape_analysis::EscapeCheckOptions {
+            no_fallback: no_fallback.get(&function.symbol).copied().unwrap_or(false),
+            return_borrow: solution.summaries.get(&function.symbol).cloned(),
+        };
+        let escape_diagnostics = crate::escape_analysis::check_escapes_with_type_info(
+            function,
+            &tc.symbols,
+            &tc.type_info,
+            options.clone(),
+        );
+        let already_reports_return = escape_diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == DiagCode::O010EscapeOfBorrowedValue);
+        diagnostics.extend(escape_diagnostics);
+        if !already_reports_return
+            && solution
+                .unproven
                 .iter()
-                .any(|diagnostic| diagnostic.code == DiagCode::O010EscapeOfBorrowedValue);
-            diagnostics.extend(escape_diagnostics);
-            if !already_reports_return
-                && solution
-                    .unproven
-                    .iter()
-                    .any(|failure| failure.function == function.symbol)
-            {
-                let span = function
-                    .temps
-                    .first()
-                    .map_or(Span::new(0, 0, 0), |temp| temp.span);
-                diagnostics.push(
+                .any(|failure| failure.function == function.symbol)
+        {
+            let span = function
+                .temps
+                .first()
+                .map_or(Span::new(0, 0, 0), |temp| temp.span);
+            diagnostics.push(
                     Diagnostic::error(
                         DiagCode::O010EscapeOfBorrowedValue,
                         "borrowed return has no demonstrable formal origin".to_string(),
@@ -211,22 +271,8 @@ pub fn lower_to_amir_with_interfaces(
                     )
                     .with_hint("return owned data or forward a borrow derived from a formal `ref` input"),
                 );
-            }
-            crate::gen_promote::apply_gen_promotion_with_type_info(
-                function,
-                &tc.type_info,
-                options,
-            );
         }
-
-        let has_errors = diagnostics.iter().any(|d| d.severity == Severity::Error);
-        if !has_errors {
-            Ok((program, diagnostics))
-        } else {
-            Err(diagnostics)
-        }
-    } else {
-        Err(diagnostics)
+        crate::gen_promote::apply_gen_promotion_with_type_info(function, &tc.type_info, options);
     }
 }
 
