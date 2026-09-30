@@ -50,8 +50,11 @@ arquitetural está em reutilizar a semântica tipada da linguagem e não em comp
 um valor isolado antes do backend.
 
 O projeto já tem componentes que ajudam — AMIR, queries Salsa, `DataLayout` e
-const generics escalares —, mas eles não constituem ainda uma VM CTFE nem um
-modelo completo de alvo. Em particular:
+const generics escalares. A campanha atual acrescentou uma VM escalar limitada
+interna e queries de lowering/avaliação locais não genéricas; isso ainda não
+constitui a superfície pública `comptime` nem um modelo completo de alvo.
+O [plano da campanha](../campaigns/0.1.9-comptime-core.md) delimita o contrato
+efetivamente implementado. Em particular:
 
 - `TargetInfo` do type checker atualmente expressa apenas a largura de ponteiro;
 - `TargetConfig` no middle-end guarda `DataLayout`, não um triple canônico com
@@ -59,6 +62,8 @@ modelo completo de alvo. Em particular:
 - const generics atualmente aceitam tipos inteiros escalares;
 - `func_amir` é uma projeção sobre o lowering program-wide, não uma cadeia real
   de lowering incremental por instância.
+- `ctfe_func_amir` baixa apenas o corpo selecionado, sem lowering global, mas
+  ainda rejeita arquivos com imports e funções genéricas por falta de staging.
 
 Essas limitações orientam a divisão em etapas. Não se deve prometer que CTFE
 evitará toda reexecução incremental: Salsa pode cortar propagação quando uma
@@ -101,6 +106,15 @@ comptime for index in 0..TABLE_SIZE {
 interpretador. Fuel limita também a expansão resultante; não há iteração
 arbitrária ou permissão para travar o compilador.
 
+O desenho deve distinguir avaliação integral de especialização: um bloco
+`comptime { ... }` executa seu corpo em compilação; um `comptime if` em corpo
+runtime avalia a condição para selecionar código residual; um `comptime for`
+nesse contexto avalia o domínio para especializar instruções em ordem. O corpo
+residual pode usar valores/efeitos runtime e não é executado pela VM. Dentro de
+um bloco inteiramente CTFE, os corpos selecionados também executam em compilação.
+A política de resolução/tipagem do ramo descartado e de desvios na expansão
+precisa ser fechada em CT.0; ambos os ramos continuam sujeitos ao parser.
+
 ### 3.3. Parâmetros de valor
 
 ```arandu
@@ -127,6 +141,11 @@ validada, além do layout.
 
 ## 4. Desenho e etapas propostas
 
+Os IDs CT.0–CT.5 seguem a ordem canônica do
+[roadmap mestre](../arandu-compiler-roadmap-v0.1.md#fila-de-execução).
+O [plano temporário da campanha](../campaigns/0.1.9-comptime-core.md) mapeia
+dependências reais, caminhos de código e decisões propostas para fechar CT.0.
+
 ### 4.1. CT.0 — decisões necessárias antes da implementação
 
 Antes de mudar lexer/parser ou iniciar a VM, a RFC precisa fechar:
@@ -141,12 +160,42 @@ Antes de mudar lexer/parser ou iniciar a VM, a RFC precisa fechar:
 5. O modelo de alvo inicial e as operações de layout válidas para cada backend.
 6. Chaves e dependências da query de avaliação, incluindo os limites reais do
    `lower_amir` program-wide atual.
-7. Orçamento padrão, cancelamento, contexto CLI/LSP e diagnósticos públicos.
+7. Orçamento de instruções/frames/valores/expansão, cancelamento, contexto
+   CLI/LSP e diagnósticos públicos; medir antes de fixar os defaults.
+8. O grafo de staging para valores necessários durante tipagem, seleção de
+   ramos e instanciação, sem `type_check → lower_amir final → type_check`.
+9. Gramática e semântica separadas para avaliação integral, seleção de ramo e
+   expansão finita; regras de capturas, desvios, scopes e ownership.
 
 Se uma decisão exigir suporte que não existe, o item fica fora do núcleo até
 essa dependência ser entregue; não deve ser simulado com dados do host.
 
-### 4.2. CT.1 — valores e interpretador
+Uma base interna já implementa o domínio escalar em `arandu_middle::ctfe` e
+operações verificadas em `arandu_mir::ctfe`: `bool`, `void` e inteiros tipados,
+larguras do alvo, conversões sem truncamento e codificação canônica v1 sem IDs
+de pools. Shifts à esquerda usam multiplicação matemática verificada; à direita,
+extensão de sinal para assinados e zeros para não assinados. Contagens inválidas,
+overflow e divisão/resto inválidos produzem erros internos estruturados. A ponte
+para `Const(u64)` é sem perda e rejeita negativos. Essa base não altera o runtime,
+não interpreta CFG nem habilita sintaxe `comptime`; integração, orçamento e
+diagnósticos públicos continuam sujeitos às decisões acima. Os detalhes e
+regressões estão no plano da campanha. A RFC permanece `Draft`.
+
+### 4.2. CT.1 — alvo e layout
+
+O banco recebe configuração explícita e validada do alvo antes das queries
+semânticas que dependem dela. O descritor deve separar identidade de alvo e
+`DataLayout`; um layout sintético não pode ser apresentado como triple ou
+suporte de codegen nativo. CLI/LSP/web configuram a borda; a VM consome os dados
+canônicos que typeck e `LayoutEngine` também usam.
+
+OS, arquitetura, ABI e capabilities só podem ser expostos quando forem obtidos
+de uma configuração explícita suportada — nunca inferidos do host durante a
+avaliação. Esses campos públicos e cross compilation geral não são necessários
+para a primeira entrega. Comparar larguras e alinhamentos, incluindo layouts
+nos quais tamanho e alinhamento diferem, antes de expor resultados na linguagem.
+
+### 4.3. CT.2 — valores e interpretador
 
 O interpretador é uma função pura da AMIR, argumentos constantes, configuração
 de alvo e orçamento. O conjunto inicial deve ser pequeno, explicitamente
@@ -154,13 +203,19 @@ enumerado e alinhado ao que a AMIR representa sem efeitos observáveis. O ponto 
 partida recomendado é valores escalares e agregados imutáveis suportados pela
 AMIR; ponteiros arbitrários, chamadas externas e efeitos ficam excluídos.
 
+A primeira entrega da VM já inclui fuel, limites de frames/valores e um hook
+de cancelamento cooperativo. A stack de execução não depende da stack nativa
+sem limite. Mutação de locais da avaliação é distinta de efeitos observáveis
+externos; CT.0 define as operações e tipos permitidos. A VM deve tratar largura
+e sinal dos inteiros conforme tipo e alvo, sem adotar a representação do host.
+
 Uma operação não suportada retorna um erro CTFE estruturado com span; nunca
 causa panic no compilador nem é silenciosamente tratada como constante.
 Implementar um modelo completo de memória virtual à maneira de Miri não é
 pré-requisito para esse subconjunto e não deve ser introduzido sem necessidade
 demonstrada.
 
-### 4.3. CT.2 — superfície de linguagem
+### 4.4. CT.3 — superfície de linguagem e staging
 
 Após o domínio de valores e a semântica de execução estarem testados, adicionar
 as formas aprovadas de `comptime` em expressão/bloco, `comptime if` e iteração
@@ -170,22 +225,17 @@ possam ser avaliadas com segurança, sem depender de falha tardia no backend.
 Parâmetros `comptime` reutilizam a representação dos const generics atuais para
 inteiros escalares no primeiro passo. Ampliação para tipos como argumentos,
 valores arbitrários ou políticas é uma decisão futura, não implícita nesta RFC.
+O domínio concreto atual é `ArType::Const(u64)`: conversões do domínio tipado
+da VM para argumentos genéricos precisam ser verificadas, sem truncamento ou
+segunda chave de monomorphização. Preservar a sintaxe `<const N: uint>` e
+`[N]T` faz parte da compatibilidade.
 
-### 4.4. CT.3 — alvo, layout e reflexão mínima
-
-O banco recebe uma descrição canônica e validada do alvo antes das queries
-semânticas que dependem dela. A primeira superfície de introspecção limita-se a
-operações de layout cujo resultado o compilador já calcula de forma confiável,
-como `@sizeOf` e `@alignOf`.
-
-O descritor deve separar identidade de alvo e `DataLayout`; ambos são dados de
-entrada semânticos. OS, arquitetura, ABI e capabilities só podem ser expostos
-quando forem obtidos de uma configuração explícita suportada — nunca inferidos
-do host durante a avaliação.
-
-Um `@typeInfo` amplo com campos, métodos, atributos ou acesso dinâmico por nome
-fica para uma etapa posterior, com contrato próprio para identidade e visibilidade
-de tipos.
+Expressões no corpo podem usar um tipo esperado já conhecido; constantes que
+determinam tipos, assinaturas ou ramos exigem tipagem/lowering das unidades de
+avaliação antes da tipagem residual. A query de CTFE não pode usar `func_amir`
+como atalho quando isso reentra no `lower_amir` final, dependente de typeck.
+CT.0 precisa definir essa fronteira e os diagnósticos de ciclo; isso não exige
+entregar toda a granularidade do pipeline AOT da RFC 0011.
 
 ### 4.5. CT.4 — Salsa, fuel e LSP
 
@@ -197,18 +247,29 @@ Garantias exigidas:
 
 - determinismo para as mesmas AMIR, argumentos, layout e configuração;
 - limite de passos aplicado em cada operação/salto/chamada relevante;
+- limites de frames, valores e expansão além do número de instruções;
 - cancelamento cooperativo, especialmente durante análise interativa do LSP;
+- cancelamento separado de erro semântico, sem resultado cancelado memoizado;
 - nenhum I/O ou efeito global dentro da query;
 - early-cutoff testado sobre o resultado, sem prometer que mudanças em
   dependências não reexecutam o interpretador;
 - preservar a correção mesmo enquanto `func_amir` dependa do lowering
   program-wide. Granularidade por instância é melhoria arquitetural separada.
 
+CT.4 acompanha cada corte público de CT.3; não se habilita uma forma no editor
+para só depois implementar seu cancelamento e sua análise incremental.
+
 Fuel, defaults CLI/LSP e opções de configuração só são congelados após benchmark
 e testes de responsividade; os números apresentados em versões anteriores desta
 proposta eram exemplos, não contrato.
 
-### 4.6. Critérios de saída do núcleo
+### 4.6. CT.5 — reflexão mínima e critérios de saída do núcleo
+
+A superfície de layout `@sizeOf`/`@alignOf` reutiliza as operações canônicas
+de `LayoutEngine` e a classificação compartilhada dos intrínsecos; preservar
+`mem.sizeOf<T>()`/`mem.alignOf<T>()`. Um `@typeInfo` amplo com campos, métodos,
+atributos ou acesso dinâmico por nome fica para etapa posterior, com contrato
+próprio para identidade e visibilidade de tipos.
 
 O núcleo não está pronto para release até que haja testes que demonstrem:
 

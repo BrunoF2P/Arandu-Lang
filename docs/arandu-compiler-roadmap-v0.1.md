@@ -49,10 +49,12 @@ Este documento consolida as decisões arquiteturais sobre Data-Oriented Design (
 > Este é o único roadmap executivo; contratos técnicos vivos permanecem em
 > documentos próprios e campanhas concluídas permanecem recuperáveis no Git.
 
-> **Campanha ativa: 0.1.8 — estabilização e consolidação.** Nenhuma nova superfície
-> de linguagem entra antes de concluir as notas de migração do RFC 0023, classificar
-> as limitações conhecidas (O2, lower_amir, fila LSP) e preparar a release com CI
-> nativo verde em Linux, macOS e Windows. Async e effects permanecem infra interna.
+> **Campanha ativa: 0.1.9 — CTFE & Comptime Core, começando por CT.0.**
+> A preparação da 0.1.8 foi integrada pela PR #30 e a tag `v0.1.8` aponta para
+> `17d893624534d74701124338d022e4c11ce2fc00`, com `S0 / Gate` e matriz nativa verdes.
+> A publicação dos artefatos tem evidência própria no workflow de release.
+> A RFC 0013 continua `Draft`: contrato, staging e compatibilidade precisam estar
+> fechados antes de habilitar a nova superfície de linguagem.
 
 ### Semântica de status
 
@@ -89,84 +91,49 @@ quando cumprir seu contrato atual.
 | SL_T — testes e benchmarks | `done`; soak para `gold` | [contrato consolidado](./arandu-testing-benchmark-harness-v0.1.md), SDK/VSIX e matriz nativa `SL_T / Harness` |
 | Paralelismo Estruturado | `done` | [RFC 0003](./rfcs/0003-structured-parallelism.md); funcional em Linux, aguardando benchmark reproduzível e matriz nativa para `gold` |
 | **v0.1.7** | **`released`** | Tag `v0.1.7` publicada; PR #29 verde; 71 commits, 609 arquivos. Inclui RFC 0023 (inteiros portáveis), RFC 0021 (visibilidade/módulos), RFC 0022 (AranduSmith), RFC 0020 (empacotamento nativo), correções de ownership e backends, expansão do corpus. |
+| **Preparação v0.1.8** | **`done`; tag publicada** | PR #30 mergeada com todos os checks verdes; contrato de release validado para 26 manifests; tag `v0.1.8` no commit `17d8936`. Diagnósticos, CLI, LSP, extensão e documentação consolidados. Evidência de instalação/publicação pertence à release. |
 
 ### Fila de execução
 
-**Próximo:** `0.1.8 — estabilização e consolidação`
+**Agora:** `0.1.9 — CTFE & Comptime Core`, com CT.0 em elaboração, base escalar,
+VM limitada e recorte incremental internos implementados, sem superfície pública. O desenho permanece na
+[RFC 0013](./rfcs/0013-deterministic-ctfe-and-comptime-metaprogramming.md);
+o [plano temporário da campanha](./campaigns/0.1.9-comptime-core.md) detalha
+entregas, caminhos de código, decisões propostas e provas. Esta fila permanece
+a única autoridade para ordem e status.
 
-A 0.1.8 é uma versão de estabilização sem abertura de nova superfície grande de linguagem.
-O volume da 0.1.7 (71 commits, 609 arquivos) torna a consolidação obrigatória antes de avançar.
+| Gate | Estado | Entrega e condição para avançar |
+| --- | --- | --- |
+| CT.0 — contrato e staging | `in progress`; base interna implementada, desenho restante aberto | Fechar gramática, efeitos, const generics, orçamento e um grafo sem ciclos entre typeck/AMIR/CTFE. Aceitar a RFC antes da implementação pública; VM escalar e queries locais possuem regressões, mas ainda não fecham o contrato. |
+| CT.1 — alvo e layout | `planned` | Configuração explícita validada e contrato compartilhado com `LayoutEngine`; comprovar larguras, alinhamentos e rejeição de combinações sem backend real. |
+| CT.2 — VM AMIR pura | `in progress`; VM escalar limitada interna | CFG, chamadas diretas, locais, fuel compartilhado, limites de frames/slots e cancelamento implementados. Completar efeitos, contexto de falha, paridade e agregados sem recursos de runtime. |
+| CT.3 — superfície e especialização | `planned` | Entregas sucessivas de expressão/bloco, parâmetros compatíveis, seleção `comptime if` e expansão finita `comptime for`; produzir AMIR residual válida para os três backends. |
+| CT.4 — Salsa e editor | `in progress`; recorte interno local não genérico | `ctfe_func_amir` baixa só o item; queries provam cutoff de irmãos/consumidores e cancelamento sem memoizar falha. Imports/instâncias, staging público e LSP responsivo com diagnóstico estruturado permanecem pendentes. |
+| CT.5 — layout público e release | `planned` | `@sizeOf`/`@alignOf` compartilham a semântica de `mem.sizeOf<T>()`/`mem.alignOf<T>()`; corpus real, Smith, matriz nativa, playground e extensão validados. |
 
-**Escopo confirmado para 0.1.8:**
+**Primeira entrega executável:** uma chamada pura com argumentos constantes,
+avaliada na VM e materializada como constante no programa residual, com testes
+C/Cranelift/Wasm e sem passar pelo `lower_amir` final durante o type checking.
+CT.3 e CT.4 avançam em cortes verticais: nenhuma superfície é habilitada no LSP
+antes de suas provas de fuel, cancelamento e invalidation.
 
-1. **Documentação e verdade dos contratos:** alinhar notas de migração do RFC 0023
-   (`int = i32`, `uint = u32`, `isize`/`usize` para endereços; diagnóstico T038 para
-   literais acima de 32 bits sem sufixo). Async (`A3`) e effects (`A2`) permanecem
-   infra interna não anunciada: o AMIR coroutine splitting, frame allocation e codegen
-   completos pertencem ao marco futuro SL_R; a superfície pública não muda.
-2. **Rodada de estabilização:** medir e classificar limitações conhecidas antes de
-   decidir quais bloqueiam a release. Itens monitorados:
-   - O2 permanece `experimental` sem promoção precipitada;
-   - `lower_amir` monolítico documentado como débito técnico aberto (RFC 0011, marco `0.3`);
-   - validação incremental em corpus de 50 módulos (`check-project-corpus` / `check-project-performance`);
-   - pressão da fila de resultados LSP (coalescência preservada, sem limite formal ainda).
-3. **SL_T soak:** o critério para promoção a `gold` (10 execuções verdes em ≥7 dias)
-   continua como limitação documentada, sem bloquear a entrega da 0.1.8.
-4. **CI e cache:** consolidar `shared-key` e `save-if` em todos os workflows;
-   pinagem universal em `ubuntu-24.04`; `CARGO_INCREMENTAL: 0`.
-5. **Preparação da release:** `cargo run --locked -p xtask -- prepare-release 0.1.8`,
-   validação do workspace completa e CI nativo verde em Linux, macOS e Windows.
+**Escopo de produto proposto:** expressões/blocos `comptime`, parâmetros de valor
+inteiros compatíveis com os const generics atuais, decisões/iterações estáticas
+finitas e introspecção de layout. A RFC fecha a diferença entre executar um bloco
+em compilação e selecionar/expandir instruções que rodarão em runtime.
 
-**Não entra na 0.1.8:** async runtime real (SL_R), effect system público, LLVM,
-closures, cache remoto, self-hosting nem qualquer nova superfície de linguagem.
+**Após a 0.1.9:** `@typeInfo` estrutural, OS/arch/ABI/capabilities públicos,
+`quote`, splicing, `@Derive`, geração de items, inclusão de arquivos e JIT
+continuam fora deste núcleo, com desenho próprio.
 
-### Proposta de sequência após 0.1.8
-
-**Candidata a 0.1.9: CTFE & Comptime Core (RFC 0013, ainda Draft).** Esta é uma
-direção de planejamento, não um escopo aprovado: a RFC precisa ser revisada e
-aceita antes de iniciar implementação. A 0.1.8 continua sendo a campanha ativa.
-
-O núcleo deve ser implementado como uma sequência de gates, e não como uma
-promessa de entregar toda a metaprogramação de uma vez:
-
-1. **CT.0 — fechar o contrato:** definir domínio de `ConstValue`, operações e
-   efeitos permitidos, integração com os const generics escalares existentes,
-   semântica de erros e limites de execução. Preservar a sintaxe existente até
-   haver uma migração explícita; evitar dois mecanismos independentes para
-   valores conhecidos em compilação.
-2. **CT.1 — alvo e layout:** tornar explícita a identidade/layout do alvo na
-   configuração semântica. `@sizeOf` e `@alignOf` só podem refletir layouts
-   realmente suportados pelo backend. Não expor `target.os`, `target.arch`, ABI
-   ou capabilities enquanto o compilador não tiver um descritor canônico e
-   validado para esses alvos.
-3. **CT.2 — avaliação determinística:** implementar o interpretador sobre AMIR
-   para um subconjunto puro, documentado e testado; começar por valores escalares
-   e agregados suportados. Sem I/O, acesso ambiental ao filesystem, ponteiros
-   arbitrários ou efeitos de runtime nesta etapa.
-4. **CT.3 — superfície inicial:** `comptime` em expressão/bloco, `comptime if`,
-   parâmetros de valor compatíveis com os const generics atuais e `comptime for`
-   apenas sobre domínios finitos e conhecidos estaticamente. Sintaxe e conversões
-   permanecem sujeitas à aceitação da RFC.
-5. **CT.4 — editor e incrementalidade:** avaliação memoizada em Salsa, fuel,
-   cancelamento cooperativo e diagnósticos estruturados. A garantia inicial é
-   determinismo, correção e cutoff do resultado; não prometer que uma mudança na
-   implementação nunca reexecutará a avaliação. `func_amir` ainda projeta sobre
-   `lower_amir` program-wide; granularidade real por instância continua no marco
-   de lowering incremental correspondente.
-6. **CT.5 — reflexão mínima e gate de release:** começar por operações de layout
-   como `@sizeOf`/`@alignOf`. Ampliar `@typeInfo` somente com contrato estável para
-   tipos e campos. Exigir paridade incremental/clean, determinismo entre hosts,
-   testes de fuel/cancelamento e equivalência com execução de runtime no
-   subconjunto compartilhado.
-
-**Depois do núcleo:** reflexão estrutural mais ampla e capabilities por alvo
-precisam de RFC/etapa própria. `quote`, splicing, `@Derive`, geração de items,
-DSLs, inclusão de arquivos e JIT ficam fora da primeira entrega; só devem avançar
-com decisões específicas para higiene, resolução, re-typecheck e invalidação.
-
-**Outras trilhas:** manter o gate de `gold` do Paralelismo Estruturado e a
-estabilização de runtime como trabalho independente. Não os encadear como
-pré-requisitos de CTFE nem deslocar a estabilização da 0.1.8.
+**Dívida preservada:** O2 continua `experimental`; granularidade completa do
+lowering permanece no marco `0.3` da RFC 0011. CTFE exige um caminho tipado sem
+ciclos para suas unidades, não a reescrita de todo o pipeline incremental AOT.
+`ctfe_func_amir` adianta um recorte local não genérico do lowering por função;
+não muda `func_amir` de runtime nem comprova o gate completo de 0.3.
+A pressão de resultados LSP e o soak SL_T (10 execuções verdes em ≥7 dias)
+continuam classificados em suas trilhas; async/effects públicos, LLVM,
+closures, cache remoto e self-hosting não são pré-requisitos desta campanha.
 
 
 ### Trilha incremental nativa — RFC 0011

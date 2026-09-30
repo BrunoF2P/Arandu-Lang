@@ -28,10 +28,22 @@ impedem o LSP de publicar resultados de buffers/revisões obsoletos.
 |-------|--------|
 | `parse`, `resolve`, `module_signatures`, `type_check`, `lower_amir` | Reais |
 | `local_symbols`, `exported_symbols`, `func_amir` | Reais |
+| `ctfe_func_amir` / `ctfe_eval` | Internas, escalares locais não genéricas; imports ainda não staged |
 | `liveness_facts` | Real (`arandu_mir::liveness`) |
 | `block_dataflow_facts` | live/init/moved/stmt counts por bloco |
 | `func_analysis_diags` / `block_diagnostics` / `file_ide_diagnostics` | F4 — diags IDE memoizados |
 | DX.5 `RebuildLog` | Opt-in (`-Zexplain-rebuild`) |
+
+`func_amir` de runtime projeta sobre `lower_amir` program-wide. O caminho
+interno CTFE é distinto: `item_source_input` e `item_body_typeck`, com
+`module_signatures`/alvo, alimentam o lowering HIR canônico de apenas uma
+função; sua AMIR possui pool próprio e descritores escalares resolvidos.
+`ctfe_eval` rastreia unidades chamadas sob demanda, argumentos e orçamento.
+Valor igual permite cutoff downstream; cancelamento usa unwind Salsa, não um
+erro cacheado. Essa fronteira não completa granularidade por instância de
+runtime nem habilita `comptime` no LSP. Imports são rejeitados porque a cadeia
+atual de assinaturas/interfaces de empréstimo pode pedir lowering final;
+separá-la é requisito do staging público, não algo a mascarar nesta query.
 
 ### I/O de fonte
 
