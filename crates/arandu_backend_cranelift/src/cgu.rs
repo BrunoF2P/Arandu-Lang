@@ -5,12 +5,9 @@
 //! compiler identity, target, optimization policy, AMIR, concrete layouts and
 //! direct-callee signatures.
 
-use std::collections::BTreeSet;
-
 use arandu_semantics::amir::{
     AmirConstant, AmirFunc, AmirOperand, AmirPlace, AmirProgram, AmirProjection, AmirRvalue,
-    AmirStmt, AmirTerminator, for_each_place_operand, for_each_rvalue_operand,
-    for_each_terminator_operand,
+    AmirStmt, AmirTerminator,
 };
 use arandu_semantics::literal_pool::AmirLiteralEntry;
 use arandu_semantics::types::{
@@ -22,8 +19,10 @@ use target_lexicon::Triple;
 use crate::aot::{AotOptimization, CraneliftObjectBackend};
 use crate::jit::isa::codegen_ice;
 
-const CGU_HASH_SCHEMA: &[u8] = b"arandu-cgu-input-v2\0";
-const CRANELIFT_IDENTITY: &[u8] = b"cranelift-0.134.3\0";
+pub(crate) mod dependencies;
+
+const CGU_HASH_SCHEMA: &[u8] = b"arandu-cgu-input-v3\0";
+const CRANELIFT_IDENTITY: &[u8] = b"cranelift-0.136.1\0";
 
 /// A discrete compilation unit corresponding to one function or item.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,11 +99,9 @@ pub fn compute_cgu_hash(
     };
     context.func(func);
     context.direct_callee_signatures(func);
-    // ObjectModule declares the complete module surface before defining this
-    // function. Keep that declaration closure in the cache key: removing or
-    // changing a declaration must never reuse an object whose relocation or
-    // platform metadata was produced against the previous closure.
-    context.module_declaration_surface();
+    // Object emission uses this same function-local declaration closure.
+    // ABI/layout and implicit destructor dependencies remain in the digest;
+    // unrelated declarations no longer affect object metadata or the key.
     hash.finish()
 }
 
@@ -168,26 +165,6 @@ struct HashContext<'a> {
 }
 
 impl HashContext<'_> {
-    fn module_declaration_surface(&mut self) {
-        self.hash.usize(self.program.funcs.len());
-        for func in &self.program.funcs {
-            self.symbol(func.symbol);
-            self.func_signature(func);
-        }
-
-        let mut externs: Vec<_> = self.program.extern_funcs.iter().collect();
-        externs.sort_by_key(|(symbol, _)| (symbol.file_id, symbol.local_id.0));
-        self.hash.usize(externs.len());
-        for (&symbol, (params, result)) in externs {
-            self.symbol(symbol);
-            self.hash.usize(params.len());
-            for param in params {
-                self.ar_type(param);
-            }
-            self.ar_type(result);
-        }
-    }
-
     fn symbol(&mut self, id: SymbolId) {
         if let Some(symbol) = self.symbols.try_get(id) {
             self.hash.tag(0);
@@ -198,9 +175,9 @@ impl HashContext<'_> {
             // valid symbol. The numeric identity gives the diagnostic path a
             // deterministic cache miss until validation reports the ICE.
             self.hash.tag(1);
+            self.hash.u32(id.file_id);
+            self.hash.u32(id.local_id.0);
         }
-        self.hash.u32(id.file_id);
-        self.hash.u32(id.local_id.0);
     }
 
     fn type_id(&mut self, id: TypeId) {
@@ -327,6 +304,16 @@ impl HashContext<'_> {
         }
         self.hash.tag(1);
         self.named_type_stack.push(symbol);
+        self.hash
+            .bool(self.type_info.struct_repr_c.contains(&symbol));
+        if let Some(params) = self.type_info.generic_params.get(&symbol) {
+            self.hash.usize(params.len());
+            for &param in params.iter() {
+                self.symbol(param);
+            }
+        } else {
+            self.hash.usize(0);
+        }
 
         if let Some(fields) = self.type_info.struct_fields.get(&symbol) {
             self.hash.tag(0);
@@ -428,12 +415,7 @@ impl HashContext<'_> {
             self.hash.usize(local.id.as_usize());
             self.type_id(local.ty);
             self.hash.bool(local.is_memory);
-            if let Some(symbol) = local.symbol {
-                self.hash.tag(1);
-                self.symbol(symbol);
-            } else {
-                self.hash.tag(0);
-            }
+            // Source/local debug symbols are not used by CGU code emission.
         }
 
         self.hash.usize(func.temps.len());
@@ -497,10 +479,10 @@ impl HashContext<'_> {
                     self.hash.tag(4);
                     self.hash.usize(*variant_tag);
                     self.hash.usize(*index);
-                    self.hash.usize(field_ty.as_usize());
+                    self.type_id(*field_ty);
                     if let Some(tuple_ty) = tuple_ty {
                         self.hash.tag(1);
-                        self.hash.usize(tuple_ty.as_usize());
+                        self.type_id(*tuple_ty);
                     } else {
                         self.hash.tag(0);
                     }
@@ -551,13 +533,15 @@ impl HashContext<'_> {
         match constant {
             AmirConstant::Pool(id) => {
                 self.hash.tag(0);
-                self.hash.u32(id.0);
                 match self.program.literal_pool.entries.get(id.0 as usize) {
                     Some(literal) => {
                         self.hash.tag(0);
                         self.literal(literal);
                     }
-                    None => self.hash.tag(1),
+                    None => {
+                        self.hash.tag(1);
+                        self.hash.u32(id.0);
+                    }
                 }
             }
             AmirConstant::Bool(value) => {
@@ -650,13 +634,23 @@ impl HashContext<'_> {
             AmirRvalue::EnumPayload {
                 value,
                 variant,
+                variant_tag,
                 index,
-                ..
+                field_ty,
+                tuple_ty,
             } => {
                 self.hash.tag(9);
                 self.operand(value);
                 self.symbol(*variant);
+                self.hash.usize(*variant_tag);
                 self.hash.usize(*index);
+                self.type_id(*field_ty);
+                if let Some(tuple_ty) = tuple_ty {
+                    self.hash.tag(1);
+                    self.type_id(*tuple_ty);
+                } else {
+                    self.hash.tag(0);
+                }
             }
             AmirRvalue::EnumConstruct {
                 variant_tag,
@@ -949,43 +943,17 @@ impl HashContext<'_> {
     }
 
     fn direct_callee_signatures(&mut self, func: &AmirFunc) {
-        let mut callees = BTreeSet::new();
-        {
-            let mut collect = |operand: &AmirOperand| {
-                if let AmirOperand::FunctionRef(symbol) = operand {
-                    callees.insert((symbol.file_id, symbol.local_id.0));
-                }
-            };
-
-            for block in &func.blocks {
-                for statement_id in block.statements.iter_ids() {
-                    let Some(statement) = func.try_stmt(statement_id) else {
-                        continue;
-                    };
-                    match statement {
-                        AmirStmt::Assign { rhs, .. } => for_each_rvalue_operand(rhs, &mut collect),
-                        AmirStmt::Store { lhs, rhs } => {
-                            collect(rhs);
-                            for_each_place_operand(lhs, &mut collect);
-                        }
-                        AmirStmt::Call { callee, args, .. } => {
-                            collect(callee);
-                            for operand in args {
-                                collect(operand);
-                            }
-                        }
-                        AmirStmt::Free(operand) => collect(operand),
-                        AmirStmt::Destroy(place) => for_each_place_operand(place, &mut collect),
-                        AmirStmt::StorageLive(_) | AmirStmt::StorageDead(_) | AmirStmt::Nop => {}
-                    }
-                }
-                for_each_terminator_operand(&block.terminator, &mut collect);
-            }
-        }
-
+        let Ok(callees) =
+            dependencies::function_dependencies(func, self.program, self.symbols, self.type_info)
+        else {
+            // Emission rejects the same invalid closure; no executable object
+            // can be cached for this diagnostic-only sentinel.
+            self.hash.tag(u8::MAX);
+            return;
+        };
+        self.hash.tag(0);
         self.hash.usize(callees.len());
-        for (file_id, local_id) in callees {
-            let symbol = SymbolId::new(file_id, local_id);
+        for symbol in callees {
             self.symbol(symbol);
             if let Some(callee) = self.program.funcs.iter().find(|func| func.symbol == symbol) {
                 self.hash.tag(0);

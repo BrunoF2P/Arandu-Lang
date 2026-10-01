@@ -70,7 +70,7 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                 .get(&payload_ty)
                 .and_then(|destructor| {
                     let name =
-                        format!("__ar_drop_{}_{}", destructor.file_id, destructor.local_id.0);
+                        crate::cgu::dependencies::drop_shim_name(self.symbol_table, *destructor)?;
                     self.func_ids.get(&name).copied()
                 })
                 .map(|id| {

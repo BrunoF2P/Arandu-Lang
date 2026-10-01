@@ -278,6 +278,18 @@ impl<M: Module> AranduModule<M> {
             return Err(issue);
         }
         let is_unit_func = |sym: SymbolId| unit_func_symbols.is_none_or(|set| set.contains(&sym));
+        let declarations = unit_func_symbols
+            .map(|definitions| {
+                crate::cgu::dependencies::declaration_closure(
+                    program,
+                    symbols,
+                    type_info,
+                    definitions,
+                )
+            })
+            .transpose()?;
+        let needs_declaration =
+            |sym: SymbolId| declarations.as_ref().is_none_or(|set| set.contains(&sym));
         let mut func_ids = FxHashMap::default();
         let default_call_conv = self.module.isa().default_call_conv();
         let ptr_type = self.module.target_config().pointer_type();
@@ -308,6 +320,9 @@ impl<M: Module> AranduModule<M> {
 
         // 1. Declare all functions first to support cross-calls
         for func in &program.funcs {
+            if !needs_declaration(func.symbol) {
+                continue;
+            }
             let sym = symbols.get(func.symbol);
             let host_name = symbols.host_func_name(sym);
             let param_types: Vec<_> = func
@@ -383,10 +398,8 @@ impl<M: Module> AranduModule<M> {
                 else {
                     continue;
                 };
-                let name = format!(
-                    "__ar_drop_{}_{}",
-                    destructor_symbol.file_id, destructor_symbol.local_id.0
-                );
+                let name = crate::cgu::dependencies::drop_shim_name(symbols, destructor_symbol)
+                    .ok_or_else(|| codegen_ice("drop shim destructor has no symbol"))?;
                 if drop_shims.contains_key(&name) {
                     continue;
                 }
@@ -407,6 +420,9 @@ impl<M: Module> AranduModule<M> {
 
         // Declare all extern functions as imports
         for (&symbol_id, (param_types, return_type)) in &program.extern_funcs {
+            if !needs_declaration(symbol_id) {
+                continue;
+            }
             let sym = symbols.get(symbol_id);
             if func_ids.contains_key(sym.name.as_str()) {
                 continue;
