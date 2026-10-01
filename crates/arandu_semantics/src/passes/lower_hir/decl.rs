@@ -76,16 +76,23 @@ fn lower_decl_with_body(
                 .type_info
                 .decl_type_id(symbol)
                 .unwrap_or_else(error_ty);
-            let return_type = match type_check.type_info.type_interner.resolve(decl_ty_id) {
-                ArType::Func(_, ret) => ret,
-                _ => decl_ty_id,
-            };
+            let (formal_types, return_type) =
+                match type_check.type_info.type_interner.resolve(decl_ty_id) {
+                    ArType::Func(formals, ret) => {
+                        (type_check.type_info.type_interner.type_args(formals), ret)
+                    }
+                    _ => (Vec::new(), decl_ty_id),
+                };
             let mut params = Vec::new();
-            for p in &d.params {
+            for (index, p) in d.params.iter().enumerate() {
                 let p_symbol = require_def_symbol(&type_check.resolved, p.span)?;
                 let p_ty = type_check
                     .type_info
                     .decl_type_id(p_symbol)
+                    // A declaration-only checker has no body-local parameter
+                    // entries. The function signature is the canonical source
+                    // of its formal types and borrow modes in that context.
+                    .or_else(|| formal_types.get(index).copied())
                     .unwrap_or_else(error_ty);
                 params.push(HirParam {
                     symbol: p_symbol,

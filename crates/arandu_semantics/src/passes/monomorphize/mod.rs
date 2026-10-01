@@ -286,6 +286,37 @@ mod tests {
     }
 
     #[test]
+    fn mangling_preserves_nominal_identity_and_nested_tuple_arity() {
+        let (mut symbols, interner) = setup();
+        let function = define_symbol(&mut symbols, "identity");
+        let nominal = define_symbol(&mut symbols, "ptr_int");
+        let int = interner.intern(ArType::Primitive(Primitive::Int));
+        let pointer = interner.intern(ArType::Ptr(int));
+        let named = interner.intern(ArType::named(nominal, &[], &interner));
+        let pair = interner.intern(ArType::tuple(&[int, int], &interner));
+        let left = interner.intern(ArType::tuple(&[pair, int], &interner));
+        let right = interner.intern(ArType::tuple(&[pair, int, int], &interner));
+        let bump = bumpalo::Bump::new();
+        let encode = |ty| {
+            mangle_symbol(
+                &InstantiationKey {
+                    symbol: function,
+                    type_args: bump.alloc_slice_copy(&[ty]),
+                },
+                &interner,
+                &symbols,
+            )
+        };
+        assert_ne!(encode(pointer), encode(named));
+        assert_ne!(encode(left), encode(right));
+        let nested_left = interner.intern(ArType::tuple(
+            &[interner.intern(ArType::tuple(&[int], &interner)), int],
+            &interner,
+        ));
+        assert_ne!(encode(nested_left), encode(pair));
+    }
+
+    #[test]
     fn test_mangled_names_are_unique() {
         let (mut st, interner) = setup();
         let sym = define_symbol(&mut st, "identity");

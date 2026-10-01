@@ -160,7 +160,8 @@ pub struct SymbolTable {
     pub sealed_interfaces: FxHashSet<SymbolId>,
     /// Explicit type/interface implementation declarations.
     pub interface_implementations: FxHashSet<(SymbolId, SymbolId)>,
-    /// Canonical flat backend names, computed once from defining module paths.
+    /// Canonical backend identities of functions and nominal type arguments,
+    /// computed once from defining module paths, never from import aliases.
     pub host_function_names: FxHashMap<SymbolId, SmolStr>,
     pub module_scopes: FxHashMap<SymbolId, ScopeId>,
     /// Type-parameter symbols for named types (`struct` / `enum` / …), in declaration order.

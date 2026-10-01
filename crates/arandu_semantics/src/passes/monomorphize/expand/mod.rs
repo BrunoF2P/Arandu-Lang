@@ -43,6 +43,8 @@ use rewrite::rewrite_block_calls;
 pub struct InstantiatedFunction {
     pub function: SymbolId,
     pub instances: Vec<(SymbolId, arandu_middle::types::FunctionInstance)>,
+    /// Unit-local allocations, separate from every source symbol identity.
+    pub generated_symbols: Vec<SymbolId>,
 }
 
 /// Specialize only the selected body. Callees are represented by concrete HIR
@@ -53,11 +55,17 @@ pub fn instantiate_function(
     instance: &arandu_middle::types::FunctionInstance,
 ) -> Result<InstantiatedFunction, Vec<Diagnostic>> {
     use arandu_middle::types::TypeShape;
+    let source_symbols = tc
+        .symbols
+        .iter()
+        .map(|symbol| symbol.id)
+        .collect::<rustc_hash::FxHashSet<_>>();
+    let unit_span = hir.span;
     let failure = |message: &str| {
         vec![Diagnostic::error(
             DiagCode::G002GenericInstantiationLimit,
             message,
-            hir.span,
+            unit_span,
         )]
     };
     let arguments = instance
@@ -155,17 +163,112 @@ pub fn instantiate_function(
         .collect::<FxHashMap<_, _>>();
     let graph = super::collect::analyze_instantiations(tc, hir, &bump)?;
     let mut keys = graph.iter().map(|node| node.key).collect::<Vec<_>>();
+    let mut destructor_receivers = Vec::new();
     // Compiler-inserted drops have no source Call. Discover concrete nominal
     // receiver types from this unit's own typed HIR, never another body.
-    let observed = hir
+    let mut observed = hir
         .pool
         .exprs
         .iter()
         .map(|expr| expr.ty)
-        .chain(hir.pool.params.iter().map(|parameter| parameter.ty))
+        .chain(
+            hir.decls
+                .iter()
+                .filter_map(|&id| match hir.pool.decl(id) {
+                    HirDecl::Func(root) if root.symbol == function => Some(root.params),
+                    _ => None,
+                })
+                .flat_map(|params| {
+                    hir.pool
+                        .params_list(params)
+                        .iter()
+                        .map(|parameter| parameter.ty)
+                }),
+        )
         .collect::<Vec<_>>();
-    for ty in observed {
-        let ArType::Named(nominal, arguments) = tc.type_info.type_interner.resolve(ty) else {
+    let mut visited_types = rustc_hash::FxHashSet::default();
+    while let Some(ty) = observed.pop() {
+        if !visited_types.insert(ty) {
+            continue;
+        }
+        if visited_types.len() > 4096 {
+            return Err(failure(
+                "instance cleanup type graph exceeds its structural bounds",
+            ));
+        }
+        TypeShape::from_id(ty, &tc.type_info.type_interner)
+            .map_err(|_| failure("instance cleanup types exceed the structural type bounds"))?;
+        let resolved = tc.type_info.type_interner.resolve(ty);
+        // A returned wrapper can own a generic field without mentioning that
+        // field's concrete type in this body (BitSet owns Vec<u64>). Discover
+        // the structural closure from declaration metadata, not callee bodies.
+        match &resolved {
+            ArType::Named(nominal, arguments) => {
+                let args = tc.type_info.type_interner.type_args(*arguments);
+                observed.extend_from_slice(&args);
+                if let Some(fields) = tc.type_info.struct_fields.get(nominal) {
+                    for field in fields.iter() {
+                        if let Some(field_ty) = arandu_middle::layout::instantiated_field_type(
+                            &resolved,
+                            &field.name,
+                            &tc.type_info.type_interner,
+                            tc.type_info.as_ref(),
+                        ) {
+                            observed.push(field_ty);
+                        }
+                    }
+                }
+                let subst = tc
+                    .type_info
+                    .generic_params
+                    .get(nominal)
+                    .map(|params| build_subst_ids(params, &args, &tc.type_info.type_interner))
+                    .unwrap_or_default();
+                let mut variants = tc
+                    .type_info
+                    .enum_variants
+                    .iter()
+                    .filter(|(_, (owner, _))| owner == nominal)
+                    .collect::<Vec<_>>();
+                variants.sort_by_key(|(symbol, _)| (symbol.file_id, symbol.local_id.0));
+                for (_, (_, payload)) in variants {
+                    if let arandu_typeck::type_checker::EnumPayloadShape::Tuple(fields) = payload {
+                        observed.extend(fields.iter().map(|&field| {
+                            substitute_type_id(field, &subst, &tc.type_info.type_interner)
+                        }));
+                    }
+                }
+            }
+            ArType::Func(args, result) => {
+                observed.extend_from_slice(&tc.type_info.type_interner.type_args(*args));
+                observed.push(*result);
+            }
+            ArType::Tuple(args) => {
+                observed.extend_from_slice(&tc.type_info.type_interner.type_args(*args))
+            }
+            ArType::Nullable(inner)
+            | ArType::Slice(inner)
+            | ArType::Array(_, inner)
+            | ArType::ConstArray(_, inner)
+            | ArType::Ptr(inner)
+            | ArType::Ref(inner)
+            | ArType::RefMut(inner)
+            | ArType::Option(inner)
+            | ArType::Coroutine(inner)
+            | ArType::Poll(inner)
+            | ArType::Range(inner) => observed.push(*inner),
+            ArType::Result(ok, error) => observed.extend([*ok, *error]),
+            ArType::Primitive(_)
+            | ArType::Const(_)
+            | ArType::ConstParam(_)
+            | ArType::GenRef
+            | ArType::Err
+            | ArType::Void
+            | ArType::IntLiteral
+            | ArType::FloatLiteral
+            | ArType::Error => {}
+        }
+        let ArType::Named(nominal, arguments) = resolved else {
             continue;
         };
         let Some(&destructor) = tc.type_info.destructors.get(&nominal) else {
@@ -175,13 +278,22 @@ pub fn instantiate_function(
             continue;
         }
         let arguments = tc.type_info.type_interner.type_args(arguments);
-        if !instance_args_fully_concrete(tc, &arguments) {
+        let normalized = arguments
+            .iter()
+            .map(|&ty| {
+                let mut shape = TypeShape::from_id(ty, &tc.type_info.type_interner)?;
+                shape.default_numeric_literals()?;
+                shape.intern(&tc.type_info.type_interner)
+            })
+            .collect::<Result<Vec<_>, _>>();
+        if !normalized.is_ok_and(|arguments| instance_args_fully_concrete(tc, &arguments)) {
             continue;
         }
         let key = InstantiationKey {
             symbol: destructor,
             type_args: bump.alloc_slice_copy(&arguments),
         };
+        destructor_receivers.push((ty, key));
         if !keys.contains(&key) {
             keys.push(key);
         }
@@ -190,7 +302,25 @@ pub fn instantiate_function(
     if function != instance.definition {
         instances.push((function, instance.clone()));
     }
-    for key in keys {
+    for original_key in keys {
+        let arguments = original_key
+            .type_args
+            .iter()
+            .map(|&ty| {
+                let mut shape = TypeShape::from_id(ty, &tc.type_info.type_interner)?;
+                shape.default_numeric_literals()?;
+                shape.intern(&tc.type_info.type_interner)
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| failure("callee type arguments exceed the structural type bounds"))?;
+        let key = InstantiationKey {
+            symbol: original_key.symbol,
+            type_args: bump.alloc_slice_copy(&arguments),
+        };
+        if let Some(&callee) = specialized.get(&key) {
+            specialized.insert(original_key, callee);
+            continue;
+        }
         if specialized.contains_key(&key)
             || !templates.contains_key(&key.symbol)
             || is_identity_instantiation(tc, key.symbol, key.type_args)
@@ -226,11 +356,27 @@ pub fn instantiate_function(
             },
         ));
         specialized.insert(key, callee);
+        specialized.insert(original_key, callee);
+    }
+    for (receiver, key) in destructor_receivers {
+        if let Some(&destructor) = specialized.get(&key) {
+            // Source HIR can retain defaulted numeric pseudo-types in nominal
+            // arguments. Preserve cleanup for that equivalent receiver shape.
+            tc.type_info_mut()
+                .destructor_instances
+                .insert(receiver, destructor);
+        }
     }
     rewrite_block_calls(hir, body, &specialized, tc, &bump);
     Ok(InstantiatedFunction {
         function,
         instances,
+        generated_symbols: tc
+            .symbols
+            .iter()
+            .filter(|symbol| !source_symbols.contains(&symbol.id))
+            .map(|symbol| symbol.id)
+            .collect(),
     })
 }
 
@@ -671,9 +817,9 @@ fn type_arg_still_param(tc: &TypeCheckResult, tid: TypeId) -> bool {
     }
 }
 
-/// New independent units must not publish nested free parameters as concrete
-/// keys. Keep the legacy program-wide admission policy unchanged until its
-/// composer is migrated and its bounds/compatibility gate is exercised.
+/// Independent units must not publish free parameters or unresolved numeric
+/// pseudo-types as concrete keys. Inferred literals are defaulted before this
+/// check; the legacy pure producer retains its existing admission policy.
 fn instance_args_fully_concrete(tc: &TypeCheckResult, type_args: &[TypeId]) -> bool {
     use arandu_middle::types::TypeShape;
     fn unresolved(tc: &TypeCheckResult, shape: &TypeShape) -> bool {
@@ -689,9 +835,9 @@ fn instance_args_fully_concrete(tc: &TypeCheckResult, type_args: &[TypeId]) -> b
             }
             TypeShape::ConstArray(_, _)
             | TypeShape::ConstParam(_)
-            | TypeShape::Error
             | TypeShape::IntLiteral
-            | TypeShape::FloatLiteral => true,
+            | TypeShape::FloatLiteral
+            | TypeShape::Error => true,
             TypeShape::Func(args, ret) => {
                 args.iter().any(|arg| unresolved(tc, arg)) || unresolved(tc, ret)
             }

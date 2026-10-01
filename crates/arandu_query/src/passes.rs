@@ -619,7 +619,7 @@ pub fn cycle_recover_module_signatures(
 /// Canonical direct import edges. The query deliberately exposes only the
 /// dependency shape, so a private body edit can early-cut off unchanged edges.
 #[salsa::tracked]
-fn module_import_edges(
+pub(crate) fn module_import_edges(
     db: &dyn ArandCompilerDb,
     file: SourceFile,
 ) -> Vec<(String, Option<crate::db::FileId>)> {
@@ -1197,6 +1197,12 @@ pub struct BorrowInterfaces {
         arandu_middle::SymbolId,
         arandu_middle::types::ReturnBorrowSummary,
     )>,
+    /// Concrete contracts use structural keys, never synthetic symbol numbers
+    /// allocated in another producer's context.
+    pub instances: Vec<(
+        arandu_middle::types::FunctionInstance,
+        arandu_middle::types::ReturnBorrowSummary,
+    )>,
 }
 
 /// Collect transitive imports of `root`, lower each to HIR, and link into `hir`.
@@ -1393,64 +1399,13 @@ pub fn prepare_hir(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<Prepare
     query = "lower_amir", file = ?file.file_id(db),
 ))]
 pub fn lower_amir(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<LowerAmirArtifacts> {
-    // Keep diagnostics/ownership clients on the enriched view. Canonical HIR
-    // and monomorphization are shared with the contract producer via an Arc.
-    let checked = type_check(db, file);
-    let prepared = prepare_hir(db, file);
-    let mut type_check_result = prepared.type_check.clone();
-    type_check_result
-        .type_info_mut()
-        .return_borrow_summaries
-        .extend(
-            checked
-                .type_info
-                .return_borrow_summaries
-                .iter()
-                .map(|(symbol, summary)| (*symbol, summary.clone())),
-        );
-    let empty_amir = || AmirProgram {
-        funcs: vec![],
-        literal_pool: arandu_middle::literal_pool::AmirLiteralPool::default(),
-        extern_funcs: Default::default(),
-        debug_bindings: Vec::new(),
-        debug_blocks: Vec::new(),
-    };
-    for diagnostic in &prepared.diagnostics {
+    // Executable assembly consumes independently checked instances. Share the
+    // composed result instead of cloning the program into a compatibility memo.
+    let composed = crate::runtime::runtime_program(db, file);
+    for diagnostic in &composed.diagnostics {
         arandu_middle::db::DiagnosticsAccumulator(diagnostic.clone()).accumulate(db);
     }
-    let Some(hir) = &prepared.hir else {
-        return HashEq::new(LowerAmirArtifacts {
-            amir: empty_amir(),
-            type_check: type_check_result,
-        });
-    };
-
-    let amir = {
-        arandu_base::time_pass!("lower-amir-body");
-        let pointer_width = db.target_config().data_layout(db).pointer_width();
-        match arandu_semantics::lower_to_amir_with_interfaces(
-            &mut type_check_result,
-            hir,
-            pointer_width,
-        ) {
-            Ok((a, diags)) => {
-                for diag in diags {
-                    arandu_middle::db::DiagnosticsAccumulator(diag).accumulate(db);
-                }
-                a
-            }
-            Err(diags) => {
-                for diag in diags {
-                    arandu_middle::db::DiagnosticsAccumulator(diag).accumulate(db);
-                }
-                empty_amir()
-            }
-        }
-    };
-    HashEq::new(LowerAmirArtifacts {
-        amir,
-        type_check: type_check_result,
-    })
+    HashEq::from_arc(std::sync::Arc::clone(&composed.artifacts))
 }
 
 #[salsa::tracked]
@@ -1459,73 +1414,73 @@ pub fn lower_amir(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<LowerAmi
     file = ?file.file_id(db),
 ))]
 pub fn borrow_interfaces(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<BorrowInterfaces> {
+    use crate::StableHash;
     let declarations = declaration_signatures(db, file);
     let parsed = parse(db, file);
-    let needs_flow = parsed.as_ref().as_ref().is_ok_and(|program| {
-        arandu_semantics::body_item_symbols(program, &declarations.resolved)
-            .iter()
-            .any(|symbol| {
-                declarations.type_info.generic_params.contains_key(symbol)
-                    || declarations
-                        .type_info
-                        .decl_types
-                        .get(symbol)
-                        .is_some_and(
-                            |ty| match declarations.type_info.type_interner.resolve(*ty) {
-                                arandu_middle::types::ArType::Func(_, ret) => declarations
-                                    .type_info
-                                    .borrow_paths(ret)
-                                    .map_or(true, |paths| !paths.is_empty()),
-                                _ => false,
-                            },
-                        )
-            })
-    });
-    if !needs_flow {
-        // Scalar-only modules need no body at all to publish contracts. Keep
-        // inherited/external declaration contracts without a whole-module HIR.
-        return canonical_borrow_interfaces(
-            &module_signatures(db, file)
-                .type_info
-                .return_borrow_summaries,
-        );
+    let mut summaries = declarations.type_info.return_borrow_summaries.clone();
+    let mut concrete = rustc_hash::FxHashMap::default();
+    if let Ok(program) = &**parsed {
+        for symbol in arandu_semantics::free_func_symbols(program, &declarations.resolved) {
+            db.unwind_if_revision_cancelled();
+            // Uninstantiated templates retain declaration contracts only.
+            // Their executable proof belongs to each concrete instance.
+            if declarations.type_info.generic_params.contains_key(&symbol) {
+                continue;
+            }
+            let carries_borrow =
+                declarations
+                    .type_info
+                    .decl_type(symbol)
+                    .is_some_and(|ty| match ty {
+                        arandu_middle::types::ArType::Func(_, result) => declarations
+                            .type_info
+                            .borrow_paths(result)
+                            .map_or(true, |paths| !paths.is_empty()),
+                        _ => false,
+                    });
+            if !carries_borrow {
+                continue;
+            }
+            let instance = crate::runtime::Instance::new(
+                db,
+                file,
+                arandu_middle::types::FunctionInstance {
+                    definition: symbol,
+                    arguments: Vec::new(),
+                },
+            );
+            let contracts = crate::runtime::instance_contracts(db, instance);
+            // Failed source recovery never certifies the callee. Runtime/IDE
+            // units own and report its error; keep declaration recovery here.
+            if !contracts.diagnostics.is_empty() {
+                continue;
+            }
+            for (key, summary) in &contracts.entries {
+                if key.arguments.is_empty() {
+                    summaries.insert(key.definition, summary.clone());
+                } else {
+                    concrete.insert(key.clone(), summary.clone());
+                }
+            }
+        }
     }
-    let prepared = prepare_hir(db, file);
-    let summaries = prepared.hir.as_ref().and_then(|hir| {
-        db.unwind_if_revision_cancelled();
-        arandu_mir::lower_borrow_interfaces(
-            &prepared.type_check,
-            hir,
-            db.target_config().data_layout(db).pointer_width(),
-        )
-        .ok()
-        .map(|solution| solution.summaries)
-    });
-    db.unwind_if_revision_cancelled();
-    match summaries {
-        Some(summaries) => canonical_borrow_interfaces(&summaries),
-        // Preserve the previous declaration/import fallback for invalid code.
-        // The final path still owns and reports the failed validation.
-        None => canonical_borrow_interfaces(
-            &module_signatures(db, file)
-                .type_info
-                .return_borrow_summaries,
-        ),
-    }
-}
-
-fn canonical_borrow_interfaces(
-    summaries: &rustc_hash::FxHashMap<
-        arandu_middle::SymbolId,
-        arandu_middle::types::ReturnBorrowSummary,
-    >,
-) -> HashEq<BorrowInterfaces> {
     let mut entries = summaries
-        .iter()
-        .map(|(symbol, summary)| (*symbol, summary.clone()))
+        .into_iter()
+        .filter(|(_, summary)| !summary.dependencies.is_empty())
         .collect::<Vec<_>>();
     entries.sort_by_key(|(symbol, _)| (symbol.file_id, symbol.local_id.0));
-    HashEq::new(BorrowInterfaces { entries })
+    let mut instances = concrete
+        .into_iter()
+        .filter(|(_, summary)| !summary.dependencies.is_empty())
+        .collect::<Vec<_>>();
+    instances.sort_by_key(|(key, _)| {
+        (
+            key.definition.file_id,
+            key.definition.local_id.0,
+            *key.stable_hash().as_bytes(),
+        )
+    });
+    HashEq::new(BorrowInterfaces { entries, instances })
 }
 
 #[salsa::tracked]

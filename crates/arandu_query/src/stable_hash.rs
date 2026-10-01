@@ -906,6 +906,11 @@ impl StableHash for crate::passes::BorrowInterfaces {
             hash_symbol_id(&mut hasher, *symbol);
             hash_return_borrow_summary(&mut hasher, summary);
         }
+        hasher.update(&u64_le(self.instances.len() as u64));
+        for (key, summary) in &self.instances {
+            hasher.update(key.stable_hash().as_bytes());
+            hash_return_borrow_summary(&mut hasher, summary);
+        }
         finish(hasher)
     }
 }

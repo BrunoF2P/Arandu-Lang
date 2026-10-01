@@ -130,6 +130,49 @@ mod tests {
     }
 
     #[test]
+    fn shape_visitors_keep_source_identities_and_default_only_numeric_leaves() {
+        let symbol = SymbolId {
+            file_id: 7,
+            local_id: LocalSymbolId(2),
+        };
+        let mut shape = TypeShape::Named(
+            symbol,
+            vec![
+                TypeShape::Option(Box::new(TypeShape::IntLiteral)),
+                TypeShape::Func(
+                    vec![TypeShape::FloatLiteral],
+                    Box::new(TypeShape::ConstParam(symbol)),
+                ),
+            ],
+        );
+        let mut visited = Vec::new();
+        shape
+            .for_each_symbol(|id| visited.push(id))
+            .expect("bounded shape");
+        assert_eq!(visited, [symbol, symbol]);
+        shape.default_numeric_literals().expect("bounded shape");
+        assert_eq!(
+            shape,
+            TypeShape::Named(
+                symbol,
+                vec![
+                    TypeShape::Option(Box::new(TypeShape::Primitive(Primitive::Int))),
+                    TypeShape::Func(
+                        vec![TypeShape::Primitive(Primitive::Float)],
+                        Box::new(TypeShape::ConstParam(symbol))
+                    )
+                ]
+            )
+        );
+        let mut wide = TypeShape::Tuple(vec![TypeShape::Void; TypeShape::MAX_NODES]);
+        assert_eq!(wide.for_each_symbol(|_| {}), Err(TypeShapeError::NodeLimit));
+        assert_eq!(
+            wide.default_numeric_literals(),
+            Err(TypeShapeError::NodeLimit)
+        );
+    }
+
+    #[test]
     fn instance_identity_keeps_the_full_definition_and_nested_arguments() {
         let definition = SymbolId {
             file_id: 1,
@@ -167,6 +210,129 @@ pub struct FunctionInstance {
 impl TypeShape {
     pub const MAX_DEPTH: usize = 128;
     pub const MAX_NODES: usize = 4096;
+
+    /// Finalize numeric literal leaves before publishing an executable
+    /// instance key. Pseudo-types and their defaults have the same ABI and
+    /// must not create two instances with the same mangled backend name.
+    pub fn default_numeric_literals(&mut self) -> Result<(), TypeShapeError> {
+        let mut remaining = Self::MAX_NODES;
+        self.default_literals(0, &mut remaining)
+    }
+
+    fn default_literals(
+        &mut self,
+        depth: usize,
+        remaining: &mut usize,
+    ) -> Result<(), TypeShapeError> {
+        if depth >= Self::MAX_DEPTH {
+            return Err(TypeShapeError::DepthLimit);
+        }
+        *remaining = remaining.checked_sub(1).ok_or(TypeShapeError::NodeLimit)?;
+        match self {
+            Self::IntLiteral => *self = Self::Primitive(Primitive::Int),
+            Self::FloatLiteral => *self = Self::Primitive(Primitive::Float),
+            Self::Named(_, args) | Self::Tuple(args) => {
+                for arg in args {
+                    arg.default_literals(depth + 1, remaining)?;
+                }
+            }
+            Self::Func(args, result) => {
+                for arg in args {
+                    arg.default_literals(depth + 1, remaining)?;
+                }
+                result.default_literals(depth + 1, remaining)?;
+            }
+            Self::Nullable(inner)
+            | Self::Slice(inner)
+            | Self::Array(_, inner)
+            | Self::ConstArray(_, inner)
+            | Self::Ptr(inner)
+            | Self::Ref(inner)
+            | Self::RefMut(inner)
+            | Self::Option(inner)
+            | Self::Coroutine(inner)
+            | Self::Poll(inner)
+            | Self::Range(inner) => inner.default_literals(depth + 1, remaining)?,
+            Self::Result(ok, error) => {
+                ok.default_literals(depth + 1, remaining)?;
+                error.default_literals(depth + 1, remaining)?;
+            }
+            Self::Primitive(_)
+            | Self::Const(_)
+            | Self::ConstParam(_)
+            | Self::GenRef
+            | Self::Err
+            | Self::Void
+            | Self::Error => {}
+        }
+        Ok(())
+    }
+
+    /// Visit source identities inside a structural argument without interning
+    /// it or allocating an expanded child list. Uses the same shape bounds.
+    pub fn for_each_symbol(&self, mut visitor: impl FnMut(SymbolId)) -> Result<(), TypeShapeError> {
+        let mut remaining = Self::MAX_NODES;
+        self.visit_symbols(0, &mut remaining, &mut visitor)
+    }
+
+    fn visit_symbols(
+        &self,
+        depth: usize,
+        remaining: &mut usize,
+        visitor: &mut impl FnMut(SymbolId),
+    ) -> Result<(), TypeShapeError> {
+        if depth >= Self::MAX_DEPTH {
+            return Err(TypeShapeError::DepthLimit);
+        }
+        *remaining = remaining.checked_sub(1).ok_or(TypeShapeError::NodeLimit)?;
+        match self {
+            Self::Named(symbol, args) => {
+                visitor(*symbol);
+                for arg in args {
+                    arg.visit_symbols(depth + 1, remaining, visitor)?;
+                }
+            }
+            Self::ConstParam(symbol) => visitor(*symbol),
+            Self::ConstArray(symbol, inner) => {
+                visitor(*symbol);
+                inner.visit_symbols(depth + 1, remaining, visitor)?;
+            }
+            Self::Func(args, result) => {
+                for arg in args {
+                    arg.visit_symbols(depth + 1, remaining, visitor)?;
+                }
+                result.visit_symbols(depth + 1, remaining, visitor)?;
+            }
+            Self::Tuple(args) => {
+                for arg in args {
+                    arg.visit_symbols(depth + 1, remaining, visitor)?;
+                }
+            }
+            Self::Nullable(inner)
+            | Self::Slice(inner)
+            | Self::Array(_, inner)
+            | Self::Ptr(inner)
+            | Self::Ref(inner)
+            | Self::RefMut(inner)
+            | Self::Option(inner)
+            | Self::Coroutine(inner)
+            | Self::Poll(inner)
+            | Self::Range(inner) => inner.visit_symbols(depth + 1, remaining, visitor)?,
+            Self::Result(ok, error) => {
+                ok.visit_symbols(depth + 1, remaining, visitor)?;
+                error.visit_symbols(depth + 1, remaining, visitor)?;
+            }
+            Self::Primitive(_)
+            | Self::Const(_)
+            | Self::GenRef
+            | Self::Err
+            | Self::Void
+            | Self::IntLiteral
+            | Self::FloatLiteral
+            | Self::Error => {}
+        }
+        Ok(())
+    }
 
     pub fn from_id(id: TypeId, interner: &TypeInterner) -> Result<Self, TypeShapeError> {
         let mut remaining = Self::MAX_NODES;

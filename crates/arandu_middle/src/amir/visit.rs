@@ -267,6 +267,26 @@ pub fn for_each_stmt_operand_mut(
     }
 }
 
+/// Visit statement operands, including operands nested in place projections.
+pub fn for_each_stmt_operand(statement: &super::AmirStmt, mut f: impl FnMut(&AmirOperand)) {
+    match statement {
+        super::AmirStmt::Assign { rhs, .. } => for_each_rvalue_operand(rhs, f),
+        super::AmirStmt::Store { lhs, rhs } => {
+            for_each_place_operand(lhs, &mut f);
+            f(rhs);
+        }
+        super::AmirStmt::Call { callee, args, .. } => {
+            f(callee);
+            args.iter().for_each(f);
+        }
+        super::AmirStmt::Free(op) => f(op),
+        super::AmirStmt::Destroy(place) => for_each_place_operand(place, f),
+        super::AmirStmt::StorageLive(_)
+        | super::AmirStmt::StorageDead(_)
+        | super::AmirStmt::Nop => {}
+    }
+}
+
 /// Invoke `f` for every operand nested in `place` projections (e.g. index).
 pub fn for_each_place_operand(place: &AmirPlace, mut f: impl FnMut(&AmirOperand)) {
     for proj in &place.projections {

@@ -41,8 +41,14 @@ fn mangle_type_into(out: &mut String, ty: &ArType, symbols: &SymbolTable, intern
     match ty {
         ArType::Primitive(p) => out.push_str(p.as_str()),
         ArType::Named(id, args) => {
-            out.push_str(&symbols.get(*id).name);
-            for &arg in interner.type_args(*args).iter() {
+            // Nominal arguments need their defining module identity too:
+            // identity<a.User> and identity<b.User> are different instances.
+            let name = symbols.host_func_name(symbols.get(*id));
+            let arguments = interner.type_args(*args);
+            // Length/arity delimiters make nominal names and nested generic
+            // arguments unambiguous, including identifiers containing `_`.
+            let _ = write!(out, "n{}_{}_g{}", name.len(), name, arguments.len());
+            for &arg in &arguments {
                 out.push('_');
                 mangle_type_into(out, &interner.resolve(arg), symbols, interner);
             }
@@ -86,15 +92,17 @@ fn mangle_type_into(out: &mut String, ty: &ArType, symbols: &SymbolTable, intern
             out.push_str(&symbols.get(*param).name);
         }
         ArType::Tuple(items) => {
-            out.push_str("tup");
-            for &item in interner.type_args(*items).iter() {
+            let items = interner.type_args(*items);
+            let _ = write!(out, "tup{}", items.len());
+            for &item in &items {
                 out.push('_');
                 mangle_type_into(out, &interner.resolve(item), symbols, interner);
             }
         }
         ArType::Func(params, ret) => {
-            out.push_str("fn");
-            for &param in interner.type_args(*params).iter() {
+            let params = interner.type_args(*params);
+            let _ = write!(out, "fn{}", params.len());
+            for &param in &params {
                 out.push('_');
                 mangle_type_into(out, &interner.resolve(param), symbols, interner);
             }

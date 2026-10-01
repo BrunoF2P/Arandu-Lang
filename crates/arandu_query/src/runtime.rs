@@ -8,7 +8,9 @@ use arandu_middle::types::{FunctionInstance, TypeShape};
 use arandu_middle::{Diagnostic, Severity, SymbolId};
 
 mod contracts;
+mod program;
 pub use contracts::{instance_contracts, runtime_unit, InstanceContracts};
+pub use program::{runtime_program, RuntimeProgram};
 
 #[derive(Debug)]
 pub struct DeclarationHir {
@@ -29,6 +31,7 @@ pub struct InstanceHir {
     pub artifacts: PreparedHir,
     pub function: Option<SymbolId>,
     pub instances: Vec<(SymbolId, FunctionInstance)>,
+    pub generated_symbols: Vec<SymbolId>,
 }
 
 #[derive(Debug)]
@@ -36,6 +39,11 @@ pub struct RuntimeUnit {
     pub result: Result<arandu_mir::FunctionUnit, Vec<Diagnostic>>,
     pub context: std::sync::Arc<arandu_semantics::TypeCheckResult>,
     pub instances: Vec<(SymbolId, FunctionInstance)>,
+    pub generated_symbols: Vec<SymbolId>,
+    pub borrow_summary: Option<arandu_middle::types::ReturnBorrowSummary>,
+    /// Retains annotated flow for IDE diagnostics even when final validation
+    /// fails. It is not publishable executable code; `result` owns that gate.
+    pub analysis_function: Option<std::sync::Arc<arandu_middle::amir::AmirFunc>>,
 }
 
 impl StableHash for FunctionInstance {
@@ -151,6 +159,10 @@ impl StableHash for InstanceHir {
             hash.update(&symbol.local_id.0.to_le_bytes());
             hash.update(key.stable_hash().as_bytes());
         }
+        for symbol in &self.generated_symbols {
+            hash.update(&symbol.file_id.to_le_bytes());
+            hash.update(&symbol.local_id.0.to_le_bytes());
+        }
         hash.finalize()
     }
 }
@@ -199,6 +211,22 @@ impl StableHash for RuntimeUnit {
             hash.update(&symbol.local_id.0.to_le_bytes());
             hash.update(key.stable_hash().as_bytes());
         }
+        for symbol in &self.generated_symbols {
+            hash.update(&symbol.file_id.to_le_bytes());
+            hash.update(&symbol.local_id.0.to_le_bytes());
+        }
+        if let Some(summary) = &self.borrow_summary {
+            hash.update(&[1]);
+            crate::stable_hash::hash_return_borrow_summary(&mut hash, summary);
+        } else {
+            hash.update(&[0]);
+        }
+        if let Some(function) = &self.analysis_function {
+            hash.update(&[1]);
+            hash.update(function.stable_hash().as_bytes());
+        } else {
+            hash.update(&[0]);
+        }
         hash.finalize()
     }
 }
@@ -230,12 +258,68 @@ pub fn instance_hir<'db>(
     let mut diagnostics = template.diagnostics.clone();
     let mut function = None;
     let mut instances = Vec::new();
+    let mut generated_symbols = Vec::new();
+    let mut fingerprint = blake3::Hasher::new();
+    fingerprint.update(template.stable_hash().as_bytes());
+    fingerprint.update(key.stable_hash().as_bytes());
     if let Some(hir) = &mut hir {
         db.unwind_if_revision_cancelled();
+        // A concrete argument may come from the caller's module, not from the
+        // generic definition's imports (e.g. Vec<String>). Bring only its
+        // declaration context, never that module's sibling bodies.
+        let mut files = std::collections::BTreeSet::new();
+        for argument in &key.arguments {
+            if argument
+                .for_each_symbol(|symbol| {
+                    if checked.symbols.try_get(symbol).is_none() {
+                        files.insert(symbol.file_id);
+                    }
+                })
+                .is_err()
+            {
+                diagnostics.push(Diagnostic::error(
+                    arandu_middle::DiagCode::G002GenericInstantiationLimit,
+                    "instance arguments exceed the structural type bounds",
+                    hir.span,
+                ));
+            }
+        }
+        let mut pending = files.into_iter().collect::<Vec<_>>();
+        let mut visited = rustc_hash::FxHashSet::default();
+        while let Some(file_id) = pending.pop() {
+            db.unwind_if_revision_cancelled();
+            if !visited.insert(file_id) {
+                continue;
+            }
+            let Some(context_file) = db.source_file_by_id(file_id) else {
+                continue;
+            };
+            let declarations = declaration_hir(db, context_file);
+            fingerprint.update(declarations.stable_hash().as_bytes());
+            if let Some(context) = &declarations.artifacts.hir {
+                arandu_semantics::link_hir_module(
+                    &mut checked,
+                    hir,
+                    &declarations.artifacts.type_check,
+                    context,
+                );
+            } else {
+                diagnostics.extend(declarations.artifacts.diagnostics.iter().cloned());
+            }
+            for (_, imported) in crate::passes::module_import_edges(db, context_file)
+                .iter()
+                .rev()
+            {
+                if let Some(file_id) = imported {
+                    pending.push(*file_id);
+                }
+            }
+        }
         match arandu_semantics::passes::monomorphize::instantiate_function(&mut checked, hir, key) {
             Ok(concrete) => {
                 function = Some(concrete.function);
                 instances = concrete.instances;
+                generated_symbols = concrete.generated_symbols;
             }
             Err(errors) => diagnostics.extend(errors),
         }
@@ -246,9 +330,6 @@ pub fn instance_hir<'db>(
     {
         hir = None;
     }
-    let mut fingerprint = blake3::Hasher::new();
-    fingerprint.update(template.stable_hash().as_bytes());
-    fingerprint.update(key.stable_hash().as_bytes());
     HashEq::new(InstanceHir {
         artifacts: PreparedHir {
             hir,
@@ -258,6 +339,7 @@ pub fn instance_hir<'db>(
         },
         function,
         instances,
+        generated_symbols,
     })
 }
 
@@ -316,6 +398,9 @@ pub fn runtime_raw_unit<'db>(
         result,
         context: std::sync::Arc::new(concrete.artifacts.type_check.clone()),
         instances: concrete.instances.clone(),
+        generated_symbols: concrete.generated_symbols.clone(),
+        borrow_summary: None,
+        analysis_function: None,
     })
 }
 
@@ -488,20 +573,15 @@ pub fn function_hir(
             } else {
                 diagnostics.extend(declarations.artifacts.diagnostics.iter().cloned());
             }
-            let parsed = parse(db, context_file);
-            if let Ok(program) = &**parsed {
-                let mut paths = Vec::new();
-                for import in &program.imports {
-                    if let Some(path) = arandu_resolve::canonicalize_import_path(import) {
-                        paths.push(path);
-                    }
-                }
-                paths.sort();
-                paths.dedup();
-                for path in paths.into_iter().rev() {
-                    if let Some(imported) = db.as_source_db().resolve_module_path(&path) {
-                        pending.push(imported);
-                    }
+            // Import topology is a narrow memo. Depending on parse here would
+            // relower every sibling's HIR after an unrelated body edit even
+            // when declaration_hir itself had already cut off that edit.
+            for (_, imported) in crate::passes::module_import_edges(db, context_file)
+                .iter()
+                .rev()
+            {
+                if let Some(imported) = imported.and_then(|id| db.source_file_by_id(id)) {
+                    pending.push(imported);
                 }
             }
         }

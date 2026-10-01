@@ -18,6 +18,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 mod arg_modes;
 mod builder;
+mod compose;
 mod ctx;
 mod expr;
 mod flow;
@@ -29,6 +30,7 @@ mod place;
 mod ssa;
 mod stmt;
 mod unit;
+pub use compose::{ComposedUnits, ContextualFunctionUnit, compose_function_units};
 
 pub use unit::{FunctionUnit, append_function_unit, finalize_function_unit, lower_function_unit};
 

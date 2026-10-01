@@ -1,8 +1,8 @@
 //! Per-function / per-block analysis queries (A1 / F4 granularity).
 //!
 //! Bodies reuse pure functions from `arandu_mir` — Salsa only memoizes.
-//! Independent functions early-cutoff via [`HashEq`] even when the whole
-//! `lower_amir` program is recomputed (other funcs' AMIR hash-stable).
+//! Source functions consume independently checked runtime units with their own
+//! type/symbol domains. Aggregated instance IDs remain a compatibility view.
 
 use crate::db::HashEq;
 use crate::{ArandCompilerDb, SourceFile};
@@ -159,6 +159,25 @@ pub fn func_amir(
     file: SourceFile,
     func_sym: SymbolId,
 ) -> HashEq<AmirFunc> {
+    if let Some(unit) = source_runtime_unit(db, func_sym) {
+        return unit.analysis_function.as_ref().map_or_else(
+            || HashEq::new(empty_func(func_sym)),
+            |function| HashEq::from_arc(std::sync::Arc::clone(function)),
+        );
+    }
+    if let Some(source) = db.source_file_by_id(func_sym.file_id) {
+        let declarations = crate::passes::declaration_signatures(db, source);
+        if declarations
+            .type_info
+            .generic_params
+            .contains_key(&func_sym)
+        {
+            // Source templates are not executable functions. Concrete keys
+            // are analyzed through runtime_unit; do not discover a program
+            // just to present an uninstantiated source item to the IDE.
+            return HashEq::new(empty_func(func_sym));
+        }
+    }
     let artifacts = crate::passes::lower_amir(db, file);
     let func = artifacts
         .amir
@@ -168,6 +187,30 @@ pub fn func_amir(
         .cloned()
         .unwrap_or_else(|| empty_func(func_sym));
     HashEq::new(func)
+}
+
+fn source_runtime_unit(
+    db: &dyn ArandCompilerDb,
+    symbol: SymbolId,
+) -> Option<&HashEq<crate::runtime::RuntimeUnit>> {
+    let source = db.source_file_by_id(symbol.file_id)?;
+    let declarations = crate::passes::declaration_signatures(db, source);
+    if declarations.symbols.try_get(symbol)?.kind != arandu_middle::SymbolKind::Func
+        || declarations.type_info.generic_params.contains_key(&symbol)
+    {
+        return None;
+    }
+    Some(crate::runtime::runtime_unit(
+        db,
+        crate::runtime::Instance::new(
+            db,
+            source,
+            arandu_middle::types::FunctionInstance {
+                definition: symbol,
+                arguments: Vec::new(),
+            },
+        ),
+    ))
 }
 
 fn empty_func(symbol: SymbolId) -> AmirFunc {
@@ -430,7 +473,8 @@ pub fn item_ide_diagnostics(
     #[cfg(any(test, debug_assertions))]
     ITEM_IDE_DIAGS_EXEC_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-    let body_tc = crate::passes::item_body_typeck(db, file, item_sym);
+    let body_tc = crate::passes::item_typing(db, file, item_sym);
+    let runtime = source_runtime_unit(db, item_sym);
     let mut out: Vec<IdeDiagnostic> = body_tc
         .diagnostics
         .iter()
@@ -446,8 +490,15 @@ pub fn item_ide_diagnostics(
     // Diags are tagged with the real AMIR block of the bad use (honesty: span→block).
     let amir = func_amir(db, file, item_sym);
     if !amir.blocks.is_empty() {
-        let sigs = crate::passes::module_signatures(db, file);
-        let borrow_ifaces = crate::passes::borrow_interfaces(db, file);
+        // Dense TypeIds are local to the producer. Never interpret this body
+        // using the declaration interner or the aggregated module's context.
+        let aggregate;
+        let context = if let Some(unit) = runtime {
+            &*unit.context
+        } else {
+            aggregate = crate::passes::lower_amir(db, file);
+            &aggregate.type_check
+        };
         let item = crate::passes::item_source_input(db, file, item_sym);
         // `func_amir` is post-promotion, so the original borrow no longer
         // escapes when the ordinary escape checker runs. Preserve G5
@@ -491,16 +542,17 @@ pub fn item_ide_diagnostics(
             }
         }
         for (bid, d) in
-            arandu_mir::definite_init::check_definite_init_by_block(amir, sigs.symbols.as_ref())
-        {
-            out.push(IdeDiagnostic::from_diag(&d, Some(item_sym), Some(bid)));
-        }
-        for (bid, d) in arandu_mir::move_checker::check_moves_by_block(amir, sigs.symbols.as_ref())
+            arandu_mir::definite_init::check_definite_init_by_block(amir, context.symbols.as_ref())
         {
             out.push(IdeDiagnostic::from_diag(&d, Some(item_sym), Some(bid)));
         }
         for (bid, d) in
-            arandu_mir::borrow_check::check_borrows_by_block(amir, sigs.symbols.as_ref())
+            arandu_mir::move_checker::check_moves_by_block(amir, context.symbols.as_ref())
+        {
+            out.push(IdeDiagnostic::from_diag(&d, Some(item_sym), Some(bid)));
+        }
+        for (bid, d) in
+            arandu_mir::borrow_check::check_borrows_by_block(amir, context.symbols.as_ref())
         {
             out.push(IdeDiagnostic::from_diag(&d, Some(item_sym), Some(bid)));
         }
@@ -510,18 +562,22 @@ pub fn item_ide_diagnostics(
             arandu_base::NO_GENERATIONAL_FALLBACK.load(std::sync::atomic::Ordering::Relaxed);
         for (bid, d) in arandu_mir::escape_analysis::check_escapes_by_block(
             amir,
-            sigs.symbols.as_ref(),
-            &body_tc.type_info.type_interner,
+            context.symbols.as_ref(),
+            &context.type_info.type_interner,
             arandu_mir::escape_analysis::EscapeCheckOptions {
                 no_fallback,
                 // The per-item IDE pass must use the same exported contract as
                 // full lowering. Dropping it here made a valid `ref` parameter
                 // passthrough reappear as O004/O010 only in the editor.
-                return_borrow: borrow_ifaces
-                    .entries
-                    .iter()
-                    .find(|(sym, _)| *sym == item_sym)
-                    .map(|(_, s)| s.clone()),
+                return_borrow: runtime
+                    .and_then(|unit| unit.borrow_summary.clone())
+                    .or_else(|| {
+                        context
+                            .type_info
+                            .return_borrow_summaries
+                            .get(&item_sym)
+                            .cloned()
+                    }),
             },
         ) {
             let mut diagnostic = IdeDiagnostic::from_diag(&d, Some(item_sym), Some(bid));
@@ -547,6 +603,38 @@ pub fn item_ide_diagnostics(
             let bid = BlockId::from_usize(bi);
             let _ = block_dataflow_facts(db, file, item_sym, bid);
             let _ = block_borrow_facts(db, file, item_sym, bid);
+        }
+    }
+
+    if let Some(runtime) = runtime {
+        let diagnostics = match &runtime.result {
+            Ok(unit) => &unit.diagnostics,
+            Err(errors) => errors,
+        };
+        for diagnostic in diagnostics {
+            let mut converted = IdeDiagnostic::from_diag(diagnostic, Some(item_sym), None);
+            if diagnostic.code == DiagCode::O004GenerationalFallback
+                && diagnostic.severity == arandu_middle::Severity::Note
+            {
+                let item = crate::passes::item_source_input(db, file, item_sym);
+                converted.hints.push(IdeHint {
+                    message: "forbid this implicit fallback in the containing function".into(),
+                    replacement: Some(IdeReplacement {
+                        file_id: *file.file_id(db),
+                        start: item.item_start,
+                        end: item.item_start,
+                        new_text: "@NoFallback\n".into(),
+                    }),
+                });
+            }
+            if !out.iter().any(|existing| {
+                existing.start == converted.start
+                    && existing.end == converted.end
+                    && existing.code == converted.code
+                    && existing.message == converted.message
+            }) {
+                out.push(converted);
+            }
         }
     }
 
@@ -584,9 +672,16 @@ pub fn block_diagnostics(
     let _facts = block_dataflow_facts(db, file, func_sym, block);
     let _borrow = block_borrow_facts(db, file, func_sym, block);
     // Body typeck diags live on entry (no AST block ids); AMIR diags filter by block.
-    let body_tc = crate::passes::item_body_typeck(db, file, func_sym);
+    let body_tc = crate::passes::item_typing(db, file, func_sym);
     let amir = func_amir(db, file, func_sym);
-    let sigs = crate::passes::module_signatures(db, file);
+    let runtime = source_runtime_unit(db, func_sym);
+    let aggregate;
+    let context = if let Some(unit) = runtime {
+        &*unit.context
+    } else {
+        aggregate = crate::passes::lower_amir(db, file);
+        &aggregate.type_check
+    };
 
     let mut out = Vec::new();
     if block.as_usize() == 0 {
@@ -605,20 +700,21 @@ pub fn block_diagnostics(
     }
     if !amir.blocks.is_empty() {
         for (bid, d) in
-            arandu_mir::definite_init::check_definite_init_by_block(amir, sigs.symbols.as_ref())
-        {
-            if bid == block {
-                out.push(IdeDiagnostic::from_diag(&d, Some(func_sym), Some(bid)));
-            }
-        }
-        for (bid, d) in arandu_mir::move_checker::check_moves_by_block(amir, sigs.symbols.as_ref())
+            arandu_mir::definite_init::check_definite_init_by_block(amir, context.symbols.as_ref())
         {
             if bid == block {
                 out.push(IdeDiagnostic::from_diag(&d, Some(func_sym), Some(bid)));
             }
         }
         for (bid, d) in
-            arandu_mir::borrow_check::check_borrows_by_block(amir, sigs.symbols.as_ref())
+            arandu_mir::move_checker::check_moves_by_block(amir, context.symbols.as_ref())
+        {
+            if bid == block {
+                out.push(IdeDiagnostic::from_diag(&d, Some(func_sym), Some(bid)));
+            }
+        }
+        for (bid, d) in
+            arandu_mir::borrow_check::check_borrows_by_block(amir, context.symbols.as_ref())
         {
             if bid == block {
                 out.push(IdeDiagnostic::from_diag(&d, Some(func_sym), Some(bid)));
@@ -638,7 +734,7 @@ pub fn file_signature_ide_diagnostics(
     db: &dyn ArandCompilerDb,
     file: SourceFile,
 ) -> HashEq<Vec<IdeDiagnostic>> {
-    let sigs = crate::passes::module_signatures(db, file);
+    let sigs = crate::passes::declaration_signatures(db, file);
     let mut out: Vec<IdeDiagnostic> = sigs
         .diagnostics
         .iter()
@@ -666,7 +762,7 @@ pub fn file_ide_diagnostics(
     file: SourceFile,
 ) -> HashEq<Vec<IdeDiagnostic>> {
     let program_res = crate::passes::parse(db, file);
-    let signatures = crate::passes::module_signatures(db, file);
+    let signatures = crate::passes::declaration_signatures(db, file);
 
     let mut out: Vec<IdeDiagnostic> = Vec::new();
     let mut covered = std::collections::HashSet::new();

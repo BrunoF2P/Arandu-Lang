@@ -345,8 +345,8 @@ fn contract_projection_does_not_certify_an_unsafe_sibling_for_execution() {
         arandu_middle::db::DiagnosticsAccumulator,
     >(&db, file)
     .is_empty());
-    // HIR and mono are memoized once for both consumers; the final path must
-    // still diagnose the mutation under the selected returned borrow.
+    // Contract projection typed only the borrow-returning body. The final path
+    // must independently type/validate the unsafe scalar sibling.
     log.clear();
     let lowered = arandu_query::lower_amir(&db, file);
     assert!(lowered.amir.funcs.is_empty());
@@ -357,7 +357,7 @@ fn contract_projection_does_not_certify_an_unsafe_sibling_for_execution() {
         .iter()
         .any(|d| d.0.code == arandu_middle::DiagCode::O003MutableBorrowConflict));
     assert_eq!(log.count_executions_matching("prepare_hir"), 0);
-    assert_eq!(log.count_executions_matching("item_typing"), 0);
+    assert_eq!(log.count_executions_matching("item_typing"), 1);
 }
 
 #[test]
@@ -409,10 +409,26 @@ fn projected_recursive_and_monomorphized_contracts_equal_final_contracts() {
     assert!(!lowered.amir.funcs.is_empty());
     assert!(!projected.entries.is_empty());
     assert_eq!(
-        projected.entries.len(),
+        projected.entries.len() + projected.instances.len(),
         lowered.type_check.type_info.return_borrow_summaries.len()
     );
     for (symbol, summary) in &projected.entries {
+        assert_eq!(
+            Some(summary),
+            lowered
+                .type_check
+                .type_info
+                .return_borrow_summaries
+                .get(symbol)
+        );
+    }
+    let composed = arandu_query::runtime::runtime_program(&db, file);
+    for (key, summary) in &projected.instances {
+        let (symbol, _) = composed
+            .instances
+            .iter()
+            .find(|(_, instance)| instance == key)
+            .expect("canonical instance");
         assert_eq!(
             Some(summary),
             lowered

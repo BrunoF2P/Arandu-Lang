@@ -10,6 +10,7 @@ const SLICE_ARU: &str = include_str!("../../../../stdlib/core/slice.aru");
 const INTRINSICS_ARU: &str = include_str!("../../../../stdlib/core/intrinsics.aru");
 const MEM_ARU: &str = include_str!("../../../../stdlib/core/mem.aru");
 const VEC_ARU: &str = include_str!("../../../../stdlib/alloc/vec.aru");
+const MARKER_ARU: &str = include_str!("../../../../stdlib/core/marker.aru");
 
 #[test]
 fn stdlib_io_parses_and_exports_expected_symbols() {
@@ -50,6 +51,7 @@ fn stdlib_buf_io_usage_in_program() {
     db.new_file("stdlib/core/slice.aru".to_string(), SLICE_ARU.to_string());
     db.new_file("stdlib/core/mem.aru".to_string(), MEM_ARU.to_string());
     db.new_file("stdlib/alloc/vec.aru".to_string(), VEC_ARU.to_string());
+    db.new_file("stdlib/core/marker.aru".to_string(), MARKER_ARU.to_string());
     let io_file = db.new_file("stdlib/std/io.aru".to_string(), IO_ARU.to_string());
     let main_src = r#"
 import std.io as io

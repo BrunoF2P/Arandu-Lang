@@ -8,7 +8,7 @@ use crate::literal_pool::LiteralId;
 
 #[derive(Debug, Clone)]
 pub struct FunctionUnit {
-    pub function: AmirFunc,
+    pub function: std::sync::Arc<AmirFunc>,
     pub literals: AmirLiteralPool,
     pub debug_bindings: Vec<AmirDebugBinding>,
     pub debug_blocks: Vec<AmirDebugBlock>,
@@ -23,15 +23,16 @@ pub fn finalize_function_unit(
     unit: &mut FunctionUnit,
     tc: &TypeCheckResult,
     summaries: &FxHashMap<SymbolId, arandu_middle::types::ReturnBorrowSummary>,
-) -> Result<(), Vec<Diagnostic>> {
-    crate::borrow_interface::apply_call_interfaces(&mut unit.function, summaries);
+) -> Result<arandu_middle::types::ReturnBorrowSummary, Vec<Diagnostic>> {
+    let function = std::sync::Arc::make_mut(&mut unit.function);
+    crate::borrow_interface::apply_call_interfaces(function, summaries);
     let (summary, missing) =
-        crate::borrow_interface::infer_function_interface(&unit.function, &tc.type_info, summaries);
+        crate::borrow_interface::infer_function_interface(function, &tc.type_info, summaries);
     let mut diagnostics = Vec::new();
     super::validate_borrowed_function(
         tc,
-        &mut unit.function,
-        (!summary.dependencies.is_empty()).then_some(summary),
+        function,
+        (!summary.dependencies.is_empty()).then(|| summary.clone()),
         !missing.is_empty(),
         unit.no_fallback,
         &mut diagnostics,
@@ -43,7 +44,7 @@ pub fn finalize_function_unit(
         return Err(diagnostics);
     }
     unit.diagnostics.extend(diagnostics);
-    Ok(())
+    Ok(summary)
 }
 
 /// Lower just one concrete function, using the canonical function lowerer.
@@ -110,7 +111,7 @@ pub(super) fn lower_function_unit_with_context(
         return Err(diagnostics);
     }
     Ok(FunctionUnit {
-        function: amir,
+        function: std::sync::Arc::new(amir),
         literals,
         debug_bindings: bindings
             .into_iter()
@@ -140,7 +141,7 @@ pub(super) fn lower_function_unit_with_context(
 /// context; this operation does not pretend they are process-wide identities.
 pub fn append_function_unit(
     program: &mut AmirProgram,
-    mut unit: FunctionUnit,
+    unit: FunctionUnit,
 ) -> Result<Vec<Diagnostic>, Diagnostic> {
     let span = unit
         .function
@@ -153,6 +154,7 @@ pub fn append_function_unit(
         .into_iter()
         .map(|literal| program.literal_pool.intern(literal))
         .collect::<Vec<_>>();
+    let mut function = std::sync::Arc::unwrap_or_clone(unit.function);
     let mut invalid = false;
     let mut remap = |operand: &mut AmirOperand| {
         if let AmirOperand::Constant(crate::amir::AmirConstant::Pool(LiteralId(index))) = operand {
@@ -163,12 +165,12 @@ pub fn append_function_unit(
             }
         }
     };
-    for id in unit.function.stmts.iter_ids().collect::<Vec<_>>() {
-        if let Some(statement) = unit.function.stmts.get_mut(id) {
+    for id in function.stmts.iter_ids().collect::<Vec<_>>() {
+        if let Some(statement) = function.stmts.get_mut(id) {
             for_each_stmt_operand_mut(statement, &mut remap);
         }
     }
-    for block in &mut unit.function.blocks {
+    for block in &mut function.blocks {
         for_each_terminator_operand_mut(&mut block.terminator, &mut remap);
     }
     if invalid {
@@ -178,7 +180,7 @@ pub fn append_function_unit(
             span,
         ));
     }
-    program.funcs.push(unit.function);
+    program.funcs.push(function);
     program.debug_bindings.extend(unit.debug_bindings);
     program.debug_blocks.extend(unit.debug_blocks);
     Ok(unit.diagnostics)
@@ -199,7 +201,7 @@ mod tests {
             rhs: AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Pool(literal))),
         });
         FunctionUnit {
-            function: AmirFunc {
+            function: std::sync::Arc::new(AmirFunc {
                 symbol,
                 return_type: crate::types::TypeInterner::new().intern(ArType::Void),
                 receiver: None,
@@ -218,7 +220,7 @@ mod tests {
                 }],
                 stmts: statements,
                 cfg: crate::cfg::ControlFlowGraph::default(),
-            },
+            }),
             literals,
             debug_bindings: Vec::new(),
             debug_blocks: Vec::new(),

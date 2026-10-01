@@ -243,6 +243,12 @@ pub fn runtime_unit<'db>(
     }
     let contracts = instance_contracts(db, instance);
     let mut result = raw.result.clone();
+    let mut borrow_summary = contracts
+        .entries
+        .iter()
+        .find(|(key, _)| key == instance.key(db))
+        .map(|(_, summary)| summary.clone());
+    let mut analysis_function = None;
     if contracts.diagnostics.is_empty() {
         if let Ok(unit) = &mut result {
             let summaries = contracts
@@ -251,8 +257,11 @@ pub fn runtime_unit<'db>(
                 .cloned()
                 .collect::<FxHashMap<_, _>>();
             let local = local_contracts(raw, &summaries);
-            if let Err(errors) = arandu_mir::finalize_function_unit(unit, &raw.context, &local) {
-                result = Err(errors);
+            let validation = arandu_mir::finalize_function_unit(unit, &raw.context, &local);
+            analysis_function = Some(std::sync::Arc::clone(&unit.function));
+            match validation {
+                Ok(summary) => borrow_summary = Some(summary),
+                Err(errors) => result = Err(errors),
             }
         }
     } else {
@@ -262,5 +271,8 @@ pub fn runtime_unit<'db>(
         result,
         context: std::sync::Arc::clone(&raw.context),
         instances: raw.instances.clone(),
+        generated_symbols: raw.generated_symbols.clone(),
+        borrow_summary,
+        analysis_function,
     })
 }

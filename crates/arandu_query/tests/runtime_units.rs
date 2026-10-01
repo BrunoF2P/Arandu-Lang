@@ -27,6 +27,34 @@ fn instance<'db>(
 }
 
 #[test]
+fn returned_wrapper_discovers_its_field_destructor_without_reading_callee_bodies() {
+    let mut db = DatabaseImpl::new();
+    let file = db.new_file(
+        "main.aru".into(),
+        r#"
+struct Counter<T> { value: T }
+@Destructor
+func Counter.destroy<T>(own self: Counter<T>): void {}
+struct Wrapper { counter: Counter<int> }
+func make(): Wrapper { return Wrapper { counter: Counter<int> { value: 1 } } }
+func main(): int { let wrapped = make() return 0 }
+"#
+        .into(),
+    );
+    let main = runtime_raw_unit(&db, instance(&db, file, "main", Vec::new()));
+    let body = main.result.as_ref().expect("valid caller");
+    assert!(body.function.stmts.payloads.iter().any(|statement| matches!(
+        statement, arandu_middle::amir::AmirStmt::Destroy(place) if !place.projections.is_empty()
+    )), "a field-owned destructor must be visible before composing callees");
+    let program = arandu_query::runtime::runtime_program(&db, file);
+    assert!(program.diagnostics.is_empty(), "{:?}", program.diagnostics);
+    assert!(program.instances.iter().any(|(_, key)| {
+        key.definition == symbol(&db, file, "Counter.destroy")
+            && key.arguments == [TypeShape::Primitive(Primitive::Int)]
+    }));
+}
+
+#[test]
 fn final_unit_uses_imported_borrow_contracts_without_global_lowering() {
     let (mut db, log) = DatabaseImpl::with_rebuild_log();
     let library = db.new_file(
@@ -73,6 +101,12 @@ fn final_unit_uses_imported_borrow_contracts_without_global_lowering() {
         log.count_executions_matching("runtime_raw_unit"),
         1,
         "only the callee body is lowered: {}",
+        log.format_chain(true)
+    );
+    assert_eq!(
+        log.count_executions_matching("function_hir"),
+        1,
+        "unrelated HIR bodies must not be re-lowered: {}",
         log.format_chain(true)
     );
     assert_eq!(log.count_executions_matching("runtime_unit"), 1);
@@ -411,6 +445,401 @@ fn symbol(db: &DatabaseImpl, file: SourceFile, name: &str) -> SymbolId {
     .into_iter()
     .find(|id| declarations.symbols.get(*id).name == name)
     .expect("function")
+}
+
+#[test]
+fn runtime_composition_rebases_generic_symbols_types_and_literal_pools() {
+    let mut db = DatabaseImpl::new();
+    let file = db.new_file("main.aru".into(), "func identity<T>(value: T): T { return value }\nfunc left(): int { return identity<int>(41) }\nfunc right(): bool { return identity<bool>(true) }\nfunc main(): int { if right() { return left() + 1 } return 0 }".into());
+    let composed = arandu_query::runtime::runtime_program(&db, file);
+    assert!(
+        composed.diagnostics.is_empty(),
+        "{:?}",
+        composed.diagnostics
+    );
+    let output = &composed.artifacts;
+    assert_eq!(output.amir.funcs.len(), 5);
+    let unique = output
+        .amir
+        .funcs
+        .iter()
+        .map(|function| function.symbol)
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(unique.len(), 5);
+    let definition = symbol(&db, file, "identity");
+    for primitive in [Primitive::Int, Primitive::Bool] {
+        let (id, _) = composed
+            .instances
+            .iter()
+            .find(|(_, key)| {
+                key.definition == definition
+                    && key.arguments == vec![TypeShape::Primitive(primitive)]
+            })
+            .expect("canonical instance");
+        let function = output
+            .amir
+            .funcs
+            .iter()
+            .find(|function| function.symbol == *id)
+            .expect("instantiated body");
+        assert_eq!(
+            TypeShape::from_id(
+                function.return_type,
+                &output.type_check.type_info.type_interner
+            ),
+            Ok(TypeShape::Primitive(primitive))
+        );
+    }
+    for function in &output.amir.funcs {
+        for stmt in function
+            .stmts
+            .iter_ids()
+            .filter_map(|id| function.stmts.get(id))
+        {
+            arandu_middle::amir::visit::for_each_stmt_operand_mut(&mut stmt.clone(), |operand| {
+                if let arandu_middle::amir::AmirOperand::FunctionRef(id) = operand {
+                    assert!(unique.contains(id), "unlinked callee {id:?}");
+                }
+            });
+        }
+    }
+    assert!(output.amir.literal_pool.entries.iter().any(|literal| matches!(literal, arandu_middle::literal_pool::AmirLiteralEntry::Int(value) if value == "41")));
+}
+
+#[test]
+fn nominal_arguments_with_equal_short_names_keep_distinct_backend_names() {
+    let mut db = DatabaseImpl::new();
+    db.new_file(
+        "a.aru".into(),
+        "module a\npublic struct User { public value: int }".into(),
+    );
+    db.new_file(
+        "b.aru".into(),
+        "module b\npublic struct User { public value: int }".into(),
+    );
+    let file = db.new_file("main.aru".into(), "import a\nimport b\nfunc identity<T>(value: T): T { return value }\nfunc main(): int { let left = identity(a.User { value: 20 })\nlet right = identity(b.User { value: 22 })\nreturn left.value + right.value }".into());
+    let composed = arandu_query::runtime::runtime_program(&db, file);
+    assert!(
+        composed.diagnostics.is_empty(),
+        "{:?}",
+        composed.diagnostics
+    );
+    let definition = symbol(&db, file, "identity");
+    let names = composed
+        .instances
+        .iter()
+        .filter(|(_, key)| key.definition == definition)
+        .map(|(id, _)| {
+            composed
+                .artifacts
+                .type_check
+                .symbols
+                .host_func_name(composed.artifacts.type_check.symbols.get(*id))
+        })
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(names.len(), 2, "{names:?}");
+}
+
+#[test]
+fn nested_nominal_definitions_keep_qualified_backend_identity() {
+    let mut db = DatabaseImpl::new();
+    let file = db.new_file("main.aru".into(), "module app\nmodule left { public struct User { public value: int } }\nmodule right { public struct User { public value: int } }\nfunc identity<T>(value: T): T { return value }\nfunc main(): int { let a = identity(left.User { value: 20 }) let b = identity(right.User { value: 22 }) return a.value + b.value }".into());
+    let composed = arandu_query::runtime::runtime_program(&db, file);
+    assert!(
+        composed.diagnostics.is_empty(),
+        "{:?}",
+        composed.diagnostics
+    );
+    let definition = symbol(&db, file, "identity");
+    let names = composed
+        .instances
+        .iter()
+        .filter(|(_, key)| key.definition == definition)
+        .map(|(id, _)| {
+            composed
+                .artifacts
+                .type_check
+                .symbols
+                .host_func_name(composed.artifacts.type_check.symbols.get(*id))
+        })
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(names.len(), 2, "{names:?}");
+}
+
+#[test]
+fn composing_a_callee_edit_does_not_relower_unmodified_callers_or_siblings() {
+    let (mut db, log) = DatabaseImpl::with_rebuild_log();
+    let source = "func callee(): int { return 41 }\nfunc caller(): int { return callee() }\nfunc sibling(): int { return 42 }";
+    let file = db.new_file("main.aru".into(), source.into());
+    assert!(arandu_query::runtime::runtime_program(&db, file)
+        .diagnostics
+        .is_empty());
+    log.clear();
+    file.set_text(&mut db)
+        .to(Arc::from(source.replace("41", "40")));
+    assert!(arandu_query::runtime::runtime_program(&db, file)
+        .diagnostics
+        .is_empty());
+    assert_eq!(
+        log.count_executions_matching("runtime_raw_unit"),
+        1,
+        "{}",
+        log.format_chain(true)
+    );
+    assert_eq!(
+        log.count_executions_matching("runtime_unit"),
+        1,
+        "{}",
+        log.format_chain(true)
+    );
+    for forbidden in [
+        "prepare_hir",
+        "lower_amir",
+        "file_typing",
+        "module_signatures",
+    ] {
+        assert_eq!(
+            log.count_executions_matching(forbidden),
+            0,
+            "{}",
+            log.format_chain(true)
+        );
+    }
+}
+
+#[test]
+fn imported_effect_metadata_survives_expression_shard_removal() {
+    let mut db = DatabaseImpl::new();
+    let helper = db.new_file(
+        "helper.aru".into(),
+        "module helper\n@Effects(Pure)\npublic func answer(): int { return 42 }".into(),
+    );
+    let entry = db.new_file(
+        "main.aru".into(),
+        "import helper\nfunc main(): int { return helper.answer() }".into(),
+    );
+    let key = FunctionInstance {
+        definition: symbol(&db, helper, "answer"),
+        arguments: Vec::new(),
+    };
+    let unit = runtime_unit(&db, Instance::new(&db, helper, key.clone()));
+    let mut aggregate = arandu_query::runtime::declaration_hir(&db, entry)
+        .artifacts
+        .type_check
+        .clone();
+    aggregate.type_info_mut().function_effects.clear();
+    arandu_mir::compose_function_units(
+        &mut aggregate,
+        &[arandu_mir::ContextualFunctionUnit {
+            key: &key,
+            unit: unit.result.as_ref().expect("validated callee"),
+            context: &unit.context,
+            generated_symbols: &unit.generated_symbols,
+            instances: &unit.instances,
+            borrow_summary: unit.borrow_summary.as_ref().expect("summary"),
+        }],
+        || {},
+    )
+    .expect("valid composition");
+    assert!(aggregate
+        .type_info
+        .function_effects
+        .get(&key.definition)
+        .expect("imported effects")
+        .contains(arandu_middle::EffectFlags::PURE));
+}
+
+#[test]
+fn later_header_merges_cannot_overwrite_proven_borrow_contracts() {
+    let mut db = DatabaseImpl::new();
+    let file = db.new_file("main.aru".into(), "func second(a: ref int, b: ref int): ref int { return b }\nfunc caller(a: ref int, b: ref int): ref int { return second(a, b) }\nfunc scalar(): int { return 42 }".into());
+    let composed = arandu_query::runtime::runtime_program(&db, file);
+    assert!(
+        composed.diagnostics.is_empty(),
+        "{:?}",
+        composed.diagnostics
+    );
+    for name in ["second", "caller"] {
+        let summary = composed
+            .artifacts
+            .type_check
+            .type_info
+            .return_borrow_summaries
+            .get(&symbol(&db, file, name))
+            .expect("proven summary");
+        assert_eq!(
+            summary.dependencies[0].sources[0].parameter_index, 1,
+            "{name}: {summary:?}"
+        );
+    }
+}
+
+#[test]
+fn invalid_declaration_metadata_blocks_executable_publication() {
+    let mut db = DatabaseImpl::new();
+    let file = db.new_file(
+        "main.aru".into(),
+        "struct Broken { value: Absent }\nfunc main(): int { return 42 }".into(),
+    );
+    let result = arandu_query::runtime::runtime_program(&db, file);
+    assert!(
+        !result.diagnostics.is_empty(),
+        "invalid declaration must not be certified by a valid body"
+    );
+    assert!(result.artifacts.amir.funcs.is_empty());
+}
+
+#[test]
+fn composition_does_not_publish_a_partial_program_with_an_invalid_entry_body() {
+    let mut db = DatabaseImpl::new();
+    let file = db.new_file(
+        "main.aru".into(),
+        "func valid(): int { return 42 }\nfunc broken(): int { return absent }".into(),
+    );
+    let composed = arandu_query::runtime::runtime_program(&db, file);
+    assert!(composed.artifacts.amir.funcs.is_empty());
+    assert!(composed
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.code == arandu_middle::DiagCode::N001UndefinedValue));
+}
+
+#[test]
+fn an_invalid_reachable_dependency_cannot_publish_executable_mir() {
+    let mut db = DatabaseImpl::new();
+    let helper = db.new_file(
+        "helper.aru".into(),
+        "module helper\nimport missing\npublic func answer(): int { return 42 }".into(),
+    );
+    let file = db.new_file(
+        "main.aru".into(),
+        "import helper\nfunc main(): int { return helper.answer() }".into(),
+    );
+    let result = arandu_query::runtime::runtime_program(&db, file);
+    assert!(result.artifacts.amir.funcs.is_empty());
+    assert!(result
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.code.as_str() == "M001"
+            && diagnostic.span.file_id == *helper.file_id(&db)));
+}
+
+#[test]
+fn composition_links_only_reachable_imported_bodies() {
+    let (mut db, log) = DatabaseImpl::with_rebuild_log();
+    db.new_file("helper.aru".into(), "module helper\npublic func good(): int { return 42 }\nfunc broken(): int { return absent }".into());
+    let file = db.new_file(
+        "main.aru".into(),
+        "import helper\nfunc main(): int { return helper.good() }".into(),
+    );
+    log.clear();
+    let composed = arandu_query::runtime::runtime_program(&db, file);
+    assert!(
+        composed.diagnostics.is_empty(),
+        "{:?}",
+        composed.diagnostics
+    );
+    assert_eq!(composed.artifacts.amir.funcs.len(), 2);
+    assert_eq!(log.count_executions_matching("item_typing"), 2);
+}
+
+#[test]
+fn inferred_generic_struct_receiver_is_concrete_before_instance_lowering() {
+    let mut db = DatabaseImpl::new();
+    let file = db.new_file("main.aru".into(), "struct BoxG<T> { v: T }\nfunc BoxG.get(shared self): T { return self.v }\nfunc main(): int { let b = BoxG { v: 42 } return b.get() }".into());
+    let composed = arandu_query::runtime::runtime_program(&db, file);
+    assert!(
+        composed.diagnostics.is_empty(),
+        "{:?}",
+        composed.diagnostics
+    );
+}
+
+#[test]
+fn a_concrete_type_from_the_caller_brings_declarations_not_sibling_bodies() {
+    let (mut db, log) = DatabaseImpl::with_rebuild_log();
+    db.new_file(
+        "generic.aru".into(),
+        "module generic\npublic func identity<T>(value: T): T { return value }".into(),
+    );
+    db.new_file("owner.aru".into(), "module owner\npublic struct Owner { public value: int }\nfunc broken(): int { return absent }".into());
+    let file = db.new_file("main.aru".into(), "import generic\nimport owner\nfunc main(): int { let value = generic.identity(owner.Owner { value: 42 }) return value.value }".into());
+    log.clear();
+    let composed = arandu_query::runtime::runtime_program(&db, file);
+    assert!(
+        composed.diagnostics.is_empty(),
+        "{:?}",
+        composed.diagnostics
+    );
+    assert_eq!(composed.artifacts.amir.funcs.len(), 2);
+    assert_eq!(log.count_executions_matching("item_typing"), 2);
+}
+
+#[test]
+fn specialized_function_values_are_executable_dependencies_too() {
+    let mut db = DatabaseImpl::new();
+    let file = db.new_file("main.aru".into(), "extern \"C\" { func sink(callback: ptr[u8]): void }\nfunc identity<T>(value: T): T { return value }\nfunc main(): int { unsafe { sink(identity<int> as ptr[u8]) } return 42 }".into());
+    let composed = arandu_query::runtime::runtime_program(&db, file);
+    assert!(
+        composed.diagnostics.is_empty(),
+        "{:?}",
+        composed.diagnostics
+    );
+    assert_eq!(composed.artifacts.amir.funcs.len(), 2);
+}
+
+#[test]
+fn equivalent_literal_receiver_shapes_share_one_destructor_instance() {
+    let mut db = DatabaseImpl::new();
+    let file = db.new_file("main.aru".into(), "struct Counter<T, A = int> { value: T tag: A }\n@Destructor\nfunc Counter.destroy<T, A>(self: Counter<T, A>): void {}\nfunc inspect<T>(c: ref Counter<T>): T { return c.value }\nfunc main(): int { let c: Counter<int> = Counter { value: 42, tag: 1 } return inspect(c) }".into());
+    let composed = arandu_query::runtime::runtime_program(&db, file);
+    assert!(
+        composed.diagnostics.is_empty(),
+        "{:?}",
+        composed.diagnostics
+    );
+    let destructors = composed
+        .instances
+        .iter()
+        .filter(|(_, key)| {
+            composed
+                .artifacts
+                .type_check
+                .symbols
+                .get(key.definition)
+                .name
+                .ends_with("destroy")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(destructors.len(), 1, "{destructors:?}");
+}
+
+#[test]
+fn source_func_amir_and_ide_analysis_do_not_request_program_wide_stages() {
+    let (mut db, log) = DatabaseImpl::with_rebuild_log();
+    let source = "func selected(): int { return 42 }\nfunc broken(): int { return absent }";
+    let file = db.new_file("main.aru".into(), source.into());
+    let selected = symbol(&db, file, "selected");
+    log.clear();
+    assert!(!arandu_query::func_amir(&db, file, selected)
+        .blocks
+        .is_empty());
+    assert!(arandu_query::dataflow::item_ide_diagnostics(&db, file, selected).is_empty());
+    for forbidden in [
+        "runtime_program",
+        "prepare_hir",
+        "lower_amir",
+        "file_typing",
+        "module_signatures",
+        "borrow_interfaces",
+    ] {
+        assert_eq!(
+            log.count_executions_matching(forbidden),
+            0,
+            "{}",
+            log.format_chain(true)
+        );
+    }
 }
 
 #[test]
