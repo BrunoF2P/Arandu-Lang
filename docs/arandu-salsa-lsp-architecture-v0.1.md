@@ -30,9 +30,10 @@ impedem o LSP de publicar resultados de buffers/revisões obsoletos.
 | `declaration_signatures` | Assinaturas declarativas; imports não solicitam contratos derivados de corpos nem MIR final |
 | `item_typing` / `file_typing` | Checker canônico contra declarações; sem dependência dos contratos de fluxo |
 | `prepare_hir` / `borrow_interfaces` | Produtor global legado para oráculos / contratos por unidades independentes antes da validação final |
-| `local_symbols`, `exported_symbols`, `func_amir` | Reais |
+| `local_symbols`, `exported_symbols`, `func_amir` / `instance_amir` | Reais; definições fonte e instâncias concretas têm APIs distintas |
 | `ctfe_func_amir` / `ctfe_eval` | Internas, escalares não genéricas; chamadas importadas rastreadas por unidade |
-| `declaration_hir` / `function_hir` / `instance_hir` | Produtor interno de um corpo concreto; callees são assinaturas sem corpo |
+| `declaration_hir` / `declaration_context` | Headers por módulo e closure transitiva compartilhada, sem corpos |
+| `function_hir` / `instance_hir` | Corpo isolado e especialização concreta; headers são ligados somente na instância |
 | `runtime_raw_unit` / `instance_contracts` / `runtime_unit` | Lowering, convergência de contratos e validação separados por instância no caminho ativo |
 | `runtime_program` | Descoberta determinística de dependências e composição canônica para `lower_amir`/backends |
 | `liveness_facts` | Real (`arandu_mir::liveness`) |
@@ -41,9 +42,11 @@ impedem o LSP de publicar resultados de buffers/revisões obsoletos.
 | DX.5 `RebuildLog` | Opt-in (`-Zexplain-rebuild`) |
 
 `func_amir` de uma definição não genérica compartilha a função de `runtime_unit`,
-sem solicitar composição global. IDs sintéticos do agregado conservam um
-fallback de projeção por compatibilidade; templates não instanciados não
-ganham corpo executável. O caminho
+sem solicitar composição global. A API fonte não aceita IDs sintéticos do
+agregado: IDs desconhecidos/templates recuperam com corpo vazio, sem fallback
+global. `file_func_symbols` enumera definições fonte ordinárias, não a lista
+de funções de um executável. Instâncias concretas usam `instance_amir(Instance)`
+e compartilham a AMIR/contexto de `runtime_unit`. O caminho
 interno CTFE é distinto: `item_source_input` e `item_typing`, com
 `declaration_signatures`/alvo, alimentam o lowering HIR canônico de apenas uma
 função; sua AMIR possui pool próprio e descritores escalares resolvidos.
@@ -83,10 +86,13 @@ recursão, imports transitivos e rejeição final de um sibling inseguro.
 
 ### Runtime por instância e composição ativa
 
-`function_hir` combina o item tipado com `declaration_hir` dos módulos
-registrados. Apenas o corpo selecionado é baixado; a mesma rotina canônica de
-declarações produz assinaturas, constantes, modos de parâmetros/receptor e
-metadata nominal sem ler corpos irmãos. Não há outro parser ou checker.
+`function_hir` retém somente o corpo selecionado. `declaration_context` liga
+uma vez os headers transitivos de um módulo, usando a mesma rotina canônica de
+declarações para assinaturas, constantes, modos de parâmetros/receptor e
+metadata nominal. `instance_hir` combina essa closure compartilhada com o corpo;
+o memo de função não duplica headers nem os copia novamente para especialização.
+Não há outro parser ou checker. Cada contexto concreto continua com seu domínio
+de interner, necessário às mutações de especialização/lowering.
 
 `FunctionInstance` preserva o `SymbolId` composto da definição e argumentos
 `TypeShape` estruturais. `TypeId` e ranges de argumentos são locais ao interner,
@@ -140,13 +146,34 @@ formar chaves; nomes nominais qualificados e aridades evitam aliases nativos.
 `lower_amir` compartilha o resultado agregado por Arc. Backends continuam
 consumindo a mesma AMIR, sem saber como Salsa produziu os corpos.
 
+Na composição, `TypeInfo::merge_codegen_context` traduz a metadata emprestada,
+sem clonar o interner inteiro de cada unidade. Headers nominais de uma mesma
+revisão são traduzidos uma vez por identidade fonte; funções/locais gerados,
+destruidores concretos e efeitos são remapeados. Summaries provados são
+instalados após todos os headers. Esse modo não pode mesclar revisões distintas;
+o merge ordinário continua substituindo headers alterados.
+
+CGUs usam uma closure de declarações por função, compartilhada entre hashing
+e emissão do `ObjectModule`. Ela cobre referências em statements/terminadores,
+callbacks e destruidores implícitos da closure de tipos. Callees contribuem
+assinatura/layout, não corpo. Pool IDs, IDs sintéticos de composição e símbolos
+de debug locais não são identidade de máquina: literais/tipos são codificados
+por conteúdo e símbolos válidos pelos nomes nativos qualificados. `SymbolId`
+composto continua intacto no IR. Drop shims usam o mesmo nome nativo estável.
+O schema CGU v3 invalida caches antigos, preservando verificações de objetos,
+target, toolchain, ABI/layout (inclusive `repr(C)`) e closure final do link.
+Remover uma CGU pode reutilizar objetos restantes, mas obriga relink do
+executável quando sua closure mudou. Regressões comparam objetos byte a byte
+e exercitam uma nova instância genérica com apenas dois misses e três hits.
+
 Análises IDE usam tipos, símbolos e contrato da própria unidade. Uma função
 inválida pode reter AMIR de análise para diagnósticos por bloco, mas nunca é
 publicada para execução. Quick fixes estruturados continuam preservados.
 
-**Limite:** composição final e metadata de headers ainda são agregadas. Hashes
-de CGU preservam seus guardrails de superfície/ABI; este lote não prova que
-todo novo tipo/instância preserve CGUs irmãs nem encerra o marco 0.3. A DB
+**Limite:** a entrega final aos backends continua agregada; isso não é um
+produtor global de corpos nem uma dependência global dos objetos CGU. Contextos
+concretos ainda retêm metadata em domínios locais. Cutoff de nova instância e
+mudanças não relacionadas têm regressões, mas não encerram o marco 0.3. A DB
 batch continua nova a cada processo. Latência p95, retenção de contextos e
 validação nativa Windows/macOS continuam gates distintos.
 
@@ -187,6 +214,24 @@ isolada ficou próxima de 34 ms em uma sondagem separada. Reduzir duplicação d
 headers/contextos exige perfil adicional, preservando IDs locais e cutoff.
 Estas amostras não certificam p95 ≤ 10 ms, release otimizada, projeto grande
 ou suporte nativo de outros sistemas.
+
+Refinamento de 2026-10-01, mesmo workload/host debug, cinco pares intercalados
+em processos isolados antes/depois, sem compilação Rust dentro da janela.
+CPU/RSS medidos por `getrusage(RUSAGE_CHILDREN)` de um supervisor novo por
+amostra (o pico de um filho anterior não contamina o próximo). Medianas:
+
+| Medida | Antes do refinamento | Depois |
+| --- | ---: | ---: |
+| Produção fria | 701,4 ms | 673,0 ms |
+| Memo quente | 8 µs | 8 µs |
+| Edição privada | 65,2 ms | 49,8 ms |
+| CPU user + system, sessão cold/warm/edit | 0,774 s | 0,726 s |
+| Pico RSS, sessão cold/warm/edit | 29,18 MiB | 26,87 MiB |
+
+A composição isolada caiu de aproximadamente 34 ms na sondagem anterior para
+20,4 ms em uma nova sondagem. São medições informativas, não prova de budget
+p95 ou desempenho geral: o cold ainda custa mais que o produtor global legado.
+O teste mantém exatamente uma HIR e unidade raw/final reexecutadas na edição.
 
 ### I/O de fonte
 

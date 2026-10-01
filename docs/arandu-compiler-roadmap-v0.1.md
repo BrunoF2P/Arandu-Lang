@@ -142,8 +142,13 @@ antes da validação final, sem solicitar HIR/MIR global. Há produtores
 instância e contratos convergidos sem HIR/MIR global. `runtime_program` descobre
 dependências e remapeia tipos/símbolos/pools para o caminho ativo de
 `lower_amir`/CLI. `func_amir` e diagnósticos de uma definição fonte ordinária
-usam seu contexto próprio. Metadata agregada, hashes conservadores de CGU,
-gates p95/CPU/RSS e matriz nativa permanecem limitações explícitas.
+usam seu contexto próprio; instâncias concretas usam `instance_amir`, sem
+fallback por IDs sintéticos agregados. Headers transitivos são compartilhados
+e a composição traduz contextos sem clonar interners. CGUs agora declaram e
+hasheiam somente suas dependências reais, incluindo callbacks/destruidores;
+regressões provam cutoff de nova instância e igualdade de objetos incremental/clean.
+A entrega final agregada, retenção de metadata concreta, gates p95/CPU/RSS e
+matriz nativa permanecem limitações explícitas.
 A pressão de resultados LSP e o soak SL_T (10 execuções verdes em ≥7 dias)
 continuam classificados em suas trilhas; async/effects públicos, LLVM,
 closures, cache remoto e self-hosting não são pré-requisitos desta campanha.
@@ -159,9 +164,9 @@ ou aceitação de estado não verificado.
 
 | Marco | Estado | Corpo funcional e critério de saída |
 | --- | --- | --- |
-| Fundação atual (`0.1`) | `done` | O CLI verifica a closure de inputs e o BLAKE3 do executável antes de aceitar cutoff; mudanças apenas documentais cortam antes das queries; fingerprints atuais são movidos para a sessão substituta sem reler inputs imutáveis; CGUs têm chaves canônicas e sidecars verificados. No Linux x86-64, se todas as CGUs forem hits e o layout provar igualdade exata da closure, o executável verificado é reutilizado sem link; caso contrário, o CLI tenta patch ELF fail-closed e sempre pode voltar ao linker completo. O oráculo compara SHA-256 entre paths e `RAYON_NUM_THREADS=1/16`, e o relatório schema 2 separa tempo de parede de custos por fase. Limite conhecido: cada `build` ainda nasce com uma DB nova; `lower_amir` compõe unidades memoizadas, mas metadata final e CGUs conservam guardrails agregados. |
+| Fundação atual (`0.1`) | `done` | O CLI verifica a closure de inputs e o BLAKE3 do executável antes de aceitar cutoff; mudanças apenas documentais cortam antes das queries; fingerprints atuais são movidos para a sessão substituta sem reler inputs imutáveis; CGUs têm chaves canônicas e sidecars verificados. No Linux x86-64, se todas as CGUs forem hits e o layout provar igualdade exata da closure, o executável verificado é reutilizado sem link; caso contrário, o CLI tenta patch ELF fail-closed e sempre pode voltar ao linker completo. O oráculo compara SHA-256 entre paths e `RAYON_NUM_THREADS=1/16`, e o relatório schema 2 separa tempo de parede de custos por fase. Limite conhecido: cada `build` ainda nasce com uma DB nova; `lower_amir` compõe unidades memoizadas para entrega agregada, enquanto hashes/emissão CGU compartilham a closure de dependências por função. |
 | Motor quente e imagem dev (`0.2`) | `planned` | Manter uma `DatabaseImpl` viva em um serviço local supervisionado, com protocolo versionado, fila limitada/coalescida, prioridade para o build solicitado e fallback transparente ao CLI batch após crash ou incompatibilidade. A DB Salsa não é serializada e queries continuam sem filesystem. Em paralelo, definir uma publicação de imagem dev recuperável que sincronize somente ranges/páginas alterados ou use clone CoW quando disponível, sem mutar artefatos CAS publicados; ausência de suporte sempre cai no protocolo atômico atual. O gate exige equivalência byte a byte com clean build, testes de kill/recovery, corpus de edições repetidas e `p95 ≤ 100 ms` para edição de corpo no host de referência documentado; CI compartilhada observa, mas não impõe a latência. |
-| Granularidade por instância (`0.3`) | `in progress`; produtor/compositor ativos | `item_source_input → item_typing → AMIR por instância` é real no runtime; `func_amir` fonte não projeta o programa global. Completar a fronteira de metadata/hash até CGU e provar os gates, sem remover guardrails de ABI. Persistência em disco, se necessária, cobre apenas saídas canônicas e versionadas fora do grafo Salsa, com CAS BLAKE3, dependências explícitas, GC limitado e validação fail-closed. O gate exige que uma edição privada não rebaixe importadores nem CGUs irmãs, equivalência incremental/clean e `p95 ≤ 10 ms` no workload e host de referência. |
+| Granularidade por instância (`0.3`) | `in progress`; produtor/compositor e closure CGU ativos | `item_source_input → item_typing → AMIR por instância` é real no runtime; `func_amir` fonte e `instance_amir` concreto não projetam o programa global. Headers são compartilhados, composição não clona interners e hashes/emissão CGU usam a mesma closure de assinatura/layout/callback/drop. Cutoff ao adicionar instância e equivalência de objetos incremental/clean têm regressões; completar retenção/latência e matriz nativa sem remover guardrails de ABI. Persistência em disco, se necessária, cobre apenas saídas canônicas e versionadas fora do grafo Salsa, com CAS BLAKE3, dependências explícitas, GC limitado e validação fail-closed. O gate exige que uma edição privada não rebaixe importadores nem CGUs irmãs, equivalência incremental/clean e `p95 ≤ 10 ms` no workload e host de referência. |
 
 Antes de otimizar estruturas por contagem de `.clone()`, `String` ou alocações,
 o relatório por fase deve localizar o custo dominante e um perfil antes/depois
