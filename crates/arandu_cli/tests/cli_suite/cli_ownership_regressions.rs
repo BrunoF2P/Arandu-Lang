@@ -881,6 +881,14 @@ func main(): int {
     let third = maps.insert(map, strings.from("third-key"), strings.from("third-value"))
     let fourth = maps.insert(map, strings.from("fourth-key"), strings.from("fourth-value"))
     let fifth = maps.insert(map, strings.from("fifth-key"), strings.from("fifth-value"))
+    let sixth = maps.insert(map, strings.from("sixth-key"), strings.from("sixth-value"))
+    // The seventh insertion crosses the 75% threshold of eight buckets.
+    // Unlike initial allocation, rehash must move a live nonempty buffer
+    // through `mut ref self` without dropping it on field replacement.
+    let seventh = maps.insert(map, strings.from("seventh-key"), strings.from("seventh-value"))
+    if maps.capacity(map) != 16 as usize || maps.len(map) != 7 as usize {
+        return 3
+    }
     let query = strings.from("third-key")
     if !maps.contains(map, ref query) {
         return 1
@@ -900,6 +908,24 @@ func main(): int {
     assert!(stdout.is_empty());
     let c_source = emit_c(source, "hashmap_noncopy_value_c");
     run_emitted_c_with_asan(&c_source, "hashmap_noncopy_value_asan");
+}
+
+#[test]
+fn bitset_returned_from_a_callee_drops_its_nested_generic_buffer() {
+    let source = r#"
+import std.alloc.bitset as bitset
+func make(): bitset.BitSet { return bitset.bitsetWithCapacity(512 as usize) }
+func main(): int {
+    let mut flags = make()
+    flags.insert(129)
+    if !flags.contains(129) { return 1 }
+    return 0
+}
+"#;
+    let stdout = run(source, "bitset_nested_drop");
+    assert!(stdout.is_empty());
+    let c_source = emit_c(source, "bitset_nested_drop_c");
+    run_emitted_c_with_asan(&c_source, "bitset_nested_drop_asan");
 }
 
 #[test]
