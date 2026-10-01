@@ -142,8 +142,17 @@ impl IdeDiagnostic {
     file = ?file.file_id(db),
 ))]
 pub fn file_func_symbols(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<Vec<SymbolId>> {
-    let artifacts = crate::passes::lower_amir(db, file);
-    let mut ids: Vec<SymbolId> = artifacts.amir.funcs.iter().map(|f| f.symbol).collect();
+    // IDE identities are definitions, not allocations in an executable's
+    // aggregate symbol domain. Concrete specializations use Instance keys.
+    let declarations = crate::passes::declaration_signatures(db, file);
+    let parsed = crate::passes::parse(db, file);
+    let mut ids = match &**parsed {
+        Ok(program) => arandu_semantics::free_func_symbols(program, &declarations.resolved)
+            .into_iter()
+            .filter(|symbol| !declarations.type_info.generic_params.contains_key(symbol))
+            .collect::<Vec<_>>(),
+        Err(_) => Vec::new(),
+    };
     ids.sort_by_key(|s| (s.file_id, s.local_id.0));
     HashEq::new(ids)
 }
@@ -165,28 +174,11 @@ pub fn func_amir(
             |function| HashEq::from_arc(std::sync::Arc::clone(function)),
         );
     }
-    if let Some(source) = db.source_file_by_id(func_sym.file_id) {
-        let declarations = crate::passes::declaration_signatures(db, source);
-        if declarations
-            .type_info
-            .generic_params
-            .contains_key(&func_sym)
-        {
-            // Source templates are not executable functions. Concrete keys
-            // are analyzed through runtime_unit; do not discover a program
-            // just to present an uninstantiated source item to the IDE.
-            return HashEq::new(empty_func(func_sym));
-        }
-    }
-    let artifacts = crate::passes::lower_amir(db, file);
-    let func = artifacts
-        .amir
-        .funcs
-        .iter()
-        .find(|f| f.symbol == func_sym)
-        .cloned()
-        .unwrap_or_else(|| empty_func(func_sym));
-    HashEq::new(func)
+    // Uninstantiated templates and unknown/synthetic aggregate IDs have no
+    // executable body in this source API.
+    // Recover without discovering/lowering an entire executable. Callers
+    // with concrete instances must use runtime::instance_amir instead.
+    HashEq::new(empty_func(func_sym))
 }
 
 fn source_runtime_unit(

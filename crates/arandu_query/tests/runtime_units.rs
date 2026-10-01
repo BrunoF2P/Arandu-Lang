@@ -843,7 +843,7 @@ fn source_func_amir_and_ide_analysis_do_not_request_program_wide_stages() {
 }
 
 #[test]
-fn function_hir_lowers_only_the_selected_body_and_declaration_context() {
+fn function_hir_retains_only_its_body_and_headers_are_shared_separately() {
     let (mut db, log) = DatabaseImpl::with_rebuild_log();
     let library = db.new_file("math.aru".into(), "module math\npublic func helper(x: int): int { return x + 1 }\nfunc bad(): int { return absent }".into());
     let entry = db.new_file("main.aru".into(), "import math\nfunc selected(): int { return math.helper(41) }\nfunc sibling(): int { return absent }".into());
@@ -862,7 +862,10 @@ fn function_hir_lowers_only_the_selected_body_and_declaration_context() {
         })
         .collect::<Vec<_>>();
     assert_eq!(bodies, vec![selected]);
-    assert!(hir.decls.iter().any(|&id| matches!(hir.pool.decl(id), HirDecl::Func(function) if function.symbol == helper && function.body.is_none())));
+    assert_eq!(hir.decls.len(), 1, "function memo must not retain headers");
+    let headers = arandu_query::runtime::declaration_context(&db, entry);
+    let headers_hir = headers.hir.as_ref().expect("declaration closure");
+    assert!(headers_hir.decls.iter().any(|&id| matches!(headers_hir.pool.decl(id), HirDecl::Func(function) if function.symbol == helper && function.body.is_none())));
     assert_eq!(log.count_executions_matching("item_typing"), 1);
     for forbidden in [
         "prepare_hir",
@@ -901,7 +904,8 @@ fn declaration_context_preserves_constants_and_consuming_receiver_modes() {
     let mut db = DatabaseImpl::new();
     let file = db.new_file("main.aru".into(), "const ANSWER = 42\nstruct Owner { value: int }\nfunc Owner.consume(self: own Owner): int { return self.value }\nfunc selected(): int { return ANSWER }".into());
     let selected = symbol(&db, file, "selected");
-    let lowered = function_hir(&db, file, selected);
+    let lowered = instance_hir(&db, instance(&db, file, "selected", Vec::new()));
+    let lowered = &lowered.artifacts;
     assert!(lowered.diagnostics.is_empty(), "{:?}", lowered.diagnostics);
     let hir = lowered.hir.as_ref().expect("selected HIR");
     assert!(hir
@@ -942,4 +946,73 @@ fn declaration_context_preserves_constants_and_consuming_receiver_modes() {
         }),
         Some(42)
     );
+}
+
+#[test]
+fn synthetic_ids_cannot_trigger_aggregate_lowering_in_source_analysis() {
+    let (mut db, log) = DatabaseImpl::with_rebuild_log();
+    let file = db.new_file(
+        "main.aru".into(),
+        "func identity<T>(x: T): T { return x }\nfunc main(): int { return identity<int>(42) }"
+            .into(),
+    );
+    let program = arandu_query::runtime::runtime_program(&db, file);
+    let synthetic = program
+        .instances
+        .iter()
+        .find(|(_, key)| !key.arguments.is_empty())
+        .expect("concrete identity")
+        .0;
+    log.clear();
+    assert!(arandu_query::func_amir(&db, file, synthetic)
+        .blocks
+        .is_empty());
+    assert!(
+        arandu_query::func_amir(&db, file, SymbolId::new(*file.file_id(&db), u32::MAX))
+            .blocks
+            .is_empty()
+    );
+    let sources = arandu_query::file_func_symbols(&db, file);
+    assert_eq!(sources.as_slice(), [symbol(&db, file, "main")]);
+    for forbidden in ["runtime_program", "lower_amir", "runtime_unit"] {
+        assert_eq!(
+            log.count_executions_matching(forbidden),
+            0,
+            "{}",
+            log.format_chain(true)
+        );
+    }
+}
+
+#[test]
+fn concrete_analysis_uses_structural_identity_and_shares_the_unit() {
+    let (mut db, log) = DatabaseImpl::with_rebuild_log();
+    let file = db.new_file(
+        "main.aru".into(),
+        "func identity<T>(x: T): T { return x }".into(),
+    );
+    for primitive in [Primitive::Int, Primitive::Bool] {
+        let id = instance(&db, file, "identity", vec![TypeShape::Primitive(primitive)]);
+        let unit = runtime_unit(&db, id);
+        let function = arandu_query::runtime::instance_amir(&db, id)
+            .as_ref()
+            .expect("concrete analysis");
+        assert!(Arc::ptr_eq(
+            &function.value,
+            unit.analysis_function.as_ref().expect("shared function")
+        ));
+        assert_eq!(
+            unit.context.type_info.resolve_type_id(function.return_type),
+            arandu_middle::types::ArType::Primitive(primitive)
+        );
+    }
+    assert_eq!(log.count_executions_matching("declaration_context"), 1);
+    for forbidden in ["runtime_program", "lower_amir", "prepare_hir"] {
+        assert_eq!(
+            log.count_executions_matching(forbidden),
+            0,
+            "{}",
+            log.format_chain(true)
+        );
+    }
 }

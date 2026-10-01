@@ -46,6 +46,25 @@ pub struct RuntimeUnit {
     pub analysis_function: Option<std::sync::Arc<arandu_middle::amir::AmirFunc>>,
 }
 
+/// Concrete analysis identities never depend on synthetic symbols allocated
+/// by executable composition. Types/literals remain in runtime_unit's domain.
+#[salsa::tracked]
+#[tracing::instrument(
+    level = "trace",
+    target = "arandu_query",
+    skip(db),
+    fields(query = "instance_amir")
+)]
+pub fn instance_amir<'db>(
+    db: &'db dyn ArandCompilerDb,
+    instance: Instance<'db>,
+) -> Option<HashEq<arandu_middle::amir::AmirFunc>> {
+    runtime_unit(db, instance)
+        .analysis_function
+        .as_ref()
+        .map(|function| HashEq::from_arc(std::sync::Arc::clone(function)))
+}
+
 impl StableHash for FunctionInstance {
     fn stable_hash(&self) -> blake3::Hash {
         // A canonical fresh interner is not sufficient: identical outer ranges
@@ -264,6 +283,15 @@ pub fn instance_hir<'db>(
     fingerprint.update(key.stable_hash().as_bytes());
     if let Some(hir) = &mut hir {
         db.unwind_if_revision_cancelled();
+        // Header linking is memoized per module closure, not repeated in the
+        // retained function HIR and then copied again for every instance.
+        let headers = declaration_context(db, *instance.file(db));
+        fingerprint.update(headers.stable_hash().as_bytes());
+        if let Some(context) = &headers.hir {
+            arandu_semantics::link_hir_module(&mut checked, hir, &headers.type_check, context);
+        } else {
+            diagnostics.extend(headers.diagnostics.iter().cloned());
+        }
         // A concrete argument may come from the caller's module, not from the
         // generic definition's imports (e.g. Vec<String>). Bring only its
         // declaration context, never that module's sibling bodies.
@@ -501,6 +529,67 @@ pub fn declaration_hir(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<Dec
     })
 }
 
+/// Shared body-free declaration closure. Body edits can revalidate individual
+/// declarations but cut off before rebuilding this linked header context.
+#[salsa::tracked]
+#[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(query = "declaration_context", file = ?file.file_id(db)))]
+pub fn declaration_context(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<PreparedHir> {
+    let root = declaration_hir(db, file);
+    let mut checked = root.artifacts.type_check.clone();
+    let mut hir = root
+        .artifacts
+        .hir
+        .as_ref()
+        .map(|source| arandu_middle::hir::HirProgram {
+            span: source.span,
+            module: source.module.clone(),
+            decls: Vec::new(),
+            pool: arandu_middle::hir::HirPool::new(),
+        });
+    let mut fingerprint = blake3::Hasher::new();
+    fingerprint.update(b"DeclarationContext/v1");
+    let mut diagnostics = Vec::new();
+    let mut visited = rustc_hash::FxHashSet::default();
+    let mut pending = vec![file];
+    while let Some(context_file) = pending.pop() {
+        db.unwind_if_revision_cancelled();
+        if !visited.insert(*context_file.file_id(db)) {
+            continue;
+        }
+        let declarations = declaration_hir(db, context_file);
+        fingerprint.update(declarations.stable_hash().as_bytes());
+        diagnostics.extend(declarations.artifacts.diagnostics.iter().cloned());
+        if let (Some(dest), Some(source)) = (&mut hir, &declarations.artifacts.hir) {
+            arandu_semantics::link_hir_module(
+                &mut checked,
+                dest,
+                &declarations.artifacts.type_check,
+                source,
+            );
+        }
+        for (_, imported) in crate::passes::module_import_edges(db, context_file)
+            .iter()
+            .rev()
+        {
+            if let Some(imported) = imported.and_then(|id| db.source_file_by_id(id)) {
+                pending.push(imported);
+            }
+        }
+    }
+    if diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.severity == Severity::Error)
+    {
+        hir = None;
+    }
+    HashEq::new(PreparedHir {
+        hir,
+        type_check: checked,
+        diagnostics,
+        source_fingerprint: fingerprint.finalize(),
+    })
+}
+
 #[salsa::tracked]
 #[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
     query = "function_hir", file = ?file.file_id(db), function = ?symbol,
@@ -545,53 +634,13 @@ pub fn function_hir(
     fingerprint.update(b"FunctionHir/v1");
     fingerprint.update(source.stable_hash().as_bytes());
     let mut diagnostics = Vec::new();
-    let mut hir =
-        match arandu_semantics::lower_function_to_hir(&mut checked, &source.program, symbol) {
-            Ok(hir) => hir,
-            Err(errors) => {
-                diagnostics = errors;
-                None
-            }
-        };
-    if let Some(hir) = &mut hir {
-        let mut visited = rustc_hash::FxHashSet::default();
-        let mut pending = vec![file];
-        while let Some(context_file) = pending.pop() {
-            db.unwind_if_revision_cancelled();
-            if !visited.insert(*context_file.file_id(db)) {
-                continue;
-            }
-            let declarations = declaration_hir(db, context_file);
-            fingerprint.update(declarations.stable_hash().as_bytes());
-            if let Some(context) = &declarations.artifacts.hir {
-                arandu_semantics::link_hir_module(
-                    &mut checked,
-                    hir,
-                    &declarations.artifacts.type_check,
-                    context,
-                );
-            } else {
-                diagnostics.extend(declarations.artifacts.diagnostics.iter().cloned());
-            }
-            // Import topology is a narrow memo. Depending on parse here would
-            // relower every sibling's HIR after an unrelated body edit even
-            // when declaration_hir itself had already cut off that edit.
-            for (_, imported) in crate::passes::module_import_edges(db, context_file)
-                .iter()
-                .rev()
-            {
-                if let Some(imported) = imported.and_then(|id| db.source_file_by_id(id)) {
-                    pending.push(imported);
-                }
-            }
+    let hir = match arandu_semantics::lower_function_to_hir(&mut checked, &source.program, symbol) {
+        Ok(hir) => hir,
+        Err(errors) => {
+            diagnostics = errors;
+            None
         }
-    }
-    if diagnostics
-        .iter()
-        .any(|diagnostic| diagnostic.severity == Severity::Error)
-    {
-        hir = None;
-    }
+    };
     HashEq::new(PreparedHir {
         hir,
         type_check: checked,

@@ -1,5 +1,5 @@
-//! Narrow CTFE lowering/evaluation queries. General runtime `func_amir` remains
-//! a projection of whole-program lowering; this path admits scalar, non-generic
+//! Narrow CTFE lowering/evaluation queries. Unlike final runtime validation,
+//! this staged path admits scalar, non-generic
 //! functions (including direct imported callees) only and never calls that
 //! final lowering query or the body-derived borrow-interface producer.
 
