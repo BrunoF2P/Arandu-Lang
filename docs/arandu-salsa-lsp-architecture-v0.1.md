@@ -29,17 +29,21 @@ impedem o LSP de publicar resultados de buffers/revisões obsoletos.
 | `parse`, `resolve`, `module_signatures`, `type_check`, `lower_amir` | Reais |
 | `declaration_signatures` | Assinaturas declarativas; imports não solicitam contratos derivados de corpos nem MIR final |
 | `item_typing` / `file_typing` | Checker canônico contra declarações; sem dependência dos contratos de fluxo |
-| `prepare_hir` / `borrow_interfaces` | HIR/mono compartilhados; projeção de contratos antes da validação final |
+| `prepare_hir` / `borrow_interfaces` | Produtor global legado para oráculos / contratos por unidades independentes antes da validação final |
 | `local_symbols`, `exported_symbols`, `func_amir` | Reais |
 | `ctfe_func_amir` / `ctfe_eval` | Internas, escalares não genéricas; chamadas importadas rastreadas por unidade |
 | `declaration_hir` / `function_hir` / `instance_hir` | Produtor interno de um corpo concreto; callees são assinaturas sem corpo |
-| `runtime_raw_unit` / `instance_contracts` / `runtime_unit` | Lowering, convergência de contratos e validação separados por instância; ainda não são o caminho da CLI/CGU |
+| `runtime_raw_unit` / `instance_contracts` / `runtime_unit` | Lowering, convergência de contratos e validação separados por instância no caminho ativo |
+| `runtime_program` | Descoberta determinística de dependências e composição canônica para `lower_amir`/backends |
 | `liveness_facts` | Real (`arandu_mir::liveness`) |
 | `block_dataflow_facts` | live/init/moved/stmt counts por bloco |
 | `func_analysis_diags` / `block_diagnostics` / `file_ide_diagnostics` | F4 — diags IDE memoizados |
 | DX.5 `RebuildLog` | Opt-in (`-Zexplain-rebuild`) |
 
-`func_amir` de compatibilidade ainda projeta sobre `lower_amir` program-wide. O caminho
+`func_amir` de uma definição não genérica compartilha a função de `runtime_unit`,
+sem solicitar composição global. IDs sintéticos do agregado conservam um
+fallback de projeção por compatibilidade; templates não instanciados não
+ganham corpo executável. O caminho
 interno CTFE é distinto: `item_source_input` e `item_typing`, com
 `declaration_signatures`/alvo, alimentam o lowering HIR canônico de apenas uma
 função; sua AMIR possui pool próprio e descritores escalares resolvidos.
@@ -63,29 +67,21 @@ ownership, mas não retipa o caller se os tipos declarados continuarem iguais.
 A validação de atributos/testes também consulta somente declarações, para não
 reintroduzir indiretamente a dependência de fluxo em `file_typing`.
 
-`borrow_interfaces` não chama mais `lower_amir`. Usa `prepare_hir`, cuja HIR
-canônica e monomorphização são compartilhadas por Arc com o caminho final.
-`arandu_mir::lower_borrow_interfaces` baixa apenas funções com retorno que pode
-carregar empréstimos e usa o mesmo solver de ponto fixo. Não executa a validação
-interprocedural final nem a promoção de escapes. Módulos sem candidatos não
-precisam de body typing/HIR para publicar seus contratos declarados/herdados.
-O caminho final continua baixando e validando todas as funções, inclusive as
-que a projeção dispensou. Produzir um contrato não certifica segurança do corpo.
+`borrow_interfaces` consulta `instance_contracts` somente para definições com
+retorno potencialmente emprestado. Publica IDs fonte para funções ordinárias e
+chaves estruturais para instâncias; IDs sintéticos de outro domínio nunca são
+contratos públicos. Templates não instanciados conservam apenas metadata
+declarativa de recuperação, não uma prova de fluxo. A validação de cada
+instância concreta consulta o ponto fixo real. A query não solicita
+`prepare_hir`, `lower_amir`, promoção de escapes ou validação final.
 
-O estágio HIR de compatibilidade ainda é program-wide. Seu fingerprint conservador cobre fontes
-tipadas vinculadas, resultado de tipos e diagnósticos; não usa `Debug` ou
-endereços como identidade. Cutoff semântico continua na projeção dos contratos.
-Funções emprestadas são baixadas novamente pelo caminho final para obter AMIR
-owned/validada; não há deep-clone de HIR ou `AmirProgram`. Reuso completo de
-unidades/pools e granularidade por instância permanecem para o marco 0.3.
-Testes de staging provam ausência de body typecheck/lowering ao consultar
-declarações, cutoff independente de mudanças na origem do empréstimo,
-invalidação por mudança de tipo declarado, ciclos e preservação de ownership
-por imports transitivos/recuperação sintática, equivalência dos contratos
-projetados/finais em recursão e monomorphização, reuso do estágio HIR e rejeição
-final de um sibling inseguro dispensado pela projeção.
+`prepare_hir` e os produtores puros globais permanecem como compatibilidade e
+oráculo. Seu fingerprint conservador cobre fontes vinculadas, tipos e
+diagnósticos. O runtime ativo não depende desse estágio. Testes de staging
+provam consultas declarativas sem corpos, cutoff entre declaração e origem,
+recursão, imports transitivos e rejeição final de um sibling inseguro.
 
-### Produtor interno de runtime por instância
+### Runtime por instância e composição ativa
 
 `function_hir` combina o item tipado com `declaration_hir` dos módulos
 registrados. Apenas o corpo selecionado é baixado; a mesma rotina canônica de
@@ -104,6 +100,14 @@ e um mapa de símbolos locais para chaves estruturais; suas AMIRs não são
 dependências do lowering do caller. `runtime_raw_unit` conserva contexto de
 tipos/símbolos, literais e metadata de debug próprios. Não certifica segurança.
 
+Destruidores implícitos são descobertos também na closure estrutural de campos
+e payloads concretos, sem consultar corpos de callees. Assim, um retorno de
+`BitSet` já carrega a obrigação de destruir seu `Vec<u64>` interno no caller.
+A visita é determinística e limitada a 4096 tipos e aos bounds de `TypeShape`.
+Move checking e drop-on-assign consultam a mesma representação canônica de
+caminhos; a rota de dereferência é restaurada ao materializar drops. Regressões
+exercitam rehash com buffer vivo, campos retornados e ASan/LSan no backend C.
+
 `instance_contracts` percorre a closure de chamadas com retorno emprestado,
 limitada a 4096 unidades e com cancelamento entre unidades/transferências.
 Resolve contratos por ponto fixo usando a transferência canônica do MIR em
@@ -120,11 +124,69 @@ recursão sem prova e O010 para retorno local. A especialização visita também
 init/step de loops C-style. Pools são compostos pela rotina MIR compartilhada;
 visitors mutáveis incluem projeções e todos os argumentos de terminadores.
 
-**Limite de integração:** estes produtores ainda não substituem `lower_amir`,
-`func_amir`, a descoberta global de instâncias ou a composição de metadata
-consumida pelos backends/CGUs. O remapeamento global de tipos/símbolos e os
-gates clean/incremental, paridade de backends e CPU/RSS continuam pendentes.
-Validar uma unidade não certifica seus callees nem um programa completo.
+`runtime_program` parte das funções não genéricas do arquivo de entrada e
+descobre as unidades importadas/instanciadas alcançadas por referências de
+função (incluindo callbacks, não só calls) e destruidores implícitos. Headers
+dos módulos de argumentos nominais concretos são vinculados sem ler seus
+corpos. Imports e corpos alcançados inválidos impedem a publicação de AMIR
+executável; validar o caller não certifica seus callees. A closure é limitada a
+4096 instâncias e consulta cancelamento durante descoberta e composição.
+
+O compositor puro no MIR preserva IDs fonte compostos, aloca símbolos
+sintéticos por chave estrutural e traduz tipos, metadata e literais para um
+domínio agregado único. Visitors compartilhados cobrem SSA, projeções e
+argumentos de salto. Pseudo-tipos numéricos inferidos são defaultados antes de
+formar chaves; nomes nominais qualificados e aridades evitam aliases nativos.
+`lower_amir` compartilha o resultado agregado por Arc. Backends continuam
+consumindo a mesma AMIR, sem saber como Salsa produziu os corpos.
+
+Análises IDE usam tipos, símbolos e contrato da própria unidade. Uma função
+inválida pode reter AMIR de análise para diagnósticos por bloco, mas nunca é
+publicada para execução. Quick fixes estruturados continuam preservados.
+
+**Limite:** composição final e metadata de headers ainda são agregadas. Hashes
+de CGU preservam seus guardrails de superfície/ABI; este lote não prova que
+todo novo tipo/instância preserve CGUs irmãs nem encerra o marco 0.3. A DB
+batch continua nova a cada processo. Latência p95, retenção de contextos e
+validação nativa Windows/macOS continuam gates distintos.
+
+O workload informativo `runtime_workload` compara o produtor puro global
+legado e o ativo no mesmo checkout: 32 funções com `Vec<int>`, helper genérico,
+stdlib registrada, cold/warm e edição privada de corpo. Ambos os caminhos têm
+uma fronteira Salsa memoizada, inclusive no teste legado. Executar cada variante
+em processo separado (após compilar o teste; GNU time é opcional):
+
+```sh
+cargo test --locked -p arandu_query --test runtime_workload --no-run
+ARANDU_WORKLOAD_PRODUCER=legacy /usr/bin/time -v cargo test --locked -p arandu_query --test runtime_workload -- --ignored --nocapture --test-threads=1
+ARANDU_WORKLOAD_PRODUCER=units /usr/bin/time -v cargo test --locked -p arandu_query --test runtime_workload -- --ignored --nocapture --test-threads=1
+```
+
+O tempo é informativo, não budget imposto à CI. O teste exige exatamente uma
+HIR e unidade raw/final reexecutadas na edição privada. Para separar o custo
+da composição pura, usar `ARANDU_WORKLOAD_COMPOSE_ONLY=1`. O produtor legado é
+um oráculo dentro do checkout atual, não um binário histórico. Para RSS/CPU,
+preferir executar diretamente o binário de teste informado por `--no-run`,
+excluindo compilação/link Rust e o processo Cargo da medida.
+
+Medição informativa de 2026-09-30: Linux x86-64, Xeon E5-2667 v2, perfil debug,
+cinco processos isolados por produtor, uma thread de testes, log Salsa opt-in.
+Medianas (sem compilar o teste na janela):
+
+| Medida | Global legado | Unidades |
+| --- | ---: | ---: |
+| Produção fria | 225,7 ms | 702,2 ms |
+| Memo quente | 7 µs | 7 µs |
+| Edição privada | 85,5 ms | 64,8 ms |
+| CPU user + system, sessão cold/warm/edit | 0,317 s | 0,778 s |
+| Pico RSS, sessão cold/warm/edit | 21,7 MiB | 29,4 MiB |
+
+Não há ganho global de performance demonstrado: o build frio e a retenção
+regrediram neste workload, enquanto a edição privada melhorou. A composição
+isolada ficou próxima de 34 ms em uma sondagem separada. Reduzir duplicação de
+headers/contextos exige perfil adicional, preservando IDs locais e cutoff.
+Estas amostras não certificam p95 ≤ 10 ms, release otimizada, projeto grande
+ou suporte nativo de outros sistemas.
 
 ### I/O de fonte
 
@@ -248,7 +310,7 @@ Validar uma unidade não certifica seus callees nem um programa completo.
 ### F4 / P3 — delta on-type
 
 - `block_dataflow_facts`: live/init/moved/stmt por bloco.  
-- **`item_ide_diagnostics`**: diags de typeck **por item** (`item_body_typeck`) + AMIR se func.  
+- **`item_ide_diagnostics`**: typeck **por item** (`item_typing`) + AMIR/contratos no domínio próprio de runtime se func.
 - **`file_ide_diagnostics`**: union barata dos memos de item + signatures.  
 - Early cutoff entre itens (testes `item_body_cutoff`, `ide_diag_delta`).  
 - Typeck monólito substituído por compose P1/P2; wire LSP ainda manda lista full (protocolo).
