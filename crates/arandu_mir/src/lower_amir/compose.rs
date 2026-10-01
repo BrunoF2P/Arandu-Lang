@@ -182,43 +182,12 @@ pub fn compose_function_units(
         let remap_symbol = |symbol: SymbolId| symbols.get(&symbol).copied().unwrap_or(symbol);
         // Nominal metadata is source-owned. Specialization allocates only
         // functions/parameters/locals, so it cannot rebind named type symbols.
-        let mut info = (*input.context.type_info).clone();
-        info.decl_types = info
-            .decl_types
-            .into_iter()
-            .map(|(key, value)| (remap_symbol(key), value))
-            .collect();
-        info.return_borrow_summaries = info
-            .return_borrow_summaries
-            .into_iter()
-            .map(|(key, value)| (remap_symbol(key), value))
-            .collect();
-        info.function_effects = info
-            .function_effects
-            .into_iter()
-            .map(|(key, value)| (remap_symbol(key), value))
-            .collect();
-        info.unsafe_functions = info
-            .unsafe_functions
-            .into_iter()
-            .map(remap_symbol)
-            .collect();
-        info.destructor_instances = info
-            .destructor_instances
-            .into_iter()
-            .map(|(key, value)| (key, remap_symbol(value)))
-            .collect();
-        if input.key.definition.file_id != aggregate.symbols.file_id {
-            info.expr_types.clear();
-        }
-        // Effects are function-owned, not expression-indexed. merge_from's
-        // body-shard fast path skips them for an empty expression shard.
-        aggregate.type_info_mut().function_effects.extend(
-            info.function_effects
-                .iter()
-                .map(|(&symbol, &effects)| (symbol, effects)),
+        let include_expressions = input.key.definition.file_id == aggregate.symbols.file_id;
+        aggregate.type_info_mut().merge_codegen_context(
+            &input.context.type_info,
+            remap_symbol,
+            include_expressions,
         );
-        aggregate.type_info_mut().merge_from(&info);
         let mut unit = input.unit.clone();
         let mut types = FxHashMap::<TypeId, TypeId>::default();
         let mut invalid = false;

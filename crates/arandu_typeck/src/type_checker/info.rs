@@ -667,9 +667,35 @@ pub fn translate_type(ty: &ArType, from: &TypeInterner, to: &mut TypeInterner) -
 
 impl TypeInfo {
     pub fn merge_from(&mut self, other: &TypeInfo) {
+        self.merge_context(other, |symbol| symbol, false, true);
+    }
+
+    /// Compose units from one revision without cloning their interners or
+    /// translating identical source-owned headers for every body. Only
+    /// functions/parameters/locals may be rebased; nominal metadata is shared
+    /// by source identity. Not suitable for merging metadata across revisions.
+    pub fn merge_codegen_context(
+        &mut self,
+        other: &TypeInfo,
+        remap: impl Fn(SymbolId) -> SymbolId,
+        include_expressions: bool,
+    ) {
+        self.merge_context(other, remap, true, include_expressions);
+    }
+
+    fn merge_context(
+        &mut self,
+        other: &TypeInfo,
+        remap: impl Fn(SymbolId) -> SymbolId,
+        shared_headers: bool,
+        include_expressions: bool,
+    ) {
         // Symbol safety contracts are independent of expression-type shards.
         self.unsafe_functions
-            .extend(other.unsafe_functions.iter().copied());
+            .extend(other.unsafe_functions.iter().copied().map(&remap));
+        for (&symbol, &effects) in &other.function_effects {
+            self.function_effects.insert(remap(symbol), effects);
+        }
 
         // Fast path: empty body shards / empty import stubs.
         if other.decl_types.is_empty()
@@ -692,19 +718,26 @@ impl TypeInfo {
         }
 
         for (&symbol, &other_type_id) in &other.decl_types {
+            let mapped = remap(symbol);
+            if shared_headers && mapped == symbol && self.decl_types.contains_key(&mapped) {
+                continue;
+            }
             let other_type = other.type_interner.resolve(other_type_id);
             let translated =
                 translate_type(&other_type, &other.type_interner, &mut self.type_interner);
             let id = self.type_interner.intern(translated);
-            self.record_decl_type(symbol, id);
+            self.record_decl_type(mapped, id);
         }
         self.return_borrow_summaries.extend(
             other
                 .return_borrow_summaries
                 .iter()
-                .map(|(&symbol, summary)| (symbol, summary.clone())),
+                .map(|(&symbol, summary)| (remap(symbol), summary.clone())),
         );
         for (symbol, fields) in &other.struct_fields {
+            if shared_headers && self.struct_fields.contains_key(symbol) {
+                continue;
+            }
             let translated: StructFields =
                 StructFields::from_entries(fields.iter().map(|f| StructFieldInfo {
                     name: f.name.clone(),
@@ -722,6 +755,9 @@ impl TypeInfo {
         self.private_fields
             .extend(other.private_fields.iter().copied());
         for (symbol, (enum_id, shape)) in &other.enum_variants {
+            if shared_headers && self.enum_variants.contains_key(symbol) {
+                continue;
+            }
             let translated_shape = match shape {
                 EnumPayloadShape::Unit => EnumPayloadShape::Unit,
                 EnumPayloadShape::Tuple(tids) => {
@@ -748,18 +784,25 @@ impl TypeInfo {
             let ty = other.type_interner.resolve(other_type);
             let translated = translate_type(&ty, &other.type_interner, &mut self.type_interner);
             let concrete = self.type_interner.intern(translated);
-            self.destructor_instances.insert(concrete, destructor);
+            self.destructor_instances
+                .insert(concrete, remap(destructor));
         }
         for (symbol, params) in &other.generic_params {
             self.generic_params.insert(*symbol, Arc::clone(params));
         }
         for (symbol, &def_tid) in &other.generic_defaults {
+            if shared_headers && self.generic_defaults.contains_key(symbol) {
+                continue;
+            }
             let ty = other.type_interner.resolve(def_tid);
             let translated = translate_type(&ty, &other.type_interner, &mut self.type_interner);
             self.generic_defaults
                 .insert(*symbol, self.type_interner.intern(translated));
         }
         for (symbol, constraints) in &other.param_constraints {
+            if shared_headers && self.param_constraints.contains_key(symbol) {
+                continue;
+            }
             let mut translated_constraints = Vec::with_capacity(constraints.len());
             for c in constraints.iter() {
                 let mut new_args = SmallVec::with_capacity(c.type_args.len());
@@ -778,6 +821,9 @@ impl TypeInfo {
                 .insert(*symbol, Arc::new(translated_constraints));
         }
         for (symbol, interface_info) in &other.interfaces {
+            if shared_headers && self.interfaces.contains_key(symbol) {
+                continue;
+            }
             let mut translated_methods = Vec::new();
             for m in &interface_info.methods {
                 let ty = other.type_interner.resolve(m.sig_id);
@@ -801,7 +847,7 @@ impl TypeInfo {
 
         // Expr types (body typeck shards): re-intern TypeIds into `self`.
         // Signature-only TypeInfos leave this empty — skip the O(n) scan.
-        if other.expr_types.iter().all(|s| s.is_none()) {
+        if !include_expressions || other.expr_types.iter().all(|s| s.is_none()) {
             return;
         }
         if other.expr_types.len() > self.expr_types.len() {
@@ -819,9 +865,6 @@ impl TypeInfo {
                 translate_type(&other_ty, &other.type_interner, &mut self.type_interner);
             let id = self.type_interner.intern(translated);
             self.expr_types[idx] = Some(id);
-        }
-        for (&symbol, &effects) in &other.function_effects {
-            self.function_effects.insert(symbol, effects);
         }
     }
 

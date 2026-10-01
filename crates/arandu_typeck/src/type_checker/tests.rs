@@ -391,6 +391,93 @@ fn merge_from_decl_types() {
 }
 
 #[test]
+fn codegen_context_reuses_source_headers_and_rebases_function_metadata() {
+    let mut source = TypeInfo::new();
+    let integer = source
+        .type_interner
+        .intern(ArType::Primitive(Primitive::Int));
+    let nominal = SymbolId::new(1, 1);
+    let generated = SymbolId::new(1, 2);
+    let mapped = SymbolId::new(0, 20);
+    source.decl_types.insert(generated, integer);
+    source
+        .function_effects
+        .insert(generated, arandu_middle::EffectFlags::HEAP);
+    source.unsafe_functions.insert(generated);
+    source.destructor_instances.insert(integer, generated);
+    source.struct_fields.insert(
+        nominal,
+        std::sync::Arc::new(StructFields::from_entries([StructFieldInfo {
+            name: "value".into(),
+            symbol: None,
+            ty: integer,
+            index: 0,
+        }])),
+    );
+    source.expr_types.push(Some(integer));
+    let remap = |symbol| if symbol == generated { mapped } else { symbol };
+    let mut aggregate = TypeInfo::new();
+    aggregate.merge_codegen_context(&source, remap, false);
+    let fields = std::sync::Arc::clone(aggregate.struct_fields.get(&nominal).expect("fields"));
+    aggregate.merge_codegen_context(&source, remap, false);
+    assert!(std::sync::Arc::ptr_eq(
+        &fields,
+        aggregate.struct_fields.get(&nominal).expect("same header")
+    ));
+    assert_eq!(
+        aggregate.decl_type(mapped),
+        Some(ArType::Primitive(Primitive::Int))
+    );
+    assert!(!aggregate.decl_types.contains_key(&generated));
+    assert_eq!(
+        aggregate.function_effects[&mapped],
+        arandu_middle::EffectFlags::HEAP
+    );
+    assert!(aggregate.unsafe_functions.contains(&mapped));
+    let translated = aggregate
+        .type_interner
+        .intern(ArType::Primitive(Primitive::Int));
+    assert_eq!(aggregate.destructor_instances[&translated], mapped);
+    assert!(
+        aggregate.expr_types.is_empty(),
+        "foreign AST slots must not mix with the entry pool"
+    );
+}
+
+#[test]
+fn ordinary_merge_still_replaces_changed_headers_and_keeps_signature_effects() {
+    let mut source = TypeInfo::new();
+    let symbol = SymbolId::new(1, 1);
+    source
+        .function_effects
+        .insert(symbol, arandu_middle::EffectFlags::HEAP);
+    let mut target = TypeInfo::new();
+    target.merge_from(&source);
+    assert_eq!(
+        target.function_effects[&symbol],
+        arandu_middle::EffectFlags::HEAP
+    );
+    let integer = source
+        .type_interner
+        .intern(ArType::Primitive(Primitive::Int));
+    source
+        .struct_fields
+        .insert(symbol, std::sync::Arc::new(StructFields::new()));
+    target.merge_from(&source);
+    source.struct_fields.insert(
+        symbol,
+        std::sync::Arc::new(StructFields::from_entries([StructFieldInfo {
+            name: "new_field".into(),
+            symbol: None,
+            ty: integer,
+            index: 0,
+        }])),
+    );
+    target.merge_from(&source);
+    assert!(target.struct_fields[&symbol].get("new_field").is_some());
+}
+
+#[test]
 fn merge_from_struct_fields() {
     let mut from_info = TypeInfo::new();
     let int_id = from_info
