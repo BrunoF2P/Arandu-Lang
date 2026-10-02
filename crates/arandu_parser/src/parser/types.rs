@@ -307,6 +307,22 @@ impl<'a> Parser<'a> {
     }
 
     pub(super) fn parse_type(&mut self) -> Result<TypeExprId, ParseError> {
+        if self.recursion_depth >= 105 {
+            return Err(ParseError::new(
+                ParseErrorCode::ExpectedType,
+                "type recursion limit exceeded",
+                self.current(),
+                self.file_id,
+                self.source,
+            ));
+        }
+        self.recursion_depth += 1;
+        let res = self.parse_type_inner();
+        self.recursion_depth -= 1;
+        res
+    }
+
+    fn parse_type_inner(&mut self) -> Result<TypeExprId, ParseError> {
         let start = self.mark();
         let mut ty = self.parse_type_primary()?;
         if self.eat_name("QUESTION") {

@@ -69,8 +69,20 @@ pub fn try_hand_lower_type(
     Some(ty)
 }
 
+const MAX_TYPE_DEPTH: u32 = 105;
+
 /// Parse a type expression advancing `cur`.
 pub fn parse_type(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<TypeExprId> {
+    if ctx.depth >= MAX_TYPE_DEPTH {
+        return None;
+    }
+    ctx.depth += 1;
+    let res = parse_type_inner(ctx, cur);
+    ctx.depth -= 1;
+    res
+}
+
+fn parse_type_inner(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<TypeExprId> {
     let start_tok = cur.peek()?;
     let start = start_tok.start;
 

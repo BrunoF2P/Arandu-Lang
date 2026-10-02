@@ -555,3 +555,16 @@ fn deeply_nested_expression_does_not_stack_overflow_and_recovers() {
     let output = crate::syntax::lower_syntax_to_program_recovering(&tree, 0);
     assert!(!output.diagnostics.is_empty());
 }
+
+#[test]
+fn deeply_nested_type_does_not_stack_overflow_and_recovers() {
+    let mut source = String::from("func main() {\n    let x: ");
+    for _ in 0..115 {
+        source.push_str("ref ");
+    }
+    source.push_str("i32 = 42;\n}\n");
+
+    let tree = crate::syntax::parse_syntax(&source);
+    let output = crate::syntax::lower_syntax_to_program_recovering(&tree, 0);
+    assert!(!output.diagnostics.is_empty());
+}
