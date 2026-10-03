@@ -546,4 +546,81 @@ mod tests {
             )
         );
     }
+
+    #[test]
+    fn comptime_hover_displays_evaluated_value_for_blocks_and_generic_arguments() {
+        let text = concat!(
+            "func count<comptime N: uint>(): uint { return N }\n",
+            "func main(): int {\n",
+            "    let calculated = count<comptime (20 + 22)>()\n",
+            "    let block_val = comptime {\n",
+            "        let half = 21\n",
+            "        return half * 2\n",
+            "    }\n",
+            "    return (calculated + block_val) as int\n",
+            "}\n",
+        );
+        let mut host = AnalysisHost::new();
+        let file = host.new_file("comptime_hover.aru".into(), text.into());
+        let snap = host.snapshot();
+        let index = LineIndex::new(text);
+
+        // 1. Hover on `comptime (20 + 22)`
+        let arg_offset = text.find("comptime (20 + 22)").expect("comptime arg");
+        let arg_hover = hover(
+            &snap,
+            file,
+            text,
+            offset_to_position(&index, arg_offset as u32),
+        )
+        .expect("hover for comptime arg");
+        let HoverContents::Markup(arg_content) = arg_hover.contents else {
+            panic!("markdown hover expected");
+        };
+        assert!(arg_content.value.contains("= 42"), "{arg_content:?}");
+        assert!(
+            arg_content.value.contains("evaluated at compile time"),
+            "{arg_content:?}"
+        );
+
+        // 2. Hover on `count` in the generic call `count<comptime (20 + 22)>()`
+        let call_offset = text.rfind("count<").expect("count call");
+        let call_hover = hover(
+            &snap,
+            file,
+            text,
+            offset_to_position(&index, call_offset as u32),
+        )
+        .expect("hover for count call");
+        let HoverContents::Markup(call_content) = call_hover.contents else {
+            panic!("markdown hover expected");
+        };
+        assert!(
+            call_content.value.contains("func count"),
+            "{call_content:?}"
+        );
+        assert!(call_content.value.contains("= 42"), "{call_content:?}");
+        assert!(
+            call_content.value.contains("evaluated at compile time"),
+            "{call_content:?}"
+        );
+
+        // 3. Hover on `comptime {`
+        let block_offset = text.find("comptime {").expect("comptime block");
+        let block_hover = hover(
+            &snap,
+            file,
+            text,
+            offset_to_position(&index, block_offset as u32),
+        )
+        .expect("hover for comptime block");
+        let HoverContents::Markup(block_content) = block_hover.contents else {
+            panic!("markdown hover expected");
+        };
+        assert!(block_content.value.contains("= 42"), "{block_content:?}");
+        assert!(
+            block_content.value.contains("evaluated at compile time"),
+            "{block_content:?}"
+        );
+    }
 }

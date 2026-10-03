@@ -159,6 +159,21 @@ export async function run(): Promise<void> {
 
         await verifyHighlightingAcrossBuiltInThemes(uri);
 
+        const comptimeUri = vscode.Uri.joinPath(workspace.uri, 'comptime.aru');
+        const comptimeDiagnosticsChanged = waitForDiagnosticsChange(comptimeUri);
+        await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(comptimeUri));
+        assert.deepEqual(await comptimeDiagnosticsChanged, [], 'valid comptime values, static loops and selected branches must not report false editor errors');
+        await verifyHighlightingAcrossBuiltInThemes(comptimeUri);
+        const comptimeDocument = await vscode.workspace.openTextDocument(comptimeUri);
+        const argumentOffset = comptimeDocument.getText().indexOf('comptime (0 + 0)');
+        assert.ok(argumentOffset >= 0, 'computed argument fixture');
+        const argumentHovers = await vscode.commands.executeCommand<vscode.Hover[]>(
+            'vscode.executeHoverProvider', comptimeUri, comptimeDocument.positionAt(argumentOffset)
+        );
+        assert.ok(argumentHovers?.some(hover => hover.contents.some(content =>
+            typeof content !== 'string' && content.value.includes('= 0') && content.value.includes('evaluated at compile time')
+        )), 'hover must display the computed generic value');
+
         await vscode.commands.executeCommand('arandu.restartServer');
         const afterRestart = await poll(() =>
             vscode.commands.executeCommand<vscode.CompletionList>(

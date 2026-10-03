@@ -7,6 +7,7 @@
 //! drifting apart.
 
 pub mod completion;
+pub mod comptime;
 pub mod presentation;
 
 pub use completion::{
