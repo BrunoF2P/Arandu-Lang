@@ -21,7 +21,7 @@ use crate::jit::isa::codegen_ice;
 
 pub(crate) mod dependencies;
 
-const CGU_HASH_SCHEMA: &[u8] = b"arandu-cgu-input-v3\0";
+const CGU_HASH_SCHEMA: &[u8] = b"arandu-cgu-input-v4\0";
 const CRANELIFT_IDENTITY: &[u8] = b"cranelift-0.136.1\0";
 
 /// A discrete compilation unit corresponding to one function or item.
@@ -561,6 +561,10 @@ impl HashContext<'_> {
             AmirLiteralEntry::Float(value) => {
                 self.hash.tag(1);
                 self.hash.str(value);
+            }
+            AmirLiteralEntry::FloatBits(value) => {
+                self.hash.tag(4);
+                self.hash.bytes(&value.canonical_bytes());
             }
             AmirLiteralEntry::Str(value) => {
                 self.hash.tag(2);

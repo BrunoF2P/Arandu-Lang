@@ -43,7 +43,7 @@ fn compile_src(src: &str) -> (AmirProgram, TypeCheckResult) {
     );
 
     let hir = lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
-    let (amir, _) = lower_to_amir_with_interfaces(&mut tc, &hir, 64).expect("AMIR lowering failed");
+    let (amir, _) = lower_to_amir_with_interfaces(&mut tc, &hir, 8).expect("AMIR lowering failed");
     (amir, tc)
 }
 
@@ -61,6 +61,82 @@ fn execute_cranelift(amir: &AmirProgram, tc: &TypeCheckResult) -> i32 {
     }
 }
 
+#[test]
+fn parity_float_literals_round_once_and_preserve_signed_zero_and_subnormals() {
+    let source = r#"
+func main(): int {
+    let negative: f64 = -0.0
+    if 1.0 / negative >= 0.0 { return 1 }
+    let tiny: f64 = 5e-324
+    if tiny + tiny != 1e-323 { return 2 }
+    let direct: f32 = 1.000000059604644775390625000000000000000000000000000001
+    let next: f32 = 1.00000011920928955078125
+    if direct != next { return 3 }
+    return 0
+}
+"#;
+    for level in [OptLevel::O0, OptLevel::O1, OptLevel::O2] {
+        let (mut amir, tc) = compile_src(source);
+        optimize_amir_checked_with_level(
+            &mut amir,
+            &tc.symbols,
+            &tc.type_info.type_interner,
+            level,
+        )
+        .unwrap();
+        assert_eq!(execute_cranelift(&amir, &tc), 0, "{level:?}");
+        assert_eq!(
+            execute_c(&format!("float_ieee_{level:?}"), &amir, &tc),
+            0,
+            "{level:?}"
+        );
+    }
+}
+
+#[test]
+fn c_float_encoding_helpers_preserve_all_ieee_categories() {
+    let (amir, tc) = compile_src("func main(): int { return 0 }");
+    let emitted = emit_c(&amir, &tc);
+    let source = format!(
+        "#define main arandu_unused_main\n{emitted}\n#undef main\n{}",
+        r#"
+int main(void) {
+    const uint32_t singles[] = { 0, UINT32_C(2147483648), 1, UINT32_C(2139095040), UINT32_C(4286578688), UINT32_C(2143294004) };
+    const uint64_t doubles[] = { 0, UINT64_C(9223372036854775808), 1, UINT64_C(9218868437227405312), UINT64_C(18442240474082181120), UINT64_C(9221120237041095220) };
+    for (size_t i = 0; i < 6; ++i) {
+        float single = ar_f32_from_bits(singles[i]);
+        double wide = ar_f64_from_bits(doubles[i]);
+        uint32_t single_bits;
+        uint64_t wide_bits;
+        memcpy(&single_bits, &single, sizeof(single_bits));
+        memcpy(&wide_bits, &wide, sizeof(wide_bits));
+        if (single_bits != singles[i] || wide_bits != doubles[i]) return 1;
+    }
+    return 0;
+}
+"#
+    );
+    let directory = env::temp_dir().join("arandu_c_tests");
+    fs::create_dir_all(&directory).unwrap();
+    let source_file = directory.join("float_encoding_helpers.c");
+    let executable = directory.join("float_encoding_helpers.exe");
+    fs::write(&source_file, source).unwrap();
+    let compiler = env::var("CC").unwrap_or_else(|_| "gcc".into());
+    let compilation = c_compiler(&compiler)
+        .arg("-O2")
+        .arg(&source_file)
+        .arg("-o")
+        .arg(&executable)
+        .arg("-lm")
+        .output()
+        .unwrap();
+    assert!(
+        compilation.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compilation.stderr)
+    );
+    assert!(Command::new(executable).status().unwrap().success());
+}
 fn emit_c(amir: &AmirProgram, tc: &TypeCheckResult) -> String {
     // Host parity only; Cranelift is host-only — see solidification matrix.
     arandu_backend_c::emit_c(
@@ -317,6 +393,15 @@ fn test_execution_result(name: &str, src: &str) -> (i32, i32) {
         name, expected, actual_result
     );
     (expected, actual_result)
+}
+
+#[test]
+fn public_layout_expressions_fold_once_for_c_and_cranelift() {
+    let (amir, typed) = compile_src_mono(
+        "func size<T>(): usize { return @sizeOf(T) }\nfunc main(): int { return (@sizeOf([3]u16) + @alignOf(i64) + size<int>()) as int }",
+    );
+    assert_eq!(execute_c("layout_public", &amir, &typed), 18);
+    assert_eq!(execute_cranelift(&amir, &typed), 18);
 }
 
 fn generated_integer_fixture() -> (String, i32) {
@@ -1589,7 +1674,7 @@ fn compile_src_mono(src: &str) -> (AmirProgram, TypeCheckResult) {
     let mut hir = lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
     let _specialized =
         arandu_semantics::monomorphize_program(&mut tc, &mut hir).expect("monomorphization failed");
-    let (amir, _) = lower_to_amir_with_interfaces(&mut tc, &hir, 64).expect("AMIR lowering failed");
+    let (amir, _) = lower_to_amir_with_interfaces(&mut tc, &hir, 8).expect("AMIR lowering failed");
     (amir, tc)
 }
 

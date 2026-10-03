@@ -45,7 +45,7 @@ impl std::ops::Deref for ModuleSignatures {
 /// Explicit type-check target read from the Salsa [`crate::db::TargetConfig`]
 /// input (CLI `--layout=`, default host). Keeps typeck pure: the pointer width
 /// never hard-codes a 64-bit assumption inside a query.
-fn database_target_info(db: &dyn ArandCompilerDb) -> TargetInfo {
+pub(crate) fn database_target_info(db: &dyn ArandCompilerDb) -> TargetInfo {
     let layout = db.target_config().data_layout(db);
     TargetInfo {
         // `DataLayout` stores byte widths; `TargetInfo` expects bits.
@@ -407,6 +407,168 @@ pub fn parse_diagnostics(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<V
     file = ?file.file_id(db),
 ))]
 pub fn resolve(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<ResolutionResult> {
+    let program = parse(db, file);
+    let headers = resolved_headers(db, file);
+    let result = match &**program {
+        Ok(program) => {
+            let mut headers = (**headers).clone();
+            program.for_each_decl_recursive(|_, declaration| {
+                if let arandu_parser::TopLevelDecl::Func(function) = declaration {
+                    if !function.generic_params.is_empty()
+                        && (!crate::ctfe::roots::const_arguments(&program.pool, function.body.span)
+                            .is_empty()
+                            || program.pool.exprs.iter().zip(&program.pool.expr_spans).any(
+                                |(expression, span)| {
+                                    function.body.span.start <= span.start
+                                        && span.end <= function.body.span.end
+                                        && matches!(
+                                            expression,
+                                            arandu_parser::ExprKind::Comptime { .. }
+                                        )
+                                },
+                            )
+                            || program.pool.stmts.iter().any(|statement| {
+                                let span = statement.span();
+                                function.body.span.start <= span.start
+                                    && span.end <= function.body.span.end
+                                    && matches!(
+                                        statement,
+                                        arandu_parser::Stmt::If {
+                                            is_comptime: true,
+                                            ..
+                                        } | arandu_parser::Stmt::For {
+                                            is_comptime: true,
+                                            ..
+                                        }
+                                    )
+                            }))
+                    {
+                        if let Some(owner) = arandu_semantics::primary_def_key(declaration)
+                            .and_then(|key| headers.declarations.resolved.definitions.get(&key))
+                            .copied()
+                        {
+                            Arc::make_mut(&mut headers.declarations.resolved)
+                                .deferred_comptime_functions
+                                .insert(owner);
+                        }
+                    }
+                }
+            });
+            if program.pool.stmts.iter().any(|stmt| {
+                matches!(
+                    stmt,
+                    arandu_parser::Stmt::For {
+                        is_comptime: true,
+                        ..
+                    }
+                )
+            }) {
+                program.for_each_decl_recursive(|_, declaration| {
+                    if !matches!(declaration, arandu_parser::TopLevelDecl::Func(_)) {
+                        return;
+                    }
+                    if let Some(owner) = arandu_semantics::primary_def_key(declaration)
+                        .and_then(|key| headers.declarations.resolved.definitions.get(&key))
+                        .copied()
+                    {
+                        if headers
+                            .declarations
+                            .resolved
+                            .deferred_comptime_functions
+                            .contains(&owner)
+                        {
+                            return;
+                        }
+                        let loops = crate::ctfe::item_static_loops(db, file, owner);
+                        Arc::make_mut(&mut headers.declarations.resolved)
+                            .comptime_loops
+                            .extend(loops.domains.iter().map(|(&key, &value)| (key, value)));
+                        Arc::make_mut(&mut headers.declarations.resolved)
+                            .deferred_loop_bodies
+                            .extend(loops.domains.keys().copied().filter(|key| {
+                                program.pool.stmts.iter().any(|statement| match statement {
+                                    arandu_parser::Stmt::For { span, body, .. }
+                                        if arandu_middle::NodeKey::from(*span) == *key =>
+                                    {
+                                        crate::ctfe::roots::loop_requires_occurrences(
+                                            &program.pool,
+                                            body,
+                                        )
+                                    }
+                                    _ => false,
+                                }) && !program.pool.exprs.iter().zip(&program.pool.expr_spans).any(
+                                    |(expression, span)| {
+                                        matches!(
+                                            expression,
+                                            arandu_parser::ExprKind::Comptime { .. }
+                                        ) && span.start <= key.start
+                                            && key.end <= span.end
+                                    },
+                                )
+                            }));
+                        headers
+                            .declarations
+                            .diagnostics
+                            .extend(loops.diagnostics.iter().cloned());
+                    }
+                });
+            }
+            if program.pool.stmts.iter().any(|stmt| {
+                matches!(
+                    stmt,
+                    arandu_parser::Stmt::If {
+                        is_comptime: true,
+                        ..
+                    }
+                )
+            }) {
+                program.for_each_decl_recursive(|_, declaration| {
+                    if matches!(declaration, arandu_parser::TopLevelDecl::Func(_)) {
+                        if let Some(owner) = arandu_semantics::primary_def_key(declaration)
+                            .and_then(|key| headers.declarations.resolved.definitions.get(&key))
+                            .copied()
+                        {
+                            if headers
+                                .declarations
+                                .resolved
+                                .deferred_comptime_functions
+                                .contains(&owner)
+                            {
+                                return;
+                            }
+                            let selected = crate::ctfe::item_static_branches(db, file, owner);
+                            Arc::make_mut(&mut headers.declarations.resolved)
+                                .comptime_branches
+                                .extend(
+                                    selected.decisions.iter().map(|(&key, &value)| (key, value)),
+                                );
+                            headers
+                                .declarations
+                                .diagnostics
+                                .extend(selected.diagnostics.iter().cloned());
+                        }
+                    }
+                });
+            }
+            arandu_resolve::resolve_bodies_with_poll(program, headers, || {
+                db.unwind_if_revision_cancelled()
+            })
+        }
+        Err(_) => headers.declarations.clone(),
+    };
+    HashEq::new(result)
+}
+
+/// Resolution of imports/declarations only. This is the pre-body staging edge;
+/// headers do not request full resolution or execute CTFE themselves.
+#[salsa::tracked]
+#[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
+    query = "resolved_headers", file = ?file.file_id(db),
+))]
+pub fn resolved_headers(
+    db: &dyn ArandCompilerDb,
+    file: SourceFile,
+) -> HashEq<arandu_resolve::HeaderResolution> {
     // Module existence is a first-class input of name resolution. Keep this
     // dependency explicit at the tracked-query boundary: the pure resolver
     // reaches it through `SourceDatabase`, which is intentionally unaware of
@@ -430,13 +592,18 @@ pub fn resolve(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<ResolutionR
     // The resolver mutates its seed; the memoized local result must stay immutable.
     let locals_owned = (*locals_arc.value).clone();
     let resolved = match &**program_res {
-        Ok(program) => arandu_resolve::resolve_imports_and_bodies_with_poll(
+        Ok(program) => arandu_resolve::resolve_headers_with_poll(
             &arandu_resolve::SourceDbLoader(db.as_source_db()),
             program,
             locals_owned,
             || db.unwind_if_revision_cancelled(),
         ),
-        Err(_) => locals_owned,
+        Err(_) => arandu_resolve::resolve_headers_with_poll(
+            &arandu_resolve::EmptyModuleLoader,
+            &empty_program(),
+            locals_owned,
+            || {},
+        ),
     };
 
     HashEq::new(resolved)
@@ -452,6 +619,7 @@ fn signatures_from_program(
     file: SourceFile,
     program: &Program,
     resolved_arc: &ResolutionResult,
+    headers_only: bool,
 ) -> TypeCheckResult {
     // The checker owns its tables behind Arc; share the resolution result's
     // handles (O(1)) and let the first mutation copy once (COW).
@@ -474,7 +642,11 @@ fn signatures_from_program(
                 if exported_symbols(db, imported_file).is_cycle {
                     continue;
                 }
-                let imported_sigs = declaration_signatures(db, imported_file);
+                let imported_sigs = if headers_only {
+                    header_signatures(db, imported_file)
+                } else {
+                    declaration_signatures(db, imported_file)
+                };
                 tracing::debug!(
                     target: "arandu_query",
                     %path,
@@ -709,7 +881,7 @@ pub fn declaration_signatures(db: &dyn ArandCompilerDb, file: SourceFile) -> Mod
     }
 
     let res = match &**program_res {
-        Ok(program) => signatures_from_program(db, file, program, &resolved),
+        Ok(program) => signatures_from_program(db, file, program, &resolved, false),
         Err(_) => TypeCheckResult {
             symbols: std::sync::Arc::new(arandu_semantics::SymbolTable::default()),
             resolved: Arc::clone(&resolved.resolved),
@@ -719,6 +891,23 @@ pub fn declaration_signatures(db: &dyn ArandCompilerDb, file: SourceFile) -> Mod
     };
 
     ModuleSignatures::new(res)
+}
+
+/// Initial typed headers for pre-resolution staging. Recurses only through this
+/// same header boundary, never through function bodies or borrow contracts.
+#[salsa::tracked(cycle_result = cycle_recover_module_signatures)]
+#[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
+    query = "header_signatures", file = ?file.file_id(db),
+))]
+pub fn header_signatures(db: &dyn ArandCompilerDb, file: SourceFile) -> ModuleSignatures {
+    let _ = module_graph_fingerprint(db, file);
+    let program = parse(db, file);
+    let headers = resolved_headers(db, file);
+    let result = match &**program {
+        Ok(program) => signatures_from_program(db, file, program, &headers.declarations, true),
+        Err(_) => TypeCheckResult::empty(),
+    };
+    ModuleSignatures::new(result)
 }
 
 /// Compatibility/body-checking view: declarations plus imported flow-derived
@@ -815,9 +1004,12 @@ fn sealed_package_implementations(
 pub struct ItemSourceInput {
     pub program: Arc<Program>,
     pub item_sym: arandu_middle::SymbolId,
-    /// Start of the complete top-level item, including its attributes. Used by
+    /// Start of the source item, including its attributes. Used by
     /// structured fixes without re-parsing diagnostic presentation text.
     pub item_start: u32,
+    /// Conservative text-slice prefilter, not syntax recognition. A false value
+    /// avoids scanning the shared AST arena in ordinary, non-staged items.
+    pub(crate) may_have_comptime: bool,
     /// blake3 of the item's source slice for StableHash / early cutoff.
     pub(crate) body_fp: blake3::Hash,
 }
@@ -825,7 +1017,8 @@ pub struct ItemSourceInput {
 /// Backward-compatible alias used by older call sites / StableHash.
 pub type FuncBodyInput = ItemSourceInput;
 
-/// Extract one item's AST dependency from `parse`+`resolve` with content-addressed HashEq.
+/// Extract one item's AST dependency from canonical AST + declaration identities.
+/// Body resolution is deliberately not a dependency of this source boundary.
 #[salsa::tracked]
 #[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
     query = "item_source_input",
@@ -840,7 +1033,8 @@ pub fn item_source_input(
     use arandu_parser::TopLevelDecl;
 
     let program_res = parse(db, file);
-    let resolved = resolve(db, file);
+    let headers = resolved_headers(db, file);
+    let resolved = &headers.declarations;
     let text = file.text(db);
 
     let Ok(program) = &**program_res else {
@@ -848,6 +1042,7 @@ pub fn item_source_input(
             program: Arc::new(empty_program()),
             item_sym,
             item_start: 0,
+            may_have_comptime: false,
             body_fp: blake3::hash(b"parse-error"),
         });
     };
@@ -858,8 +1053,9 @@ pub fn item_source_input(
 
     let mut body_fp = blake3::hash(b"item-missing");
     let mut item_start = 0;
-    for decl_id in &program.decls {
-        let decl = program.pool.decl(*decl_id);
+    let mut may_have_comptime = false;
+    let mut selected = None;
+    program.for_each_decl_recursive(|decl_id, decl| {
         let matches = match arandu_semantics::primary_def_key(decl) {
             Some(key) => resolved.resolved.definitions.get(&key) == Some(&item_sym),
             None => false,
@@ -871,9 +1067,11 @@ pub fn item_source_input(
                         == Some(&item_sym)
                 })
         );
-        if !matches {
-            continue;
+        if matches && selected.is_none() {
+            selected = Some((decl_id, decl));
         }
+    });
+    if let Some((decl_id, decl)) = selected {
         let span = arandu_semantics::item_source_span(decl);
         item_start = span.start;
         // Floor/ceil to char boundaries — spans can land mid-UTF-8 sequence
@@ -894,12 +1092,17 @@ pub fn item_source_input(
         };
         let start = floor(span.start as usize);
         let end = ceil(span.end as usize).max(start);
+        may_have_comptime = text[start..end].contains("comptime");
         let mut h = blake3::Hasher::new();
         h.update(b"item_body_v4");
         // Prefer covering CST ITEM range (zero-copy slice of shared text).
         let mut used_cst = false;
+        let is_top_level = program.decls.contains(&decl_id);
         for &(s, e) in &ranges {
-            if s <= span.start && span.end <= e {
+            // CST item ranges describe top-level declarations. Using a
+            // containing module for a nested member would invalidate every
+            // sibling body; fingerprint that member's own AST source span.
+            if is_top_level && s <= span.start && span.end <= e {
                 let s = floor(s as usize);
                 let e = ceil(e as usize).max(s);
                 h.update(text[s..e].as_bytes());
@@ -911,13 +1114,13 @@ pub fn item_source_input(
             h.update(text[start..end].as_bytes());
         }
         body_fp = h.finalize();
-        break;
     }
 
     HashEq::new(ItemSourceInput {
         program: Arc::clone(program),
         item_sym,
         item_start,
+        may_have_comptime,
         body_fp,
     })
 }
@@ -948,7 +1151,7 @@ pub fn item_body_typeck(
     file: SourceFile,
     item_sym: arandu_middle::SymbolId,
 ) -> HashEq<TypeCheckResult> {
-    let typed = item_typing(db, file, item_sym);
+    let typed = crate::ctfe::item_staged_typing(db, file, item_sym);
     let signatures = module_signatures(db, file);
     if signatures.type_info.return_borrow_summaries == typed.type_info.return_borrow_summaries {
         return HashEq::share(typed);
@@ -974,12 +1177,32 @@ pub fn item_typing(
 ) -> HashEq<TypeCheckResult> {
     let body_in = item_source_input(db, file, item_sym);
     let signatures = declaration_signatures(db, file);
-    let res = arandu_semantics::check_item_body_only(
-        signatures,
+    if signatures
+        .resolved
+        .deferred_comptime_functions
+        .contains(&item_sym)
+    {
+        return HashEq::from_arc(Arc::clone(&signatures.value));
+    }
+    let arguments = crate::ctfe::item_const_arguments(db, file, item_sym);
+    let mut staged;
+    let initial = if arguments.values.is_empty() && arguments.diagnostics.is_empty() {
+        &**signatures
+    } else {
+        staged = (**signatures).clone();
+        std::sync::Arc::make_mut(&mut staged.resolved)
+            .comptime_arguments
+            .extend(arguments.values.iter().map(|(&key, &value)| (key, value)));
+        &staged
+    };
+    let mut res = arandu_semantics::check_item_body_only(
+        initial,
         body_in.program.as_ref(),
         item_sym,
         database_target_info(db),
     );
+    res.diagnostics
+        .extend(arguments.diagnostics.iter().cloned());
     HashEq::new(res)
 }
 
@@ -1024,16 +1247,27 @@ fn compose_file_typing(
 
     // O(1) Arc share until the first body merge; avoid deep-cloning TypeInfo up front.
     let mut merged_info = Arc::clone(&signatures.type_info);
+    let mut merged_resolved = Arc::clone(&signatures.resolved);
     let mut diagnostics = signatures.diagnostics.clone();
 
     for &item_sym in &item_syms {
         db.unwind_if_revision_cancelled();
         let item = if declarations_only {
-            item_typing(db, file, item_sym)
+            crate::ctfe::item_staged_typing(db, file, item_sym)
         } else {
             item_body_typeck(db, file, item_sym)
         };
         Arc::make_mut(&mut merged_info).merge_from(item.type_info.as_ref());
+        if !item.resolved.comptime_arguments.is_empty() {
+            Arc::make_mut(&mut merged_resolved)
+                .comptime_arguments
+                .extend(
+                    item.resolved
+                        .comptime_arguments
+                        .iter()
+                        .map(|(&key, &value)| (key, value)),
+                );
+        }
         diagnostics.extend(item.diagnostics.iter().cloned());
         diagnostics.extend(
             crate::dataflow::item_attribute_validation(db, file, item_sym)
@@ -1055,7 +1289,7 @@ fn compose_file_typing(
 
     let res = TypeCheckResult {
         symbols: Arc::clone(&signatures.symbols),
-        resolved: Arc::clone(&signatures.resolved),
+        resolved: merged_resolved,
         type_info: merged_info,
         diagnostics,
     };
@@ -1121,7 +1355,9 @@ pub fn ide_type_check(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<Type
         || db.unwind_if_revision_cancelled(),
     );
 
-    let mut signatures = Arc::new(signatures_from_program(db, file, &program, &resolved));
+    let mut signatures = Arc::new(signatures_from_program(
+        db, file, &program, &resolved, false,
+    ));
     merge_imported_borrow_interfaces(db, &program, &mut signatures);
 
     // Mirror `file_typeck_view` without per-item memos: this is a transient

@@ -36,7 +36,7 @@ fn widths_signedness_and_declared_primitives_are_preserved() {
             assert_eq!(integer.bit_width(), bits);
             assert_eq!(integer.is_signed(), signed);
             assert_eq!(
-                integer.canonical_bytes(),
+                integer.canonical_bytes().to_vec(),
                 ConstValue::Integer(ConstInt::new(integer, 0).expect("integer zero"))
                     .canonical_bytes()
             );

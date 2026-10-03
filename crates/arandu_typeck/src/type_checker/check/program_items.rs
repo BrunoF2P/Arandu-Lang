@@ -141,6 +141,25 @@ pub fn check_item_body_only(
     item_sym: SymbolId,
     target_info: TargetInfo,
 ) -> TypeCheckResult {
+    check_item_body_with_substitution(
+        signatures,
+        program,
+        item_sym,
+        target_info,
+        &arandu_middle::types::GenericSubst::new(),
+    )
+}
+
+/// Canonical body checker with arguments supplied by the pre-body instance
+/// staging edge. No query or VM callback is executed by this pure API.
+#[must_use]
+pub fn check_item_body_with_substitution(
+    signatures: &TypeCheckResult,
+    program: &Program,
+    item_sym: SymbolId,
+    target_info: TargetInfo,
+    substitution: &arandu_middle::types::GenericSubst,
+) -> TypeCheckResult {
     let mut checker = TypeChecker::new(
         Arc::clone(&signatures.symbols),
         Arc::clone(&signatures.resolved),
@@ -149,11 +168,70 @@ pub fn check_item_body_only(
         target_info,
     );
     checker.type_info = Arc::unwrap_or_clone(Arc::clone(&signatures.type_info));
+    checker.generic_substitution = substitution.clone();
+    if !substitution.is_empty() {
+        for ty in checker.type_info.decl_types.values_mut() {
+            *ty = arandu_middle::types::substitute_type_id(
+                *ty,
+                substitution,
+                &checker.type_info.type_interner,
+            );
+        }
+    }
 
     if let Some(decl) = find_decl_for_symbol(program, &checker.resolved, item_sym) {
         check_one_item_body(&mut checker, program, decl);
     }
 
+    checker.finish()
+}
+
+/// Check one residual static iteration using the owner's return contract and
+/// ordinary locals. Staged expressions remain isolated obligations.
+#[must_use]
+pub fn check_residual_loop_body(
+    initial: &TypeCheckResult,
+    program: &Program,
+    owner: SymbolId,
+    block: &arandu_parser::Block,
+    iteration: (SymbolId, arandu_middle::ctfe::ConstInt),
+    target: TargetInfo,
+    substitution: &arandu_middle::types::GenericSubst,
+) -> TypeCheckResult {
+    let (binding, value) = iteration;
+    let mut checker = TypeChecker::new(
+        Arc::clone(&initial.symbols),
+        Arc::clone(&initial.resolved),
+        Vec::new(),
+        &program.pool,
+        target,
+    );
+    checker.type_info = Arc::unwrap_or_clone(Arc::clone(&initial.type_info));
+    checker.generic_substitution = substitution.clone();
+    for (&symbol, &ty) in &checker.type_info.decl_types {
+        checker.ctx.bind(symbol, ty);
+    }
+    let ty = checker.intern(arandu_middle::types::ArType::Primitive(
+        value.ty().primitive(),
+    ));
+    checker.ctx.bind(binding, ty);
+    checker.record_decl_type(binding, ty);
+    if let Some(TopLevelDecl::Func(function)) =
+        find_decl_for_symbol(program, &checker.resolved, owner)
+    {
+        let scope = super::func::func_type_scope(&checker, function);
+        checker.type_scope_id = Some(scope);
+        let ret = function
+            .result
+            .as_ref()
+            .map(|result| checker.lower_result_type(result, scope))
+            .unwrap_or(arandu_middle::types::ArType::Void);
+        let ret = checker.intern(ret);
+        checker.ctx.push_return(ret, function.span);
+    }
+    checker.ctx.enter_loop();
+    super::block::check_block(&mut checker, &program.pool, block);
+    checker.finalize_literal_vars();
     checker.finish()
 }
 

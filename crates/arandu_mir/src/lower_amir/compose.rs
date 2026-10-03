@@ -153,7 +153,7 @@ pub fn compose_function_units(
         let mut generated = input.generated_symbols.to_vec();
         generated.sort_by_key(|symbol| (symbol.file_id, symbol.local_id.0));
         let global = aggregate.symbols.global_scope();
-        let scope = aggregate.symbols_mut().new_scope(global);
+        let mut generated_scopes = FxHashMap::default();
         for symbol in generated {
             if symbols.contains_key(&symbol) {
                 continue;
@@ -173,6 +173,13 @@ pub fn compose_function_units(
                     source.span,
                 )]);
             }
+            // Generated locals retain their source lexical buckets. Flattening
+            // a unit into one scope aliases independent `j` bindings in two
+            // selected static-loop bodies. All uses are already resolved by ID;
+            // these scopes carry names/debug metadata, not a second resolver.
+            let scope = *generated_scopes
+                .entry(source.scope)
+                .or_insert_with(|| aggregate.symbols_mut().new_scope(global));
             let mapped = aggregate
                 .symbols_mut()
                 .define(scope, &source.name, source.kind, source.span)

@@ -32,6 +32,26 @@ fn hash_str(hasher: &mut Hasher, value: &str) {
     hasher.update(value.as_bytes());
 }
 
+pub(crate) fn hash_literal_entry(
+    hasher: &mut Hasher,
+    entry: &arandu_middle::literal_pool::AmirLiteralEntry,
+) {
+    use arandu_middle::literal_pool::AmirLiteralEntry;
+    let (tag, text) = match entry {
+        AmirLiteralEntry::Int(text) => (0, text),
+        AmirLiteralEntry::Float(text) => (1, text),
+        AmirLiteralEntry::Str(text) => (2, text),
+        AmirLiteralEntry::Char(text) => (3, text),
+        AmirLiteralEntry::FloatBits(value) => {
+            hasher.update(&[4]);
+            hasher.update(&value.canonical_bytes());
+            return;
+        }
+    };
+    hasher.update(&[tag]);
+    hash_str(hasher, text);
+}
+
 fn hash_borrow_path(hasher: &mut Hasher, path: &arandu_middle::types::BorrowPath) {
     use arandu_middle::types::BorrowPathSegment;
 
@@ -159,6 +179,51 @@ fn hash_symbol_id(hasher: &mut Hasher, id: SymbolId) {
 }
 
 fn hash_resolved_names(hasher: &mut Hasher, resolved: &arandu_middle::ResolvedNames) {
+    let mut loops: Vec<_> = resolved.comptime_loops.iter().collect();
+    loops.sort_by_key(|(key, _)| (key.start, key.end));
+    hasher.update(&u64_le(u64::try_from(loops.len()).unwrap_or(u64::MAX)));
+    for (key, (lower, upper)) in loops {
+        hasher.update(&u32_le(key.start));
+        hasher.update(&u32_le(key.end));
+        hasher.update(&arandu_middle::ctfe::ConstValue::Integer(*lower).canonical_bytes());
+        hasher.update(&arandu_middle::ctfe::ConstValue::Integer(*upper).canonical_bytes());
+    }
+    let mut arguments: Vec<_> = resolved.comptime_arguments.iter().collect();
+    arguments.sort_by_key(|(key, _)| (key.start, key.end));
+    hasher.update(&u64_le(u64::try_from(arguments.len()).unwrap_or(u64::MAX)));
+    for (key, value) in arguments {
+        hasher.update(&u32_le(key.start));
+        hasher.update(&u32_le(key.end));
+        hasher.update(&[u8::from(value.is_some())]);
+        if let Some(value) = value {
+            hasher.update(&u64_le(*value));
+        }
+    }
+    let mut deferred: Vec<_> = resolved
+        .deferred_comptime_functions
+        .iter()
+        .copied()
+        .collect();
+    deferred.sort_unstable_by_key(|symbol| (symbol.file_id, symbol.local_id.0));
+    hasher.update(&u64_le(u64::try_from(deferred.len()).unwrap_or(u64::MAX)));
+    for symbol in deferred {
+        hash_symbol_id(hasher, symbol);
+    }
+    let mut loops: Vec<_> = resolved.deferred_loop_bodies.iter().collect();
+    loops.sort_unstable_by_key(|key| (key.start, key.end));
+    hasher.update(&u64_le(u64::try_from(loops.len()).unwrap_or(u64::MAX)));
+    for key in loops {
+        hasher.update(&u32_le(key.start));
+        hasher.update(&u32_le(key.end));
+    }
+    let mut branches: Vec<_> = resolved.comptime_branches.iter().collect();
+    branches.sort_by_key(|(key, _)| (key.start, key.end));
+    hasher.update(&u64_le(u64::try_from(branches.len()).unwrap_or(u64::MAX)));
+    for (key, selected) in branches {
+        hasher.update(&u32_le(key.start));
+        hasher.update(&u32_le(key.end));
+        hasher.update(&[u8::from(*selected)]);
+    }
     for entries in [
         &resolved.definitions,
         &resolved.value_refs,
@@ -388,6 +453,55 @@ impl StableHash for ResolutionResult {
     }
 }
 
+impl StableHash for arandu_resolve::HeaderResolution {
+    fn stable_hash(&self) -> blake3::Hash {
+        let mut h = Hasher::new();
+        h.update(b"HeaderResolution/v1");
+        h.update(self.declarations.stable_hash().as_bytes());
+        let mut scopes: Vec<_> = self.body_scopes.iter().collect();
+        scopes.sort_by_key(|(key, _)| (key.start, key.end));
+        h.update(&u64_le(scopes.len() as u64));
+        for (key, scope) in scopes {
+            h.update(&u32_le(key.start));
+            h.update(&u32_le(key.end));
+            h.update(&u32_le(scope.0));
+        }
+        let mut aliases: Vec<_> = self.import_aliases.iter().collect();
+        aliases.sort_by(|a, b| a.0.cmp(b.0));
+        h.update(&u64_le(aliases.len() as u64));
+        for (alias, module) in aliases {
+            hash_str(&mut h, alias);
+            hash_str(&mut h, module);
+        }
+        match &self.current_module {
+            Some(module) => {
+                h.update(&[1]);
+                hash_str(&mut h, module);
+            }
+            None => {
+                h.update(&[0]);
+            }
+        }
+        let mut imports: Vec<_> = self.imported_symbols.iter().collect();
+        imports.sort_by_key(|(symbol, _)| (symbol.file_id, symbol.local_id.0));
+        h.update(&u64_le(imports.len() as u64));
+        for (symbol, (name, span)) in imports {
+            hash_symbol_id(&mut h, *symbol);
+            hash_str(&mut h, name);
+            h.update(&u32_le(span.file_id));
+            h.update(&u32_le(span.start));
+            h.update(&u32_le(span.end));
+        }
+        let mut used: Vec<_> = self.used_symbols.iter().copied().collect();
+        used.sort_by_key(|symbol| (symbol.file_id, symbol.local_id.0));
+        h.update(&u64_le(used.len() as u64));
+        for symbol in used {
+            hash_symbol_id(&mut h, symbol);
+        }
+        finish(h)
+    }
+}
+
 impl StableHash for TypeCheckResult {
     fn stable_hash(&self) -> blake3::Hash {
         hash_type_check_result(self, true)
@@ -426,6 +540,22 @@ fn hash_type_check_result(result: &TypeCheckResult, include_spans: bool) -> blak
                 None => {
                     h.update(&[0]);
                 }
+            }
+        }
+        let mut values: Vec<_> = result.type_info.ctfe_values.iter().collect();
+        values.sort_unstable_by_key(|(span, _)| (span.file_id, span.start, span.end));
+        h.update(b"CtfeResidual/v2");
+        h.update(&u64_le(result.type_info.ctfe_roots.len() as u64));
+        for expr in &result.type_info.ctfe_roots {
+            hash_id(&mut h, expr.as_usize());
+        }
+        h.update(&u64_le(values.len() as u64));
+        for (span, (value, layout)) in values {
+            hash_span(&mut h, *span);
+            h.update(&value.canonical_bytes());
+            for class in [layout.pointer, layout.float, layout.i64, layout.f64] {
+                h.update(&class.size.to_le_bytes());
+                h.update(&class.abi_align.to_le_bytes());
             }
         }
     }
@@ -685,31 +815,14 @@ fn hash_parse_err(err: &ParseError) -> blake3::Hash {
 impl StableHash for AmirProgram {
     fn stable_hash(&self) -> blake3::Hash {
         let mut h = Hasher::new();
-        h.update(b"AmirProgram/v3");
+        h.update(b"AmirProgram/v4");
         h.update(&u64_le(self.funcs.len() as u64));
         for f in &self.funcs {
             h.update(f.stable_hash().as_bytes());
         }
         h.update(&u64_le(self.literal_pool.entries.len() as u64));
         for entry in &self.literal_pool.entries {
-            match entry {
-                arandu_middle::literal_pool::AmirLiteralEntry::Int(s) => {
-                    h.update(&[0]);
-                    hash_str(&mut h, s);
-                }
-                arandu_middle::literal_pool::AmirLiteralEntry::Float(s) => {
-                    h.update(&[1]);
-                    hash_str(&mut h, s);
-                }
-                arandu_middle::literal_pool::AmirLiteralEntry::Str(s) => {
-                    h.update(&[2]);
-                    hash_str(&mut h, s);
-                }
-                arandu_middle::literal_pool::AmirLiteralEntry::Char(s) => {
-                    h.update(&[3]);
-                    hash_str(&mut h, s);
-                }
-            }
+            hash_literal_entry(&mut h, entry);
         }
         // HashMap iteration order must not influence the content hash.
         let mut externs: Vec<_> = self.extern_funcs.iter().collect();
@@ -766,24 +879,22 @@ impl StableHash for crate::ctfe::CtfeLowering {
     fn stable_hash(&self) -> blake3::Hash {
         use crate::ctfe::BuildFailure;
         let mut hash = Hasher::new();
-        hash.update(b"CtfeLowering/v1");
+        hash.update(b"CtfeLowering/v3");
         match &self.result {
             Ok(unit) => {
                 hash.update(&[0]);
+                hash.update(unit.identity().stable_hash().as_bytes());
+                for (symbol, key) in unit.call_identities() {
+                    hash_symbol_id(&mut hash, *symbol);
+                    hash.update(key.stable_hash().as_bytes());
+                }
                 hash.update(unit.function().stable_hash().as_bytes());
                 for bytes in unit.scalar_type_bytes() {
                     hash.update(&bytes);
                 }
                 // All literal spellings/kinds belong to this function's pool.
                 for entry in &unit.literals().entries {
-                    let (tag, text) = match entry {
-                        arandu_middle::literal_pool::AmirLiteralEntry::Int(text) => (0, text),
-                        arandu_middle::literal_pool::AmirLiteralEntry::Float(text) => (1, text),
-                        arandu_middle::literal_pool::AmirLiteralEntry::Str(text) => (2, text),
-                        arandu_middle::literal_pool::AmirLiteralEntry::Char(text) => (3, text),
-                    };
-                    hash.update(&[tag]);
-                    hash_str(&mut hash, text);
+                    hash_literal_entry(&mut hash, entry);
                 }
                 // The whole explicit layout is part of the unit, even when no
                 // pointer-sized integer happens to occur in this function.
@@ -811,6 +922,19 @@ impl StableHash for crate::ctfe::CtfeLowering {
                 hash.update(&[4]);
                 hash_ctfe_error(&mut hash, error);
             }
+            Err(BuildFailure::InvalidRoot) => {
+                hash.update(&[5]);
+            }
+            Err(BuildFailure::RuntimeCapture(capture)) => {
+                hash.update(&[6]);
+                hash_symbol_id(&mut hash, capture.symbol);
+                hash_str(&mut hash, &capture.name);
+                for span in [capture.use_span, capture.declaration_span] {
+                    hash.update(&span.file_id.to_le_bytes());
+                    hash.update(&span.start.to_le_bytes());
+                    hash.update(&span.end.to_le_bytes());
+                }
+            }
         }
         finish(hash)
     }
@@ -836,9 +960,19 @@ fn hash_ctfe_error(hash: &mut Hasher, error: &arandu_mir::ctfe::EvalErrorKind) {
         E::TargetMismatch => 13,
         E::Arithmetic(_) => 14,
         E::Value(_) => 15,
+        E::InvalidLayout(_) => 16,
     };
     hash.update(&[tag]);
     match error {
+        E::InvalidLayout(error) => {
+            use arandu_middle::layout::DataLayoutError;
+            hash.update(&[match error {
+                DataLayoutError::PointerWidth => 0,
+                DataLayoutError::ScalarWidth => 1,
+                DataLayoutError::Alignment => 2,
+                DataLayoutError::FloatLayout => 3,
+            }]);
+        }
         E::MissingFunction(symbol) | E::UnavailableFunction(symbol) => {
             hash_symbol_id(hash, *symbol)
         }
@@ -882,6 +1016,12 @@ fn hash_ctfe_error(hash: &mut Hasher, error: &arandu_mir::ctfe::EvalErrorKind) {
             V::NegativeConstGeneric(value) => {
                 hash.update(&[3]);
                 hash.update(&value.to_le_bytes());
+            }
+            V::StructuralLimit => {
+                hash.update(&[4]);
+            }
+            V::InvalidAggregateShape => {
+                hash.update(&[5]);
             }
         },
         E::Cancelled

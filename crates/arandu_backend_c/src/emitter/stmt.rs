@@ -4,6 +4,29 @@ use arandu_middle::types::{ArType, Primitive};
 use std::fmt::Write;
 
 impl<'a> CEmitter<'a> {
+    /// These external operations are expanded locally and have no C linkage
+    /// declaration. Keep declaration filtering and call emission in agreement.
+    pub(super) fn inlined_mem_intrinsic(
+        &self,
+        symbol: arandu_middle::SymbolId,
+    ) -> Option<arandu_middle::IntrinsicKind> {
+        let symbol = self.symbols.get(symbol);
+        if symbol.kind != arandu_middle::SymbolKind::ExternFunc {
+            return None;
+        }
+        let kind = arandu_middle::IntrinsicKind::from_name(&symbol.name)?;
+        matches!(
+            kind,
+            arandu_middle::IntrinsicKind::Abort
+                | arandu_middle::IntrinsicKind::PtrRead
+                | arandu_middle::IntrinsicKind::PtrWrite
+                | arandu_middle::IntrinsicKind::PtrOffset
+                | arandu_middle::IntrinsicKind::SizeOf
+                | arandu_middle::IntrinsicKind::AlignOf
+        )
+        .then_some(kind)
+    }
+
     /// Emit `std.core.mem` intrinsics as C loads/stores/pointer arithmetic.
     ///
     /// Parity with Cranelift JIT: `sizeOf` is normally folded in AMIR lower;
@@ -16,13 +39,12 @@ impl<'a> CEmitter<'a> {
         args: &[AmirOperand],
         func: &AmirFunc,
     ) -> bool {
-        let name = match callee {
+        let kind = match callee {
             AmirOperand::FunctionRef(id) | AmirOperand::GlobalRef(id) => {
-                self.symbols.get(*id).name.as_str()
+                self.inlined_mem_intrinsic(*id)
             }
             _ => return false,
         };
-        let kind = arandu_middle::IntrinsicKind::from_name(name);
 
         match kind {
             Some(arandu_middle::IntrinsicKind::Abort) => {
@@ -67,15 +89,13 @@ impl<'a> CEmitter<'a> {
                 true
             }
             Some(arandu_middle::IntrinsicKind::SizeOf | arandu_middle::IntrinsicKind::AlignOf) => {
-                // Residual only — prefer AMIR fold. Host pointer width for `int`.
-                let n = if kind == Some(arandu_middle::IntrinsicKind::SizeOf) {
-                    self.layout.pointer_width()
-                } else {
-                    self.layout.pointer_width().min(8)
-                };
-                if let Some(dest) = lhs {
-                    let _ = writeln!(&mut self.output, "    t{} = {}ULL;", dest.as_usize(), n);
-                }
+                // The type operand is no longer present in a runtime call.
+                // Guessing pointer width here silently miscompiles non-pointer
+                // types: the canonical MIR layout fold must have removed it.
+                self.record_codegen_ice(
+                    func,
+                    "layout intrinsic reached C emission without canonical AMIR folding",
+                );
                 true
             }
             Some(arandu_middle::IntrinsicKind::DropInPlace) => false,

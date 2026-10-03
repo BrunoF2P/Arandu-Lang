@@ -37,6 +37,141 @@ mod rewrite;
 use clone::clone_block;
 use rewrite::rewrite_block_calls;
 
+/// Bind generic calls of an isolated CTFE root using concrete signatures only.
+/// No callee body is traversed and no callable symbol is allocated for the root.
+pub fn specialize_root_callees(
+    tc: &mut TypeCheckResult,
+    hir: &mut HirProgram,
+    root: super::collect::InstantiationRoot,
+) -> Result<Vec<(SymbolId, arandu_middle::types::FunctionInstance)>, Vec<Diagnostic>> {
+    use arandu_middle::types::{FunctionInstance, TypeShape};
+    let bump = bumpalo::Bump::new();
+    let graph = super::collect::analyze_root_instantiations(tc, hir, root, &bump)?;
+    let templates = hir
+        .decls
+        .iter()
+        .enumerate()
+        .filter_map(|(index, &id)| match hir.pool.decl(id) {
+            HirDecl::Func(function)
+                if tc.type_info.generic_params.contains_key(&function.symbol) =>
+            {
+                Some((function.symbol, index))
+            }
+            _ => None,
+        })
+        .collect::<FxHashMap<_, _>>();
+    let mut specialized = FxHashMap::default();
+    let mut instances = Vec::new();
+    for node in graph.iter() {
+        let original = node.key;
+        let arguments = original
+            .type_args
+            .iter()
+            .map(|&ty| {
+                let mut shape = TypeShape::from_id(ty, &tc.type_info.type_interner)?;
+                shape.default_numeric_literals()?;
+                shape.intern(&tc.type_info.type_interner)
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| {
+                vec![Diagnostic::error(
+                    DiagCode::G002GenericInstantiationLimit,
+                    "root callee arguments exceed the structural type bounds",
+                    hir.span,
+                )]
+            })?;
+        let key = InstantiationKey {
+            symbol: original.symbol,
+            type_args: bump.alloc_slice_copy(&arguments),
+        };
+        if !templates.contains_key(&key.symbol)
+            || is_identity_instantiation(tc, key.symbol, key.type_args)
+        {
+            continue;
+        }
+        if !instance_args_fully_concrete(tc, key.type_args) {
+            return Err(vec![Diagnostic::error(
+                DiagCode::G002GenericInstantiationLimit,
+                "compile-time root callee retains unresolved type arguments",
+                hir.span,
+            )]);
+        }
+        let symbol = if let Some(&symbol) = specialized.get(&key) {
+            symbol
+        } else {
+            let (symbol, _) = specialize_func(tc, hir, &key, &templates, false, true)
+                .map_err(|error| vec![error])?;
+            let arguments = key
+                .type_args
+                .iter()
+                .map(|&ty| TypeShape::from_id(ty, &tc.type_info.type_interner))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| {
+                    vec![Diagnostic::error(
+                        DiagCode::G002GenericInstantiationLimit,
+                        "root callee identity exceeds the structural type bounds",
+                        hir.span,
+                    )]
+                })?;
+            instances.push((
+                symbol,
+                FunctionInstance {
+                    definition: key.symbol,
+                    arguments,
+                },
+            ));
+            specialized.insert(key, symbol);
+            symbol
+        };
+        specialized.insert(original, symbol);
+    }
+    match root {
+        super::collect::InstantiationRoot::Expression(expression) => {
+            rewrite::rewrite_expr_calls(hir, expression, &specialized, tc, &bump)
+        }
+        super::collect::InstantiationRoot::Block(block) => {
+            rewrite_block_calls(hir, block, &specialized, tc, &bump)
+        }
+    }
+    Ok(instances)
+}
+
+/// Specialize an isolated staging expression in its own HIR/type domain. This
+/// shares the ordinary monomorphizer's substitution and fresh-binding rules;
+/// it does not request the enclosing runtime function or any callee body.
+pub fn specialize_root_expression(
+    tc: &mut TypeCheckResult,
+    hir: &mut HirProgram,
+    expression: HirExprId,
+    substitution: &arandu_middle::types::GenericSubst,
+) -> Result<HirExprId, Diagnostic> {
+    clone::clone_expr(
+        hir,
+        expression,
+        substitution,
+        &mut FxHashMap::default(),
+        tc,
+        "$ctfe",
+    )
+}
+
+/// Block counterpart with an independent return target and fresh local IDs.
+pub fn specialize_root_block(
+    tc: &mut TypeCheckResult,
+    hir: &mut HirProgram,
+    block: HirBlockId,
+    substitution: &arandu_middle::types::GenericSubst,
+) -> Result<HirBlockId, Diagnostic> {
+    clone::clone_block(
+        hir,
+        block,
+        substitution,
+        &mut FxHashMap::default(),
+        tc,
+        "$ctfe",
+    )
+}
+
 /// Concrete root plus unit-local symbols for the signatures of its callees.
 /// Their structural keys, not those incidental symbols, cross unit boundaries.
 #[derive(Debug)]
@@ -573,8 +708,18 @@ fn discover_nested_keys<'bump>(
                 visit_condition(hir, condition, tc, bump, template_funcs, enqueue);
                 visit_block(hir, *body, tc, bump, template_funcs, enqueue);
             }
-            HirStmtKind::For { body, .. } => {
-                visit_block(hir, *body, tc, bump, template_funcs, enqueue);
+            HirStmtKind::For {
+                body,
+                comptime_bodies,
+                ..
+            } => {
+                if let Some(bodies) = comptime_bodies {
+                    for body in bodies {
+                        visit_block(hir, *body, tc, bump, template_funcs, enqueue);
+                    }
+                } else {
+                    visit_block(hir, *body, tc, bump, template_funcs, enqueue);
+                }
             }
             HirStmtKind::Match { value, arms } => {
                 visit_expr(hir, *value, tc, bump, template_funcs, enqueue);
@@ -592,7 +737,10 @@ fn discover_nested_keys<'bump>(
                     }
                 }
             }
-            HirStmtKind::Defer(b) | HirStmtKind::ErrDefer(b) | HirStmtKind::Unsafe(b) => {
+            HirStmtKind::Defer(b)
+            | HirStmtKind::ErrDefer(b)
+            | HirStmtKind::Unsafe(b)
+            | HirStmtKind::Scope(b) => {
                 visit_block(hir, *b, tc, bump, template_funcs, enqueue);
             }
             HirStmtKind::Break | HirStmtKind::Continue | HirStmtKind::Error => {}

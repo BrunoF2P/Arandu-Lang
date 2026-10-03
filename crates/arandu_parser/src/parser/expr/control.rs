@@ -205,9 +205,27 @@ impl<'a> Parser<'a> {
         let mut parts = Vec::new();
         while !self.at_kind_name(end_name) {
             match &self.current().kind {
-                TokenKind::StringText | TokenKind::StringEscape => {
+                TokenKind::StringText => {
                     let span = self.current().span(self.file_id);
                     let text = SmolStr::new(self.current_text());
+                    self.advance();
+                    parts.push(StringPart::Text { span, text });
+                }
+                TokenKind::StringEscape => {
+                    let span = self.current().span(self.file_id);
+                    let value = arandu_lexer::decode_char_content(self.current_text()).ok_or_else(
+                        || {
+                            ParseError::new(
+                                ParseErrorCode::ExpectedExpression,
+                                "expected a valid string escape",
+                                self.current(),
+                                self.file_id,
+                                self.source,
+                            )
+                        },
+                    )?;
+                    let mut utf8 = [0; 4];
+                    let text = SmolStr::new(value.encode_utf8(&mut utf8));
                     self.advance();
                     parts.push(StringPart::Text { span, text });
                 }

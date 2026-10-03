@@ -33,6 +33,99 @@ func main(): int {
 }
 
 #[test]
+fn static_loop_residuals_execute_with_nested_and_structured_exits() {
+    for (source, expected) in [
+        (
+            "func main(): int { let mut sum = 0\ncomptime for i in 0..3 { comptime for j in 0..2 { sum += i + j } } return sum }",
+            9,
+        ),
+        (
+            "func main(): int { let mut sum = 0\ncomptime for i in 0..4 { if i == 1 { continue } if i == 3 { break } sum += i } return sum }",
+            2,
+        ),
+        (
+            "func main(): int { comptime for i in 0..4 { return i + 7 } return 99 }",
+            7,
+        ),
+    ] {
+        assert_eq!(run_main_i32(&compile_source(source)), expected);
+    }
+}
+
+#[test]
+fn public_frozen_float_and_string_values_execute_in_wasm() {
+    let bytes = compile_source(
+        r#"
+func text(): str { return "Olá\0🦀" }
+func main(): int {
+    let negative: f64 = comptime (-0.0)
+    if 1.0 / negative >= 0.0 { return 1 }
+    let tiny: f64 = comptime (5e-324 + 5e-324)
+    if tiny != 1e-323 { return 2 }
+    let nan: f64 = comptime (0.0 / 0.0)
+    if nan == nan { return 3 }
+    let frozen = comptime text()
+    if frozen != "Olá\0🦀" { return 4 }
+    return 0
+}
+"#,
+    );
+    assert_eq!(run_main_i32(&bytes), 0);
+}
+
+#[test]
+fn frozen_float_literals_keep_nan_payloads_and_signed_zero_in_wasm() {
+    let interner = TypeInterner::new();
+    let ty = interner.intern(ArType::Primitive(Primitive::F64));
+    let format = arandu_middle::ctfe::FloatType::new(Primitive::F64, common::wasm32()).unwrap();
+    for bits in [
+        0_u64,
+        0x8000000000000000,
+        1,
+        0x7ff0000000000000,
+        0xfff0000000000000,
+        0x7ff8000000001234,
+    ] {
+        let mut literals = AmirLiteralPool::default();
+        let literal =
+            literals.intern_float_bits(arandu_middle::ctfe::ConstFloat::new(format, bits).unwrap());
+        let mut statements = AmirStmtTable::new();
+        statements.push(AmirStmt::Assign {
+            lhs: TempId::from_usize(0),
+            rhs: AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Pool(literal))),
+        });
+        let blocks = vec![AmirBasicBlock {
+            id: BlockId::from_usize(0),
+            params: DenseRange::empty(),
+            statements: DenseRange::new(0, 1),
+            terminator: AmirTerminator::Return,
+        }];
+        let function = AmirFunc {
+            symbol: foreign_sym(1),
+            return_type: ty,
+            receiver: None,
+            params: vec![],
+            locals: vec![],
+            temps: vec![temp(0, ty)],
+            cfg: compute_cfg_edges(&blocks),
+            blocks,
+            block_params: vec![],
+            stmts: statements,
+        };
+        let bytes = emit_one(function, &interner, &mut literals);
+        assert_eq!(common::run_main_f64(&bytes).to_bits(), bits);
+    }
+}
+
+#[test]
+fn public_layout_expressions_are_evaluated_for_wasm32_before_emission() {
+    let bytes = compile_source(
+        "func size<T>(): usize { return @sizeOf(T) }\nfunc main(): int { let word = comptime (@sizeOf(usize)); return (word + @alignOf(i64) + size<[3]u16>()) as int }",
+    );
+    assert_eq!(run_main_i32(&bytes), 18);
+}
+
+#[test]
 fn surface_bitwise_not_uses_the_operand_width() {
     let bytes = compile_source(
         r#"

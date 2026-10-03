@@ -14,6 +14,7 @@ use crate::literal_pool::AmirLiteralPool;
 use crate::passes::type_checker::types::{ArType, Primitive};
 use crate::{SymbolId, TypeCheckResult};
 use arandu_lexer::Span;
+use arandu_middle::DataLayout;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 mod arg_modes;
@@ -28,11 +29,15 @@ mod ops;
 mod pattern;
 mod place;
 mod ssa;
+mod static_for;
 mod stmt;
 mod unit;
 pub use compose::{ComposedUnits, ContextualFunctionUnit, compose_function_units};
 
-pub use unit::{FunctionUnit, append_function_unit, finalize_function_unit, lower_function_unit};
+pub use unit::{
+    FunctionUnit, append_function_unit, finalize_function_unit, lower_block_unit,
+    lower_expression_unit, lower_function_unit,
+};
 
 pub(crate) use arg_modes::CalleeArgModes;
 pub(crate) use func::lower_func;
@@ -73,8 +78,19 @@ pub fn lower_to_amir_with_interfaces(
     hir: &HirProgram,
     pointer_width: u64,
 ) -> Result<(AmirProgram, Vec<Diagnostic>), Vec<Diagnostic>> {
+    let layout = natural_layout(pointer_width, hir)?;
+    lower_to_amir_with_layout(tc, hir, layout)
+}
+
+/// Lower against the complete target layout, preserving ABI alignments that
+/// cannot be reconstructed from pointer width (for example i686 SysV).
+pub fn lower_to_amir_with_layout(
+    tc: &mut TypeCheckResult,
+    hir: &HirProgram,
+    layout: DataLayout,
+) -> Result<(AmirProgram, Vec<Diagnostic>), Vec<Diagnostic>> {
     let (mut program, mut diagnostics, no_fallback) =
-        lower_program(tc, hir, pointer_width, LoweringPurpose::Runtime)?;
+        lower_program(tc, hir, layout, LoweringPurpose::Runtime)?;
     let solution = crate::borrow_interface::solve_borrow_interfaces(&mut program, &tc.type_info);
     tc.type_info_mut().return_borrow_summaries = solution.summaries.clone();
 
@@ -97,12 +113,23 @@ pub fn lower_borrow_interfaces(
     hir: &HirProgram,
     pointer_width: u64,
 ) -> Result<crate::borrow_interface::BorrowInterfaceSolution, Vec<Diagnostic>> {
-    let (mut program, _, _) =
-        lower_program(tc, hir, pointer_width, LoweringPurpose::ReturnInterfaces)?;
+    let layout = natural_layout(pointer_width, hir)?;
+    let (mut program, _, _) = lower_program(tc, hir, layout, LoweringPurpose::ReturnInterfaces)?;
     Ok(crate::borrow_interface::solve_borrow_interfaces(
         &mut program,
         &tc.type_info,
     ))
+}
+
+fn natural_layout(pointer_width: u64, hir: &HirProgram) -> Result<DataLayout, Vec<Diagnostic>> {
+    if !matches!(pointer_width, 4 | 8) {
+        return Err(vec![Diagnostic::ice(
+            DiagCode::ICEL001,
+            "AMIR lowering requires a pointer width of 4 or 8 bytes",
+            hir.span,
+        )]);
+    }
+    Ok(DataLayout::ptr_width(pointer_width))
 }
 
 type LoweredProgram = (AmirProgram, Vec<Diagnostic>, FxHashMap<SymbolId, bool>);
@@ -116,7 +143,7 @@ enum LoweringPurpose {
 fn lower_program(
     tc: &TypeCheckResult,
     hir: &HirProgram,
-    pointer_width: u64,
+    layout: DataLayout,
     purpose: LoweringPurpose,
 ) -> Result<LoweredProgram, Vec<Diagnostic>> {
     if tc.diagnostics.iter().any(|d| d.severity == Severity::Error) {
@@ -165,7 +192,7 @@ fn lower_program(
                 f,
                 &const_values,
                 &arg_modes,
-                pointer_width,
+                layout,
             ) {
                 Ok(unit) => match append_function_unit(&mut program, unit) {
                     Ok(unit_diagnostics) => diagnostics.extend(unit_diagnostics),
@@ -388,6 +415,10 @@ pub(crate) struct LowerCtx<'a> {
     guard_borrows: FxHashMap<SymbolId, (LocalId, crate::types::TypeId)>,
     /// (`continue_block`, `exit_block`, `defer_frame_depth`, `local_scope_depth`)
     loop_stack: Vec<(BlockId, BlockId, usize, usize)>,
+    /// Shared ceilings for residual generation; nested loops cannot reset them.
+    static_expansion_remaining: usize,
+    static_expansion_product: usize,
+    static_expansion_depth: usize,
     /// Lexical local scopes used to emit StorageDead on block exits and loop
     /// control-flow edges. Drop elaboration turns these markers into cleanup.
     local_scopes: Vec<Vec<LocalId>>,
@@ -409,8 +440,8 @@ pub(crate) struct LowerCtx<'a> {
     redirected_temps: FxHashMap<TempId, AmirOperand>,
     /// Span of the HIR construct currently being lowered (for `use_span` / diags).
     current_span: Span,
-    /// Target pointer width in bytes (drives `mem.sizeOf`/`alignOf` folding).
-    pointer_width: u64,
+    /// Complete target ABI layout for intrinsic folding, never the host layout.
+    layout: DataLayout,
     /// Temporaries that hold freshly allocated heap string buffers (`ToStr` or `StringInterp`).
     owned_string_temps: FxHashSet<TempId>,
 }

@@ -54,7 +54,7 @@ pub fn lower_function_unit(
     tc: &TypeCheckResult,
     hir: &HirProgram,
     function: &HirFunc,
-    pointer_width: u64,
+    layout: DataLayout,
 ) -> Result<FunctionUnit, Vec<Diagnostic>> {
     if tc.diagnostics.iter().any(|d| d.severity == Severity::Error) {
         return Err(tc.diagnostics.clone());
@@ -75,7 +75,7 @@ pub fn lower_function_unit(
         })
         .collect();
     let modes = CalleeArgModes::from_hir(hir, &tc.type_info.type_interner);
-    lower_function_unit_with_context(tc, hir, function, &const_values, &modes, pointer_width)
+    lower_function_unit_with_context(tc, hir, function, &const_values, &modes, layout)
 }
 
 pub(super) fn lower_function_unit_with_context(
@@ -84,7 +84,7 @@ pub(super) fn lower_function_unit_with_context(
     function: &HirFunc,
     const_values: &FxHashMap<SymbolId, crate::hir::HirExprId>,
     modes: &CalleeArgModes,
-    pointer_width: u64,
+    layout: DataLayout,
 ) -> Result<FunctionUnit, Vec<Diagnostic>> {
     let Some(body) = function.body else {
         return Err(vec![Diagnostic::ice(
@@ -93,18 +93,166 @@ pub(super) fn lower_function_unit_with_context(
             function.span,
         )]);
     };
+    lower_root_unit(
+        tc,
+        hir,
+        function,
+        const_values,
+        modes,
+        super::func::BodyRoot::Block(body),
+        layout,
+    )
+}
+
+/// Lower a typed expression as an isolated CTFE root without cloning HIR or
+/// allocating a callable symbol. The owner supplies source identity only:
+/// parameters and other runtime statements are not part of this root.
+/// The evaluator must consume it with `evaluate_unit`, not as an owner callee.
+pub fn lower_expression_unit(
+    tc: &TypeCheckResult,
+    hir: &HirProgram,
+    owner: &HirFunc,
+    expression: crate::hir::HirExprId,
+    layout: DataLayout,
+) -> Result<FunctionUnit, Vec<Diagnostic>> {
+    if tc.diagnostics.iter().any(|d| d.severity == Severity::Error) {
+        return Err(tc.diagnostics.clone());
+    }
+    // This is a small header, not an IR/pool clone. An expression may have a
+    // different result type than its containing function.
+    let root = HirFunc {
+        symbol: owner.symbol,
+        params: crate::hir::IndexRange::empty(),
+        return_type: hir.pool.expr(expression).ty,
+        body: None,
+        span: hir.pool.expr(expression).span,
+        is_async: false,
+        no_fallback: owner.no_fallback,
+    };
+    let const_values = hir
+        .decls
+        .iter()
+        .filter_map(|&id| match hir.pool.decl(id) {
+            HirDecl::Const(value) => Some((value.symbol, value.value)),
+            _ => None,
+        })
+        .collect();
+    let modes = CalleeArgModes::from_hir(hir, &tc.type_info.type_interner);
+    lower_root_unit(
+        tc,
+        hir,
+        &root,
+        &const_values,
+        &modes,
+        super::func::BodyRoot::Expression(expression),
+        layout,
+    )
+}
+
+/// Lower a separately typed block as an isolated evaluation root. Explicit
+/// returns target its own register/frame. `value_tail` comes from initial AST
+/// typing: HIR expression statements do not retain the source semicolon.
+/// Like expression roots, this unit is not the owner's callable definition.
+pub fn lower_block_unit(
+    tc: &TypeCheckResult,
+    hir: &HirProgram,
+    owner: &HirFunc,
+    block: crate::hir::HirBlockId,
+    result_type: crate::types::TypeId,
+    value_tail: bool,
+    layout: DataLayout,
+) -> Result<FunctionUnit, Vec<Diagnostic>> {
+    if tc.diagnostics.iter().any(|d| d.severity == Severity::Error) {
+        return Err(tc.diagnostics.clone());
+    }
+    let span = hir.pool.block(block).span;
+    if value_tail
+        && !hir
+            .pool
+            .stmt_list(hir.pool.block(block).statements)
+            .last()
+            .is_some_and(|&id| matches!(hir.pool.stmt(id).kind, crate::hir::HirStmtKind::Expr(_)))
+    {
+        return Err(vec![Diagnostic::ice(
+            DiagCode::ICEL001,
+            "isolated block value tail is not an expression statement",
+            span,
+        )]);
+    }
+    let root = HirFunc {
+        symbol: owner.symbol,
+        params: crate::hir::IndexRange::empty(),
+        return_type: result_type,
+        body: None,
+        span,
+        is_async: false,
+        no_fallback: owner.no_fallback,
+    };
+    let const_values = hir
+        .decls
+        .iter()
+        .filter_map(|&id| match hir.pool.decl(id) {
+            HirDecl::Const(value) => Some((value.symbol, value.value)),
+            _ => None,
+        })
+        .collect();
+    let modes = CalleeArgModes::from_hir(hir, &tc.type_info.type_interner);
+    let unit = lower_root_unit(
+        tc,
+        hir,
+        &root,
+        &const_values,
+        &modes,
+        super::func::BodyRoot::IsolatedBlock { block, value_tail },
+        layout,
+    )?;
+    if !matches!(
+        tc.type_info.type_interner.resolve(result_type),
+        ArType::Void | ArType::Error
+    ) && !crate::definite_init::uninitialized_return_exits(&unit.function).is_empty()
+    {
+        return Err(vec![
+            Diagnostic::error(
+                DiagCode::T004IncompatibleReturnType,
+                "not every exit from this comptime block produces its required value",
+                span,
+            )
+            .with_primary_label("a path reaches the end without a value")
+            .with_hint("return a value on every path or provide a final expression"),
+        ]);
+    }
+    Ok(unit)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_root_unit(
+    tc: &TypeCheckResult,
+    hir: &HirProgram,
+    function: &HirFunc,
+    const_values: &FxHashMap<SymbolId, crate::hir::HirExprId>,
+    modes: &CalleeArgModes,
+    root: super::func::BodyRoot,
+    layout: DataLayout,
+) -> Result<FunctionUnit, Vec<Diagnostic>> {
+    if let Err(error) = layout.validate() {
+        return Err(vec![Diagnostic::ice(
+            DiagCode::ICEL001,
+            format!("invalid target layout for AMIR lowering: {error:?}"),
+            function.span,
+        )]);
+    }
     let mut literals = AmirLiteralPool::default();
     let mut diagnostics = Vec::new();
     let (amir, bindings, spans) = lower_func(
         function,
-        body,
+        root,
         tc,
         hir,
         const_values,
         modes,
         &mut literals,
         &mut diagnostics,
-        pointer_width,
+        layout,
     )
     .map_err(|diagnostic| vec![diagnostic])?;
     if diagnostics.iter().any(|d| d.severity == Severity::Error) {

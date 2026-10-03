@@ -254,6 +254,9 @@ pub fn synth_generic_instantiation(
     span: arandu_lexer::Span,
 ) -> ArType {
     let arg_ids = checker.pool.type_expr_list(type_args).to_vec();
+    for &arg in &arg_ids {
+        crate::type_checker::check::validate_const_arguments(checker, arg);
+    }
     let scope = checker.type_scope();
     let ctx = LowerCtx {
         pool: checker.pool,

@@ -92,7 +92,20 @@ fn expr_type_for_kind(
                 interner.intern(ArType::IntLiteral)
             }
         }
-        HirExprKind::Float(_) => interner.intern(ArType::FloatLiteral),
+        HirExprKind::Float(_) => {
+            if matches!(
+                interner.resolve(fallback),
+                ArType::Primitive(Primitive::Float | Primitive::F32 | Primitive::F64)
+            ) {
+                fallback
+            } else {
+                interner.intern(ArType::FloatLiteral)
+            }
+        }
+        HirExprKind::FloatBits(value) => {
+            TypeInterner::preinterned_primitive(value.ty().primitive())
+        }
+        HirExprKind::FrozenBytes(_) => fallback,
         HirExprKind::Bool(_) => TypeInterner::preinterned_primitive(Primitive::Bool),
         HirExprKind::Char(_) => TypeInterner::preinterned_primitive(Primitive::Char),
         HirExprKind::Nil => {
@@ -161,6 +174,43 @@ pub(crate) fn lower_expr_raw(
         .unwrap_or_else(error_ty);
 
     let kind = match pool.expr(expr) {
+        ExprKind::Layout { query, ty } => {
+            let interner = &mut std::sync::Arc::make_mut(&mut type_check.type_info).type_interner;
+            let operand = crate::passes::type_checker::types::lower_type_expr(
+                *ty,
+                pool,
+                &type_check.symbols,
+                crate::ScopeId(0),
+                &type_check.resolved,
+                interner,
+            );
+            HirExprKind::Layout {
+                query: *query,
+                operand_ty: interner.intern(operand),
+            }
+        }
+        ExprKind::Comptime { .. } => {
+            let Some((value, layout)) = type_check.type_info.ctfe_values.get(&span) else {
+                return Err(Diagnostic::error(crate::DiagCode::T042UnsupportedComptime,
+                    "this comptime root has not been evaluated; nested staging in CTFE helpers is not supported yet", span)
+                    .with_primary_label("compile-time evaluation required"));
+            };
+            return super::materialize::materialize_ctfe_value(
+                value,
+                fallback_ty,
+                &type_check.type_info,
+                hir_pool,
+                *layout,
+                span,
+            )
+            .map_err(|_| {
+                Diagnostic::ice(
+                    crate::DiagCode::ICET001,
+                    "evaluated scalar does not match its checked residual type",
+                    span,
+                )
+            });
+        }
         ExprKind::Path { .. } => {
             let symbol = require_value_symbol(&type_check.resolved, expr, span)?;
             HirExprKind::Path { symbol }

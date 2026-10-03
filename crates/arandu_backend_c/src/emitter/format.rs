@@ -32,6 +32,13 @@ impl<'a> CEmitter<'a> {
                         arandu_middle::literal_pool::float_literal_c_source(v)
                             .unwrap_or_else(|| v.to_string())
                     }
+                    AmirLiteralEntry::FloatBits(value) => {
+                        if value.ty().bit_width() == 32 {
+                            format!("ar_f32_from_bits(UINT32_C({}))", value.bits())
+                        } else {
+                            format!("ar_f64_from_bits(UINT64_C({}))", value.bits())
+                        }
+                    }
                     AmirLiteralEntry::Str(_) => {
                         // Prefer named constant when available; compound literal fallback
                         // is handled in format_operand for pool constants.

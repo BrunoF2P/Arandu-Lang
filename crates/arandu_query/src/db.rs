@@ -382,6 +382,15 @@ impl DatabaseImpl {
         file
     }
 
+    /// Update the text of an already-registered source file and notify Salsa.
+    ///
+    /// This is the preferred API for tests and fuzz targets that depend on
+    /// `arandu_query` but do not (and should not) take a direct `salsa` dep.
+    pub fn update_file_text(&mut self, file: SourceFile, text: impl Into<Arc<str>>) {
+        use salsa::Setter as _;
+        file.set_text(self).to(text.into());
+    }
+
     pub fn register_source_file(&self, path: String, file: SourceFile) {
         let mut reg = self.files.write().unwrap_or_else(|e| e.into_inner());
         let file_id = file.file_id(self.as_source_db());

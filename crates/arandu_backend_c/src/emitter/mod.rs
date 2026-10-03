@@ -129,6 +129,9 @@ impl<'a> CEmitter<'a> {
                         arandu_middle::literal_pool::AmirLiteralEntry::Float(_) => {
                             ArType::Primitive(arandu_middle::types::Primitive::Float)
                         }
+                        arandu_middle::literal_pool::AmirLiteralEntry::FloatBits(value) => {
+                            ArType::Primitive(value.ty().primitive())
+                        }
                         arandu_middle::literal_pool::AmirLiteralEntry::Char(_) => {
                             ArType::Primitive(arandu_middle::types::Primitive::Char)
                         }
@@ -171,16 +174,26 @@ impl<'a> CEmitter<'a> {
         }
     }
 
+    #[track_caller]
     pub(super) fn checked_layout(&mut self, ty: &ArType) -> arandu_middle::layout::TypeLayout {
         match self.layout.layout_of_type(ty, self.interner, self.provider) {
             Ok(layout) => layout,
             Err(error) => {
                 if self.error.is_none() {
-                    self.error = Some(Diagnostic::ice(
-                        DiagCode::ICEGEN001,
-                        format!("C code generation rejected an invalid type layout: {error}"),
-                        Span::new(0, 0, 0),
-                    ));
+                    self.error = Some(
+                        Diagnostic::ice(
+                            DiagCode::ICEGEN001,
+                            format!(
+                                "C code generation rejected the layout of '{}': {error}",
+                                ty.display(self.symbols, self.interner)
+                            ),
+                            Span::new(0, 0, 0),
+                        )
+                        .with_note(format!(
+                            "layout consumer: {}",
+                            std::panic::Location::caller()
+                        )),
+                    );
                 }
                 arandu_middle::layout::TypeLayout::simple(0, 1)
             }
@@ -218,8 +231,40 @@ impl<'a> CEmitter<'a> {
                 self.ensure_type_emitted(&ty);
             }
             self.emit_func_decl(func);
+            if let Some(error) = self.error.take() {
+                return Err(error.with_note(format!(
+                    "while emitting function '{}'",
+                    self.symbols.get(func.symbol).name
+                )));
+            }
+        }
+        let mut referenced = rustc_hash::FxHashSet::default();
+        let mut remember = |operand: &arandu_middle::amir::AmirOperand| {
+            if let arandu_middle::amir::AmirOperand::FunctionRef(symbol) = operand {
+                referenced.insert(*symbol);
+            }
+        };
+        for function in &self.program.funcs {
+            for statement in function.stmts.payloads.iter() {
+                arandu_middle::amir::visit::for_each_stmt_operand(statement, &mut remember);
+            }
+            for block in &function.blocks {
+                arandu_middle::amir::visit::for_each_terminator_operand(
+                    &block.terminator,
+                    &mut remember,
+                );
+            }
         }
         for (symbol, (params, ret)) in &self.program.extern_funcs {
+            // Header metadata also contains unused generic extern templates.
+            // Emit only declarations referenced by the actual AMIR program;
+            // opaque template parameters do not have a concrete C layout.
+            if !referenced.contains(symbol) {
+                continue;
+            }
+            if self.inlined_mem_intrinsic(*symbol).is_some() {
+                continue;
+            }
             let name = sanitize_c_ident(&self.symbols.get(*symbol).name);
             // Provided as static helpers in this TU (path + pure-buffer alloc).
             if matches!(
@@ -258,6 +303,11 @@ impl<'a> CEmitter<'a> {
             self.ensure_type_emitted(ret);
             for param in params {
                 self.ensure_type_emitted(param);
+            }
+            if let Some(error) = self.error.take() {
+                return Err(
+                    error.with_note(format!("while emitting external declaration '{name}'"))
+                );
             }
             let ret_str = self.format_type(ret);
             let _ = write!(&mut self.output, "{} {}(", ret_str, name);

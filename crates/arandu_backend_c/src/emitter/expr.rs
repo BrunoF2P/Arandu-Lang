@@ -242,7 +242,12 @@ impl<'a> CEmitter<'a> {
                     );
                 }
             }
-            AmirRvalue::EnumPayload { value, .. } => {
+            AmirRvalue::EnumPayload {
+                value,
+                index,
+                tuple_ty,
+                ..
+            } => {
                 let base_temp = match value {
                     AmirOperand::Copy(t) | AmirOperand::Move(t) => t.as_usize(),
                     _ => {
@@ -276,31 +281,25 @@ impl<'a> CEmitter<'a> {
                     );
                     return;
                 }
-                let enum_id = match enum_ty {
-                    ArType::Named(id, _) => id,
-                    _ => arandu_middle::SymbolId::DUMMY,
+                let base_offset = layout.field_offsets.get(1).copied().unwrap_or(0);
+                let tuple_offset = if let Some(tuple) = tuple_ty {
+                    let tuple = self.interner.resolve(*tuple);
+                    let tuple_layout = self.checked_layout(&tuple);
+                    let Some(offset) = tuple_layout.field_offsets.get(*index).copied() else {
+                        self.record_codegen_ice(
+                            func,
+                            "EnumPayload field is outside its instantiated tuple layout",
+                        );
+                        return;
+                    };
+                    offset
+                } else {
+                    0
                 };
-
-                let mut payload_offset = 0;
-                if matches!(
-                    layout.tag_encoding,
-                    Some(arandu_middle::layout::TagEncoding::Niche { .. })
-                ) {
-                    payload_offset = 0;
-                } else if arandu_middle::layout::StructLayoutProvider::get_enum_variants(
-                    self.provider,
-                    enum_id,
-                )
-                .is_some()
-                    || matches!(
-                        enum_ty,
-                        ArType::Option(_) | ArType::Result(_, _) | ArType::Poll(_)
-                    )
-                {
-                    // Tag is pointer-width on the target layout (i686 → 4, host64 → 8).
-                    let tag_size = self.layout.pointer_width() as usize;
-                    payload_offset = tag_size;
-                }
+                let Some(payload_offset) = base_offset.checked_add(tuple_offset) else {
+                    self.record_codegen_ice(func, "EnumPayload offset overflow");
+                    return;
+                };
                 let _ = write!(
                     &mut self.output,
                     "({{ {expected_c_type} _payload = {{0}}; memcpy(&_payload, (uint8_t*){} + {}, sizeof(_payload)); _payload; }})",

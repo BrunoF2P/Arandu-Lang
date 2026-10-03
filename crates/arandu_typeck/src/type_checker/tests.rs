@@ -91,6 +91,50 @@ fn ty_ctx_loop_tracking() {
 }
 
 #[test]
+fn ty_ctx_nested_ctfe_targets_do_not_capture_each_others_returns() {
+    use super::context::ReturnValue;
+    let mut ctx = TyCtx::new();
+    let i = new_interner();
+    let bool_id = i.intern(ArType::Primitive(Primitive::Bool));
+    let int_id = i.intern(ArType::Primitive(Primitive::Int));
+    ctx.push_return(bool_id, dummy_span());
+    ctx.enter_loop();
+    ctx.enter_loop();
+    ctx.push_ctfe_return(None, Span::new(0, 10, 30));
+    assert_eq!(ctx.current_return(), None, "no inherited function type");
+    assert!(!ctx.is_in_loop());
+    ctx.enter_loop();
+    ctx.push_ctfe_return(Some(bool_id), Span::new(0, 20, 25));
+    assert!(!ctx.is_in_loop(), "inner root has its own loop boundary");
+    ctx.record_ctfe_return(ReturnValue {
+        ty: bool_id,
+        span: dummy_span(),
+        expression: None,
+    });
+    let inner = ctx.pop_ctfe_return().expect("inner root");
+    assert_eq!(inner.len(), 1);
+    assert_eq!(inner[0].ty, bool_id);
+    assert_eq!(ctx.current_return(), None);
+    assert!(ctx.is_in_loop(), "outer evaluation loop restored");
+    ctx.record_ctfe_return(ReturnValue {
+        ty: int_id,
+        span: dummy_span(),
+        expression: None,
+    });
+    ctx.push_return(bool_id, dummy_span());
+    assert!(!ctx.is_ctfe_return(), "callee has its own return target");
+    ctx.pop_return();
+    let outer = ctx.pop_ctfe_return().expect("outer root");
+    assert_eq!(outer.len(), 1, "inner return does not constrain outer root");
+    assert_eq!(outer[0].ty, int_id);
+    assert_eq!(ctx.current_return(), Some(bool_id));
+    ctx.exit_loop();
+    assert!(ctx.is_in_loop(), "both enclosing loops restored");
+    ctx.exit_loop();
+    assert!(!ctx.is_in_loop());
+}
+
+#[test]
 fn ty_ctx_exit_loop_does_not_underflow() {
     let mut ctx = TyCtx::new();
     ctx.exit_loop();

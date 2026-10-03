@@ -1,8 +1,9 @@
 //! Function-local runtime staging. Declaration HIR carries call modes,
 //! constants and nominal metadata; it never lowers a sibling function body.
 
+use crate::ctfe::item_staged_typing as item_typing;
 use crate::db::HashEq;
-use crate::passes::{declaration_signatures, item_source_input, item_typing, parse, PreparedHir};
+use crate::passes::{declaration_signatures, item_source_input, parse, PreparedHir};
 use crate::{ArandCompilerDb, SourceFile, StableHash};
 use arandu_middle::types::{FunctionInstance, TypeShape};
 use arandu_middle::{Diagnostic, Severity, SymbolId};
@@ -196,16 +197,7 @@ impl StableHash for RuntimeUnit {
                 hash.update(&[1]);
                 hash.update(unit.function.stable_hash().as_bytes());
                 for literal in &unit.literals.entries {
-                    use arandu_middle::literal_pool::AmirLiteralEntry;
-                    let (tag, value) = match literal {
-                        AmirLiteralEntry::Int(v) => (0, v),
-                        AmirLiteralEntry::Float(v) => (1, v),
-                        AmirLiteralEntry::Str(v) => (2, v),
-                        AmirLiteralEntry::Char(v) => (3, v),
-                    };
-                    hash.update(&[tag]);
-                    hash.update(&(value.len() as u64).to_le_bytes());
-                    hash.update(value.as_bytes());
+                    crate::stable_hash::hash_literal_entry(&mut hash, literal);
                 }
                 hash.update(unit.diagnostics.stable_hash().as_bytes());
                 hash.update(&[u8::from(unit.no_fallback)]);
@@ -250,7 +242,37 @@ impl StableHash for RuntimeUnit {
     }
 }
 
-#[salsa::tracked]
+fn instance_hir_cycle<'db>(
+    db: &'db dyn ArandCompilerDb,
+    _id: salsa::Id,
+    instance: Instance<'db>,
+) -> HashEq<InstanceHir> {
+    // Recovery may run while headers and the selected root are themselves
+    // active. Read only the interned identity, never ask another body/header
+    // query for a "better" fallback and recreate the same dependency cycle.
+    let key = instance.key(db);
+    let diagnostics = vec![Diagnostic::error(
+        arandu_middle::DiagCode::T044ComptimeEvaluationFailed,
+        "function instantiation depends on its own compile-time selection",
+        arandu_middle::Span::new(key.definition.file_id, 0, 0),
+    )
+    .with_primary_label("cyclic compile-time dependency")];
+    let mut checked = arandu_semantics::TypeCheckResult::empty();
+    checked.diagnostics = diagnostics.clone();
+    HashEq::new(InstanceHir {
+        artifacts: PreparedHir {
+            hir: None,
+            type_check: checked,
+            diagnostics,
+            source_fingerprint: key.stable_hash(),
+        },
+        function: None,
+        instances: Vec::new(),
+        generated_symbols: Vec::new(),
+    })
+}
+
+#[salsa::tracked(cycle_result = instance_hir_cycle)]
 #[tracing::instrument(
     level = "trace",
     target = "arandu_query",
@@ -262,7 +284,37 @@ pub fn instance_hir<'db>(
     instance: Instance<'db>,
 ) -> HashEq<InstanceHir> {
     let key = instance.key(db);
-    let template = function_hir(db, *instance.file(db), key.definition);
+    let source = item_source_input(db, *instance.file(db), key.definition);
+    let has_static_loop = if source.may_have_comptime && key.arguments.is_empty() {
+        let mut body_span = None;
+        source.program.for_each_decl_recursive(|_, declaration| {
+            if arandu_semantics::item_source_span(declaration).start == source.item_start {
+                if let arandu_parser::TopLevelDecl::Func(function) = declaration {
+                    body_span = Some(function.body.span);
+                }
+            }
+        });
+        body_span.is_some_and(|body| {
+            source.program.pool.stmts.iter().any(|stmt| {
+                matches!(
+                    stmt,
+                    arandu_parser::Stmt::For {
+                        is_comptime: true,
+                        ..
+                    }
+                ) && body.start <= stmt.span().start
+                    && stmt.span().end <= body.end
+            })
+        })
+    } else {
+        false
+    };
+    let staged = source.may_have_comptime && (!key.arguments.is_empty() || has_static_loop);
+    let template = if staged {
+        crate::ctfe::instance_staged_hir(db, instance)
+    } else {
+        HashEq::share(function_hir(db, *instance.file(db), key.definition))
+    };
     let mut checked = template.type_check.clone();
     let mut hir = template.hir.as_ref().map(|source| {
         let mut hir = arandu_middle::hir::HirProgram {
@@ -348,6 +400,12 @@ pub fn instance_hir<'db>(
                 function = Some(concrete.function);
                 instances = concrete.instances;
                 generated_symbols = concrete.generated_symbols;
+                if staged {
+                    generated_symbols.extend(crate::ctfe::instance_staged_symbols(db, instance));
+                    generated_symbols
+                        .sort_unstable_by_key(|symbol| (symbol.file_id, symbol.local_id.0));
+                    generated_symbols.dedup();
+                }
             }
             Err(errors) => diagnostics.extend(errors),
         }
@@ -407,7 +465,7 @@ pub fn runtime_raw_unit<'db>(
                     &concrete.artifacts.type_check,
                     hir,
                     function,
-                    db.target_config().data_layout(db).pointer_width(),
+                    *db.target_config().data_layout(db),
                 )
             }),
         _ => {
@@ -443,7 +501,27 @@ impl StableHash for DeclarationHir {
     query = "declaration_hir", file = ?file.file_id(db),
 ))]
 pub fn declaration_hir(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<DeclarationHir> {
-    let declared = declaration_signatures(db, file);
+    declaration_hir_from(db, file, false)
+}
+
+/// Pre-body staging context. Uses the same declaration lowering and constant
+/// checker, but cannot request full resolution, staged bodies or runtime units.
+#[salsa::tracked]
+#[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(query = "header_hir", file = ?file.file_id(db)))]
+pub fn header_hir(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<DeclarationHir> {
+    declaration_hir_from(db, file, true)
+}
+
+fn declaration_hir_from(
+    db: &dyn ArandCompilerDb,
+    file: SourceFile,
+    headers_only: bool,
+) -> HashEq<DeclarationHir> {
+    let declared = if headers_only {
+        crate::passes::header_signatures(db, file)
+    } else {
+        declaration_signatures(db, file)
+    };
     let parsed = parse(db, file);
     let mut checked = (**declared).clone();
     let mut fingerprint = blake3::Hasher::new();
@@ -474,9 +552,20 @@ pub fn declaration_hir(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<Dec
                 .and_then(|key| checked.resolved.definitions.get(&key))
                 .copied()
             {
-                let item = item_typing(db, file, symbol);
-                checked.type_info_mut().merge_from(&item.type_info);
-                checked.diagnostics.extend(item.diagnostics.iter().cloned());
+                if headers_only {
+                    let item = arandu_semantics::check_item_body_only(
+                        declared,
+                        program,
+                        symbol,
+                        crate::passes::database_target_info(db),
+                    );
+                    checked.type_info_mut().merge_from(&item.type_info);
+                    checked.diagnostics.extend(item.diagnostics);
+                } else {
+                    let item = item_typing(db, file, symbol);
+                    checked.type_info_mut().merge_from(&item.type_info);
+                    checked.diagnostics.extend(item.diagnostics.iter().cloned());
+                }
                 fingerprint.update(item_source_input(db, file, symbol).stable_hash().as_bytes());
             }
         });

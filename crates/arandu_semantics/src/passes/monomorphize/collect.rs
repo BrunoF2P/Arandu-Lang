@@ -10,6 +10,38 @@ use arandu_typeck::TypeCheckResult;
 
 use super::graph::{InstantiationGraph, InstantiationKey, InstantiationNodeId, MonoError};
 
+/// A selected root in the existing HIR pool, never a new callable definition.
+#[derive(Debug, Clone, Copy)]
+pub enum InstantiationRoot {
+    Expression(HirExprId),
+    Block(arandu_middle::hir::HirBlockId),
+}
+
+pub(super) fn analyze_root_instantiations<'bump>(
+    tc: &TypeCheckResult,
+    hir: &HirProgram,
+    root: InstantiationRoot,
+    bump: &'bump bumpalo::Bump,
+) -> Result<InstantiationGraph<'bump>, Vec<Diagnostic>> {
+    let mut analyzer = InstantiationAnalyzer {
+        tc,
+        hir,
+        interner: &tc.type_info.type_interner,
+        bump,
+        graph: InstantiationGraph::new(bump),
+        diagnostics: Vec::new(),
+    };
+    match root {
+        InstantiationRoot::Expression(expression) => analyzer.visit_expr(expression, None),
+        InstantiationRoot::Block(block) => analyzer.visit_block(block, None),
+    }
+    if analyzer.diagnostics.is_empty() {
+        Ok(analyzer.graph)
+    } else {
+        Err(analyzer.diagnostics)
+    }
+}
+
 #[tracing::instrument(level = "trace", target = "arandu_typeck", skip(tc, hir))]
 pub fn analyze_instantiations<'bump>(
     tc: &TypeCheckResult,
@@ -143,7 +175,12 @@ impl<'a, 'bump> InstantiationAnalyzer<'a, 'bump> {
                     self.visit_block(*block, current);
                 }
             }
-            HirStmtKind::For { clause, body } => {
+            HirStmtKind::For {
+                clause,
+                body,
+                comptime_bodies,
+                ..
+            } => {
                 match clause {
                     arandu_middle::hir::HirForClause::In { iterable, .. } => {
                         self.visit_expr(*iterable, current);
@@ -165,7 +202,13 @@ impl<'a, 'bump> InstantiationAnalyzer<'a, 'bump> {
                         }
                     }
                 }
-                self.visit_block(*body, current);
+                if let Some(bodies) = comptime_bodies {
+                    for body in bodies {
+                        self.visit_block(*body, current);
+                    }
+                } else {
+                    self.visit_block(*body, current);
+                }
             }
             HirStmtKind::While { condition, body } => {
                 self.visit_condition(condition, current);
@@ -185,7 +228,8 @@ impl<'a, 'bump> InstantiationAnalyzer<'a, 'bump> {
             }
             HirStmtKind::Defer(block)
             | HirStmtKind::ErrDefer(block)
-            | HirStmtKind::Unsafe(block) => {
+            | HirStmtKind::Unsafe(block)
+            | HirStmtKind::Scope(block) => {
                 self.visit_block(*block, current);
             }
             HirStmtKind::Break | HirStmtKind::Continue | HirStmtKind::Error => {}
@@ -274,7 +318,7 @@ impl<'a, 'bump> InstantiationAnalyzer<'a, 'bump> {
                     self.visit_expr(field.value, current);
                 }
             }
-            HirExprKind::Array { items } => {
+            HirExprKind::Array { items } | HirExprKind::Tuple { items } => {
                 for &item in self.hir.pool.expr_list(*items) {
                     self.visit_expr(item, current);
                 }
@@ -318,10 +362,13 @@ impl<'a, 'bump> InstantiationAnalyzer<'a, 'bump> {
                 self.visit_expr(*left, current);
                 self.visit_expr(*right, current);
             }
-            HirExprKind::Path { .. }
+            HirExprKind::Layout { .. }
+            | HirExprKind::Path { .. }
             | HirExprKind::TypePath { .. }
             | HirExprKind::Int(_)
             | HirExprKind::Float(_)
+            | HirExprKind::FloatBits(_)
+            | HirExprKind::FrozenBytes(_)
             | HirExprKind::Bool(_)
             | HirExprKind::Char(_)
             | HirExprKind::Str(_)

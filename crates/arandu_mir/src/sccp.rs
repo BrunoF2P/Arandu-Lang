@@ -593,9 +593,10 @@ fn const_as_i128(c: &AmirConstant, pool: &AmirLiteralPool) -> Option<i128> {
     match c {
         AmirConstant::Pool(id) => match pool.get(*id) {
             AmirLiteralEntry::Int(val) => arandu_middle::literal_pool::parse_int_literal(val),
-            AmirLiteralEntry::Float(_) | AmirLiteralEntry::Str(_) | AmirLiteralEntry::Char(_) => {
-                None
-            }
+            AmirLiteralEntry::Float(_)
+            | AmirLiteralEntry::FloatBits(_)
+            | AmirLiteralEntry::Str(_)
+            | AmirLiteralEntry::Char(_) => None,
         },
         AmirConstant::Bool(_) | AmirConstant::Nil => None,
     }

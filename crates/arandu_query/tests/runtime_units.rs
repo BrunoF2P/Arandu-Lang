@@ -27,6 +27,35 @@ fn instance<'db>(
 }
 
 #[test]
+fn typed_integer_modified_through_a_reference_is_reloaded_from_memory() {
+    use arandu_middle::amir::{AmirRvalue, AmirStmt};
+
+    let mut db = DatabaseImpl::new();
+    let file = db.new_file(
+        "main.aru".into(),
+        "extern \"C\" { func update(n: mut ref usize): void }\nfunc main(): usize {\nlet mut n: usize = 0\nunsafe { update(n) }\nreturn n\n}".into(),
+    );
+    let raw = runtime_raw_unit(&db, instance(&db, file, "main", Vec::new()));
+    let unit = raw.result.as_ref().expect("reference argument unit");
+    let function = &unit.function;
+    let local = function
+        .locals
+        .iter()
+        .enumerate()
+        .find(|(_, local)| local.is_memory)
+        .map(|(id, _)| arandu_middle::amir::LocalId::from_usize(id))
+        .expect("address-taken integer local");
+    assert!(
+        function.stmts.payloads.iter().any(|statement| matches!(
+            statement,
+            AmirStmt::Assign { rhs: AmirRvalue::Load(place), .. }
+                if place.local == local && place.projections.is_empty()
+        )),
+        "an external write must not be replaced by the integer's initial constant"
+    );
+}
+
+#[test]
 fn returned_wrapper_discovers_its_field_destructor_without_reading_callee_bodies() {
     let mut db = DatabaseImpl::new();
     let file = db.new_file(
@@ -936,8 +965,13 @@ fn declaration_context_preserves_constants_and_consuming_receiver_modes() {
             _ => None,
         })
         .expect("function");
-    let unit =
-        arandu_mir::lower_function_unit(&lowered.type_check, hir, function, 8).expect("MIR unit");
+    let unit = arandu_mir::lower_function_unit(
+        &lowered.type_check,
+        hir,
+        function,
+        arandu_middle::DataLayout::ptr_width(8),
+    )
+    .expect("MIR unit");
     assert_eq!(unit.literals.entries.len(), 1);
     assert_eq!(
         arandu_middle::literal_pool::parse_int_literal(match &unit.literals.entries[0] {

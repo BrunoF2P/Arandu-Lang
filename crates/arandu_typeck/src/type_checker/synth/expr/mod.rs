@@ -45,6 +45,36 @@ fn synth_expr_inner(
     let pool = checker.pool;
     let kind = pool.expr(expr);
 
+    if let ExprKind::Layout { ty, .. } = kind {
+        let operand = checker.lower_type_expr(*ty, checker.type_scope());
+        return if operand == ArType::Error {
+            checker.intern(ArType::Error)
+        } else {
+            checker.intern(ArType::Primitive(super::super::types::Primitive::USize))
+        };
+    }
+
+    if let ExprKind::Comptime { body } = kind {
+        if !checker.type_info.ctfe_roots.contains(&expr) {
+            checker.type_info.ctfe_roots.push(expr);
+        }
+        // Initial typing only. Evaluation and residualization are owned by the
+        // query staging boundary, never by this pure checker.
+        let ty = match body {
+            arandu_parser::ast_pool::ComptimeBody::Expression(inner) => {
+                synth_expr_expected(checker, *inner, expected)
+            }
+            arandu_parser::ast_pool::ComptimeBody::Block(block) => {
+                crate::type_checker::check::check_ctfe_block(checker, pool.block(*block), expected)
+                    .return_type
+            }
+        };
+        // A staged value is a typed scalar result, not an unbound literal
+        // variable escaping into runtime inference. Explicit context is fed
+        // to the inner checker; absent context uses the ordinary default.
+        return checker.intern(checker.resolve(ty).default_literal());
+    }
+
     if let ExprKind::VariantSugar { name, args } = kind {
         return synth_variant_sugar(checker, expr, name, *args, expected, span);
     }

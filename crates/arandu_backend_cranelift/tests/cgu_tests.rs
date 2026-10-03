@@ -26,7 +26,7 @@ fn compile_amir(
     let mut hir = lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
     arandu_semantics::passes::monomorphize::monomorphize_program(&mut tc, &mut hir)
         .expect("specialization failed");
-    let amir = lower_to_amir(&tc, &hir, 64).expect("AMIR lowering failed");
+    let amir = lower_to_amir(&tc, &hir, 8).expect("AMIR lowering failed");
     let symbols = Arc::unwrap_or_clone(tc.symbols);
     let type_info = Arc::unwrap_or_clone(tc.type_info);
     (amir, symbols, type_info)

@@ -576,6 +576,51 @@ func main(): int {
 }
 
 #[test]
+fn static_branch_owned_locals_drop_at_scope_exit_and_loop_jumps() {
+    let source = r#"
+import std.alloc.string as strings
+func main(): int {
+    let mut index = 0
+    while index < 4 {
+        comptime if true {
+            let owned = strings.from("static-scope-owned")
+            index = index + 1
+            if index == 1 { continue }
+            if index == 3 { break }
+            owned.destroy()
+        } else { unavailable() }
+    }
+    comptime if true { let owned = strings.from("end-of-scope") } else { missing() }
+    return 0
+}
+"#;
+    check_passes(source, "static_scope_drops_check");
+    run(source, "static_scope_drops_run");
+    let c_source = emit_c(source, "static_scope_drops_c");
+    run_emitted_c_with_asan(&c_source, "static_scope_drops_asan");
+}
+
+#[test]
+fn static_iteration_owned_locals_drop_once_on_each_structured_exit() {
+    let source = r#"
+import std.alloc.string as strings
+func main(): int {
+    comptime for index in 0..4 {
+        let owned = strings.from("static-iteration-owned")
+        if index == 1 { continue }
+        if index == 3 { break }
+        owned.destroy()
+    }
+    return 0
+}
+"#;
+    check_passes(source, "static_iteration_drops_check");
+    run(source, "static_iteration_drops_run");
+    let emitted = emit_c(source, "static_iteration_drops_c");
+    run_emitted_c_with_asan(&emitted, "static_iteration_drops_asan");
+}
+
+#[test]
 fn c_drop_in_place_uses_opaque_struct_layout_not_member_access() {
     let c_source = emit_c(
         r#"

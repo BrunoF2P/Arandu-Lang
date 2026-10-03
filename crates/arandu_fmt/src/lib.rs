@@ -498,6 +498,60 @@ mod tests {
     use super::*;
 
     #[test]
+    fn computed_generic_arguments_format_without_changing_the_ast() {
+        let source = "func count<comptime N:uint>():uint{return N}\nfunc main():uint{return count<comptime(20+22)>()}\n";
+        let formatted = format_source(source);
+        assert!(parses_clean(&formatted), "{formatted}");
+        assert_eq!(format_source(&formatted), formatted);
+        assert!(format_edits(&formatted).is_empty());
+        assert!(
+            formatted.contains("count<comptime(20+22)>()"),
+            "{formatted}"
+        );
+    }
+
+    #[test]
+    fn comptime_value_parameters_and_dependent_arrays_format_idempotently() {
+        for marker in ["const", "comptime"] {
+            let source = format!(
+                "func total<{marker} N: uint>(values: [N]int): int {{\nreturn (N as int) + values[0]\n}}\nfunc main(): int {{ return total<3>([39, 0, 0]) }}\n"
+            );
+            let formatted = format_source(&source);
+            assert!(parses_clean(&formatted), "{formatted}");
+            assert!(
+                formatted.contains(&format!("{marker} N: uint")),
+                "{formatted}"
+            );
+            assert!(formatted.contains("[N]int"), "{formatted}");
+            assert!(formatted.contains("    return (N as int)"), "{formatted}");
+            assert_eq!(format_source(&formatted), formatted);
+            assert!(format_edits(&formatted).is_empty());
+        }
+    }
+
+    #[test]
+    fn comptime_blocks_and_expressions_format_idempotently_without_changing_scope() {
+        let source = "func main(): int {\nlet x = comptime {\nlet y = 20\nreturn y + 22\n}\nreturn comptime (x + 1)\n}\nfunc other(): int { return comptime 42 }\n";
+        let formatted = format_source(source);
+        assert!(parses_clean(&formatted), "{formatted}");
+        assert!(formatted.contains("        return y + 22"), "{formatted}");
+        assert!(formatted.contains("comptime (x + 1)"), "{formatted}");
+        assert_eq!(format_source(&formatted), formatted);
+        assert!(format_edits(&formatted).is_empty());
+    }
+
+    #[test]
+    fn static_if_formats_both_branches_idempotently() {
+        let source = "func main():int{\ncomptime if true&&false{\nreturn absent\n}else comptime if true{\nreturn 42\n}else{\nreturn missing\n}\n}\n";
+        let formatted = format_source(source);
+        assert!(parses_clean(&formatted), "{formatted}");
+        assert!(formatted.contains("    comptime if true"), "{formatted}");
+        assert!(formatted.contains("        return absent"), "{formatted}");
+        assert_eq!(format_source(&formatted), formatted);
+        assert!(format_edits(&formatted).is_empty());
+    }
+
+    #[test]
     fn oversized_sources_are_not_parsed_or_rewritten() {
         let source = " ".repeat(MAX_FORMAT_SOURCE_BYTES + 1);
         assert_eq!(format_source(&source), source);
@@ -639,6 +693,30 @@ mod tests {
         let legacy = "@no_fallback\nfunc main() {}\n";
         assert!(format_source(canonical).contains("@NoFallback"));
         assert!(format_source(legacy).contains("@no_fallback"));
+    }
+
+    #[test]
+    fn layout_expression_formatting_preserves_types_and_attributes() {
+        let source = "@test\nfunc size():usize{\nlet n=comptime (@sizeOf([3]u16))\nlet a=@alignOf([3]u16)\n}\n";
+        let formatted = format_source(source);
+        assert!(parses_clean(&formatted), "{formatted}");
+        assert!(formatted.contains("@sizeOf([3]u16)"), "{formatted}");
+        assert!(formatted.contains("@alignOf([3]u16)"), "{formatted}");
+        assert!(formatted.starts_with("@test\n"), "{formatted}");
+        assert_eq!(format_source(&formatted), formatted);
+    }
+
+    #[test]
+    fn static_and_runtime_loops_format_without_changing_phase_or_scope() {
+        let source = "func main():int{\nlet mut sum=0\ncomptime for i in 0..4{\nif i==1{continue}\nsum+=i\n}\nfor j in 0..2{\nsum+=j\n}\nreturn sum\n}\n";
+        let formatted = format_source(source);
+        assert!(parses_clean(&formatted), "{formatted}");
+        assert!(
+            formatted.contains("    comptime for i in 0..4"),
+            "{formatted}"
+        );
+        assert!(formatted.contains("    for j in 0..2"), "{formatted}");
+        assert_eq!(format_source(&formatted), formatted);
     }
 
     #[test]

@@ -33,7 +33,7 @@ fn run(
     arguments: Vec<ConstValue>,
     budget: Budget,
 ) -> Result<ConstValue, EvalError> {
-    *ctfe_eval(db, CtfeRequest::new(db, file, symbol, arguments, budget))
+    ctfe_eval(db, CtfeRequest::new(db, file, symbol, arguments, budget)).clone()
 }
 
 fn number(value: ConstValue) -> i128 {
@@ -41,6 +41,116 @@ fn number(value: ConstValue) -> i128 {
         panic!("expected integer")
     };
     value.value()
+}
+
+struct QueryUnits<'a>(&'a DatabaseImpl);
+
+impl FunctionProvider for QueryUnits<'_> {
+    fn function(&self, symbol: SymbolId) -> Result<Arc<CtfeFunction>, EvalErrorKind> {
+        let file = arandu_middle::db::SourceDatabase::source_file_by_id(self.0, symbol.file_id)
+            .ok_or(EvalErrorKind::MissingFunction(symbol))?;
+        ctfe_func_amir(self.0, file, symbol)
+            .result
+            .as_ref()
+            .map(Arc::clone)
+            .map_err(|_| EvalErrorKind::UnavailableFunction(symbol))
+    }
+}
+
+fn expression_root(db: &DatabaseImpl, file: SourceFile, owner: SymbolId) -> Arc<CtfeFunction> {
+    use arandu_middle::hir::{HirDecl, HirStmtKind};
+    let prepared = arandu_query::runtime::function_hir(db, file, owner);
+    let hir = prepared.hir.as_ref().expect("typed owner HIR");
+    let function = hir
+        .decls
+        .iter()
+        .find_map(|&id| match hir.pool.decl(id) {
+            HirDecl::Func(function) if function.symbol == owner => Some(function),
+            _ => None,
+        })
+        .expect("owner function");
+    let expression = hir
+        .pool
+        .stmts
+        .iter()
+        .find_map(|statement| match statement.kind {
+            HirStmtKind::VarDecl { value, .. } => Some(value),
+            _ => None,
+        })
+        .expect("root initializer");
+    let layout = *db.target_config().data_layout(db);
+    let root =
+        arandu_mir::lower_expression_unit(&prepared.type_check, hir, function, expression, layout)
+            .expect("isolated expression lowering");
+    assert!(
+        root.function.params.is_empty(),
+        "runtime parameters are not root arguments"
+    );
+    assert_eq!(root.function.temps[0].span, hir.pool.expr(expression).span);
+    Arc::new(
+        CtfeFunction::new(
+            Arc::unwrap_or_clone(root.function),
+            root.literals,
+            &prepared.type_check.type_info.type_interner,
+            layout,
+        )
+        .expect("scalar root"),
+    )
+}
+
+#[test]
+fn isolated_expression_uses_its_own_type_without_running_other_owner_statements() {
+    let mut db = DatabaseImpl::new();
+    let file = db.new_file("main.aru".into(),
+        "extern \"C\" { func external(): void }\nfunc add(a: int, b: int): int { return a + b }\nfunc owner(runtime: int): bool {\nlet folded = add(20, 22)\nunsafe { external() }\nreturn false\n}".into());
+    let owner = symbol(&db, file, "owner");
+    let result = arandu_mir::ctfe::evaluate_unit(
+        &QueryUnits(&db),
+        expression_root(&db, file, owner),
+        &[],
+        budget(),
+        || false,
+    )
+    .expect("expression evaluation");
+    assert_eq!(number(result), 42);
+}
+
+#[test]
+fn isolated_expression_cannot_capture_a_runtime_parameter() {
+    let mut db = DatabaseImpl::new();
+    let file = db.new_file(
+        "main.aru".into(),
+        "func owner(runtime: int): int {\nlet folded = runtime + 1\nreturn 0\n}".into(),
+    );
+    let owner = symbol(&db, file, "owner");
+    let error = arandu_mir::ctfe::evaluate_unit(
+        &QueryUnits(&db),
+        expression_root(&db, file, owner),
+        &[],
+        budget(),
+        || false,
+    )
+    .expect_err("runtime capture rejected");
+    assert_eq!(error.kind, EvalErrorKind::UnsupportedOperation);
+}
+
+#[test]
+fn isolated_expression_calling_its_owner_resolves_the_real_function() {
+    let mut db = DatabaseImpl::new();
+    let file = db.new_file(
+        "main.aru".into(),
+        "func owner(): int {\nif false { let folded = owner() + 41 }\nreturn 1\n}".into(),
+    );
+    let owner = symbol(&db, file, "owner");
+    let result = arandu_mir::ctfe::evaluate_unit(
+        &QueryUnits(&db),
+        expression_root(&db, file, owner),
+        &[],
+        budget(),
+        || false,
+    )
+    .expect("owner is not the expression root");
+    assert_eq!(number(result), 42);
 }
 
 fn source(helper: &str, unused: &str) -> String {
@@ -94,11 +204,11 @@ fn consumer<'db>(
     db: &'db dyn ArandCompilerDb,
     request: CtfeRequest<'db>,
 ) -> Result<ConstValue, EvalError> {
-    *ctfe_eval(db, request)
+    ctfe_eval(db, request).clone()
 }
 
 fn consume(db: &DatabaseImpl, file: SourceFile, symbol: SymbolId) -> Result<ConstValue, EvalError> {
-    *consumer(db, CtfeRequest::new(db, file, symbol, vec![], budget()))
+    consumer(db, CtfeRequest::new(db, file, symbol, vec![], budget())).clone()
 }
 
 #[test]
@@ -145,7 +255,7 @@ fn loops_and_recursive_calls_run_on_bounded_frames() {
     let argument = ConstValue::Integer(ConstInt::new(int, 20).expect("argument"));
     let recurse = symbol(&db, file, "recurse");
     assert_eq!(
-        number(run(&db, file, recurse, vec![argument], budget()).expect("recursive call")),
+        number(run(&db, file, recurse, vec![argument.clone()], budget()).expect("recursive call")),
         7
     );
     let mut limited = budget();
@@ -274,6 +384,343 @@ fn unsupported_generics_and_external_calls_never_get_a_dummy_body() {
             .kind,
         EvalErrorKind::UnavailableFunction(_) | EvalErrorKind::MissingFunction(_)
     ));
+}
+
+#[test]
+fn untaken_helpers_are_dependencies_and_effect_changes_invalidate_evaluation() {
+    let (mut db, log) = DatabaseImpl::with_rebuild_log();
+    let source = |body: &str| {
+        format!(
+        "extern \"C\" {{ func external(): int }}\nfunc foo(): int {{ if false {{ return helper() }}\n return 42 }}\nfunc helper(): int {{ {body} }}\nfunc sibling(): int {{ return missing }}\n"
+    )
+    };
+    let file = db.new_file("ctfe.aru".into(), source("return 9"));
+    let foo = symbol(&db, file, "foo");
+    assert_eq!(number(consume(&db, file, foo).expect("pure closure")), 42);
+    log.clear();
+    file.set_text(&mut db)
+        .to(Arc::from(source("unsafe { return external() }")));
+    let error = consume(&db, file, foo).expect_err("untaken transitive extern");
+    assert!(matches!(
+        error.kind,
+        EvalErrorKind::UnavailableFunction(_) | EvalErrorKind::MissingFunction(_)
+    ));
+    assert_eq!(error.trace.len(), 1);
+    assert_eq!(error.trace[0].function, foo);
+    assert_eq!(log.count_executions_matching("ctfe_eval"), 1);
+    assert_eq!(log.count_executions_matching("consumer"), 1);
+    assert_eq!(log.count_executions_matching("lower_amir"), 0);
+    file.set_text(&mut db).to(Arc::from(source("return 10")));
+    assert_eq!(
+        number(consume(&db, file, foo).expect("recovered closure")),
+        42
+    );
+    let mut clean = DatabaseImpl::new();
+    let clean_file = clean.new_file("ctfe.aru".into(), source("return 10"));
+    assert_eq!(
+        consume(&db, file, foo),
+        consume(&clean, clean_file, symbol(&clean, clean_file, "foo"))
+    );
+}
+
+#[test]
+fn changes_to_untaken_pure_helpers_cut_off_equal_result_consumers() {
+    let (mut db, log) = DatabaseImpl::with_rebuild_log();
+    let source = |value| {
+        format!("func foo(): int {{ if false {{ return helper() }}\n return 42 }}\nfunc helper(): int {{ return {value} }}")
+    };
+    let file = db.new_file("ctfe.aru".into(), source(1));
+    let foo = symbol(&db, file, "foo");
+    assert_eq!(number(consume(&db, file, foo).expect("initial")), 42);
+    log.clear();
+    file.set_text(&mut db).to(Arc::from(source(2)));
+    assert_eq!(number(consume(&db, file, foo).expect("equal result")), 42);
+    assert_eq!(log.count_executions_matching("ctfe_func_amir"), 1);
+    assert_eq!(log.count_executions_matching("ctfe_eval"), 1);
+    assert_eq!(log.count_executions_matching("consumer"), 0);
+}
+
+#[test]
+fn inconsistent_layouts_are_rejected_and_do_not_poison_valid_target_results() {
+    use arandu_middle::layout::{DataLayoutError, SizeAlign};
+    let mut db = DatabaseImpl::new();
+    let file = db.new_file("ctfe.aru".into(), "func foo(): int { return 42 }".into());
+    let foo = symbol(&db, file, "foo");
+    let valid = DataLayout::ptr_width(8);
+    for invalid in [
+        DataLayout {
+            pointer: SizeAlign::natural(2),
+            ..valid
+        },
+        DataLayout {
+            i64: SizeAlign::new(8, 0),
+            ..valid
+        },
+        DataLayout {
+            float: SizeAlign::new(8, 4),
+            ..valid
+        },
+    ] {
+        db.set_target_config(invalid);
+        assert!(matches!(
+            ctfe_func_amir(&db, file, foo).result,
+            Err(BuildFailure::Evaluation(EvalErrorKind::InvalidLayout(
+                DataLayoutError::PointerWidth
+                    | DataLayoutError::Alignment
+                    | DataLayoutError::FloatLayout
+            )))
+        ));
+        assert!(run(&db, file, foo, vec![], budget()).is_err());
+    }
+    db.set_target_config(DataLayout::i686_sysv());
+    assert_eq!(
+        number(run(&db, file, foo, vec![], budget()).expect("valid i686 layout")),
+        42
+    );
+}
+
+fn run_instance(
+    db: &DatabaseImpl,
+    file: SourceFile,
+    definition: SymbolId,
+    types: Vec<arandu_middle::types::TypeShape>,
+    arguments: Vec<ConstValue>,
+) -> Result<ConstValue, EvalError> {
+    use arandu_query::ctfe::{ctfe_eval_instance, CtfeInstanceRequest};
+    let key = arandu_middle::types::FunctionInstance {
+        definition,
+        arguments: types,
+    };
+    let instance = arandu_query::runtime::Instance::new(db, file, key);
+    ctfe_eval_instance(
+        db,
+        CtfeInstanceRequest::new(db, instance, arguments, budget()),
+    )
+    .clone()
+}
+
+#[test]
+fn concrete_scalar_type_and_value_parameters_reuse_the_existing_monomorphizer() {
+    use arandu_middle::types::TypeShape;
+    let (mut db, log) = DatabaseImpl::with_rebuild_log();
+    let file = db.new_file("generic-ctfe.aru".into(), "func identity<T>(value: T): T { return value }\nfunc count<const N: uint>(): uint { return N }\nfunc caller(): int { return identity<int>(42) }".into());
+    let identity = symbol(&db, file, "identity");
+    let count = symbol(&db, file, "count");
+    let int = IntegerType::new(Primitive::Int, DataLayout::host()).expect("int");
+    let wide = IntegerType::new(Primitive::U64, DataLayout::host()).expect("u64");
+    log.clear();
+    assert_eq!(
+        number(
+            run_instance(
+                &db,
+                file,
+                identity,
+                vec![TypeShape::Primitive(Primitive::Int)],
+                vec![ConstValue::Integer(ConstInt::new(int, 42).expect("int"))]
+            )
+            .expect("integer identity")
+        ),
+        42
+    );
+    assert_eq!(
+        number(
+            run_instance(
+                &db,
+                file,
+                identity,
+                vec![TypeShape::Primitive(Primitive::U64)],
+                vec![ConstValue::Integer(
+                    ConstInt::new(wide, i128::from(u64::MAX)).expect("u64")
+                )]
+            )
+            .expect("wide identity")
+        ),
+        i128::from(u64::MAX)
+    );
+    for value in [3, 4, 3] {
+        assert_eq!(
+            number(
+                run_instance(&db, file, count, vec![TypeShape::Const(value)], vec![])
+                    .expect("value parameter")
+            ),
+            i128::from(value)
+        );
+    }
+    assert_eq!(
+        number(
+            run_instance(&db, file, symbol(&db, file, "caller"), vec![], vec![])
+                .expect("generic callee")
+        ),
+        42
+    );
+    for query in [
+        "lower_amir",
+        "runtime_unit",
+        "instance_contracts",
+        "borrow_interfaces",
+    ] {
+        assert_eq!(
+            log.count_executions_matching(query),
+            0,
+            "forbidden final stage {query}"
+        );
+    }
+}
+
+#[test]
+fn different_instantiations_of_one_callee_do_not_alias_local_synthetic_ids() {
+    let mut db = DatabaseImpl::new();
+    let file = db.new_file("generic-ctfe.aru".into(), "func count<const N: uint>(): uint { return N }\nfunc caller(): uint { return count<3>() * 10 + count<4>() }".into());
+    assert_eq!(
+        number(
+            run_instance(&db, file, symbol(&db, file, "caller"), vec![], vec![])
+                .expect("distinct values")
+        ),
+        34
+    );
+}
+
+#[test]
+fn comptime_parameter_spelling_reuses_const_identity_and_evaluation() {
+    use arandu_middle::types::{FunctionInstance, TypeShape};
+    use arandu_query::ctfe::CtfeInstanceRequest;
+    let source = |marker| {
+        format!("func count<{marker} N: uint>(): uint {{ return N }}\nfunc caller(): uint {{ return count<20>() + count<22>() }}")
+    };
+    let (mut db, log) = DatabaseImpl::with_rebuild_log();
+    let file = db.new_file("value-parameter.aru".into(), source("const"));
+    let definition = symbol(&db, file, "count");
+    let key = FunctionInstance {
+        definition,
+        arguments: vec![TypeShape::Const(42)],
+    };
+    let consume = |db: &DatabaseImpl| {
+        let instance = arandu_query::runtime::Instance::new(db, file, key.clone());
+        instance_consumer(db, CtfeInstanceRequest::new(db, instance, vec![], budget())).clone()
+    };
+    assert_eq!(number(consume(&db).expect("const parameter")), 42);
+    log.clear();
+    file.set_text(&mut db).to(source("comptime").into());
+    assert_eq!(symbol(&db, file, "count"), definition);
+    assert_eq!(number(consume(&db).expect("comptime parameter")), 42);
+    assert_eq!(
+        log.count_executions_matching("instance_consumer"),
+        0,
+        "equal semantic value must cut off consumers"
+    );
+    for value in [20, 22, u64::from(u32::MAX)] {
+        assert_eq!(
+            number(
+                run_instance(&db, file, definition, vec![TypeShape::Const(value)], vec![])
+                    .expect("same monomorphizer")
+            ),
+            i128::from(value)
+        );
+    }
+    assert!(
+        run_instance(
+            &db,
+            file,
+            definition,
+            vec![TypeShape::Const(u64::MAX)],
+            vec![]
+        )
+        .is_err(),
+        "uint parameters must not accept a value outside their declared width"
+    );
+    assert_eq!(
+        number(
+            run_instance(&db, file, symbol(&db, file, "caller"), vec![], vec![])
+                .expect("concrete calls")
+        ),
+        42
+    );
+    assert_eq!(log.count_executions_matching("lower_amir"), 0);
+}
+
+#[salsa::tracked]
+fn instance_consumer<'db>(
+    db: &'db dyn ArandCompilerDb,
+    request: arandu_query::ctfe::CtfeInstanceRequest<'db>,
+) -> Result<ConstValue, EvalError> {
+    arandu_query::ctfe::ctfe_eval_instance(db, request).clone()
+}
+
+#[test]
+fn concrete_ctfe_preserves_value_cutoff_and_clean_equivalence() {
+    use arandu_middle::types::FunctionInstance;
+    use arandu_query::ctfe::CtfeInstanceRequest;
+    let source = |body: &str| {
+        format!("func caller(): uint {{ return count<3>() * 10 + count<4>() }}\nfunc count<const N: uint>(): uint {{ {body} }}")
+    };
+    let (mut db, log) = DatabaseImpl::with_rebuild_log();
+    let file = db.new_file("generic-ctfe.aru".into(), source("return N"));
+    let definition = symbol(&db, file, "caller");
+    let key = FunctionInstance {
+        definition,
+        arguments: vec![],
+    };
+    let consume = |db: &DatabaseImpl| {
+        let instance = arandu_query::runtime::Instance::new(db, file, key.clone());
+        instance_consumer(db, CtfeInstanceRequest::new(db, instance, vec![], budget())).clone()
+    };
+    assert_eq!(number(consume(&db).expect("initial")), 34);
+    log.clear();
+    file.set_text(&mut db).to(Arc::from(source("return N + 0")));
+    assert_eq!(number(consume(&db).expect("same value")), 34);
+    assert_eq!(log.count_executions_matching("ctfe_eval_instance"), 1);
+    assert_eq!(log.count_executions_matching("instance_consumer"), 0);
+    log.clear();
+    file.set_text(&mut db).to(Arc::from(source("return N + 1")));
+    assert_eq!(number(consume(&db).expect("new value")), 45);
+    assert_eq!(log.count_executions_matching("instance_consumer"), 1);
+    let mut clean = DatabaseImpl::new();
+    let clean_file = clean.new_file("generic-ctfe.aru".into(), source("return N + 1"));
+    assert_eq!(
+        consume(&db),
+        run_instance(
+            &clean,
+            clean_file,
+            symbol(&clean, clean_file, "caller"),
+            vec![],
+            vec![]
+        )
+    );
+    assert_eq!(log.count_executions_matching("lower_amir"), 0);
+}
+
+#[test]
+fn concrete_ctfe_rejects_stale_file_identity_and_invalid_instantiation() {
+    use arandu_middle::types::TypeShape;
+    let mut db = DatabaseImpl::new();
+    let file = db.new_file(
+        "generic-ctfe.aru".into(),
+        "func count<const N: uint>(): uint { return N }\nfunc plain(): int { return 42 }".into(),
+    );
+    let other = db.new_file("other.aru".into(), "func other(): int { return 1 }".into());
+    let count = symbol(&db, file, "count");
+    assert_eq!(
+        run_instance(&db, other, count, vec![TypeShape::Const(3)], vec![])
+            .expect_err("wrong file")
+            .kind,
+        EvalErrorKind::MissingFunction(count)
+    );
+    assert!(run_instance(&db, file, count, vec![], vec![]).is_err());
+    assert!(run_instance(
+        &db,
+        file,
+        symbol(&db, file, "plain"),
+        vec![TypeShape::Const(3)],
+        vec![]
+    )
+    .is_err());
+    assert_eq!(
+        number(
+            run_instance(&db, file, count, vec![TypeShape::Const(3)], vec![])
+                .expect("valid request")
+        ),
+        3
+    );
 }
 
 #[test]

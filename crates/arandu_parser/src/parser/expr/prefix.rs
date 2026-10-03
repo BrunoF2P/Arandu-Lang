@@ -5,9 +5,30 @@ use crate::ast::ast_pool::{ExprId, ExprKind};
 use smol_str::SmolStr;
 
 impl<'a> Parser<'a> {
+    fn parse_layout_expression(&mut self) -> Result<ExprId, ParseError> {
+        let start = self.mark();
+        self.advance();
+        let query = crate::LayoutQuery::from_name(self.current_text()).ok_or_else(|| {
+            ParseError::new(
+                ParseErrorCode::ExpectedExpression,
+                "expected @sizeOf(Type) or @alignOf(Type)",
+                self.current(),
+                self.file_id,
+                self.source,
+            )
+        })?;
+        self.advance();
+        self.expect_kind(TokenKind::LParen)?;
+        let ty = self.parse_type()?;
+        self.expect_kind(TokenKind::RParen)?;
+        let span = self.span_from_mark(start);
+        Ok(self.pool.alloc_expr(ExprKind::Layout { query, ty }, span))
+    }
+
     pub(in crate::parser) fn parse_prefix(&mut self) -> Result<ExprId, ParseError> {
         let start = self.mark();
         match &self.current().kind {
+            TokenKind::At => self.parse_layout_expression(),
             TokenKind::Minus => {
                 self.advance();
                 let expr = self.parse_expr(150)?;
@@ -121,6 +142,26 @@ impl<'a> Parser<'a> {
                 Ok(self
                     .pool
                     .alloc_expr(ExprKind::AsyncBlock { block: block_id }, span))
+            }
+            TokenKind::KwComptime => {
+                self.advance();
+                if matches!(self.current().kind, TokenKind::KwIf | TokenKind::KwFor) {
+                    return Err(ParseError::new(
+                        ParseErrorCode::ExpectedExpression,
+                        "comptime if and comptime for are statements, not expressions; use comptime { ... } to produce a value",
+                        self.current(),
+                        self.file_id,
+                        self.source,
+                    ));
+                }
+                let body = if self.at_kind_name("LBRACE") {
+                    let block = self.parse_block()?;
+                    crate::ast::ast_pool::ComptimeBody::Block(self.pool.alloc_block(block))
+                } else {
+                    crate::ast::ast_pool::ComptimeBody::Expression(self.parse_expr(150)?)
+                };
+                let span = self.span_from_mark(start);
+                Ok(self.pool.alloc_expr(ExprKind::Comptime { body }, span))
             }
             TokenKind::KwUnsafe => {
                 self.advance();

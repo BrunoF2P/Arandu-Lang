@@ -23,6 +23,16 @@ impl<'a> CEmitter<'a> {
         let _ = writeln!(&mut self.output, "#include <string.h>");
         let _ = writeln!(&mut self.output, "#include <stdio.h>");
         let _ = writeln!(&mut self.output, "#include <errno.h>");
+        // memcpy preserves IEEE encodings without strict-aliasing violations,
+        // decimal round trips, or arithmetic that could quiet/canonicalize NaN.
+        let _ = writeln!(
+            &mut self.output,
+            "static inline float ar_f32_from_bits(uint32_t bits) {{ float value; memcpy(&value, &bits, sizeof(value)); return value; }}"
+        );
+        let _ = writeln!(
+            &mut self.output,
+            "static inline double ar_f64_from_bits(uint64_t bits) {{ double value; memcpy(&value, &bits, sizeof(value)); return value; }}"
+        );
         let _ = writeln!(&mut self.output, "#include <stdatomic.h>");
         let _ = writeln!(&mut self.output, "#include <sys/types.h>");
         let _ = writeln!(

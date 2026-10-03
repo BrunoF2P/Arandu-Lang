@@ -103,11 +103,11 @@ fn calls_share_exact_fuel_and_recover_frame_slots_after_return() {
     );
     let units = Units(vec![unit(a, &types, pool), unit(b, &child_types, literals)]);
     let mut exact = budget();
-    exact.fuel = 15;
+    exact.fuel = 20;
     exact.frames = 2;
-    exact.values = 2;
+    exact.values = 4; // Two admitted handles plus two live frame slots.
     assert_eq!(evaluate(&units, root, &[], exact, || false), Ok(value(42)));
-    exact.fuel = 14;
+    exact.fuel = 19;
     assert_eq!(
         evaluate(&units, root, &[], exact, || false)
             .expect_err("one step short")
@@ -123,14 +123,14 @@ fn calls_share_exact_fuel_and_recover_frame_slots_after_return() {
         EvalErrorKind::FrameLimit
     );
     exact = budget();
-    exact.values = 1;
+    exact.values = 3;
     assert_eq!(
         evaluate(&units, root, &[], exact, || false)
             .expect_err("combined slots")
             .kind,
         EvalErrorKind::ValueLimit
     );
-    // Two sequential child invocations fit in the same two-frame/two-slot cap.
+    // Sequential calls reuse the same two handles and two frame slots.
     let (mut a, types, pool) = function(root, 1);
     for lhs in [None, Some(TempId(0))] {
         a.append_stmt_to_block(
@@ -146,7 +146,7 @@ fn calls_share_exact_fuel_and_recover_frame_slots_after_return() {
     let units = Units(vec![unit(a, &types, pool), Arc::clone(&units.0[1])]);
     exact = budget();
     exact.frames = 2;
-    exact.values = 2;
+    exact.values = 4;
     assert_eq!(evaluate(&units, root, &[], exact, || false), Ok(value(42)));
 }
 
@@ -225,12 +225,12 @@ fn backedge_arguments_are_read_simultaneously_and_scratch_counts_toward_budget()
     );
     let units = Units(vec![unit(f, &types, literals)]);
     let mut limited = budget();
-    limited.values = 11;
+    limited.values = 12;
     assert_eq!(
         evaluate(&units, root, &[value(10), value(20)], limited, || false),
         Ok(value(10))
     );
-    limited.values = 10;
+    limited.values = 11;
     assert_eq!(
         evaluate(&units, root, &[value(10), value(20)], limited, || false)
             .expect_err("edge scratch")
@@ -337,6 +337,259 @@ fn forbidden_effect_in_an_unentered_block_is_rejected_before_execution() {
         .kind,
         EvalErrorKind::UnsupportedOperation
     );
+}
+
+#[test]
+fn untaken_calls_are_inspected_transitively_with_source_order_trace() {
+    let root = SymbolId::new(1, 0);
+    let child = SymbolId::new(2, 0);
+    let leaf = SymbolId::new(3, 0);
+    let mut units = Vec::new();
+    for (symbol, callee) in [(root, Some(child)), (child, Some(leaf)), (leaf, None)] {
+        let (mut f, types, mut pool) = function(symbol, 1);
+        f.temps[0].span = Span::new(symbol.file_id, 20, 25);
+        let constant = AmirOperand::Constant(AmirConstant::Pool(pool.intern_int("42")));
+        f.append_stmt_to_block(
+            BlockId(0),
+            AmirStmt::Assign {
+                lhs: TempId(0),
+                rhs: AmirRvalue::Use(constant),
+            },
+        );
+        f.blocks.push(block(1)); // Not a successor of the entry block.
+        if let Some(callee) = callee {
+            f.append_stmt_to_block(
+                BlockId(1),
+                AmirStmt::Call {
+                    lhs: Some(TempId(0)),
+                    callee: AmirOperand::FunctionRef(callee),
+                    args: Default::default(),
+                    return_borrow: None,
+                },
+            );
+        } else {
+            f.append_stmt_to_block(BlockId(1), AmirStmt::Free(constant));
+        }
+        units.push(unit(f, &types, pool));
+    }
+    let error =
+        evaluate(&Units(units), root, &[], budget(), || false).expect_err("transitive effect");
+    assert_eq!(error.kind, EvalErrorKind::UnsupportedOperation);
+    assert_eq!(error.function, leaf);
+    assert_eq!(error.block, BlockId(1));
+    assert_eq!(
+        error
+            .trace
+            .iter()
+            .map(|site| site.function)
+            .collect::<Vec<_>>(),
+        vec![root, child]
+    );
+    assert!(
+        error
+            .trace
+            .iter()
+            .all(|site| site.block == BlockId(1) && site.span.start == 20)
+    );
+    assert!(!error.trace_truncated);
+}
+
+#[test]
+fn global_reads_are_forbidden_even_in_untaken_blocks() {
+    let root = SymbolId::new(1, 0);
+    let (mut f, types, pool) = function(root, 2);
+    f.temps[1].span = Span::new(1, 30, 40);
+    f.blocks.push(block(1));
+    f.append_stmt_to_block(
+        BlockId(1),
+        AmirStmt::Assign {
+            lhs: TempId(1),
+            rhs: AmirRvalue::Use(AmirOperand::GlobalRef(SymbolId::new(1, 99))),
+        },
+    );
+    let error = evaluate(
+        &Units(vec![unit(f, &types, pool)]),
+        root,
+        &[],
+        budget(),
+        || false,
+    )
+    .expect_err("global effect");
+    assert_eq!(error.kind, EvalErrorKind::UnsupportedOperation);
+    assert_eq!(error.span, Span::new(1, 30, 40));
+}
+
+#[test]
+fn admission_charges_large_calls_and_untaken_transfer_tables() {
+    let root = SymbolId::new(1, 0);
+    let child = SymbolId::new(1, 1);
+    for transfer in 0..3 {
+        let (mut f, types, mut pool) = function(root, 1);
+        let constant = AmirOperand::Constant(AmirConstant::Pool(pool.intern_int("42")));
+        f.append_stmt_to_block(
+            BlockId(0),
+            AmirStmt::Assign {
+                lhs: TempId(0),
+                rhs: AmirRvalue::Use(constant),
+            },
+        );
+        f.blocks.push(block(1));
+        match transfer {
+            0 => {
+                f.append_stmt_to_block(
+                    BlockId(1),
+                    AmirStmt::Call {
+                        lhs: Some(TempId(0)),
+                        callee: AmirOperand::FunctionRef(child),
+                        args: vec![constant; 10_000].into(),
+                        return_borrow: None,
+                    },
+                );
+            }
+            1 => {
+                f.blocks[1].terminator = AmirTerminator::Goto {
+                    target: BlockId(0),
+                    args: vec![constant; 10_000],
+                };
+            }
+            2 => {
+                f.blocks[1].terminator = AmirTerminator::SwitchInt {
+                    discriminant: constant,
+                    targets: (0..10_000).map(|tag| (tag, BlockId(0), vec![])).collect(),
+                    otherwise: (BlockId(0), vec![]),
+                };
+            }
+            _ => unreachable!("test cases are bounded"),
+        }
+        let mut limited = budget();
+        limited.fuel = 32;
+        let mut polls = 0;
+        let error = evaluate(
+            &Units(vec![unit(f, &types, pool)]),
+            root,
+            &[],
+            limited,
+            || {
+                polls += 1;
+                false
+            },
+        )
+        .expect_err("admission bound");
+        assert_eq!(
+            error.kind,
+            EvalErrorKind::FuelExhausted,
+            "transfer {transfer}"
+        );
+        assert!(polls <= 34, "admission work must be proportional to fuel");
+    }
+}
+
+#[test]
+fn expression_root_does_not_shadow_its_source_owner() {
+    let owner = SymbolId::new(1, 0);
+    let (mut expression, types, pool) = function(owner, 1);
+    expression.append_stmt_to_block(
+        BlockId(0),
+        AmirStmt::Call {
+            lhs: Some(TempId(0)),
+            callee: AmirOperand::FunctionRef(owner),
+            args: Default::default(),
+            return_borrow: None,
+        },
+    );
+    let expression = unit(expression, &types, pool);
+    let (mut definition, types, mut pool) = function(owner, 1);
+    let constant = AmirOperand::Constant(AmirConstant::Pool(pool.intern_int("42")));
+    definition.append_stmt_to_block(
+        BlockId(0),
+        AmirStmt::Assign {
+            lhs: TempId(0),
+            rhs: AmirRvalue::Use(constant),
+        },
+    );
+    let units = Units(vec![unit(definition, &types, pool)]);
+    assert_eq!(
+        evaluate_unit(&units, expression, &[], budget(), || false),
+        Ok(value(42))
+    );
+}
+
+#[test]
+fn recursive_admission_deduplicates_units_and_bounds_runtime_trace() {
+    use std::cell::Cell;
+    struct Counted {
+        units: Units,
+        lookups: Cell<usize>,
+    }
+    impl FunctionProvider for Counted {
+        fn function(&self, symbol: SymbolId) -> Result<Arc<CtfeFunction>, EvalErrorKind> {
+            self.lookups.set(self.lookups.get() + 1);
+            self.units.function(symbol)
+        }
+    }
+    let root = SymbolId::new(1, 0);
+    let (mut f, types, pool) = function(root, 1);
+    f.append_stmt_to_block(
+        BlockId(0),
+        AmirStmt::Call {
+            lhs: Some(TempId(0)),
+            callee: AmirOperand::FunctionRef(root),
+            args: Default::default(),
+            return_borrow: None,
+        },
+    );
+    let provider = Counted {
+        units: Units(vec![unit(f, &types, pool)]),
+        lookups: Cell::new(0),
+    };
+    let mut policy = budget();
+    policy.frames = 64;
+    let error = evaluate(&provider, root, &[], policy, || false).expect_err("bounded recursion");
+    assert_eq!(error.kind, EvalErrorKind::FrameLimit);
+    assert_eq!(provider.lookups.get(), 1);
+    assert_eq!(error.trace.len(), 32);
+    assert!(error.trace_truncated);
+}
+
+#[test]
+fn arithmetic_failure_points_to_the_operation_and_retains_callers() {
+    let root = SymbolId::new(1, 0);
+    let child = SymbolId::new(2, 0);
+    let (mut f, types, pool) = function(root, 1);
+    f.temps[0].span = Span::new(1, 10, 15);
+    f.append_stmt_to_block(
+        BlockId(0),
+        AmirStmt::Call {
+            lhs: Some(TempId(0)),
+            callee: AmirOperand::FunctionRef(child),
+            args: Default::default(),
+            return_borrow: None,
+        },
+    );
+    let (mut g, child_types, mut literals) = function(child, 2);
+    g.temps[1].span = Span::new(2, 30, 35);
+    let one = AmirOperand::Constant(AmirConstant::Pool(literals.intern_int("1")));
+    let zero = AmirOperand::Constant(AmirConstant::Pool(literals.intern_int("0")));
+    g.append_stmt_to_block(
+        BlockId(0),
+        AmirStmt::Assign {
+            lhs: TempId(1),
+            rhs: AmirRvalue::Binary {
+                op: BinaryOp::Div,
+                left: one,
+                right: zero,
+            },
+        },
+    );
+    let units = Units(vec![unit(f, &types, pool), unit(g, &child_types, literals)]);
+    let error = evaluate(&units, root, &[], budget(), || false).expect_err("division by zero");
+    assert_eq!(
+        error.kind,
+        EvalErrorKind::Arithmetic(ScalarEvalError::DivisionByZero)
+    );
+    assert_eq!(error.span, Span::new(2, 30, 35));
+    assert_eq!(error.trace.len(), 1);
+    assert_eq!(error.trace[0].span, Span::new(1, 10, 15));
 }
 
 #[test]
@@ -546,7 +799,7 @@ fn repeated_literal_decoding_is_charged_and_can_be_cancelled_mid_spelling() {
     let mut exact = budget();
     // Root lookup, block/statements/temp admission, two instructions, return,
     // and three scans of the spelling (admission plus each decoding).
-    exact.fuel = 8 + 3 * spelling.len() as u64;
+    exact.fuel = 11 + 3 * spelling.len() as u64;
     assert_eq!(evaluate(&units, root, &[], exact, || false), Ok(value(42)));
     exact.fuel -= 1;
     assert_eq!(
@@ -566,4 +819,333 @@ fn repeated_literal_decoding_is_charged_and_can_be_cancelled_mid_spelling() {
         EvalErrorKind::Cancelled
     );
     assert!(polls > spelling.len());
+}
+
+#[test]
+fn array_calls_keep_their_own_types_and_project_checked_values() {
+    let root = SymbolId::new(1, 0);
+    let child = SymbolId::new(2, 0);
+    let (mut caller, types, pool) = function(root, 2);
+    let array = types.intern(ArType::Array(2, caller.return_type));
+    caller.temps[1].ty = array;
+    caller.append_stmt_to_block(
+        BlockId(0),
+        AmirStmt::Call {
+            lhs: Some(TempId(1)),
+            callee: AmirOperand::FunctionRef(child),
+            args: Default::default(),
+            return_borrow: None,
+        },
+    );
+    caller.append_stmt_to_block(
+        BlockId(0),
+        AmirStmt::Assign {
+            lhs: TempId(0),
+            rhs: AmirRvalue::IndexAccess {
+                base: AmirOperand::Copy(TempId(1)),
+                index: AmirOperand::Constant(AmirConstant::Pool(
+                    arandu_middle::literal_pool::LiteralId(0),
+                )),
+            },
+        },
+    );
+    let mut pool = pool;
+    pool.intern_int("1");
+    let (mut callee, child_types, mut child_pool) = function(child, 1);
+    let int = callee.return_type;
+    // Give the same array a different interner index than the caller's.
+    child_types.intern(ArType::Primitive(Primitive::Bool));
+    callee.return_type = child_types.intern(ArType::Array(2, int));
+    callee.temps[0].ty = callee.return_type;
+    let twenty = AmirOperand::Constant(AmirConstant::Pool(child_pool.intern_int("20")));
+    let answer = AmirOperand::Constant(AmirConstant::Pool(child_pool.intern_int("42")));
+    callee.append_stmt_to_block(
+        BlockId(0),
+        AmirStmt::Assign {
+            lhs: TempId(0),
+            rhs: AmirRvalue::Array {
+                items: vec![twenty, answer],
+            },
+        },
+    );
+    let units = Units(vec![
+        unit(caller, &types, pool),
+        unit(callee, &child_types, child_pool),
+    ]);
+    assert_eq!(
+        evaluate(&units, root, &[], budget(), || false),
+        Ok(value(42))
+    );
+    let mut limited = budget();
+    limited.values = 6; // five live slots/handles plus two construction slots.
+    assert_eq!(
+        evaluate(&units, root, &[], limited, || false)
+            .expect_err("aggregate scratch")
+            .kind,
+        EvalErrorKind::ValueLimit
+    );
+    let mut polls = 0;
+    assert_eq!(
+        evaluate(&units, root, &[], budget(), || {
+            polls += 1;
+            polls == 28
+        })
+        .expect_err("cancel aggregate construction/admission")
+        .kind,
+        EvalErrorKind::Cancelled
+    );
+}
+
+#[test]
+fn frozen_strings_bytes_and_subviews_keep_unicode_nul_and_bounds() {
+    let root = SymbolId::new(1, 0);
+    let (mut f, types, mut pool) = function(root, 4);
+    let byte = types.intern(ArType::Primitive(Primitive::Byte));
+    let str_ty = types.intern(ArType::Primitive(Primitive::Str));
+    let bytes = types.intern(ArType::Slice(byte));
+    f.return_type = bytes;
+    f.temps[0].ty = bytes;
+    f.temps[1].ty = str_ty;
+    f.temps[2].ty = bytes;
+    f.temps[3].ty = types.intern(ArType::Primitive(Primitive::USize));
+    let literal = AmirOperand::Constant(AmirConstant::Pool(pool.intern_str("Olá\0🦀")));
+    let start = AmirOperand::Constant(AmirConstant::Pool(pool.intern_int("2")));
+    let len = AmirOperand::Constant(AmirConstant::Pool(pool.intern_int("3")));
+    f.append_stmt_to_block(
+        BlockId(0),
+        AmirStmt::Assign {
+            lhs: TempId(1),
+            rhs: AmirRvalue::Use(literal),
+        },
+    );
+    f.append_stmt_to_block(
+        BlockId(0),
+        AmirStmt::Assign {
+            lhs: TempId(2),
+            rhs: AmirRvalue::StrBytes {
+                source: AmirOperand::Copy(TempId(1)),
+            },
+        },
+    );
+    f.append_stmt_to_block(
+        BlockId(0),
+        AmirStmt::Assign {
+            lhs: TempId(0),
+            rhs: AmirRvalue::SliceSubslice {
+                slice: AmirOperand::Copy(TempId(2)),
+                start,
+                len,
+            },
+        },
+    );
+    let units = Units(vec![unit(f, &types, pool)]);
+    let expected = arandu_middle::ctfe::ConstString::new("Olá\0🦀")
+        .bytes()
+        .view(2, 3)
+        .expect("view");
+    assert_eq!(
+        evaluate(&units, root, &[], budget(), || false),
+        Ok(ConstValue::Bytes(expected))
+    );
+}
+
+#[test]
+fn string_backing_bytes_are_bounded_independently_of_slots_and_fuel() {
+    let root = SymbolId::new(1, 0);
+    let (mut f, types, mut pool) = function(root, 1);
+    f.return_type = types.intern(ArType::Primitive(Primitive::Str));
+    f.temps[0].ty = f.return_type;
+    let text = "x".repeat(4096);
+    let literal = AmirOperand::Constant(AmirConstant::Pool(pool.intern_str(text)));
+    f.append_stmt_to_block(
+        BlockId(0),
+        AmirStmt::Assign {
+            lhs: TempId(0),
+            rhs: AmirRvalue::Use(literal),
+        },
+    );
+    let units = Units(vec![unit(f, &types, pool)]);
+    let mut limited = budget();
+    limited.fuel = 20_000;
+    limited.values = 2; // one admitted handle and one temp, no room for backing.
+    assert_eq!(
+        evaluate(&units, root, &[], limited, || false)
+            .expect_err("byte ceiling")
+            .kind,
+        EvalErrorKind::ValueLimit
+    );
+    limited.values = 128;
+    assert!(evaluate(&units, root, &[], limited, || false).is_ok());
+}
+
+#[test]
+fn repeated_string_backing_allocations_share_the_cumulative_byte_ceiling() {
+    let root = SymbolId::new(1, 0);
+    let (mut f, types, mut pool) = function(root, 1);
+    f.return_type = types.intern(ArType::Primitive(Primitive::Str));
+    f.temps[0].ty = f.return_type;
+    let literal = AmirOperand::Constant(AmirConstant::Pool(pool.intern_str("x".repeat(128))));
+    for _ in 0..5 {
+        f.append_stmt_to_block(
+            BlockId(0),
+            AmirStmt::Assign {
+                lhs: TempId(0),
+                rhs: AmirRvalue::Use(literal),
+            },
+        );
+    }
+    let units = Units(vec![unit(f, &types, pool)]);
+    let mut limited = budget();
+    limited.fuel = 20_000;
+    limited.values = 4;
+    assert_eq!(
+        evaluate(&units, root, &[], limited, || false)
+            .expect_err("redecoding cannot reset the shared byte ceiling")
+            .kind,
+        EvalErrorKind::ValueLimit
+    );
+    limited.values = 8;
+    assert!(evaluate(&units, root, &[], limited, || false).is_ok());
+}
+
+#[test]
+fn nominal_products_require_copy_proof_no_destructor_and_safe_fields() {
+    use arandu_middle::layout::{
+        EnumPayloadShape, StructFieldInfo, StructFields, StructLayoutProvider,
+    };
+    struct Pod {
+        fields: StructFields,
+        copy: Option<bool>,
+        destructor: Option<SymbolId>,
+    }
+    impl StructLayoutProvider for Pod {
+        fn get_struct_fields(&self, _: SymbolId) -> Option<&StructFields> {
+            Some(&self.fields)
+        }
+        fn get_generic_params(&self, _: SymbolId) -> Option<&[SymbolId]> {
+            Some(&[])
+        }
+        fn get_enum_variants(&self, _: SymbolId) -> Option<Vec<EnumPayloadShape>> {
+            None
+        }
+        fn is_copy_type(&self, _: arandu_middle::types::TypeId) -> Option<bool> {
+            self.copy
+        }
+        fn destructor_for_type(&self, _: arandu_middle::types::TypeId) -> Option<SymbolId> {
+            self.destructor
+        }
+    }
+    let root = SymbolId::new(1, 0);
+    let nominal = SymbolId::new(2, 1);
+    let (mut f, types, mut pool) = function(root, 1);
+    let int = f.return_type;
+    let named = types.intern(ArType::named(nominal, &[], &types));
+    f.return_type = named;
+    f.temps[0].ty = named;
+    let literal = AmirOperand::Constant(AmirConstant::Pool(pool.intern_int("42")));
+    f.append_stmt_to_block(
+        BlockId(0),
+        AmirStmt::Assign {
+            lhs: TempId(0),
+            rhs: AmirRvalue::StructLiteral {
+                struct_symbol: nominal,
+                fields: vec![("answer".into(), literal)],
+            },
+        },
+    );
+    let mut provider = Pod {
+        fields: StructFields::from_entries([StructFieldInfo {
+            name: "answer".into(),
+            symbol: Some(SymbolId::new(2, 2)),
+            ty: int,
+            index: 0,
+        }]),
+        copy: None,
+        destructor: None,
+    };
+    assert!(matches!(
+        CtfeFunction::new_with_provider(
+            f.clone(),
+            pool.clone(),
+            &types,
+            DataLayout::ptr_width(8),
+            &provider
+        ),
+        Err(EvalErrorKind::UnsupportedType(_))
+    ));
+    provider.copy = Some(false);
+    assert!(matches!(
+        CtfeFunction::new_with_provider(
+            f.clone(),
+            pool.clone(),
+            &types,
+            DataLayout::ptr_width(8),
+            &provider
+        ),
+        Err(EvalErrorKind::UnsupportedType(_))
+    ));
+    provider.copy = Some(true);
+    let unit = Arc::new(
+        CtfeFunction::new_with_provider(
+            f.clone(),
+            pool.clone(),
+            &types,
+            DataLayout::ptr_width(8),
+            &provider,
+        )
+        .expect("proven POD"),
+    );
+    let actual =
+        evaluate(&Units(vec![unit]), root, &[], budget(), || false).expect("closed product");
+    let expected = ConstValue::Aggregate(
+        arandu_middle::ctfe::ConstAggregate::new(
+            arandu_middle::types::TypeShape::Named(nominal, vec![]),
+            vec![value(42)],
+        )
+        .expect("product"),
+    );
+    assert_eq!(actual, expected);
+    provider.destructor = Some(SymbolId::new(2, 3));
+    assert!(matches!(
+        CtfeFunction::new_with_provider(
+            f.clone(),
+            pool.clone(),
+            &types,
+            DataLayout::ptr_width(8),
+            &provider
+        ),
+        Err(EvalErrorKind::UnsupportedType(_))
+    ));
+    provider.destructor = None;
+    provider.fields.fields[0].ty = types.intern(ArType::Ref(int));
+    assert!(matches!(
+        CtfeFunction::new_with_provider(f, pool, &types, DataLayout::ptr_width(8), &provider),
+        Err(EvalErrorKind::UnsupportedType(_))
+    ));
+}
+
+#[test]
+fn retained_aggregate_constructors_charge_each_operand_before_execution() {
+    let root = SymbolId::new(1, 0);
+    let (mut f, types, pool) = function(root, 2);
+    f.temps[1].ty = types.intern(ArType::Array(0, f.return_type));
+    f.blocks.push(block(1));
+    f.append_stmt_to_block(
+        BlockId(1),
+        AmirStmt::Assign {
+            lhs: TempId(1),
+            rhs: AmirRvalue::Array {
+                items: vec![AmirOperand::Constant(AmirConstant::Bool(false)); 1024],
+            },
+        },
+    );
+    let units = Units(vec![unit(f, &types, pool)]);
+    let mut limited = budget();
+    limited.fuel = 32;
+    assert_eq!(
+        evaluate(&units, root, &[], limited, || false)
+            .expect_err("unentered constructor is metered")
+            .kind,
+        EvalErrorKind::FuelExhausted
+    );
 }

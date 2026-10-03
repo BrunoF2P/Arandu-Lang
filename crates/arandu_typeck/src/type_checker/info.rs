@@ -31,6 +31,18 @@ pub struct InterfaceConstraint {
 pub struct TypeInfo {
     pub type_interner: TypeInterner,
     pub expr_types: Vec<Option<TypeId>>,
+    /// Source-local obligations recorded only when checking explicit staging.
+    pub ctfe_roots: Vec<ExprId>,
+    /// Frozen roots by full source span, not revision-local arena IDs. Item
+    /// memos may retain an older AST after a sibling edit; file composition and
+    /// imported contexts must not confuse those pools. No VM handles escape.
+    pub ctfe_values: FxHashMap<
+        arandu_middle::Span,
+        (
+            arandu_middle::ctfe::ConstValue,
+            arandu_middle::layout::DataLayout,
+        ),
+    >,
     pub decl_types: FxHashMap<SymbolId, TypeId>,
     /// Canonical flow-derived borrow interfaces published across item/module boundaries.
     pub return_borrow_summaries: FxHashMap<SymbolId, ReturnBorrowSummary>,
@@ -84,6 +96,8 @@ impl TypeInfo {
         Self {
             type_interner,
             expr_types: Vec::new(),
+            ctfe_roots: Vec::new(),
+            ctfe_values: FxHashMap::default(),
             decl_types: FxHashMap::default(),
             return_borrow_summaries: FxHashMap::default(),
             struct_fields: FxHashMap::default(),
@@ -846,6 +860,19 @@ impl TypeInfo {
         self.struct_repr_c.extend(&other.struct_repr_c);
 
         // Expr types (body typeck shards): re-intern TypeIds into `self`.
+        if include_expressions {
+            for &expr in &other.ctfe_roots {
+                if !self.ctfe_roots.contains(&expr) {
+                    self.ctfe_roots.push(expr);
+                }
+            }
+            self.ctfe_values.extend(
+                other
+                    .ctfe_values
+                    .iter()
+                    .map(|(&span, value)| (span, value.clone())),
+            );
+        }
         // Signature-only TypeInfos leave this empty — skip the O(n) scan.
         if !include_expressions || other.expr_types.iter().all(|s| s.is_none()) {
             return;

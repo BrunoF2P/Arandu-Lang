@@ -11,6 +11,7 @@ impl<'a> Resolver<'a> {
     pub(crate) fn resolve_expr(&mut self, scope: ScopeId, expr: ExprId) {
         let span = self.pool.expr_span(expr);
         match self.pool.expr(expr) {
+            ExprKind::Layout { ty, .. } => self.resolve_type_expr(scope, *ty),
             ExprKind::Path { path } => {
                 if let Some(root) = path.first() {
                     if path.len() > 1
@@ -150,6 +151,14 @@ impl<'a> Resolver<'a> {
             ExprKind::AsyncBlock { block, .. } | ExprKind::UnsafeBlock { block, .. } => {
                 self.resolve_block_child(scope, self.pool, self.pool.block(*block));
             }
+            ExprKind::Comptime { body } => match body {
+                arandu_parser::ast_pool::ComptimeBody::Expression(expr) => {
+                    self.resolve_expr(scope, *expr)
+                }
+                arandu_parser::ast_pool::ComptimeBody::Block(block) => {
+                    self.resolve_block_child(scope, self.pool, self.pool.block(*block))
+                }
+            },
             ExprKind::If {
                 condition,
                 then_block,

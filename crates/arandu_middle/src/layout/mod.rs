@@ -2,7 +2,7 @@ pub mod abi;
 mod data_layout;
 
 pub use abi::{AbiScalar, AbiSlot, ArgAbi, DirectAbi, TargetAbi, TargetAbiClassifier};
-pub use data_layout::{DataLayout, SizeAlign};
+pub use data_layout::{DataLayout, DataLayoutError, SizeAlign};
 
 use crate::SymbolId;
 use crate::index_vec::IdIndex;
@@ -189,6 +189,10 @@ pub enum LayoutError {
         align: u64,
     },
     UnresolvedConst,
+    /// Nominal metadata is missing; it is not a zero-sized type.
+    UnknownType,
+    /// Shared structural limit, including recursive by-value definitions.
+    StructuralLimit,
 }
 
 impl std::fmt::Display for LayoutError {
@@ -203,6 +207,10 @@ impl std::fmt::Display for LayoutError {
             }
             Self::UnresolvedConst => {
                 f.write_str("const generic reached layout before monomorphization")
+            }
+            Self::UnknownType => f.write_str("type is unresolved or has no layout metadata"),
+            Self::StructuralLimit => {
+                f.write_str("type is recursive by value or exceeds the structural layout limit")
             }
         }
     }
@@ -313,12 +321,34 @@ pub trait StructLayoutProvider {
 /// [`LayoutEngine::from_data_layout`] / [`LayoutEngine::host`];
 /// [`LayoutEngine::new`] remains as sugar for [`DataLayout::ptr_width`].
 ///
-/// Language `float` is always IEEE f64 (see [`DataLayout`]); platform `int`
-/// follows pointer width. i686 uses [`DataLayout::i686_sysv`] for i64/f64
+/// Language `float` is always IEEE f64 (see [`DataLayout`]); `int` and `uint`
+/// are fixed 32-bit. i686 uses [`DataLayout::i686_sysv`] for i64/f64
 /// abi_align=4.
 #[derive(Debug, Clone)]
 pub struct LayoutEngine {
     pub data_layout: DataLayout,
+}
+
+/// One bounded traversal shared by layout and niche queries. Use the existing
+/// structural type limits, rather than resetting the budget in recursive calls.
+struct LayoutWalk {
+    remaining: usize,
+}
+
+impl LayoutWalk {
+    fn new() -> Self {
+        Self {
+            remaining: crate::types::TypeShape::MAX_NODES,
+        }
+    }
+
+    fn visit(&mut self, depth: usize) -> Result<(), LayoutError> {
+        if depth >= crate::types::TypeShape::MAX_DEPTH || self.remaining == 0 {
+            return Err(LayoutError::StructuralLimit);
+        }
+        self.remaining -= 1;
+        Ok(())
+    }
 }
 
 impl LayoutEngine {
@@ -369,11 +399,25 @@ impl LayoutEngine {
         interner: &TypeInterner,
         provider: &dyn StructLayoutProvider,
     ) -> bool {
-        match ty {
+        self.has_null_niche_inner(ty, interner, provider, &mut LayoutWalk::new(), 0)
+            .unwrap_or(false)
+    }
+
+    fn has_null_niche_inner(
+        &self,
+        ty: &ArType,
+        interner: &TypeInterner,
+        provider: &dyn StructLayoutProvider,
+        walk: &mut LayoutWalk,
+        depth: usize,
+    ) -> Result<bool, LayoutError> {
+        walk.visit(depth)?;
+        Ok(match ty {
             ArType::Ref(_) | ArType::RefMut(_) | ArType::Func(_, _) | ArType::Err => true,
             ArType::Named(sym, args) => {
                 if let Some(fields_def) = provider.get_struct_fields(*sym)
-                    && let Ok(layout) = self.layout_of_type(ty, interner, provider)
+                    && let Ok(layout) =
+                        self.layout_of_type_inner(ty, interner, provider, walk, depth + 1)
                 {
                     for f in fields_def.iter() {
                         if layout.field_offsets.get(f.index) == Some(&0) {
@@ -386,14 +430,20 @@ impl LayoutEngine {
                                 .collect();
                             let field_ty = interner.resolve(f.ty);
                             let substituted = substitute(&field_ty, &subst, interner);
-                            return self.has_null_niche(&substituted, interner, provider);
+                            return self.has_null_niche_inner(
+                                &substituted,
+                                interner,
+                                provider,
+                                walk,
+                                depth + 1,
+                            );
                         }
                     }
                 }
                 false
             }
             _ => false,
-        }
+        })
     }
 
     /// Returns the alignment of the pointed-to object if `ty` is a reference or pointer,
@@ -404,12 +454,27 @@ impl LayoutEngine {
         interner: &TypeInterner,
         provider: &dyn StructLayoutProvider,
     ) -> Option<u64> {
-        match ty {
+        self.ref_pointee_align_inner(ty, interner, provider, &mut LayoutWalk::new(), 0)
+            .ok()
+            .flatten()
+    }
+
+    fn ref_pointee_align_inner(
+        &self,
+        ty: &ArType,
+        interner: &TypeInterner,
+        provider: &dyn StructLayoutProvider,
+        walk: &mut LayoutWalk,
+        depth: usize,
+    ) -> Result<Option<u64>, LayoutError> {
+        walk.visit(depth)?;
+        Ok(match ty {
             ArType::Ref(inner) | ArType::RefMut(inner) | ArType::Ptr(inner) => {
                 let inner_ty = interner.resolve(*inner);
-                self.layout_of_type(&inner_ty, interner, provider)
-                    .ok()
-                    .map(|l| l.align)
+                Some(
+                    self.layout_of_type_inner(&inner_ty, interner, provider, walk, depth + 1)?
+                        .align,
+                )
             }
             ArType::Named(sym, args) => {
                 if let Some(fields_def) = provider.get_struct_fields(*sym)
@@ -425,13 +490,19 @@ impl LayoutEngine {
                         .collect();
                     let field_ty = interner.resolve(field.ty);
                     let substituted = substitute(&field_ty, &subst, interner);
-                    self.ref_pointee_align(&substituted, interner, provider)
+                    return self.ref_pointee_align_inner(
+                        &substituted,
+                        interner,
+                        provider,
+                        walk,
+                        depth + 1,
+                    );
                 } else {
                     None
                 }
             }
             _ => None,
-        }
+        })
     }
 
     /// Returns the [`SooLayout`] for an element type `ty`, calculating how many
@@ -524,6 +595,18 @@ impl LayoutEngine {
         interner: &TypeInterner,
         provider: &dyn StructLayoutProvider,
     ) -> Result<TypeLayout, LayoutError> {
+        self.layout_of_type_inner(ty, interner, provider, &mut LayoutWalk::new(), 0)
+    }
+
+    fn layout_of_type_inner(
+        &self,
+        ty: &ArType,
+        interner: &TypeInterner,
+        provider: &dyn StructLayoutProvider,
+        walk: &mut LayoutWalk,
+        depth: usize,
+    ) -> Result<TypeLayout, LayoutError> {
+        walk.visit(depth)?;
         Ok(match ty {
             ArType::Primitive(p) => match p {
                 Primitive::I8 | Primitive::U8 | Primitive::Byte | Primitive::Bool => {
@@ -567,6 +650,8 @@ impl LayoutEngine {
                 let p = self.data_layout.pointer;
                 TypeLayout::simple(p.size, p.abi_align)
             }
+            // Error has a recovery-only zero layout for existing IDE callers;
+            // executable lowering rejects erroneous type-check results first.
             ArType::Void | ArType::Error => TypeLayout::simple(0, 1),
             ArType::Ref(inner) | ArType::RefMut(inner)
                 if interner.with_type(*inner, |inner| matches!(inner, ArType::Slice(_))) =>
@@ -596,7 +681,13 @@ impl LayoutEngine {
             }
             ArType::Slice(_) => self.fat_pointer_layout(),
             ArType::Array(len, inner) => {
-                let inner_layout = self.layout_of(*inner, interner, provider)?;
+                let inner_layout = self.layout_of_type_inner(
+                    &interner.resolve(*inner),
+                    interner,
+                    provider,
+                    walk,
+                    depth + 1,
+                )?;
                 TypeLayout {
                     size: self.checked_mul(
                         inner_layout.size,
@@ -618,7 +709,13 @@ impl LayoutEngine {
                 let mut field_offsets = Vec::with_capacity(ty_ids.len());
 
                 for &ty_id in &ty_ids {
-                    let layout = self.layout_of(ty_id, interner, provider)?;
+                    let layout = self.layout_of_type_inner(
+                        &interner.resolve(ty_id),
+                        interner,
+                        provider,
+                        walk,
+                        depth + 1,
+                    )?;
                     max_align = max_align.max(layout.align);
                     current_offset =
                         self.align_up(current_offset, layout.align, LayoutOperation::FieldOffset)?;
@@ -659,7 +756,13 @@ impl LayoutEngine {
                     for f in fields_def.iter() {
                         let ty = interner.resolve(f.ty);
                         let substituted = substitute(&ty, &subst, interner);
-                        let layout = self.layout_of_type(&substituted, interner, provider)?;
+                        let layout = self.layout_of_type_inner(
+                            &substituted,
+                            interner,
+                            provider,
+                            walk,
+                            depth + 1,
+                        )?;
                         items.push(FieldItem {
                             orig_index: f.index,
                             layout,
@@ -745,8 +848,20 @@ impl LayoutEngine {
                         if let Some(payload_ty_id) = variant.payload_ty {
                             non_unit_count += 1;
                             let payload_ty = interner.resolve(payload_ty_id);
-                            if let Some(align) =
-                                self.ref_pointee_align(&payload_ty, interner, provider)
+                            // Pointee alignment is an optional tagging proof,
+                            // not a prerequisite for a pointer payload's size.
+                            // Recursive enums through references may not admit
+                            // that proof; retain the conservative direct tag.
+                            if let Some(align) = self
+                                .ref_pointee_align_inner(
+                                    &payload_ty,
+                                    interner,
+                                    provider,
+                                    walk,
+                                    depth + 1,
+                                )
+                                .ok()
+                                .flatten()
                             {
                                 if align < min_payload_align {
                                     min_payload_align = align;
@@ -787,8 +902,13 @@ impl LayoutEngine {
                         let mut max_payload_align = 1;
                         for variant in variants {
                             if let Some(payload_ty_id) = variant.payload_ty {
-                                let payload_layout =
-                                    self.layout_of(payload_ty_id, interner, provider)?;
+                                let payload_layout = self.layout_of_type_inner(
+                                    &interner.resolve(payload_ty_id),
+                                    interner,
+                                    provider,
+                                    walk,
+                                    depth + 1,
+                                )?;
                                 if payload_layout.size > max_payload_size {
                                     max_payload_size = payload_layout.size;
                                 }
@@ -819,14 +939,26 @@ impl LayoutEngine {
                         }
                     }
                 } else {
-                    TypeLayout::simple(0, 1)
+                    return Err(LayoutError::UnknownType);
                 }
             }
 
             ArType::Func(_, _) => TypeLayout::simple(self.pointer_width(), self.pointer_width()),
             ArType::Result(ok, err) => {
-                let ok_layout = self.layout_of(*ok, interner, provider)?;
-                let err_layout = self.layout_of(*err, interner, provider)?;
+                let ok_layout = self.layout_of_type_inner(
+                    &interner.resolve(*ok),
+                    interner,
+                    provider,
+                    walk,
+                    depth + 1,
+                )?;
+                let err_layout = self.layout_of_type_inner(
+                    &interner.resolve(*err),
+                    interner,
+                    provider,
+                    walk,
+                    depth + 1,
+                )?;
                 let max_align = ok_layout
                     .align
                     .max(err_layout.align)
@@ -854,9 +986,10 @@ impl LayoutEngine {
             }
             ArType::Option(inner) | ArType::Poll(inner) => {
                 let inner_ty = interner.resolve(*inner);
-                let inner_layout = self.layout_of(*inner, interner, provider)?;
+                let inner_layout =
+                    self.layout_of_type_inner(&inner_ty, interner, provider, walk, depth + 1)?;
                 if matches!(ty, ArType::Option(_))
-                    && self.has_null_niche(&inner_ty, interner, provider)
+                    && self.has_null_niche_inner(&inner_ty, interner, provider, walk, depth + 1)?
                 {
                     TypeLayout {
                         size: inner_layout.size,
@@ -895,7 +1028,13 @@ impl LayoutEngine {
             }
             ArType::Coroutine(_) => TypeLayout::simple(self.pointer_width(), self.pointer_width()),
             ArType::Range(inner) => {
-                let inner_layout = self.layout_of(*inner, interner, provider)?;
+                let inner_layout = self.layout_of_type_inner(
+                    &interner.resolve(*inner),
+                    interner,
+                    provider,
+                    walk,
+                    depth + 1,
+                )?;
                 let align = inner_layout.align;
                 let start_offset = 0;
                 let end_offset =

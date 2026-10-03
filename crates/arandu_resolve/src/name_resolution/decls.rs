@@ -55,6 +55,11 @@ impl<'a> Resolver<'a> {
     }
 
     pub(crate) fn resolve_func(&mut self, scope: ScopeId, decl: &FuncDecl) {
+        let func_scope = self.resolve_func_header(scope, decl);
+        self.resolve_block_in_scope(func_scope, self.pool, &decl.body);
+    }
+
+    pub(crate) fn resolve_func_header(&mut self, scope: ScopeId, decl: &FuncDecl) -> ScopeId {
         self.resolve_attrs(scope, &decl.attrs);
         let func_scope = self.symbols.new_scope(scope);
         // Methods on generic types must see the receiver type's type params
@@ -73,7 +78,44 @@ impl<'a> Resolver<'a> {
         if let Some(result) = &decl.result {
             self.resolve_result_type(func_scope, result);
         }
-        self.resolve_block_in_scope(func_scope, self.pool, &decl.body);
+        func_scope
+    }
+
+    /// Allocate declaration scopes before any function body. Body scopes are
+    /// revision-local continuations, not new persistent symbol identities.
+    pub(crate) fn resolve_top_level_headers(
+        &mut self,
+        scope: ScopeId,
+        decl: &TopLevelDecl,
+        bodies: &mut rustc_hash::FxHashMap<crate::NodeKey, ScopeId>,
+    ) {
+        match decl {
+            TopLevelDecl::Func(function) => {
+                let func_scope = self.resolve_func_header(scope, function);
+                let key = match &function.name {
+                    FuncName::Free { span, .. } | FuncName::Method { span, .. } => (*span).into(),
+                };
+                bodies.insert(key, func_scope);
+            }
+            TopLevelDecl::Submodule(module) => {
+                self.resolve_attrs(scope, &module.attrs);
+                let sub_scope = self
+                    .symbols
+                    .lookup_module(scope, &module.name)
+                    .and_then(|id| self.symbols.module_scopes.get(&id).copied())
+                    .unwrap_or(scope);
+                for &id in &module.decls {
+                    self.resolve_top_level_headers(sub_scope, self.pool.decl(id), bodies);
+                }
+            }
+            TopLevelDecl::Const(_)
+            | TopLevelDecl::TypeAlias(_)
+            | TopLevelDecl::Struct(_)
+            | TopLevelDecl::Enum(_)
+            | TopLevelDecl::Interface(_)
+            | TopLevelDecl::Extern(_)
+            | TopLevelDecl::Error(_) => self.resolve_top_level(scope, decl),
+        }
     }
 
     /// Bind parent type parameters into a method scope (same `SymbolId`s as the type).

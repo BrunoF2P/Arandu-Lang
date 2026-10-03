@@ -160,6 +160,9 @@ pub struct TypeChecker<'a> {
     pub target_info: TargetInfo,
     pub current_observed_effects: arandu_middle::EffectFlags,
     pub literal_table: solver::LiteralTable,
+    /// Concrete owner arguments during isolated instance checking. Source
+    /// templates keep this empty; it never becomes exported declaration data.
+    pub(crate) generic_substitution: arandu_middle::types::GenericSubst,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -258,6 +261,7 @@ impl<'a> TypeChecker<'a> {
             target_info,
             current_observed_effects: arandu_middle::EffectFlags::NONE,
             literal_table: solver::LiteralTable::new(),
+            generic_substitution: arandu_middle::types::GenericSubst::new(),
         }
     }
 
@@ -305,6 +309,7 @@ impl<'a> TypeChecker<'a> {
         expr_id: arandu_parser::TypeExprId,
         scope: ScopeId,
     ) -> ArType {
+        check::validate_const_arguments(self, expr_id);
         let ctx = types::LowerCtx {
             pool: self.pool,
             symbols: &self.symbols,
@@ -317,6 +322,15 @@ impl<'a> TypeChecker<'a> {
             &mut self.type_info.type_interner,
         );
         // T2.1: `Vec<int>` expands to `Vec<int, GlobalAllocator>` when A has a default.
+        let ty = if self.generic_substitution.is_empty() {
+            ty
+        } else {
+            arandu_middle::types::substitute_type(
+                &ty,
+                &self.generic_substitution,
+                &self.type_info.type_interner,
+            )
+        };
         let ty = types::expand_named_with_defaults(self, ty);
         types::expand_aliases(self, ty)
     }
@@ -326,6 +340,7 @@ impl<'a> TypeChecker<'a> {
         result: &arandu_parser::ResultType,
         scope: ScopeId,
     ) -> ArType {
+        check::validate_const_result(self, result);
         let ctx = types::LowerCtx {
             pool: self.pool,
             symbols: &self.symbols,
@@ -338,6 +353,15 @@ impl<'a> TypeChecker<'a> {
             &mut self.type_info.type_interner,
         );
         // T2.1: expand trailing defaults on Named return types (`Vec<T>` → `Vec<T, Adef>`).
+        let ty = if self.generic_substitution.is_empty() {
+            ty
+        } else {
+            arandu_middle::types::substitute_type(
+                &ty,
+                &self.generic_substitution,
+                &self.type_info.type_interner,
+            )
+        };
         let ty = types::expand_named_with_defaults(self, ty);
         types::expand_aliases(self, ty)
     }
@@ -356,6 +380,15 @@ impl<'a> TypeChecker<'a> {
             resolved: &self.resolved,
         };
         let ty = types::lower_named_type(span, name, args, &ctx, &mut self.type_info.type_interner);
+        let ty = if self.generic_substitution.is_empty() {
+            ty
+        } else {
+            arandu_middle::types::substitute_type(
+                &ty,
+                &self.generic_substitution,
+                &self.type_info.type_interner,
+            )
+        };
         let ty = types::expand_named_with_defaults(self, ty);
         types::expand_aliases(self, ty)
     }

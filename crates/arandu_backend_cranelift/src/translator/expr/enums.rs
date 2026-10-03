@@ -16,11 +16,11 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
         let Some(malloc_func_id) = self.malloc_func_id() else {
             return self.poison_i32();
         };
+        let pointer_width = self.ptr_type.bytes() as u64;
         let local_ref = self
             .module
             .declare_func_in_func(malloc_func_id, self.builder.func);
 
-        let pointer_width = self.ptr_type.bytes() as u64;
         let enum_ty = expected_ar_type.cloned().unwrap_or(ArType::Error);
         let layout = self.checked_layout(&enum_ty);
 
@@ -273,13 +273,12 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
     pub(super) fn translate_enum_payload(
         &mut self,
         value: &AmirOperand,
-        variant: &arandu_semantics::SymbolId,
-        variant_tag: usize,
+        field_ty: arandu_semantics::types::TypeId,
+        tuple_ty: Option<arandu_semantics::types::TypeId>,
         index: usize,
         expected_ty: Option<Type>,
     ) -> Value {
         let ptr_val = self.translate_operand(value, Some(self.ptr_type));
-        let pointer_width = self.ptr_type.bytes() as u64;
 
         let base_ty = match value {
             AmirOperand::Copy(temp_id) | AmirOperand::Move(temp_id) => self.temp_ar_ty(*temp_id),
@@ -296,79 +295,53 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
             ..
         }) = layout.tag_encoding
         {
+            let Ok(pointer_offset) = i32::try_from(pointer_offset) else {
+                self.record_ice(
+                    "EnumPayload pointer offset exceeds the target instruction range",
+                    self.func_span(),
+                );
+                return self.builder.ins().iconst(self.ptr_type, 0);
+            };
             let raw_val = self.builder.ins().load(
                 self.ptr_type,
                 cranelift_codegen::ir::MemFlagsData::new(),
                 ptr_val,
-                pointer_offset as i32,
+                pointer_offset,
             );
             let mask_inv = !(tag_mask as i64);
             return self.builder.ins().band_imm_s(raw_val, mask_inv);
         }
-        let enum_id = match enum_ty {
-            ArType::Named(enum_id, _) => enum_id,
-            _ => arandu_semantics::SymbolId::DUMMY,
-        };
-
-        let mut payload_offset = 0;
-        if let Some(variants) = arandu_semantics::layout::StructLayoutProvider::get_enum_variants(
-            self.type_info,
-            enum_id,
-        ) {
-            let tag = self
-                .type_info
-                .enum_variant_tags
-                .get(variant)
-                .copied()
-                .unwrap_or(0);
-            if let Some(variant_shape) = variants.get(tag)
-                && let Some(payload_ty_id) = variant_shape.payload_ty
-            {
-                let payload_ty = self.type_info.resolve_type_id(payload_ty_id);
-                let payload_layout = self.checked_layout(&payload_ty);
-                if index < payload_layout.field_offsets.len() {
-                    payload_offset = payload_layout.field_offsets[index] as i32;
-                }
-            }
-        }
-
-        let base_offset = if matches!(
-            layout.tag_encoding,
-            Some(arandu_semantics::layout::TagEncoding::Niche { .. })
-        ) {
-            0
+        let payload_offset = if let Some(tuple_ty) = tuple_ty {
+            let payload_ty = self.type_info.resolve_type_id(tuple_ty);
+            let payload_layout = self.checked_layout(&payload_ty);
+            let Some(offset) = payload_layout.field_offsets.get(index).copied() else {
+                self.record_ice(
+                    "EnumPayload field is outside its instantiated tuple layout",
+                    self.func_span(),
+                );
+                return self.builder.ins().iconst(self.ptr_type, 0);
+            };
+            offset
         } else {
-            pointer_width as i32
+            0
         };
-        let total_offset = base_offset + payload_offset;
-        let payload_ty = match &enum_ty {
-            ArType::Option(inner) => Some(self.type_info.resolve_type_id(*inner)),
-            ArType::Result(ok, err) => {
-                let tag = variant_tag;
-                if tag == 0 {
-                    Some(self.type_info.resolve_type_id(*ok))
-                } else {
-                    Some(self.type_info.resolve_type_id(*err))
-                }
-            }
-            ArType::Poll(inner) => Some(self.type_info.resolve_type_id(*inner)),
-            ArType::Named(enum_id, _) => {
-                arandu_semantics::layout::StructLayoutProvider::get_enum_variants(
-                    self.type_info,
-                    *enum_id,
-                )
-                .and_then(|variants| {
-                    let tag = variant_tag;
-                    variants.get(tag).cloned()
-                })
-                .and_then(|shape| shape.payload_ty)
-                .map(|ty_id| self.type_info.resolve_type_id(ty_id))
-            }
-            _ => None,
+        // Use the common layout's payload position, not a guessed tag width.
+        // Niche layouts have no separate payload offset and start at zero.
+        let base_offset = layout.field_offsets.get(1).copied().unwrap_or(0);
+        let Some(total_offset) = base_offset
+            .checked_add(payload_offset)
+            .and_then(|offset| i32::try_from(offset).ok())
+        else {
+            self.record_ice(
+                "EnumPayload offset exceeds the target instruction range",
+                self.func_span(),
+            );
+            return self.builder.ins().iconst(self.ptr_type, 0);
         };
-        if let Some(ref ty) = payload_ty
-            && self.is_inline_aggregate_ty(ty)
-        {
+        // Payload types are instantiated by shared AMIR lowering. Do not
+        // reinterpret generic declaration metadata in the target backend.
+        let payload_ty = self.type_info.resolve_type_id(field_ty);
+        if self.is_inline_aggregate_ty(&payload_ty) {
             return if total_offset == 0 {
                 ptr_val
             } else {

@@ -3,9 +3,12 @@ mod demangle;
 mod expand;
 mod graph;
 
-pub use collect::analyze_instantiations;
+pub use collect::{InstantiationRoot, analyze_instantiations};
 pub use demangle::{demangle_symbol, mangle_symbol};
-pub use expand::{InstantiatedFunction, expand_specializations, instantiate_function};
+pub use expand::{
+    InstantiatedFunction, expand_specializations, instantiate_function, specialize_root_block,
+    specialize_root_callees, specialize_root_expression,
+};
 pub use graph::{
     InstantiationGraph, InstantiationKey, InstantiationNode, InstantiationNodeId, MonoError,
 };

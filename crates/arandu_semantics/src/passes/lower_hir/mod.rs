@@ -11,11 +11,54 @@ use arandu_parser::Program;
 mod decl;
 mod expr;
 mod link;
+mod materialize;
 mod pattern;
 mod place;
 mod stmt;
 
 pub use link::link_hir_module;
+pub use materialize::{MaterializationError, materialize_ctfe_scalar, materialize_ctfe_value};
+
+/// Lower only an initially typed expression into the caller's HIR context.
+/// The canonical AST/pool and declaration headers remain shared by the caller;
+/// this does not lower the containing function or evaluate source syntax.
+pub fn lower_expression_to_hir(
+    type_check: &mut TypeCheckResult,
+    pool: &arandu_parser::ast_pool::AstPool,
+    hir: &mut HirProgram,
+    expression: arandu_parser::ast_pool::ExprId,
+) -> Result<crate::hir::HirExprId, Vec<Diagnostic>> {
+    if type_check
+        .diagnostics
+        .iter()
+        .any(|d| d.severity == Severity::Error)
+    {
+        return Err(type_check.diagnostics.clone());
+    }
+    expr::lower_expr(type_check, pool, &mut hir.pool, expression)
+        .map_err(|diagnostic| vec![diagnostic])
+}
+
+/// Lower an initially typed isolated block into an existing declaration context.
+/// No headers are rebuilt, no enclosing/sibling body is lowered, and no
+/// callable/synthetic symbol is added.
+/// The root's return type and semicolon-aware tail are supplied separately by
+/// its initial checker; the containing function header is not its return target.
+pub fn lower_block_to_hir(
+    type_check: &mut TypeCheckResult,
+    pool: &arandu_parser::ast_pool::AstPool,
+    hir: &mut HirProgram,
+    block: &arandu_parser::Block,
+) -> Result<crate::hir::HirBlockId, Vec<Diagnostic>> {
+    if type_check
+        .diagnostics
+        .iter()
+        .any(|d| d.severity == Severity::Error)
+    {
+        return Err(type_check.diagnostics.clone());
+    }
+    stmt::lower_block(type_check, pool, &mut hir.pool, block).map_err(|diagnostic| vec![diagnostic])
+}
 
 /// Canonical HIR declaration context, including call modes and destructor
 /// associations, but without lowering any function body. Constants must have
@@ -103,6 +146,25 @@ pub fn lower_function_to_hir(
     program: &Program,
     symbol: crate::SymbolId,
 ) -> Result<Option<HirProgram>, Vec<Diagnostic>> {
+    lower_selected_declaration(type_check, program, symbol, false)
+}
+
+/// Retain one external declaration container, including its ABI and generic
+/// signatures, without lowering unrelated declarations or function bodies.
+pub fn lower_extern_to_hir(
+    type_check: &mut TypeCheckResult,
+    program: &Program,
+    symbol: crate::SymbolId,
+) -> Result<Option<HirProgram>, Vec<Diagnostic>> {
+    lower_selected_declaration(type_check, program, symbol, true)
+}
+
+fn lower_selected_declaration(
+    type_check: &mut TypeCheckResult,
+    program: &Program,
+    symbol: crate::SymbolId,
+    external: bool,
+) -> Result<Option<HirProgram>, Vec<Diagnostic>> {
     if type_check
         .diagnostics
         .iter()
@@ -112,11 +174,17 @@ pub fn lower_function_to_hir(
     }
     let mut selected = None;
     program.for_each_decl_recursive(|_, item| {
-        if matches!(item, arandu_parser::TopLevelDecl::Func(_))
-            && crate::primary_def_key(item)
-                .and_then(|key| type_check.resolved.definitions.get(&key))
-                == Some(&symbol)
-        {
+        let matches = if external {
+            matches!(item, arandu_parser::TopLevelDecl::Extern(declaration)
+                if declaration.members.iter().any(|member|
+                    type_check.resolved.definitions.get(&member.span.into()) == Some(&symbol)))
+        } else {
+            matches!(item, arandu_parser::TopLevelDecl::Func(_))
+                && crate::primary_def_key(item)
+                    .and_then(|key| type_check.resolved.definitions.get(&key))
+                    == Some(&symbol)
+        };
+        if matches {
             selected = Some(item);
         }
     });

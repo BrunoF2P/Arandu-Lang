@@ -314,7 +314,10 @@ impl<'a, 'b, M: Module> FunctionTranslator<'a, 'b, M> {
             }
             Err(error) => {
                 self.record_ice(
-                    format!("Cranelift rejected an invalid type layout: {error}"),
+                    format!(
+                        "Cranelift rejected the layout of '{}': {error}",
+                        ty.display(self.symbol_table, &self.type_info.type_interner)
+                    ),
                     self.func_span(),
                 );
                 arandu_semantics::layout::TypeLayout::simple(0, 1)
@@ -390,6 +393,9 @@ impl<'a, 'b, M: Module> FunctionTranslator<'a, 'b, M> {
                     arandu_semantics::literal_pool::AmirLiteralEntry::Int(_) => ArType::IntLiteral,
                     arandu_semantics::literal_pool::AmirLiteralEntry::Float(_) => {
                         ArType::FloatLiteral
+                    }
+                    arandu_semantics::literal_pool::AmirLiteralEntry::FloatBits(value) => {
+                        ArType::Primitive(value.ty().primitive())
                     }
                     arandu_semantics::literal_pool::AmirLiteralEntry::Str(_) => {
                         ArType::Primitive(Primitive::Str)

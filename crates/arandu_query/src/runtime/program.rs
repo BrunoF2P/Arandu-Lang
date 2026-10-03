@@ -63,7 +63,7 @@ pub fn runtime_program(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<Run
                 // Uninstantiated entry templates still receive their ordinary
                 // source/body diagnostics. They are not executable units.
                 diagnostics.extend(
-                    crate::passes::item_typing(db, file, function.symbol)
+                    crate::ctfe::item_staged_typing(db, file, function.symbol)
                         .diagnostics
                         .iter()
                         .cloned(),

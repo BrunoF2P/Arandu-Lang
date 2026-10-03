@@ -58,6 +58,14 @@ pub fn lower_type_expr_ctx(
         TypeExpr::Const { value, .. } => parse_const_u64(value)
             .map(ArType::Const)
             .unwrap_or(ArType::Error),
+        TypeExpr::ConstExpression { span, .. } => ctx
+            .resolved
+            .comptime_arguments
+            .get(&(*span).into())
+            .copied()
+            .flatten()
+            .map(ArType::Const)
+            .unwrap_or(ArType::Error),
         TypeExpr::Primitive { name, .. } => {
             if name == "Err" {
                 let ty = ArType::Err;

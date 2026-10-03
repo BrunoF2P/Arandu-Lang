@@ -304,7 +304,7 @@ fn parse_named_or_primitive_type(
     Some(ty)
 }
 
-fn parse_generic_type_args(
+pub(super) fn parse_generic_type_args(
     ctx: &mut HandCtx<'_>,
     cur: &mut Cursor<'_>,
 ) -> Option<(IndexRange, u32)> {
@@ -318,6 +318,15 @@ fn parse_generic_type_args(
                 args.push(ctx.pool.alloc_type_expr(TypeExpr::Const {
                     span: ctx.token_span(token),
                     value,
+                }));
+            } else if cur.peek_kind() == Some(TokenKind::KwComptime) {
+                let token = cur.bump()?;
+                cur.expect(TokenKind::LParen)?;
+                let expression = super::expr::try_hand_lower_expr(ctx, cur, 0)?;
+                let end = cur.expect(TokenKind::RParen)?.end();
+                args.push(ctx.pool.alloc_type_expr(TypeExpr::ConstExpression {
+                    span: ctx.span(token.start, end),
+                    expression,
                 }));
             } else {
                 args.push(parse_type(ctx, cur)?);

@@ -1,4 +1,4 @@
-use super::{IndexRange, TypeExprId};
+use super::{ExprId, IndexRange, TypeExprId};
 use arandu_lexer::Span;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -22,6 +22,12 @@ pub enum TypeExpr {
     Const {
         span: Span,
         value: SmolStr,
+    },
+    /// Explicit `comptime (expression)` in a generic argument list. The
+    /// expression is staged before body typing, never lowered as runtime code.
+    ConstExpression {
+        span: Span,
+        expression: ExprId,
     },
     Primitive {
         span: Span,
@@ -76,6 +82,7 @@ impl TypeExpr {
     pub fn span(&self) -> Span {
         match self {
             TypeExpr::Const { span, .. }
+            | TypeExpr::ConstExpression { span, .. }
             | TypeExpr::Primitive { span, .. }
             | TypeExpr::Named { span, .. }
             | TypeExpr::Nullable { span, .. }

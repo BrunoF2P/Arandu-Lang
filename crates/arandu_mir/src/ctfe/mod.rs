@@ -5,11 +5,14 @@
 //! cancellation hook. Public `comptime` syntax/materialization remain separate
 //! steps. Operations accept typed values; coercions belong to type checking.
 
-use arandu_middle::ctfe::{ConstInt, ConstValue, IntegerType};
+use arandu_middle::ctfe::{ConstInt, ConstValue, FloatArithmetic, IntegerType};
 use arandu_middle::ops::{BinaryOp, UnaryOp};
 
 mod vm;
-pub use vm::{Budget, CtfeFunction, EvalError, EvalErrorKind, FunctionProvider, evaluate};
+pub use vm::{
+    Budget, CtfeFunction, EvalError, EvalErrorKind, EvalLocation, FunctionProvider, evaluate,
+    evaluate_instance, evaluate_unit,
+};
 
 /// Internal arithmetic failure; the evaluation boundary adds source locations
 /// and chooses the existing or new public diagnostic for the specific cause.
@@ -30,6 +33,7 @@ pub fn eval_unary(op: UnaryOp, value: ConstValue) -> Result<ConstValue, ScalarEv
         (UnaryOp::Neg, ConstValue::Integer(value)) => {
             integer_result(value.ty(), value.value().checked_neg())
         }
+        (UnaryOp::Neg, ConstValue::Float(value)) => Ok(ConstValue::Float(value.negated())),
         (UnaryOp::BitNot, ConstValue::Integer(value)) => {
             let complemented = if value.ty().is_signed() {
                 !value.value()
@@ -89,8 +93,47 @@ pub fn eval_binary(
             _ => Err(ScalarEvalError::UnsupportedBinary(op)),
         },
         (ConstValue::Integer(left), ConstValue::Integer(right)) => eval_integers(op, left, right),
+        (ConstValue::Float(left), ConstValue::Float(right)) => eval_floats(op, left, right),
+        (ConstValue::String(left), ConstValue::String(right)) => match op {
+            BinaryOp::Equal => Ok(ConstValue::Bool(left.as_str() == right.as_str())),
+            BinaryOp::NotEqual => Ok(ConstValue::Bool(left.as_str() != right.as_str())),
+            _ => Err(ScalarEvalError::UnsupportedBinary(op)),
+        },
         _ => Err(ScalarEvalError::TypeMismatch),
     }
+}
+
+fn eval_floats(
+    op: BinaryOp,
+    left: arandu_middle::ctfe::ConstFloat,
+    right: arandu_middle::ctfe::ConstFloat,
+) -> Result<ConstValue, ScalarEvalError> {
+    use std::cmp::Ordering;
+    let order = left
+        .compare(right)
+        .map_err(|_| ScalarEvalError::TypeMismatch)?;
+    let boolean = match op {
+        BinaryOp::Equal => Some(order == Some(Ordering::Equal)),
+        BinaryOp::NotEqual => Some(order != Some(Ordering::Equal)),
+        BinaryOp::Lt => Some(order == Some(Ordering::Less)),
+        BinaryOp::Gt => Some(order == Some(Ordering::Greater)),
+        BinaryOp::LtEqual => Some(matches!(order, Some(Ordering::Less | Ordering::Equal))),
+        BinaryOp::GtEqual => Some(matches!(order, Some(Ordering::Greater | Ordering::Equal))),
+        _ => None,
+    };
+    if let Some(value) = boolean {
+        return Ok(ConstValue::Bool(value));
+    }
+    let arithmetic = match op {
+        BinaryOp::Add => FloatArithmetic::Add,
+        BinaryOp::Sub => FloatArithmetic::Subtract,
+        BinaryOp::Mul => FloatArithmetic::Multiply,
+        BinaryOp::Div => FloatArithmetic::Divide,
+        _ => return Err(ScalarEvalError::UnsupportedBinary(op)),
+    };
+    left.arithmetic(arithmetic, right)
+        .map(ConstValue::Float)
+        .map_err(|_| ScalarEvalError::TypeMismatch)
 }
 
 fn eval_integers(

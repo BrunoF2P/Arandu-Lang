@@ -254,6 +254,19 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                                 self.builder.ins().f64const(val)
                             }
                         }
+                        arandu_semantics::literal_pool::AmirLiteralEntry::FloatBits(value) => {
+                            if let Some(bits) = value.bits32() {
+                                self.builder.ins().f32const(
+                                    cranelift_codegen::ir::immediates::Ieee32::with_bits(bits),
+                                )
+                            } else {
+                                self.builder.ins().f64const(
+                                    cranelift_codegen::ir::immediates::Ieee64::with_bits(
+                                        value.bits(),
+                                    ),
+                                )
+                            }
+                        }
                         arandu_semantics::literal_pool::AmirLiteralEntry::Str(s) => {
                             let str_bytes = s.as_bytes();
                             let data_id = match self.module.declare_data(

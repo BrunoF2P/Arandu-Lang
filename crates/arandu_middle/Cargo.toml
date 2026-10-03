@@ -19,6 +19,7 @@ tracing.workspace = true
 salsa = { workspace = true }
 smol_str.workspace = true
 serde = { workspace = true }
+rustc_apfloat.workspace = true
 
 [lib]
 path = "src/lib.rs"

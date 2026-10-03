@@ -148,6 +148,14 @@ pub(super) fn dump_expr(pool: &AstPool, expr: ExprId) -> String {
         ExprKind::AsyncBlock { block } => {
             dump_inline_block(pool, "AsyncBlock", span, pool.block(*block))
         }
+        ExprKind::Comptime { body } => match body {
+            crate::ast::ast_pool::ComptimeBody::Expression(expr) => {
+                format!("Comptime {}({})", dump_span(span), dump_expr(pool, *expr))
+            }
+            crate::ast::ast_pool::ComptimeBody::Block(block) => {
+                dump_inline_block(pool, "Comptime", span, pool.block(*block))
+            }
+        },
         ExprKind::UnsafeBlock { block } => {
             dump_inline_block(pool, "UnsafeBlock", span, pool.block(*block))
         }
@@ -191,6 +199,14 @@ pub(super) fn dump_expr(pool: &AstPool, expr: ExprId) -> String {
                 dump_span(span),
                 dump_expr(pool, *left),
                 dump_expr(pool, *right)
+            )
+        }
+        ExprKind::Layout { query, ty } => {
+            format!(
+                "@{} {}({})",
+                query.name(),
+                dump_span(span),
+                dump_type(pool.type_expr(*ty), pool)
             )
         }
         ExprKind::Cast { expr, ty } => {

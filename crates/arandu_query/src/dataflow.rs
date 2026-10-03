@@ -449,7 +449,7 @@ pub fn item_attribute_diagnostics(
 
 /// P3: diagnostics for **one** top-level item (body typeck + AMIR analysis if func).
 ///
-/// Depends on [`crate::passes::item_body_typeck`] (fine-grained) and, for functions,
+/// Depends on [`crate::ctfe::item_staged_typing`] (fine-grained) and, for functions,
 /// [`func_amir`] whose HashEq is content-stable across sibling edits.
 #[salsa::tracked]
 #[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
@@ -465,7 +465,7 @@ pub fn item_ide_diagnostics(
     #[cfg(any(test, debug_assertions))]
     ITEM_IDE_DIAGS_EXEC_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-    let body_tc = crate::passes::item_typing(db, file, item_sym);
+    let body_tc = crate::ctfe::item_staged_typing(db, file, item_sym);
     let runtime = source_runtime_unit(db, item_sym);
     let mut out: Vec<IdeDiagnostic> = body_tc
         .diagnostics
@@ -664,7 +664,7 @@ pub fn block_diagnostics(
     let _facts = block_dataflow_facts(db, file, func_sym, block);
     let _borrow = block_borrow_facts(db, file, func_sym, block);
     // Body typeck diags live on entry (no AST block ids); AMIR diags filter by block.
-    let body_tc = crate::passes::item_typing(db, file, func_sym);
+    let body_tc = crate::ctfe::item_staged_typing(db, file, func_sym);
     let amir = func_amir(db, file, func_sym);
     let runtime = source_runtime_unit(db, func_sym);
     let aggregate;

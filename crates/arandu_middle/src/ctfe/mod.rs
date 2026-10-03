@@ -5,6 +5,15 @@
 
 use crate::layout::DataLayout;
 use crate::types::Primitive;
+use crate::types::TypeShape;
+use std::sync::Arc;
+
+mod aggregate;
+pub use aggregate::{ConstAggregate, canonical_type_bytes, validate_ctfe_type_shape};
+mod float;
+pub use float::{ConstFloat, FloatArithmetic, FloatError, FloatType};
+mod string;
+pub use string::{ConstBytes, ConstString, StringError};
 
 /// An admitted integer type with a resolved, target-dependent bit width.
 ///
@@ -141,11 +150,15 @@ impl ConstInt {
 
 /// Initial CTFE value domain. Aggregate values are a separate implementation
 /// step; no pointer, pool-local identity or reference can escape this domain.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ConstValue {
     Void,
     Bool(bool),
     Integer(ConstInt),
+    Aggregate(ConstAggregate),
+    Float(ConstFloat),
+    String(ConstString),
+    Bytes(ConstBytes),
 }
 
 impl ConstValue {
@@ -156,14 +169,14 @@ impl ConstValue {
     /// does not serialize the Rust memory layout or depend on `TypeId`/`LiteralId`.
     /// Keep existing tags fixed if the value domain grows.
     #[must_use]
-    pub fn canonical_bytes(self) -> [u8; 20] {
+    pub fn canonical_bytes(&self) -> Vec<u8> {
         let mut bytes = [0; 20];
         bytes[0] = 1;
         match self {
             Self::Void => {}
             Self::Bool(value) => {
                 bytes[1] = 1;
-                bytes[4] = u8::from(value);
+                bytes[4] = u8::from(*value);
             }
             Self::Integer(integer) => {
                 bytes[1] = 2;
@@ -171,8 +184,12 @@ impl ConstValue {
                 bytes[3] = integer.ty.bit_width;
                 bytes[4..].copy_from_slice(&integer.value.to_le_bytes());
             }
+            Self::Aggregate(value) => return value.canonical_bytes(),
+            Self::Float(value) => return value.canonical_bytes().to_vec(),
+            Self::String(value) => return value.canonical_bytes(),
+            Self::Bytes(value) => return value.canonical_bytes(),
         }
-        bytes
+        bytes.to_vec()
     }
 }
 
@@ -184,6 +201,8 @@ pub enum ConstValueError {
     UnsupportedPointerWidth(u64),
     OutOfRange { ty: IntegerType, value: i128 },
     NegativeConstGeneric(i128),
+    StructuralLimit,
+    InvalidAggregateShape,
 }
 
 #[cfg(test)]

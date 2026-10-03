@@ -107,7 +107,7 @@ fn validate_method_receiver(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
     }
 }
 
-fn func_type_scope(checker: &TypeChecker<'_>, decl: &FuncDecl) -> crate::ScopeId {
+pub(super) fn func_type_scope(checker: &TypeChecker<'_>, decl: &FuncDecl) -> crate::ScopeId {
     if let Some(param) = decl.params.first() {
         let param_key = crate::NodeKey::from(param.span);
         if let Some(symbol_id) = checker.resolved.definitions.get(&param_key) {

@@ -26,8 +26,9 @@ pub use borrow_check::check_borrows;
 pub use inlining::inline_leaf_functions;
 pub use lower_amir::{
     ComposedUnits, ContextualFunctionUnit, FunctionUnit, append_function_unit,
-    compose_function_units, finalize_function_unit, lower_borrow_interfaces, lower_function_unit,
-    lower_to_amir, lower_to_amir_with_interfaces,
+    compose_function_units, finalize_function_unit, lower_block_unit, lower_borrow_interfaces,
+    lower_expression_unit, lower_function_unit, lower_to_amir, lower_to_amir_with_interfaces,
+    lower_to_amir_with_layout,
 };
 pub use move_checker::check_moves;
 pub use optimize::{

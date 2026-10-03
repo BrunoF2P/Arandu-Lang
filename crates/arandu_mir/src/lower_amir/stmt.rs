@@ -98,6 +98,7 @@ impl LowerCtx<'_> {
         stmt: &HirStmt,
         symbols: &SymbolTable,
     ) -> Result<(), Diagnostic> {
+        self.charge_static_expansion(stmt.span)?;
         match &stmt.kind {
             HirStmtKind::VarDecl { bindings, value } => {
                 let bindings_slice = self.hir.pool.bindings_list(*bindings);
@@ -260,12 +261,10 @@ impl LowerCtx<'_> {
 
                     // BB Err: runs errdefers AND defers
                     self.builder.current_block = Some(bb_err);
-                    let saved_frames = self.defer_frames.clone();
                     self.exit_all_defer_frames(true, symbols)?;
                     self.set_terminator(AmirTerminator::Return);
 
                     // BB Ok: runs ONLY defers
-                    self.defer_frames = saved_frames;
                     self.builder.current_block = Some(bb_ok);
                     self.exit_all_defer_frames(false, symbols)?;
                     self.set_terminator(AmirTerminator::Return);
@@ -362,7 +361,27 @@ impl LowerCtx<'_> {
 
                 self.builder.current_block = Some(bb_exit);
             }
-            HirStmtKind::For { clause, body } => match clause {
+            HirStmtKind::For {
+                comptime_bounds: Some(bounds),
+                clause,
+                body,
+                comptime_bodies,
+            } => {
+                self.lower_static_for(
+                    *bounds,
+                    clause,
+                    *body,
+                    comptime_bodies.as_deref(),
+                    stmt.span,
+                    symbols,
+                )?;
+            }
+            HirStmtKind::For {
+                comptime_bounds: None,
+                clause,
+                body,
+                ..
+            } => match clause {
                 HirForClause::In {
                     span: _,
                     bindings,
@@ -558,7 +577,7 @@ impl LowerCtx<'_> {
                 let bb_end = self.new_block();
                 self.lower_match_stmt(*value, arms, bb_end, symbols)?;
             }
-            HirStmtKind::Unsafe(b) => {
+            HirStmtKind::Unsafe(b) | HirStmtKind::Scope(b) => {
                 self.lower_block(*b, symbols)?;
             }
             HirStmtKind::Defer(block) => {
@@ -871,6 +890,8 @@ impl LowerCtx<'_> {
         }
         if self.builder.current_block.is_some() {
             self.exit_current_defer_frame(false, symbols)?;
+        } else {
+            self.defer_frames.pop(); // Lexical exit; this edge emitted cleanup already.
         }
         self.end_local_scope();
         Ok(())
@@ -931,6 +952,8 @@ impl LowerCtx<'_> {
             }
             if self.builder.current_block.is_some() {
                 self.exit_current_defer_frame(false, symbols)?;
+            } else {
+                self.defer_frames.pop();
             }
             self.end_local_scope();
             return Ok(());
@@ -1005,6 +1028,8 @@ impl LowerCtx<'_> {
         }
         if self.builder.current_block.is_some() {
             self.exit_current_defer_frame(false, symbols)?;
+        } else {
+            self.defer_frames.pop();
         }
         self.end_local_scope();
         Ok(())

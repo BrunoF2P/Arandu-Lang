@@ -78,27 +78,28 @@ func main(): int {
 }
 
 #[test]
-fn stage1_const_eval_division_by_zero_float_is_rejected_with_t040() {
+fn stage1_literal_float_division_preserves_ieee754_special_values() {
     let fixture = temp_fixture(
         "div_zero_float.aru",
         r#"module div_zero_float
 func main(): int {
-    let x: float = 1.0 / 0.0
+    let infinity: float = 1.0 / 0.0
+    let frozen: float = comptime (1.0 / 0.0)
+    let nan: float = comptime (0.0 / 0.0)
+    if infinity != frozen { return 1 }
+    if nan == nan { return 2 }
     return 0
 }
 "#,
     );
-    let output = check_fixture(&fixture);
+    let output = run_fixture(&fixture);
     cleanup_fixture(&fixture);
 
-    assert!(
-        !output.status.success(),
-        "float division by 0.0 literal must fail"
-    );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("T040"),
-        "expected T040DivisionByZero, got: {stderr}"
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "literal and frozen float division must agree with IEEE 754: {stderr}"
     );
 }
 
@@ -289,7 +290,7 @@ func main(): int {
     if s.lenBytes(str_val) == 3 {
         return 1
     }
-    if s.lenBytes(str_val) != 8 {
+    if s.lenBytes(str_val) != 7 {
         return 2
     }
     return 0

@@ -618,15 +618,12 @@ pub(super) fn synth_binary_unary_expr(
                         );
                         return Some(checker.intern(ArType::Error));
                     }
-                    if matches!(op, BinaryOp::Div | BinaryOp::Mod) {
+                    if matches!(op, BinaryOp::Div | BinaryOp::Mod) && right_ty.is_integer() {
                         let is_zero = match checker.pool.expr(right_id) {
                             ExprKind::Int { value, .. } => {
                                 arandu_middle::literal_pool::parse_int_literal(value) == Some(0)
                             }
                             ExprKind::Byte { value } => *value == 0,
-                            ExprKind::Float { value, .. } => {
-                                value.parse::<f64>().map(|f| f == 0.0).unwrap_or(false)
-                            }
                             _ => false,
                         };
                         if is_zero {

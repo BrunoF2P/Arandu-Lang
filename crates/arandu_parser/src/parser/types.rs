@@ -40,7 +40,9 @@ impl<'a> Parser<'a> {
         }
         let params_vec = self.parse_generic_list(1, |parser| {
             let start = parser.mark();
-            let is_const = parser.eat_name("KW_CONST");
+            // Both spellings share the existing value-parameter AST contract;
+            // comptime here is not an extra runtime argument or evaluator.
+            let is_const = parser.eat_name("KW_CONST") || parser.eat_name("KW_COMPTIME");
             let name = parser.expect_ident_type()?;
             let const_ty = if is_const {
                 parser.expect_name("COLON")?;
@@ -80,6 +82,16 @@ impl<'a> Parser<'a> {
                 parser.advance();
                 let span = parser.span_from_mark(start);
                 Ok(parser.pool.alloc_type_expr(TypeExpr::Const { span, value }))
+            } else if matches!(parser.current().kind, TokenKind::KwComptime) {
+                let start = parser.mark();
+                parser.advance();
+                parser.expect_name("LPAREN")?;
+                let expression = parser.parse_expr(0)?;
+                parser.expect_name("RPAREN")?;
+                let span = parser.span_from_mark(start);
+                Ok(parser
+                    .pool
+                    .alloc_type_expr(TypeExpr::ConstExpression { span, expression }))
             } else {
                 parser.parse_type()
             }
@@ -635,6 +647,14 @@ impl<'a> Parser<'a> {
                         return None;
                     }
                     delimiter_depth -= 1;
+                    // Comparisons inside a group are not generic openers in
+                    // the enclosing list (`F<comptime (a < b)>`).
+                    while generic_open_depths
+                        .last()
+                        .is_some_and(|depth| *depth > delimiter_depth)
+                    {
+                        generic_open_depths.pop();
+                    }
                 }
                 TokenKind::Semicolon => {
                     // Top-level statement terminator (explicit or ASI): a

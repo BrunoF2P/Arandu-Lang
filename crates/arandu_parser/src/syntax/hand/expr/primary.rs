@@ -16,6 +16,7 @@ pub(super) fn parse_primary(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Opti
     let t = cur.peek()?;
     let start = t.start;
     match t.kind {
+        TokenKind::At => parse_layout_expression(ctx, cur),
         TokenKind::IntDec | TokenKind::IntHex | TokenKind::IntBin | TokenKind::IntOct => {
             let value = SmolStr::new(ctx.text(t)?);
             cur.bump();
@@ -181,6 +182,30 @@ pub(super) fn parse_primary(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Opti
             ))
         }
         TokenKind::KwIf => parse_if_expr(ctx, cur, start),
+        TokenKind::KwComptime => {
+            cur.bump();
+            if matches!(cur.peek_kind(), Some(TokenKind::KwIf | TokenKind::KwFor)) {
+                return None;
+            }
+            let (body, end) = if cur.peek_kind() == Some(TokenKind::LBrace) {
+                let block = parse_block_tokens(ctx, cur)?;
+                let end = block.span.end;
+                (
+                    crate::ast::ast_pool::ComptimeBody::Block(ctx.pool.alloc_block(block)),
+                    end,
+                )
+            } else {
+                let expr = try_hand_lower_expr(ctx, cur, 150)?;
+                (
+                    crate::ast::ast_pool::ComptimeBody::Expression(expr),
+                    ctx.pool.expr_span(expr).end,
+                )
+            };
+            Some(
+                ctx.pool
+                    .alloc_expr(ExprKind::Comptime { body }, ctx.span(start, end)),
+            )
+        }
         TokenKind::KwMatch => parse_match_expr(ctx, cur, start),
         TokenKind::KwAsync => {
             cur.bump();
@@ -204,6 +229,19 @@ pub(super) fn parse_primary(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Opti
         }
         _ => None,
     }
+}
+
+fn parse_layout_expression(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<ExprId> {
+    let start = cur.bump()?.start;
+    let name = cur.bump()?;
+    let query = crate::LayoutQuery::from_name(ctx.text(name)?)?;
+    cur.expect(TokenKind::LParen)?;
+    let ty = super::super::ty::parse_type(ctx, cur)?;
+    let close = cur.expect(TokenKind::RParen)?;
+    Some(ctx.pool.alloc_expr(
+        ExprKind::Layout { query, ty },
+        ctx.span(start, close.start + close.len),
+    ))
 }
 
 fn ident_type_starts_type_led_expr(cur: &Cursor<'_>) -> bool {
@@ -272,8 +310,18 @@ pub(super) fn parse_string(
                     ctx.span(start, end_tok.start + end_tok.len),
                 ));
             }
-            TokenKind::StringText | TokenKind::StringEscape => {
+            TokenKind::StringText => {
                 let text = SmolStr::new(ctx.text(t)?);
+                let span = ctx.token_span(t);
+                cur.bump();
+                parts.push(ctx.pool.alloc_string_part(StringPart::Text { span, text }));
+            }
+            TokenKind::StringEscape => {
+                // CST tokens preserve spelling/spans; the AST stores the
+                // decoded value exactly once, including inside interpolation.
+                let value = arandu_lexer::decode_char_content(ctx.text(t)?)?;
+                let mut utf8 = [0; 4];
+                let text = SmolStr::new(value.encode_utf8(&mut utf8));
                 let span = ctx.token_span(t);
                 cur.bump();
                 parts.push(ctx.pool.alloc_string_part(StringPart::Text { span, text }));

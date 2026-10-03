@@ -83,7 +83,12 @@ pub(super) fn rewrite_stmt_calls<'bump>(
             rewrite_condition_calls(hir, &condition, specialized, tc, bump);
             rewrite_block_calls(hir, body, specialized, tc, bump);
         }
-        HirStmtKind::For { clause, body } => {
+        HirStmtKind::For {
+            clause,
+            body,
+            comptime_bodies,
+            ..
+        } => {
             match clause {
                 HirForClause::In { iterable, .. } => {
                     rewrite_expr_calls(hir, iterable, specialized, tc, bump);
@@ -105,7 +110,13 @@ pub(super) fn rewrite_stmt_calls<'bump>(
                     }
                 }
             }
-            rewrite_block_calls(hir, body, specialized, tc, bump);
+            if let Some(bodies) = comptime_bodies {
+                for body in bodies {
+                    rewrite_block_calls(hir, body, specialized, tc, bump);
+                }
+            } else {
+                rewrite_block_calls(hir, body, specialized, tc, bump);
+            }
         }
         HirStmtKind::Match { value, arms } => {
             rewrite_expr_calls(hir, value, specialized, tc, bump);
@@ -120,7 +131,10 @@ pub(super) fn rewrite_stmt_calls<'bump>(
                 }
             }
         }
-        HirStmtKind::Defer(b) | HirStmtKind::ErrDefer(b) | HirStmtKind::Unsafe(b) => {
+        HirStmtKind::Defer(b)
+        | HirStmtKind::ErrDefer(b)
+        | HirStmtKind::Unsafe(b)
+        | HirStmtKind::Scope(b) => {
             rewrite_block_calls(hir, b, specialized, tc, bump);
         }
         HirStmtKind::Break | HirStmtKind::Continue | HirStmtKind::Error => {}

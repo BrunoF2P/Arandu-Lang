@@ -16,9 +16,9 @@ pub use arandu_codegen::{CodegenBackend, CompiledCode, JitError};
 pub use arandu_middle::{
     BitMatrix, BitSet, CodeReplacement, DenseRange, DiagCode, Diagnostic, DocCommentMap, Hint,
     IntrinsicKind, Label, NodeKey, ResolutionResult, ResolvedNames, ScopeId, Severity, SmolStr,
-    Symbol, SymbolId, SymbolKind, SymbolTable, amir, amir_validate, bitset, cfg, diagnostics, hir,
-    index_vec, intrinsics, layout, literal_pool, newtype_index, ops, resolved, symbol_table, types,
-    validate_amir_program,
+    Symbol, SymbolId, SymbolKind, SymbolTable, amir, amir_validate, bitset, cfg, ctfe, diagnostics,
+    hir, index_vec, intrinsics, layout, literal_pool, newtype_index, ops, resolved, symbol_table,
+    types, validate_amir_program,
 };
 
 pub use arandu_middle::Visibility;
@@ -41,6 +41,8 @@ pub use arandu_typeck::{
     type_check,
 };
 pub use passes::lower_hir::{
-    link_hir_module, lower_declarations_to_hir, lower_function_to_hir, lower_to_hir,
+    MaterializationError, link_hir_module, lower_block_to_hir, lower_declarations_to_hir,
+    lower_expression_to_hir, lower_extern_to_hir, lower_function_to_hir, lower_to_hir,
+    materialize_ctfe_scalar, materialize_ctfe_value,
 };
 pub use passes::monomorphize::monomorphize_program;

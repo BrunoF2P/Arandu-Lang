@@ -27,7 +27,11 @@ fn unsigned_byte_arithmetic_matches_an_independent_checked_oracle() {
                 let expected = expected
                     .map(|value| integer(ty, i128::from(value)))
                     .ok_or(ScalarEvalError::Overflow(ty));
-                assert_eq!(eval_binary(op, left, right), expected, "{a} {op:?} {b}");
+                assert_eq!(
+                    eval_binary(op, left.clone(), right.clone()),
+                    expected,
+                    "{a} {op:?} {b}"
+                );
             }
             for (op, expected) in [
                 (BinaryOp::Div, a.checked_div(b)),
@@ -36,7 +40,11 @@ fn unsigned_byte_arithmetic_matches_an_independent_checked_oracle() {
                 let expected = expected
                     .map(|value| integer(ty, i128::from(value)))
                     .ok_or(ScalarEvalError::DivisionByZero);
-                assert_eq!(eval_binary(op, left, right), expected, "{a} {op:?} {b}");
+                assert_eq!(
+                    eval_binary(op, left.clone(), right.clone()),
+                    expected,
+                    "{a} {op:?} {b}"
+                );
             }
         }
     }
@@ -57,7 +65,11 @@ fn signed_byte_arithmetic_matches_an_independent_checked_oracle() {
                 let expected = expected
                     .map(|value| integer(ty, i128::from(value)))
                     .ok_or(ScalarEvalError::Overflow(ty));
-                assert_eq!(eval_binary(op, left, right), expected, "{a} {op:?} {b}");
+                assert_eq!(
+                    eval_binary(op, left.clone(), right.clone()),
+                    expected,
+                    "{a} {op:?} {b}"
+                );
             }
             for (op, expected) in [
                 (BinaryOp::Div, a.checked_div(b)),
@@ -71,7 +83,11 @@ fn signed_byte_arithmetic_matches_an_independent_checked_oracle() {
                 let expected = expected
                     .map(|value| integer(ty, i128::from(value)))
                     .ok_or(error);
-                assert_eq!(eval_binary(op, left, right), expected, "{a} {op:?} {b}");
+                assert_eq!(
+                    eval_binary(op, left.clone(), right.clone()),
+                    expected,
+                    "{a} {op:?} {b}"
+                );
             }
         }
     }
@@ -139,7 +155,7 @@ fn unsigned_64_values_keep_the_high_bit_and_handle_intermediate_overflow() {
     let ty = ty(Primitive::U64, 8);
     let high = integer(ty, 1_i128 << 63);
     assert_eq!(
-        eval_binary(BinaryOp::Gt, high, integer(ty, 1)),
+        eval_binary(BinaryOp::Gt, high.clone(), integer(ty, 1)),
         Ok(ConstValue::Bool(true))
     );
     assert_eq!(
@@ -229,14 +245,18 @@ fn byte_shifts_match_independent_wider_arithmetic_and_native_right_shift() {
                 .map(|value| integer(unsigned, i128::from(value)))
                 .map_err(|_| ScalarEvalError::Overflow(unsigned));
             assert_eq!(
-                eval_binary(BinaryOp::ShiftLeft, integer(unsigned, i128::from(a)), count),
+                eval_binary(
+                    BinaryOp::ShiftLeft,
+                    integer(unsigned, i128::from(a)),
+                    count.clone()
+                ),
                 expected
             );
             assert_eq!(
                 eval_binary(
                     BinaryOp::ShiftRight,
                     integer(unsigned, i128::from(a)),
-                    count
+                    count.clone()
                 ),
                 Ok(integer(unsigned, i128::from(a >> amount)))
             );
@@ -247,11 +267,19 @@ fn byte_shifts_match_independent_wider_arithmetic_and_native_right_shift() {
                 .map(|value| integer(signed, i128::from(value)))
                 .map_err(|_| ScalarEvalError::Overflow(signed));
             assert_eq!(
-                eval_binary(BinaryOp::ShiftLeft, integer(signed, i128::from(a)), count),
+                eval_binary(
+                    BinaryOp::ShiftLeft,
+                    integer(signed, i128::from(a)),
+                    count.clone()
+                ),
                 expected
             );
             assert_eq!(
-                eval_binary(BinaryOp::ShiftRight, integer(signed, i128::from(a)), count),
+                eval_binary(
+                    BinaryOp::ShiftRight,
+                    integer(signed, i128::from(a)),
+                    count.clone()
+                ),
                 Ok(integer(signed, i128::from(a >> amount)))
             );
         }
@@ -401,11 +429,11 @@ fn no_implicit_conversion_occurs_between_integer_types_or_targets() {
         ConstValue::Void,
     ] {
         assert_eq!(
-            eval_binary(BinaryOp::Add, int, other),
+            eval_binary(BinaryOp::Add, int.clone(), other.clone()),
             Err(ScalarEvalError::TypeMismatch)
         );
         assert_eq!(
-            eval_binary(BinaryOp::Equal, int, other),
+            eval_binary(BinaryOp::Equal, int.clone(), other),
             Err(ScalarEvalError::TypeMismatch)
         );
     }
@@ -418,7 +446,7 @@ fn no_implicit_conversion_occurs_between_integer_types_or_targets() {
         Err(ScalarEvalError::TypeMismatch)
     );
     assert_eq!(
-        eval_unary(UnaryOp::Not, int),
+        eval_unary(UnaryOp::Not, int.clone()),
         Err(ScalarEvalError::TypeMismatch)
     );
     assert_eq!(
@@ -426,7 +454,7 @@ fn no_implicit_conversion_occurs_between_integer_types_or_targets() {
         Err(ScalarEvalError::TypeMismatch)
     );
     assert_eq!(
-        eval_binary(BinaryOp::And, int, int),
+        eval_binary(BinaryOp::And, int.clone(), int),
         Err(ScalarEvalError::TypeMismatch)
     );
     assert_eq!(
