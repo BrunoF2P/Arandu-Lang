@@ -27,11 +27,20 @@ impedem o LSP de publicar resultados de buffers/revisões obsoletos.
 | Query | Estado |
 |-------|--------|
 | `parse`, `resolve`, `module_signatures`, `type_check`, `lower_amir` | Reais |
+| `resolved_headers` / `header_signatures` | Resolução declarativa/imports e tipagem inicial sem resolução de corpos de funções; fronteira preparatória de seleção estática |
+| `header_hir` / `ctfe_extern_hir` / `ctfe_header_func_amir` | Headers por módulo, declarações externas referenciadas e helpers isolados antes da resolução completa |
 | `declaration_signatures` | Assinaturas declarativas; imports não solicitam contratos derivados de corpos nem MIR final |
 | `item_typing` / `file_typing` | Checker canônico contra declarações; sem dependência dos contratos de fluxo |
 | `prepare_hir` / `borrow_interfaces` | Produtor global legado para oráculos / contratos por unidades independentes antes da validação final |
 | `local_symbols`, `exported_symbols`, `func_amir` / `instance_amir` | Reais; definições fonte e instâncias concretas têm APIs distintas |
-| `ctfe_func_amir` / `ctfe_eval` | Internas, escalares não genéricas; chamadas importadas rastreadas por unidade |
+| `ctfe_func_amir` / `ctfe_eval` | Unidades não genéricas com valores admitidos; chamadas importadas rastreadas por unidade |
+| `ctfe_instance_amir` / `ctfe_eval_instance` | Unidades concretas; monomorphização canônica e identidade estrutural de callees |
+| `ctfe_root_amir` / `ctfe_eval_root` | Tipagem inicial e avaliação de expressão/bloco isolados; seletores estruturais de instância e ocorrência |
+| `item_static_branches` | Seleção pública de `comptime if` por função não genérica antes de resolução de corpos; mapa explícito de decisões, exclusão parent-first e recuperação de ciclos |
+| `item_const_arguments` | Argumentos `comptime (expr)` independentes da instância em corpos ordinários, inclusive templates; congelados via headers/VM antes do checker puro, com `Const(u64)` e falhas explícitas, sem AMIR runtime |
+| `item_staged_typing` | Obrigações públicas após tipagem inicial por item; materialização de valores antes de HIR runtime |
+| `item_static_loops` | Domínios inteiros finitos via raízes AMIR; expansões não executam um interpretador de AST |
+| `instance_staged_result` | Seleção, argumentos e raízes dependentes antes de resolver/tipar uma instância concreta; corpos residuais por ocorrência |
 | `declaration_hir` / `declaration_context` | Headers por módulo e closure transitiva compartilhada, sem corpos |
 | `function_hir` / `instance_hir` | Corpo isolado e especialização concreta; headers são ligados somente na instância |
 | `runtime_raw_unit` / `instance_contracts` / `runtime_unit` | Lowering, convergência de contratos e validação separados por instância no caminho ativo |
@@ -49,14 +58,119 @@ de funções de um executável. Instâncias concretas usam `instance_amir(Instan
 e compartilham a AMIR/contexto de `runtime_unit`. O caminho
 interno CTFE é distinto: `item_source_input` e `item_typing`, com
 `declaration_signatures`/alvo, alimentam o lowering HIR canônico de apenas uma
-função; sua AMIR possui pool próprio e descritores escalares resolvidos.
+função; sua AMIR possui pool próprio e descritores de valores resolvidos.
 `ctfe_eval` rastreia unidades chamadas sob demanda, argumentos e orçamento.
 Valor igual permite cutoff downstream; cancelamento usa unwind Salsa, não um
-erro cacheado. Essa fronteira não completa granularidade por instância de
-runtime nem habilita `comptime` no LSP. Chamadas diretas a funções importadas
-escalares não genéricas são admitidas, inclusive aliases/imports transitivos,
+erro cacheado. Essa fronteira não encerra os gates AOT do marco 0.3 nem
+encerra a superfície completa de `comptime`. Chamadas diretas a funções importadas
+não genéricas com valores admitidos são suportadas, inclusive aliases/imports transitivos,
 sem pedir interfaces de empréstimo, HIR global ou MIR final. Imports ausentes
 ou cíclicos são rejeitados; a VM mantém seus limites e rejeições de efeitos.
+
+O caminho concreto `ctfe_instance_amir` reutiliza `instance_hir` e a máquina
+de monomorphização existente, sem consultar contratos finais nem composição.
+Cada unidade traduz IDs sintéticos locais de chamadas para `FunctionInstance`
+estrutural, preservando pools e layout próprios. A VM admite a closure retida,
+inclusive helpers não executados, com fuel/cancelamento e handles limitados.
+`instance_hir` ainda depende da tipagem inicial do item; não se pode chamá-lo
+de dentro dessa tipagem para resolver obrigações CTFE sem um staging explícito.
+
+Raízes isoladas de expressão/bloco têm APIs puras e queries estreitas. O
+[recorte público escalar](arandu-comptime-core-v0.1.md) usa essas mesmas queries.
+O checker do bloco tem destino de retorno próprio e unifica retornos/cauda com
+o solver canônico; efeitos e limites de loops não vazam para o proprietário.
+O lowering empresta a AST e o contexto HIR declarativo existente, sem reconstruir
+headers nem criar símbolos chamáveis. A mesma SSA/CFG materializa retornos,
+e saídas não unitárias exigem resultado definido em todos os caminhos.
+`evaluate_unit` não registra a raiz como callee do símbolo proprietário.
+`CtfeRoot` identifica arquivo/proprietário, um caminho local de seleção na
+AST canônica e um tipo esperado escalar independente de pools. O seletor é
+validado e limitado; não é um ID persistente, offset de texto nem nova sintaxe.
+`ctfe_root_amir` usa `item_source_input`/declarações, o checker inicial puro e
+os headers memoizados de `declaration_hir`; não consulta a tipagem do corpo
+proprietário. Leituras e escritas em locais/parâmetros externos são capturas
+runtime, mesmo se inicializados com literal. Locais declarados no bloco
+pertencem à raiz; constantes globais mantêm seu checker canônico.
+`ctfe_eval_root` consulta callees não genéricos na admissão e inclui orçamento
+na chave. Mudanças runtime com spans preservados podem cortar antes da VM;
+mudanças que deslocam spans podem revalidá-la, mas valor igual corta os
+consumidores. Erros guardam spans atuais; cancelamento desenrola Salsa sem
+memoizar uma falha da linguagem. O grafo não pede `function_hir`/`instance_hir`,
+contratos de empréstimo ou AMIR final para tipar/avaliar a raiz.
+`materialize_ctfe_scalar`, a ponte histórica no lowering HIR puro, reconstrói
+valores escalares, arrays/tuplas/structs Copy e views literais usando tipos do
+contexto destino e span fornecido pelo caller. Não
+transporta IDs de pools, endereços ou handles da VM. Exige tipo exato e largura
+de alvo compatível; não insere coerções nem reinterpreta `usize` entre ptr4/ptr8.
+As provas internas substituem uma chamada por esse literal e removem o helper
+antes de executar AMIR ordinária em C/Cranelift/Wasm, em O0/O1/O2. A seleção da
+substituição nessas provas ainda é test-only, não um provider público residual.
+O parser CST/AST agora preserva a raiz explícita. O checker inicial registra
+obrigações sem executar queries; `item_staged_typing` avalia cada raiz e publica
+valores por span completo de origem, sem IDs de pools estrangeiros. Assim,
+memos retidos após edição irmã e raízes de arquivos distintos não confundem
+índices de arenas. HIR usa a ponte pura e literais/constructores ordinários;
+floats retêm encodings IEEE tipados até os três backends. Helpers CTFE
+consultam `item_typing` inicial, não a visão staged;
+staging aninhado/não materializado falha fechado, sem ciclos Salsa. Resultados
+e layout entram no hash de corpo, não no hash de declarações exportadas. Itens
+sem staging compartilham o memo inicial sem varredura da arena.
+Parser/formatter, keyword semântico, completion e fallback TextMate reconhecem
+esse recorte. Seleção estática em match e templates usa a mesma continuação
+lexical. A seleção em escopos de lambda não habilita o sistema geral de closures:
+tipagem e lowering dessas expressões conservam U001 até o marco 0.3, conforme
+a delimitação de escopo aprovada pelo mantenedor.
+
+`resolved_headers` executa o pipeline puro de imports e resolve declarações,
+atributos, constantes e assinaturas, sem visitar corpos de funções. Guarda
+scopes revisionais e o estado de uso/aliases dos imports. `resolve` continua
+desse memo, visitando cada corpo uma vez e só então emitindo warnings de imports
+não utilizados. Não há segundo resolvedor, reparse ou nova identidade pública.
+Headers de parâmetros são alocados antes dos locais de todos os corpos: seus
+IDs ficam iguais na continuação e não mudam ao inserir locais num corpo anterior.
+IDs exportados continuam vindos do coletor local original. A ordem de alocação
+dos locais revisionais mudou deliberadamente; não é ABI nem identidade de CGU.
+
+`header_signatures` usa o checker declarativo canônico e recorre apenas à mesma
+fronteira nos imports, com recuperação de ciclos e alvo explícito. Não chama
+`resolve`, contratos de empréstimo ou AMIR. Edições de corpo com spans/headers
+preservados cortam consumidores; deslocamentos de spans ou mudanças de índices
+da arena podem revalidar o header. A seleção estática consulta essa fronteira
+antes de resolver os ramos; `declaration_signatures` mantém sua visão compatível com
+referências resolvidas dos corpos para consumidores atuais.
+
+O seletor interno `IfCondition` conecta essa fronteira à VM escalar existente:
+continua o resolvedor puro apenas na expressão, exige `bool`, rejeita captura
+de parâmetros runtime e não visita nenhum ramo do proprietário. `header_hir`
+reutiliza o produtor declarativo e o checker de constantes; helpers solicitados
+pela VM usam `ctfe_header_func_amir`, com resolução/tipagem de somente seu corpo.
+`ctfe_extern_hir` retém apenas o container externo de cada símbolo referenciado,
+incluindo a identidade ABI dos intrínsecos de layout. A VM não adivinha um
+intrínseco pelo nome nem precisa solicitar seu corpo externo. A composição
+reutiliza o linker canônico sem trazer spans/corpos de funções irmãs para a
+unidade CTFE; regressões exigem cutoff mesmo quando um corpo irmão muda de tamanho.
+Não consulta `resolve`, `declaration_signatures`, `item_typing`, contratos ou
+AMIR runtime final. A extração de `item_source_input` agora usa identidades do
+header, não resolução completa. Não há parser, checker ou intérprete paralelo.
+
+A continuação pre-body usa a AST canônica atual junto dos headers, não a arena
+que um memo de item pode ter retido de outra revisão. Isso permite revalidar o
+lowering após uma edição de sibling; AMIR/valor iguais cortam VM e consumidores.
+Budget, alvo, caminho local e proprietário fazem parte das dependências/chaves;
+erros e cancelamento não produzem decisão arbitrária. `StaticIfCondition`
+publica o mapa de seleção parent-first. `InInstance` fornece a substituição
+estrutural concreta; `InIteration` distingue índices de loops finitos sem
+confundir valores pelo mesmo span. Capturas runtime continuam proibidas.
+
+O produtor concreto resolve/tipa apenas corpos selecionados, usando os mesmos
+passes puros. Corpos de loop dependentes são verificados por ocorrência e
+ligados ao pool HIR do proprietário; corpos independentes são compartilhados.
+`comptime_bodies` conserva a ordem do domínio congelado, e o lowering AMIR
+emite blocos acíclicos com locais SSA novos e cleanup lexical para desvios.
+Locais exclusivos de ocorrência são remapeados por unidade no compositor,
+preservando seus escopos de nomes e os IDs fonte de declarações/instâncias.
+Limites de ocorrências, obrigações e trabalho residual são finitos; seleção
+estática não reinicia o orçamento público inteiro a cada iteração.
 
 `declaration_signatures` é a fronteira inicial dessa separação: importa somente
 as assinaturas declarativas, reutilizando o checker e os inputs existentes.

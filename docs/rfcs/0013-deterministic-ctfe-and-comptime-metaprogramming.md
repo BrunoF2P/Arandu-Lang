@@ -9,9 +9,12 @@
 - **PR da RFC:** N/A (In-Tree RFC)
 - **Issue de Acompanhamento:** N/A
 
-> Esta RFC continua sendo uma proposta. Exemplos de sintaxe são ilustrativos
-> até a seção de gramática ser revisada e a RFC ser aceita. Nenhuma capacidade
-> descrita aqui é apresentada como já implementada.
+> Esta RFC completa continua sendo uma proposta. O recorte público escalar de
+> expressões/blocos, posteriormente ampliado para valores congelados,
+> instâncias concretas e expansão estática com aprovação do mantenedor,
+> está implementado no contrato de
+> [comptime core](../arandu-comptime-core-v0.1.md). Exemplos e recursos além desse
+> contrato continuam ilustrativos; isso não aceita nem implementa a RFC inteira.
 
 ---
 
@@ -50,24 +53,36 @@ arquitetural está em reutilizar a semântica tipada da linguagem e não em comp
 um valor isolado antes do backend.
 
 O projeto já tem componentes que ajudam — AMIR, queries Salsa, `DataLayout` e
-const generics escalares. A campanha atual acrescentou uma VM escalar limitada
-interna e queries de lowering/avaliação escalares não genéricas com imports; isso ainda não
-constitui a superfície pública `comptime` nem um modelo completo de alvo.
+const generics escalares. A campanha atual acrescentou uma VM limitada com
+valores escalares, agregados Copy fechados, strings imutáveis e floats IEEE
+determinísticos. Expressões/blocos públicos, `comptime if`, argumentos
+`count<comptime (expression)>()`, staging em instâncias concretas e expansão
+finita de `comptime for` estão conectados. Intrínsecos públicos de layout
+compartilham o `LayoutEngine`;
+isso não constitui metaprogramação completa nem um modelo completo de alvo.
 O [plano da campanha](../campaigns/0.1.9-comptime-core.md) delimita o contrato
 efetivamente implementado. Em particular:
 
 - `TargetInfo` do type checker atualmente expressa apenas a largura de ponteiro;
 - `TargetConfig` no middle-end guarda `DataLayout`, não um triple canônico com
   OS, arquitetura, ABI e capabilities;
-- const generics atualmente aceitam tipos inteiros escalares;
-- `func_amir` é uma projeção sobre o lowering program-wide, não uma cadeia real
-  de lowering incremental por instância.
+- const generics atualmente aceitam tipos inteiros escalares, com verificação
+  de domínio declarado e argumentos calculados em corpos concretos;
+- `func_amir` fonte e `instance_amir` concreto já consultam unidades independentes;
+  o programa agregado é um compositor final, não seu produtor.
 - `ctfe_func_amir` baixa apenas o corpo selecionado, sem lowering global,
-  e consulta callees importados sob demanda; funções genéricas ainda são rejeitadas.
+  e consulta a closure retida de callees importados na admissão;
+  funções genéricas são rejeitadas nessa API por símbolo.
+- `ctfe_instance_amir` é o caminho interno para instâncias escalares concretas:
+  reutiliza `instance_hir`/monomorphização e traduz IDs sintéticos locais para
+  `FunctionInstance`. O spelling público de parâmetros já reutiliza const
+  generics; templates selecionam staging após substituição concreta.
+  Headers/defaults e dependências gerais entre parâmetros permanecem fora do corte.
 - `declaration_signatures` já permite consultar imports sem baixar corpos;
   a visão compatível `module_signatures` compõe contratos de empréstimo
-  projetados antes da validação final. O produtor compartilha HIR/mono, mas esse
-  estágio continua program-wide; granularidade completa por instância é pendente.
+  projetados antes da validação final. Contratos usam unidades por instância;
+  retenção/latência e composição final continuam gates separados da
+  granularidade do produtor.
 
 Essas limitações orientam a divisão em etapas. Não se deve prometer que CTFE
 evitará toda reexecução incremental: Salsa pode cortar propagação quando uma
@@ -91,6 +106,34 @@ comptime {
 Uma avaliação CTFE só pode chamar operações e funções admitidas pelo subconjunto
 de execução. Chamadas com I/O, efeitos de runtime ou acesso ambiental ao sistema
 de arquivos são rejeitadas; não são executadas parcialmente.
+
+Contrato de retorno confirmado pelo mantenedor em 2026-10-01: o bloco
+`comptime { ... }` cria um destino de retorno próprio. `return val;` encerra
+somente essa avaliação, não a função runtime que contém o bloco. Retornos em
+ramos/loops internos pertencem à mesma avaliação; uma avaliação aninhada ou
+função chamada possui seu próprio destino.
+
+Todos os retornos explícitos devem unificar com a expressão final produtora de
+valor, mesmo que algum deles seja inalcançável. O resultado usa o contexto de
+tipo esperado, quando houver; sem contexto, é inferido desses valores pelo
+checker canônico. `return;` só é válido quando esse resultado é unidade
+(`void` na representação atual; `()` é a notação semântica de unidade, não um
+novo tipo primitivo). Um bloco sem cauda produtora de valor é unitário quando
+chega ao fim; se ele deve produzir um valor, todo caminho de saída precisa
+devolvê-lo. `break`/`continue` não podem cruzar a fronteira da avaliação.
+
+A API interna trata um `;` explícito como descarte do valor da expressão,
+independentemente do tipo esperado. Essa é a proposta para a nova gramática de
+bloco, não uma alteração do tratamento legado de caudas de funções ordinárias;
+deve ser revista junto da aceitação da superfície pública.
+
+O contrato possui provas na API de tipagem/lowering de blocos isolados
+e no grafo interno `ctfe_root_amir → ctfe_eval_root`: a tipagem inicial da raiz
+é independente do corpo runtime proprietário e os callees são rastreados pela
+avaliação. A sintaxe pública se conecta a essas raízes e materializa o resultado
+no corpo residual. Os seletores de raiz usados pelas provas continuam sendo
+caminhos internos na AST canônica, não uma forma pública alternativa de escrever
+`comptime`.
 
 ### 3.2. Decisões e iteração estáticas
 
@@ -152,7 +195,27 @@ dependências reais, caminhos de código e decisões propostas para fechar CT.0.
 
 ### 4.1. CT.0 — decisões necessárias antes da implementação
 
-Antes de mudar lexer/parser ou iniciar a VM, a RFC precisa fechar:
+Decisão de staging confirmada pelo mantenedor em 2026-10-01: `comptime if`
+verifica a sintaxe de ambos os ramos, mas resolve e tipa somente o selecionado.
+O ramo descartado pode mencionar nomes ou tipos ausentes no alvo. Essa decisão
+não aceita retroativamente as demais questões abertas. A implementação usa
+uma fronteira de seleção anterior à resolução residual.
+O contrato de retorno local/unificação/unidade da seção 3.1 também foi
+confirmado; as demais questões e a aceitação formal da RFC continuam abertas.
+
+Recorte público inicial confirmado pelo mantenedor em 2026-10-01: começar por
+expressões/blocos `comptime` escalares (`bool`, inteiros admitidos e unidade
+representada por `void`). Agregados, seleção `comptime if` e expansão
+`comptime for` são cortes seguintes, sem mudar os contratos de retorno e de
+ramo descartado já confirmados. Essa aprovação é do recorte, não da RFC inteira
+nem uma aceitação dos recursos futuros descritos nesta proposta.
+Tipos fora do recorte devem produzir diagnóstico semântico determinístico,
+registrado em `DiagCode`, nunca ICE ou execução de fallback. As regressões do
+corte público precisam incluir overflow, divisão por zero e resultado unitário.
+O contrato público documenta a gramática, os limites fixos e os diagnósticos
+entregues; configuração pública de orçamento permanece futura.
+
+Para cada ampliação do núcleo, a RFC precisa fechar ou preservar:
 
 1. O domínio de `ConstValue`, incluindo representabilidade, igualdade, hashing e
    serialização determinística para os tipos aceitos.
@@ -162,8 +225,8 @@ Antes de mudar lexer/parser ou iniciar a VM, a RFC precisa fechar:
 4. Como parâmetros de valor interagem com const generics, monomorphização e
    inferência, sem quebrar programas existentes.
 5. O modelo de alvo inicial e as operações de layout válidas para cada backend.
-6. Chaves e dependências da query de avaliação, incluindo os limites reais do
-   `lower_amir` program-wide atual.
+6. Chaves e dependências da query de avaliação, incluindo contexto declarativo
+   compartilhado e composição final, sem reentrar na validação de runtime.
 7. Orçamento de instruções/frames/valores/expansão, cancelamento, contexto
    CLI/LSP e diagnósticos públicos; medir antes de fixar os defaults.
 8. O grafo de staging para valores necessários durante tipagem, seleção de
@@ -180,10 +243,12 @@ larguras do alvo, conversões sem truncamento e codificação canônica v1 sem I
 de pools. Shifts à esquerda usam multiplicação matemática verificada; à direita,
 extensão de sinal para assinados e zeros para não assinados. Contagens inválidas,
 overflow e divisão/resto inválidos produzem erros internos estruturados. A ponte
-para `Const(u64)` é sem perda e rejeita negativos. Essa base não altera o runtime,
-não interpreta CFG nem habilita sintaxe `comptime`; integração, orçamento e
-diagnósticos públicos continuam sujeitos às decisões acima. Os detalhes e
-regressões estão no plano da campanha. A RFC permanece `Draft`.
+para `Const(u64)` é sem perda e rejeita negativos. A VM interpreta CFG com
+chamadas/locais e aplica limites compartilhados e cancelamento. A integração
+pública traduz falhas em diagnósticos estruturados e congela valores no AMIR
+residual; ela não introduz um runtime CTFE nos programas gerados. O contrato
+técnico registra a implementação, os limites e as provas. A RFC completa
+permanece `Draft`.
 
 ### 4.2. CT.1 — alvo e layout
 
@@ -257,8 +322,9 @@ Garantias exigidas:
 - nenhum I/O ou efeito global dentro da query;
 - early-cutoff testado sobre o resultado, sem prometer que mudanças em
   dependências não reexecutam o interpretador;
-- preservar a correção mesmo enquanto `func_amir` dependa do lowering
-  program-wide. Granularidade por instância é melhoria arquitetural separada.
+- preservar a correção sem usar o MIR final durante tipagem inicial.
+  As queries internas por função/instância já são independentes; completar
+  o staging público não equivale a fechar todos os gates AOT da RFC 0011.
 
 CT.4 acompanha cada corte público de CT.3; não se habilita uma forma no editor
 para só depois implementar seu cancelamento e sua análise incremental.

@@ -95,8 +95,12 @@ quando cumprir seu contrato atual.
 
 ### Fila de execução
 
-**Agora:** `0.1.9 — CTFE & Comptime Core`, com CT.0 em elaboração, base escalar,
-VM limitada e recorte incremental internos implementados, sem superfície pública. O desenho permanece na
+**Agora:** `0.1.9 — CTFE & Comptime Core`, com VM limitada, valores escalares,
+agregados Copy, strings imutáveis, floats determinísticos, argumentos calculados,
+seleção por instância e expansão estática implementados, com validação integrada
+concluída no host Linux. Matriz nativa, playground e promoção de release continuam
+separados; as provas locais estão no [contrato público](./arandu-comptime-core-v0.1.md#integrated-development-host-evidence).
+O desenho permanece na
 [RFC 0013](./rfcs/0013-deterministic-ctfe-and-comptime-metaprogramming.md);
 o [plano temporário da campanha](./campaigns/0.1.9-comptime-core.md) detalha
 entregas, caminhos de código, decisões propostas e provas. Esta fila permanece
@@ -104,18 +108,26 @@ a única autoridade para ordem e status.
 
 | Gate | Estado | Entrega e condição para avançar |
 | --- | --- | --- |
-| CT.0 — contrato e staging | `in progress`; base interna implementada, desenho restante aberto | Fechar gramática, efeitos, const generics, orçamento e um grafo sem ciclos entre typeck/AMIR/CTFE. Aceitar a RFC antes da implementação pública; VM escalar e queries locais possuem regressões, mas ainda não fecham o contrato. |
-| CT.1 — alvo e layout | `planned` | Configuração explícita validada e contrato compartilhado com `LayoutEngine`; comprovar larguras, alinhamentos e rejeição de combinações sem backend real. |
-| CT.2 — VM AMIR pura | `in progress`; VM escalar limitada interna | CFG, chamadas diretas, locais, fuel compartilhado, limites de frames/slots e cancelamento implementados. Completar efeitos, contexto de falha, paridade e agregados sem recursos de runtime. |
-| CT.3 — superfície e especialização | `planned` | Entregas sucessivas de expressão/bloco, parâmetros compatíveis, seleção `comptime if` e expansão finita `comptime for`; produzir AMIR residual válida para os três backends. |
-| CT.4 — Salsa e editor | `in progress`; recorte interno escalar não genérico com imports | `ctfe_func_amir` baixa só o item e rastreia callees importados; queries provam cutoff de irmãos/consumidores, equivalência ao clean e cancelamento sem memoizar falha. Instâncias, staging público e LSP responsivo com diagnóstico estruturado permanecem pendentes. |
-| CT.5 — layout público e release | `planned` | `@sizeOf`/`@alignOf` compartilham a semântica de `mem.sizeOf<T>()`/`mem.alignOf<T>()`; corpus real, Smith, matriz nativa, playground e extensão validados. |
+| CT.0 — contrato e staging | `in progress`; recorte escalar aprovado, desenho amplo aberto | O mantenedor aprovou expressões/blocos escalares e retornos locais; gramática e limites desse corte estão no contrato de comptime core. Fechar efeitos ampliados, const generics, configuração de orçamento e o restante da RFC antes de ampliar a superfície. A aprovação parcial não aceita a RFC inteira. |
+| CT.1 — alvo e layout | `in progress`; validação e intrínsecos com layout completo | CTFE rejeita tamanhos/alinhamentos inconsistentes em `DataLayout`; unidades runtime/CTFE compartilham `LayoutEngine` com o layout completo, incluindo i686. Completar configuração na borda e identidade de alvo, sem equiparar layout conhecido a codegen nativo suportado. |
+| CT.2 — VM AMIR pura | `done` no recorte de valores; gates locais verdes | CFG, chamadas diretas, locais, fuel, limites de frames/slots/handles e cancelamento. Tuplas, structs Copy fechadas e arrays usam valores limitados; strings/views imutáveis contabilizam backing. Floats IEEE usam software e bits tipados, sem aritmética do host. Oráculos residuais comparam C/Cranelift/Wasm em O0/O1/O2. Recursos de runtime e closures permanecem fora da admissão. |
+| CT.3 — superfície e especialização | `done` no recorte CT.3a/b/c/d; gates locais verdes | Expressões/blocos públicos, retornos locais e argumentos de valor calculados usam raízes isoladas e identidade estrutural existente. Instâncias concretas selecionam condições dependentes e congelam argumentos antes do corpo residual. Match arms preservam escopo; `comptime for` expande domínios inteiros finitos, com locais frescos, drops e saídas estruturadas. Lambdas têm seleção/capturas preparadas, mas execução continua U001 até closures em 0.3. Headers/defaults, raízes explícitas aninhadas e dimensões calculadas permanecem fora deste corte. |
+| CT.4 — Salsa e editor | `in progress`; primeiro corte público conectado | `item_staged_typing` conecta tipagem inicial e queries de raiz sem AMIR runtime nem ciclos; itens sem staging compartilham memo inicial. Valores/layout participam do hash de corpo e preservam cutoff de exports. T042–T046 contextualizam falhas/limites; fmt, completion, keyword semântico e TextMate acompanham, com regressões LSP UTF-16/diagnóstico atual e temas no Extension Host. Demais cortes e budgets interativos de campanha permanecem abertos. |
+| CT.5 — layout público e release | `in progress`; layout validado nos gates locais, release pendente | `@sizeOf(T)`/`@alignOf(T)` usam o `LayoutEngine` completo, inclusive i686, e substituem operandos genéricos no lowering canônico. A API legada valida identidade intrínseca; layouts inválidos usam T047 e walks estruturais são limitados. Faltam corpus real, matriz nativa, playground e release; dimensões calculadas continuam futuras. |
 
 **Primeira entrega executável:** uma chamada pura com argumentos constantes,
 avaliada na VM e materializada como constante no programa residual, com testes
 C/Cranelift/Wasm e sem passar pelo `lower_amir` final durante o type checking.
 CT.3 e CT.4 avançam em cortes verticais: nenhuma superfície é habilitada no LSP
 antes de suas provas de fuel, cancelamento e invalidation.
+
+**Próxima passagem:** exercitar corpus real e comprovar a matriz nativa e o
+playground antes da promoção de release. Ciclos/cutoff das instâncias e os seis
+gates locais passaram em 2026-10-03, junto do Extension Host. O [plano auditado da campanha](./campaigns/0.1.9-comptime-core.md#plano-auditado-para-os-cinco-cortes-seguintes--2026-10-02)
+registra os contratos, donos, riscos e critérios de aceitação. Implementação
+local não equivale a promoção de release; closures permanecem no marco 0.3.
+Defeito atual de staging em membros de módulos inline foi corrigido com busca
+recursiva e fingerprint do membro, preservando cutoff de siblings.
 
 **Escopo de produto proposto:** expressões/blocos `comptime`, parâmetros de valor
 inteiros compatíveis com os const generics atuais, decisões/iterações estáticas
