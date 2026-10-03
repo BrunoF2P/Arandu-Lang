@@ -527,6 +527,13 @@ pub fn synthesize_with_oracle(seed: u64) -> SynthesizedProgram {
     let source = add_seeded_slice_iter_case(source, seed, base_value);
     let source = add_seeded_option_result_cmp_case(source, seed, base_value);
     let source = add_seeded_str_mem_case(source, seed, base_value);
+    // Keep the normal independent result/stdout oracle unchanged. A bounded
+    // static tree checks parent-first exclusion in real Smith runs, not only
+    // in a separate hand-picked unit fixture.
+    let (static_body, static_expected) = gen_comptime_if_node(&mut Rng::new(seed), 0, 3);
+    let source = replace_once(source, "func main(): int {", &format!(
+        "func smith_static_tree(): int {{\n{static_body}\n}}\n\nfunc main(): int {{\n    if smith_static_tree() != {static_expected} {{ return -1000060 }}"
+    ));
     SynthesizedProgram {
         source,
         expected_result,
@@ -1800,4 +1807,75 @@ fn compare<T: PartialOrd>(left: T, right: T, operator: &str) -> bool {
         ">=" => left >= right,
         _ => unreachable!("comparison operator must come from the generated set"),
     }
+}
+
+/// Synthesizes a program containing a tree of nested `comptime if` statements.
+///
+/// Returns the full program source and the expected integer result determined by
+/// the statically selected branch. Unselected branches contain syntactically valid
+/// but semantically unavailable symbols to ensure discarded code is never resolved
+/// or typed.
+pub fn synthesize_nested_comptime_if(seed: u64, max_depth: usize) -> SynthesizedProgram {
+    let mut rng = Rng::new(seed);
+    let depth = max_depth.clamp(1, 4);
+    let (body, expected_result) = gen_comptime_if_node(&mut rng, 0, depth);
+    let source = format!("func main(): int {{\n{body}\n}}\n");
+    SynthesizedProgram {
+        source,
+        expected_result,
+    }
+}
+
+fn gen_comptime_if_node(rng: &mut Rng, current_depth: usize, max_depth: usize) -> (String, i32) {
+    let select_then = rng.below(2) == 0;
+    let condition_expr = if select_then {
+        match rng.below(3) {
+            0 => "true".to_string(),
+            1 => {
+                let a = i64::try_from(rng.below(50) + 1).expect("bounded static condition");
+                format!("({a} + {a}) == {}", a * 2)
+            }
+            _ => "!false && ((3 * 3) == 9)".to_string(),
+        }
+    } else {
+        match rng.below(3) {
+            0 => "false".to_string(),
+            1 => {
+                let a = i64::try_from(rng.below(50) + 1).expect("bounded static condition");
+                format!("({a} + {a}) == {}", a * 2 + 1)
+            }
+            _ => "!true || ((2 * 2) == 5)".to_string(),
+        }
+    };
+
+    let indent = "    ".repeat(current_depth + 1);
+    let next_depth = current_depth + 1;
+
+    let (selected_body, expected_val) = if next_depth >= max_depth {
+        let val = i32::try_from(rng.below(100) + 1).expect("bounded static result");
+        (format!("{indent}return {val}"), val)
+    } else {
+        gen_comptime_if_node(rng, next_depth, max_depth)
+    };
+
+    let discarded_id = rng.below(10_000);
+    let discarded_body = match rng.below(3) {
+        0 => format!("{indent}return missing_callee_{discarded_id}()"),
+        1 => format!("{indent}return nonexistent_symbol_{discarded_id}"),
+        _ => format!(
+            "{indent}comptime if false {{\n{indent}    return absent_inner_{discarded_id}()\n{indent}}} else {{\n{indent}    return missing_fallback_{discarded_id}()\n{indent}}}"
+        ),
+    };
+
+    let (then_code, else_code) = if select_then {
+        (selected_body, discarded_body)
+    } else {
+        (discarded_body, selected_body)
+    };
+
+    let body = format!(
+        "{indent}comptime if {condition_expr} {{\n{then_code}\n{indent}}} else {{\n{else_code}\n{indent}}}"
+    );
+
+    (body, expected_val)
 }

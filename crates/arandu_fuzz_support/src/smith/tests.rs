@@ -22,6 +22,323 @@ fn assert_synthesized_seed_matches_all_backends(seed: u64) {
 }
 
 #[test]
+fn scalar_ctfe_matches_defined_runtime_in_every_backend_and_optimization_level() {
+    use arandu_middle::ctfe::ConstValue;
+    use arandu_mir::ctfe::Budget;
+    use arandu_query::ctfe::{ctfe_eval, CtfeRequest};
+    use arandu_query::{passes::declaration_signatures, DatabaseImpl};
+    // Checked CTFE arithmetic and runtime wrapping are compared only where
+    // both are defined. Large unsigned values are compared before returning
+    // int so the result channel, not the process exit byte, is the oracle.
+    let cases = [
+        (
+            "func add(a: int, b: int): int { return a + b }\nfunc main(): int { return add(20, 22) }",
+            42,
+        ),
+        (
+            "func main(): int { let mut i = 0\n let mut total = 0\n while i < 10 { total = total + i\n i = i + 1 }\n return total }",
+            45,
+        ),
+        (
+            "func sum(n: int): int { if n == 0 { return 0 }\n return n + sum(n - 1) }\nfunc main(): int { return sum(10) }",
+            55,
+        ),
+        (
+            "func main(): int { let a: int = -27\n let b: int = 4\n return (a / b) * 10 + a % b }",
+            -63,
+        ),
+        (
+            "func main(): int { let a: int = -32\n let b: uint = 32\n return (a >> 3) + ((b >> 2) as int) + (3 << 2) }",
+            16,
+        ),
+        (
+            "func main(): int { let high: u64 = 18446744073709551615\n if high > 9223372036854775807 { return 42 }\n return 1 }",
+            42,
+        ),
+    ];
+    for (source, expected) in cases {
+        let mut db = DatabaseImpl::new();
+        let file = db.new_file("ctfe-parity.aru".into(), source.into());
+        let main = declaration_signatures(&db, file)
+            .symbols
+            .iter()
+            .find(|symbol| symbol.name == "main")
+            .expect("main")
+            .id;
+        let request = CtfeRequest::new(
+            &db,
+            file,
+            main,
+            vec![],
+            Budget {
+                fuel: 100_000,
+                frames: 64,
+                values: 10_000,
+            },
+        );
+        let value = ctfe_eval(&db, request)
+            .as_ref()
+            .unwrap_or_else(|error| panic!("CTFE failed: {error:?}\n{source}"));
+        let ConstValue::Integer(value) = value else {
+            panic!("integer result expected")
+        };
+        assert_eq!(value.value(), i128::from(expected), "CTFE: {source}");
+        let runtime = check_source(source, true, true)
+            .unwrap_or_else(|error| panic!("runtime failed: {error:?}\n{source}"));
+        assert_eq!(runtime.result, expected, "runtime: {source}");
+        assert!(runtime.stdout.is_empty() && runtime.stderr.is_empty());
+    }
+}
+
+#[test]
+fn static_if_scopes_match_every_backend_and_optimization_level() {
+    let cases = [
+        (
+            "func choose(): bool { comptime if true { return true } else { return missing } }\nfunc main(): int { comptime if choose() { return 42 } else { return absent() } }",
+            42,
+        ),
+        (
+            "func id<T>(x: T): T { return x }\nfunc main(): int { comptime if false { return absent() } else comptime if true && !false { let answer = comptime 42; return id(answer) } else { return missing } }",
+            42,
+        ),
+        (
+            "func main(): int { let mut i = 0; let mut total = 0; while i < 4 { comptime if true { defer { total = total + 1 }; i = i + 1; if i == 1 { continue }; if i == 3 { break } } else { missing() } }; return total }",
+            3,
+        ),
+        (
+            "func main(): int { let mut i = 0; let mut total = 0; while i < 4 { if true { defer { total = total + 1 }; i = i + 1; if i == 1 { continue }; if i == 3 { break } } }; return total }",
+            3,
+        ),
+    ];
+    for (source, expected) in cases {
+        let observation = check_source(source, true, true)
+            .unwrap_or_else(|failure| panic!("static selection failed: {failure:?}\n{source}"));
+        assert_eq!(observation.result, expected, "{source}");
+        assert!(observation.stdout.is_empty() && observation.stderr.is_empty());
+    }
+}
+
+#[test]
+fn finite_static_loops_execute_identically_in_all_backends_and_optimization_levels() {
+    // The independent results include normal/empty/reversed domains, fresh
+    // iteration locals and scope exits. `check_source` exercises O0/O1/O2;
+    // these are execution oracles, not merely successful lowering checks.
+    let cases = [
+        (
+            "func main(): int { let mut sum = 0; comptime for i in 0..4 { let value = i * 2; sum += value }; return sum }",
+            12,
+        ),
+        (
+            "func main(): int { let mut sum = 42; comptime for i in 4..4 { sum += i }; comptime for i in 5..2 { sum += i }; return sum }",
+            42,
+        ),
+        (
+            "func main(): int { let mut sum = 0; comptime for i in 0..4 { if i == 1 { continue }; if i == 3 { break }; sum += i }; return sum }",
+            2,
+        ),
+        (
+            "func main(): int { let mut sum = 0; comptime for i in 0..4 { defer { sum += 10 }; if i == 1 { continue }; if i == 3 { break }; sum += i }; return sum }",
+            42,
+        ),
+        (
+            "func main(): int { comptime for i in 0..4 { return i + 42 }; return 99 }",
+            42,
+        ),
+        (
+            "func main(): int { let mut sum = 0; comptime for i in 0..3 { comptime for j in 0..2 { sum += i + j } }; return sum }",
+            9,
+        ),
+        (
+            "func end(): uint { return 4 }\nfunc main(): int { let mut sum = 0; comptime for i in 0..end() { sum += i as int }; return sum }",
+            6,
+        ),
+        (
+            "func main(): int { let mut sum = 0; comptime for i in -2..2 { sum += i }; return sum }",
+            -2,
+        ),
+        (
+            "func main(): int { return comptime { let mut sum = 0; comptime for i in 0..4 { sum += i }; sum } }",
+            6,
+        ),
+        (
+            "func main(): int { let mut sum: usize = 0; comptime for i in 0..(@sizeOf([3]u16)) { sum += i }; return sum as int }",
+            15,
+        ),
+        (
+            "func main(): int { let mut sum = 0; comptime for i in 0..4 { comptime if i == 2 { sum += 42 } else { sum += i } }; return sum }",
+            46,
+        ),
+        (
+            "func count<comptime N: uint>(): uint { return N }\nfunc main(): int { let mut sum = 0; comptime for i in 0..4 { sum += count<comptime (i + 1)>() as int }; return sum }",
+            10,
+        ),
+        (
+            "func main(): int { let mut sum = 0; comptime for i in 0..4 { let value = comptime (i + 1); sum += value }; return sum }",
+            10,
+        ),
+        (
+            "func main(): int { let mut sum = 0; comptime for i in 0..4 { comptime for j in 0..i { sum += j } }; return sum }",
+            4,
+        ),
+    ];
+    for (source, expected) in cases {
+        let observation = check_source(source, true, true).unwrap_or_else(|failure| {
+            panic!("static loop execution failed: {failure:?}\n{source}")
+        });
+        assert_eq!(observation.result, expected, "{source}");
+        assert!(observation.stdout.is_empty() && observation.stderr.is_empty());
+    }
+}
+
+#[test]
+fn synthesized_nested_comptime_if_matches_oracle_across_backends() {
+    use super::synthesize_nested_comptime_if;
+    for seed in [0, 7, 42, 99, 1337] {
+        let synthesized = synthesize_nested_comptime_if(seed, 3);
+        let observation = check_source(&synthesized.source, true, true).unwrap_or_else(|failure| {
+            panic!("seed {seed} failed: {failure:?}\n{}", synthesized.source)
+        });
+        assert_eq!(
+            observation.result, synthesized.expected_result,
+            "seed {seed}:\n{}",
+            synthesized.source
+        );
+        assert!(observation.stdout.is_empty() && observation.stderr.is_empty());
+    }
+}
+
+#[test]
+fn synthesized_nested_comptime_if_salsa_cache_invalidation_is_clean() {
+    use super::synthesize_nested_comptime_if;
+    use arandu_query::{passes, DatabaseImpl};
+
+    for seed in [0, 42, 128] {
+        super::oracle::check_static_cache(seed).unwrap_or_else(|error| panic!("{error:?}"));
+        let synthesized = synthesize_nested_comptime_if(seed, 3);
+        let (mut db, log) = DatabaseImpl::with_rebuild_log();
+        let file = db.new_file("static.aru".into(), synthesized.source.clone());
+
+        // First pass: type checking must pass with zero errors because discarded
+        // branches are never resolved or typed.
+        let checked = passes::type_check(&db, file);
+        assert!(
+            checked
+                .diagnostics
+                .iter()
+                .all(|d| d.severity != arandu_middle::Severity::Error),
+            "seed {seed} had unexpected errors: {:?}",
+            checked.diagnostics
+        );
+
+        let branches_initial = passes::resolve(&db, file)
+            .resolved
+            .comptime_branches
+            .clone();
+        assert!(
+            !branches_initial.is_empty(),
+            "seed {seed} should have static branch decisions"
+        );
+
+        // Append outside the owner: leading text would move every real span
+        // and must revalidate diagnostic locations, not preserve stale keys.
+        log.clear();
+        db.update_file_text(
+            file,
+            format!("{}\n// trailing comment\n", synthesized.source),
+        );
+        let branches_after_comment = passes::resolve(&db, file)
+            .resolved
+            .comptime_branches
+            .clone();
+        assert_eq!(branches_initial, branches_after_comment);
+        assert_eq!(
+            log.count_executions_matching("item_static_branches"),
+            0,
+            "seed {seed}: item_static_branches re-executed spuriously on comment edit"
+        );
+
+        // 2. Editing discarded code in unselected branches: must NOT invalidate
+        // the selected branch typing or report errors.
+        log.clear();
+        let modified_discarded = synthesized
+            .source
+            .replace("missing", "unknown")
+            .replace("nonexistent", "unavailable")
+            .replace("absent", "unseen");
+        db.update_file_text(file, modified_discarded);
+        let checked_after_discarded = passes::type_check(&db, file);
+        assert!(
+            checked_after_discarded
+                .diagnostics
+                .iter()
+                .all(|d| d.severity != arandu_middle::Severity::Error),
+            "seed {seed} had errors after modifying discarded branch: {:?}",
+            checked_after_discarded.diagnostics
+        );
+        let branches_after_discarded = passes::resolve(&db, file)
+            .resolved
+            .comptime_branches
+            .clone();
+        assert_eq!(branches_initial, branches_after_discarded);
+        assert_eq!(
+            log.count_executions_matching("ctfe_eval_root"),
+            0,
+            "seed {seed}: unchanged conditions must cut off before the VM"
+        );
+
+        // A source displacement must publish current spans and converge to a
+        // fresh DB. This is legitimate revalidation, not spurious invalidation.
+        let displaced = format!("// 😀 shifted source\n{}", synthesized.source);
+        db.update_file_text(file, displaced.clone());
+        let incremental = passes::type_check(&db, file);
+        let mut clean = DatabaseImpl::new();
+        let clean_file = clean.new_file("static.aru".into(), displaced);
+        let clean_result = passes::type_check(&clean, clean_file);
+        assert_eq!(incremental.diagnostics, clean_result.diagnostics);
+        assert_eq!(
+            incremental.resolved.comptime_branches,
+            clean_result.resolved.comptime_branches
+        );
+    }
+}
+
+#[test]
+fn comptime_value_parameters_match_const_parameters_across_all_backends() {
+    for marker in ["const", "comptime"] {
+        for source in [
+            format!(
+                "func count<{marker} N: uint>(): uint {{ return N }}\nfunc main(): int {{ return (count<20>() + count<22>()) as int }}"
+            ),
+            format!(
+                "func total<{marker} N: uint>(values: [N]int): int {{ return (N as int) + values[0] + values[1] }}\nfunc main(): int {{ return total<3>([19, 20, 0]) }}"
+            ),
+        ] {
+            let observation = check_source(&source, true, true)
+                .unwrap_or_else(|failure| panic!("{marker}: {failure:?}\n{source}"));
+            assert_eq!(observation.result, 42);
+            assert!(observation.stdout.is_empty() && observation.stderr.is_empty());
+        }
+    }
+}
+
+#[test]
+fn computed_const_arguments_match_every_backend_and_optimization_level() {
+    for source in [
+        "func count<comptime N: uint>(): uint { return N }\nfunc wrapper<T>(x: T): uint { return count<comptime (20 + 22)>() }\nfunc main(): int { if wrapper<int>(0) != 42 || wrapper<bool>(false) != 42 { return 1 }; return 42 }",
+        "func leaf<comptime N: u16>(): int { return N as int }\nfunc wrapper<comptime M: u8>(): int { return leaf<M>() }\nfunc main(): int { return wrapper<42>() }",
+        "func add(a: int, b: int): int { return a + b }\nfunc count<comptime N: uint>(): uint { return N }\nfunc main(): int { return count<comptime (add(20, 22))>() as int }",
+        "func total<comptime N: uint>(values: [N]int): int { return (N as int) + values[0] + values[1] }\nfunc main(): int { return total<comptime (1 + 2)>([19, 20, 0]) }",
+        "func count<comptime N: uint>(): uint { return N }\nfunc main(): int { comptime if true { return count<comptime (42)>() as int } else { return count<comptime (missing / 0)>() as int } }",
+        "func count<comptime N: uint>(): uint { return N }\nfunc main(): int { return count<comptime (if 1 < 2 { 42 } else { 0 })>() as int }",
+    ] {
+        let observation = check_source(source, true, true)
+            .unwrap_or_else(|failure| panic!("computed constant failed: {failure:?}\n{source}"));
+        assert_eq!(observation.result, 42, "{source}");
+        assert!(observation.stdout.is_empty() && observation.stderr.is_empty());
+    }
+}
+
+#[test]
 fn confirmed_failure_artifact_contains_source_seed_and_replay_metadata() {
     let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
     let root = std::env::temp_dir().join(format!(
