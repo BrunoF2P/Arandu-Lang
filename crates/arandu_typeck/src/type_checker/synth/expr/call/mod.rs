@@ -443,7 +443,7 @@ pub(super) fn synth_call_expr(
             {
                 return Some(checker.intern(option_ty));
             }
-            if let Some(poll_ty) = synth_poll_ctor(checker, callee_id, args_range, span) {
+            if let Some(poll_ty) = synth_poll_ctor(checker, callee_id, args_range, span, expected) {
                 return Some(checker.intern(poll_ty));
             }
             if let ExprKind::Field { base, field } = checker.pool.expr(callee_id) {

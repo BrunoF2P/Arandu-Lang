@@ -8,7 +8,7 @@ use arandu_parser::ast_pool::{AstPool, ExprId, ExprKind, IndexRange};
 use super::super::TypeChecker;
 use super::super::constraints::ConstraintOrigin;
 use super::super::types::{ArType, TypeId};
-use super::expr::synth_expr;
+use super::expr::{synth_expr, synth_expr_expected};
 
 fn type_path_member(pool: &AstPool, callee: ExprId) -> Option<(&TypeName, &str)> {
     match pool.expr(callee) {
@@ -57,7 +57,7 @@ pub(crate) fn synth_result_ctor(
                 return Some(ArType::Error);
             }
             if let Some((exp_id, ok_id, _err_id)) = expected_result {
-                let got = synth_expr(checker, arg_ids[0]);
+                let got = synth_expr_expected(checker, arg_ids[0], Some(ok_id));
                 if !checker.unify_ids(ok_id, got) {
                     checker.add_constraint(
                         ok_id,
@@ -90,7 +90,7 @@ pub(crate) fn synth_result_ctor(
                 return Some(ArType::Error);
             }
             if let Some((exp_id, _ok_id, err_id)) = expected_result {
-                let got = synth_expr(checker, arg_ids[0]);
+                let got = synth_expr_expected(checker, arg_ids[0], Some(err_id));
                 if !checker.unify_ids(err_id, got) {
                     checker.add_constraint(
                         err_id,
@@ -151,7 +151,7 @@ pub(crate) fn synth_option_ctor(
                 return Some(ArType::Error);
             }
             if let Some(exp_inner) = expected_inner {
-                let got = synth_expr(checker, arg_ids[0]);
+                let got = synth_expr_expected(checker, arg_ids[0], Some(exp_inner));
                 if !checker.unify_ids(exp_inner, got) {
                     checker.add_constraint(
                         exp_inner,
@@ -228,7 +228,7 @@ pub(crate) fn synth_variant_sugar(
                     ));
                     return checker.intern(ArType::Error);
                 }
-                let got = synth_expr(checker, arg_ids[0]);
+                let got = synth_expr_expected(checker, arg_ids[0], Some(ok_id));
                 if !checker.unify_ids(ok_id, got) {
                     checker.add_constraint(
                         ok_id,
@@ -252,7 +252,7 @@ pub(crate) fn synth_variant_sugar(
                     ));
                     return checker.intern(ArType::Error);
                 }
-                let got = synth_expr(checker, arg_ids[0]);
+                let got = synth_expr_expected(checker, arg_ids[0], Some(err_id));
                 if !checker.unify_ids(err_id, got) {
                     checker.add_constraint(
                         err_id,
@@ -286,7 +286,7 @@ pub(crate) fn synth_variant_sugar(
                     ));
                     return checker.intern(ArType::Error);
                 }
-                let got = synth_expr(checker, arg_ids[0]);
+                let got = synth_expr_expected(checker, arg_ids[0], Some(inner_id));
                 if !checker.unify_ids(inner_id, got) {
                     checker.add_constraint(
                         inner_id,
@@ -331,7 +331,7 @@ pub(crate) fn synth_variant_sugar(
                     ));
                     return checker.intern(ArType::Error);
                 }
-                let got = synth_expr(checker, arg_ids[0]);
+                let got = synth_expr_expected(checker, arg_ids[0], Some(inner_id));
                 if !checker.unify_ids(inner_id, got) {
                     checker.add_constraint(
                         inner_id,
@@ -456,7 +456,7 @@ pub(crate) fn synth_variant_sugar(
                     return checker.intern(ArType::Error);
                 }
                 for (i, &arg) in arg_ids.iter().enumerate() {
-                    let got = synth_expr(checker, arg);
+                    let got = synth_expr_expected(checker, arg, params.get(i).copied());
                     if let Some(&param) = params.get(i)
                         && !checker.unify_ids(param, got)
                     {
@@ -502,6 +502,7 @@ pub(crate) fn synth_poll_ctor(
     callee: ExprId,
     args: IndexRange,
     span: Span,
+    expected: Option<TypeId>,
 ) -> Option<ArType> {
     let (type_name, member) = type_path_member(checker.pool, callee)?;
     let resolved_sym = checker
@@ -513,6 +514,10 @@ pub(crate) fn synth_poll_ctor(
         return None;
     }
     let arg_ids = checker.pool.expr_list(args).to_vec();
+    let expected_inner = expected.and_then(|id| match checker.resolve(id) {
+        ArType::Poll(inner) => Some(inner),
+        _ => None,
+    });
     match member {
         "Ready" => {
             if arg_ids.len() != 1 {
@@ -526,8 +531,22 @@ pub(crate) fn synth_poll_ctor(
                 checker.diagnostics.push(diag);
                 return Some(ArType::Error);
             }
-            let inner_id = synth_expr(checker, arg_ids[0]);
-            Some(ArType::Poll(inner_id))
+            let got = synth_expr_expected(checker, arg_ids[0], expected_inner);
+            if let Some(inner) = expected_inner
+                && !checker.unify_ids(inner, got)
+            {
+                checker.add_constraint(
+                    inner,
+                    got,
+                    ConstraintOrigin::CallArg {
+                        call_span: span,
+                        param_span: span,
+                        arg_span: checker.pool.expr_span(arg_ids[0]),
+                        arg_index: 0,
+                    },
+                );
+            }
+            Some(ArType::Poll(expected_inner.unwrap_or(got)))
         }
         "Pending" => {
             if !arg_ids.is_empty() {
@@ -541,7 +560,7 @@ pub(crate) fn synth_poll_ctor(
                 return Some(ArType::Error);
             }
             // Inner type from expected context; Error placeholder if unknown.
-            let placeholder = checker.intern(ArType::Error);
+            let placeholder = expected_inner.unwrap_or_else(|| checker.intern(ArType::Error));
             Some(ArType::Poll(placeholder))
         }
         _ => None,

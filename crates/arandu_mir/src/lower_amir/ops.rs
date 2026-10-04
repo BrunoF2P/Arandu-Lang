@@ -61,6 +61,24 @@ impl LowerCtx<'_> {
         let l_op = self.typed_integer_constant(left, l_op);
         let r_op = self.typed_integer_constant(right, r_op);
         let dest = target.unwrap_or_else(|| self.new_temp_id(expr_ty));
+        if matches!(op, BinaryOp::Equal | BinaryOp::NotEqual)
+            && matches!(
+                self.resolve_ty(self.hir.pool.expr(left).ty),
+                ArType::Option(_) | ArType::Result(_, _)
+            )
+        {
+            let equal = self.lower_value_equality(l_op, r_op, self.hir.pool.expr(left).ty)?;
+            let value = if op == BinaryOp::NotEqual {
+                AmirRvalue::Unary {
+                    op: UnaryOp::Not,
+                    operand: equal,
+                }
+            } else {
+                AmirRvalue::Use(equal)
+            };
+            self.emit_assign_temp(dest, value);
+            return Ok(AmirOperand::Copy(dest));
+        }
         self.emit_assign_temp(
             dest,
             AmirRvalue::Binary {

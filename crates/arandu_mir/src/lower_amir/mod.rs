@@ -21,6 +21,7 @@ mod arg_modes;
 mod builder;
 mod compose;
 mod ctx;
+mod equality;
 mod expr;
 mod flow;
 mod func;

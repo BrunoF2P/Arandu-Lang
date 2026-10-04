@@ -1222,6 +1222,58 @@ fn synthesized_generic_tuples_match_all_backends() {
 }
 
 #[test]
+fn nominal_enum_payload_equality_matches_all_backends_and_optimization_levels() {
+    let source = r#"
+enum Choice { Empty, Value(int), Pair(int, str), Nested(Option<int>) }
+enum GenericChoice<T> { Empty, Value(T) }
+func main(): int {
+    let left = Option.Some(Choice.Value(7))
+    let right = Option.Some(Choice.Value(7))
+    if left != right { return 1 }
+    if left == Option.Some(Choice.Value(8)) { return 2 }
+    if left == Option.Some(Choice.Empty) { return 3 }
+    let empty = Option.Some(Choice.Empty)
+    if empty != Option.Some(Choice.Empty) { return 4 }
+    let pair = Option.Some(Choice.Pair(7, "text"))
+    if pair != Option.Some(Choice.Pair(7, "text")) { return 5 }
+    if pair == Option.Some(Choice.Pair(8, "text")) { return 6 }
+    if pair == Option.Some(Choice.Pair(7, "other")) { return 7 }
+    let nested = Option.Some(Choice.Nested(Option.Some(9)))
+    if nested != Option.Some(Choice.Nested(Option.Some(9))) { return 8 }
+    if nested == Option.Some(Choice.Nested(Option.None)) { return 9 }
+    let ok: Result<Choice, bool> = Result.Ok(Choice.Pair(3, "ok"))
+    let sameOk: Result<Choice, bool> = Result.Ok(Choice.Pair(3, "ok"))
+    let error: Result<Choice, bool> = Result.Err(false)
+    if ok != sameOk { return 10 }
+    if ok == error { return 11 }
+    let generic: Option<GenericChoice<int>> = Option.Some(GenericChoice.Value(42))
+    let sameGeneric: Option<GenericChoice<int>> = Option.Some(GenericChoice.Value(42))
+    let differentGeneric: Option<GenericChoice<int>> = Option.Some(GenericChoice.Value(43))
+    if generic != sameGeneric { return 12 }
+    if generic == differentGeneric { return 13 }
+    return 0
+}
+"#;
+    let observation = check_source(source, true, true)
+        .unwrap_or_else(|failure| panic!("nominal equality failed: {failure:?}"));
+    assert_eq!(observation.result, 0);
+}
+
+#[test]
+fn io_print_output_matches_all_backends_at_every_optimization_level() {
+    let observation = check_source(
+        "import io\nfunc main(): int { io.print(\"hello\"); io.print(\"\"); io.print(\"\\0world\"); return 17 }\n",
+        true,
+        true,
+    )
+    .unwrap_or_else(|failure| panic!("partial-output differential failed: {failure:?}"));
+
+    assert_eq!(observation.result, 17);
+    assert_eq!(observation.stdout, b"hello\0world");
+    assert!(observation.stderr.is_empty());
+}
+
+#[test]
 fn io_println_output_matches_all_backends_at_every_optimization_level() {
     let observation = check_source(
         "import io\nfunc main(): int { io.println(\"smith-output\"); return 17 }\n",
