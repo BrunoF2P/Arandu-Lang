@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use crate::artifact;
 use crate::cli_error::{CliFailure, CliResult, CliSuccess};
-use crate::pipeline::{ensure_host_jit_layout, pipeline_lower};
+use crate::pipeline::{ensure_host_jit_layout, pipeline_lower_checked};
 use crate::project::{self, ProjectFlags};
 use crate::test_runner;
 
@@ -201,10 +201,13 @@ pub fn cmd_project_test_list(
                 } else if outcome.status == arandu_codegen::testing::TestStatus::Failed {
                     (arandu_codegen::testing::TestStatus::Failed, outcome.failure)
                 } else if let Err(err) = &result {
+                    // Preserve labels/notes in captured stderr; keep the IPC
+                    // summary concise and free of internal Rust/IR Debug data.
+                    err.render();
                     (
                         arandu_codegen::testing::TestStatus::Failed,
                         Some(arandu_codegen::testing::TestFailure::simple(format!(
-                            "{err:?}"
+                            "{err}"
                         ))),
                     )
                 } else {
@@ -321,7 +324,11 @@ pub fn run_exact_test(
                 "test source was not registered in the project database",
             )
         })?;
-        let artifacts = pipeline_lower(db, file, &filepath);
+        // A harness child must report compilation failures through its terminal
+        // event, not exit inside the pipeline before the IPC frame is written.
+        let artifacts = pipeline_lower_checked(db, file)
+            .map_err(|diagnostics| CliFailure::diagnostics(diagnostics, Some(path.clone())))?
+            .artifacts;
         ensure_host_jit_layout(data_layout)?;
         let backend = arandu_backend_cranelift::CraneliftBackend::try_new()
             .map_err(|diag| CliFailure::diagnostics([diag], Some(path.clone())))?;
