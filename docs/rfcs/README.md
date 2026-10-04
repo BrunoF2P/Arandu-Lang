@@ -56,6 +56,8 @@ Uma RFC evolui através dos seguintes estados formais:
 | [0021](0021-visibility-and-module-surface.md) | Visibilidade Granular e Superfície de Módulo (`internal`, `sealed`, re-exports) | Frontend / Middle-end / Tooling | `Implemented` | 2026-09-21 |
 | [0022](0022-holistic-synthesis-differential-fuzzing.md) | Síntese Holística de Programas, Testes Diferenciais Multi-Backend e Fuzzing Incremental (`AranduSmith`) | Tooling / Middle-end / Backend | `Implemented` | 2026-09-22 |
 | [0023](0023-portable-default-integer-model.md) | Modelo Portável de Inteiros Padrão e Tipos de Largura do Alvo | Frontend / Middle-end / Backend / Stdlib | `Implemented` | 2026-09-24 |
+| [0024](0024-unified-attribute-system.md) | Sistema Unificado de Atributos — `@` como mecanismo comptime de primeira classe | Frontend / Middle-end / Stdlib | `Draft` | 2026-10-03 |
+| [0025](0025-optimization-oracle-and-testing-aot.md) | Arandu Optimization Oracle & Testing (`AOT`): Diagnóstico Estruturado, Testes de Codegen e Fuzzing Metamórfico | Middle-end / Backend / Tooling | `Draft` | 2026-10-04 |
 
 ---
 

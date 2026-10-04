@@ -423,3 +423,138 @@ propostas RFCs para reflexão estrutural, capabilities por alvo, inclusão
 determinística de recursos e geração higiênica de itens. O avanço de cada etapa
 depende de casos de uso concretos e de contratos específicos; nada disso é
 prometido pela candidata 0.1.9.
+
+## 10.1. Roadmap de expansão — comptime como plataforma de metaprogramação
+
+O comptime do Arandu não deve ser visto apenas como uma calculadora de
+constantes em compilação, mas como a fundação de um sistema completo de
+metaprogramação sem macros separadas. A evolução do sistema é organizada em
+cinco horizontes:
+
+| Fase | Versão | Nome | O que habilita |
+|---|---|---|---|
+| **C1** | `0.1.9` | Núcleo escalar (atual) | `comptime (expr)`, `comptime { block }`, `comptime if`, `comptime for`, const generics escalares, `@sizeOf`, `@alignOf` |
+| **C2** | `0.2` | Tipos como valores | `comptime T: type`, tipos como `ConstValue::TypeDesc(TypeId)`, introspecção básica (`T.name`, `T.size`, `T.align`), type aliases calculados |
+| **C3** | `0.3` | Reflection e tipos gerados | `comptime func` retornando `type`, `T.fields()`, structs com campos calculados, primeiro recorte de `SymbolId::Generated` |
+| **C4** | `0.4` | Geração de declarações e atributos | `@Foo` via `Foo.apply(target)` (ver [RFC 0024](0024-unified-attribute-system.md)), `@Derive(Debug, Eq)`, injeção de métodos `impl`, `comptime stmt` no módulo |
+| **C5** | `0.5+` | Staging completo | Quoting/splicing higiênico, verificação estática de efeitos em compilação, macros de módulo com ponto fixo Salsa |
+
+### 10.1.1. Fase C2 — Tipos como valores de primeira classe (`0.2`)
+
+Em C2, tipos deixam de ser entidades puramente semânticas do compilador e passam
+a ter representação como valores manipuláveis dentro do interpretador CTFE:
+
+```rust
+// Extensão em ConstValue:
+pub enum ConstValue {
+    Integer(ConstInt),
+    Bool(bool),
+    Void,
+    TypeDesc(TypeId),   // tipo como valor de compilação
+}
+```
+
+Isso habilita funções genéricas que escolhem tipos com base em lógica de compilação:
+
+```arandu
+// Tipo numérico de tamanho mínimo capaz de armazenar N bits:
+comptime func MinInt<comptime Bits: uint>: type {
+    comptime if Bits <= 8 {
+        return i8
+    } else if Bits <= 16 {
+        return i16
+    } else if Bits <= 32 {
+        return i32
+    } else {
+        return i64
+    }
+}
+
+type PacketId = MinInt<12>   // PacketId é i16
+```
+
+### 10.1.2. Fase C3 — Geração estrutural e reflection API (`0.3`)
+
+Em C3, `comptime func` pode retornar a descrição completa de um novo tipo
+estrutural (`struct`), e tipos existentes expõem seus membros via reflection:
+
+```arandu
+// Geração de struct de vetor com dimensão calculada:
+comptime func VecN<comptime N: uint>: type {
+    return struct {
+        data: [N]float
+
+        func dot(shared self, other: VecN<N>): float {
+            let mut sum = 0.0
+            comptime for i in 0..N {
+                sum += self.data[i] * other.data[i]
+            }
+            return sum
+        }
+    }
+}
+
+type Vec3 = VecN<3>   // Vec3 tem data: [3]float e método dot()
+```
+
+A API de reflection expõe introspecção estrutural:
+
+```arandu
+// Inspeção de campos em tempo de compilação:
+comptime func printFields<comptime T: type>(): void {
+    comptime for field in T.fields() {
+        // field.name: str
+        // field.ty: type
+        // field.offset: usize
+    }
+}
+```
+
+### 10.1.3. Fase C4 — Geração de declarações e atributos (`0.4`)
+
+A fase C4 conecta a geração de código à sintaxe de atributos declarativos
+estabelecida pela [RFC 0024](0024-unified-attribute-system.md). Um atributo
+`@Foo(args...)` aplicado a uma declaração D executa `Foo.apply(D, args...)` em
+comptime, e pode injetar métodos, implementações de interface ou metadata
+diretamente no módulo:
+
+```arandu
+// Derivação automática de Debug via reflection — sem compilador conhecer Debug:
+@Derive(Debug, Eq, Hash)
+struct Point {
+    x: float
+    y: float
+}
+
+// O resultado é idêntico a escrever manualmente:
+// func Point.debug(shared self): str { ... }
+// func Point.eq(shared self, other: Point): bool { ... }
+```
+
+A geração imperativa no módulo atende a casos onde o alvo não é uma declaração
+única (como schemas de banco ou clientes de API):
+
+```arandu
+// Metaprogramação pesada — geração de tabela SQL e métodos de persistência:
+comptime Sql.table(Point, tableName: "points")
+```
+
+### 10.1.4. Invariantes de compilação e integridade incremental
+
+Para que a geração de AST em comptime não comprometa a arquitetura do Arandu,
+três garantias são obrigatórias:
+
+1. **Identidades estáveis para código gerado**: nós e símbolos gerados por
+   comptime recebem identidades estruturadas:
+   `SymbolId::Generated { origin: ExprId, index: u32 }`. IDs gerados são
+   monotônicos e reproduzíveis entre compilações com os mesmos inputs.
+2. **Higiene e precedência ("manual vence")**: quando um atributo gera um método
+   ou membro cujo nome já foi definido explicitamente pelo usuário, a
+   implementação manual tem precedência estrita e o gerador omite
+   silenciosamente o membro conflitante. Não há substituição silenciosa de código
+   do usuário.
+3. **Pureza e isolamento de efeitos**: metaprogramação em comptime é pura por
+   padrão (`@Effects(reflection)`). Qualquer acesso a filesystem ou ambiente
+   deve ser explicitamente declarado (ex: `@Effects(fsRead)`), garantindo que
+   queries Salsa continuem puras e que o compilador mantenha determinismo
+   estrito.
