@@ -97,7 +97,7 @@ quando cumprir seu contrato atual.
 
 **Agora:** `0.1.9 — CTFE & Comptime Core`, com VM limitada, valores escalares,
 agregados Copy, strings imutáveis, floats determinísticos, argumentos calculados,
-seleção por instância e expansão estática implementados, com validação integrada
+seleção por instância, expansão estática e repetição de arrays implementados, com validação integrada
 concluída no host Linux. Matriz nativa, playground e promoção de release continuam
 separados; as provas locais estão no [contrato público](./arandu-comptime-core-v0.1.md#integrated-development-host-evidence).
 O desenho permanece na
@@ -128,6 +128,53 @@ registra os contratos, donos, riscos e critérios de aceitação. Implementaçã
 local não equivale a promoção de release; closures permanecem no marco 0.3.
 Defeito atual de staging em membros de módulos inline foi corrigido com busca
 recursiva e fingerprint do membro, preservando cutoff de siblings.
+
+**Integração com a stdlib e corpus real (2026-10-03):** `[value; N]` preserva um
+único inicializador no AST/HIR, avalia uma vez inclusive para N=0 e exige Copy
+para N>1 após especialização. T048 cobre comprimentos/ownership inválidos; a
+expansão AMIR tem teto de 65.536 elementos e participa do orçamento de expansão
+estática. `ascii.byteSet` e `ascii.byteTable` exercitam construção e mutação CTFE.
+O Pypor usa perfis inteiros especializados, com fallback para configurações
+personalizadas; seus 13 testes passaram e a saída no kernel Linux permaneceu
+idêntica à do executável anterior. Isso não prova equivalência de classificação
+com Tokei, nem armazenamento global em `.rodata`.
+
+**Próximas lacunas do workload, na ordem de dependência:**
+
+1. Representação residual de agregados: o Cranelift agora promove casos
+   admitidos a frames independentes, com orçamento de 1 KiB, retornos em destino
+   do chamador e parâmetros por valor materializados no callee. Arrays de
+   literais, tuplas e structs Copy fechadas usam um serializador limitado no MIR,
+   compartilhado com Wasm, incluindo floats e padding determinístico; valores
+   mutáveis recebem cópias próprias. Containers afins admitidos também têm backing
+   privado, sem duplicar os drops de seus recursos. Casos além do orçamento usam buffers
+   heap privados por ponto de materialização, alocados sob demanda, reutilizados
+   nos loops e liberados após copiar/empacotar retornos. Option/Result/Poll nativos
+   têm retorno em destino do chamador. Wasm tem shadow stack separado de rodata/heap,
+   scratch maior liberado por invocação e transferência de resultados owned fechados,
+   incluindo payloads afins com destruição única dos recursos.
+   Ainda faltam provas para retenção externa desconhecida, phis de agregados em
+   back-edges, views emprestadas, suspensão/payloads agregados de corrotinas e
+   retornos Wasm com views por ponteiro; os fallbacks conservam gaps legados. O
+   experimento com LUT no Pypor confirmou aumento de RSS e chamadas de malloc
+   no assembly. Corrigir armazenamento/lifetimes e cópias por valor na AMIR/ABI
+   antes de prometer tabelas sem alocação; drops incondicionais causariam aliases
+   pendurados. Comparar alocações/liberações e RSS em loops e nos três backends.
+2. Constantes globais CTFE: raiz por declaração, ciclos diagnosticados e cutoff
+   de constantes importadas; materialização canônica de dados imutáveis nos
+   três backends, sem reevaluar inicializadores no runtime.
+3. Valores constantes de enum: discriminante e payload validados na VM,
+   representação congelada estrutural e materialização compartilhada.
+4. Argumentos `comptime` tipados além dos inteiros atuais: chaves canônicas de
+   valor/tipo/layout, substituição e hashing de instâncias; structs como
+   `Language` dependem também do suporte a enums acima.
+5. Identidade pública do alvo: OS/arquitetura explícitos na configuração de
+   compilação, não deduzidos do layout nem do host dentro de queries; API tipada
+   na stdlib e invalidação entre alvos coberta por regressões.
+
+Essas lacunas continuam abertas. Remover os diagnósticos que hoje as impedem
+não constitui implementação; cada corte exige os contratos de query, ownership
+e paridade antes de habilitar a sintaxe correspondente.
 
 **Escopo de produto proposto:** expressões/blocos `comptime`, parâmetros de valor
 inteiros compatíveis com os const generics atuais, decisões/iterações estáticas

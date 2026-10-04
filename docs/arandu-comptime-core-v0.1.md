@@ -48,6 +48,61 @@ preserves the full signed/unsigned range without lossy casts or VM handles.
 
 ## Captures, operations and limits
 
+### Repeated arrays
+
+`[value; N]` is an ordinary array expression, also admitted inside `comptime`.
+The length can be an integer literal, an integer compile-time parameter, or
+an explicit `comptime (expression)` in a supported function-body staging context.
+It shares generic argument staging; no parallel AST evaluator is introduced.
+
+```arandu
+func flags<comptime N: uint>(): [N]bool { return [false; N] }
+func main(): void {
+    let horizontal = comptime {
+        let mut table = [false; 256]
+        table[32] = true
+        table[9] = true
+        table[13] = true
+        table
+    }
+}
+```
+
+The initializer is evaluated exactly once, even for zero elements. Zero-length
+repetitions dispose of an owning initializer at the expression boundary;
+one-element repetitions move it normally. Greater lengths require Copy,
+checked again after specialization. There is no implicit clone or shallow
+duplication of owners. T048 explains invalid lengths/ownership.
+
+The AST/HIR retain a single initializer. Shared AMIR lowering constructs an
+ordinary array, so CTFE and all backends use existing array semantics. Eager IR
+materialization is bounded to 65,536 elements and charged against the residual
+work budget inside static loops. This is a resource guard, not a claim of an
+unlimited compact repeat representation. A future compact constructor can
+remove that eager-expansion ceiling without changing the surface syntax.
+The full target layout of a repeated array is checked before lowering its
+initializer, including nested aggregates; sizes exceeding the backend's current
+32-bit allocation-size interface are rejected with T048 instead of truncated.
+
+Numeric leaves of public staged aggregate types are defaulted structurally
+before defining runtime locals, keeping frozen initializers and SSA parameters
+consistent across control-flow joins. `ascii.byteTable(text)` exercises repeat,
+mutation and imported helper evaluation; `ascii.ByteSet` remains the compact
+32-byte alternative. Neither API guarantees vectorization or fewer instructions
+on every target.
+
+CTFE evaluation and residual storage are separate contracts. Before the
+aggregate-storage refinement, frozen Copy arrays were materialized with heap
+backing. An eight-core Pypor experiment with two 256-byte tables retained the
+same counts but increased peak RSS compared with compact ByteSets; its assembly
+called `ar_rt_raw_malloc` without Copy-only cleanup. The current native/Wasm
+consumers use shared bounded static initializers and private backing for
+admitted cases, as documented in [the ABI contract](arandu-abi-layout-v0.1.md).
+`comptime` alone still does not guarantee allocation-free storage: borrowed
+views, aggregate back-edge phis and other conservative exclusions retain
+fallbacks. Unconditional drops of Copy values would not be safe; their aliases
+must retain independent value semantics without dangling backing or double frees.
+
 Locals declared inside the root belong to its CTFE frame. Ordinary global
 constants are available; runtime locals and parameters outside the root cannot
 be captured, even if initialized from literals. Pure helpers, including
@@ -300,12 +355,13 @@ release readiness are separate gates from development-host tests.
 On Linux x86-64, 2026-10-03, the six prescribed workspace gates passed in
 order: formatting, locked check, all-target/all-feature Clippy with warnings
 denied, workspace tests, diagnostic documentation and warning-free rustdoc.
-The workspace run recorded 2,759 passed tests, zero failures and eight ignored
+The workspace run including repeated-array regressions recorded 2,768 passed
+tests, zero failures and eight ignored
 tests across 132 suites, including doc tests. Ignored tests are not claimed as
 executed. Architecture, canonical LF and diagnostic determinism (one versus
 eight threads) checks also passed.
 
-The VS Code Extension Host passed both project and manifestless-file runs;
+Before the repeated-array integration, the VS Code Extension Host passed both project and manifestless-file runs;
 the extension's 26 unit tests, compilation and lint checks passed separately.
 Differential tests exercise residual values and finite loops in C, Cranelift
 and Wasm at O0/O1/O2. Query regressions cover concrete instances, cycles and
@@ -319,6 +375,34 @@ instead of falling back to field zero or truncating an offset. A deliberately
 malformed AMIR regression covers both cases. Parser recovery tests keep the
 statement-only `comptime if`/`comptime for` diagnostic aligned with the supported
 value-producing block syntax.
+
+## A stdlib consumer: byte sets
+
+After the aggregate-storage and tooling refinements, the prescribed six gates
+passed again in order on Linux x86-64 (2026-10-04): 2,820 tests passed, zero
+failed and eight were ignored across 132 suites. Architecture, canonical LF
+and diagnostic determinism checks also passed. This does not replace native
+Windows/macOS validation or the earlier, separately executed Extension Host gates.
+
+`std.core.ascii.byteSet(text)` builds a closed Copy `ByteSet` containing four
+`u64` words. A caller can write `comptime ascii.byteSet(" \t\r")` to run the
+pure construction loop in the VM and freeze the 32-byte result. The same API
+accepts runtime text; `contains(u8)` only borrows the set and performs a bounded
+word lookup and bit test. UTF-8 input denotes its encoded bytes, not Unicode
+scalar values; empty strings and duplicate bytes have ordinary set semantics.
+
+The CLI regression imports the actual stdlib module and checks all 256 byte
+values, including empty sets, NUL, word-boundary bits and UTF-8 bytes. It
+compares CTFE construction with runtime construction, checks the target layout,
+and inspects AMIR to require that only the explicitly runtime builder remains
+as a call. Native execution and emitted C execution (when Clang is available)
+exercise the residual values.
+
+The external Pypor scanner uses two such frozen sets for horizontal whitespace
+and identifier bytes. Its exhaustive test preserves the old byte predicates;
+before/after binaries produced identical totals for the local Linux kernel
+corpus (65,479 files and 37,995,166 lines). This is a real consumer test, not a
+claim of Unicode classification, reduced peak memory or native CI coverage.
 
 ## Frozen IEEE values and immutable text
 
