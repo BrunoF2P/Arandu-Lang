@@ -20,6 +20,8 @@ pub use arandu_middle::{
     hir, index_vec, intrinsics, layout, literal_pool, newtype_index, ops, resolved, symbol_table,
     types, validate_amir_program,
 };
+pub use arandu_mir::aggregate_storage;
+pub use arandu_mir::static_data;
 
 pub use arandu_middle::Visibility;
 pub use arandu_middle::ops::{BinaryOp, SetOp, UnaryOp};

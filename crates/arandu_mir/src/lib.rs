@@ -1,3 +1,4 @@
+pub mod aggregate_storage;
 pub mod analysis_limits;
 pub mod borrow_audit;
 pub mod borrow_check;
@@ -20,6 +21,7 @@ pub mod pin_free;
 pub(crate) mod sccp;
 pub(crate) mod simplify_cfg;
 pub(crate) mod sroa;
+pub mod static_data;
 pub mod suspend_check;
 
 pub use borrow_check::check_borrows;
