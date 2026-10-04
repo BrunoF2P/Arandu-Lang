@@ -389,6 +389,7 @@ impl<'a> WasmModuleBuilder<'a> {
                     && let Some(sym_def) = self.symbols.try_get(*sym)
                     && let Some(field) = match sym_def.name.as_str() {
                         "io.println" => Some("println"),
+                        "io.print" => Some("print"),
                         "io.eprint" => Some("eprint"),
                         _ => None,
                     }

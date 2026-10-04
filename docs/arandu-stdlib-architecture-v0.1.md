@@ -368,7 +368,23 @@ definidos antes de se tornarem gate.
 O primeiro corte de `SL_S-Core` estabelece os seguintes contratos concretos:
 
 - nomes públicos de funções e métodos usam `camelCase`;
+- `io.print(str)` escreve bytes em stdout sem newline; `io.println` continua
+  acrescentando newline. Ambos usam o ABI de string existente, sem montar uma
+  `String` intermediária. No core Wasm o host fornece `io.print(ptr, len)`;
+- `std.core.str.asBytes(ref str)` expõe a view compartilhada de bytes UTF-8 sem
+  importar intrínsecos na aplicação. O parâmetro de referência preserva a origem;
+  literais podem ser passados diretamente, como `strings.asBytes("hello")`;
+  um wrapper que recebe `str` por valor e retorna `[]u8` ainda não demonstra
+  essa origem no contrato atual e é rejeitado, não liberado por exceção;
+- `std.fs.readToBytes(path)` retorna `Result<Vec<u8>, IoError>`, adotando o buffer
+  do host sem conversão textual. `vec.adoptBytes` é uma API `@Unsafe` de
+  implementação, não uma obrigação imposta ao usuário de `readToBytes`;
+- `Vec.get(index)` e `vec.get(ref values, index)` retornam `Option<ref T>` sem
+  exigir `Copy`. O método encaminha para a mesma implementação; uma referência
+  ainda em uso bloqueia crescimento, substituição e destruição do vetor;
 - `char` representa um Unicode scalar em 32 bits em layout, C e Cranelift;
+- o cast `u8`/`byte` para `char` mapeia U+0000..U+00FF e não decodifica UTF-8;
+  valores inteiros mais largos continuam exigindo conversão validada;
 - `Option`/`Result` consomem `self` ao retirar payloads possuídos;
 - `[]T` é uma borrowed view segura, copiável localmente e não escapável; seu ABI
   é `ptr + len`, enquanto a origem fica em summaries/holders compile-time.

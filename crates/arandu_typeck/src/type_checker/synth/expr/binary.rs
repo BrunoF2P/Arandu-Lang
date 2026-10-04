@@ -23,6 +23,14 @@ pub(super) fn cast_types_compatible(
     if found.is_numeric() && target.is_numeric() {
         return true;
     }
+    // Every unsigned byte maps to a valid Unicode scalar U+0000..U+00FF.
+    // This is a numeric codepoint conversion, not UTF-8 decoding. Wider or
+    // signed integers still require checked scalar validation.
+    if matches!(found, ArType::Primitive(Primitive::U8 | Primitive::Byte))
+        && matches!(target, ArType::Primitive(Primitive::Char))
+    {
+        return true;
+    }
     // `char` is a Unicode scalar value with a canonical u32 representation.
     // This direction is lossless; the inverse requires scalar validation and
     // therefore remains outside the general cast operator.

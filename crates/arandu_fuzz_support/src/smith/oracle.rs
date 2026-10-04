@@ -19,10 +19,10 @@ use super::artifact::{
 };
 use super::emi::{check_emi_pair_with_expected, inject_dead_pure_statement, inject_emi_mutation};
 use super::process::{
-    capture_jit_eprint, capture_jit_println, captured_stderr, describe_exit_status,
-    parse_backend_result, read_result_channel, reset_jit_stdout_capture, run_with_timeout,
-    synthesized_args_arg, synthesized_args_len, take_jit_stderr_capture, take_jit_stdout_capture,
-    BACKEND_PROCESS_TIMEOUT,
+    capture_jit_eprint, capture_jit_print, capture_jit_println, captured_stderr,
+    describe_exit_status, parse_backend_result, read_result_channel, reset_jit_stdout_capture,
+    run_with_timeout, synthesized_args_arg, synthesized_args_len, take_jit_stderr_capture,
+    take_jit_stdout_capture, BACKEND_PROCESS_TIMEOUT,
 };
 use super::synth::synthesize_with_oracle;
 use super::types::SYNTHESIZED_PROGRAM_ARGS;
@@ -715,6 +715,7 @@ fn execute_cranelift_internal(
         arandu_backend_cranelift::CraneliftBackend::
             try_new_with_block_coverage_and_io_and_process_args(
                 capture_jit_println,
+                capture_jit_print,
                 capture_jit_eprint,
                 synthesized_args_len,
                 synthesized_args_arg,
@@ -722,6 +723,7 @@ fn execute_cranelift_internal(
     } else {
         arandu_backend_cranelift::CraneliftBackend::try_new_with_io_and_process_args(
             capture_jit_println,
+            capture_jit_print,
             capture_jit_eprint,
             synthesized_args_len,
             synthesized_args_arg,
@@ -1429,6 +1431,12 @@ const env={
   }
 };
 const io={
+  print: (ptr,len)=>{
+    const start=Number(ptr), size=Number(len);
+    const memory=instance.exports.memory;
+    if(!memory || !Number.isSafeInteger(start) || !Number.isSafeInteger(size) || start<0 || size<0 || start+size>memory.buffer.byteLength) throw new Error('invalid io.print memory range');
+    process.stdout.write(new Uint8Array(memory.buffer,start,size));
+  },
   println: (ptr,len)=>{
     const start=Number(ptr), size=Number(len);
     const memory=instance.exports.memory;

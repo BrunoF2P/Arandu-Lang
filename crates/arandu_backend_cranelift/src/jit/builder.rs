@@ -36,6 +36,7 @@ pub(crate) fn create_jit_builder_with_process_args(
 ) -> Result<JITBuilder, Diagnostic> {
     create_jit_builder_with_io_and_process_args(
         io_println,
+        crate::to_str_runtime::ar_jit_print as *const u8,
         crate::to_str_runtime::ar_jit_eprint as *const u8,
         args_len,
         args_arg,
@@ -44,6 +45,7 @@ pub(crate) fn create_jit_builder_with_process_args(
 
 pub(crate) fn create_jit_builder_with_io_and_process_args(
     io_println: *const u8,
+    io_print: *const u8,
     io_eprint: *const u8,
     args_len: *const u8,
     args_arg: *const u8,
@@ -84,6 +86,7 @@ pub(crate) fn create_jit_builder_with_io_and_process_args(
     // Prelude string output uses the fat-pointer ABI: ptr + i64 len.
     builder.symbol("abort", std::process::abort as *const u8);
     builder.symbol("io.println", io_println);
+    builder.symbol("io.print", io_print);
     builder.symbol("eprint", io_eprint);
     // Prelude `err.new(str) -> Err` (message handle = non-null ptr; fat-pointer str arg).
     builder.symbol(

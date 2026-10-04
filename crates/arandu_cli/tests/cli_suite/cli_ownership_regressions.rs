@@ -645,6 +645,34 @@ func main(): int {
 }
 
 #[test]
+fn vec_get_method_preserves_the_element_borrow_until_its_last_use() {
+    let stderr = check(
+        r#"
+module tests.cli.ownership.vec_get_method
+import std.alloc.string as strings
+import std.alloc.vec as vec
+import std.core.io as io
+func main(): int {
+    let mut values = vec.new<strings.String>()
+    values.push(strings.from("held"))
+    let item = values.get(0)
+    values.push(strings.from("reallocate"))
+    match item {
+        Some(value) => { io.println(value.asStr()) }
+        None => {}
+    }
+    return 0
+}
+"#,
+        "vec_get_method",
+    );
+    assert!(
+        stderr.contains("O003"),
+        "expected reallocation conflict with method element borrow, got: {stderr}"
+    );
+}
+
+#[test]
 fn vec_get_borrows_owned_values_and_blocks_reallocation() {
     let stderr = check(
         r#"

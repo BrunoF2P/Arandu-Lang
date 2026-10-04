@@ -206,8 +206,9 @@ impl<'a> CEmitter<'a> {
         let needs_str = self.program_uses_str();
         let needs_println = self.program_uses_println();
         let needs_eprint = self.program_uses_eprint();
+        let needs_print = self.program_uses_print();
         // I/O prelude functions require the ArStr runtime even without literals.
-        let needs_str = needs_str || needs_println || needs_eprint;
+        let needs_str = needs_str || needs_println || needs_print || needs_eprint;
         self.emit_headers(needs_str);
         if needs_str {
             self.emit_str_literals();
@@ -217,6 +218,9 @@ impl<'a> CEmitter<'a> {
         }
         if needs_eprint {
             self.emit_prelude_eprint();
+        }
+        if needs_print {
+            self.emit_prelude_print();
         }
 
         for func in &self.program.funcs {

@@ -51,6 +51,7 @@ import std.io as io
 import std.core.mem as mem
 import std.core.intrinsics as intrinsics
 import std.alloc.string as strings
+import std.alloc.vec as vec
 
 /// Describes open flags; no public `open` function consumes this type yet.
 public struct OpenOptions {
@@ -163,6 +164,26 @@ public func readToString(path: str): Result<strings.String, io.IoError> {
         return Result.Err(io.errorFromPortable(errCode as int))
     }
     return Result.Ok(unsafe { strings.adoptOwned(buf, cap, len) })
+}
+
+/// Reads a whole file into an owned byte vector without UTF-8 interpretation.
+///
+/// The vector adopts the host buffer without an intermediate String or a
+/// second byte allocation. Empty files return an empty vector; read failures
+/// return the same portable error categories as `readToString`.
+@Effects(FileRead, Foreign)
+public func readToBytes(path: str): Result<vec.Vec<u8>, io.IoError> {
+    let mut buf: ptr[u8] = nil
+    let mut len: usize = 0
+    let mut cap: usize = 0
+    let mut errCode: isize = 0
+    unsafe {
+        ar_fs_read_all(path, buf, len, cap, errCode)
+    }
+    if errCode != 0 {
+        return Result.Err(io.errorFromPortable(errCode as int))
+    }
+    return Result.Ok(unsafe { vec.adoptBytes(buf, cap, len) })
 }
 
 /// An owned snapshot of a directory listing in one contiguous allocation.

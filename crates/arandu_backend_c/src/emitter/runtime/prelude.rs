@@ -9,6 +9,24 @@ use arandu_middle::types::{ArType, Primitive};
 use super::super::CEmitter;
 
 impl<'a> CEmitter<'a> {
+    pub(in crate::emitter) fn program_uses_print(&self) -> bool {
+        self.program.funcs.iter().any(|func| {
+            func.stmts.payloads.iter().any(|stmt| {
+                matches!(stmt, AmirStmt::Call { callee: AmirOperand::FunctionRef(id), .. }
+                    if self.symbols.try_get(*id).is_some_and(|symbol| symbol.name == "io.print"))
+            })
+        })
+    }
+
+    pub(in crate::emitter) fn emit_prelude_print(&mut self) {
+        let _ = writeln!(&mut self.output, "static void io__print(ArStr s) {{");
+        let _ = writeln!(
+            &mut self.output,
+            "    if (s.len > 0 && s.ptr) {{ fwrite(s.ptr, 1, (size_t)s.len, stdout); }}"
+        );
+        let _ = writeln!(&mut self.output, "    fflush(stdout);\n}}\n");
+    }
+
     /// True if any call targets prelude `io.println` (symbol name or C sanitization).
     pub(in crate::emitter) fn program_uses_println(&self) -> bool {
         for func in &self.program.funcs {

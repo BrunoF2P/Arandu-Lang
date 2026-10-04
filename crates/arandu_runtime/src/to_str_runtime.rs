@@ -144,6 +144,27 @@ pub unsafe extern "C" fn ar_jit_println(ptr: *const u8, len: i64) {
     });
 }
 
+/// Prelude `io.print(str)` — write UTF-8 bytes without a trailing newline.
+///
+/// # Safety
+/// `ptr` must be valid for `len` bytes if `len > 0`; `len` is non-negative.
+#[unsafe(export_name = "io.print")]
+pub unsafe extern "C" fn ar_jit_print(ptr: *const u8, len: i64) {
+    crate::ffi::guard(|| {
+        use std::io::{self, Write};
+        let mut stdout = io::stdout().lock();
+        if len > 0 && !ptr.is_null() {
+            let Ok(length) = usize::try_from(len) else {
+                return;
+            };
+            // SAFETY: the caller supplies a readable buffer of `length` bytes.
+            let bytes = unsafe { std::slice::from_raw_parts(ptr, length) };
+            let _ = stdout.write_all(bytes);
+        }
+        let _ = stdout.flush();
+    });
+}
+
 /// Prelude `io.eprint(str)` — write `len` bytes at `ptr` to stderr.
 ///
 /// Linked as the JIT symbol `eprint` (dual fat-pointer ABI: ptr + i64 len).

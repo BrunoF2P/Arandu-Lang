@@ -39,6 +39,13 @@ module std.core.str
 import std.core.intrinsics as intrinsics
 import std.core.slice as slice
 
+/// Returns a shared view of the UTF-8 bytes without allocating or copying.
+/// The view borrows the input storage and cannot outlive it. Lengths and
+/// indices in this view count bytes, not Unicode characters.
+public func asBytes(s: ref str): []u8 {
+    return intrinsics.strBytes(s)
+}
+
 /// Returns `true` if the string is empty (`len == 0`).
 ///
 /// # Examples

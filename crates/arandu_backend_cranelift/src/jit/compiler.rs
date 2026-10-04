@@ -145,12 +145,14 @@ impl AranduModule<JITModule> {
     /// host callbacks.
     pub fn try_new_with_io_and_process_args(
         io_println: extern "C" fn(*const u8, i64),
+        io_print: extern "C" fn(*const u8, i64),
         io_eprint: extern "C" fn(*const u8, i64),
         args_len: extern "C" fn() -> i64,
         arg: crate::EnvArgHandler,
     ) -> Result<Self, Diagnostic> {
         let builder = create_jit_builder_with_io_and_process_args(
             io_println as *const u8,
+            io_print as *const u8,
             io_eprint as *const u8,
             args_len as *const u8,
             arg as *const u8,
@@ -165,12 +167,14 @@ impl AranduModule<JITModule> {
     /// Creates a JIT with caller-provided I/O and opt-in block profiling.
     pub fn try_new_with_block_coverage_and_io_and_process_args(
         io_println: extern "C" fn(*const u8, i64),
+        io_print: extern "C" fn(*const u8, i64),
         io_eprint: extern "C" fn(*const u8, i64),
         args_len: extern "C" fn() -> i64,
         arg: crate::EnvArgHandler,
     ) -> Result<Self, Diagnostic> {
         let mut builder = create_jit_builder_with_io_and_process_args(
             io_println as *const u8,
+            io_print as *const u8,
             io_eprint as *const u8,
             args_len as *const u8,
             arg as *const u8,
@@ -465,6 +469,22 @@ impl<M: Module> AranduModule<M> {
         let str_ty = ArType::Primitive(Primitive::Str);
         let void_ty = ArType::Void;
         let err_ty = ArType::Err;
+        if !func_ids.contains_key("io.print") {
+            let sig = build_signature_with_classifier(
+                std::slice::from_ref(&str_ty),
+                &void_ty,
+                default_call_conv,
+                ptr_type,
+                &classifier,
+                &type_info.type_interner,
+                type_info,
+            );
+            let id = self
+                .module
+                .declare_function("io.print", Linkage::Import, &sig)
+                .map_err(|err| codegen_ice(format!("failed to declare io.print: {err:?}")))?;
+            func_ids.insert("io.print".to_string(), id);
+        }
         if !func_ids.contains_key("io.println") {
             let sig = build_signature(
                 std::slice::from_ref(&str_ty),
