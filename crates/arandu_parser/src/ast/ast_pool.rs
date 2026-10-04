@@ -222,6 +222,11 @@ pub enum ExprKind {
     Array {
         items: IndexRange,
     }, // expr_ids range
+    /// One initializer and a static length; never expands the AST per element.
+    ArrayRepeat {
+        value: ExprId,
+        count: TypeExprId,
+    },
     Lambda {
         params: IndexRange,
         body: super::LambdaBody,

@@ -72,7 +72,29 @@ fn synth_expr_inner(
         // A staged value is a typed scalar result, not an unbound literal
         // variable escaping into runtime inference. Explicit context is fed
         // to the inner checker; absent context uses the ordinary default.
-        return checker.intern(checker.resolve(ty).default_literal());
+        // Freeze numeric leaves of aggregates too. Otherwise a local can keep
+        // `[N][M]IntLiteral` while materialization produces `[N][M]int`, making
+        // SSA join parameters disagree with their incoming values.
+        let interner = &checker.type_info.type_interner;
+        let normalized =
+            arandu_middle::types::TypeShape::from_id(ty, interner).and_then(|mut shape| {
+                shape.default_numeric_literals()?;
+                shape.intern(interner)
+            });
+        return match normalized {
+            Ok(ty) => ty,
+            Err(_) => {
+                checker.diagnostics.push(
+                    crate::Diagnostic::error(
+                        crate::DiagCode::T042UnsupportedComptime,
+                        "compile-time result exceeds the structural type limits",
+                        span,
+                    )
+                    .with_primary_label("result type is too deeply nested or too large"),
+                );
+                checker.intern(ArType::Error)
+            }
+        };
     }
 
     if let ExprKind::VariantSugar { name, args } = kind {

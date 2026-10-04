@@ -485,6 +485,9 @@ fn remap_expr(
         HirExprKind::Array { items } => HirExprKind::Array {
             items: offs.range(*items, offs.expr_ids),
         },
+        HirExprKind::ArrayRepeat { value } => HirExprKind::ArrayRepeat {
+            value: offs.expr_id(*value),
+        },
         HirExprKind::Tuple { items } => HirExprKind::Tuple {
             items: offs.range(*items, offs.expr_ids),
         },

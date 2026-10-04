@@ -312,25 +312,7 @@ pub(super) fn parse_generic_type_args(
     let mut args = Vec::new();
     if !cur.at_gt() {
         loop {
-            if cur.peek_kind() == Some(TokenKind::IntDec) {
-                let token = cur.bump()?;
-                let value = SmolStr::new(ctx.text(token)?);
-                args.push(ctx.pool.alloc_type_expr(TypeExpr::Const {
-                    span: ctx.token_span(token),
-                    value,
-                }));
-            } else if cur.peek_kind() == Some(TokenKind::KwComptime) {
-                let token = cur.bump()?;
-                cur.expect(TokenKind::LParen)?;
-                let expression = super::expr::try_hand_lower_expr(ctx, cur, 0)?;
-                let end = cur.expect(TokenKind::RParen)?.end();
-                args.push(ctx.pool.alloc_type_expr(TypeExpr::ConstExpression {
-                    span: ctx.span(token.start, end),
-                    expression,
-                }));
-            } else {
-                args.push(parse_type(ctx, cur)?);
-            }
+            args.push(parse_generic_argument(ctx, cur)?);
             if cur.eat(TokenKind::Comma) {
                 continue;
             }
@@ -339,6 +321,31 @@ pub(super) fn parse_generic_type_args(
     }
     let (gt_start, gt_len) = cur.expect_gt()?;
     Some((ctx.pool.alloc_type_expr_list(&args), gt_start + gt_len))
+}
+
+pub(crate) fn parse_generic_argument(
+    ctx: &mut HandCtx<'_>,
+    cur: &mut Cursor<'_>,
+) -> Option<TypeExprId> {
+    if cur.peek_kind() == Some(TokenKind::IntDec) {
+        let token = cur.bump()?;
+        let value = SmolStr::new(ctx.text(token)?);
+        Some(ctx.pool.alloc_type_expr(TypeExpr::Const {
+            span: ctx.token_span(token),
+            value,
+        }))
+    } else if cur.peek_kind() == Some(TokenKind::KwComptime) {
+        let token = cur.bump()?;
+        cur.expect(TokenKind::LParen)?;
+        let expression = super::expr::try_hand_lower_expr(ctx, cur, 0)?;
+        let end = cur.expect(TokenKind::RParen)?.end();
+        Some(ctx.pool.alloc_type_expr(TypeExpr::ConstExpression {
+            span: ctx.span(token.start, end),
+            expression,
+        }))
+    } else {
+        parse_type(ctx, cur)
+    }
 }
 
 /// `: T` result type (single).

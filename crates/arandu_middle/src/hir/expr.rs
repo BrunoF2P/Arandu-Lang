@@ -106,6 +106,10 @@ pub enum HirExprKind {
     Array {
         items: IndexRange,
     },
+    /// Evaluate the initializer once. The concrete/symbolic length is in `ty`.
+    ArrayRepeat {
+        value: HirExprId,
+    },
     /// Semantic product value (including frozen multiple-return CTFE values).
     Tuple {
         items: IndexRange,
@@ -299,6 +303,9 @@ impl HirExpr {
                 for &item in pool.expr_list(*items) {
                     pool.expr(item).validate_invariants(pool, symbols)?;
                 }
+            }
+            HirExprKind::ArrayRepeat { value } => {
+                pool.expr(*value).validate_invariants(pool, symbols)?;
             }
             HirExprKind::Lambda { params, body } => {
                 for p in pool.lambda_params_list(*params) {

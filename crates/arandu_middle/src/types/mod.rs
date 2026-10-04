@@ -8,6 +8,10 @@ pub mod subst;
 pub mod type_interner;
 mod unify;
 
+/// Bounds eager repeat materialization in the shared AMIR producer. The parser
+/// retains one initializer regardless of length; backends receive ordinary arrays.
+pub const MAX_ARRAY_REPEAT_ELEMENTS: u64 = 65_536;
+
 pub use ar_type::ArType;
 pub use borrow::{
     BorrowKind, BorrowPath, BorrowPathSegment, BorrowSource, ReturnBorrowDependency,

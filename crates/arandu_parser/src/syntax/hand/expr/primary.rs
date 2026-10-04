@@ -166,12 +166,24 @@ pub(super) fn parse_primary(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Opti
             cur.bump();
             let mut items = Vec::new();
             if cur.peek_kind() != Some(TokenKind::RBracket) {
-                loop {
-                    items.push(try_hand_lower_expr(ctx, cur, 0)?);
-                    if cur.eat(TokenKind::Comma) {
-                        continue;
+                let value = try_hand_lower_expr(ctx, cur, 0)?;
+                if cur.eat(TokenKind::Semicolon) {
+                    let count = super::super::ty::parse_generic_argument(ctx, cur)?;
+                    let close = cur.expect(TokenKind::RBracket)?;
+                    return Some(ctx.pool.alloc_expr(
+                        ExprKind::ArrayRepeat { value, count },
+                        ctx.span(start, close.end()),
+                    ));
+                }
+                items.push(value);
+                if cur.eat(TokenKind::Comma) && cur.peek_kind() != Some(TokenKind::RBracket) {
+                    loop {
+                        items.push(try_hand_lower_expr(ctx, cur, 0)?);
+                        if cur.eat(TokenKind::Comma) {
+                            continue;
+                        }
+                        break;
                     }
-                    break;
                 }
             }
             let close = cur.expect(TokenKind::RBracket)?;

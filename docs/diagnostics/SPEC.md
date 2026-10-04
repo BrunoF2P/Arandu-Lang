@@ -291,6 +291,7 @@ Abaixo estão listados todos os diagnósticos mapeados para o compilador Arandu.
 | **T045** | `compile-time evaluation exceeded its resource limit` | Error | `0.1.9` | Limites determinísticos de fuel, frames, valores ou quantidade de raízes excedidos. |
 | **T046** | `compile-time arithmetic overflows or uses an invalid shift` | Error | `0.1.9` | Operação inteira fora da faixa ou deslocamento inválido durante CTFE. |
 | **T047** | `type has no concrete target layout` | Error | `0.1.9` | Layout indefinido ou excessivo no alvo de compilação. |
+| **T048** | `invalid array repetition` | Error | `0.1.9` | Repetição exige tamanho estático limitado e elementos Copy quando há duplicação. |
 
 ---
 

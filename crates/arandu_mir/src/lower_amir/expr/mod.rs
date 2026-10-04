@@ -399,6 +399,9 @@ impl LowerCtx<'_> {
                 self.emit_assign_temp(dest, AmirRvalue::Array { items: item_ops });
                 Ok(AmirOperand::Copy(dest))
             }
+            HirExprKind::ArrayRepeat { value } => {
+                self.lower_array_repeat(*value, &expr, target, symbols)
+            }
             HirExprKind::Tuple { items } => {
                 let items_slice = self.hir.pool.expr_list(*items);
                 let mut item_ops = Vec::with_capacity(items_slice.len());

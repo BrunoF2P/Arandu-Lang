@@ -15,12 +15,20 @@ impl LowerCtx<'_> {
     /// Charge both statements and expressions, so one giant expression cannot
     /// bypass the finite residual-work budget of a static expansion.
     pub(super) fn charge_static_expansion(&mut self, span: Span) -> Result<(), Diagnostic> {
+        self.charge_static_expansion_work(span, 1)
+    }
+
+    pub(super) fn charge_static_expansion_work(
+        &mut self,
+        span: Span,
+        work: usize,
+    ) -> Result<(), Diagnostic> {
         if self.static_expansion_depth == 0 {
             return Ok(());
         }
         self.static_expansion_remaining = self
             .static_expansion_remaining
-            .checked_sub(1)
+            .checked_sub(work)
             .ok_or_else(|| {
                 Diagnostic::error(
                     DiagCode::T045ComptimeLimitExceeded,

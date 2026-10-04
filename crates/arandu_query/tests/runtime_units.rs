@@ -10,6 +10,47 @@ use arandu_query::{DatabaseImpl, SourceFile};
 use salsa::Setter;
 use std::sync::Arc;
 
+#[test]
+fn repeated_arrays_and_mutable_ctfe_roots_preserve_ssa_types() {
+    let mut db = DatabaseImpl::new();
+    let file = db.new_file(
+        "repeat.aru".into(),
+        r#"
+func repeated<T, comptime N: uint>(value: T): [N]T { return [value; N] }
+func main(): int {
+    let generic = repeated<int, 3>(42)
+    let nested = comptime [[7; 2]; 3]
+    let frozen = comptime { let mut table = [false; 256]; table[32] = true; table }
+    if !frozen[32] || frozen[33] { return 2 }
+    if generic[2] != 42 || nested[2][1] != 7 { return 1 }
+    return 0
+}
+"#
+        .into(),
+    );
+    let id = instance(&db, file, "main", Vec::new());
+    let concrete = instance_hir(&db, id);
+    let types = &concrete.artifacts.type_check.type_info.type_interner;
+    if let Some(hir) = &concrete.artifacts.hir {
+        for statement in hir.pool.stmts.iter() {
+            if let arandu_middle::hir::HirStmtKind::VarDecl {
+                bindings, value, ..
+            } = &statement.kind
+            {
+                for binding in hir.pool.bindings_list(*bindings) {
+                    assert_eq!(
+                        TypeShape::from_id(binding.ty, types),
+                        TypeShape::from_id(hir.pool.expr(*value).ty, types),
+                        "binding and frozen initializer must have the same structural type",
+                    );
+                }
+            }
+        }
+    }
+    let raw = runtime_raw_unit(&db, id);
+    assert!(raw.result.is_ok(), "{:?}", raw.result);
+}
+
 fn instance<'db>(
     db: &'db DatabaseImpl,
     file: SourceFile,

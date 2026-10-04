@@ -2,6 +2,225 @@ use crate::common;
 use std::fs;
 
 #[test]
+fn array_repetition_runs_once_and_supports_static_lengths_and_ctfe() {
+    let root = common::temp_dir("arandu-cli-array-repeat").expect("reserve fixture");
+    let source = root.join("main.aru");
+    fs::write(
+        &source,
+        r#"
+func flags<comptime N: uint>(): [N]bool { return [false; N] }
+func repeated<T, comptime N: uint>(value: T): [N]T { return [value; N] }
+enum Packet { Data([64]u8), Empty }
+func packet(): Packet { return .Data([42; 64]) }
+struct Counter { value: int }
+func next(counter: mut ref Counter): int { counter.value += 1; return counter.value }
+func main(): int {
+    let mut calls = Counter { value: 0 }
+    let numbers = [next(calls); 3]
+    let empty = [next(calls); 0]
+    if calls.value != 2 || numbers[0] != 1 || numbers[2] != 1 { return 1 }
+    let flags = flags<256>()
+    let generic = repeated<int, 3>(42)
+    let computed = [7; comptime (2 + 2)]
+    let frozen = comptime { let mut table = [false; 256]; table[32] = true; table }
+    let nested = comptime [[7; 2]; 3]
+    if flags[255] || !frozen[32] || frozen[33] { return 2 }
+    if generic[2] != 42 || computed[3] != 7 || nested[2][1] != 7 { return 3 }
+    if @sizeOf([0]int) != 0 { return 4 }
+    match packet() {
+        Packet.Data(bytes) => { if bytes[63] != 42 { return 5 } }
+        Packet.Empty => { return 6 }
+    }
+    return 0
+}
+"#,
+    )
+    .expect("write repeat consumer");
+    for command in ["check", "run", "emit-c"] {
+        let output = common::cli_command()
+            .arg(command)
+            .arg(&source)
+            .output()
+            .expect("run repeat consumer");
+        assert!(output.status.success(), "{command}: {output:?}");
+        if command == "emit-c"
+            && std::process::Command::new("clang")
+                .arg("--version")
+                .output()
+                .is_ok_and(|version| version.status.success())
+        {
+            let c_file = root.join("repeat.c");
+            let binary = root.join(if cfg!(windows) {
+                "repeat.exe"
+            } else {
+                "repeat"
+            });
+            fs::write(&c_file, &output.stdout).expect("write repeat C");
+            let compiled = std::process::Command::new("clang")
+                .arg("-O2")
+                .arg(c_file)
+                .arg("-o")
+                .arg(&binary)
+                .output()
+                .expect("compile repeat C");
+            assert!(compiled.status.success(), "{compiled:?}");
+            let executed = std::process::Command::new(binary)
+                .output()
+                .expect("execute repeat C");
+            assert!(executed.status.success(), "{executed:?}");
+        }
+    }
+    fs::remove_dir_all(root).expect("remove fixture");
+}
+
+#[test]
+fn array_repetition_rejects_ownership_duplication_and_excessive_lengths() {
+    let root = common::temp_dir("arandu-cli-array-repeat-invalid").expect("reserve fixture");
+    let source = root.join("main.aru");
+    for program in [
+        "func main(): void { let mut x = 0; let refs = [mut ref x; 2] }",
+        "func main(): void { let x = [false; 65537] }",
+        "func main(): void { let x = [false; 18446744073709551615] }",
+        "func main(): void { let x = [false; bool] }",
+        "func main(): void { let x = [[false; 65536]; 65536] }",
+        "func repeat<T, comptime N: uint>(x: T): [N]T { return [x; N] }\nfunc main(): void { let mut x = 0; let refs = repeat<mut ref int, 2>(mut ref x) }",
+    ] {
+        fs::write(&source, program).expect("write invalid repetition");
+        let output = common::cli_command()
+            .arg("check")
+            .arg(&source)
+            .output()
+            .expect("check invalid repetition");
+        assert!(!output.status.success(), "{program}: {output:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("T048"),
+            "{program}: {output:?}"
+        );
+    }
+    fs::remove_dir_all(root).expect("remove fixture");
+}
+
+#[test]
+fn zero_and_one_repetitions_drop_owners_exactly_once() {
+    let root = common::temp_dir("arandu-cli-array-repeat-drop").expect("reserve fixture");
+    let source = root.join("main.aru");
+    fs::write(
+        &source,
+        r#"
+import std.io as io
+struct Owner { id: int }
+@Destructor
+func Owner.destroy(own self: Owner): void { io.println("drop ${self.id}") }
+func make(id: int): Owner { return Owner { id: id } }
+func main(): int {
+    let empty = [make(10); 0]
+    io.println("after zero")
+    let single = [make(20); 1]
+    if single[0].id != 20 { return 1 }
+    return 0
+}
+"#,
+    )
+    .expect("write owning repetition");
+    let stdlib = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../stdlib");
+    let output = common::cli_command()
+        .arg("run")
+        .arg(&source)
+        .arg("--stdlib-path")
+        .arg(stdlib)
+        .output()
+        .expect("run owning repetition");
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "drop 10\nafter zero\ndrop 20\n"
+    );
+    fs::remove_dir_all(root).expect("remove fixture");
+}
+
+#[test]
+fn stdlib_byte_sets_freeze_imported_aggregate_helpers_and_match_all_bytes() {
+    let root = common::temp_dir("arandu-cli-byte-set").expect("reserve fixture");
+    let source = root.join("main.aru");
+    fs::write(&source, r#"
+import std.core.ascii as ascii
+func main(): int {
+    let horizontal = comptime ascii.byteSet(" \t\r")
+    let identifier = comptime ascii.byteSet("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
+    let empty = comptime ascii.byteSet("")
+    let horizontalTable = comptime ascii.byteTable(" \t\r")
+    let edgeTable = comptime ascii.byteTable("\0?@Àÿ??\0")
+    let edge = comptime ascii.byteSet("\0?@Àÿ??\0")
+    let runtime = ascii.byteSet(" \t\r")
+    if @sizeOf(ascii.ByteSet) != 32 { return 1 }
+    let mut value: uint = 0
+    while value < 256 {
+        let b = value as u8
+        let expectedSpace = b == 32 || b == 9 || b == 13
+        let expectedWord = (b >= 97 && b <= 122) || (b >= 65 && b <= 90)
+            || (b >= 48 && b <= 57) || b == 95
+        let expectedEdge = b == 0 || b == 63 || b == 64 || b == 195 || b == 128 || b == 191
+        if horizontal.contains(b) != expectedSpace { return 2 }
+        if identifier.contains(b) != expectedWord { return 3 }
+        if empty.contains(b) { return 4 }
+        if edge.contains(b) != expectedEdge { return 5 }
+        if runtime.contains(b) != horizontal.contains(b) { return 6 }
+        if horizontalTable[value as usize] != expectedSpace { return 7 }
+        if edgeTable[value as usize] != expectedEdge { return 8 }
+        value = value + 1
+    }
+    return 0
+}
+"#).expect("write byte-set consumer");
+    let stdlib = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../stdlib");
+    for command in ["check", "run", "amir", "emit-c"] {
+        let output = common::cli_command()
+            .arg(command)
+            .arg(&source)
+            .arg("--stdlib-path")
+            .arg(&stdlib)
+            .output()
+            .expect("execute byte-set consumer");
+        assert!(output.status.success(), "{command}: {output:?}");
+        if command == "amir" {
+            let amir = std::str::from_utf8(&output.stdout).expect("AMIR output");
+            assert_eq!(
+                amir.matches("call fn@byteSet(").count(),
+                1,
+                "only the explicitly runtime builder may remain:\n{amir}"
+            );
+        }
+        if command == "emit-c"
+            && std::process::Command::new("clang")
+                .arg("--version")
+                .output()
+                .is_ok_and(|version| version.status.success())
+        {
+            let c_file = root.join("byte_set.c");
+            let binary = root.join(if cfg!(windows) {
+                "byte_set.exe"
+            } else {
+                "byte_set"
+            });
+            fs::write(&c_file, output.stdout).expect("write emitted C");
+            let compile = std::process::Command::new("clang")
+                .arg("-O2")
+                .arg(&c_file)
+                .arg("-o")
+                .arg(&binary)
+                .output()
+                .expect("compile byte-set consumer");
+            assert!(compile.status.success(), "{compile:?}");
+            let executed = std::process::Command::new(&binary)
+                .output()
+                .expect("run byte-set C consumer");
+            assert!(executed.status.success(), "{executed:?}");
+        }
+    }
+    fs::remove_dir_all(root).expect("remove fixture");
+}
+
+#[test]
 fn static_loops_execute_with_fresh_locals_and_structured_exits() {
     let root = common::temp_dir("arandu-cli-static-for").expect("reserve fixture");
     let source = root.join("main.aru");

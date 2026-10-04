@@ -594,6 +594,9 @@ pub(crate) fn lower_expr_raw(
             let items_range = hir_pool.alloc_expr_list(&hir_items);
             HirExprKind::Array { items: items_range }
         }
+        ExprKind::ArrayRepeat { value, .. } => HirExprKind::ArrayRepeat {
+            value: lower_expr(type_check, pool, hir_pool, *value)?,
+        },
         ExprKind::Lambda { params, body, .. } => {
             let mut hir_params = Vec::new();
             let param_ids = pool.lambda_param_list(*params);

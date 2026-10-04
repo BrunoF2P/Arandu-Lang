@@ -2,6 +2,40 @@ use crate::ParseErrorCode;
 use crate::{parse, parse_recovering, parse_to_string};
 
 #[test]
+fn array_repetition_retains_one_initializer_in_both_parser_paths() {
+    for source in [
+        "func main(): void { let table = [false; 256] }",
+        "func flags<comptime N: uint>(): [N]bool { return [false; N] }",
+        "func main(): void { let table = [false; comptime (128 + 128)] }",
+        "func main(): void { let table = comptime [false; 256] }",
+        "func main(): void { let table = [[false; 2]; 3] }",
+    ] {
+        let direct = parse(source).expect("direct parse");
+        let canonical =
+            crate::lower_syntax_to_program(&crate::parse_syntax(source), 0).expect("CST parse");
+        assert_eq!(direct, canonical, "{source}");
+        assert!(
+            canonical
+                .pool
+                .exprs
+                .iter()
+                .any(|kind| matches!(kind, crate::ExprKind::ArrayRepeat { .. }))
+        );
+        assert!(
+            canonical.pool.exprs.len() < 12,
+            "repetition must not expand AST"
+        );
+    }
+    for source in [
+        "func main(): void { let x = [false;] }",
+        "func main(): void { let x = [false; 2, 3] }",
+        "func main(): void { let x = [; 2] }",
+    ] {
+        assert!(parse(source).is_err(), "{source}");
+    }
+}
+
+#[test]
 fn static_for_shares_the_canonical_ast_without_changing_runtime_for() {
     for source in [
         "func main(): void { comptime for i in 0..4 {} }",

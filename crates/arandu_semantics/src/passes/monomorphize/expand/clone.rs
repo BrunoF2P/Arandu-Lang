@@ -690,6 +690,9 @@ pub(super) fn clone_expr_kind(
                 items: hir.pool.alloc_expr_list(&new_items),
             }
         }
+        ArrayRepeat { value } => ArrayRepeat {
+            value: clone_expr(hir, *value, subst, symbol_map, tc, name_prefix)?,
+        },
         Tuple { items } => {
             let old = hir.pool.expr_list(*items).to_vec();
             let mut new_items = Vec::with_capacity(old.len());

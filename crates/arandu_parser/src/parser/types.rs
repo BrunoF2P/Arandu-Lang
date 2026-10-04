@@ -75,30 +75,32 @@ impl<'a> Parser<'a> {
 
     pub(super) fn parse_generic_args(&mut self) -> Result<IndexRange, ParseError> {
         self.expect_name("LT")?;
-        let args = self.parse_generic_list(1, |parser| {
-            if matches!(parser.current().kind, TokenKind::IntDec) {
-                let start = parser.mark();
-                let value = SmolStr::new(parser.current_text());
-                parser.advance();
-                let span = parser.span_from_mark(start);
-                Ok(parser.pool.alloc_type_expr(TypeExpr::Const { span, value }))
-            } else if matches!(parser.current().kind, TokenKind::KwComptime) {
-                let start = parser.mark();
-                parser.advance();
-                parser.expect_name("LPAREN")?;
-                let expression = parser.parse_expr(0)?;
-                parser.expect_name("RPAREN")?;
-                let span = parser.span_from_mark(start);
-                Ok(parser
-                    .pool
-                    .alloc_type_expr(TypeExpr::ConstExpression { span, expression }))
-            } else {
-                parser.parse_type()
-            }
-        })?;
+        let args = self.parse_generic_list(1, |parser| parser.parse_generic_argument())?;
         self.expect_gt()?;
         let range = self.pool.alloc_type_expr_list(&args);
         Ok(range)
+    }
+
+    pub(super) fn parse_generic_argument(&mut self) -> Result<TypeExprId, ParseError> {
+        if matches!(self.current().kind, TokenKind::IntDec) {
+            let start = self.mark();
+            let value = SmolStr::new(self.current_text());
+            self.advance();
+            let span = self.span_from_mark(start);
+            Ok(self.pool.alloc_type_expr(TypeExpr::Const { span, value }))
+        } else if matches!(self.current().kind, TokenKind::KwComptime) {
+            let start = self.mark();
+            self.advance();
+            self.expect_name("LPAREN")?;
+            let expression = self.parse_expr(0)?;
+            self.expect_name("RPAREN")?;
+            let span = self.span_from_mark(start);
+            Ok(self
+                .pool
+                .alloc_type_expr(TypeExpr::ConstExpression { span, expression }))
+        } else {
+            self.parse_type()
+        }
     }
 
     pub(super) fn parse_where_clause(

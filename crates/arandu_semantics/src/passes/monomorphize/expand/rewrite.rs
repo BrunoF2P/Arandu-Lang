@@ -266,6 +266,9 @@ pub(super) fn rewrite_expr_calls<'bump>(
                 rewrite_expr_calls(hir, e, specialized, tc, bump);
             }
         }
+        HirExprKind::ArrayRepeat { value } => {
+            rewrite_expr_calls(hir, *value, specialized, tc, bump);
+        }
         HirExprKind::Array { items } => {
             let es: Vec<_> = hir.pool.expr_list(*items).to_vec();
             for e in es {

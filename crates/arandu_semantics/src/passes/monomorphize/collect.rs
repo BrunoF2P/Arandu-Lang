@@ -312,7 +312,9 @@ impl<'a, 'bump> InstantiationAnalyzer<'a, 'bump> {
                     }
                 }
             }
-            HirExprKind::ResultCtor { value, .. } => self.visit_expr(*value, current),
+            HirExprKind::ResultCtor { value, .. } | HirExprKind::ArrayRepeat { value } => {
+                self.visit_expr(*value, current)
+            }
             HirExprKind::StructLiteral { fields, .. } => {
                 for field in self.hir.pool.field_inits_list(*fields) {
                     self.visit_expr(field.value, current);

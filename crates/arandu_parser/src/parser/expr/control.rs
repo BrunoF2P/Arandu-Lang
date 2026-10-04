@@ -47,13 +47,25 @@ impl<'a> Parser<'a> {
         self.expect_name("LBRACKET")?;
         let mut items = Vec::new();
         if !self.at_kind_name("RBRACKET") {
-            loop {
-                items.push(self.parse_expr(0)?);
-                if !self.eat_name("COMMA") {
-                    break;
-                }
-                if self.at_kind_name("RBRACKET") {
-                    break;
+            let value = self.parse_expr(0)?;
+            if self.eat_name("SEMICOLON") {
+                let count = self.parse_generic_argument()?;
+                self.expect_name("RBRACKET")?;
+                let span = self.span_from_mark(start);
+                return Ok(self
+                    .pool
+                    .alloc_expr(ExprKind::ArrayRepeat { value, count }, span));
+            }
+            items.push(value);
+            if self.eat_name("COMMA") && !self.at_kind_name("RBRACKET") {
+                loop {
+                    items.push(self.parse_expr(0)?);
+                    if !self.eat_name("COMMA") {
+                        break;
+                    }
+                    if self.at_kind_name("RBRACKET") {
+                        break;
+                    }
                 }
             }
         }

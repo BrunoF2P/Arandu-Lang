@@ -218,6 +218,10 @@ fn validate_expr(checker: &mut TypeChecker<'_>, expr: ExprId) {
                 validate_expr(checker, item_id);
             }
         }
+        ExprKind::ArrayRepeat { value, count } => {
+            validate_const_arguments(checker, *count);
+            validate_expr(checker, *value);
+        }
         ExprKind::Lambda { params, body, .. } => {
             let param_ids = checker.pool.lambda_param_list(*params).to_vec();
             for param_id in param_ids {

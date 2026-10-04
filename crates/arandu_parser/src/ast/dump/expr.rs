@@ -116,6 +116,12 @@ pub(super) fn dump_expr(pool: &AstPool, expr: ExprId) -> String {
                 .join(", ");
             format!("Array {}([{items_str}])", dump_span(span))
         }
+        ExprKind::ArrayRepeat { value, count } => format!(
+            "ArrayRepeat {}({}, {})",
+            dump_span(span),
+            dump_expr(pool, *value),
+            dump_type(pool.type_expr(*count), pool)
+        ),
         ExprKind::Lambda { params, body } => {
             let param_ids = pool.lambda_param_list(*params);
             let params_str = param_ids

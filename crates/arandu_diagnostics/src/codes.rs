@@ -123,6 +123,8 @@ pub enum DiagCode {
     T046ComptimeArithmetic,
     /// A requested type has no finite, concrete layout on the selected target.
     T047InvalidTypeLayout,
+    /// Array repetition requires a static length and safely duplicable elements.
+    T048InvalidArrayRepeat,
 
     // ── Lowering (L) ──
     L001LoweringUnresolvedSymbol,
@@ -261,6 +263,7 @@ impl DiagCode {
             T045ComptimeLimitExceeded,
             T046ComptimeArithmetic,
             T047InvalidTypeLayout,
+            T048InvalidArrayRepeat,
             L001LoweringUnresolvedSymbol,
             G001GenericInstantiationCycle,
             G002GenericInstantiationLimit,
@@ -406,6 +409,7 @@ impl DiagCode {
             DiagCode::T045ComptimeLimitExceeded => "T045",
             DiagCode::T046ComptimeArithmetic => "T046",
             DiagCode::T047InvalidTypeLayout => "T047",
+            DiagCode::T048InvalidArrayRepeat => "T048",
             DiagCode::L001LoweringUnresolvedSymbol => "L001",
             DiagCode::G001GenericInstantiationCycle => "G001",
             DiagCode::G002GenericInstantiationLimit => "G002",

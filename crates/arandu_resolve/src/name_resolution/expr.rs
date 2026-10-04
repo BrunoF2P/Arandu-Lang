@@ -137,6 +137,10 @@ impl<'a> Resolver<'a> {
                     self.resolve_expr(scope, *item);
                 }
             }
+            ExprKind::ArrayRepeat { value, count } => {
+                self.resolve_expr(scope, *value);
+                self.resolve_type_expr(scope, *count);
+            }
             ExprKind::Lambda { params, body, .. } => {
                 let param_ids = self.pool.lambda_param_list(*params);
                 let mut params_vec = Vec::new();

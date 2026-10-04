@@ -176,6 +176,7 @@ fn format_from_tree(tree: &SyntaxTree) -> String {
         return normalize_whitespace(source);
     }
     let mut out = String::with_capacity(source.len() + 32);
+    let mut previous_end = 0;
     for (i, item) in items.iter().enumerate() {
         if i > 0 {
             out.push('\n');
@@ -183,11 +184,23 @@ fn format_from_tree(tree: &SyntaxTree) -> String {
         let r = item.text_range();
         let s = u32::from(r.start()) as usize;
         let e = (u32::from(r.end()) as usize).min(source.len()).max(s);
+        // Top-level trivia belongs to the source, not necessarily to an item
+        // node. Preserve it so documentation and standalone comments cannot
+        // disappear when printing only the green item nodes.
+        let trivia = source[previous_end..s].trim();
+        if !trivia.is_empty() {
+            out.push_str(&normalize_whitespace(trivia));
+        }
         let item_src = &source[s..e];
         out.push_str(&reindent_item(item_src));
         if !out.ends_with('\n') {
             out.push('\n');
         }
+        previous_end = e;
+    }
+    let trailing = source[previous_end..].trim();
+    if !trailing.is_empty() {
+        out.push_str(&normalize_whitespace(trailing));
     }
     // Preserve leading module-less files; strip excess leading blanks.
     if out.starts_with('\n') && out.len() > 1 {
@@ -498,6 +511,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn array_repetition_preserves_semicolons_and_formats_idempotently() {
+        let source = "func flags<comptime N:uint>():[N]bool{return [false;N]}\nfunc main():void{let table=comptime [false;256];let other=[0;comptime(2+2)]}\n";
+        let formatted = format_source(source);
+        assert!(parses_clean(&formatted), "{formatted}");
+        assert_eq!(format_source(&formatted), formatted);
+        let parsed = arandu_parser::parse(&formatted).expect("formatted source");
+        assert_eq!(
+            parsed
+                .pool
+                .exprs
+                .iter()
+                .filter(|kind| matches!(kind, arandu_parser::ExprKind::ArrayRepeat { .. }))
+                .count(),
+            3
+        );
+    }
+
+    #[test]
     fn computed_generic_arguments_format_without_changing_the_ast() {
         let source = "func count<comptime N:uint>():uint{return N}\nfunc main():uint{return count<comptime(20+22)>()}\n";
         let formatted = format_source(source);
@@ -716,6 +747,37 @@ mod tests {
             "{formatted}"
         );
         assert!(formatted.contains("    for j in 0..2"), "{formatted}");
+        assert_eq!(format_source(&formatted), formatted);
+    }
+
+    #[test]
+    fn top_level_documentation_and_comment_trivia_survive_formatting() {
+        let source = concat!(
+            "//! Module documentation: keep the overview.\n",
+            "module example\n\n",
+            "// Import explanation.\n",
+            "import std.core.ascii as ascii\n\n",
+            "/// Set documentation.\n",
+            "struct Set {\n    word: u64\n}\n\n",
+            "/* Between declarations: keep { these } braces. */\n",
+            "/// Function documentation.\n",
+            "func main(): int {\n    return 0\n}\n",
+            "// End of file explanation.\n",
+        );
+        let formatted = format_source(source);
+        assert!(parses_clean(&formatted), "{formatted}");
+        for comment in [
+            "//! Module documentation: keep the overview.",
+            "// Import explanation.",
+            "/// Set documentation.",
+            "/* Between declarations: keep { these } braces. */",
+            "/// Function documentation.",
+            "// End of file explanation.",
+        ] {
+            assert_eq!(formatted.matches(comment).count(), 1, "{formatted}");
+        }
+        assert!(formatted.contains("/// Set documentation.\nstruct Set"));
+        assert!(formatted.contains("/// Function documentation.\nfunc main"));
         assert_eq!(format_source(&formatted), formatted);
     }
 

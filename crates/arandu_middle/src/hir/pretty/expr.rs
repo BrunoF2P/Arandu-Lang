@@ -178,6 +178,14 @@ impl HirExpr {
                     item.pretty_print_to(out, indent + 1, ctx);
                 }
             }
+            HirExprKind::ArrayRepeat { value } => {
+                out.push_str(&format!(
+                    "{}ArrayRepeat: {}\n",
+                    ind,
+                    display_type(self.ty, ctx)
+                ));
+                value.pretty_print_to(out, indent + 1, ctx);
+            }
             HirExprKind::Tuple { items } => {
                 out.push_str(&format!("{}Tuple: {}\n", ind, display_type(self.ty, ctx)));
                 for &item in ctx.pool.expr_list(*items) {

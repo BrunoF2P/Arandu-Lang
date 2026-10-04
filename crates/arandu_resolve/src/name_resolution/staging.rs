@@ -147,6 +147,14 @@ impl Resolver<'_> {
             ExprKind::VariantSugar { args, .. } | ExprKind::Array { items: args } => {
                 children.extend_from_slice(pool.expr_list(*args));
             }
+            ExprKind::ArrayRepeat { value, count } => {
+                children.push(*value);
+                if let arandu_parser::TypeExpr::ConstExpression { expression, .. } =
+                    pool.type_expr(*count)
+                {
+                    children.push(*expression);
+                }
+            }
             ExprKind::StructLiteral { fields, .. } => {
                 children.extend(
                     pool.field_init_list(*fields)
