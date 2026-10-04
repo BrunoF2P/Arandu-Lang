@@ -1206,7 +1206,7 @@ fn stdio_static_if_edits_select_only_current_branch_without_stale_errors() {
             let missing = diagnostics
                 .iter()
                 .find(|d| d.get("code") == Some(&json!("N001")))
-                .expect("selected undefined value");
+                .unwrap_or_else(|| panic!("selected undefined value missing: {message}"));
             let text = source.replace("FLAG", flag);
             let offset = text.find("missing").expect("missing span");
             assert_eq!(

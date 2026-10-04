@@ -398,6 +398,11 @@ O teste mantém exatamente uma HIR e unidade raw/final reexecutadas na edição.
    comprimentos UTF-16 e são divididos por linha.
 9. Edições recebidas dentro do debounce compõem sobre o buffer pendente da VFS,
    inclusive múltiplas mudanças por notificação, Unicode, arquivo vazio e EOF.
+   Enquanto o documento tiver texto pendente, diagnósticos não são agendados
+   nem publicados para ele: a versão do cliente já pode ter avançado sem que
+   o texto correspondente esteja no snapshot Salsa. Após o flush, a análise é
+   reagendada normalmente. Testes de interleaving sem sleeps cobrem refresh
+   durante debounce e a publicação apenas depois do commit.
 10. `IdeDiagnostic` preserva labels, notes, hints e replacements nas queries;
     o wire publica versão, `codeDescription`, `relatedInformation`, tags e
     `Diagnostic.data`. Quick fixes consomem apenas replacements estruturados.
