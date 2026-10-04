@@ -27,7 +27,11 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                     let expected_ty = self.get_temp_clif_type(*lhs);
                     let lhs_ar = self.temp_ar_ty(*lhs);
                     let expected_ar_type = Some(&lhs_ar);
+                    if lhs.as_usize() == 0 {
+                        self.aggregate_destination = self.indirect_return_destination;
+                    }
                     let val = self.translate_rvalue(rhs, expected_ty, expected_ar_type);
+                    self.aggregate_destination = None;
                     if self.error.is_some() {
                         return;
                     }
@@ -163,14 +167,9 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                         }
                         arandu_semantics::layout::ArgAbi::Direct(direct) => {
                             let mut args = Vec::with_capacity(direct.slots.len());
+                            let layout = self.checked_layout(ty);
                             for abi_slot in &direct.slots {
-                                let chunk_ty = crate::abi::abi_scalar_to_clif(abi_slot.scalar);
-                                let chunk_val = self.builder.ins().load(
-                                    chunk_ty,
-                                    cranelift_codegen::ir::MemFlagsData::new(),
-                                    ptr_val,
-                                    abi_slot.offset as i32,
-                                );
+                                let chunk_val = self.load_abi_slot(ptr_val, abi_slot, layout.size);
                                 args.push(chunk_val);
                             }
                             self.builder.ins().call(function, &args);

@@ -39,6 +39,9 @@ impl<'a> FuncTranslator<'a> {
                     match shape {
                         Shape::Scalar => {
                             self.code.push(Instruction::LocalSet(local));
+                            if let Some(slot) = self.current_returned_home {
+                                self.adopt_returned_home(slot, local);
+                            }
                         }
                         Shape::Fat => {
                             self.code.push(Instruction::LocalSet(local + 1));

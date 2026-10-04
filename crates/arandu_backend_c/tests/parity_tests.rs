@@ -28,6 +28,44 @@ fn c_compiler(cc: &str) -> Command {
     command
 }
 
+#[test]
+fn parity_print_does_not_append_a_newline() {
+    let (amir, tc) = compile_src(
+        r#"
+import io
+func main(): int {
+    io.print("hello")
+    io.print("")
+    io.print("\0world")
+    io.println("") // Delimit the harness's separate numeric result line.
+    return 0
+}
+"#,
+    );
+    let (status, output) = execute_c_output("print_without_newline", &amir, &tc);
+    assert_eq!(status, 0);
+    assert_eq!(output.as_bytes(), b"hello\0world\n0\n");
+}
+
+#[test]
+fn parity_byte_to_char_preserves_every_unsigned_codepoint() {
+    test_zero_result_all_opt_levels(
+        "byte_to_char",
+        r#"
+func main(): int {
+    let mut value: u32 = 0
+    while value < 256 {
+        let byteValue = value as u8
+        let character = byteValue as char
+        if character as u32 != value { return 1 }
+        value = value + 1
+    }
+    return 0
+}
+"#,
+    );
+}
+
 fn compile_src(src: &str) -> (AmirProgram, TypeCheckResult) {
     let program = arandu_parser::parse(src).expect("parse failed");
     let resolution = resolve_for_test(0, &program);
@@ -596,6 +634,25 @@ fn test_execution_parity(name: &str, src: &str) {
     let _ = test_execution_result(name, src);
 }
 
+fn test_zero_result_all_opt_levels(name: &str, source: &str) {
+    for level in [OptLevel::O0, OptLevel::O1, OptLevel::O2] {
+        let (mut amir, tc) = compile_src(source);
+        optimize_amir_checked_with_level(
+            &mut amir,
+            &tc.symbols,
+            &tc.type_info.type_interner,
+            level,
+        )
+        .expect("valid aggregate fixture must optimize");
+        assert_eq!(execute_cranelift(&amir, &tc), 0, "{name}: {level:?}");
+        assert_eq!(
+            execute_c(&format!("{name}_{level:?}"), &amir, &tc),
+            0,
+            "{name}: {level:?}"
+        );
+    }
+}
+
 fn test_execution_parity_mono(name: &str, src: &str) {
     let (amir, tc) = compile_src_mono(src);
     let actual_result = execute_c(name, &amir, &tc);
@@ -956,6 +1013,37 @@ fn parity_fibonacci() {
 }
 
 #[test]
+fn contextual_tagged_array_payloads_keep_the_declared_element_width() {
+    let source = r#"
+func some(): Option<[64]u8> { return Option.Some([42; 64]) }
+func ok(): Result<[64]u8, int> { return Result.Ok([41; 64]) }
+func error(): Result<int, [64]u8> { return Result.Err([40; 64]) }
+func main(): int {
+    match some() { Some(a) => { if a[63] != 42 { return 1 } } None => { return 2 } }
+    match ok() { Ok(a) => { if a[63] != 41 { return 3 } } Err(e) => { return 4 } }
+    match error() { Ok(a) => { return 5 } Err(e) => { if e[63] != 40 { return 6 } } }
+    return 0
+}
+"#;
+    let (native, c) = test_execution_result("contextual_tagged_arrays", source);
+    assert_eq!((native, c), (0, 0));
+}
+
+#[test]
+fn unit_result_nil_has_materialized_tagged_backing() {
+    test_zero_result_all_opt_levels(
+        "unit_result_nil",
+        r#"
+func success(): Result<void, Err> { return nil }
+func forward(): Result<void, Err> { return success() }
+func main(): int {
+    match forward() { Ok(_) => { return 0 } Err(e) => { return 1 } }
+}
+"#,
+    );
+}
+
+#[test]
 fn parity_struct_layout() {
     let src = r#"
     struct Point {
@@ -1108,6 +1196,61 @@ fn parity_ssa_pattern_bind_multi_arms() {
 }
 
 #[test]
+fn parity_structural_option_result_equality() {
+    test_zero_result_all_opt_levels(
+        "structural_option_result_equality",
+        r#"
+func main(): int {
+    let a: Option<int> = Option.Some(7)
+    let b: Option<int> = Option.Some(7)
+    let c: Option<int> = Option.Some(8)
+    let n: Option<int> = Option.None
+    let m: Option<int> = Option.None
+    if a != b || a == c || a == n || n != m { return 1 }
+    let x: Option<Option<int>> = Option.Some(a)
+    let y: Option<Option<int>> = Option.Some(b)
+    let z: Option<Option<int>> = Option.Some(c)
+    if x != y || x == z { return 2 }
+    let ok: Result<int, int> = Result.Ok(42)
+    let same: Result<int, int> = Result.Ok(42)
+    let bad: Result<int, int> = Result.Err(42)
+    if ok != same || ok == bad { return 3 }
+    let text: Option<str> = Option.Some("hello")
+    let other: Option<str> = Option.Some("hello")
+    if text != other { return 4 }
+    return 0
+}
+"#,
+    );
+}
+
+#[test]
+fn parity_enum_equality_uses_values_not_padding_or_float_bits() {
+    test_zero_result_all_opt_levels(
+        "enum_equality_values",
+        r#"
+struct Padded { small: u8, wide: i64 }
+func main(): int {
+    let a: Option<[3]int> = Option.Some([1, 2, 3])
+    let b: Option<[3]int> = Option.Some([1, 2, 3])
+    let c: Option<[3]int> = Option.Some([1, 2, 4])
+    if a != b || a == c { return 1 }
+    let x: Option<Padded> = Option.Some(Padded { small: 1, wide: 42 })
+    let y: Option<Padded> = Option.Some(Padded { small: 1, wide: 42 })
+    if x != y { return 2 }
+    let plus: Option<f64> = Option.Some(0.0)
+    let minus: Option<f64> = Option.Some(-0.0)
+    if plus != minus { return 3 }
+    let nan: f64 = 0.0 / 0.0
+    let wrapped: Option<f64> = Option.Some(nan)
+    if wrapped == wrapped { return 4 }
+    return 0
+}
+"#,
+    );
+}
+
+#[test]
 fn parity_array_index_access() {
     let src = r#"
     func dummy(xs: [3]int) {}
@@ -1121,6 +1264,82 @@ fn parity_array_index_access() {
     }
     "#;
     test_execution_parity("array_index_access", src);
+}
+
+#[test]
+fn parity_array_register_abi_covers_calls_parameters_and_returns() {
+    test_zero_result_all_opt_levels(
+        "array_register_abi",
+        r#"
+func integers(x: [2]i64): [2]i64 { return [x[1], x[0]] }
+func floats(x: [2]f64): [2]f64 { return [x[1], x[0]] }
+func odd(x: [3]u8): [3]u8 { return [x[2], x[1], x[0]] }
+func nested(x: [2][2]u8): [2][2]u8 { return [x[1], x[0]] }
+func tail(x: [11]u8): [11]u8 { return [x[10], x[9], x[8], x[7], x[6], x[5], x[4], x[3], x[2], x[1], x[0]] }
+struct Tiny { a: u8, b: u8, c: u8 }
+func tiny(x: Tiny): Tiny { return Tiny { a: x.c, b: x.b, c: x.a } }
+func main(): int {
+    let ints: [2]i64 = [17, 42]
+    let ir = integers(ints)
+    if ir[0] != 42 || ir[1] != 17 { return 1 }
+    let fs: [2]f64 = [1.5, 2.5]
+    let fr = floats(fs)
+    if fr[0] != 2.5 || fr[1] != 1.5 { return 2 }
+    let os: [3]u8 = [128, 192, 255]
+    let or = odd(os)
+    if or[0] != 255 || or[2] != 128 { return 3 }
+    let ns: [2][2]u8 = [[1, 2], [3, 4]]
+    let nr = nested(ns)
+    if nr[0][0] != 3 || nr[1][1] != 2 { return 4 }
+    let ts: [11]u8 = [128, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    let tr = tail(ts)
+    if tr[0] != 10 || tr[8] != 2 || tr[10] != 128 { return 5 }
+    let small = tiny(Tiny { a: 1, b: 2, c: 3 })
+    if small.a != 3 || small.b != 2 || small.c != 1 { return 6 }
+    return 0
+}
+"#,
+    );
+}
+
+#[test]
+fn parity_large_aggregate_results_are_owned_by_each_caller() {
+    test_zero_result_all_opt_levels(
+        "large_caller_owned_result",
+        r#"
+struct Packet { bytes: [24]u8, sum: i64 }
+func reverse(x: [24]u8): [24]u8 {
+    let mut result: [24]u8 = [0; 24]
+    let mut i: usize = 0
+    while i < 24 { result[i] = x[23 - i]; i += 1 }
+    return result
+}
+func recurse(depth: int, x: [24]u8): [24]u8 {
+    if depth == 0 { return x }
+    return reverse(recurse(depth - 1, x))
+}
+func packet(value: u8): Packet {
+    return Packet { bytes: [value; 24], sum: 42 }
+}
+func main(): int {
+    let input: [24]u8 = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24]
+    let first = recurse(3, input)
+    let second = recurse(2, input)
+    if first[0] != 24 || first[23] != 1 { return 1 }
+    if second[0] != 1 || second[23] != 24 { return 2 }
+    let p = packet(255)
+    let q = packet(128)
+    if p.bytes[23] != 255 || q.bytes[23] != 128 || p.sum != 42 { return 3 }
+    let mut i: int = 0
+    while i < 20 {
+        let next = reverse(input)
+        if next[0] != 24 || first[23] != 1 { return 4 }
+        i += 1
+    }
+    return 0
+}
+"#,
+    );
 }
 
 #[test]

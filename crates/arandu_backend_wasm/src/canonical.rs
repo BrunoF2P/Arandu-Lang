@@ -310,6 +310,16 @@ impl CabiSupport {
             Instruction::Return,
             Instruction::End,
             // base = ptr - CELL_HEADER_SIZE
+            // Frames and readonly data are never allocator cells, even if
+            // nearby user bytes happen to look like a valid header magic.
+            Instruction::LocalGet(0),
+            Instruction::GlobalGet(crate::memory::GLOBAL_HEAP_BASE),
+            Instruction::I32Const(CELL_HEADER_SIZE),
+            Instruction::I32Add,
+            Instruction::I32LtU,
+            Instruction::If(BlockType::Empty),
+            Instruction::Return,
+            Instruction::End,
             Instruction::LocalGet(0),
             Instruction::I32Const(CELL_HEADER_SIZE),
             Instruction::I32Sub,

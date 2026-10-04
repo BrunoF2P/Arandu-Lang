@@ -237,7 +237,15 @@ impl LowerCtx<'_> {
                 Ok(op)
             }
             HirExprKind::Nil => {
-                let op = if self.with_ty(expr.ty, is_option_type) {
+                // Unit success is a real tagged Result, not a null backing
+                // pointer. All consumers (including caller-owned returns) must
+                // be able to inspect/copy the same ordinary representation.
+                let unit_result = self.with_ty(expr.ty, |ty| match ty {
+                    ArType::Result(ok, _) => self.with_ty(*ok, |ty| matches!(ty, ArType::Void)),
+                    _ => false,
+                });
+                let materialized = self.with_ty(expr.ty, is_option_type) || unit_result;
+                let op = if materialized {
                     let dest = target.unwrap_or_else(|| self.new_temp_id(expr.ty));
                     self.emit_assign_temp(
                         dest,
@@ -250,7 +258,7 @@ impl LowerCtx<'_> {
                 } else {
                     AmirOperand::Constant(AmirConstant::Nil)
                 };
-                if let (Some(dest), false) = (target, self.with_ty(expr.ty, is_option_type)) {
+                if let (Some(dest), false) = (target, materialized) {
                     self.emit_assign_temp(dest, AmirRvalue::Use(op));
                 }
                 Ok(op)

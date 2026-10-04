@@ -13,21 +13,12 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
         payload: Option<&AmirOperand>,
         expected_ar_type: Option<&ArType>,
     ) -> Value {
-        let Some(malloc_func_id) = self.malloc_func_id() else {
-            return self.poison_i32();
-        };
         let pointer_width = self.ptr_type.bytes() as u64;
-        let local_ref = self
-            .module
-            .declare_func_in_func(malloc_func_id, self.builder.func);
 
         let enum_ty = expected_ar_type.cloned().unwrap_or(ArType::Error);
         let layout = self.checked_layout(&enum_ty);
 
-        let size_val = self.builder.ins().iconst(self.ptr_type, layout.size as i64);
-        let call_inst = self.builder.ins().call(local_ref, &[size_val]);
-        let ptr_val = self.builder.inst_results(call_inst)[0];
-        self.trap_if_null(ptr_val);
+        let ptr_val = self.allocate_aggregate(&enum_ty);
 
         if let Some(arandu_semantics::layout::TagEncoding::PointerTag {
             tag_mask,
@@ -154,6 +145,20 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                 && let Some(memcpy_id) = self.memcpy_func_id()
             {
                 let op_layout = self.checked_layout(&op_ty);
+                if payload_ar_ty
+                    .as_ref()
+                    .is_none_or(|declared| self.checked_layout(declared).size != op_layout.size)
+                    || u64::try_from(payload_base_offset)
+                        .ok()
+                        .and_then(|offset| offset.checked_add(op_layout.size))
+                        .is_none_or(|end| end > layout.size)
+                {
+                    self.record_ice(
+                        "enum payload does not fit its instantiated storage layout",
+                        self.func_span(),
+                    );
+                    return ptr_val;
+                }
                 if op_layout.size > 0 {
                     let val = self.translate_operand(op, Some(self.ptr_type));
                     let memcpy_ref = self

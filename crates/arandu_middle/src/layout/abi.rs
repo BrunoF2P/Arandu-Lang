@@ -128,10 +128,8 @@ impl TargetAbiClassifier {
     ) -> ArgAbi {
         match ty {
             ArType::Void | ArType::Error => ArgAbi::ZeroSized,
-            ArType::Named(sym, _) => {
-                if provider.get_struct_fields(*sym).is_none() {
-                    return ArgAbi::Indirect;
-                }
+            ArType::Named(sym, _) if provider.get_struct_fields(*sym).is_none() => ArgAbi::Indirect,
+            ArType::Named(_, _) | ArType::Tuple(_) | ArType::Array(_, _) => {
                 let engine = LayoutEngine::new(self.pointer_width);
                 let Ok(layout) = engine.layout_of_type(ty, interner, provider) else {
                     return ArgAbi::Indirect;
@@ -139,25 +137,10 @@ impl TargetAbiClassifier {
                 if layout.size == 0 {
                     return ArgAbi::ZeroSized;
                 }
-                let mut leaves = Vec::new();
-                Self::collect_leaf_fields(
-                    ty,
-                    0,
-                    &layout,
-                    interner,
-                    provider,
-                    self.pointer_width,
-                    &mut leaves,
-                );
-                self.classify_layout(&layout, &leaves)
-            }
-            ArType::Tuple(_) => {
-                let engine = LayoutEngine::new(self.pointer_width);
-                let Ok(layout) = engine.layout_of_type(ty, interner, provider) else {
+                // Avoid walking an arbitrarily large array merely to discover
+                // it is indirect. This also bounds classification of nested arrays.
+                if layout.size > 16 {
                     return ArgAbi::Indirect;
-                };
-                if layout.size == 0 {
-                    return ArgAbi::ZeroSized;
                 }
                 let mut leaves = Vec::new();
                 Self::collect_leaf_fields(
@@ -507,6 +490,28 @@ impl TargetAbiClassifier {
                             &elem_ty,
                             current_offset + offset,
                             &elem_layout,
+                            interner,
+                            provider,
+                            pointer_width,
+                            leaves,
+                        );
+                    }
+                }
+            }
+            ArType::Array(count, element) => {
+                let ty = interner.resolve(*element);
+                let engine = LayoutEngine::new(pointer_width);
+                if let Ok(element_layout) = engine.layout_of_type(&ty, interner, provider) {
+                    // ZSTs contribute no register class, even if their source
+                    // length is enormous. Never iterate them for ABI transport.
+                    if element_layout.size == 0 {
+                        return;
+                    }
+                    for index in 0..*count {
+                        Self::collect_leaf_fields(
+                            &ty,
+                            current_offset + index * element_layout.size,
+                            &element_layout,
                             interner,
                             provider,
                             pointer_width,

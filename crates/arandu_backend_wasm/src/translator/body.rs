@@ -28,7 +28,15 @@ impl FuncTranslator<'_> {
             .iter_ids::<arandu_middle::amir::stmt::InstrId>()
         {
             if let Some(stmt) = self.func.stmts.get(stmt_id) {
+                self.current_cell_home = self.frame_homes.get(&stmt_id).copied();
+                self.current_initializer = Some(stmt_id);
+                self.current_returned_home = self.returned_homes.get(&stmt_id).copied();
+                self.current_heap_home = self.heap_homes.get(&stmt_id).copied();
                 self.emit_stmt(stmt);
+                self.current_cell_home = None;
+                self.current_heap_home = None;
+                self.current_initializer = None;
+                self.current_returned_home = None;
             }
         }
     }
@@ -80,6 +88,28 @@ impl FuncTranslator<'_> {
         let ret_ty = self.func.return_type;
         let shape = types::shape(ret_ty, self.interner, self.layout_engine.data_layout);
         let ret_temp = TempId::from_usize(0);
+        if self.transfer_owned_result {
+            let Some(&source) = self.temp_local.get(&ret_temp) else {
+                self.code.push(Instruction::Unreachable);
+                return;
+            };
+            let Ok(size) = i32::try_from(self.layout_of_id(ret_ty).size) else {
+                self.code.push(Instruction::Unreachable);
+                return;
+            };
+            self.alloc_cell(size.max(1));
+            self.code.extend([
+                Instruction::LocalGet(self.scratch),
+                Instruction::LocalGet(source),
+                Instruction::I32Const(size),
+                Instruction::MemoryCopy {
+                    src_mem: 0,
+                    dst_mem: 0,
+                },
+                Instruction::LocalGet(self.scratch),
+            ]);
+            return;
+        }
         match shape {
             Shape::Empty => {}
             Shape::Fat if self.retptr_return => {

@@ -641,6 +641,21 @@ impl<'a> FuncTranslator<'a> {
     /// every cell shares the `{magic, size, next}` block format that
     /// `__arandu_free` understands — `free`/`Destroy` can actually reclaim it.
     pub(super) fn alloc_cell(&mut self, size: i32) {
+        if let Some(slot) = self.current_heap_home.take() {
+            self.alloc_heap_home(slot, size);
+            return;
+        }
+        if let Some(offset) = self.current_cell_home.take() {
+            let Ok(offset) = i32::try_from(offset) else {
+                self.code.push(Instruction::Unreachable);
+                return;
+            };
+            self.code.push(Instruction::LocalGet(self.frame_base));
+            self.code.push(Instruction::I32Const(offset));
+            self.code.push(Instruction::I32Add);
+            self.code.push(Instruction::LocalSet(self.scratch));
+            return;
+        }
         self.code.push(Instruction::I32Const(size.max(0)));
         self.code.push(Instruction::Call(self.alloc_func_idx));
         self.code.push(Instruction::LocalSet(self.scratch));

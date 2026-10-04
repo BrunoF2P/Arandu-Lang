@@ -23,7 +23,10 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
         });
         let layout = self.checked_layout(&struct_ty);
 
-        let ptr_val = self.call_malloc(layout.size as u32);
+        let ptr_val = self.allocate_aggregate(&struct_ty);
+        if self.initialize_aggregate_from_rodata(ptr_val) {
+            return ptr_val;
+        }
 
         for (i, (name, op)) in fields.iter().enumerate() {
             let field_idx = self
@@ -133,7 +136,10 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
         let tuple_ty = expected_ar_type.cloned().unwrap_or(ArType::Error);
         let layout = self.checked_layout(&tuple_ty);
 
-        let ptr_val = self.call_malloc(layout.size as u32);
+        let ptr_val = self.allocate_aggregate(&tuple_ty);
+        if self.initialize_aggregate_from_rodata(ptr_val) {
+            return ptr_val;
+        }
 
         for (i, op) in items.iter().enumerate() {
             let offset = layout.field_offsets.get(i).copied().unwrap_or(0) as i32;
@@ -171,6 +177,9 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                         | ArType::Tuple(..)
                 );
                 let elem_layout = self.checked_layout(&elem_ty);
+                if elem_layout.size == 0 {
+                    continue;
+                }
                 if is_aggregate
                     && elem_layout.size > 0
                     && let Some(memcpy_id) = self.memcpy_func_id()
@@ -216,17 +225,43 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
     ) -> Value {
         let pointer_width = self.ptr_type.bytes() as u64;
         let array_ty = expected_ar_type.cloned().unwrap_or(ArType::Error);
-        let _ = self.checked_layout(&array_ty);
+        if !matches!(&array_ty, ArType::Array(count, _) if usize::try_from(*count).ok() == Some(items.len()))
+        {
+            self.record_ice(
+                "array initializer length does not match its type",
+                self.func_span(),
+            );
+            return self.poison_value(self.ptr_type);
+        }
+        let array_layout = self.checked_layout(&array_ty);
 
         let item_ar_ty = match &array_ty {
             ArType::Array(_, inner) => self.type_info.resolve_type_id(*inner),
             _ => ArType::Error,
         };
         let item_layout = self.checked_layout(&item_ar_ty);
+        if u64::try_from(items.len())
+            .ok()
+            .and_then(|count| item_layout.size.checked_mul(count))
+            != Some(array_layout.size)
+        {
+            self.record_ice(
+                "array initializer exceeds its storage layout",
+                self.func_span(),
+            );
+            return self.poison_value(self.ptr_type);
+        }
         let item_size = item_layout.size as i32;
 
-        let total_bytes = items.len() * item_size as usize;
-        let ptr_val = self.call_malloc(total_bytes as u32);
+        let ptr_val = self.allocate_aggregate(&array_ty);
+        // Operands have already been evaluated in AMIR. A zero-sized element
+        // has no bytes to store, including no pointer-sized representation.
+        if item_layout.size == 0 {
+            return ptr_val;
+        }
+        if self.initialize_aggregate_from_rodata(ptr_val) {
+            return ptr_val;
+        }
 
         for (i, op) in items.iter().enumerate() {
             let offset = i as i32 * item_size;
