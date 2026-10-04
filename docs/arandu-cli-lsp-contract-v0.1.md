@@ -23,6 +23,16 @@ Exit `101` belongs to Cargo when Cargo itself fails; it is not an Arandu CLI
 exit-code contract. Shells and operating systems may restrict the observable
 range of a program return value.
 
+Test harness children return parse/type/AMIR compilation failures through the
+terminal IPC event, rather than exiting inside the compiler pipeline. A missing
+control frame denotes a process/protocol failure, not an ordinary source error.
+
+Invalid lockfile hashes are never integrity evidence. For a local-only graph,
+`arandu update --accept` explicitly regenerates a malformed UTF-8-encoded lockfile and
+retains the original bytes in `.arandu/locks/invalid-arandu.lock`. An existing,
+different recovery copy is not overwritten. `--locked` forbids recovery, and
+remote graphs do not use this local recovery path.
+
 ### Command matrix
 
 | Command | Purpose | Backend | Stability | Success |
