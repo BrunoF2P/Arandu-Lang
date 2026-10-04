@@ -55,6 +55,71 @@ fn make_func(
 }
 
 #[test]
+fn wrappers_become_inlinable_without_resetting_the_call_site_budget() {
+    let ty = intern_int();
+    let result = AmirTemp {
+        id: TempId(0),
+        ty,
+        is_copy: true,
+        is_nullable: false,
+        span: arandu_lexer::Span::new(0, 0, 0),
+    };
+    let wrapper = |symbol, callee| {
+        make_func(
+            symbol,
+            vec![(
+                vec![AmirStmt::Call {
+                    lhs: Some(TempId(0)),
+                    callee: AmirOperand::FunctionRef(SymbolId::new(0, callee)),
+                    args: smallvec::smallvec![],
+                    return_borrow: None,
+                }],
+                AmirTerminator::Return,
+            )],
+            vec![result.clone()],
+            vec![],
+        )
+    };
+    let mut pool = AmirLiteralPool::default();
+    let value = pool.intern_int("42");
+    let leaf = make_func(
+        3,
+        vec![(
+            vec![AmirStmt::Assign {
+                lhs: TempId(0),
+                rhs: AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Pool(value))),
+            }],
+            AmirTerminator::Return,
+        )],
+        vec![result.clone()],
+        vec![],
+    );
+    for reversed in [false, true] {
+        let mut funcs = vec![wrapper(1, 2), wrapper(2, 3), leaf.clone()];
+        if reversed {
+            funcs.reverse();
+        }
+        let mut program = AmirProgram {
+            funcs,
+            literal_pool: pool.clone(),
+            extern_funcs: FxHashMap::default(),
+            debug_bindings: Vec::new(),
+            debug_blocks: Vec::new(),
+        };
+        assert_eq!(inline_leaf_functions(&mut program), 2);
+        for func in &program.funcs {
+            for block in &func.blocks {
+                assert!(
+                    func.block_stmts(block.id)
+                        .all(|stmt| !matches!(stmt, AmirStmt::Call { .. }))
+                );
+            }
+        }
+        assert_eq!(inline_leaf_functions(&mut program), 0);
+    }
+}
+
+#[test]
 fn test_leaf_cost_evaluation() {
     let int_ty = intern_int();
     let temp0 = AmirTemp {
