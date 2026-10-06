@@ -538,6 +538,47 @@ pub fn resolve_headers_with_poll(
                                             .associated_members
                                             .insert((type_sym, smol_str::SmolStr::new(method)), id);
                                     }
+                                } else if matches!(
+                                    kind,
+                                    arandu_middle::SymbolKind::Struct
+                                        | arandu_middle::SymbolKind::Enum
+                                        | arandu_middle::SymbolKind::TypeAlias
+                                ) {
+                                    let prefix = format!("{}.", item.name);
+                                    for (assoc_name, &(assoc_id, assoc_kind)) in
+                                        exports.symbols.iter().chain(
+                                            internal
+                                                .iter()
+                                                .flat_map(|table| table.internal_symbols.iter()),
+                                        )
+                                    {
+                                        if matches!(
+                                            assoc_kind,
+                                            arandu_middle::SymbolKind::AssociatedFunc
+                                        ) && let Some(method) = assoc_name.strip_prefix(&prefix)
+                                        {
+                                            let exported_assoc_name =
+                                                format!("{import_name}.{method}");
+                                            let assoc_lang = core_lang_item(path, assoc_name);
+                                            let assoc_sym = arandu_middle::Symbol {
+                                                id: assoc_id,
+                                                name: exported_assoc_name.into(),
+                                                kind: assoc_kind,
+                                                span: item.span,
+                                                scope: global,
+                                                visibility: sym_visibility,
+                                                lang_item: assoc_lang,
+                                            };
+                                            resolver.symbols.register_imported_symbol(assoc_sym);
+                                            if let Some(lang) = assoc_lang {
+                                                resolver.symbols.set_lang_item(assoc_id, lang);
+                                            }
+                                            resolver.symbols.associated_members.insert(
+                                                (id, smol_str::SmolStr::new(method)),
+                                                assoc_id,
+                                            );
+                                        }
+                                    }
                                 }
                             } else if !db.same_package(resolver.symbols.file_id, imported_file)
                                 && db

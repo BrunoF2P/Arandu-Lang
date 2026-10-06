@@ -166,6 +166,27 @@ pub fn exported_symbols(
                                         sealed_implementations.push((ty, iface));
                                     }
                                 }
+                                if matches!(
+                                    kind,
+                                    arandu_middle::SymbolKind::Struct
+                                        | arandu_middle::SymbolKind::Enum
+                                        | arandu_middle::SymbolKind::TypeAlias
+                                ) {
+                                    let prefix = format!("{name}.");
+                                    for (k, &(assoc_id, assoc_kind)) in &target_exports.symbols {
+                                        if matches!(
+                                            assoc_kind,
+                                            arandu_middle::SymbolKind::AssociatedFunc
+                                        ) {
+                                            if let Some(method) = k.strip_prefix(&prefix) {
+                                                map.insert(
+                                                    format!("{export_name}.{method}"),
+                                                    (assoc_id, assoc_kind),
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
                                 map.insert(export_name, (id, kind));
                             }
                         }
@@ -279,6 +300,33 @@ pub fn internal_symbols(
                                 {
                                     if iface == id {
                                         sealed_implementations.push((ty, iface));
+                                    }
+                                }
+                                if matches!(
+                                    kind,
+                                    arandu_middle::SymbolKind::Struct
+                                        | arandu_middle::SymbolKind::Enum
+                                        | arandu_middle::SymbolKind::TypeAlias
+                                ) {
+                                    let prefix = format!("{name}.");
+                                    for (k, &(assoc_id, assoc_kind)) in
+                                        target_exports.symbols.iter().chain(
+                                            target_internal
+                                                .iter()
+                                                .flat_map(|t| t.internal_symbols.iter()),
+                                        )
+                                    {
+                                        if matches!(
+                                            assoc_kind,
+                                            arandu_middle::SymbolKind::AssociatedFunc
+                                        ) {
+                                            if let Some(method) = k.strip_prefix(&prefix) {
+                                                map.insert(
+                                                    format!("{export_name}.{method}"),
+                                                    (assoc_id, assoc_kind),
+                                                );
+                                            }
+                                        }
                                     }
                                 }
                                 map.insert(export_name, (id, kind));
@@ -688,6 +736,14 @@ fn signatures_from_program(
                 for &struct_id in imported_sigs.type_info.struct_fields.keys() {
                     if checker.symbols.try_get(struct_id).is_none() {
                         if let Some(symbol) = imported_sigs.symbols.try_get(struct_id).cloned() {
+                            Arc::make_mut(&mut checker.symbols).register_imported_symbol(symbol);
+                        }
+                    }
+                }
+                for &destructor_id in imported_sigs.type_info.destructors.values() {
+                    if checker.symbols.try_get(destructor_id).is_none() {
+                        if let Some(symbol) = imported_sigs.symbols.try_get(destructor_id).cloned()
+                        {
                             Arc::make_mut(&mut checker.symbols).register_imported_symbol(symbol);
                         }
                     }

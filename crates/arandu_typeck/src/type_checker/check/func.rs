@@ -91,6 +91,13 @@ fn validate_method_receiver(checker: &mut TypeChecker<'_>, decl: &FuncDecl) {
         }
         self_ty = ArType::named(struct_id, &new_args, &checker.type_info.type_interner);
     }
+    if let (ArType::Named(owner, recv_args), ArType::Named(self_owner, self_args)) =
+        (&recv_ty, &self_ty)
+        && owner == self_owner
+        && recv_args.len == self_args.len
+    {
+        recv_ty = self_ty.clone();
+    }
     if !super::super::types::unify(&recv_ty, &self_ty, &checker.type_info.type_interner) {
         // `lhs_span` points at the declared `self: T` type and `rhs_span` at
         // the receiver name in `Type.method`, so `self_ty` is the declared

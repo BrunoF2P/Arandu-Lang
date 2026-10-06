@@ -120,7 +120,11 @@ fn expr_type_for_kind(
         // generic free funcs typeck specializes `join_g` → `Func(..., int)` on
         // the Path expr; `decl_type` stays the template `Func(..., T)`. Using
         // decl_type here made mono see identity `T` and skip specialization.
-        HirExprKind::Path { symbol } => {
+        HirExprKind::Path { symbol }
+        | HirExprKind::TypePath {
+            member_symbol: symbol,
+            ..
+        } => {
             if fallback != error_ty() {
                 return fallback;
             }
@@ -145,7 +149,11 @@ fn expr_type_for_kind(
                 };
             }
             match &callee_expr.kind {
-                HirExprKind::Path { symbol } => type_check
+                HirExprKind::Path { symbol }
+                | HirExprKind::TypePath {
+                    member_symbol: symbol,
+                    ..
+                } => type_check
                     .type_info
                     .decl_type_id(*symbol)
                     .and_then(|id| match interner.resolve(id) {

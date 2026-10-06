@@ -186,16 +186,19 @@ pub(super) fn parse_type_led(
             ctx.span(start, close.start + close.len),
         ));
     }
-    // Type.member
+    // Type.member / Type<T>.member
     let named_info = match ctx.pool.type_expr(ty) {
-        TypeExpr::Named { name, args, .. } if args.is_empty() => Some(name.clone()),
-        TypeExpr::Primitive { span, name } => Some(TypeName {
-            span: *span,
-            path: smallvec::smallvec![name.clone()],
-        }),
+        TypeExpr::Named { name, args, .. } => Some((name.clone(), *args)),
+        TypeExpr::Primitive { span, name } => Some((
+            TypeName {
+                span: *span,
+                path: smallvec::smallvec![name.clone()],
+            },
+            crate::ast::IndexRange::empty(),
+        )),
         _ => None,
     };
-    if let Some(type_name) = named_info
+    if let Some((type_name, args)) = named_info
         && cur.eat(TokenKind::Dot)
     {
         let mem = cur.peek()?;
@@ -204,10 +207,17 @@ pub(super) fn parse_type_led(
         }
         let member = SmolStr::new(ctx.text(mem)?);
         cur.bump();
-        return Some(ctx.pool.alloc_expr(
-            ExprKind::TypePath { type_name, member },
-            ctx.span(start, mem.start + mem.len),
-        ));
+        let span = ctx.span(start, mem.start + mem.len);
+        let tp = ctx
+            .pool
+            .alloc_expr(ExprKind::TypePath { type_name, member }, span);
+        if args.is_empty() {
+            return Some(tp);
+        }
+        return Some(
+            ctx.pool
+                .alloc_expr(ExprKind::Generic { callee: tp, args }, span),
+        );
     }
     None
 }

@@ -490,17 +490,18 @@ pub(in crate::passes::monomorphize) fn instantiation_key_for_call(
                 ArType::Option(inner) => vec![inner],
                 _ => Vec::new(),
             };
-            if recv_args.len() == params.len() && !recv_args.is_empty() {
+            let call_info = CallSiteInfo {
+                callee_id,
+                args,
+                result_ty: call_result_ty,
+                recv_args: &recv_args,
+            };
+            if let Some(inferred) = infer_call_type_args(tc, sym, &params, pool, &call_info) {
+                (sym, inferred)
+            } else if recv_args.len() == params.len() && !recv_args.is_empty() {
                 (sym, recv_args)
             } else {
-                let call_info = CallSiteInfo {
-                    callee_id,
-                    args,
-                    result_ty: call_result_ty,
-                    recv_args: &recv_args,
-                };
-                let inferred = infer_call_type_args(tc, sym, &params, pool, &call_info)?;
-                (sym, inferred)
+                return None;
             }
         }
         HirExprKind::Path { symbol } => {
@@ -585,7 +586,15 @@ fn infer_call_type_args(
     let arg_ids = pool.expr_list(call.args);
     let interner = &tc.type_info.type_interner;
     let formals_vec = interner.type_args(formals);
-    if formals_vec.len() != arg_ids.len() {
+    let receiver_expr = match &pool.expr(call.callee_id).kind {
+        HirExprKind::Field { base, .. } | HirExprKind::SafeField { base, .. }
+            if formals_vec.len() == arg_ids.len() + 1 =>
+        {
+            Some(*base)
+        }
+        _ => None,
+    };
+    if receiver_expr.is_none() && formals_vec.len() != arg_ids.len() {
         return None;
     }
 
@@ -593,14 +602,21 @@ fn infer_call_type_args(
     let mut bindings: rustc_hash::FxHashMap<SymbolId, arandu_middle::types::TypeId> =
         rustc_hash::FxHashMap::default();
 
-    for (&param_sym, &concrete_tid) in params.iter().zip(call.recv_args.iter()) {
-        bindings.insert(param_sym, concrete_tid);
-    }
-
-    for (&formal_id, &arg_eid) in formals_vec.iter().zip(arg_ids.iter()) {
-        let formal = interner.resolve(formal_id);
-        let arg_ty_id = pool.expr(arg_eid).ty;
+    if let Some(base_eid) = receiver_expr {
+        let formal = interner.resolve(formals_vec[0]);
+        let arg_ty_id = pool.expr(base_eid).ty;
         collect_param_bindings(interner, params, &formal, arg_ty_id, &mut bindings);
+        for (&formal_id, &arg_eid) in formals_vec[1..].iter().zip(arg_ids.iter()) {
+            let formal = interner.resolve(formal_id);
+            let arg_ty_id = pool.expr(arg_eid).ty;
+            collect_param_bindings(interner, params, &formal, arg_ty_id, &mut bindings);
+        }
+    } else {
+        for (&formal_id, &arg_eid) in formals_vec.iter().zip(arg_ids.iter()) {
+            let formal = interner.resolve(formal_id);
+            let arg_ty_id = pool.expr(arg_eid).ty;
+            collect_param_bindings(interner, params, &formal, arg_ty_id, &mut bindings);
+        }
     }
 
     // Specialized Func type on the callee (typeck inference → HIR .ty).
@@ -619,6 +635,10 @@ fn infer_call_type_args(
     {
         let ret_formal = interner.resolve(ret);
         collect_param_bindings(interner, params, &ret_formal, call.result_ty, &mut bindings);
+    }
+
+    for (&param_sym, &concrete_tid) in params.iter().zip(call.recv_args.iter()) {
+        bindings.entry(param_sym).or_insert(concrete_tid);
     }
 
     // Deduce unbound type parameters from constraints of bound parameters.
@@ -773,16 +793,24 @@ fn collect_param_bindings(
             bindings.entry(*id).or_insert(actual_id);
         }
         ArType::Named(_, args) => {
-            let actual = interner.resolve(actual_id);
-            let act_args = match actual {
-                ArType::Named(_, a) => Some(a),
+            let mut peeled_id = actual_id;
+            for _ in 0..4 {
+                match interner.resolve(peeled_id) {
+                    ArType::Ref(i) | ArType::RefMut(i) | ArType::Ptr(i) | ArType::Nullable(i) => {
+                        peeled_id = i;
+                    }
+                    _ => break,
+                }
+            }
+            let actual = interner.resolve(peeled_id);
+            let actual_args: Option<Vec<arandu_middle::types::TypeId>> = match actual {
+                ArType::Named(_, a) if args.len == a.len => Some(interner.type_args(a)),
+                ArType::Option(inner) if args.len == 1 => Some(vec![inner]),
+                ArType::Result(ok, err) if args.len == 2 => Some(vec![ok, err]),
                 _ => None,
             };
-            if let Some(act_args) = act_args
-                && args.len == act_args.len
-            {
+            if let Some(actual_args) = actual_args {
                 let formal_args = interner.type_args(*args);
-                let actual_args = interner.type_args(act_args);
                 for (&fa, &aa) in formal_args.iter().zip(actual_args.iter()) {
                     let fty = interner.resolve(fa);
                     collect_param_bindings(interner, type_params, &fty, aa, bindings);

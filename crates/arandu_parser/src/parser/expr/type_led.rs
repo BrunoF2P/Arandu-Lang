@@ -68,21 +68,30 @@ impl<'a> Parser<'a> {
             ));
         }
         let named_info = match self.pool.type_expr(ty) {
-            TypeExpr::Named { name, args, .. } if args.is_empty() => Some(name.clone()),
-            TypeExpr::Primitive { span, name } => Some(TypeName {
-                span: *span,
-                path: smallvec::smallvec![name.clone()],
-            }),
+            TypeExpr::Named { name, args, .. } => Some((name.clone(), *args)),
+            TypeExpr::Primitive { span, name } => Some((
+                TypeName {
+                    span: *span,
+                    path: smallvec::smallvec![name.clone()],
+                },
+                crate::ast::IndexRange::empty(),
+            )),
             _ => None,
         };
-        if let Some(type_name) = named_info
+        if let Some((type_name, args)) = named_info
             && self.eat_name("DOT")
         {
             let member = self.expect_name_like()?;
             let span = self.span_from_mark(start);
+            let tp = self
+                .pool
+                .alloc_expr(ExprKind::TypePath { type_name, member }, span);
+            if args.is_empty() {
+                return Ok(tp);
+            }
             return Ok(self
                 .pool
-                .alloc_expr(ExprKind::TypePath { type_name, member }, span));
+                .alloc_expr(ExprKind::Generic { callee: tp, args }, span));
         }
         Err(ParseError::new(
             ParseErrorCode::ExpectedExpression,

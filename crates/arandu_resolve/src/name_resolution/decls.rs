@@ -65,7 +65,7 @@ impl<'a> Resolver<'a> {
         // Methods on generic types must see the receiver type's type params
         // (`func Box.get(): T` needs `T` from `struct Box<T>`).
         if let FuncName::Method { receiver, .. } = &decl.name {
-            self.import_receiver_type_params(scope, func_scope, receiver);
+            self.import_receiver_type_params(scope, func_scope, receiver, decl);
             self.resolve_type_name(func_scope, receiver);
         }
         self.define_generics(func_scope, &decl.generic_params);
@@ -118,12 +118,14 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Bind parent type parameters into a method scope (same `SymbolId`s as the type).
+    /// Bind parent type parameters into a method scope (same `SymbolId`s as the type),
+    /// unless the method explicitly redeclares that parameter with its own constraints.
     fn import_receiver_type_params(
         &mut self,
         scope: ScopeId,
         func_scope: ScopeId,
         receiver: &TypeName,
+        decl: &FuncDecl,
     ) {
         let Some(root) = receiver.path.first() else {
             return;
@@ -138,7 +140,18 @@ impl<'a> Resolver<'a> {
             .copied()
             .collect();
         for param in params {
-            self.symbols.bind_existing(func_scope, param);
+            let param_name = self.symbols.get(param).name.clone();
+            let has_method_constraints = decl
+                .generic_params
+                .iter()
+                .any(|gp| gp.name == param_name && !gp.constraints.is_empty())
+                || decl
+                    .where_clause
+                    .iter()
+                    .any(|w| w.name == param_name && !w.constraints.is_empty());
+            if !has_method_constraints {
+                self.symbols.bind_existing(func_scope, param);
+            }
         }
     }
 

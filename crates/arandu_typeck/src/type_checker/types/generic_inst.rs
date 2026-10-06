@@ -403,7 +403,10 @@ pub fn synth_generic_instantiation(
 
     let subst = build_subst(&param_symbols, &arg_tys);
     super::interfaces::check_instantiation_constraints(checker, &param_symbols, &arg_tys, span);
-    instantiate_type(&template, &subst, &mut checker.type_info.type_interner)
+    let inst_ty = instantiate_type(&template, &subst, &mut checker.type_info.type_interner);
+    let inst_id = checker.intern(inst_ty.clone());
+    checker.record_expr_type(callee, inst_id);
+    inst_ty
 }
 
 fn resolve_generic_callee_symbol(
