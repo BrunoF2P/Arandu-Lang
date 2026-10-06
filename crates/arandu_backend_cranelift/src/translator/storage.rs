@@ -192,6 +192,170 @@ mod tests {
         (result, ALLOCATIONS.with(Cell::get), FREES.with(Cell::get))
     }
 
+    /// Source-level shape of the `katu` searcher hot path: slice params, a
+    /// bounded loop, and a scalar helper call. Before the descriptor
+    /// admission, each `[]u8` copy in those bodies cost a `malloc(16)` per
+    /// call — the fixtures pin the shape to zero heap traffic.
+    #[cfg(target_pointer_width = "64")]
+    mod katu_searcher_shape {
+        use super::{OptLevel, run_counted};
+
+        /// Intrinsics are recognized by bare name, so a local declaration of
+        /// `strBytes` becomes the `str -> []u8` view at every call site. That
+        /// is how these fixtures get slices without the stdlib; the body is
+        /// never executed.
+        ///
+        /// The harness also has no `slice.len`, so bounds travel as scalar
+        /// params while the views themselves stay `[]u8`.
+        const SLICE_LOOP: &str = r#"
+module std.core.fixture_shapes
+
+extern "arandu-intrinsic" {
+    func strBytes(source: str): []u8
+}
+func inner(x: u8): u8 {
+    return x + 32
+}
+func probe(hay: []u8, pos: usize, hlen: usize, needle: []u8, nlen: usize, ic: bool): bool {
+    if pos + nlen > hlen { return false }
+    let mut k: usize = 0
+    while k < nlen {
+        let h = hay[pos + k]
+        let n = needle[k]
+        if ic {
+            if inner(h) != inner(n) { return false }
+        } else {
+            if h != n { return false }
+        }
+        k = k + 1
+    }
+    return true
+}
+func main(): int {
+    let hay = strBytes("abcd")
+    let needle = strBytes("c")
+    let a = probe(hay, 2, 4, needle, 1, false)
+    let b = probe(hay, 2, 4, needle, 1, true)
+    if !a || !b { return 1 }
+    return 0
+}
+"#;
+
+        /// The same helper, but the loop body has no scalar helper call.
+        const SLICE_LOOP_NO_CALL: &str = r#"
+module std.core.fixture_shapes
+
+extern "arandu-intrinsic" {
+    func strBytes(source: str): []u8
+}
+func probe(hay: []u8, pos: usize, hlen: usize, needle: []u8, nlen: usize): bool {
+    if pos + nlen > hlen { return false }
+    let mut k: usize = 0
+    while k < nlen {
+        if hay[pos + k] != needle[k] { return false }
+        k = k + 1
+    }
+    return true
+}
+func main(): int {
+    let hay = strBytes("abcd")
+    let needle = strBytes("c")
+    if !probe(hay, 2, 4, needle, 1) { return 1 }
+    return 0
+}
+"#;
+
+        /// One slice param instead of two, to see whether the count scales
+        /// with the number of slice parameters.
+        const ONE_SLICE_PARAM: &str = r#"
+module std.core.fixture_shapes
+
+extern "arandu-intrinsic" {
+    func strBytes(source: str): []u8
+}
+func probe(text: []u8, pos: usize, hlen: usize): bool {
+    if pos >= hlen { return false }
+    return text[pos] == 97
+}
+func main(): int {
+    let text = strBytes("ab")
+    if !probe(text, 0, 2) { return 1 }
+    return 0
+}
+"#;
+
+        /// Scalar params only, with a helper call, to separate "has a call"
+        /// from "has slice params".
+        const SCALARS_WITH_CALL: &str = r#"
+func inner(x: u8): u8 {
+    return x + 32
+}
+func probe(a: u8, b: u8, pos: usize, ic: bool): bool {
+    if ic {
+        return inner(a) != inner(b)
+    }
+    return a != b
+}
+func main(): int {
+    let a = probe(1, 2, 0, false)
+    let b = probe(1, 2, 0, true)
+    return 0
+}
+"#;
+
+        #[test]
+        fn records_baseline_counts_for_every_variant() {
+            // Prints the counts so the isolating assertions below can be
+            // written against observed values rather than assumptions.
+            for (name, src) in [
+                ("slice_loop_with_call", SLICE_LOOP),
+                ("slice_loop_no_call", SLICE_LOOP_NO_CALL),
+                ("one_slice_param", ONE_SLICE_PARAM),
+                ("scalars_with_call", SCALARS_WITH_CALL),
+            ] {
+                let (_, allocs) = run_counted(src, OptLevel::O2);
+                println!("katu-shape {name}: allocations={allocs}");
+            }
+        }
+
+        #[test]
+        fn one_slice_param_does_not_allocate() {
+            let (result, allocs) = run_counted(ONE_SLICE_PARAM, OptLevel::O2);
+            assert_eq!(result, 0);
+            assert_eq!(
+                allocs, 0,
+                "a single slice param must not force heap scratch"
+            );
+        }
+
+        #[test]
+        fn slice_params_without_any_call_do_not_allocate() {
+            let (result, allocs) = run_counted(SLICE_LOOP_NO_CALL, OptLevel::O2);
+            assert_eq!(result, 0);
+            assert_eq!(allocs, 0, "slice params alone must not force heap scratch");
+        }
+
+        #[test]
+        fn slice_loop_with_scalar_helper_does_not_allocate() {
+            let (result, allocs) = run_counted(SLICE_LOOP, OptLevel::O2);
+            assert_eq!(result, 0);
+            assert_eq!(
+                allocs, 0,
+                "a slice loop with a scalar helper call must not allocate"
+            );
+        }
+
+        #[test]
+        fn scalar_helper_call_does_not_allocate() {
+            let (result, allocs) = run_counted(SCALARS_WITH_CALL, OptLevel::O2);
+            assert_eq!(result, 0);
+            assert_eq!(
+                allocs, 0,
+                "a scalar helper call must not force heap scratch"
+            );
+        }
+    }
+
     #[test]
     #[cfg(target_pointer_width = "64")]
     fn copy_frames_preserve_mutation_loop_and_recursive_return_semantics_without_malloc() {

@@ -12,6 +12,7 @@ pub mod escape_analysis;
 pub mod gen_promote;
 pub(crate) mod gvn;
 pub mod inlining;
+pub mod licm;
 pub mod liveness;
 pub mod lower_amir;
 pub mod move_checker;
@@ -26,6 +27,7 @@ pub mod suspend_check;
 
 pub use borrow_check::check_borrows;
 pub use inlining::inline_leaf_functions;
+pub use licm::licm;
 pub use lower_amir::{
     ComposedUnits, ContextualFunctionUnit, FunctionUnit, append_function_unit,
     compose_function_units, finalize_function_unit, lower_block_unit, lower_borrow_interfaces,
