@@ -60,6 +60,8 @@ pub struct FunctionTranslator<'a, 'b, M: Module> {
     /// Stack homes for address-taken scalar locals (F2.0 `&`/`&mut`).
     /// Aggregate/heap locals keep their address in `local_map` (pointer SSA).
     pub local_stack_slots: FxHashMap<LocalId, StackSlot>,
+    pub(crate) integer_concat_temps: Vec<Option<arandu_codegen::string_interp::IntegerStringKind>>,
+    pub(crate) integer_concat_values: FxHashMap<TempId, (Value, Value, &'static str)>,
     pub str_temp_map: FxHashMap<TempId, (Variable, Variable)>,
     pub str_local_map: FxHashMap<LocalId, (Variable, Variable)>,
     pub ptr_type: Type,
@@ -137,6 +139,11 @@ impl<'a, 'b, M: Module> FunctionTranslator<'a, 'b, M> {
             temp_map: FxHashMap::default(),
             local_map: FxHashMap::default(),
             local_stack_slots: FxHashMap::default(),
+            integer_concat_temps: arandu_codegen::string_interp::integer_concat_temps(
+                current_func,
+                &type_info.type_interner,
+            ),
+            integer_concat_values: FxHashMap::default(),
             str_temp_map: FxHashMap::default(),
             str_local_map: FxHashMap::default(),
             ptr_type,

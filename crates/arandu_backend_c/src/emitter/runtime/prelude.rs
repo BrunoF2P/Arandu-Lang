@@ -176,7 +176,36 @@ impl<'a> CEmitter<'a> {
         let _ = writeln!(&mut self.output, "    free(parts);");
         let _ = writeln!(&mut self.output, "    return ar_str_pack(buf, total);");
         let _ = writeln!(&mut self.output, "}}");
-        // ToStr v0.1 helpers (malloc + snprintf; process-lifetime leak OK for debug).
+        // Allocation-free measure/write for proven-private integer concat parts.
+        let _ = writeln!(
+            self.output,
+            "static size_t ar_i64_write_digits(int64_t v, uint8_t *out) {{"
+        );
+        let _ = writeln!(
+            self.output,
+            "    char tmp[32]; int n = snprintf(tmp, sizeof(tmp), \"%lld\", (long long)v);"
+        );
+        let _ = writeln!(
+            self.output,
+            "    if (n < 0 || (size_t)n >= sizeof(tmp)) abort();"
+        );
+        let _ = writeln!(self.output, "    if (out) memcpy(out, tmp, (size_t)n);");
+        let _ = writeln!(self.output, "    return (size_t)n; }}");
+        let _ = writeln!(
+            self.output,
+            "static size_t ar_u64_write_digits(uint64_t v, uint8_t *out) {{"
+        );
+        let _ = writeln!(
+            self.output,
+            "    char tmp[32]; int n = snprintf(tmp, sizeof(tmp), \"%llu\", (unsigned long long)v);"
+        );
+        let _ = writeln!(
+            self.output,
+            "    if (n < 0 || (size_t)n >= sizeof(tmp)) abort();"
+        );
+        let _ = writeln!(self.output, "    if (out) memcpy(out, tmp, (size_t)n);");
+        let _ = writeln!(self.output, "    return (size_t)n; }}");
+        // ToStr helpers return caller-owned malloc buffers.
         let _ = writeln!(&mut self.output, "static ArStr ar_i64_to_str(int64_t v) {{");
         let _ = writeln!(&mut self.output, "    char tmp[32];");
         let _ = writeln!(

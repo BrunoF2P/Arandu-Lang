@@ -617,6 +617,17 @@ pub(crate) fn declare_runtime_imports<M: Module>(
         .map_err(|err| codegen_ice(format!("failed to declare memcmp: {err:?}")))?;
     insert_sym(func_ids, "memcmp", memcmp_id);
 
+    for name in ["ar_rt_i64_write_digits", "ar_rt_u64_write_digits"] {
+        let mut sig = Signature::new(default_call_conv);
+        sig.params.push(AbiParam::new(I64));
+        sig.params.push(AbiParam::new(ptr_type));
+        sig.returns.push(AbiParam::new(I64));
+        let id = module
+            .declare_function(name, Linkage::Import, &sig)
+            .map_err(|err| codegen_ice(format!("failed to declare {name}: {err:?}")))?;
+        insert_sym(func_ids, name, id);
+    }
+
     // ToStr v0.1 host helpers
     for (name, val_ty) in [
         ("ar_jit_i64_to_str", I64),

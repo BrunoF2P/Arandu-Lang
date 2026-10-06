@@ -64,6 +64,7 @@ pub struct CEmitter<'a> {
     pub(super) emitted_types: rustc_hash::FxHashSet<String>,
     /// A3.3: unique id for `__ar_co_N` stack payload locals (multi-stmt).
     pub(super) co_stack_slot: u32,
+    pub(super) integer_concat_temps: Vec<Option<arandu_codegen::string_interp::IntegerStringKind>>,
     pub(super) error: Option<Diagnostic>,
 }
 
@@ -85,6 +86,7 @@ impl<'a> CEmitter<'a> {
             output: String::new(),
             emitted_types: rustc_hash::FxHashSet::default(),
             co_stack_slot: 0,
+            integer_concat_temps: Vec::new(),
             error: None,
         }
     }

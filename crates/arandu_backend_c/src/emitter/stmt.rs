@@ -4,6 +4,106 @@ use arandu_middle::types::{ArType, Primitive};
 use std::fmt::Write;
 
 impl<'a> CEmitter<'a> {
+    /// Emit admitted integer parts directly into the materialized result.
+    fn emit_integer_concat_statement(
+        &mut self,
+        lhs: TempId,
+        rhs: &arandu_middle::amir::AmirRvalue,
+        func: &AmirFunc,
+    ) -> bool {
+        use arandu_codegen::string_interp::IntegerStringKind;
+        use arandu_middle::amir::AmirRvalue;
+        if let Some(kind) = self.integer_concat_temps[lhs.as_usize()]
+            && let AmirRvalue::ToStr { value, .. } = rhs
+        {
+            let value = self.format_operand(value, func);
+            let (ty, helper) = match kind {
+                IntegerStringKind::Signed => ("int64_t", "ar_i64_write_digits"),
+                IntegerStringKind::Unsigned => ("uint64_t", "ar_u64_write_digits"),
+            };
+            let index = lhs.as_usize();
+            let _ = writeln!(self.output, "    ar_integer_{index} = ({ty})({value});");
+            let _ = writeln!(
+                self.output,
+                "    ar_integer_len_{index} = {helper}(ar_integer_{index}, NULL);"
+            );
+            return true;
+        }
+        let AmirRvalue::StringInterp { parts } = rhs else {
+            return false;
+        };
+        let integer_parts: Vec<_> = parts
+            .iter()
+            .map(|part| match part {
+                AmirOperand::Copy(temp) | AmirOperand::Move(temp) => {
+                    self.integer_concat_temps[temp.as_usize()].map(|kind| (*temp, kind))
+                }
+                _ => None,
+            })
+            .collect();
+        if integer_parts.iter().all(Option::is_none) {
+            return false;
+        }
+        let index = lhs.as_usize();
+        let max_len = if self.layout.pointer_width() == 4 {
+            "INT32_MAX"
+        } else {
+            "INT64_MAX"
+        };
+        let _ = writeln!(self.output, "    {{");
+        let _ = writeln!(self.output, "        size_t ar_total = 0;");
+        for (part_index, (part, integer)) in parts.iter().zip(&integer_parts).enumerate() {
+            let length = if let Some((temp, _)) = integer {
+                format!("ar_integer_len_{}", temp.as_usize())
+            } else {
+                let value = self.format_operand(part, func);
+                let _ = writeln!(self.output, "        ArStr ar_part_{part_index} = {value};");
+                format!("(size_t)ar_part_{part_index}.len")
+            };
+            let _ = writeln!(
+                self.output,
+                "        if ({length} > (size_t){max_len} - ar_total) abort();"
+            );
+            let _ = writeln!(self.output, "        ar_total += {length};");
+        }
+        let _ = writeln!(
+            self.output,
+            "        uint8_t *ar_buffer = (uint8_t*)malloc(ar_total + 1);"
+        );
+        let _ = writeln!(self.output, "        if (!ar_buffer) abort();");
+        let _ = writeln!(self.output, "        size_t ar_offset = 0;");
+        for (part_index, integer) in integer_parts.iter().enumerate() {
+            if let Some((temp, kind)) = integer {
+                let helper = match kind {
+                    IntegerStringKind::Signed => "ar_i64_write_digits",
+                    IntegerStringKind::Unsigned => "ar_u64_write_digits",
+                };
+                let temp = temp.as_usize();
+                let _ = writeln!(
+                    self.output,
+                    "        {helper}(ar_integer_{temp}, ar_buffer + ar_offset);"
+                );
+                let _ = writeln!(self.output, "        ar_offset += ar_integer_len_{temp};");
+            } else {
+                let _ = writeln!(
+                    self.output,
+                    "        if (ar_part_{part_index}.len > 0) memcpy(ar_buffer + ar_offset, ar_part_{part_index}.ptr, (size_t)ar_part_{part_index}.len);"
+                );
+                let _ = writeln!(
+                    self.output,
+                    "        ar_offset += (size_t)ar_part_{part_index}.len;"
+                );
+            }
+        }
+        let _ = writeln!(self.output, "        ar_buffer[ar_total] = 0;");
+        let _ = writeln!(
+            self.output,
+            "        t{index} = ar_str_pack(ar_buffer, ar_total);"
+        );
+        let _ = writeln!(self.output, "    }}");
+        true
+    }
+
     /// These external operations are expanded locally and have no C linkage
     /// declaration. Keep declaration filtering and call emission in agreement.
     pub(super) fn inlined_mem_intrinsic(
@@ -106,6 +206,9 @@ impl<'a> CEmitter<'a> {
     pub(super) fn emit_stmt(&mut self, stmt: &AmirStmt, func: &AmirFunc) {
         match stmt {
             AmirStmt::Assign { lhs, rhs } => {
+                if self.emit_integer_concat_statement(*lhs, rhs, func) {
+                    return;
+                }
                 let lhs_ty = self.temp_ty(func, *lhs);
                 if matches!(lhs_ty, ArType::Void) {
                     return;
@@ -271,6 +374,11 @@ impl<'a> CEmitter<'a> {
                 let _ = writeln!(&mut self.output, ");");
             }
             AmirStmt::Free(op) => {
+                if let AmirOperand::Copy(temp) | AmirOperand::Move(temp) = op
+                    && self.integer_concat_temps[temp.as_usize()].is_some()
+                {
+                    return;
+                }
                 let op_ty = self.operand_ty(func, op);
                 let op_str = self.format_operand(op, func);
                 if matches!(op_ty, ArType::Primitive(Primitive::Str)) {

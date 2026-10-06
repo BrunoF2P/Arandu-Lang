@@ -10,6 +10,8 @@ use super::{CEmitter, sanitize_c_ident};
 
 impl<'a> CEmitter<'a> {
     pub(super) fn emit_func(&mut self, func: &AmirFunc) {
+        self.integer_concat_temps =
+            arandu_codegen::string_interp::integer_concat_temps(func, self.interner);
         let sym = self.symbols.get(func.symbol);
         let name = sanitize_c_ident(self.symbols.host_func_name(sym));
         let ret_ty = self.c_func_return_type(func);
@@ -284,8 +286,17 @@ impl<'a> CEmitter<'a> {
                 if matches!(ty, arandu_middle::types::ArType::Void) {
                     continue;
                 }
-                let ty_str = self.format_type(&ty);
-                let _ = writeln!(&mut self.output, "    {} t{};", ty_str, i);
+                if let Some(kind) = self.integer_concat_temps[i] {
+                    let numeric_type = match kind {
+                        arandu_codegen::string_interp::IntegerStringKind::Signed => "int64_t",
+                        arandu_codegen::string_interp::IntegerStringKind::Unsigned => "uint64_t",
+                    };
+                    let _ = writeln!(&mut self.output, "    {numeric_type} ar_integer_{i};");
+                    let _ = writeln!(&mut self.output, "    size_t ar_integer_len_{i};");
+                } else {
+                    let ty_str = self.format_type(&ty);
+                    let _ = writeln!(&mut self.output, "    {} t{};", ty_str, i);
+                }
             }
         }
 

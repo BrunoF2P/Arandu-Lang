@@ -3209,3 +3209,132 @@ fn parity_user_defined_generic_option() {
         "#,
     );
 }
+
+#[test]
+fn parity_integer_interpolation_extremes_nested_and_repeated_in_loops() {
+    test_zero_result_all_opt_levels(
+        "integer_interpolation_fusion",
+        r#"
+struct Counter { value: int }
+func next(counter: mut ref Counter): int {
+    counter.value = counter.value + 1
+    return counter.value
+}
+func main(): int {
+    let lo: i64 = -9223372036854775808
+    let hi: u64 = 18446744073709551615
+    let small: i8 = -128
+    let unsignedSmall: u8 = 255
+    let empty = ""
+    let text = "${empty}${lo}|${hi}|${small}|${unsignedSmall}|${0}"
+    if text != "-9223372036854775808|18446744073709551615|-128|255|0" { return 1 }
+    let independentlyUsed = lo.to_str()
+    if independentlyUsed != "-9223372036854775808" { return 5 }
+    if "${independentlyUsed}/${independentlyUsed}" != "-9223372036854775808/-9223372036854775808" { return 6 }
+    if "\0:${small}:é" != "\0:-128:é" { return 7 }
+    let nested = "before:${"v=${small}"}:after"
+    if nested != "before:v=-128:after" { return 2 }
+    let mut counter = Counter { value: 0 }
+    let ordered = "${next(mut ref counter)}:${next(mut ref counter)}:${counter.value}"
+    if ordered != "1:2:2" { return 3 }
+    let mut i: int = 0
+    while i < 100 {
+        let repeated = "${i}:${i}"
+        let first = "${i}"
+        if repeated != "${first}:${first}" { return 4 }
+        i = i + 1
+    }
+    return 0
+}
+"#,
+    );
+}
+
+#[test]
+fn integer_concat_admission_rejects_escape_duplicate_use_and_jump_arguments() {
+    use arandu_codegen::string_interp::integer_concat_temps;
+    use arandu_middle::amir::AmirTerminator;
+    let (program, tc) = compile_src(
+        r#"
+func main(): int {
+    let n: int = 42
+    let s = "n=${n}"
+    return 0
+}
+"#,
+    );
+    let function = &program.funcs[0];
+    let plan = integer_concat_temps(function, &tc.type_info.type_interner);
+    let temp = plan
+        .iter()
+        .position(Option::is_some)
+        .expect("integer part admitted");
+    let temp_id = arandu_middle::amir::TempId::from_usize(temp);
+    let check_rejected = |function: &arandu_middle::amir::AmirFunc| {
+        assert_eq!(
+            integer_concat_temps(function, &tc.type_info.type_interner)[temp],
+            None
+        );
+    };
+    let concat_id = function
+        .stmts
+        .payloads
+        .iter()
+        .enumerate()
+        .find_map(|(id, statement)| {
+            matches!(
+                statement,
+                AmirStmt::Assign {
+                    rhs: AmirRvalue::StringInterp { .. },
+                    ..
+                }
+            )
+            .then_some(id)
+        })
+        .unwrap();
+    let free_id = function.stmts.payloads.iter().enumerate().find_map(|(id, statement)| {
+        matches!(statement, AmirStmt::Free(AmirOperand::Copy(t) | AmirOperand::Move(t)) if *t == temp_id).then_some(id)
+    }).unwrap();
+
+    let mut reused = function.clone();
+    if let AmirStmt::Assign {
+        rhs: AmirRvalue::StringInterp { parts },
+        ..
+    } = reused.stmt_mut(arandu_middle::amir::InstrId::from_usize(concat_id))
+    {
+        parts.push(AmirOperand::Copy(temp_id));
+    }
+    check_rejected(&reused);
+
+    let mut escaped = function.clone();
+    *escaped.stmt_mut(arandu_middle::amir::InstrId::from_usize(free_id)) = AmirStmt::Assign {
+        lhs: arandu_middle::amir::TempId::from_usize(0),
+        rhs: AmirRvalue::Use(AmirOperand::Copy(temp_id)),
+    };
+    check_rejected(&escaped);
+
+    let mut jump = function.clone();
+    jump.blocks[0].terminator = AmirTerminator::Goto {
+        target: jump.blocks[0].id,
+        args: vec![AmirOperand::Copy(temp_id)],
+    };
+    check_rejected(&jump);
+
+    let mut cross_block = function.clone();
+    let mut second = cross_block.blocks[0].clone();
+    let range = second.statements.as_range();
+    second.id = arandu_middle::amir::BlockId::from_usize(cross_block.blocks.len());
+    second.statements = arandu_middle::DenseRange::new(concat_id, range.end - concat_id);
+    cross_block.blocks[0].statements =
+        arandu_middle::DenseRange::new(range.start, concat_id - range.start);
+    cross_block.blocks[0].terminator = AmirTerminator::Goto {
+        target: second.id,
+        args: vec![],
+    };
+    cross_block.blocks.push(second);
+    check_rejected(&cross_block);
+
+    let mut no_free = function.clone();
+    *no_free.stmt_mut(arandu_middle::amir::InstrId::from_usize(free_id)) = AmirStmt::Nop;
+    check_rejected(&no_free);
+}

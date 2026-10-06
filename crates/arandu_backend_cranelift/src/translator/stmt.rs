@@ -13,6 +13,9 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
         }
         match stmt {
             AmirStmt::Assign { lhs, rhs } => {
+                if self.capture_integer_concat_part(*lhs, rhs) {
+                    return;
+                }
                 let lhs_ty = self.temp_ar_ty(*lhs);
                 if matches!(&lhs_ty, ArType::Primitive(Primitive::Str)) {
                     let (ptr_val, len_val) = self.translate_str_rvalue(rhs);
@@ -114,6 +117,12 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                 }
             }
             AmirStmt::Free(op) => {
+                if let arandu_semantics::amir::AmirOperand::Copy(temp)
+                | arandu_semantics::amir::AmirOperand::Move(temp) = op
+                    && self.integer_concat_temps[temp.as_usize()].is_some()
+                {
+                    return;
+                }
                 let op_ty = self.get_operand_ar_type(op);
                 let ptr_val = if matches!(op_ty, ArType::Primitive(Primitive::Str)) {
                     self.translate_str_operand(op).0

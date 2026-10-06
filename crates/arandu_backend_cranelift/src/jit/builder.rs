@@ -61,6 +61,14 @@ pub(crate) fn create_jit_builder_with_io_and_process_args(
         super::isa::codegen_ice(format!("failed to reserve Cranelift JIT arena: {error}"))
     })?;
     builder.memory_provider(Box::new(memory));
+    builder.symbol(
+        "ar_rt_i64_write_digits",
+        crate::to_str_runtime::ar_rt_i64_write_digits as *const u8,
+    );
+    builder.symbol(
+        "ar_rt_u64_write_digits",
+        crate::to_str_runtime::ar_rt_u64_write_digits as *const u8,
+    );
     // ToStr v0.1 host helpers (malloc-backed fat strings).
     builder.symbol(
         "ar_jit_i64_to_str",
