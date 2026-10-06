@@ -692,4 +692,31 @@ func main(): int {
             assert_eq!(run_counted(source, level), (0, 0), "{level:?}");
         }
     }
+
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn acyclic_aggregate_branches_and_pointer_loops_promote_without_heap_traffic() {
+        let source = r#"
+struct Pair { left: [4]int, right: [4]int }
+func selectPair(flag: bool, seed: int): Pair {
+    let chosen: [4]int = if flag {
+        [seed, seed + 1, seed + 2, seed + 3]
+    } else {
+        [seed + 10, seed + 20, seed + 30, seed + 40]
+    }
+    let backup: [4]int = [1, 2, 3, 4]
+    return Pair { left: chosen, right: backup }
+}
+func main(): int {
+    let a = selectPair(true, 5)
+    let b = selectPair(false, 2)
+    if a.left[0] != 5 || a.left[3] != 8 || a.right[2] != 3 { return 1 }
+    if b.left[0] != 12 || b.left[3] != 42 || b.right[3] != 4 { return 2 }
+    return 0
+}
+"#;
+        for level in [OptLevel::O0, OptLevel::O1, OptLevel::O2] {
+            assert_eq!(run_counted(source, level), (0, 0), "{level:?}");
+        }
+    }
 }

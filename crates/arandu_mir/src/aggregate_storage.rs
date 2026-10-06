@@ -130,6 +130,74 @@ fn extern_exposes_backing(
         })
 }
 
+fn block_in_cycle(function: &AmirFunc, start: arandu_middle::amir::BlockId) -> bool {
+    let mut visited = vec![false; function.blocks.len()];
+    let mut stack: Vec<arandu_middle::amir::BlockId> = function
+        .cfg
+        .successors
+        .get(start.as_usize())
+        .map_or_else(Vec::new, |succs| succs.clone());
+    while let Some(current) = stack.pop() {
+        if current == start {
+            return true;
+        }
+        let Some(seen) = visited.get_mut(current.as_usize()) else {
+            continue;
+        };
+        if *seen {
+            continue;
+        }
+        *seen = true;
+        if let Some(succs) = function.cfg.successors.get(current.as_usize()) {
+            stack.extend_from_slice(succs);
+        }
+    }
+    false
+}
+
+fn block_param_safe(ty: TypeId, interner: &TypeInterner, in_cycle: bool, depth: usize) -> bool {
+    if depth > 64 {
+        return false;
+    }
+    match interner.resolve(ty) {
+        ArType::Primitive(p) => p != Primitive::Str,
+        ArType::Ptr(_)
+        | ArType::Void
+        | ArType::GenRef
+        | ArType::IntLiteral
+        | ArType::FloatLiteral => true,
+        ArType::Slice(inner) => {
+            !in_cycle && depth == 0 && block_param_safe(inner, interner, in_cycle, depth + 1)
+        }
+        ArType::Array(_, inner) | ArType::Option(inner) | ArType::Poll(inner) => {
+            !in_cycle && block_param_safe(inner, interner, in_cycle, depth + 1)
+        }
+        ArType::Result(ok, err) => {
+            !in_cycle
+                && block_param_safe(ok, interner, in_cycle, depth + 1)
+                && block_param_safe(err, interner, in_cycle, depth + 1)
+        }
+        ArType::Tuple(args) | ArType::Named(_, args) => {
+            !in_cycle
+                && interner
+                    .type_args(args)
+                    .iter()
+                    .all(|&inner| block_param_safe(inner, interner, in_cycle, depth + 1))
+        }
+        ArType::Nullable(_)
+        | ArType::Ref(_)
+        | ArType::RefMut(_)
+        | ArType::Coroutine(_)
+        | ArType::Range(_)
+        | ArType::Func(..)
+        | ArType::ConstArray(..)
+        | ArType::Const(_)
+        | ArType::ConstParam(_)
+        | ArType::Err
+        | ArType::Error => false,
+    }
+}
+
 #[must_use]
 pub fn function_scratch_safe(
     function: &AmirFunc,
@@ -138,12 +206,29 @@ pub fn function_scratch_safe(
     result_abi: ScratchResultAbi,
 ) -> bool {
     // Back-edge aggregate phi values may retain a previous iteration's
-    // materialization. Without slot liveness/coloring, a static site must not
-    // overwrite or reclaim that backing while the phi still references it.
-    if function.block_params.iter().any(|parameter| {
-        !matches!(interner.resolve(parameter.ty),
-        ArType::Primitive(p) if p != Primitive::Str)
-    }) {
+    // materialization. Without slot liveness/coloring, a cyclic merge must not
+    // overwrite or reclaim that backing while the phi still references it;
+    // value-passed handles and acyclic joins cannot re-enter a predecessor site.
+    let mut covered_block_params = 0usize;
+    for block in &function.blocks {
+        let params = function.block_params(block.params);
+        covered_block_params = covered_block_params.saturating_add(params.len());
+        if !params.is_empty() {
+            let in_cycle = block_in_cycle(function, block.id);
+            if params
+                .iter()
+                .any(|parameter| !block_param_safe(parameter.ty, interner, in_cycle, 0))
+            {
+                return false;
+            }
+        }
+    }
+    if covered_block_params != function.block_params.len()
+        && function
+            .block_params
+            .iter()
+            .any(|parameter| !block_param_safe(parameter.ty, interner, true, 0))
+    {
         return false;
     }
     // A called async function can construct the state on behalf of this
@@ -568,5 +653,167 @@ mod tests {
         let pointer = interner.intern(ArType::Ptr(byte));
         let array = interner.intern(ArType::Array(4, pointer));
         assert!(scratch_type_safe(array, &interner, &info));
+    }
+
+    #[test]
+    fn acyclic_aggregate_joins_and_cyclic_value_handles_stay_admitted() {
+        use arandu_middle::amir::{AmirConstant, BlockId, BlockParam, LocalId};
+
+        let interner = TypeInterner::new();
+        let int = interner.intern(ArType::Primitive(Primitive::Int));
+        let byte = interner.intern(ArType::Primitive(Primitive::U8));
+        let pointer = interner.intern(ArType::Ptr(byte));
+        let gen_ref = interner.intern(ArType::GenRef);
+        let array = interner.intern(ArType::Array(4, byte));
+        let symbols = SymbolTable::new(0);
+
+        let diamond_blocks = vec![
+            AmirBasicBlock {
+                id: BlockId::from_usize(0),
+                params: DenseRange::empty(),
+                statements: DenseRange::empty(),
+                terminator: AmirTerminator::Branch {
+                    condition: AmirOperand::Constant(AmirConstant::Bool(true)),
+                    if_true: BlockId::from_usize(1),
+                    true_args: Vec::new(),
+                    if_false: BlockId::from_usize(2),
+                    false_args: Vec::new(),
+                },
+            },
+            AmirBasicBlock {
+                id: BlockId::from_usize(1),
+                params: DenseRange::empty(),
+                statements: DenseRange::empty(),
+                terminator: AmirTerminator::Goto {
+                    target: BlockId::from_usize(3),
+                    args: vec![AmirOperand::Copy(TempId::from_usize(0))],
+                },
+            },
+            AmirBasicBlock {
+                id: BlockId::from_usize(2),
+                params: DenseRange::empty(),
+                statements: DenseRange::empty(),
+                terminator: AmirTerminator::Goto {
+                    target: BlockId::from_usize(3),
+                    args: vec![AmirOperand::Copy(TempId::from_usize(1))],
+                },
+            },
+            AmirBasicBlock {
+                id: BlockId::from_usize(3),
+                params: DenseRange::new(0, 1),
+                statements: DenseRange::empty(),
+                terminator: AmirTerminator::Return,
+            },
+        ];
+        let diamond_cfg = compute_cfg_edges(&diamond_blocks);
+        let diamond = AmirFunc {
+            symbol: SymbolId::new(0, 0),
+            return_type: int,
+            receiver: None,
+            params: Vec::new(),
+            locals: Vec::new(),
+            temps: vec![temp(0, array), temp(1, array), temp(2, array)],
+            blocks: diamond_blocks,
+            block_params: vec![BlockParam {
+                id: TempId::from_usize(2),
+                local: LocalId::from_usize(0),
+                ty: array,
+                from: None,
+                moved: false,
+            }],
+            stmts: Default::default(),
+            cfg: diamond_cfg,
+        };
+        assert!(
+            safe(&diamond, &symbols, &interner),
+            "acyclic diamond join with aggregate block param must stay admitted"
+        );
+
+        let loop_blocks = vec![
+            AmirBasicBlock {
+                id: BlockId::from_usize(0),
+                params: DenseRange::empty(),
+                statements: DenseRange::empty(),
+                terminator: AmirTerminator::Goto {
+                    target: BlockId::from_usize(1),
+                    args: vec![AmirOperand::Copy(TempId::from_usize(0))],
+                },
+            },
+            AmirBasicBlock {
+                id: BlockId::from_usize(1),
+                params: DenseRange::new(0, 1),
+                statements: DenseRange::empty(),
+                terminator: AmirTerminator::Branch {
+                    condition: AmirOperand::Constant(AmirConstant::Bool(true)),
+                    if_true: BlockId::from_usize(2),
+                    true_args: Vec::new(),
+                    if_false: BlockId::from_usize(3),
+                    false_args: Vec::new(),
+                },
+            },
+            AmirBasicBlock {
+                id: BlockId::from_usize(2),
+                params: DenseRange::empty(),
+                statements: DenseRange::empty(),
+                terminator: AmirTerminator::Goto {
+                    target: BlockId::from_usize(1),
+                    args: vec![AmirOperand::Copy(TempId::from_usize(1))],
+                },
+            },
+            AmirBasicBlock {
+                id: BlockId::from_usize(3),
+                params: DenseRange::empty(),
+                statements: DenseRange::empty(),
+                terminator: AmirTerminator::Return,
+            },
+        ];
+        let loop_cfg = compute_cfg_edges(&loop_blocks);
+        for handle_ty in [pointer, gen_ref] {
+            let handle_loop = AmirFunc {
+                symbol: SymbolId::new(0, 0),
+                return_type: int,
+                receiver: None,
+                params: Vec::new(),
+                locals: Vec::new(),
+                temps: vec![temp(0, handle_ty), temp(1, handle_ty)],
+                blocks: loop_blocks.clone(),
+                block_params: vec![BlockParam {
+                    id: TempId::from_usize(1),
+                    local: LocalId::from_usize(0),
+                    ty: handle_ty,
+                    from: None,
+                    moved: false,
+                }],
+                stmts: Default::default(),
+                cfg: loop_cfg.clone(),
+            };
+            assert!(
+                safe(&handle_loop, &symbols, &interner),
+                "cyclic value-passed handle block param must stay admitted"
+            );
+        }
+
+        let cyclic_aggregate = AmirFunc {
+            symbol: SymbolId::new(0, 0),
+            return_type: int,
+            receiver: None,
+            params: Vec::new(),
+            locals: Vec::new(),
+            temps: vec![temp(0, array), temp(1, array)],
+            blocks: loop_blocks,
+            block_params: vec![BlockParam {
+                id: TempId::from_usize(1),
+                local: LocalId::from_usize(0),
+                ty: array,
+                from: None,
+                moved: false,
+            }],
+            stmts: Default::default(),
+            cfg: loop_cfg,
+        };
+        assert!(
+            !safe(&cyclic_aggregate, &symbols, &interner),
+            "cyclic aggregate block param must remain rejected"
+        );
     }
 }
