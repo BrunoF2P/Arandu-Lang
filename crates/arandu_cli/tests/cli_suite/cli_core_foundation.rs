@@ -35,8 +35,8 @@ import std.alloc.string as strings
 import std.core.slice as slice
 struct Step { name: strings.String }
 func main(): int {
-    let mut steps = vec.new<Step>()
-    steps.push(Step { name: strings.from("field") })
+    let mut steps = vec.Vec<Step>.new()
+    steps.push(Step { name: strings.String.from("field") })
     let view = steps.asSlice()
     if slice.len<Step>(view) != 1 { return 1 }
     if slice.len<Step>(view) != 1 { return 2 }
@@ -57,7 +57,6 @@ func main(): int {
         Option.Some(_) => { return 8 }
         Option.None => {}
     }
-    steps.destroy()
     return 0
 }
 "#,
@@ -194,8 +193,8 @@ fn q16_16_uses_widened_intermediates() {
 import std.core.fixed as fixed
 
 func main(): int {
-    let five = fixed.fromInt(5 as i16)
-    let two = fixed.fromInt(2 as i16)
+    let five = fixed.Q16_16.fromInt(5 as i16)
+    let two = fixed.Q16_16.fromInt(2 as i16)
     if five.mul(two).toRaw() != 655360 as i32 { return 1 }
     match five.div(two) {
         Option.Some(value) => {
@@ -203,7 +202,7 @@ func main(): int {
         }
         Option.None => { return 3 }
     }
-    match five.div(fixed.fromRaw(0 as i32)) {
+    match five.div(fixed.Q16_16.fromRaw(0 as i32)) {
         Option.Some(_) => { return 4 }
         Option.None => {}
     }
@@ -229,18 +228,18 @@ import std.core.io as io
 import std.alloc.vec as vec
 
 func main(): int {
-    let mut storage = vec.new<u8>()
+    let mut storage = vec.Vec<u8>.new()
     storage.push(0 as u8)
     storage.push(0 as u8)
     storage.push(0 as u8)
     storage.push(0 as u8)
-    let mut input = vec.new<u8>()
+    let mut input = vec.Vec<u8>.new()
     input.push(10 as u8)
     input.push(20 as u8)
     input.push(30 as u8)
     let storageSlice = storage.asSlice()
     let inputSlice = input.asSlice()
-    let mut writer = io.newSliceWriter(storageSlice)
+    let mut writer = io.SliceWriter.new(storageSlice)
     if writer.remaining() != 4 { return 10 }
     match writer.write(inputSlice) {
         Result.Ok(count) => { if count != 3 { return 1 } }
@@ -248,9 +247,9 @@ func main(): int {
     }
     if writer.written() != 3 { return 11 }
     if storageSlice[0] != 10 as u8 { return 12 }
-    let mut reader = io.newSliceReader(storageSlice)
+    let mut reader = io.SliceReader.new(storageSlice)
     if reader.remaining() != 4 { return 13 }
-    let mut output = vec.new<u8>()
+    let mut output = vec.Vec<u8>.new()
     output.push(0 as u8)
     output.push(0 as u8)
     output.push(0 as u8)

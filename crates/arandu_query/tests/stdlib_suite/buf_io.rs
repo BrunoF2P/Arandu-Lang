@@ -24,13 +24,14 @@ fn stdlib_io_parses_and_exports_expected_symbols() {
     let expected = [
         "IoErrorKind",
         "IoError",
+        "IoError.new",
         "Read",
         "Write",
         "BufRead",
         "BufReader",
-        "newBufReader",
+        "BufReader.new",
         "BufWriter",
-        "newBufWriter",
+        "BufWriter.new",
     ];
     for key in expected {
         assert!(
@@ -76,11 +77,11 @@ public func MockStream.flush(self: mut ref MockStream): Result<bool, io.IoError>
 
 func testBufReader(): int {
     let s = MockStream { count: 10 }
-    let mut bytes = vec.new<u8>()
+    let mut bytes = vec.Vec<u8>.new()
     bytes.push(0 as u8)
     let buf = bytes.asSlice()
-    let br = io.newBufReader<MockStream>(s, buf)
-    let bw = io.newBufWriter<MockStream>(s, buf)
+    let br = io.BufReader<MockStream>.new(s, buf)
+    let bw = io.BufWriter<MockStream>.new(s, buf)
     if br.pos != 0 || bw.buffered_count != 0 {
         return 1
     }

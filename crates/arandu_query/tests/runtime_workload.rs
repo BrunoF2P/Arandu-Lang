@@ -50,7 +50,7 @@ fn runtime_producer_workload() {
     let mut source =
         String::from("import std.alloc.vec as vec\nfunc identity<T>(x: T): T { return x }\n");
     for index in 0..32 {
-        source.push_str(&format!("func worker{index}(): int {{ let mut values = vec.new<int>() values.push({index}) return identity<int>({index}) }}\n"));
+        source.push_str(&format!("func worker{index}(): int {{ let mut values = vec.Vec<int>.new() values.push({index}) return identity<int>({index}) }}\n"));
     }
     source.push_str("func main(): int { return worker0() }\n");
     let (mut db, log) = DatabaseImpl::with_rebuild_log();

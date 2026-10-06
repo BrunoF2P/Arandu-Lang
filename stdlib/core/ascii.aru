@@ -33,23 +33,28 @@ import std.core.intrinsics as intrinsics
 /// A fixed set of byte values, stored in four words (32 bytes).
 /// UTF-8 text contributes its encoded bytes, not Unicode scalar values.
 /// No explicit pointers or runtime construction loop are required when built
-/// with `comptime byteSet("...")`. Duplicate bytes are harmless. Physical
+/// with `comptime ByteSet.from("...")`. Duplicate bytes are harmless. Physical
 /// backing storage is backend-dependent; see the module's allocation contract.
 public struct ByteSet {
     words: [4]u64
 }
 
+/// Creates an empty `ByteSet` with no bytes set.
+public func ByteSet.new(): ByteSet {
+    return ByteSet { words: [0; 4] }
+}
+
 /// Builds a byte set from UTF-8 text. Empty text produces an empty set.
 ///
 /// ```arandu
-/// let horizontal = comptime ascii.byteSet(" \t\r")
+/// let horizontal = comptime ascii.ByteSet.from(" \t\r")
 /// let isSpace = horizontal.contains(b' ')
 /// ```
 ///
 /// Construction: O(text bytes), O(1) storage. With `comptime`, construction is
 /// evaluated by the compiler; the residual program only receives four words.
 /// This function also permits runtime text with the same semantics.
-public func byteSet(text: str): ByteSet {
+public func ByteSet.from(text: str): ByteSet {
     let bytes = intrinsics.strBytes(text)
     let mut words: [4]u64 = [0; 4]
     let mut i: usize = 0
@@ -73,7 +78,7 @@ public func ByteSet.contains(self: ref ByteSet, value: u8): bool {
 
 /// Builds a direct byte-membership lookup table as a fixed-size value.
 /// Empty text clears all 256 entries; duplicates and NUL bytes are supported.
-/// UTF-8 contributes encoded bytes, as with `byteSet`.
+/// UTF-8 contributes encoded bytes, as with `ByteSet.from`.
 ///
 /// ```arandu
 /// let horizontal = comptime ascii.byteTable(" \t\r")

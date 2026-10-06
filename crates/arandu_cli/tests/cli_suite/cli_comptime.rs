@@ -145,13 +145,13 @@ fn stdlib_byte_sets_freeze_imported_aggregate_helpers_and_match_all_bytes() {
     fs::write(&source, r#"
 import std.core.ascii as ascii
 func main(): int {
-    let horizontal = comptime ascii.byteSet(" \t\r")
-    let identifier = comptime ascii.byteSet("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
-    let empty = comptime ascii.byteSet("")
+    let horizontal = comptime ascii.ByteSet.from(" \t\r")
+    let identifier = comptime ascii.ByteSet.from("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
+    let empty = comptime ascii.ByteSet.new()
     let horizontalTable = comptime ascii.byteTable(" \t\r")
     let edgeTable = comptime ascii.byteTable("\0?@Àÿ??\0")
-    let edge = comptime ascii.byteSet("\0?@Àÿ??\0")
-    let runtime = ascii.byteSet(" \t\r")
+    let edge = comptime ascii.ByteSet.from("\0?@Àÿ??\0")
+    let runtime = ascii.ByteSet.from(" \t\r")
     if @sizeOf(ascii.ByteSet) != 32 { return 1 }
     let mut value: uint = 0
     while value < 256 {
@@ -185,7 +185,7 @@ func main(): int {
         if command == "amir" {
             let amir = std::str::from_utf8(&output.stdout).expect("AMIR output");
             assert_eq!(
-                amir.matches("call fn@byteSet(").count(),
+                amir.matches("call fn@ByteSet.from(").count(),
                 1,
                 "only the explicitly runtime builder may remain:\n{amir}"
             );

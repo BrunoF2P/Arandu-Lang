@@ -107,8 +107,8 @@ fn compiles_program_with_std_core_fixed() {
 import std.core.fixed as fixed
 
 public func main(): i32 {
-    let one = fixed.fromInt(1 as i16)
-    let two = fixed.fromInt(2 as i16)
+    let one = fixed.Q16_16.fromInt(1 as i16)
+    let two = fixed.Q16_16.fromInt(2 as i16)
     let sum = one.add(two)
     return sum.toInt()
 }
@@ -175,7 +175,7 @@ import std.core.io as io
 
 public func main(): i32 {
     let storage = unsafe { intrinsics.strBytes("arandu") }
-    let reader = io.newSliceReader(storage)
+    let reader = io.SliceReader.new(storage)
     let rem = reader.remaining()
     return rem as i32
 }

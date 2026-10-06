@@ -713,12 +713,12 @@ fn synthesized_seeded_collection_cases_match_every_backend_and_level() {
     let first_map_insert = generated[0]
         .source
         .lines()
-        .find(|line| line.contains("hash_map.insert<GeneratedKey, int>"))
+        .find(|line| line.contains("generated_map.put("))
         .expect("seeded HashMap source has an insertion");
     let second_map_insert = generated[1]
         .source
         .lines()
-        .find(|line| line.contains("hash_map.insert<GeneratedKey, int>"))
+        .find(|line| line.contains("generated_map.put("))
         .expect("seeded HashMap source has an insertion");
     assert_ne!(first_map_insert, second_map_insert);
     assert!(generated[0]
@@ -732,8 +732,10 @@ fn synthesized_seeded_collection_cases_match_every_backend_and_level() {
         .contains("bs_union.unionWith(ref bs_cap)"));
     assert!(generated[0]
         .source
-        .contains("generated_map_pre = hash_map.withCapacity"));
-    assert!(generated[0].source.contains("cap_vec = vec.withCapacity"));
+        .contains("generated_map_pre = hash_map.HashMap<GeneratedKey, int>.withCapacity"));
+    assert!(generated[0]
+        .source
+        .contains("cap_vec = vec.Vec<int>.withCapacity"));
 
     for generated in generated {
         assert!(generated.source.contains("GeneratedKey.hash"));
@@ -1325,11 +1327,11 @@ fn fixed_width_int_hash_matches_all_backends_and_optimization_levels() {
 import std.core.hash as hash
 
 func main(): int {
-    let mut hasher = hash.fnvNew()
+    let mut hasher = hash.FnvHasher.new()
     hasher.writeInt(240)
     if hasher.finish() as int != -490752091 { return 1 }
 
-    hasher = hash.fnvNew()
+    hasher = hash.FnvHasher.new()
     hasher.writeInt(-1)
     if hasher.finish() as int != 1042954577 { return 2 }
     return 0
@@ -1423,13 +1425,11 @@ func transfer<T>(own value: T): T {
 }
 
 func main(): int {
-    let mut values = transfer<vec.Vec<int>>(vec.new<int>())
-    if !vec.tryPush<int>(values, 42) {
-        vec.destroy<int>(values)
+    let mut values = transfer<vec.Vec<int>>(vec.Vec<int>.new())
+    if !values.tryPush(42) {
         return -1
     }
-    let length = vec.len<int>(values) as int
-    values.destroy()
+    let length = values.len() as int
     return length
 }
 "#;
@@ -1677,7 +1677,7 @@ fn synthesis_exercises_array_aggregate_enum_and_control_flow() {
     assert!(source.contains("func make_owned_pack(value: int, marker: int): OwnedPack"));
     assert!(source.contains("return OwnedPack { items: items, marker: marker }"));
     assert!(source.contains("transfer<OwnedPack>(make_owned_pack(sample.left, sample.right))"));
-    assert!(source.contains("vec.len<int>(owned_pack.items) != 1 as usize"));
+    assert!(source.contains("owned_pack.items.len() != 1 as usize"));
     assert!(source.contains("func identity<T>(value: T): T"));
     assert!(source.contains("func make_pair<T, U>(left: T, enabled: U): (T, U)"));
     assert!(source.contains("let pair_value, pair_enabled = make_pair<"));
@@ -1691,13 +1691,13 @@ fn synthesis_exercises_array_aggregate_enum_and_control_flow() {
     assert!(source.contains("func make_vec<T>(): vec.Vec<T>"));
     assert!(source.contains("vec.Vec<uint>"));
     assert!(source.contains("relay<vec.Vec<uint>>(make_vec<uint>())"));
-    assert!(source.contains("vec.tryPush<uint>(unsigned_values, uint_result)"));
+    assert!(source.contains("unsigned_values.tryPush(uint_result)"));
     assert!(source.contains("vec.Vec<core_result.Result<int, bool>>"));
     assert!(source.contains("relay<vec.Vec<core_result.Result<int, bool>>>("));
     assert!(source.contains("Result.Err(sample.enabled)"));
     assert!(source.contains("relay<vec.Vec<int>>(make_vec<int>())"));
     assert!(source.contains("transfer<vec.Vec<int>>(relay<vec.Vec<int>>(make_vec<int>()))"));
-    assert!(source.contains("return vec.new<T>()"));
+    assert!(source.contains("return vec.Vec<T>.new()"));
     assert!(source.contains("identity<int>("));
     assert!(source.contains("identity<bool>("));
     assert!(source.contains("env.arg(0) != \"arandu-smith\""));
@@ -1730,42 +1730,36 @@ fn synthesis_exercises_array_aggregate_enum_and_control_flow() {
     assert!(source.contains("io.println(\"result-odd\")"));
     assert!(source.contains("io.eprint(\"result-even\")"));
     assert!(source.contains("io.eprint(\"result-odd\")"));
-    assert!(source.contains("vec.tryReserve<int>(dynamic, 1 as usize)"));
-    assert!(source.contains("slice.len<int>(vec.asSlice<int>(dynamic))"));
-    assert!(source.contains("vec.getCopy<int>(dynamic, dynamic_len as usize)"));
+    assert!(source.contains("dynamic.tryReserve(1 as usize)"));
+    assert!(source.contains("slice.len<int>(dynamic.asSlice())"));
+    assert!(source.contains("dynamic.getCopy(dynamic_len as usize)"));
     assert!(source.contains("while dynamic_count < 9"));
-    assert!(source.contains("vec.tryPush<int>(dynamic, sample.left + dynamic_count)"));
+    assert!(source.contains("dynamic.tryPush(sample.left + dynamic_count)"));
     assert!(source.contains("transfer<vec.Vec<bool>>(make_vec<bool>())"));
-    assert!(source.contains("vec.tryPush<bool>(flags, sample.enabled)"));
-    assert!(source.contains("slice.len<bool>(vec.asSlice<bool>(flags))"));
+    assert!(source.contains("flags.tryPush(sample.enabled)"));
+    assert!(source.contains("slice.len<bool>(flags.asSlice())"));
     assert!(source.contains("transfer<vec.Vec<Choice>>(make_vec<Choice>())"));
-    assert!(source.contains("vec.tryPush<Choice>(choices, Choice.Flag(sample.enabled))"));
-    assert!(source.contains("vec.pop<Choice>(choices)"));
+    assert!(source.contains("choices.tryPush(Choice.Flag(sample.enabled))"));
+    assert!(source.contains("choices.pop()"));
     assert!(source.contains("Some(Choice.Flag(value)) => value"));
     assert!(source.contains("Choice.Letter(sample.character)"));
     assert!(source.contains("Some(Choice.Letter(value)) => value"));
     assert!(source.contains("recovered_character != sample.character"));
-    assert!(source.contains("choices.destroy()"));
     assert!(source.contains("transfer<vec.Vec<char>>(make_vec<char>())"));
-    assert!(source.contains("vec.tryPush<char>(characters, sample.character)"));
-    assert!(source.contains("slice.len<char>(vec.asSlice<char>(characters))"));
-    assert!(source.contains("vec.getCopy<char>(characters, 0 as usize)"));
+    assert!(source.contains("characters.tryPush(sample.character)"));
+    assert!(source.contains("slice.len<char>(characters.asSlice())"));
+    assert!(source.contains("characters.getCopy(0 as usize)"));
     assert!(source.contains("recovered_vector_character != sample.character"));
-    assert!(source.contains("characters.destroy()"));
     assert!(source.contains("transfer<vec.Vec<float>>(make_vec<float>())"));
-    assert!(source.contains("vec.tryPush<float>(floats, float_result)"));
-    assert!(source.contains("vec.getCopy<float>(floats, 0 as usize)"));
+    assert!(source.contains("floats.tryPush(float_result)"));
+    assert!(source.contains("floats.getCopy(0 as usize)"));
     assert!(source.contains("recovered_vector_float != float_result"));
-    assert!(source.contains("floats.destroy()"));
-    assert!(source.contains("vec.destroy<int>(dynamic)"));
-    assert!(source.contains("dynamic.destroy()"));
-    assert!(source.contains("flags.destroy()"));
-    assert!(source.contains("vec.getCopy<int>(dynamic, dynamic_index)"));
+    assert!(source.contains("dynamic.getCopy(dynamic_index)"));
     assert!(source.contains("if dynamic_len != 9"));
     assert!(source.contains("if dynamic_tail != sample.left + 8"));
-    assert!(source.contains("vec.put<int>(dynamic, 8 as usize, sample.right)"));
-    assert!(source.contains("vec.pop<int>(dynamic)"));
-    assert!(source.contains("vec.clear<int>(dynamic)"));
+    assert!(source.contains("dynamic.set(8 as usize, sample.right)"));
+    assert!(source.contains("dynamic.pop()"));
+    assert!(source.contains("dynamic.clear()"));
     assert!(source.contains("Some(_) => true"));
     assert!(source.contains("func adjust(value: int, enabled: bool): int"));
     assert!(source.contains(
@@ -1992,19 +1986,19 @@ fn test_iter_slice_chain_across_all_backends() {
         "    return VecIter { items: v, index: 0 as usize }\n",
         "}\n\n",
         "func VecIter.next(self: mut ref VecIter): Option<int> {\n",
-        "    let item = vec.getCopy<int>(self.items, self.index)\n",
-        "    if self.index < vec.len<int>(self.items) {\n",
+        "    let item = self.items.getCopy(self.index)\n",
+        "    if self.index < self.items.len() {\n",
         "        self.index = self.index + (1 as usize)\n",
         "    }\n",
         "    return item\n",
         "}\n\n",
         "func main(): int {\n",
-        "    let mut v = vec.new<int>()\n",
-        "    vec.push<int>(v, 10)\n",
-        "    vec.push<int>(v, 20)\n",
-        "    vec.push<int>(v, 30)\n",
-        "    vec.push<int>(v, 40)\n",
-        "    vec.push<int>(v, 50)\n",
+        "    let mut v = vec.Vec<int>.new()\n",
+        "    v.push(10)\n",
+        "    v.push(20)\n",
+        "    v.push(30)\n",
+        "    v.push(40)\n",
+        "    v.push(50)\n",
         "    let it = make_vec_iter(v)\n",
         "    let taken = iter.take(it, 4 as uint)\n",
         "    let skipped = iter.skip(taken, 1 as uint)\n",
@@ -2035,19 +2029,19 @@ fn test_slice_split_and_cuts_across_all_backends() {
         "    return VecIter { items: v, index: 0 as usize }\n",
         "}\n\n",
         "func VecIter.next(self: mut ref VecIter): Option<int> {\n",
-        "    let item = vec.getCopy<int>(self.items, self.index)\n",
-        "    if self.index < vec.len<int>(self.items) {\n",
+        "    let item = self.items.getCopy(self.index)\n",
+        "    if self.index < self.items.len() {\n",
         "        self.index = self.index + (1 as usize)\n",
         "    }\n",
         "    return item\n",
         "}\n\n",
         "func main(): int {\n",
-        "    let mut v = vec.new<int>()\n",
-        "    vec.push<int>(v, 100)\n",
-        "    vec.push<int>(v, 200)\n",
-        "    vec.push<int>(v, 300)\n",
-        "    vec.push<int>(v, 400)\n",
-        "    let s = vec.asSlice<int>(v)\n",
+        "    let mut v = vec.Vec<int>.new()\n",
+        "    v.push(100)\n",
+        "    v.push(200)\n",
+        "    v.push(300)\n",
+        "    v.push(400)\n",
+        "    let s = v.asSlice()\n",
         "    let empty_start = match slice.subslice<int>(s, 0 as usize, 0 as usize) {\n",
         "        Some(sub) => slice.len<int>(sub) == (0 as usize)\n",
         "        None => false\n",
@@ -2249,7 +2243,7 @@ fn test_str_mem_across_all_backends() {
         "func main(): int {\n",
         "    // 1. String operations\n",
         "    if !core_str.isEmpty(\"\") || core_str.isEmpty(\"hello\") { return -1 }\n",
-        "    if core_str.lenBytes(\"\") != 0 as usize || core_str.lenBytes(\"hello\") != 5 as usize || core_str.lenBytes(\"olá\") != 4 as usize { return -2 }\n",
+        "    if core_str.len(\"\") != 0 as usize || core_str.len(\"hello\") != 5 as usize || core_str.len(\"olá\") != 4 as usize { return -2 }\n",
         "    if !core_str.startsWith(\"hello world\", \"hello\") || core_str.startsWith(\"hello\", \"world\") || !core_str.startsWith(\"hello\", \"\") { return -3 }\n",
         "    if !core_str.endsWith(\"main.aru\", \".aru\") || core_str.endsWith(\"main.c\", \".aru\") || !core_str.endsWith(\"main.aru\", \"\") { return -4 }\n",
         "    if !core_str.contains(\"arandu compiler\", \"compiler\") || core_str.contains(\"arandu\", \"rust\") || !core_str.contains(\"arandu\", \"\") { return -5 }\n",
@@ -2291,23 +2285,21 @@ fn test_str_mem_across_all_backends() {
         "    if ref_target != 333 { return -16 }\n",
         "\n",
         "    // 4. Raw pointer operations\n",
-        "    let mut v = vec.new<int>()\n",
-        "    if !vec.tryPush<int>(v, 10) || !vec.tryPush<int>(v, 20) {\n",
-        "        vec.destroy<int>(v)\n",
+        "    let mut v = vec.Vec<int>.new()\n",
+        "    if !v.tryPush(10) || !v.tryPush(20) {\n",
         "        return -17\n",
         "    }\n",
-        "    let v_slice = vec.asSlice<int>(v)\n",
+        "    let v_slice = v.asSlice()\n",
         "    let raw_ptr = slice.asPtr<int>(v_slice)\n",
         "    let val0 = unsafe { mem.ptrRead<int>(raw_ptr) }\n",
         "    let ptr1 = unsafe { mem.ptrOffset<int>(raw_ptr, 1 as isize) }\n",
         "    let val1 = unsafe { mem.ptrRead<int>(ptr1) }\n",
         "    unsafe { mem.ptrWrite<int>(ptr1, 999) }\n",
         "    let val1_up = unsafe { mem.ptrRead<int>(ptr1) }\n",
-        "    let elem1 = match vec.getCopy<int>(v, 1 as usize) {\n",
+        "    let elem1 = match v.getCopy(1 as usize) {\n",
         "        Some(val) => val\n",
         "        None => 0\n",
         "    }\n",
-        "    vec.destroy<int>(v)\n",
         "    if val0 != 10 || val1 != 20 || val1_up != 999 || elem1 != 999 { return -18 }\n",
         "\n",
         "    return 42\n",
@@ -2353,57 +2345,55 @@ fn test_collections_across_all_backends() {
         "\n",
         "func main(): int {\n",
         "    // 1. Vec withCapacity, isEmpty, push, pop, clear\n",
-        "    let mut v = vec.withCapacity<int>(16 as usize)\n",
-        "    if !vec.isEmpty<int>(v) || vec.len<int>(v) != 0 as usize || vec.capacity<int>(v) < 16 as usize { return -1 }\n",
-        "    vec.push<int>(v, 100)\n",
-        "    vec.push<int>(v, 200)\n",
-        "    if vec.isEmpty<int>(v) || vec.len<int>(v) != 2 as usize { return -2 }\n",
-        "    let popped = match vec.pop<int>(v) {\n",
+        "    let mut v = vec.Vec<int>.withCapacity(16 as usize)\n",
+        "    if !v.isEmpty() || v.len() != 0 as usize || v.capacity() < 16 as usize { return -1 }\n",
+        "    v.push(100)\n",
+        "    v.push(200)\n",
+        "    if v.isEmpty() || v.len() != 2 as usize { return -2 }\n",
+        "    let popped = match v.pop() {\n",
         "        Some(val) => val == 200\n",
         "        None => false\n",
         "    }\n",
-        "    if !popped || vec.len<int>(v) != 1 as usize { return -3 }\n",
-        "    vec.clear<int>(v)\n",
-        "    if !vec.isEmpty<int>(v) || vec.len<int>(v) != 0 as usize || vec.capacity<int>(v) < 16 as usize { return -4 }\n",
-        "    v.destroy()\n",
+        "    if !popped || v.len() != 1 as usize { return -3 }\n",
+        "    v.clear()\n",
+        "    if !v.isEmpty() || v.len() != 0 as usize || v.capacity() < 16 as usize { return -4 }\n",
         "\n",
-        "    // 2. HashMap withCapacity, insert, contains, remove, clear\n",
-        "    let mut map = hash_map.withCapacity<MapKey, int>(16 as usize)\n",
-        "    if !hash_map.isEmpty<MapKey, int>(map) || hash_map.capacity<MapKey, int>(map) != 16 as usize { return -5 }\n",
+        "    // 2. HashMap withCapacity, put, contains, remove, clear\n",
+        "    let mut map = hash_map.HashMap<MapKey, int>.withCapacity(16 as usize)\n",
+        "    if !map.isEmpty() || map.capacity() != 16 as usize { return -5 }\n",
         "    let k1 = MapKey { id: 1 }\n",
         "    let k2 = MapKey { id: 2 }\n",
-        "    hash_map.insert<MapKey, int>(map, k1, 10)\n",
-        "    hash_map.insert<MapKey, int>(map, k2, 20)\n",
-        "    if hash_map.isEmpty<MapKey, int>(map) || hash_map.len<MapKey, int>(map) != 2 as usize { return -6 }\n",
-        "    if !hash_map.contains<MapKey, int>(map, ref k1) || !hash_map.contains<MapKey, int>(map, ref k2) { return -7 }\n",
+        "    map.put(k1, 10)\n",
+        "    map.put(k2, 20)\n",
+        "    if map.isEmpty() || map.len() != 2 as usize { return -6 }\n",
+        "    if !map.contains(ref k1) || !map.contains(ref k2) { return -7 }\n",
         "    let k3 = MapKey { id: 3 }\n",
-        "    if hash_map.contains<MapKey, int>(map, ref k3) { return -8 }\n",
-        "    let rem1 = match hash_map.remove<MapKey, int>(map, ref k1) {\n",
+        "    if map.contains(ref k3) { return -8 }\n",
+        "    let rem1 = match map.remove(ref k1) {\n",
         "        Some(val) => val == 10\n",
         "        None => false\n",
         "    }\n",
-        "    if !rem1 || hash_map.contains<MapKey, int>(map, ref k1) || hash_map.len<MapKey, int>(map) != 1 as usize { return -9 }\n",
-        "    hash_map.clear<MapKey, int>(map)\n",
-        "    if !hash_map.isEmpty<MapKey, int>(map) || hash_map.len<MapKey, int>(map) != 0 as usize { return -10 }\n",
-        "    map.destroy()\n",
+        "    if !rem1 || map.contains(ref k1) || map.len() != 1 as usize { return -9 }\n",
+        "    map.clear()\n",
+        "    if !map.isEmpty() || map.len() != 0 as usize { return -10 }\n",
         "\n",
-        "    // 3. BitSet bitsetWithCapacity, set ops (union, intersect, diff)\n",
-        "    let mut bs1 = bitset.bitsetWithCapacity(128 as usize)\n",
+        "    // 3. BitSet BitSet.withCapacity, set ops (union, intersect, diff)\n",
+        "    let mut bs1 = bitset.BitSet.withCapacity(128 as usize)\n",
         "    if bs1.countOnes() != 0 as uint || bs1.contains(0 as usize) || bs1.contains(64 as usize) { return -11 }\n",
         "    bs1.insert(1 as usize)\n",
         "    bs1.insert(70 as usize)\n",
-        "    let mut bs2 = bitset.bitsetNew()\n",
+        "    let mut bs2 = bitset.BitSet.new()\n",
         "    bs2.insert(70 as usize)\n",
         "    bs2.insert(100 as usize)\n",
-        "    let mut bs_u = bitset.bitsetNew()\n",
+        "    let mut bs_u = bitset.BitSet.new()\n",
         "    bs_u.unionWith(ref bs1)\n",
         "    bs_u.unionWith(ref bs2)\n",
         "    if bs_u.countOnes() != 3 as uint || !bs_u.contains(1 as usize) || !bs_u.contains(70 as usize) || !bs_u.contains(100 as usize) { return -12 }\n",
-        "    let mut bs_i = bitset.bitsetNew()\n",
+        "    let mut bs_i = bitset.BitSet.new()\n",
         "    bs_i.unionWith(ref bs1)\n",
         "    bs_i.intersectWith(ref bs2)\n",
         "    if bs_i.countOnes() != 1 as uint || !bs_i.contains(70 as usize) || bs_i.contains(1 as usize) || bs_i.contains(100 as usize) { return -13 }\n",
-        "    let mut bs_d = bitset.bitsetNew()\n",
+        "    let mut bs_d = bitset.BitSet.new()\n",
         "    bs_d.unionWith(ref bs1)\n",
         "    bs_d.differenceWith(ref bs2)\n",
         "    if bs_d.countOnes() != 1 as uint || !bs_d.contains(1 as usize) || bs_d.contains(70 as usize) { return -14 }\n",

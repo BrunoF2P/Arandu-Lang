@@ -395,7 +395,7 @@ fn stdio_workspace_index_reports_standard_progress_and_status() {
 fn stdio_manifestless_folder_resolves_toolchain_stdlib() {
     let fixture = FixtureDir::new();
     let document = fixture.path().join("main.aru");
-    let source = "import std.alloc.vec as vec\nfunc size(): usize { let values = vec.new<int>(); return values.len() }\n";
+    let source = "import std.alloc.vec as vec\nfunc size(): usize { let values = vec.Vec<int>.new(); return values.len() }\n";
     fs::write(&document, source).expect("write standalone source");
     let uri = file_uri(&document);
     let mut lsp = LspProcess::spawn();
@@ -1658,7 +1658,7 @@ fn stdio_package_imports_refresh_completion_goto_and_diagnostics() {
         "import editor_gold.util as util\n",
         "import std.path as path\n",
         "func main(): int {\n",
-        "    if path.isEmpty(\"\") { return util.answer() }\n",
+        "    if path.Path.from(\"\").isEmpty() { return util.answer() }\n",
         "    return 0\n",
         "}\n",
     );
@@ -1753,12 +1753,12 @@ fn stdio_package_imports_refresh_completion_goto_and_diagnostics() {
         "goto must target the newly created module: {goto}"
     );
 
-    let std_call = missing_source.find("path.isEmpty").expect("stdlib call");
+    let std_call = missing_source.find("path.Path.from").expect("stdlib call");
     lsp.send(&json!({
         "jsonrpc": "2.0", "id": 6, "method": "textDocument/definition",
         "params": {
             "textDocument": { "uri": main_uri },
-            "position": utf16_position(missing_source, std_call + "path.".len() + 2)
+            "position": utf16_position(missing_source, std_call + "path.Path.".len() + 2)
         }
     }));
     let std_goto = lsp.wait_for_response(6);

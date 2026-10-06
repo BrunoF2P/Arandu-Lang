@@ -258,7 +258,7 @@ func main(): int {
     }
     let ws = "   \t\r\n   "
     let concat = "${empty}${ws}${empty}"
-    if s.lenBytes(concat) != s.lenBytes(ws) {
+    if s.len(concat) != s.len(ws) {
         return 2
     }
     return 0
@@ -287,10 +287,10 @@ import std.core.str as s
 func main(): int {
     let str_val = "abc\0def"
     // Must NOT truncate at \0 like C strlen
-    if s.lenBytes(str_val) == 3 {
+    if s.len(str_val) == 3 {
         return 1
     }
-    if s.lenBytes(str_val) != 7 {
+    if s.len(str_val) != 7 {
         return 2
     }
     return 0
@@ -321,7 +321,7 @@ func main(): int {
     let cjk = "日本語・中文・한국어"
     let combining = "e\u{0301}"
     let combined = "${emojis} ${cjk} ${combining}"
-    if s.lenBytes(combined) == 0 {
+    if s.len(combined) == 0 {
         return 1
     }
     return 0
@@ -867,9 +867,9 @@ async func compute(val: int): int {
 }
 
 func main(): int {
-    let ex = rt.newSyncExecutor()
-    let h = rt.spawn(ex, compute(21))
-    let result = rt.join(ex, h)
+    let ex = rt.SyncExecutor.new()
+    let h = ex.spawn(compute(21))
+    let result = ex.join(h)
     if result != 42 {
         return 1
     }
@@ -927,16 +927,15 @@ func runFold(items: []Item, workers: uint): int {
 }
 
 func main(): int {
-    let mut values = vec.new<Item>()
+    let mut values = vec.Vec<Item>.new()
     let mut i = 0
     while i < 100 {
-        vec.push<Item>(values, Item { val: 1 })
+        values.push(Item { val: 1 })
         i = i + 1
     }
-    let items = vec.asSlice<Item>(values)
+    let items = values.asSlice()
     let res1 = runFold(items, 1)
     let res4 = runFold(items, 4)
-    vec.destroy<Item>(values)
 
     if res1 != 100 { return 1 }
     if res4 != 100 { return 2 }
@@ -1216,8 +1215,8 @@ func SumCombine.combine(self: ref SumCombine, dest: mut ref Sum, partial: ref Su
 }
 
 func main(): int {
-    let values = vec.new<Item>()
-    let items = vec.asSlice<Item>(values)
+    let values = vec.Vec<Item>.new()
+    let items = values.asSlice()
     let identity = Sum { value: 0 }
     let seed = Sum { value: 42 }
 
@@ -1232,7 +1231,6 @@ func main(): int {
         Ok(res) => { res.value }
         Err(_) => { -1 }
     }
-    vec.destroy<Item>(values)
 
     if result != 42 {
         return 1
@@ -1276,9 +1274,9 @@ func SumCombine.combine(self: ref SumCombine, dest: mut ref Sum, partial: ref Su
 }
 
 func main(): int {
-    let mut values = vec.new<Item>()
-    vec.push<Item>(values, Item { val: 58 })
-    let items = vec.asSlice<Item>(values)
+    let mut values = vec.Vec<Item>.new()
+    values.push(Item { val: 58 })
+    let items = values.asSlice()
     let identity = Sum { value: 0 }
     let seed = Sum { value: 42 }
 
@@ -1293,7 +1291,6 @@ func main(): int {
         Ok(res) => { res.value }
         Err(_) => { -1 }
     }
-    vec.destroy<Item>(values)
 
     // 42 + 58 = 100
     if result != 100 {

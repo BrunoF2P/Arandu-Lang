@@ -27,8 +27,8 @@ fn stdlib_bitset_parses_and_exports_expected_symbols() {
     let exports = exported_symbols(&db, file);
     let expected = [
         "BitSet",
-        "bitsetNew",
-        "bitsetWithCapacity",
+        "BitSet.new",
+        "BitSet.withCapacity",
         "BitSet.contains",
         "BitSet.insert",
         "BitSet.remove",
@@ -72,7 +72,7 @@ fn stdlib_bitset_usage_in_program() {
             import std.alloc.bitset as bitset
 
             public func testBits(): uint {
-                let mut bs = bitset.bitsetNew()
+                let mut bs = bitset.BitSet.new()
                 bs.insert(1)
                 bs.insert(65)
                 bs.insert(128)
