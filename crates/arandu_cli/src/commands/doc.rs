@@ -78,12 +78,19 @@ pub fn cmd_doc(args: &[String], flags: &ProjectFlags, data_layout: DataLayout) -
     // of `<error>` in function signatures and struct fields.
     let stdlib_root = target
         .ancestors()
-        .find(|path| arandu_query::is_stdlib_root(path));
-    if let Some(root) = stdlib_root {
+        .find(|path| arandu_query::is_stdlib_root(path))
+        .map(PathBuf::from)
+        .or_else(|| {
+            arandu_query::resolve_stdlib_root(arandu_query::StdlibResolveOpts {
+                explicit: flags.stdlib_path.clone(),
+                ..Default::default()
+            })
+            .ok()
+            .map(|root| root.path)
+        });
+    if let Some(root) = stdlib_root.as_deref() {
         db.set_stdlib_root(root.to_path_buf());
-        if target.is_file() {
-            crate::pipeline::register_stdlib_sources(&mut db, root);
-        }
+        crate::pipeline::register_stdlib_sources(&mut db, root);
     }
 
     let mut files_to_doc = Vec::new();

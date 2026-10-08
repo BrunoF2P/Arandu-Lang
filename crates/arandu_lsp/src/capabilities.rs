@@ -23,6 +23,7 @@ use std::path::PathBuf;
 pub(crate) struct InitializedContext {
     pub(crate) workspace_roots: Vec<PathBuf>,
     pub(crate) work_done_progress: bool,
+    pub(crate) trace_value: lsp_types::TraceValue,
 }
 
 pub(crate) fn initialize_connection(
@@ -30,6 +31,8 @@ pub(crate) fn initialize_connection(
 ) -> Result<InitializedContext, Box<dyn Error + Sync + Send>> {
     let (initialize_id, initialize_params) = connection.initialize_start()?;
     let init: lsp_types::InitializeParams = serde_json::from_value(initialize_params)?;
+    let trace_value = init.trace.unwrap_or(lsp_types::TraceValue::Off);
+    crate::logging::set_trace(trace_value);
     let mut workspace_roots = Vec::new();
     if let Some(folders) = init.workspace_folders.as_ref() {
         workspace_roots.extend(folders.iter().filter_map(|folder| {
@@ -141,6 +144,7 @@ pub(crate) fn initialize_connection(
     Ok(InitializedContext {
         workspace_roots,
         work_done_progress,
+        trace_value,
     })
 }
 

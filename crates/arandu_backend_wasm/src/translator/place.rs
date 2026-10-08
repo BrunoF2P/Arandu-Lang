@@ -49,7 +49,47 @@ impl<'a> FuncTranslator<'a> {
         let Some(ty_id) = self.place_resolved_ty(place) else {
             return;
         };
-        if !matches!(self.interner.resolve(ty_id), ArType::Named(..)) {
+        let resolved_ty = self.interner.resolve(ty_id);
+        if matches!(resolved_ty, ArType::Primitive(Primitive::Str)) {
+            if place.projections.is_empty() {
+                let Some(slot) = self.local_slot(place.local) else {
+                    return;
+                };
+                let is_memory = self
+                    .func
+                    .locals
+                    .get(place.local.as_usize())
+                    .is_some_and(|local| local.is_memory);
+                if is_memory {
+                    self.code.push(Instruction::LocalGet(slot));
+                    self.code
+                        .push(Instruction::I32Load(crate::memory::noffset_memarg()));
+                    self.code.push(Instruction::Call(self.free_func_idx));
+                    self.code.push(Instruction::LocalGet(slot));
+                    self.code.push(Instruction::I32Const(0));
+                    self.code
+                        .push(Instruction::I32Store(crate::memory::noffset_memarg()));
+                } else {
+                    self.code.push(Instruction::LocalGet(slot));
+                    self.code.push(Instruction::Call(self.free_func_idx));
+                    self.code.push(Instruction::I32Const(0));
+                    self.code.push(Instruction::LocalSet(slot));
+                }
+            } else {
+                self.emit_place_address(place);
+                self.code.push(Instruction::LocalSet(self.scratch));
+                self.code.push(Instruction::LocalGet(self.scratch));
+                self.code
+                    .push(Instruction::I32Load(crate::memory::noffset_memarg()));
+                self.code.push(Instruction::Call(self.free_func_idx));
+                self.code.push(Instruction::LocalGet(self.scratch));
+                self.code.push(Instruction::I32Const(0));
+                self.code
+                    .push(Instruction::I32Store(crate::memory::noffset_memarg()));
+            }
+            return;
+        }
+        if !matches!(resolved_ty, ArType::Named(..)) {
             return;
         }
         // Materialize the value address once. `scratch` is not touched by the

@@ -84,12 +84,42 @@ impl<'a> Resolver<'a> {
                 self.record_type_ref(name.span, symbol);
                 return true;
             }
+            if name.path.len() >= 3 {
+                let enum_ns = name.path[0..name.path.len() - 2].join(".");
+                let expanded_enum_ns = self.expand_namespace_alias(&enum_ns);
+                let enum_name = &name.path[name.path.len() - 2];
+                if let Some(enum_sym) = self
+                    .symbols
+                    .lookup_module_member(&expanded_enum_ns, enum_name)
+                    && let Some(variant_sym) =
+                        self.symbols.lookup_associated_member(enum_sym, member)
+                {
+                    self.record_type_ref(name.span, variant_sym);
+                    return true;
+                }
+            }
             self.diagnostics.push(Diagnostic::error(
                 DiagCode::M002UndefinedNamespaceMember,
                 format!("namespace member '{namespace}.{member}' is not declared"),
                 name.span,
             ));
             return false;
+        }
+        if name.path.len() == 2 {
+            let enum_sym_opt = self
+                .current_module
+                .as_ref()
+                .and_then(|cur_mod| self.symbols.lookup_module_member(cur_mod, root))
+                .or_else(|| self.symbols.lookup_type(scope, root))
+                .or_else(|| self.symbols.lookup_type(self.symbols.global_scope(), root));
+            if let Some(enum_sym) = enum_sym_opt
+                && let Some(variant_sym) = self
+                    .symbols
+                    .lookup_associated_member(enum_sym, &name.path[1])
+            {
+                self.record_type_ref(name.span, variant_sym);
+                return true;
+            }
         }
         if let Some(ref cur_mod) = self.current_module
             && let Some(symbol) = self.symbols.lookup_module_member(cur_mod, root)
@@ -114,6 +144,27 @@ impl<'a> Resolver<'a> {
         if let Some(symbol) = self.symbols.lookup_type(self.symbols.global_scope(), root) {
             self.record_type_ref(name.span, symbol);
             return true;
+        }
+        if name.path.len() == 1 {
+            let mut matched_variant: Option<crate::SymbolId> = None;
+            for ((parent_id, member_name), &variant_sym) in &self.symbols.associated_members {
+                if member_name == root
+                    && self
+                        .symbols
+                        .try_get(*parent_id)
+                        .is_some_and(|s| s.kind == crate::SymbolKind::Enum)
+                    && matched_variant.is_none_or(|prev| {
+                        (variant_sym.file_id, variant_sym.local_id.0)
+                            < (prev.file_id, prev.local_id.0)
+                    })
+                {
+                    matched_variant = Some(variant_sym);
+                }
+            }
+            if let Some(variant_sym) = matched_variant {
+                self.record_type_ref(name.span, variant_sym);
+                return true;
+            }
         }
         if matches!(root.as_str(), "void" | "Err") {
             return true;

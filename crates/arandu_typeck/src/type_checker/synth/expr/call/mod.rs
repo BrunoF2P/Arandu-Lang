@@ -310,8 +310,12 @@ pub(super) fn synth_call_expr(
         ExprKind::Call {
             callee,
             args,
-            trailing_block: _,
+            trailing_block,
         } => {
+            if let Some(block_id) = trailing_block {
+                let block = checker.pool.block(*block_id);
+                let _ = crate::type_checker::check::check_block(checker, checker.pool, block);
+            }
             let callee_id = *callee;
             let args_range = *args;
             // Enum variant constructors inherit their generic parameters from

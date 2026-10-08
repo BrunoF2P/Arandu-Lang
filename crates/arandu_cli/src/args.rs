@@ -418,7 +418,7 @@ pub fn global_help() -> &'static str {
 pub fn command_help(command: &str) -> Option<&'static str> {
     match command {
         "run" => Some(
-            "Usage: arandu run [path] [-- program-args...]\n\nCompile and execute a package or .aru file with the Cranelift JIT.\n\nOptions:\n  --opt             Optimize AMIR before execution\n  --parallel        Check multiple source files where supported\n  --stdlib-path DIR Override the standard library path\n  -v, --verbose     Show progress and incremental status\n  -q, --quiet       Suppress non-error status output\n\nExamples:\n  arandu run\n  arandu run src/main.aru -- hello\n",
+            "Usage: arandu run [path] [-- program-args...]\n\nCompile and execute a package or .aru file with the Cranelift JIT.\n\nOptions:\n  --opt             Optimize AMIR before execution\n  --stdlib-path DIR Override the standard library path\n  -v, --verbose     Show progress and incremental status\n  -q, --quiet       Suppress non-error status output\n\nExamples:\n  arandu run\n  arandu run src/main.aru -- hello\n",
         ),
         "build" => Some(
             "Usage: arandu build [path] [options]\n\nCompile a package to a native executable or library.\n\nOptions:\n  --release            Build with speed optimizations\n  --target TRIPLE      Select a compilation target\n  --layout LAYOUT      Select host, ptr4, ptr8, or i686 layout\n  --locked             Require the lockfile to be current\n  --offline            Resolve from the local cache only\n  -v, --verbose        Show detailed build progress\n  -q, --quiet          Suppress non-error status output\n",
@@ -472,7 +472,7 @@ pub fn command_help(command: &str) -> Option<&'static str> {
             "Usage: arandu doctor [--stdlib-path DIR] [-v]\n\nInspect the compiler toolchain, runtime, and standard library.\n",
         ),
         "cache" => Some(
-            "Usage: arandu cache <dir|inspect|verify|prune> [options]\n\nInspect or maintain the compiler cache.\n",
+            "Usage: arandu cache <dir|inspect|verify|verify-tree|prune> [options]\n\nInspect or maintain the compiler cache.\n",
         ),
         "lex" => Some(
             "Usage: arandu lex <file.aru>\n\nPrint the source token stream (compiler inspection tool).\n",

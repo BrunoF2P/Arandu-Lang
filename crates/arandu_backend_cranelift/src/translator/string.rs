@@ -182,6 +182,7 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                 value,
                 variant,
                 index,
+                tuple_ty,
                 ..
             } => {
                 let ptr_val = self.translate_operand(value, Some(self.ptr_type));
@@ -199,32 +200,26 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                     }
                     other => other,
                 };
-                let enum_id = match enum_ty {
-                    ArType::Named(enum_id, _) => enum_id,
-                    _ => arandu_semantics::SymbolId::DUMMY,
-                };
+                let tag = self
+                    .type_info
+                    .enum_variant_tags
+                    .get(variant)
+                    .copied()
+                    .unwrap_or(0);
 
                 let mut payload_offset = 0;
-                if let Some(variants) =
-                    arandu_semantics::layout::StructLayoutProvider::get_enum_variants(
+                if let Some(payload_ty_id) = (*tuple_ty).or_else(|| {
+                    arandu_semantics::layout::instantiated_enum_variant_payload_type(
+                        &enum_ty,
+                        tag,
+                        &self.type_info.type_interner,
                         self.type_info,
-                        enum_id,
                     )
-                {
-                    let tag = self
-                        .type_info
-                        .enum_variant_tags
-                        .get(variant)
-                        .copied()
-                        .unwrap_or(0);
-                    if let Some(variant_shape) = variants.get(tag)
-                        && let Some(payload_ty_id) = variant_shape.payload_ty
-                    {
-                        let payload_ty = self.type_info.resolve_type_id(payload_ty_id);
-                        let payload_layout = self.checked_layout(&payload_ty);
-                        if *index < payload_layout.field_offsets.len() {
-                            payload_offset = payload_layout.field_offsets[*index] as i32;
-                        }
+                }) {
+                    let payload_ty = self.type_info.resolve_type_id(payload_ty_id);
+                    let payload_layout = self.checked_layout(&payload_ty);
+                    if *index < payload_layout.field_offsets.len() {
+                        payload_offset = payload_layout.field_offsets[*index] as i32;
                     }
                 }
 

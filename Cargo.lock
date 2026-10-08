@@ -204,6 +204,7 @@ dependencies = [
 name = "arandu_ide"
 version = "0.1.8"
 dependencies = [
+ "arandu_lexer",
  "arandu_middle",
  "arandu_parser",
  "arandu_query",

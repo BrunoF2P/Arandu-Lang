@@ -8,7 +8,7 @@ use crate::cli_error::{CliFailure, CliResult, CliSuccess};
 use crate::linker;
 use crate::pipeline::{
     open_entry_file, optimize_amir_or_exit, optimize_amir_with_level_or_exit, pipeline_lower,
-    print_diagnostics_and_exit,
+    print_diagnostics_and_exit, print_genref_report,
 };
 use crate::project::{self, ProjectFlags};
 use arandu_middle::layout::DataLayout;
@@ -19,6 +19,7 @@ pub fn cmd_project_build(
     flags: &ProjectFlags,
     opt: bool,
     debug_info: bool,
+    genref_report: bool,
     data_layout: DataLayout,
 ) -> CliResult {
     let backend = project::BackendChoice::from_release_flag(flags.release);
@@ -103,7 +104,7 @@ pub fn cmd_project_build(
         crate::incremental::check_incremental(&session_config)
     };
     let reusable_input_fingerprints = match check {
-        crate::incremental::IncrementalCheck::UpToDate { artifact_path } => {
+        crate::incremental::IncrementalCheck::UpToDate { artifact_path } if !genref_report => {
             let backend_name = if is_wasm {
                 if ctx.target_kind == project::TargetKind::Component {
                     "wasm-component"
@@ -125,6 +126,7 @@ pub fn cmd_project_build(
             }
             return Ok(CliSuccess::Done);
         }
+        crate::incremental::IncrementalCheck::UpToDate { .. } => None,
         crate::incremental::IncrementalCheck::NeedsRebuild {
             reason,
             reusable_input_fingerprints,
@@ -139,6 +141,9 @@ pub fn cmd_project_build(
     let mut registry = arandu_base::SourceRegistry::default();
     let (file, filepath) = open_entry_file(&db, &mut registry, &ctx.entry_path);
     let artifacts = pipeline_lower(&db, file, &filepath);
+    if genref_report {
+        print_genref_report(&filepath, &artifacts);
+    }
     if !flags.quiet
         && (flags.verbose || explain_rebuild)
         && let Some(log) = &rebuild_log

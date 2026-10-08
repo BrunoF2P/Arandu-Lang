@@ -3338,3 +3338,36 @@ func main(): int {
     *no_free.stmt_mut(arandu_middle::amir::InstrId::from_usize(free_id)) = AmirStmt::Nop;
     check_rejected(&no_free);
 }
+
+#[test]
+fn parity_user_function_with_runtime_helper_name_is_an_ordinary_call() {
+    test_zero_result_all_opt_levels(
+        "user_copy_value",
+        r#"
+struct User {}
+func User.ar_rt_copy_value(destination: int, source: int, size: int): int {
+    return destination + source + size
+}
+func main(): int {
+    return User.ar_rt_copy_value(10, 20, 12) - 42
+}
+"#,
+    );
+}
+
+#[test]
+fn parity_shorthand_record_pattern_uses_scrutinee_enum_identity() {
+    test_zero_result_all_opt_levels(
+        "record_pattern_identity",
+        r#"
+enum First { Item { value: int } }
+enum Second { Item { value: int } }
+func read(value: Second): int {
+    return match value { Item { value: result } => result }
+}
+func main(): int {
+    return read(Second.Item { value: 42 }) - 42
+}
+"#,
+    );
+}

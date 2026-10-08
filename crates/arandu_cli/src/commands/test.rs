@@ -127,6 +127,20 @@ pub fn cmd_project_test_list(
             ));
         }
         let text = file.text(&db);
+        for case in arandu_query::file_test_manifest(&db, file).iter() {
+            let id = format!("{}::{module}::{}", ctx.name, case.name);
+            let (line, column_utf16) = discovery_position(text, case.span.start);
+            discovered.push(DiscoveryCase {
+                id: id.clone(),
+                path: discovery_path(&ctx.root, &path),
+                line,
+                column_utf16,
+            });
+            registry.insert(arandu_codegen::testing::TestEntry {
+                id,
+                function: case.name.to_string(),
+            });
+        }
         if doc_tests {
             for (idx, doctest) in arandu_query::file_doctests(&db, file).iter().enumerate() {
                 let id = format!("{}::{module}::doctest_{idx}", ctx.name);
@@ -139,21 +153,6 @@ pub fn cmd_project_test_list(
                 registry.insert(arandu_codegen::testing::TestEntry {
                     id,
                     function: format!("doctest_{idx}"),
-                });
-            }
-        } else {
-            for case in arandu_query::file_test_manifest(&db, file).iter() {
-                let id = format!("{}::{module}::{}", ctx.name, case.name);
-                let (line, column_utf16) = discovery_position(text, case.span.start);
-                discovered.push(DiscoveryCase {
-                    id: id.clone(),
-                    path: discovery_path(&ctx.root, &path),
-                    line,
-                    column_utf16,
-                });
-                registry.insert(arandu_codegen::testing::TestEntry {
-                    id,
-                    function: case.name.to_string(),
                 });
             }
         }
@@ -189,7 +188,7 @@ pub fn cmd_project_test_list(
                 .unwrap_or(0);
             let temp_root = std::env::var_os("ARANDU_TEST_TEMP_ROOT").map(PathBuf::from);
             arandu_runtime::testing_runtime::init_test_context(exact, sequence, temp_root);
-            let result = run_exact_test(&db, &ctx, exact, data_layout);
+            let result = run_exact_test(&mut db, &ctx, exact, data_layout);
             let outcome = arandu_runtime::testing_runtime::finish_test_context();
 
             let (status, failure) =
@@ -278,14 +277,13 @@ pub fn cmd_project_test_list(
         }
     } else {
         if runner.format == test_runner::TestOutputFormat::Human {
-            let (harness_manifest, harness_c) = harness.as_ref().ok_or_else(|| {
+            let harness_manifest = harness.as_ref().ok_or_else(|| {
                 CliFailure::operational("run tests", None, "missing published harness")
             })?;
             eprintln!(
-                "test harness: {} cases (manifest={}, c={})",
+                "test harness: {} cases (manifest={})",
                 cases.len(),
                 harness_manifest.display(),
-                harness_c.display()
             );
         }
         let passed = test_runner::run_cases(&ctx.root, &ctx.stdlib.path, cases, runner)
@@ -302,7 +300,7 @@ pub fn cmd_project_test_list(
 }
 
 pub fn run_exact_test(
-    db: &arandu_query::DatabaseImpl,
+    db: &mut arandu_query::DatabaseImpl,
     ctx: &project::ProjectContext,
     exact: &str,
     data_layout: arandu_middle::layout::DataLayout,
@@ -324,6 +322,79 @@ pub fn run_exact_test(
                 "test source was not registered in the project database",
             )
         })?;
+
+        let is_source_test = arandu_query::file_test_manifest(db, file)
+            .iter()
+            .any(|case| case.name.as_str() == function);
+        if !is_source_test
+            && let Some(idx_str) = function.strip_prefix("doctest_")
+            && let Ok(idx) = idx_str.parse::<usize>()
+        {
+            let doctests = arandu_query::file_doctests(db, file);
+            let snippet = doctests.get(idx).cloned().ok_or_else(|| {
+                CliFailure::operational(
+                    "run test case",
+                    Some(path.clone()),
+                    format!("doctest `{function}` was not found in module"),
+                )
+            })?;
+            let original_text = file.text(db).to_string();
+            let synthetic_source = format!(
+                "{original_text}\n\nfunc {function}(): void {{\n{}\n}}\n",
+                snippet.code
+            );
+            let doctest_key = format!("{}#{function}", filepath);
+            let doctest_file = db.new_file(doctest_key, synthetic_source);
+            let artifacts = pipeline_lower_checked(db, doctest_file)
+                .map_err(|diagnostics| CliFailure::diagnostics(diagnostics, Some(path.clone())))?
+                .artifacts;
+            if snippet.no_run {
+                return Ok(CliSuccess::Done);
+            }
+            ensure_host_jit_layout(data_layout)?;
+            let backend = arandu_backend_cranelift::CraneliftBackend::try_new()
+                .map_err(|diag| CliFailure::diagnostics([diag], Some(path.clone())))?;
+            let output = arandu_semantics::CodegenBackend::compile(
+                backend,
+                &artifacts.amir,
+                artifacts.type_check.symbols.as_ref(),
+                artifacts.type_check.type_info.as_ref(),
+            )
+            .map_err(|diag| CliFailure::diagnostics([diag], Some(path.clone())))?;
+            let host_name = artifacts.amir.funcs.iter().find_map(|func_def| {
+                let symbol = artifacts.type_check.symbols.get(func_def.symbol);
+                (symbol.name.as_str() == function)
+                    .then(|| artifacts.type_check.symbols.host_func_name(symbol))
+            });
+            unsafe {
+                if let Some(test_fn) = host_name.as_ref().and_then(|name| {
+                    arandu_semantics::CompiledCode::get_fn::<unsafe fn()>(&output, name)
+                }) {
+                    test_fn();
+                    if snippet.should_panic {
+                        let outcome = arandu_runtime::testing_runtime::finish_test_context();
+                        let temp_root =
+                            std::env::var_os("ARANDU_TEST_TEMP_ROOT").map(PathBuf::from);
+                        arandu_runtime::testing_runtime::init_test_context(exact, 0, temp_root);
+                        if outcome.status == arandu_codegen::testing::TestStatus::Failed {
+                            return Ok(CliSuccess::Done);
+                        }
+                        return Err(CliFailure::operational(
+                            "run test case",
+                            Some(path),
+                            "doctest marked `should_panic` completed without failing",
+                        ));
+                    }
+                    return Ok(CliSuccess::Done);
+                }
+            }
+            return Err(CliFailure::operational(
+                "run test case",
+                Some(path),
+                format!("doctest function `{function}` is not callable as `fn() -> void`"),
+            ));
+        }
+
         // A harness child must report compilation failures through its terminal
         // event, not exit inside the pipeline before the IPC frame is written.
         let artifacts = pipeline_lower_checked(db, file)

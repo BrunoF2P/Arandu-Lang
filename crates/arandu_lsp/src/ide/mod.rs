@@ -623,4 +623,52 @@ mod tests {
             "{block_content:?}"
         );
     }
+
+    #[test]
+    fn references_respects_include_declaration_expr_fallback_and_multi_file_docs() {
+        let util_text = "public func helper(): int {\n    return 1\n}\n";
+        let main_text = "import util\nfunc main(): int {\n    return util.helper()\n}\n";
+        let mut host = AnalysisHost::new();
+        let util_file = host.new_file("util.aru".into(), util_text.into());
+        let main_file = host.new_file("main.aru".into(), main_text.into());
+        let snap = host.snapshot();
+
+        let util_uri = crate::uri_util::parse_uri("file:///util.aru").expect("util uri");
+        let main_uri = crate::uri_util::parse_uri("file:///main.aru").expect("main uri");
+        let docs = vec![
+            DocSnap {
+                source: util_file,
+                path: std::sync::Arc::new(std::path::PathBuf::from("/util.aru")),
+                uri: util_uri.clone(),
+            },
+            DocSnap {
+                source: main_file,
+                path: std::sync::Arc::new(std::path::PathBuf::from("/main.aru")),
+                uri: main_uri.clone(),
+            },
+        ];
+
+        // Position on `util.helper` call in main.aru (requires expr_symbol_at fallback)
+        let call_offset = main_text.find("helper").expect("helper call") as u32;
+        let call_pos = offset_to_position(&LineIndex::new(main_text), call_offset);
+
+        let with_decl = references(
+            &snap, main_file, main_text, call_pos, &main_uri, &docs, true,
+        );
+        assert_eq!(with_decl.len(), 2, "expected decl + call: {with_decl:?}");
+        assert!(with_decl.iter().any(|loc| loc.uri == util_uri));
+        assert!(with_decl.iter().any(|loc| loc.uri == main_uri));
+
+        let without_decl = references(
+            &snap, main_file, main_text, call_pos, &main_uri, &docs, false,
+        );
+        assert_eq!(
+            without_decl.len(),
+            1,
+            "expected only call: {without_decl:?}"
+        );
+        assert_eq!(without_decl[0].uri, main_uri);
+        assert_eq!(without_decl[0].range.start, call_pos);
+        assert_eq!(without_decl[0].range.end.character, call_pos.character + 6);
+    }
 }

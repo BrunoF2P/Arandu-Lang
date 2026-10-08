@@ -301,9 +301,16 @@ impl<'a> CEmitter<'a> {
                     | "ar_rt_join_i64"
                     | "ar_rt_cancel_i64"
                     | "ar_rt_parallel_fold_run"
+                    | "ar_rt_copy_value"
+                    | "ar_rt_alloc_aligned"
+                    | "ar_rt_free_aligned"
                     | "io__eprint"
                     | "eprint"
-            ) {
+            ) || name.ends_with("__ar_rt_copy_value")
+                || name.ends_with("__ar_rt_alloc_aligned")
+                || name.ends_with("__ar_rt_free_aligned")
+                || name.ends_with("__ar_rt_parallel_fold_run")
+            {
                 continue;
             }
             self.ensure_type_emitted(ret);

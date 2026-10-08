@@ -90,13 +90,13 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
         if let Some(op) = payload {
             let op_ty = self.get_operand_ar_type(op);
             let payload_ar_ty = match &enum_ty {
-                ArType::Named(enum_id, _) => {
-                    arandu_semantics::layout::StructLayoutProvider::get_enum_variants(
+                ArType::Named(_, _) => {
+                    arandu_semantics::layout::instantiated_enum_variant_payload_type(
+                        &enum_ty,
+                        variant_tag,
+                        &self.type_info.type_interner,
                         self.type_info,
-                        *enum_id,
                     )
-                    .and_then(|variants| variants.get(variant_tag).cloned())
-                    .and_then(|shape| shape.payload_ty)
                 }
                 ArType::Result(ok, err) => match variant_tag {
                     0 => Some(*ok),

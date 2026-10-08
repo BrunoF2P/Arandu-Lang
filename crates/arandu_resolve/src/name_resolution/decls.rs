@@ -352,8 +352,27 @@ impl<'a> Resolver<'a> {
             }
             Some(EnumPayload::Struct { fields, .. }) => {
                 let variant_scope = self.symbols.new_scope(scope);
+                let mut seen_fields = smallvec::SmallVec::<[(&str, arandu_lexer::Span); 8]>::new();
                 for field in fields {
-                    self.resolve_field(variant_scope, field);
+                    if let Some((_, prev_span)) =
+                        seen_fields.iter().find(|(name, _)| *name == field.name)
+                    {
+                        self.diagnostics.push(
+                            crate::Diagnostic::error(
+                                crate::DiagCode::T030DuplicateFieldDecl,
+                                format!(
+                                    "field '{}' is already declared in enum variant '{}'",
+                                    field.name, variant.name
+                                ),
+                                field.span,
+                            )
+                            .with_label(*prev_span, "first declaration here")
+                            .with_label(field.span, "duplicate field"),
+                        );
+                    } else {
+                        seen_fields.push((&field.name, field.span));
+                        self.resolve_field(variant_scope, field);
+                    }
                 }
             }
             None => {}

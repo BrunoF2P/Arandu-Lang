@@ -77,17 +77,9 @@ impl TyCtx {
     }
 
     /// Look up the type for a symbol.
-    ///
-    /// Reports to the global perf counters when `-Zprofile-queries` is active.
     #[must_use]
     pub fn lookup(&self, symbol: SymbolId) -> Option<TypeId> {
-        let result = self.bindings.get(&symbol).copied();
-        if result.is_some() {
-            arandu_base::perf::track_query_hit();
-        } else {
-            arandu_base::perf::track_query_miss();
-        }
-        result
+        self.bindings.get(&symbol).copied()
     }
 
     // ── Return type stack ───────────────────────────────────────────

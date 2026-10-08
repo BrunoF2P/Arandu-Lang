@@ -205,7 +205,7 @@ async function startLanguageServer(
         errorHandler
     };
     const nextClient = new LanguageClient(
-        'aranduLanguageServer',
+        'arandu',
         'Arandu Language Server',
         serverOptions,
         clientOptions

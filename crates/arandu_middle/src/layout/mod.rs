@@ -1281,5 +1281,35 @@ pub fn instantiated_field_type(
     ))
 }
 
+/// Resolve an enum variant's payload type through the concrete generic arguments
+/// on `owner`. Returns `None` for unit variants, unavailable metadata, or arity mismatch.
+#[must_use]
+pub fn instantiated_enum_variant_payload_type(
+    owner: &ArType,
+    variant_tag: usize,
+    interner: &TypeInterner,
+    provider: &dyn StructLayoutProvider,
+) -> Option<TypeId> {
+    let ArType::Named(symbol, arguments) = owner else {
+        return None;
+    };
+    let variants = provider.get_enum_variants(*symbol)?;
+    let payload = variants.get(variant_tag)?.payload_ty?;
+    let parameters = provider.get_generic_params(*symbol).unwrap_or(&[]);
+    let arguments = interner.type_args(*arguments);
+    if parameters.is_empty() || arguments.is_empty() {
+        return Some(payload);
+    }
+    if parameters.len() != arguments.len() {
+        return None;
+    }
+    let substitution = crate::types::build_subst_ids(parameters, &arguments, interner);
+    Some(crate::types::substitute_type_id(
+        payload,
+        &substitution,
+        interner,
+    ))
+}
+
 #[cfg(test)]
 mod tests;

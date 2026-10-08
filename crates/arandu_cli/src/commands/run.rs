@@ -19,6 +19,7 @@ pub fn cmd_project_run(
     flags: &ProjectFlags,
     opt: bool,
     _debug: bool,
+    genref_report: bool,
     data_layout: DataLayout,
     program_args: &[String],
 ) -> CliResult {
@@ -49,6 +50,9 @@ pub fn cmd_project_run(
     let mut registry = arandu_base::SourceRegistry::default();
     let (file, filepath) = open_entry_file(&db, &mut registry, &ctx.entry_path);
     let artifacts = pipeline_lower(&db, file, &filepath);
+    if genref_report {
+        print_genref_report(&filepath, &artifacts);
+    }
     if !flags.quiet
         && let Some(log) = &rebuild_log
     {
@@ -649,6 +653,8 @@ pub fn cmd_project_check(
     flags: &ProjectFlags,
     _opt: bool,
     _debug: bool,
+    parallel: bool,
+    genref_report: bool,
     data_layout: DataLayout,
 ) -> CliResult {
     let explain_rebuild = arandu_base::EXPLAIN_REBUILD.load(std::sync::atomic::Ordering::Relaxed);
@@ -671,7 +677,55 @@ pub fn cmd_project_check(
     };
     let mut registry = arandu_base::SourceRegistry::default();
     let (file, filepath) = open_entry_file(&db, &mut registry, &ctx.entry_path);
-    let _ = pipeline_lower(&db, file, &filepath);
+    if parallel {
+        let package_src = ctx
+            .entry_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| ctx.root.clone());
+        let mut module_files = vec![(file, filepath.clone())];
+        for rel in arandu_query::scan_aru_entries(&package_src) {
+            let full_path = package_src.join(&rel);
+            let key = full_path.to_string_lossy().into_owned();
+            if key == filepath {
+                continue;
+            }
+            if let Some(sf) = db.source_file_by_path(&key) {
+                module_files.push((sf, key));
+            }
+        }
+        let db_mutex = std::sync::Mutex::new(db);
+        let outcomes = module_files
+            .into_par_iter()
+            .map(|(sf, path_str)| {
+                let thread_db = match db_mutex.lock() {
+                    Ok(guard) => guard.clone(),
+                    Err(poisoned) => poisoned.into_inner().clone(),
+                };
+                let outcome = pipeline_lower_checked(&thread_db, sf);
+                (path_str, outcome)
+            })
+            .collect::<Vec<_>>();
+        let db = match db_mutex.into_inner() {
+            Ok(db) => db,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        for (path_str, outcome) in outcomes {
+            let outcome = match outcome {
+                Ok(outcome) => outcome,
+                Err(diagnostics) => render_pipeline_failure(&db, diagnostics, &path_str),
+            };
+            render_nonfatal_diagnostics(&db, &outcome.diagnostics, &path_str);
+            if genref_report && path_str == filepath {
+                print_genref_report(&filepath, &outcome.artifacts);
+            }
+        }
+    } else {
+        let artifacts = pipeline_lower(&db, file, &filepath);
+        if genref_report {
+            print_genref_report(&filepath, &artifacts);
+        }
+    }
     if !flags.quiet
         && let Some(log) = &rebuild_log
     {

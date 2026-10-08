@@ -2398,3 +2398,40 @@ fn jit_user_defined_generic_option_executes_successfully() {
     };
     assert_eq!(result, 65);
 }
+
+#[test]
+fn jit_enum_struct_variants_execute_end_to_end() {
+    let src = r#"
+    enum Shape<T> {
+        Circle { radius: T }
+        Rect { width: T, height: T }
+        Empty
+    }
+
+    func area(s: Shape<int>): int {
+        return match s {
+            Shape.Circle { radius } => radius * radius * 3
+            Shape.Rect { height: h, width } => width * h
+            Shape.Empty => 0
+        }
+    }
+
+    func main(): int {
+        let radius = 4
+        let c = Shape.Circle { radius }
+        let r = Shape<int>.Rect { height: 7, width: 6 }
+        let e: Shape<int> = Shape.Empty
+        return area(c) + area(r) + area(e)
+    }
+    "#;
+    let (amir, symbols, type_info) = compile_src_mono(src);
+    let backend = backend_for_test();
+    let module = backend.compile(&amir, &symbols, &type_info).unwrap();
+
+    let result: i64 = unsafe {
+        let f: unsafe extern "C" fn() -> i64 = module.get_fn("main").unwrap();
+        f()
+    };
+    // Circle: 4 * 4 * 3 = 48; Rect: 6 * 7 = 42; Empty: 0 => 90
+    assert_eq!(result, 90);
+}

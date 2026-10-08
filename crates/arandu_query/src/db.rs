@@ -202,11 +202,14 @@ impl DatabaseImpl {
         QueryCancellationToken(self.cancellation_token())
     }
 
-    /// Database without rebuild event overhead.
+    /// Database without rebuild event overhead (installs lightweight counter callback only if `-Zprofile-queries` is enabled).
     #[must_use]
     pub fn new() -> Self {
+        let callback = arandu_base::perf::PROFILE_QUERIES
+            .load(std::sync::atomic::Ordering::Relaxed)
+            .then(RebuildLog::profile_queries_callback);
         let mut db = Self {
-            storage: Storage::new(None),
+            storage: Storage::new(callback),
             files: Arc::new(RwLock::new(FileRegistry::default())),
             cst_cache: Arc::new(Mutex::new(CstCache::default())),
             rebuild_log: None,

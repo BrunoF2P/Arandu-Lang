@@ -200,21 +200,50 @@ impl LowerCtx<'_> {
         let fields_slice = self.hir.pool.field_inits_list(fields);
         let mut field_ops = Vec::with_capacity(fields_slice.len());
         for f in fields_slice {
+            let field_ty = self.hir.pool.expr(f.value).ty;
             let value = self.lower_expr(f.value, None, symbols)?;
             // A struct literal takes ownership of each non-Copy field value.
             // Record that move before drop elaboration so the source local is
             // not destroyed after its value has been installed in the result.
             let value = self.consume_operand(value)?;
-            field_ops.push((f.name.clone(), value));
+            field_ops.push((f.name.clone(), value, field_ty));
         }
         if let Some(struct_fields) = self.tc.type_info.struct_fields.get(&struct_symbol) {
-            field_ops.sort_by_key(|(name, _)| {
+            field_ops.sort_by_key(|(name, _, _)| {
                 struct_fields
                     .get(name.as_str())
                     .map(|f| f.index)
                     .unwrap_or(usize::MAX)
             });
         }
+        if let Some(&tag) = self.tc.type_info.enum_variant_tags.get(&struct_symbol) {
+            let payload_op = match field_ops.len() {
+                0 => None,
+                1 => field_ops.pop().map(|(_, op, _)| op),
+                _ => {
+                    let param_tys: Vec<_> = field_ops.iter().map(|(_, _, ty)| *ty).collect();
+                    let item_ops: Vec<_> = field_ops.into_iter().map(|(_, op, _)| op).collect();
+                    let tuple_ty =
+                        crate::types::ArType::tuple(&param_tys, &self.tc.type_info.type_interner);
+                    let dest_tuple = self.new_temp(tuple_ty);
+                    self.emit_assign_temp(dest_tuple, AmirRvalue::Tuple { items: item_ops });
+                    Some(self.consume_operand(AmirOperand::Copy(dest_tuple))?)
+                }
+            };
+            let dest = target.unwrap_or_else(|| self.new_temp_id(expr.ty));
+            self.emit_assign_temp(
+                dest,
+                AmirRvalue::EnumConstruct {
+                    variant_tag: tag,
+                    payload: payload_op,
+                },
+            );
+            return Ok(AmirOperand::Copy(dest));
+        }
+        let field_ops = field_ops
+            .into_iter()
+            .map(|(name, op, _)| (name, op))
+            .collect();
         let dest = target.unwrap_or_else(|| self.new_temp_id(expr.ty));
         self.emit_assign_temp(
             dest,

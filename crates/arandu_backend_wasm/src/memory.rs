@@ -79,6 +79,15 @@ pub const CELL_SCRATCH_MAGIC: i32 = 0x5A5A_5354;
 /// Alignment exponent used for every memory access (4-byte aligned memory).
 pub const MEM_ALIGN: u32 = 2;
 
+/// Reserved low-memory slot (`< RODATA_BASE`) holding the monotonic `GenRef`
+/// generation counter.
+pub const GEN_COUNTER_ADDR: u64 = 0x1FE8;
+
+/// Reserved 16-byte low-memory scratch area (`< RODATA_BASE`) used to launder
+/// `BlackBox` values through exported linear memory (`[0x1FF0..0x1FF8)` holds
+/// the value and `0x1FF8` holds an opaque zero base offset).
+pub const BLACK_BOX_SCRATCH_ADDR: u64 = 0x1FF0;
+
 /// Shorthand for `MemArg` with no offset and 4-byte alignment on memory 0.
 #[must_use]
 pub const fn noffset_memarg() -> MemArg {

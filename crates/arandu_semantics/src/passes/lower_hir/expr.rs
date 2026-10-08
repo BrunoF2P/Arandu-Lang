@@ -529,15 +529,28 @@ pub(crate) fn lower_expr_raw(
                 trailing_block: hir_trailing,
             }
         }
-        ExprKind::StructLiteral { ty: _, fields, .. } => {
-            let struct_symbol = match type_check.type_info.type_interner.resolve(fallback_ty) {
-                ArType::Named(id, _) => id,
-                _ => {
-                    return Err(Diagnostic::error(
-                        crate::diagnostics::DiagCode::L001LoweringUnresolvedSymbol,
-                        "cannot lower struct literal: type is not a named struct",
-                        span,
-                    ));
+        ExprKind::StructLiteral { ty, fields, .. } => {
+            let resolved_variant_sym = match pool.type_expr(*ty) {
+                arandu_parser::TypeExpr::Named { name, .. } => type_check
+                    .resolved
+                    .type_refs
+                    .get(&crate::NodeKey::from(name.span))
+                    .copied()
+                    .filter(|sym| type_check.type_info.enum_variants.contains_key(sym)),
+                _ => None,
+            };
+            let struct_symbol = if let Some(variant_sym) = resolved_variant_sym {
+                variant_sym
+            } else {
+                match type_check.type_info.type_interner.resolve(fallback_ty) {
+                    ArType::Named(id, _) => id,
+                    _ => {
+                        return Err(Diagnostic::error(
+                            crate::diagnostics::DiagCode::L001LoweringUnresolvedSymbol,
+                            "cannot lower struct literal: type is not a named struct",
+                            span,
+                        ));
+                    }
                 }
             };
             let field_ids = pool.field_init_list(*fields);

@@ -1438,6 +1438,25 @@ fn stdio_semantic_requests_use_utf16_around_unicode() {
         );
     }
 
+    lsp.send(&json!({
+        "jsonrpc": "2.0", "id": 10, "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": uri }, "position": hover_position,
+            "context": { "includeDeclaration": false }
+        }
+    }));
+    let response = lsp.wait_for_response(10);
+    let locations = response["result"].as_array().expect("reference locations");
+    assert_eq!(locations.len(), 1, "{response}");
+    assert_eq!(
+        locations[0]["range"]["start"],
+        utf16_position(source, call_start)
+    );
+    assert_eq!(
+        locations[0]["range"]["end"],
+        utf16_position(source, call_start + 4)
+    );
+
     lsp.shutdown(9);
 }
 

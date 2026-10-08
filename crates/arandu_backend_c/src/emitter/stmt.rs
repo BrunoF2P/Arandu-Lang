@@ -330,6 +330,8 @@ impl<'a> CEmitter<'a> {
                     return;
                 }
                 if let AmirOperand::FunctionRef(symbol) = callee
+                    && self.symbols.get(*symbol).kind
+                        == arandu_middle::symbol_table::SymbolKind::ExternFunc
                     && self
                         .symbols
                         .get(*symbol)
@@ -355,6 +357,32 @@ impl<'a> CEmitter<'a> {
                             owner, value, value
                         );
                     }
+                    return;
+                }
+                if let AmirOperand::FunctionRef(symbol) = callee
+                    && self.symbols.get(*symbol).kind == arandu_middle::SymbolKind::ExternFunc
+                    && self
+                        .symbols
+                        .get(*symbol)
+                        .name
+                        .rsplit('.')
+                        .next()
+                        .is_some_and(|bare| bare == "ar_rt_copy_value")
+                    && let [dest, source, size] = args.as_slice()
+                {
+                    let dest_str = self.format_operand(dest, func);
+                    let source_str = self.format_operand(source, func);
+                    let size_str = self.format_operand(size, func);
+                    let source_ty = self.operand_ty(func, source);
+                    let source_ptr = if source_ty.is_borrowed_slice_abi(self.interner) {
+                        format!("(const void*)&({source_str})")
+                    } else {
+                        format!("(const void*)({source_str})")
+                    };
+                    let _ = writeln!(
+                        &mut self.output,
+                        "    ar_rt_copy_value((void*)({dest_str}), {source_ptr}, (size_t)({size_str}));"
+                    );
                     return;
                 }
                 let callee_str = self.format_operand(callee, func);

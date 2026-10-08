@@ -305,8 +305,6 @@ public func BufWriter.write<W: Write>(self: mut ref BufWriter<W>, data: []u8): R
 }
 
 extern "C" {
-    /// Write UTF-8 bytes to stdout (no trailing newline).
-    func write(buf: str): void
     /// Write UTF-8 bytes to stderr (no trailing newline).
     func eprint(buf: str): void
 }

@@ -1,6 +1,6 @@
 use arandu_semantics::amir::{AmirStmt, LocalId};
 use arandu_semantics::passes::type_checker::types::{ArType, Primitive};
-use cranelift_codegen::ir::{InstBuilder, Value};
+use cranelift_codegen::ir::{InstBuilder, MemFlagsData, Value};
 
 use super::FunctionTranslator;
 use crate::types::{ClifType, clif_type};
@@ -135,9 +135,38 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
             AmirStmt::Destroy(place) => {
                 let ty = self.place_ar_ty(place);
                 if matches!(ty, ArType::Primitive(Primitive::Str)) {
-                    if let Some(&(var_ptr, _)) = self.str_local_map.get(&place.local) {
-                        let ptr_val = self.builder.use_var(var_ptr);
+                    let zero = self.builder.ins().iconst(self.ptr_type, 0);
+                    if place.projections.is_empty() {
+                        if let Some(&slot) = self.local_stack_slots.get(&place.local) {
+                            let addr = self.builder.ins().stack_addr(self.ptr_type, slot, 0);
+                            let ptr_val = self.builder.ins().load(
+                                self.ptr_type,
+                                MemFlagsData::new(),
+                                addr,
+                                0,
+                            );
+                            self.emit_free_ptr(ptr_val);
+                            self.builder.ins().store(MemFlagsData::new(), zero, addr, 0);
+                            if let Some(&(var_ptr, _)) = self.str_local_map.get(&place.local) {
+                                self.builder.def_var(var_ptr, zero);
+                            }
+                        } else if let Some(&(var_ptr, _)) = self.str_local_map.get(&place.local) {
+                            let ptr_val = self.builder.use_var(var_ptr);
+                            self.emit_free_ptr(ptr_val);
+                            self.builder.def_var(var_ptr, zero);
+                        }
+                    } else {
+                        let (base_ptr, offset) = self.translate_place_address_for_load(place);
+                        let ptr_val = self.builder.ins().load(
+                            self.ptr_type,
+                            MemFlagsData::new(),
+                            base_ptr,
+                            offset,
+                        );
                         self.emit_free_ptr(ptr_val);
+                        self.builder
+                            .ins()
+                            .store(MemFlagsData::new(), zero, base_ptr, offset);
                     }
                 } else {
                     let ptr_val = if place.projections.is_empty() {
