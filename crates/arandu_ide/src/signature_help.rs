@@ -78,6 +78,25 @@ pub fn call_context(
     })
 }
 
+/// Resolve the callee through semantic identities, including namespace members.
+/// Unknown or invalid callees must not pick an unrelated function by spelling.
+#[must_use]
+pub fn callee_symbol(
+    snap: &AnalysisSnapshot,
+    source: SourceFile,
+    tc: &arandu_semantics::TypeCheckResult,
+    context: &CallContext,
+) -> Option<arandu_middle::SymbolId> {
+    crate::symbol_at(tc, context.callee_start).or_else(|| {
+        let parsed = arandu_query::passes::parse(&snap.db, source);
+        parsed
+            .as_ref()
+            .as_ref()
+            .ok()
+            .and_then(|program| crate::expr_symbol_at(program, tc, context.callee_start))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

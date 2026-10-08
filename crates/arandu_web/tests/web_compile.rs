@@ -322,3 +322,24 @@ fn compile_source_includes_ide_diagnostics_with_structured_replacements() {
         "expected structured @NoFallback replacement on O004, got: {o004:?}"
     );
 }
+
+#[test]
+fn signature_help_does_not_guess_an_unresolved_member_by_global_name() {
+    let source = "func helper(value: int): int { return value }\nfunc main(): int { return missing.helper(1) }\n";
+    let offset = u32::try_from(source.rfind("(1").unwrap() + 1).unwrap();
+    assert!(arandu_web::signature_help_source(source, offset).is_none());
+}
+
+#[test]
+fn signature_help_resolves_a_namespace_member_with_a_global_homonym() {
+    let source = concat!(
+        "module signatures\n",
+        "module util { public func helper(value: i64): i64 { return value } }\n",
+        "func helper(value: int): int { return value }\n",
+        "func main(): i64 { return util.helper(1) }\n",
+    );
+    let offset = u32::try_from(source.rfind("(1").unwrap() + 1).unwrap();
+    let help =
+        arandu_web::signature_help_source(source, offset).expect("resolved member signature");
+    assert!(help.signatures[0].label.contains("i64"), "{help:?}");
+}

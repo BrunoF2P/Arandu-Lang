@@ -308,3 +308,85 @@ fn test_doc_discovers_and_executes_doctest_blocks() {
 
     let _ = fs::remove_dir_all(temporary);
 }
+
+#[test]
+fn doctests_do_not_replace_source_tests_or_collide_with_ordinary_functions() {
+    let temporary = temporary_directory();
+    let project = temporary.join("doc_collisions");
+    let created = common::cli_command()
+        .args(["new", "doc_collisions", "--vcs=none"])
+        .current_dir(&temporary)
+        .output()
+        .unwrap();
+    assert!(created.status.success());
+    fs::remove_file(project.join("tests/smoke.aru")).unwrap();
+    fs::write(
+        project.join("src/main.aru"),
+        concat!(
+            "module doc_collisions\n",
+            "import std.testing as testing\n",
+            "@Test\nfunc doctest_0(): void {}\n",
+            "func doctest_0_(): void {}\n",
+            "/// # Examples\n",
+            "/// ```arandu\n",
+            "/// testing.expectEqualInt(42, answer(), \"answer\")\n",
+            "/// ```\n",
+            "public func answer(): int { return 42 }\n",
+            "func main(): int { return 0 }\n",
+        ),
+    )
+    .unwrap();
+    let listed = common::cli_command()
+        .args(["test", project.to_str().unwrap(), "--doc", "--list"])
+        .output()
+        .unwrap();
+    assert!(
+        listed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&listed.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&listed.stdout),
+        "doc_collisions::bin::main::doctest_0\ndoc_collisions::bin::main::doctest_0__\n"
+    );
+    let executed = common::cli_command()
+        .args([
+            "test",
+            project.to_str().unwrap(),
+            "--doc",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        executed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&executed.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&executed.stdout).unwrap();
+    assert_eq!(report["cases"].as_array().unwrap().len(), 2);
+    assert!(
+        report["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|case| case["status"] == "passed")
+    );
+    let selected = common::cli_command()
+        .args([
+            "test",
+            project.to_str().unwrap(),
+            "--doc",
+            "--exact",
+            "doc_collisions::bin::main::doctest_0__",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        selected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&selected.stderr)
+    );
+    fs::remove_dir_all(temporary).unwrap();
+}

@@ -318,23 +318,10 @@ pub fn signature_help_source(source: &str, offset: u32) -> Option<WebSignatureHe
     let snapshot = host.snapshot();
 
     let context = arandu_ide::signature_help::call_context(&snapshot, file, offset)?;
-    let callee_start = context.callee_start;
-    let callee_name = context.name;
     let active_param = context.active_parameter;
 
     let tc = arandu_ide::typecheck(&snapshot, file);
-    let sym = arandu_ide::symbol_at(&tc, callee_start).or_else(|| {
-        tc.symbols
-            .iter()
-            .find(|symbol| {
-                symbol.name.as_str() == callee_name
-                    && matches!(
-                        symbol.kind,
-                        SymbolKind::Func | SymbolKind::AssociatedFunc | SymbolKind::ExternFunc
-                    )
-            })
-            .map(|symbol| symbol.id)
-    })?;
+    let sym = arandu_ide::signature_help::callee_symbol(&snapshot, file, &tc, &context)?;
     let symbol = tc.symbols.try_get(sym)?;
     if !matches!(
         symbol.kind,

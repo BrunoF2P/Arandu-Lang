@@ -5,7 +5,7 @@ use arandu_middle::SymbolKind;
 use arandu_query::{AnalysisSnapshot, SourceFile};
 use lsp_types::{ParameterInformation, ParameterLabel, Position};
 
-use super::presentation::{markdown_documentation, symbol_at, symbol_presentation, typecheck};
+use super::presentation::{markdown_documentation, symbol_presentation, typecheck};
 use crate::conv::position_to_offset;
 
 #[must_use]
@@ -20,18 +20,7 @@ pub fn signature_help(
     let context = call_context(snap, source, offset)?;
 
     let tc = typecheck(snap, source);
-    let sym = symbol_at(&tc, context.callee_start).or_else(|| {
-        tc.symbols
-            .iter()
-            .find(|symbol| {
-                symbol.name.as_str() == context.name
-                    && matches!(
-                        symbol.kind,
-                        SymbolKind::Func | SymbolKind::AssociatedFunc | SymbolKind::ExternFunc
-                    )
-            })
-            .map(|symbol| symbol.id)
-    })?;
+    let sym = arandu_ide::signature_help::callee_symbol(snap, source, &tc, &context)?;
     let symbol = tc.symbols.try_get(sym)?;
     if !matches!(
         symbol.kind,

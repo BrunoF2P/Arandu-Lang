@@ -3367,3 +3367,28 @@ fn file_uri_encodes_spaces_and_unicode_as_utf8() {
     let uri = file_uri(Path::new("/tmp/Arandu Gold/ação.aru"));
     assert!(uri.ends_with("/Arandu%20Gold/a%C3%A7%C3%A3o.aru"), "{uri}");
 }
+
+#[test]
+fn stdio_signature_help_does_not_guess_an_unresolved_namespace_member() {
+    let fixture = FixtureDir::new();
+    let document = fixture.path().join("signature-identity.aru");
+    let uri = file_uri(&document);
+    let source = "func helper(value: int): int { return value }\nfunc main(): int { return missing.helper(1) }\n";
+    let position = utf16_position(source, source.rfind("(1").unwrap() + 1);
+    let mut lsp = LspProcess::spawn();
+    lsp.initialize(fixture.path(), 1);
+    lsp.send(&json!({
+        "jsonrpc": "2.0", "method": "textDocument/didOpen",
+        "params": { "textDocument": {
+            "uri": uri, "languageId": "arandu", "version": 1, "text": source
+        }}
+    }));
+    lsp.send(&json!({
+        "jsonrpc": "2.0", "id": 2, "method": "textDocument/signatureHelp",
+        "params": { "textDocument": { "uri": uri }, "position": position }
+    }));
+    let response = lsp.wait_for_response(2);
+    assert!(response.get("error").is_none(), "{response}");
+    assert!(response["result"].is_null(), "{response}");
+    lsp.shutdown(3);
+}

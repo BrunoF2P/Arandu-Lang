@@ -83,6 +83,25 @@ pub fn project_test_sources(
     Ok(sources.into_iter().collect())
 }
 
+// Use the same deterministic name in discovery and in each harness child.
+// Checking all source symbols also avoids collisions with ordinary non-test functions.
+fn doctest_function_name(
+    db: &arandu_query::DatabaseImpl,
+    file: arandu_query::SourceFile,
+    index: usize,
+) -> String {
+    let resolution = arandu_query::passes::resolve(db, file);
+    let mut name = format!("doctest_{index}");
+    while resolution
+        .symbols
+        .iter()
+        .any(|symbol| symbol.name.as_str() == name)
+    {
+        name.push('_');
+    }
+    name
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn cmd_project_test_list(
     start: &Path,
@@ -143,17 +162,15 @@ pub fn cmd_project_test_list(
         }
         if doc_tests {
             for (idx, doctest) in arandu_query::file_doctests(&db, file).iter().enumerate() {
-                let id = format!("{}::{module}::doctest_{idx}", ctx.name);
+                let function = doctest_function_name(&db, file, idx);
+                let id = format!("{}::{module}::{function}", ctx.name);
                 discovered.push(DiscoveryCase {
                     id: id.clone(),
                     path: discovery_path(&ctx.root, &path),
                     line: doctest.line_offset,
                     column_utf16: 0,
                 });
-                registry.insert(arandu_codegen::testing::TestEntry {
-                    id,
-                    function: format!("doctest_{idx}"),
-                });
+                registry.insert(arandu_codegen::testing::TestEntry { id, function });
             }
         }
     }
@@ -326,18 +343,15 @@ pub fn run_exact_test(
         let is_source_test = arandu_query::file_test_manifest(db, file)
             .iter()
             .any(|case| case.name.as_str() == function);
-        if !is_source_test
-            && let Some(idx_str) = function.strip_prefix("doctest_")
-            && let Ok(idx) = idx_str.parse::<usize>()
-        {
+        let snippet = if is_source_test {
+            None
+        } else {
             let doctests = arandu_query::file_doctests(db, file);
-            let snippet = doctests.get(idx).cloned().ok_or_else(|| {
-                CliFailure::operational(
-                    "run test case",
-                    Some(path.clone()),
-                    format!("doctest `{function}` was not found in module"),
-                )
-            })?;
+            doctests.iter().enumerate().find_map(|(index, snippet)| {
+                (doctest_function_name(db, file, index) == function).then(|| snippet.clone())
+            })
+        };
+        if let Some(snippet) = snippet {
             let original_text = file.text(db).to_string();
             let synthetic_source = format!(
                 "{original_text}\n\nfunc {function}(): void {{\n{}\n}}\n",
