@@ -325,7 +325,8 @@ impl DatabaseImpl {
                 input.set_data_layout(self).to(data_layout);
             }
             None => {
-                let input = TargetConfig::new(self, data_layout);
+                let input =
+                    TargetConfig::new(self, data_layout, arandu_middle::db::TargetIdentity::host());
                 let mut slot = self
                     .target_config
                     .write()
@@ -333,6 +334,11 @@ impl DatabaseImpl {
                 *slot = Some(input);
             }
         }
+    }
+
+    /// Supply platform identity explicitly before requesting semantic queries.
+    pub fn set_target_identity(&mut self, identity: arandu_middle::db::TargetIdentity) {
+        self.target_config().set_identity(self).to(identity);
     }
 
     /// Registered Salsa input for the compilation target.

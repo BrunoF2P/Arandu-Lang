@@ -25,16 +25,36 @@ pub(crate) fn instance_staged_hir<'db>(
     db: &'db dyn ArandCompilerDb,
     instance: Instance<'db>,
 ) -> HashEq<PreparedHir> {
-    HashEq::from_arc(Arc::clone(&instance_staged_result(db, instance).artifacts))
+    HashEq::from_arc(Arc::clone(
+        &instance_staged_result(db, instance, false).artifacts,
+    ))
 }
 
 pub(crate) fn instance_staged_symbols<'db>(
     db: &'db dyn ArandCompilerDb,
     instance: Instance<'db>,
 ) -> Vec<arandu_middle::SymbolId> {
-    instance_staged_result(db, instance)
+    instance_staged_result(db, instance, false)
         .occurrence_symbols
         .clone()
+}
+
+pub(crate) fn instance_ctfe_symbols<'db>(
+    db: &'db dyn ArandCompilerDb,
+    instance: Instance<'db>,
+) -> Vec<arandu_middle::SymbolId> {
+    instance_staged_result(db, instance, true)
+        .occurrence_symbols
+        .clone()
+}
+
+pub(crate) fn instance_ctfe_hir<'db>(
+    db: &'db dyn ArandCompilerDb,
+    instance: Instance<'db>,
+) -> HashEq<PreparedHir> {
+    HashEq::from_arc(Arc::clone(
+        &instance_staged_result(db, instance, true).artifacts,
+    ))
 }
 
 #[salsa::tracked]
@@ -47,11 +67,16 @@ pub(crate) fn instance_staged_symbols<'db>(
 fn instance_staged_result<'db>(
     db: &'db dyn ArandCompilerDb,
     instance: Instance<'db>,
+    for_ctfe: bool,
 ) -> HashEq<StagedInstance> {
     let file = *instance.file(db);
     let key = instance.key(db);
     let parsed = crate::passes::parse(db, file);
-    let declared = crate::passes::header_signatures(db, file);
+    let declared = if for_ctfe {
+        crate::passes::seed_header_signatures(db, file)
+    } else {
+        crate::passes::header_signatures(db, file)
+    };
     let mut checked = (**declared).clone();
     let mut diagnostics = Vec::new();
     let mut hir = None;
@@ -112,6 +137,12 @@ fn instance_staged_result<'db>(
         resolved
             .comptime_loops
             .extend(loops.domains.iter().map(|(&key, &value)| (key, value)));
+        resolved.typed_comptime_arguments.extend(
+            arguments
+                .typed_values
+                .iter()
+                .map(|(&key, value)| (key, value.clone())),
+        );
         resolved
             .comptime_arguments
             .extend(arguments.values.iter().map(|(&key, &value)| (key, value)));
@@ -142,6 +173,28 @@ fn instance_staged_result<'db>(
         checked.symbols = resolved.symbols;
         checked.resolved = resolved.resolved;
         checked.diagnostics = resolved.diagnostics;
+        if for_ctfe {
+            let mut span = None;
+            program.for_each_decl_recursive(|_, declaration| {
+                if arandu_semantics::primary_def_key(declaration)
+                    .and_then(|node| checked.resolved.definitions.get(&node))
+                    == Some(&key.definition)
+                {
+                    span = Some(arandu_semantics::item_source_span(declaration));
+                }
+            });
+            if let Some(span) = span {
+                if let Err(error) =
+                    super::globals::install_referenced_globals(db, program, span, &mut checked)
+                {
+                    super::public::append_failure(
+                        &mut checked.diagnostics,
+                        super::RootEvalError::Build(error),
+                        span,
+                    );
+                }
+            }
+        }
         let substitution = if key.arguments.is_empty() {
             Ok(arandu_middle::types::GenericSubst::new())
         } else {
@@ -165,16 +218,22 @@ fn instance_staged_result<'db>(
                 checked
                     .diagnostics
                     .extend(arguments.diagnostics.iter().cloned());
-                checked = (*super::public::stage_public_roots(
-                    db,
-                    file,
-                    key.definition,
-                    &HashEq::new(checked),
-                    concrete,
-                ))
-                .clone();
-                match arandu_semantics::lower_function_to_hir(&mut checked, program, key.definition)
-                {
+                if !for_ctfe {
+                    checked = (*super::public::stage_public_roots(
+                        db,
+                        file,
+                        key.definition,
+                        &HashEq::new(checked),
+                        concrete,
+                    ))
+                    .clone();
+                }
+                let lowering = if for_ctfe {
+                    arandu_semantics::lower_ctfe_function_to_hir
+                } else {
+                    arandu_semantics::lower_function_to_hir
+                };
+                match lowering(&mut checked, program, key.definition) {
                     Ok(mut lowered) => {
                         if let Some(hir) = &mut lowered {
                             let source_symbols: rustc_hash::FxHashSet<_> =
@@ -393,6 +452,12 @@ fn install_occurrences(
                     .decisions
                     .iter()
                     .map(|(&node, &value)| (node, value)),
+            );
+            names.typed_comptime_arguments.extend(
+                arguments
+                    .typed_values
+                    .iter()
+                    .map(|(&key, value)| (key, value.clone())),
             );
             names
                 .comptime_arguments

@@ -84,6 +84,16 @@ fn mangle_type_into(out: &mut String, ty: &ArType, symbols: &SymbolTable, intern
             out.push('_');
             mangle_type_into(out, &interner.resolve(*inner), symbols, interner);
         }
+        ArType::FrozenConst(value) => {
+            out.push_str("frozen_");
+            // Artifact names must stay bounded when Copy arguments contain
+            // large immutable strings. The instantiation graph still compares
+            // full TypeIds/values; this digest is only the external spelling.
+            let mut digest = blake3::Hasher::new();
+            digest.update(b"arandu-frozen-argument-symbol/v1");
+            digest.update(&value.canonical_bytes());
+            out.push_str(digest.finalize().to_hex().as_str());
+        }
         ArType::Const(value) => {
             let _ = write!(out, "const{value}");
         }
@@ -136,5 +146,36 @@ fn mangle_type_into(out: &mut String, ty: &ArType, symbols: &SymbolTable, intern
         ArType::IntLiteral => out.push_str("int"),
         ArType::FloatLiteral => out.push_str("float"),
         ArType::Error => out.push_str("error"),
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use super::*;
+    use arandu_middle::ctfe::{ConstAggregate, ConstString, ConstValue};
+    use arandu_middle::types::{Primitive, TypeShape};
+
+    #[test]
+    fn aggregate_argument_symbols_are_bounded_and_keep_full_value_identity() {
+        fn spelling(text: &str) -> String {
+            let value = ConstAggregate::new(
+                TypeShape::Array(1, Box::new(TypeShape::Primitive(Primitive::Str))),
+                vec![ConstValue::String(ConstString::new(text))],
+            )
+            .expect("closed immutable array");
+            let ty = ArType::FrozenConst(std::sync::Arc::new(ConstValue::Aggregate(value)));
+            let mut name = String::new();
+            mangle_type_into(&mut name, &ty, &SymbolTable::new(0), &TypeInterner::new());
+            name
+        }
+        let text = "a".repeat(16_384);
+        let first = spelling(&text);
+        assert_eq!(first.len(), "frozen_".len() + 64);
+        assert_eq!(first, spelling(&text));
+        let mut different = text;
+        different.pop();
+        different.push('b');
+        assert_ne!(first, spelling(&different));
     }
 }

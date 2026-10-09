@@ -13,13 +13,16 @@ use arandu_middle::{Diagnostic, SymbolId};
 use arandu_mir::ctfe::{Budget, CtfeFunction, EvalError, EvalErrorKind, FunctionProvider};
 
 mod arguments;
+pub(crate) mod globals;
+pub(crate) mod headers;
+pub use globals::{global_const_value, FrozenConstant, GlobalConstant};
 mod branches;
-mod instances;
+pub(crate) mod instances;
 mod loops;
 pub use arguments::{item_const_arguments, ConstArguments};
 pub(crate) use instances::{instance_staged_hir, instance_staged_symbols};
 pub use loops::{item_static_loops, StaticLoops};
-mod public;
+pub(crate) mod public;
 pub use branches::{item_static_branches, StaticBranches};
 pub(crate) mod roots;
 pub use public::{item_staged_typing, PUBLIC_BUDGET};
@@ -78,6 +81,44 @@ pub fn ctfe_header_func_amir(
     lower_scalar_function(db, file, symbol, true)
 }
 
+#[salsa::tracked]
+fn scalar_resolution_diagnostics(
+    db: &dyn ArandCompilerDb,
+    file: SourceFile,
+    symbol: SymbolId,
+) -> HashEq<Vec<Diagnostic>> {
+    let source = crate::passes::item_source_input(db, file, symbol);
+    let resolution = crate::passes::resolve(db, file);
+    let mut span = None;
+    source.program.for_each_decl_recursive(|_, declaration| {
+        if arandu_semantics::primary_def_key(declaration)
+            .and_then(|key| resolution.resolved.definitions.get(&key))
+            == Some(&symbol)
+        {
+            span = Some(arandu_semantics::item_source_span(declaration));
+        }
+    });
+    HashEq::new(
+        resolution
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| {
+                span.is_some_and(|span| {
+                    diagnostic.span.file_id == span.file_id
+                        && span.start <= diagnostic.span.start
+                        && diagnostic.span.end <= span.end
+                }) || source.program.imports.iter().any(|import| {
+                    let span = import.span();
+                    span.file_id == diagnostic.span.file_id
+                        && span.start <= diagnostic.span.start
+                        && diagnostic.span.end <= span.end
+                })
+            })
+            .cloned()
+            .collect(),
+    )
+}
+
 fn lower_scalar_function(
     db: &dyn ArandCompilerDb,
     file: SourceFile,
@@ -89,7 +130,7 @@ fn lower_scalar_function(
             result: Err(BuildFailure::MissingFunction),
         });
     }
-    let body = crate::passes::item_source_input(db, file, symbol);
+    let source = crate::passes::item_source_input(db, file, symbol);
     let parsed = headers_only.then(|| crate::passes::parse(db, file));
     let program = if let Some(parsed) = parsed {
         match &**parsed {
@@ -97,11 +138,11 @@ fn lower_scalar_function(
             Err(_) => {
                 return HashEq::new(CtfeLowering {
                     result: Err(BuildFailure::MissingFunction),
-                });
+                })
             }
         }
     } else {
-        body.program.as_ref()
+        source.program.as_ref()
     };
     let layout = *db.target_config().data_layout(db);
     if let Err(error) = layout.validate() {
@@ -118,11 +159,7 @@ fn lower_scalar_function(
             result: Err(BuildFailure::Evaluation(EvalErrorKind::Value(error))),
         });
     }
-    let signatures = if headers_only {
-        crate::passes::header_signatures(db, file)
-    } else {
-        crate::passes::declaration_signatures(db, file)
-    };
+    let signatures = headers::owner_signatures(db, file, symbol);
     let import_errors = signatures
         .diagnostics
         .iter()
@@ -142,7 +179,21 @@ fn lower_scalar_function(
             result: Err(BuildFailure::Diagnostics(import_errors)),
         });
     }
-    let item = if headers_only {
+    let mut has_global_constants = false;
+    program.for_each_decl_recursive(|_, declaration| {
+        if matches!(declaration, arandu_parser::TopLevelDecl::Const(_)) {
+            has_global_constants = true;
+        }
+    });
+    let ordinary_body = !headers_only && !source.may_have_comptime && !has_global_constants;
+    let resolution_diagnostics = if ordinary_body {
+        Some(scalar_resolution_diagnostics(db, file, symbol))
+    } else {
+        None
+    };
+    let item = if ordinary_body {
+        crate::passes::item_typing(db, file, symbol).clone()
+    } else {
         let mut headers = (**crate::passes::resolved_headers(db, file)).clone();
         // Keep imported semantic identities added by the signature checker.
         headers.declarations.symbols = Arc::clone(&signatures.symbols);
@@ -163,15 +214,59 @@ fn lower_scalar_function(
             .declarations
             .diagnostics
             .extend(selected.diagnostics.iter().cloned());
+        let arguments = item_const_arguments(db, file, symbol);
+        Arc::make_mut(&mut headers.declarations.resolved)
+            .typed_comptime_arguments
+            .extend(
+                arguments
+                    .typed_values
+                    .iter()
+                    .map(|(&key, value)| (key, value.clone())),
+            );
+        Arc::make_mut(&mut headers.declarations.resolved)
+            .comptime_arguments
+            .extend(arguments.values.iter().map(|(&key, &value)| (key, value)));
+        headers
+            .declarations
+            .diagnostics
+            .extend(arguments.diagnostics.iter().cloned());
         let resolved = arandu_resolve::resolve_selected_body_with_poll(
             program,
             headers,
             arandu_resolve::BodySelection::Function(symbol),
             || db.unwind_if_revision_cancelled(),
         );
-        let mut initial = (**signatures).clone();
+        let mut initial = signatures.clone();
         initial.symbols = resolved.symbols;
         initial.resolved = resolved.resolved;
+        let mut source_span = None;
+        program.for_each_decl_recursive(|_, declaration| {
+            if arandu_semantics::primary_def_key(declaration)
+                .and_then(|key| initial.resolved.definitions.get(&key))
+                == Some(&symbol)
+            {
+                source_span = Some(arandu_semantics::item_source_span(declaration));
+            }
+        });
+        if let Some(span) = source_span {
+            if let Err(error) =
+                headers::install_referenced_headers(db, &program.pool, span, &mut initial)
+            {
+                public::append_failure(
+                    &mut initial.diagnostics,
+                    roots::RootEvalError::Build(error),
+                    span,
+                );
+            }
+            if let Err(error) = globals::install_referenced_globals(db, program, span, &mut initial)
+            {
+                public::append_failure(
+                    &mut initial.diagnostics,
+                    roots::RootEvalError::Build(error),
+                    span,
+                );
+            }
+        }
         let mut checked = arandu_semantics::check_item_body_only(
             &initial,
             program,
@@ -180,10 +275,18 @@ fn lower_scalar_function(
         );
         checked.diagnostics.extend(resolved.diagnostics);
         HashEq::new(checked)
-    } else {
-        crate::passes::item_typing(db, file, symbol).clone()
     };
     let build = || -> Result<Arc<CtfeFunction>, BuildFailure> {
+        if let Some(diagnostics) = &resolution_diagnostics {
+            if diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.severity == arandu_middle::Severity::Error)
+            {
+                return Err(BuildFailure::Diagnostics(
+                    diagnostics.iter().cloned().collect(),
+                ));
+            }
+        }
         if item.type_info.generic_params.contains_key(&symbol) {
             return Err(BuildFailure::GenericFunction);
         }
@@ -218,24 +321,13 @@ fn lower_scalar_function(
                 })
                 .cloned(),
         );
-        let mut hir = arandu_semantics::lower_function_to_hir(&mut checked, program, symbol)
+        let mut hir = arandu_semantics::lower_ctfe_function_to_hir(&mut checked, program, symbol)
             .map_err(BuildFailure::Diagnostics)?
             .ok_or(BuildFailure::MissingFunction)?;
-        if headers_only {
-            // Global constants need their canonical HIR values, not just types.
-            // Link body-free headers; the AMIR producer still sees exactly one
-            // function body and uses the shared constant/call-mode lowering.
-            let declarations = crate::runtime::header_hir(db, file);
-            let headers = declarations.artifacts.hir.as_ref().ok_or_else(|| {
-                BuildFailure::Diagnostics(declarations.artifacts.diagnostics.clone())
-            })?;
-            arandu_semantics::link_hir_module(
-                &mut checked,
-                &mut hir,
-                &declarations.artifacts.type_check,
-                headers,
-            );
-        }
+        let declarations = globals::declaration_context(db, file, program, &mut checked)?;
+        let declaration_info = checked.clone();
+        arandu_semantics::link_hir_module(&mut checked, &mut hir, &declaration_info, &declarations);
+        globals::link_referenced_globals(db, program, span, &mut checked, &mut hir)?;
         link_extern_headers(db, &mut checked, &mut hir)?;
         db.unwind_if_revision_cancelled();
         let (mut program, diagnostics) =
@@ -279,7 +371,7 @@ fn ctfe_extern_hir(
     symbol: SymbolId,
 ) -> HashEq<crate::passes::PreparedHir> {
     let source = crate::passes::item_source_input(db, file, symbol);
-    let declared = crate::passes::header_signatures(db, file);
+    let declared = crate::passes::seed_header_signatures(db, file);
     let mut checked = (**declared).clone();
     let mut diagnostics = Vec::new();
     let hir = match arandu_semantics::lower_extern_to_hir(&mut checked, &source.program, symbol) {
@@ -358,7 +450,7 @@ pub fn ctfe_instance_amir<'db>(
         layout
             .validate()
             .map_err(|error| BuildFailure::Evaluation(EvalErrorKind::InvalidLayout(error)))?;
-        let concrete = crate::runtime::instance_hir(db, instance);
+        let concrete = crate::runtime::instance_ctfe_hir(db, instance);
         let artifacts = &concrete.artifacts;
         let hir = artifacts
             .hir

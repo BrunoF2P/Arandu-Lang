@@ -481,6 +481,31 @@ impl LowerCtx<'_> {
             HirExprKind::AsyncBlock { block } => {
                 self.lower_async_block(*block, &expr, target, symbols)
             }
+            HirExprKind::ValueBlock { block } => {
+                let dest = target.unwrap_or_else(|| self.new_temp_id(expr.ty));
+                let exit = self.new_block();
+                self.value_returns.push((
+                    dest,
+                    exit,
+                    self.defer_frames.len(),
+                    self.local_scopes.len(),
+                ));
+                let previous_return_type = self.func_return_type;
+                self.func_return_type = expr.ty;
+                let result = self.lower_block_as_expr(*block, Some(dest), symbols);
+                self.func_return_type = previous_return_type;
+                self.value_returns.pop();
+                result?;
+                if self.builder.current_block.is_some() {
+                    self.set_terminator(crate::amir::AmirTerminator::Goto {
+                        target: exit,
+                        args: Vec::new(),
+                    });
+                }
+                self.seal_block(exit);
+                self.builder.current_block = Some(exit);
+                Ok(AmirOperand::Copy(dest))
+            }
             HirExprKind::UnsafeBlock { block } => {
                 let dest = match target {
                     Some(t) => t,

@@ -124,6 +124,10 @@ pub enum HirExprKind {
     AsyncBlock {
         block: HirBlockId,
     },
+    /// An isolated compile-time block with a local return target.
+    ValueBlock {
+        block: HirBlockId,
+    },
     UnsafeBlock {
         block: HirBlockId,
     },
@@ -320,7 +324,9 @@ impl HirExpr {
             HirExprKind::Alloc { expr } => {
                 pool.expr(*expr).validate_invariants(pool, symbols)?;
             }
-            HirExprKind::AsyncBlock { block } | HirExprKind::UnsafeBlock { block } => {
+            HirExprKind::AsyncBlock { block }
+            | HirExprKind::UnsafeBlock { block }
+            | HirExprKind::ValueBlock { block } => {
                 pool.block(*block).validate_invariants(pool, symbols)?;
             }
             HirExprKind::If {

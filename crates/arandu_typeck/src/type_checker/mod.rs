@@ -252,7 +252,17 @@ impl<'a> TypeChecker<'a> {
             symbols: symbols.into(),
             resolved: resolved.into(),
             ctx: TyCtx::new(),
-            type_info: TypeInfo::with_interner(type_interner),
+            type_info: {
+                let mut info = TypeInfo::with_interner(type_interner);
+                info.target_pointer_width = target_info.pointer_width;
+                info.target_layout =
+                    arandu_middle::DataLayout::ptr_width(if target_info.pointer_width == 32 {
+                        4
+                    } else {
+                        8
+                    });
+                info
+            },
             diagnostics,
             solved_constraints: Vec::new(),
             type_scope_id: None,
@@ -292,6 +302,18 @@ impl<'a> TypeChecker<'a> {
     #[must_use]
     pub fn try_ok_type(&self, ty: &ArType) -> Option<ArType> {
         types::try_ok_type(ty, &self.type_info.type_interner)
+    }
+
+    /// Propagation validates the error channel, independently of the success
+    /// type inferred for the nearest function or isolated comptime block.
+    fn can_propagate_try(&self, inner: &ArType, target: &ArType) -> bool {
+        match (inner, target) {
+            (ArType::Result(_, inner_err), ArType::Result(_, outer_err)) => {
+                self.is_assignable_return_type(&self.resolve(*outer_err), &self.resolve(*inner_err))
+            }
+            (ArType::Option(_), ArType::Option(_)) => true,
+            _ => false,
+        }
     }
 
     #[must_use]

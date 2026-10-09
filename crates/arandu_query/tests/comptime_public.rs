@@ -111,8 +111,9 @@ fn root_return_is_local_and_unifies_with_tail_and_unit() {
 }
 
 #[test]
-fn public_values_reject_unsupported_results_and_nested_staging_without_ice() {
-    for expression in ["'x'", "{ let x = comptime 42; x }"] {
+fn public_values_reject_unsupported_results_without_ice() {
+    {
+        let expression = "'x'";
         let source = format!("func main(): void {{ let x = comptime {expression} }}");
         let errors = codes(&source);
         assert!(
@@ -322,13 +323,10 @@ fn staged_values_are_concrete_and_do_not_bypass_narrowing_checks() {
 }
 
 #[test]
-fn helpers_with_unresolved_staging_fail_closed_instead_of_salsa_cycles() {
+fn recursive_staging_helpers_stop_at_the_shared_vm_limit() {
     assert!(codes("func helper(): int { return comptime helper() }\nfunc main(): int { return comptime helper() }")
-        .contains(&DiagCode::T044ComptimeEvaluationFailed));
-    assert!(
-        codes("const answer = comptime 42\nfunc main(): int { return answer }")
-            .contains(&DiagCode::T042UnsupportedComptime)
-    );
+        .contains(&DiagCode::T045ComptimeLimitExceeded));
+    assert!(codes("const answer = comptime 42\nfunc main(): int { return answer }").is_empty());
 }
 
 #[test]

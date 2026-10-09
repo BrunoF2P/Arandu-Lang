@@ -52,13 +52,22 @@ pub fn expand_type_args_with_defaults(
     if provided.len() > params.len() {
         return None;
     }
-    if provided.len() == params.len() {
-        return Some(provided.to_vec());
-    }
     let mut out = provided.to_vec();
     for &param_sym in &params[provided.len()..] {
         let &def_tid = checker.type_info.generic_defaults.get(&param_sym)?;
         out.push(checker.resolve(def_tid));
+    }
+    for (&parameter, argument) in params.iter().zip(&mut out) {
+        if let ArType::FrozenConst(value) = argument
+            && let arandu_middle::ctfe::ConstValue::Integer(integer) = value.as_ref()
+            && let Some(ArType::Primitive(primitive)) = checker.decl_type(parameter)
+            && let Ok(domain) =
+                arandu_middle::ctfe::IntegerType::new(primitive, checker.type_info.target_layout)
+            && let Ok(integer) = integer.cast(domain)
+        {
+            *argument =
+                ArType::FrozenConst(Arc::new(arandu_middle::ctfe::ConstValue::Integer(integer)));
+        }
     }
     Some(out)
 }
@@ -362,7 +371,7 @@ pub fn synth_generic_instantiation(
     };
 
     // T2.1: fill trailing defaults when fewer type args are written.
-    let arg_tys = match expand_type_args_with_defaults(checker, callee_symbol, &arg_tys) {
+    let mut arg_tys = match expand_type_args_with_defaults(checker, callee_symbol, &arg_tys) {
         Some(expanded) => expanded,
         None => {
             let diag = crate::Diagnostic::error(
@@ -401,6 +410,25 @@ pub fn synth_generic_instantiation(
         return ArType::Error;
     };
 
+    for ((&parameter, argument), &source) in param_symbols.iter().zip(&mut arg_tys).zip(&arg_ids) {
+        if let ArType::FrozenConst(value) = argument
+            && let arandu_middle::ctfe::ConstValue::Integer(integer) = value.as_ref()
+            && let Some(ArType::Primitive(primitive)) = checker.decl_type(parameter)
+            && let Ok(domain) =
+                arandu_middle::ctfe::IntegerType::new(primitive, checker.type_info.target_layout)
+            && let Ok(integer) = integer.cast(domain)
+        {
+            let value = arandu_middle::ctfe::ConstValue::Integer(integer);
+            *argument = ArType::FrozenConst(Arc::new(value.clone()));
+            if let arandu_parser::TypeExpr::ConstExpression { span, .. } =
+                checker.pool.type_expr(source)
+            {
+                Arc::make_mut(&mut checker.resolved)
+                    .typed_comptime_arguments
+                    .insert((*span).into(), value);
+            }
+        }
+    }
     let subst = build_subst(&param_symbols, &arg_tys);
     super::interfaces::check_instantiation_constraints(checker, &param_symbols, &arg_tys, span);
     let inst_ty = instantiate_type(&template, &subst, &mut checker.type_info.type_interner);

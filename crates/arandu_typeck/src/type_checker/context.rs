@@ -12,6 +12,7 @@ struct ReturnScope {
     expected: Option<TypeId>,
     span: Span,
     ctfe_values: Option<Vec<ReturnValue>>,
+    ctfe_propagations: Vec<ReturnValue>,
     outer_loop_depth: Option<u32>,
 }
 
@@ -90,6 +91,7 @@ impl TyCtx {
             expected: Some(ty),
             span: decl_span,
             ctfe_values: None,
+            ctfe_propagations: Vec::new(),
             outer_loop_depth: None,
         });
     }
@@ -116,6 +118,7 @@ impl TyCtx {
             expected,
             span,
             ctfe_values: Some(Vec::new()),
+            ctfe_propagations: Vec::new(),
             outer_loop_depth: Some(self.loop_depth),
         });
         // A control-flow exit cannot jump from CTFE into a runtime loop.
@@ -138,8 +141,17 @@ impl TyCtx {
         }
     }
 
-    pub(super) fn pop_ctfe_return(&mut self) -> Option<Vec<ReturnValue>> {
-        self.pop_return_scope().and_then(|scope| scope.ctfe_values)
+    pub(super) fn record_ctfe_propagation(&mut self, value: ReturnValue) {
+        if let Some(scope) = self.return_stack.last_mut()
+            && scope.ctfe_values.is_some()
+        {
+            scope.ctfe_propagations.push(value);
+        }
+    }
+
+    pub(super) fn pop_ctfe_return(&mut self) -> Option<(Vec<ReturnValue>, Vec<ReturnValue>)> {
+        let scope = self.pop_return_scope()?;
+        Some((scope.ctfe_values?, scope.ctfe_propagations))
     }
 
     fn pop_return_scope(&mut self) -> Option<ReturnScope> {

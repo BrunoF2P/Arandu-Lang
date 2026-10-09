@@ -100,7 +100,7 @@ impl<'a> Parser<'a> {
             )),
             _ => None,
         };
-        if let Some((mut type_name, args)) = named_info
+        if let Some((mut type_name, args)) = named_info.clone()
             && self.eat_name("DOT")
         {
             let member = self.expect_name_like()?;
@@ -132,6 +132,17 @@ impl<'a> Parser<'a> {
             return Ok(self
                 .pool
                 .alloc_expr(ExprKind::Generic { callee: tp, args }, member_span));
+        }
+        // A qualified uppercase name may denote an exported constant. Leave
+        // its classification to resolution, just as for an unqualified path.
+        if let Some((name, args)) = named_info
+            && args.is_empty()
+            && name.path.len() > 1
+        {
+            let span = self.span_from_mark(start);
+            return Ok(self
+                .pool
+                .alloc_expr(ExprKind::Path { path: name.path }, span));
         }
         Err(ParseError::new(
             ParseErrorCode::ExpectedExpression,

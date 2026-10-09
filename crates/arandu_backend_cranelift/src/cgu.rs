@@ -286,6 +286,12 @@ impl HashContext<'_> {
                 self.symbol(*param);
                 self.type_id(*inner);
             }
+            ArType::FrozenConst(value) => {
+                self.hash.tag(24);
+                for byte in value.canonical_bytes() {
+                    self.hash.tag(byte);
+                }
+            }
             ArType::Const(value) => {
                 self.hash.tag(22);
                 self.hash.u64(*value);

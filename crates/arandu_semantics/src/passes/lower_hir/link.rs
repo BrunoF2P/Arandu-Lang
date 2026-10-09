@@ -504,6 +504,9 @@ fn remap_expr(
         HirExprKind::AsyncBlock { block } => HirExprKind::AsyncBlock {
             block: offs.block_id(*block),
         },
+        HirExprKind::ValueBlock { block } => HirExprKind::ValueBlock {
+            block: offs.block_id(*block),
+        },
         HirExprKind::UnsafeBlock { block } => HirExprKind::UnsafeBlock {
             block: offs.block_id(*block),
         },

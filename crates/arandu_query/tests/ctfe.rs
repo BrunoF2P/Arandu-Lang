@@ -821,9 +821,8 @@ fn imported_callees_are_staged_on_demand_and_preserve_value_cutoff() {
         number(consume(&db, file, foo).expect("unused sibling edit")),
         42
     );
-    // Removing a resolution diagnostic changes the module signature view.
-    // The called unit may be revalidated, but identical IR cuts off evaluation.
-    assert_eq!(log.count_executions_matching("ctfe_func_amir"), 1);
+    // A sibling diagnostic stays outside the selected unit's resolution shard.
+    assert_eq!(log.count_executions_matching("ctfe_func_amir"), 0);
     assert_eq!(log.count_executions_matching("ctfe_eval"), 0);
     log.clear();
     library

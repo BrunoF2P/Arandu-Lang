@@ -39,6 +39,7 @@ pub struct ResolvedNames {
     /// failed obligation whose diagnostic is already reported by the producer.
     /// Pure consumers must not evaluate expressions or fall back to runtime.
     pub comptime_arguments: FxHashMap<NodeKey, Option<u64>>,
+    pub typed_comptime_arguments: FxHashMap<NodeKey, crate::ctfe::ConstValue>,
     pub definitions: FxHashMap<NodeKey, SymbolId>,
     pub expr_symbols: Vec<Option<SymbolId>>,
     pub value_refs: FxHashMap<NodeKey, SymbolId>,

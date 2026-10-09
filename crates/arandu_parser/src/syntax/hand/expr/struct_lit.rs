@@ -188,7 +188,7 @@ pub(super) fn parse_type_led(
         )),
         _ => None,
     };
-    if let Some((mut type_name, args)) = named_info
+    if let Some((mut type_name, args)) = named_info.clone()
         && cur.eat(TokenKind::Dot)
     {
         let mem = cur.peek()?;
@@ -224,6 +224,16 @@ pub(super) fn parse_type_led(
         return Some(
             ctx.pool
                 .alloc_expr(ExprKind::Generic { callee: tp, args }, member_span),
+        );
+    }
+    if let Some((name, args)) = named_info
+        && args.is_empty()
+        && name.path.len() > 1
+    {
+        let span = name.span;
+        return Some(
+            ctx.pool
+                .alloc_expr(ExprKind::Path { path: name.path }, span),
         );
     }
     None

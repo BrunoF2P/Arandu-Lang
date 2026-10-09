@@ -143,19 +143,24 @@ fn parse_type_inner(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<TypeE
             }));
         }
         let size_tok = cur.peek()?;
-        if !matches!(
-            size_tok.kind,
-            TokenKind::IntDec
-                | TokenKind::IntHex
-                | TokenKind::IntBin
-                | TokenKind::IntOct
-                | TokenKind::IdentValue
-                | TokenKind::IdentType
-        ) {
-            return None;
-        }
-        let size = SmolStr::new(ctx.text(size_tok)?);
-        cur.bump();
+        let (size, size_expression) = if size_tok.kind == TokenKind::KwComptime {
+            (SmolStr::new(""), Some(parse_generic_argument(ctx, cur)?))
+        } else {
+            if !matches!(
+                size_tok.kind,
+                TokenKind::IntDec
+                    | TokenKind::IntHex
+                    | TokenKind::IntBin
+                    | TokenKind::IntOct
+                    | TokenKind::IdentValue
+                    | TokenKind::IdentType
+            ) {
+                return None;
+            }
+            let size = SmolStr::new(ctx.text(size_tok)?);
+            cur.bump();
+            (size, None)
+        };
         cur.expect(TokenKind::RBracket)?;
         let elem = parse_type(ctx, cur)?;
         let end = ctx.pool.type_expr_span(elem).end;
@@ -163,6 +168,7 @@ fn parse_type_inner(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Option<TypeE
             span: ctx.span(start, end),
             size,
             size_span: ctx.token_span(size_tok),
+            size_expression,
             elem,
         }));
     }

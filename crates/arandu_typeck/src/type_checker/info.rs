@@ -27,8 +27,11 @@ pub struct InterfaceConstraint {
 
 /// Shared metadata maps use `Arc` so `merge_from` (item body typeck fold) is O(1)
 /// per entry instead of deep-cloning every field map / generic param list.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct TypeInfo {
+    pub target_identity: arandu_middle::db::TargetIdentity,
+    pub target_pointer_width: u8,
+    pub target_layout: arandu_middle::DataLayout,
     pub type_interner: TypeInterner,
     pub expr_types: Vec<Option<TypeId>>,
     /// Source-local obligations recorded only when checking explicit staging.
@@ -43,6 +46,8 @@ pub struct TypeInfo {
             arandu_middle::layout::DataLayout,
         ),
     >,
+    /// Exportable values keyed by source identity, without initializer spans.
+    pub ctfe_global_values: FxHashMap<SymbolId, arandu_middle::ctfe::ConstValue>,
     pub decl_types: FxHashMap<SymbolId, TypeId>,
     /// Canonical flow-derived borrow interfaces published across item/module boundaries.
     pub return_borrow_summaries: FxHashMap<SymbolId, ReturnBorrowSummary>,
@@ -79,6 +84,12 @@ pub struct TypeInfo {
     pub struct_repr_c: rustc_hash::FxHashSet<SymbolId>,
 }
 
+impl Default for TypeInfo {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TypeInfo {
     /// Maximum nesting published in a borrow interface. This bound is part of
     /// the compiler contract, not a recursion guard chosen by the host stack.
@@ -94,10 +105,14 @@ impl TypeInfo {
     #[must_use]
     pub fn with_interner(type_interner: TypeInterner) -> Self {
         Self {
+            target_identity: arandu_middle::db::TargetIdentity::default(),
+            target_pointer_width: 0,
+            target_layout: arandu_middle::DataLayout::ptr_width(8),
             type_interner,
             expr_types: Vec::new(),
             ctfe_roots: Vec::new(),
             ctfe_values: FxHashMap::default(),
+            ctfe_global_values: FxHashMap::default(),
             decl_types: FxHashMap::default(),
             return_borrow_summaries: FxHashMap::default(),
             struct_fields: FxHashMap::default(),
@@ -405,6 +420,7 @@ impl TypeInfo {
                 output.push((BorrowPath(prefix.clone()), BorrowKind::Shared));
             }
             ArType::Primitive(_)
+            | ArType::FrozenConst(_)
             | ArType::Const(_)
             | ArType::ConstParam(_)
             | ArType::Func(_, _)
@@ -463,10 +479,17 @@ impl TypeInfo {
                         Primitive::Bool | Primitive::Char | Primitive::Byte | Primitive::Str
                     )
             }
-            ArType::IntLiteral | ArType::FloatLiteral | ArType::GenRef | ArType::Const(_) => true,
+            ArType::IntLiteral
+            | ArType::FloatLiteral
+            | ArType::GenRef
+            | ArType::FrozenConst(_)
+            | ArType::Const(_) => true,
             ArType::Named(sym, args) => {
                 let args = self.type_interner.type_args(*args);
-                self.is_named_struct_pod_copy(*sym, &args, visiting)
+                visiting.insert(id, true);
+                let result = self.is_named_struct_pod_copy(*sym, &args, visiting);
+                visiting.insert(id, false);
+                result
             }
             ArType::Tuple(elems) => {
                 let elems = self.type_interner.type_args(*elems);
@@ -507,6 +530,39 @@ impl TypeInfo {
         // Copying such a value would duplicate that obligation.
         if self.destructors.contains_key(&sym) {
             return false;
+        }
+        let mut variants: Vec<_> = self
+            .enum_variants
+            .iter()
+            .filter(|(_, (owner, _))| *owner == sym)
+            .collect();
+        if !variants.is_empty() {
+            variants.sort_by_key(|(symbol, _)| {
+                (
+                    self.enum_variant_tags.get(symbol).copied(),
+                    symbol.file_id,
+                    symbol.local_id.0,
+                )
+            });
+            let parameters = self
+                .generic_params
+                .get(&sym)
+                .map_or(&[][..], |p| p.as_slice());
+            if parameters.len() != args.len() {
+                return false;
+            }
+            let substitution = build_subst_ids(parameters, args, &self.type_interner);
+            return variants.iter().all(|(_, (_, payload))| match payload {
+                EnumPayloadShape::Unit => true,
+                EnumPayloadShape::Tuple(fields) => fields.iter().all(|ty| {
+                    let ty = arandu_middle::types::substitute_type_id(
+                        *ty,
+                        &substitution,
+                        &self.type_interner,
+                    );
+                    self.is_pod_component(ty, visiting)
+                }),
+            });
         }
         let Some(fields) = self.struct_fields.get(&sym) else {
             return false;
@@ -604,6 +660,7 @@ pub fn translate_type(ty: &ArType, from: &TypeInterner, to: &mut TypeInterner) -
             ArType::ConstArray(*param, new_inner)
         }
         ArType::Const(value) => ArType::Const(*value),
+        ArType::FrozenConst(value) => ArType::FrozenConst(Arc::clone(value)),
         ArType::ConstParam(param) => ArType::ConstParam(*param),
         ArType::Ptr(inner) => {
             let resolved = from.resolve(*inner);
@@ -873,6 +930,12 @@ impl TypeInfo {
                     .map(|(&span, value)| (span, value.clone())),
             );
         }
+        self.ctfe_global_values.extend(
+            other
+                .ctfe_global_values
+                .iter()
+                .map(|(&symbol, value)| (symbol, value.clone())),
+        );
         // Signature-only TypeInfos leave this empty — skip the O(n) scan.
         if !include_expressions || other.expr_types.iter().all(|s| s.is_none()) {
             return;
@@ -949,6 +1012,16 @@ impl arandu_middle::layout::StructLayoutProvider for TypeInfo {
         self.generic_params.get(&struct_id).map(|v| v.as_slice())
     }
 
+    fn get_enum_variant_symbol(&self, enum_id: SymbolId, tag: usize) -> Option<SymbolId> {
+        self.enum_variants
+            .iter()
+            .filter(|(symbol, (owner, _))| {
+                *owner == enum_id && self.enum_variant_tags.get(symbol) == Some(&tag)
+            })
+            .map(|(symbol, _)| *symbol)
+            .min_by_key(|symbol| (symbol.file_id, symbol.local_id.0))
+    }
+
     fn get_enum_variants(
         &self,
         enum_id: SymbolId,
@@ -980,9 +1053,9 @@ impl arandu_middle::layout::StructLayoutProvider for TypeInfo {
                     } else if tids.len() == 1 {
                         Some(tids[0])
                     } else {
-                        // Multi-payload: layout uses the interned Tuple type if present.
+                        // Multi-payload: retain a concrete tuple even for unselected variants.
                         let range = self.type_interner.push_type_args(tids);
-                        self.type_interner.lookup(&ArType::Tuple(range))
+                        Some(self.type_interner.intern(ArType::Tuple(range)))
                     }
                 }
             };

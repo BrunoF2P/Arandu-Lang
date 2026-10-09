@@ -199,6 +199,7 @@ impl<'a> WasmModuleBuilder<'a> {
         // ── 5. Memory section ─────────────────────────────────────────────
         let mut rodata = crate::memory::RodataTable::from_literal_pool(&self.program.literal_pool);
         let mut static_offsets = FxHashMap::default();
+        let mut static_sources: FxHashMap<Vec<u8>, (u32, u32)> = FxHashMap::default();
         for func in &self.program.funcs {
             let mut initializers = arandu_semantics::static_data::static_initializers(
                 func,
@@ -214,6 +215,10 @@ impl<'a> WasmModuleBuilder<'a> {
                     continue;
                 };
                 if initializer.alignment > 16 || !initializer.alignment.is_power_of_two() {
+                    continue;
+                }
+                if let Some(&source) = static_sources.get(&initializer.bytes) {
+                    static_offsets.insert((func.symbol, id), source);
                     continue;
                 }
                 let aligned = rodata
@@ -242,7 +247,8 @@ impl<'a> WasmModuleBuilder<'a> {
                     ));
                 };
                 rodata.bytes.resize(aligned, 0);
-                rodata.bytes.extend(initializer.bytes);
+                rodata.bytes.extend_from_slice(&initializer.bytes);
+                static_sources.insert(initializer.bytes, (offset, size));
                 static_offsets.insert((func.symbol, id), (offset, size));
             }
         }

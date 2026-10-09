@@ -93,6 +93,7 @@ fn hash_shape(hash: &mut blake3::Hasher, shape: &TypeShape) {
         Array(_, _) => 5,
         ConstArray(_, _) => 6,
         Const(_) => 7,
+        FrozenConst(_) => 24,
         ConstParam(_) => 8,
         Ptr(_) => 9,
         Ref(_) => 10,
@@ -144,6 +145,9 @@ fn hash_shape(hash: &mut blake3::Hasher, shape: &TypeShape) {
             hash.update(&symbol.file_id.to_le_bytes());
             hash.update(&symbol.local_id.0.to_le_bytes());
             hash_shape(hash, inner);
+        }
+        FrozenConst(value) => {
+            hash.update(&value.canonical_bytes());
         }
         Const(value) => {
             hash.update(&value.to_le_bytes());
@@ -283,6 +287,23 @@ pub fn instance_hir<'db>(
     db: &'db dyn ArandCompilerDb,
     instance: Instance<'db>,
 ) -> HashEq<InstanceHir> {
+    build_instance_hir(db, instance, false)
+}
+
+/// Runtime-independent instance lowering used by the CTFE call closure.
+#[salsa::tracked(cycle_result = instance_hir_cycle)]
+pub(crate) fn instance_ctfe_hir<'db>(
+    db: &'db dyn ArandCompilerDb,
+    instance: Instance<'db>,
+) -> HashEq<InstanceHir> {
+    build_instance_hir(db, instance, true)
+}
+
+fn build_instance_hir<'db>(
+    db: &'db dyn ArandCompilerDb,
+    instance: Instance<'db>,
+    for_ctfe: bool,
+) -> HashEq<InstanceHir> {
     let key = instance.key(db);
     let source = item_source_input(db, *instance.file(db), key.definition);
     let has_static_loop = if source.may_have_comptime && key.arguments.is_empty() {
@@ -310,7 +331,9 @@ pub fn instance_hir<'db>(
         false
     };
     let staged = source.may_have_comptime && (!key.arguments.is_empty() || has_static_loop);
-    let template = if staged {
+    let template = if for_ctfe {
+        crate::ctfe::instances::instance_ctfe_hir(db, instance)
+    } else if staged {
         crate::ctfe::instance_staged_hir(db, instance)
     } else {
         HashEq::share(function_hir(db, *instance.file(db), key.definition))
@@ -337,12 +360,58 @@ pub fn instance_hir<'db>(
         db.unwind_if_revision_cancelled();
         // Header linking is memoized per module closure, not repeated in the
         // retained function HIR and then copied again for every instance.
-        let headers = declaration_context(db, *instance.file(db));
-        fingerprint.update(headers.stable_hash().as_bytes());
-        if let Some(context) = &headers.hir {
-            arandu_semantics::link_hir_module(&mut checked, hir, &headers.type_check, context);
+        if for_ctfe {
+            match crate::ctfe::globals::declaration_context(
+                db,
+                *instance.file(db),
+                &source.program,
+                &mut checked,
+            ) {
+                Ok(context) => {
+                    let metadata = checked.clone();
+                    arandu_semantics::link_hir_module(&mut checked, hir, &metadata, &context);
+                    let program = parse(db, *instance.file(db));
+                    if let Ok(program) = &**program {
+                        let mut span = None;
+                        program.for_each_decl_recursive(|_, declaration| {
+                            if arandu_semantics::primary_def_key(declaration)
+                                .and_then(|node| checked.resolved.definitions.get(&node))
+                                == Some(&key.definition)
+                            {
+                                span = Some(arandu_semantics::item_source_span(declaration));
+                            }
+                        });
+                        if let Some(span) = span {
+                            if let Err(error) = crate::ctfe::globals::link_referenced_globals(
+                                db,
+                                program,
+                                span,
+                                &mut checked,
+                                hir,
+                            ) {
+                                crate::ctfe::public::append_failure(
+                                    &mut diagnostics,
+                                    crate::ctfe::RootEvalError::Build(error),
+                                    span,
+                                );
+                            }
+                        }
+                    }
+                }
+                Err(error) => crate::ctfe::public::append_failure(
+                    &mut diagnostics,
+                    crate::ctfe::RootEvalError::Build(error),
+                    hir.span,
+                ),
+            }
         } else {
-            diagnostics.extend(headers.diagnostics.iter().cloned());
+            let headers = declaration_context(db, *instance.file(db));
+            fingerprint.update(headers.stable_hash().as_bytes());
+            if let Some(context) = &headers.hir {
+                arandu_semantics::link_hir_module(&mut checked, hir, &headers.type_check, context);
+            } else {
+                diagnostics.extend(headers.diagnostics.iter().cloned());
+            }
         }
         // A concrete argument may come from the caller's module, not from the
         // generic definition's imports (e.g. Vec<String>). Bring only its
@@ -374,6 +443,29 @@ pub fn instance_hir<'db>(
             let Some(context_file) = db.source_file_by_id(file_id) else {
                 continue;
             };
+            if for_ctfe {
+                let parsed = crate::passes::parse(db, context_file);
+                let Ok(program) = &**parsed else {
+                    continue;
+                };
+                match crate::ctfe::globals::declaration_context(
+                    db,
+                    context_file,
+                    program,
+                    &mut checked,
+                ) {
+                    Ok(context) => {
+                        let metadata = checked.clone();
+                        arandu_semantics::link_hir_module(&mut checked, hir, &metadata, &context);
+                    }
+                    Err(error) => crate::ctfe::public::append_failure(
+                        &mut diagnostics,
+                        crate::ctfe::RootEvalError::Build(error),
+                        hir.span,
+                    ),
+                }
+                continue;
+            }
             let declarations = declaration_hir(db, context_file);
             fingerprint.update(declarations.stable_hash().as_bytes());
             if let Some(context) = &declarations.artifacts.hir {
@@ -395,13 +487,29 @@ pub fn instance_hir<'db>(
                 }
             }
         }
+        // Narrow CTFE declaration contexts contain local headers only. Retain
+        // demanded imported intrinsic declarations before monomorphization;
+        // otherwise a layout query becomes an unavailable external call.
+        if for_ctfe {
+            if let Err(error) = crate::ctfe::link_extern_headers(db, &mut checked, hir) {
+                crate::ctfe::public::append_failure(
+                    &mut diagnostics,
+                    crate::ctfe::RootEvalError::Build(error),
+                    hir.span,
+                );
+            }
+        }
         match arandu_semantics::passes::monomorphize::instantiate_function(&mut checked, hir, key) {
             Ok(concrete) => {
                 function = Some(concrete.function);
                 instances = concrete.instances;
                 generated_symbols = concrete.generated_symbols;
                 if staged {
-                    generated_symbols.extend(crate::ctfe::instance_staged_symbols(db, instance));
+                    generated_symbols.extend(if for_ctfe {
+                        crate::ctfe::instances::instance_ctfe_symbols(db, instance)
+                    } else {
+                        crate::ctfe::instance_staged_symbols(db, instance)
+                    });
                     generated_symbols
                         .sort_unstable_by_key(|symbol| (symbol.file_id, symbol.local_id.0));
                     generated_symbols.dedup();
@@ -553,11 +661,17 @@ fn declaration_hir_from(
                 .copied()
             {
                 if headers_only {
-                    let item = arandu_semantics::check_item_body_only(
+                    let mut item = arandu_semantics::check_item_body_only(
                         declared,
                         program,
                         symbol,
                         crate::passes::database_target_info(db),
+                    );
+                    crate::ctfe::globals::stage_initializer(
+                        &mut item,
+                        program,
+                        symbol,
+                        *db.target_config().data_layout(db),
                     );
                     checked.type_info_mut().merge_from(&item.type_info);
                     checked.diagnostics.extend(item.diagnostics);

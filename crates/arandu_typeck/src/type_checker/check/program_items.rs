@@ -243,6 +243,14 @@ fn check_one_item_body(checker: &mut TypeChecker<'_>, program: &Program, decl: &
         }
         TopLevelDecl::Const(const_decl) => {
             validate_top_level_any(checker, decl);
+            let key = NodeKey::from(const_decl.span);
+            if let Some(&symbol) = checker.resolved.definitions.get(&key)
+                && checker.type_info.ctfe_global_values.contains_key(&symbol)
+                && let Some(ty) = checker.type_info.decl_type_id(symbol)
+            {
+                checker.type_info.record_expr_type(const_decl.value, ty);
+                return;
+            }
             let val_ty = synth_expr(checker, const_decl.value);
             let const_key = NodeKey::from(const_decl.span);
             if let Some(&symbol_id) = checker.resolved.definitions.get(&const_key) {

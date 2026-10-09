@@ -329,7 +329,9 @@ impl<'a, 'bump> InstantiationAnalyzer<'a, 'bump> {
                 HirLambdaBody::Expr(expr) => self.visit_expr(*expr, current),
                 HirLambdaBody::Block(block) => self.visit_block(*block, current),
             },
-            HirExprKind::AsyncBlock { block } | HirExprKind::UnsafeBlock { block } => {
+            HirExprKind::AsyncBlock { block }
+            | HirExprKind::UnsafeBlock { block }
+            | HirExprKind::ValueBlock { block } => {
                 self.visit_block(*block, current);
             }
             HirExprKind::If {

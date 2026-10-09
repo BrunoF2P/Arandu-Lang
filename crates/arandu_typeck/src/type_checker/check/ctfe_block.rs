@@ -60,7 +60,7 @@ pub fn check_ctfe_block(
     }
     let observed_effects = checker.current_observed_effects;
     checker.current_observed_effects = outer_effects;
-    let Some(mut returns) = checker.ctx.pop_ctfe_return() else {
+    let Some((mut returns, propagations)) = checker.ctx.pop_ctfe_return() else {
         checker.diagnostics.push(crate::Diagnostic::ice(
             crate::DiagCode::ICET001,
             "isolated block lost its return target during type checking",
@@ -87,6 +87,18 @@ pub fn check_ctfe_block(
         .map(|value| checker.resolve(value.ty).default_literal())
         .unwrap_or(ArType::Void);
     let result = expected.unwrap_or_else(|| checker.intern(inferred));
+    for propagation in propagations {
+        if !checker.can_propagate_try(&checker.resolve(propagation.ty), &checker.resolve(result)) {
+            checker.add_constraint(
+                ArType::Error,
+                result,
+                ConstraintOrigin::TryReturnInvalid {
+                    span: propagation.span,
+                    return_span: block.span,
+                },
+            );
+        }
+    }
     if returns.is_empty() && !matches!(checker.resolve(result), ArType::Void | ArType::Error) {
         checker.add_constraint(
             result,

@@ -394,6 +394,7 @@ pub fn instantiate_function(
             | ArType::Range(inner) => observed.push(*inner),
             ArType::Result(ok, error) => observed.extend([*ok, *error]),
             ArType::Primitive(_)
+            | ArType::FrozenConst(_)
             | ArType::Const(_)
             | ArType::ConstParam(_)
             | ArType::GenRef
@@ -905,7 +906,9 @@ fn discover_nested_keys<'bump>(
                 HirLambdaBody::Expr(e) => visit_expr(hir, *e, tc, bump, template_funcs, enqueue),
                 HirLambdaBody::Block(b) => visit_block(hir, *b, tc, bump, template_funcs, enqueue),
             },
-            HirExprKind::AsyncBlock { block } | HirExprKind::UnsafeBlock { block } => {
+            HirExprKind::AsyncBlock { block }
+            | HirExprKind::UnsafeBlock { block }
+            | HirExprKind::ValueBlock { block } => {
                 visit_block(hir, *block, tc, bump, template_funcs, enqueue);
             }
             HirExprKind::StructLiteral { fields, .. } => {
@@ -1005,6 +1008,7 @@ fn instance_args_fully_concrete(tc: &TypeCheckResult, type_args: &[TypeId]) -> b
             | TypeShape::Range(inner) => unresolved(tc, inner),
             TypeShape::Result(ok, error) => unresolved(tc, ok) || unresolved(tc, error),
             TypeShape::Primitive(_)
+            | TypeShape::FrozenConst(_)
             | TypeShape::Const(_)
             | TypeShape::GenRef
             | TypeShape::Err

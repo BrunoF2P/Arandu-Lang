@@ -42,6 +42,7 @@ pub struct CtfeFunction {
     layout: DataLayout,
     temp_types: Vec<ValueType>,
     local_types: Vec<ValueType>,
+    projection_types: Vec<(TypeId, ValueType)>,
     return_type: ValueType,
     identity: FunctionInstance,
     calls: Vec<(SymbolId, FunctionInstance)>,
@@ -154,6 +155,23 @@ impl CtfeFunction {
             .iter()
             .map(|local| resolve(local.ty))
             .collect::<Result<_, _>>()?;
+        let mut projection_types = Vec::new();
+        for stmt in function.stmts.iter_ids().map(|id| function.stmt(id)) {
+            if let AmirStmt::Assign {
+                rhs:
+                    AmirRvalue::EnumPayload {
+                        field_ty, tuple_ty, ..
+                    },
+                ..
+            } = stmt
+            {
+                for id in std::iter::once(*field_ty).chain(*tuple_ty) {
+                    if !projection_types.iter().any(|(known, _)| *known == id) {
+                        projection_types.push((id, resolve(id)?));
+                    }
+                }
+            }
+        }
         Ok(Self {
             identity: FunctionInstance {
                 definition: function.symbol,
@@ -165,8 +183,15 @@ impl CtfeFunction {
             layout,
             temp_types,
             local_types,
+            projection_types,
             return_type,
         })
+    }
+
+    /// Canonical result type, reconstructed without exposing this unit's IDs.
+    #[must_use]
+    pub fn result_type_shape(&self) -> arandu_middle::types::TypeShape {
+        self.return_type.shape()
     }
 
     /// Pool-independent type encodings for semantic hashing by query consumers.
@@ -174,6 +199,7 @@ impl CtfeFunction {
         std::iter::once(&self.return_type)
             .chain(&self.temp_types)
             .chain(&self.local_types)
+            .chain(self.projection_types.iter().map(|(_, ty)| ty))
             .map(ValueType::canonical_bytes)
     }
 
@@ -909,6 +935,109 @@ impl Frame {
                 eval_binary(*op, a, self.operand(*right, right_hint, meter)?)
                     .map_err(EvalErrorKind::Arithmetic)
             }
+            AmirRvalue::EnumConstruct {
+                variant_tag,
+                payload,
+            } => {
+                let ValueType::Enum(descriptor) = &ty else {
+                    return Err(EvalErrorKind::TypeMismatch);
+                };
+                let (symbol, payload_ty) = descriptor
+                    .variants
+                    .get(*variant_tag)
+                    .ok_or(EvalErrorKind::InvalidIr)?;
+                let value = match (payload, payload_ty) {
+                    (None, None) => None,
+                    (Some(operand), Some(ty)) => {
+                        Some(self.operand(*operand, Some(ty.clone()), meter)?)
+                    }
+                    _ => return Err(EvalErrorKind::TypeMismatch),
+                };
+                meter.aggregate(&descriptor.shape, usize::from(value.is_some()))?;
+                if let Some(value) = &value {
+                    meter.frozen(value)?;
+                }
+                Ok(ConstValue::Aggregate(
+                    ConstAggregate::enumeration(
+                        descriptor.shape.clone(),
+                        arandu_middle::ctfe::ConstVariant {
+                            tag: *variant_tag,
+                            symbol: *symbol,
+                        },
+                        value,
+                    )
+                    .map_err(EvalErrorKind::Value)?,
+                ))
+            }
+            AmirRvalue::Discriminant { value } => {
+                let ConstValue::Aggregate(value) = self.operand(*value, None, meter)? else {
+                    return Err(EvalErrorKind::TypeMismatch);
+                };
+                let variant = value.variant().ok_or(EvalErrorKind::TypeMismatch)?;
+                let ValueType::Integer(integer) = ty else {
+                    return Err(EvalErrorKind::TypeMismatch);
+                };
+                ConstInt::new(
+                    integer,
+                    i128::try_from(variant.tag).map_err(|_| EvalErrorKind::ValueLimit)?,
+                )
+                .map(ConstValue::Integer)
+                .map_err(EvalErrorKind::Value)
+            }
+            AmirRvalue::EnumPayload {
+                value,
+                variant,
+                variant_tag,
+                index,
+                field_ty,
+                tuple_ty,
+            } => {
+                let ConstValue::Aggregate(value) = self.operand(*value, None, meter)? else {
+                    return Err(EvalErrorKind::TypeMismatch);
+                };
+                let identity = value.variant().ok_or(EvalErrorKind::TypeMismatch)?;
+                if identity.tag != *variant_tag
+                    || identity.symbol.is_some_and(|symbol| symbol != *variant)
+                {
+                    return Err(EvalErrorKind::InvalidIr);
+                }
+                let [payload] = value.values() else {
+                    return Err(EvalErrorKind::InvalidIr);
+                };
+                let projected = if let Some(tuple_ty) = tuple_ty {
+                    let ConstValue::Aggregate(tuple) = payload else {
+                        return Err(EvalErrorKind::TypeMismatch);
+                    };
+                    let descriptor = self
+                        .unit
+                        .projection_types
+                        .iter()
+                        .find(|(id, _)| id == tuple_ty)
+                        .map(|(_, ty)| ty)
+                        .ok_or(EvalErrorKind::InvalidIr)?;
+                    if tuple.variant().is_some() || !descriptor.accepts(payload) {
+                        return Err(EvalErrorKind::TypeMismatch);
+                    }
+                    tuple.values().get(*index).ok_or(EvalErrorKind::InvalidIr)?
+                } else {
+                    if *index != 0 {
+                        return Err(EvalErrorKind::InvalidIr);
+                    }
+                    payload
+                };
+                let field = self
+                    .unit
+                    .projection_types
+                    .iter()
+                    .find(|(id, _)| id == field_ty)
+                    .map(|(_, ty)| ty)
+                    .ok_or(EvalErrorKind::InvalidIr)?;
+                if field != &ty || !ty.accepts(projected) {
+                    return Err(EvalErrorKind::TypeMismatch);
+                }
+                meter.step()?;
+                Ok(projected.clone())
+            }
             AmirRvalue::Load(place) => self.load_place(place, meter).map(|(_, value)| value),
             AmirRvalue::Array { items } | AmirRvalue::Tuple { items } => {
                 let ValueType::Aggregate(descriptor) = &ty else {
@@ -980,6 +1109,16 @@ impl Frame {
                     return Err(EvalErrorKind::TypeMismatch);
                 };
                 meter.step()?;
+                if value.variant().is_some() {
+                    if *field != arandu_middle::amir::ENUM_PAYLOAD_FIELD {
+                        return Err(EvalErrorKind::InvalidIr);
+                    }
+                    return value
+                        .values()
+                        .first()
+                        .cloned()
+                        .ok_or(EvalErrorKind::InvalidIr);
+                }
                 value
                     .values()
                     .get(*field)
@@ -991,7 +1130,7 @@ impl Frame {
                 let index = self.index_operand(*index, meter)?;
                 meter.step()?;
                 match base {
-                    ConstValue::Aggregate(value) => value
+                    ConstValue::Aggregate(value) if value.variant().is_none() => value
                         .values()
                         .get(index)
                         .cloned()
@@ -1013,7 +1152,9 @@ impl Frame {
             }
             AmirRvalue::Len(base) => {
                 let length = match self.operand(*base, None, meter)? {
-                    ConstValue::Aggregate(value) => value.values().len(),
+                    ConstValue::Aggregate(value) if value.variant().is_none() => {
+                        value.values().len()
+                    }
                     ConstValue::String(value) => value.len(),
                     ConstValue::Bytes(value) => value.len(),
                     _ => return Err(EvalErrorKind::TypeMismatch),
@@ -1145,11 +1286,11 @@ fn admitted_rvalue(rhs: &AmirRvalue) -> Result<(), EvalErrorKind> {
         | AmirRvalue::Tuple { .. }
         | AmirRvalue::Len(_)
         | AmirRvalue::StrBytes { .. }
-        | AmirRvalue::SliceSubslice { .. } => Ok(()),
-        AmirRvalue::Discriminant { .. }
+        | AmirRvalue::SliceSubslice { .. }
+        | AmirRvalue::Discriminant { .. }
         | AmirRvalue::EnumPayload { .. }
-        | AmirRvalue::EnumConstruct { .. }
-        | AmirRvalue::SliceData(_)
+        | AmirRvalue::EnumConstruct { .. } => Ok(()),
+        AmirRvalue::SliceData(_)
         | AmirRvalue::SliceView { .. }
         | AmirRvalue::StrView { .. }
         | AmirRvalue::Alloc(_)

@@ -23,6 +23,13 @@ impl LowerCtx<'_> {
                 .lower_layout_query(query, operand_ty, hir_expr.ty, None, hir_expr.span)
                 .map(Some);
         }
+        if self.tc.type_info.ctfe_global_values.contains_key(&symbol) {
+            // Frozen declarations contain only admitted materialized values.
+            // Interpret that value in this unit's literal pool instead of
+            // leaving a runtime GlobalRef in a CTFE expression/helper.
+            let symbols = std::sync::Arc::clone(&self.tc.symbols);
+            return self.lower_expr(expr, None, &symbols).map(Some);
+        }
         // Preserve integer consts through a compile-time cast. Returning the
         // literal directly drops its inferred target type in AMIR; materializing
         // it in a typed temp keeps comparisons (e.g. `uint > CONST`) well typed.

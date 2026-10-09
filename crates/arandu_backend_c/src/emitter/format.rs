@@ -319,19 +319,41 @@ impl<'a> CEmitter<'a> {
                     {
                         current_ty = self.interner.resolve(*inner);
                     }
+                    let pointee_array = match &current_ty {
+                        ArType::Ptr(inner) | ArType::Ref(inner) | ArType::RefMut(inner) => {
+                            match self.interner.resolve(*inner) {
+                                ArType::Array(len, elem) => Some((len, elem)),
+                                _ => None,
+                            }
+                        }
+                        _ => None,
+                    };
                     let is_vec = arandu_middle::types::is_vec_type(&current_ty, self.symbols);
-                    let elem_ty = match arandu_middle::types::index_elem_type(
-                        &current_ty,
-                        self.symbols,
-                        self.interner,
-                    ) {
-                        Some(id) => self.interner.resolve(id),
-                        None => ArType::Error,
+                    let elem_ty = if let Some((_, elem_id)) = pointee_array {
+                        self.interner.resolve(elem_id)
+                    } else {
+                        match arandu_middle::types::index_elem_type(
+                            &current_ty,
+                            self.symbols,
+                            self.interner,
+                        ) {
+                            Some(id) => self.interner.resolve(id),
+                            None => ArType::Error,
+                        }
                     };
                     let elem_c_ty = self.format_type(&elem_ty);
                     let index_str = self.format_operand(index_op, func);
 
-                    if matches!(
+                    if let Some((len, elem_id)) = pointee_array
+                        && len > 0
+                        && self.checked_layout(&ArType::Array(len, elem_id)).size > 0
+                    {
+                        path = format!("({})->data[{}]", path, index_str);
+                    } else if matches!(&current_ty, ArType::Array(len, _) if *len > 0)
+                        && self.checked_layout(&current_ty).size > 0
+                    {
+                        path = format!("({}).data[{}]", path, index_str);
+                    } else if matches!(
                         current_ty,
                         ArType::Ptr(_) | ArType::Ref(_) | ArType::RefMut(_)
                     ) {
@@ -352,17 +374,39 @@ impl<'a> CEmitter<'a> {
                     {
                         current_ty = self.interner.resolve(*inner);
                     }
+                    let pointee_array = match &current_ty {
+                        ArType::Ptr(inner) | ArType::Ref(inner) | ArType::RefMut(inner) => {
+                            match self.interner.resolve(*inner) {
+                                ArType::Array(len, elem) => Some((len, elem)),
+                                _ => None,
+                            }
+                        }
+                        _ => None,
+                    };
                     let is_vec = arandu_middle::types::is_vec_type(&current_ty, self.symbols);
-                    let elem_ty = match arandu_middle::types::index_elem_type(
-                        &current_ty,
-                        self.symbols,
-                        self.interner,
-                    ) {
-                        Some(id) => self.interner.resolve(id),
-                        None => ArType::Error,
+                    let elem_ty = if let Some((_, elem_id)) = pointee_array {
+                        self.interner.resolve(elem_id)
+                    } else {
+                        match arandu_middle::types::index_elem_type(
+                            &current_ty,
+                            self.symbols,
+                            self.interner,
+                        ) {
+                            Some(id) => self.interner.resolve(id),
+                            None => ArType::Error,
+                        }
                     };
                     let elem_c_ty = self.format_type(&elem_ty);
-                    if matches!(
+                    if let Some((len, elem_id)) = pointee_array
+                        && len > 0
+                        && self.checked_layout(&ArType::Array(len, elem_id)).size > 0
+                    {
+                        path = format!("({})->data[{}]", path, index);
+                    } else if matches!(&current_ty, ArType::Array(len, _) if *len > 0)
+                        && self.checked_layout(&current_ty).size > 0
+                    {
+                        path = format!("({}).data[{}]", path, index);
+                    } else if matches!(
                         current_ty,
                         ArType::Ptr(_) | ArType::Ref(_) | ArType::RefMut(_)
                     ) {

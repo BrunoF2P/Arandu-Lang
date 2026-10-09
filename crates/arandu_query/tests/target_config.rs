@@ -157,8 +157,11 @@ fn mem_intrinsics_preserve_non_natural_abi_alignments_in_runtime_and_ctfe() {
         );
         let concrete_result =
             ctfe_eval_instance(&db, CtfeInstanceRequest::new(&db, instance, vec![], budget));
-        for result in [source_result, concrete_result] {
-            let ConstValue::Integer(value) = result.as_ref().expect("layout CTFE") else {
+        for (mode, result) in [("source", source_result), ("concrete", concrete_result)] {
+            let ConstValue::Integer(value) = result
+                .as_ref()
+                .unwrap_or_else(|error| panic!("{mode} layout CTFE: {error:?}"))
+            else {
                 panic!("expected an alignment integer");
             };
             assert_eq!(value.value(), alignment);

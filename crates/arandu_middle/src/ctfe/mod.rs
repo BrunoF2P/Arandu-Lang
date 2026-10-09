@@ -9,7 +9,7 @@ use crate::types::TypeShape;
 use std::sync::Arc;
 
 mod aggregate;
-pub use aggregate::{ConstAggregate, canonical_type_bytes, validate_ctfe_type_shape};
+pub use aggregate::{ConstAggregate, ConstVariant, canonical_type_bytes, validate_ctfe_type_shape};
 mod float;
 pub use float::{ConstFloat, FloatArithmetic, FloatError, FloatType};
 mod string;
@@ -162,6 +162,21 @@ pub enum ConstValue {
 }
 
 impl ConstValue {
+    /// Structural type of a frozen value, independent of any interner.
+    #[must_use]
+    pub fn type_shape(&self) -> crate::types::TypeShape {
+        use crate::types::{Primitive, TypeShape};
+        match self {
+            Self::Void => TypeShape::Void,
+            Self::Bool(_) => TypeShape::Primitive(Primitive::Bool),
+            Self::Integer(value) => TypeShape::Primitive(value.ty().primitive()),
+            Self::Float(value) => TypeShape::Primitive(value.ty().primitive()),
+            Self::String(_) => TypeShape::Primitive(Primitive::Str),
+            Self::Bytes(_) => TypeShape::Slice(Box::new(TypeShape::Primitive(Primitive::U8))),
+            Self::Aggregate(value) => value.shape().clone(),
+        }
+    }
+
     /// Canonical scalar encoding v1, suitable as input to a stable digest.
     ///
     /// Bytes are version, value tag, primitive tag, resolved bit width, then

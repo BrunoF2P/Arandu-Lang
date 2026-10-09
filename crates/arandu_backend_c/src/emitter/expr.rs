@@ -545,11 +545,27 @@ impl<'a> CEmitter<'a> {
                 }
             }
             AmirRvalue::Array { items } => {
-                if items.is_empty() {
+                let array_layout = self.checked_layout(expected_ar_type);
+                if items.is_empty() || array_layout.size == 0 {
                     let _ = write!(
                         &mut self.output,
                         "({{ {expected_c_type} _res = {{0}}; _res; }})"
                     );
+                } else if let ArType::Array(len, _) = expected_ar_type
+                    && *len > 0
+                {
+                    let _ = write!(
+                        &mut self.output,
+                        "({{ {expected_c_type} _res = {{ .data = {{"
+                    );
+                    for (i, op) in items.iter().take(*len as usize).enumerate() {
+                        if i > 0 {
+                            let _ = write!(&mut self.output, ", ");
+                        }
+                        let op_str = self.format_operand(op, func);
+                        let _ = write!(&mut self.output, "{}", op_str);
+                    }
+                    let _ = write!(&mut self.output, "}} }}; _res; }})");
                 } else {
                     let elem_ty = match expected_ar_type {
                         ArType::Array(_, inner) => self.interner.resolve(*inner),
@@ -723,7 +739,16 @@ impl<'a> CEmitter<'a> {
                 let base_str = self.format_operand(base, func);
                 let index_str = self.format_operand(index, func);
 
-                if matches!(base_ty, ArType::Ptr(_)) {
+                let is_nonempty_array = matches!(&deref_ty, ArType::Array(len, _) if *len > 0)
+                    && self.checked_layout(&deref_ty).size > 0;
+
+                if is_nonempty_array {
+                    if matches!(base_ty, ArType::Ptr(_) | ArType::Ref(_) | ArType::RefMut(_)) {
+                        let _ = write!(&mut self.output, "({})->data[{}]", base_str, index_str);
+                    } else {
+                        let _ = write!(&mut self.output, "({}).data[{}]", base_str, index_str);
+                    }
+                } else if matches!(base_ty, ArType::Ptr(_)) {
                     let _ = write!(
                         &mut self.output,
                         "(({}*){})[{}]",

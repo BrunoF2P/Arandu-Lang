@@ -22,12 +22,8 @@ pub fn value_at(
         let TypeExpr::ConstExpression { span, .. } = ty else {
             return None;
         };
-        let value = tc
-            .resolved
-            .comptime_arguments
-            .get(&NodeKey::from(*span))?
-            .as_ref()?;
-        contains(*span, offset).then(|| (*span, value.to_string()))
+        contains(*span, offset).then_some(())?;
+        argument_value(tc, *span).map(|value| (*span, value))
     });
     let roots = program
         .pool
@@ -73,6 +69,17 @@ fn present_value(value: &ConstValue) -> String {
     }
 }
 
+fn argument_value(tc: &TypeCheckResult, span: Span) -> Option<String> {
+    let key = NodeKey::from(span);
+    if let Some(value) = tc.resolved.typed_comptime_arguments.get(&key) {
+        return Some(present_value(value));
+    }
+    tc.resolved
+        .comptime_arguments
+        .get(&key)?
+        .map(|value| value.to_string())
+}
+
 /// Values belonging to this generic callee, in argument order. Use the AST
 /// relationship, not a byte window that can accidentally select a nearby call.
 #[must_use]
@@ -97,12 +104,7 @@ pub fn arguments_at(
     for &id in program.pool.type_expr_list(args) {
         if let TypeExpr::ConstExpression { span, .. } = program.pool.type_expr(id) {
             // One failed argument makes the instantiated call unavailable.
-            let value = tc
-                .resolved
-                .comptime_arguments
-                .get(&NodeKey::from(*span))?
-                .as_ref()?;
-            values.push(value.to_string());
+            values.push(argument_value(tc, *span)?);
         }
     }
     (!values.is_empty()).then_some(ComptimePresentation { span, values })
@@ -179,6 +181,32 @@ mod tests {
             assert!(at(text, needle, false).is_none());
         }
         assert!(at(text, "count<comptime (1 / 0)", true).is_none());
+    }
+
+    #[test]
+    fn typed_arguments_present_bool_and_signed_values_on_arguments_and_callees() {
+        let text = "func choose<comptime ENABLED: bool, comptime N: i64>(): i64 { if ENABLED { return N }; return 0 }\nfunc main(): i64 { return choose<comptime (true), comptime (-42)>() }";
+        assert_eq!(
+            at(text, "choose<comptime", true)
+                .expect("typed call")
+                .values,
+            ["true", "-42"]
+        );
+        assert_eq!(
+            at(text, "comptime (true)", false)
+                .expect("bool argument")
+                .values,
+            ["true"]
+        );
+        assert_eq!(
+            at(text, "comptime (-42)", false)
+                .expect("signed argument")
+                .values,
+            ["-42"]
+        );
+        let failed = text.replace("-42", "1 / 0");
+        assert!(at(&failed, "choose<comptime", true).is_none());
+        assert!(at(&failed, "comptime (1 / 0)", false).is_none());
     }
 
     #[test]

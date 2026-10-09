@@ -73,6 +73,7 @@ pub fn scratch_type_safe(
             | ArType::Func(..)
             | ArType::GenRef
             | ArType::ConstArray(..)
+            | ArType::FrozenConst(_)
             | ArType::Const(_)
             | ArType::ConstParam(_)
             | ArType::IntLiteral
@@ -191,6 +192,7 @@ fn block_param_safe(ty: TypeId, interner: &TypeInterner, in_cycle: bool, depth: 
         | ArType::Range(_)
         | ArType::Func(..)
         | ArType::ConstArray(..)
+        | ArType::FrozenConst(_)
         | ArType::Const(_)
         | ArType::ConstParam(_)
         | ArType::Err
@@ -272,6 +274,7 @@ pub fn function_scratch_safe(
         | ArType::Func(..)
         | ArType::GenRef
         | ArType::ConstArray(..)
+        | ArType::FrozenConst(_)
         | ArType::Const(_)
         | ArType::ConstParam(_)
         | ArType::Err

@@ -45,13 +45,23 @@ fn synth_expr_inner(
     let pool = checker.pool;
     let kind = pool.expr(expr);
 
-    if let ExprKind::Layout { ty, .. } = kind {
-        let operand = checker.lower_type_expr(*ty, checker.type_scope());
-        return if operand == ArType::Error {
-            checker.intern(ArType::Error)
-        } else {
-            checker.intern(ArType::Primitive(super::super::types::Primitive::USize))
+    if let ExprKind::Layout { query, ty } = kind {
+        let result = match query {
+            arandu_parser::LayoutQuery::Size | arandu_parser::LayoutQuery::Align => {
+                let Some(ty) = ty else {
+                    return checker.intern(ArType::Error);
+                };
+                if checker.lower_type_expr(*ty, checker.type_scope()) == ArType::Error {
+                    return checker.intern(ArType::Error);
+                }
+                super::super::types::Primitive::USize
+            }
+            arandu_parser::LayoutQuery::TargetOS | arandu_parser::LayoutQuery::TargetArch => {
+                super::super::types::Primitive::Str
+            }
+            arandu_parser::LayoutQuery::TargetPointerWidth => super::super::types::Primitive::USize,
         };
+        return checker.intern(ArType::Primitive(result));
     }
 
     if let ExprKind::Comptime { body } = kind {

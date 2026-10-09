@@ -173,6 +173,11 @@ pub fn load_project(
     start: &Path,
     flags: &ProjectFlags,
 ) -> Result<ProjectContext, String> {
+    if let Some(triple) = &flags.target {
+        let identity =
+            arandu_middle::db::TargetIdentity::from_triple(triple).map_err(str::to_owned)?;
+        db.set_target_identity(identity);
+    }
     let discovery = find_manifest(start)
         .map_err(|error| error.to_string())?
         .ok_or_else(|| {

@@ -159,6 +159,108 @@ pub fn materialize_ctfe_value(
         {
             return Err(MaterializationError::TypeMismatch);
         }
+        if let Some(variant) = aggregate.variant() {
+            use arandu_middle::hir::ResultCtorVariant;
+            use arandu_middle::layout::StructLayoutProvider;
+            if info.destructor_for_type(expected).is_some() {
+                return Err(MaterializationError::TypeMismatch);
+            }
+            let expected_type = info
+                .type_interner
+                .try_resolve(expected)
+                .ok_or(MaterializationError::InvalidType(expected))?;
+            let (symbol, payload_ty, builtin) = match expected_type {
+                ArType::Option(inner) => match variant.tag {
+                    0 => (None, None, Some(ResultCtorVariant::None)),
+                    1 => (None, Some(inner), Some(ResultCtorVariant::Some)),
+                    _ => return Err(MaterializationError::TypeMismatch),
+                },
+                ArType::Result(ok, error) => match variant.tag {
+                    0 => (None, Some(ok), Some(ResultCtorVariant::Ok)),
+                    1 => (None, Some(error), Some(ResultCtorVariant::Err)),
+                    _ => return Err(MaterializationError::TypeMismatch),
+                },
+                ArType::Named(owner, _) => {
+                    let symbol = info
+                        .get_enum_variant_symbol(owner, variant.tag)
+                        .ok_or(MaterializationError::TypeMismatch)?;
+                    let declared = info
+                        .get_enum_variants(owner)
+                        .and_then(|variants| variants.get(variant.tag).cloned())
+                        .ok_or(MaterializationError::TypeMismatch)?;
+                    let payload = declared
+                        .payload_ty
+                        .map(|_| {
+                            arandu_middle::layout::instantiated_enum_variant_payload_type(
+                                &expected_type,
+                                variant.tag,
+                                &info.type_interner,
+                                info,
+                            )
+                            .ok_or(MaterializationError::TypeMismatch)
+                        })
+                        .transpose()?;
+                    (Some(symbol), payload, None)
+                }
+                _ => return Err(MaterializationError::TypeMismatch),
+            };
+            if symbol != variant.symbol {
+                return Err(MaterializationError::TypeMismatch);
+            }
+            let payload = match (payload_ty, aggregate.values()) {
+                (None, []) => None,
+                (Some(ty), [value]) => Some(materialize(
+                    value,
+                    ty,
+                    destination,
+                    pool,
+                    depth + 1,
+                    remaining,
+                )?),
+                _ => return Err(MaterializationError::TypeMismatch),
+            };
+            let kind = if let Some(variant) = builtin {
+                let child = payload.unwrap_or(HirExpr {
+                    kind: HirExprKind::Bool(false),
+                    ty: info
+                        .type_interner
+                        .intern(ArType::Primitive(Primitive::Bool)),
+                    span,
+                });
+                HirExprKind::ResultCtor {
+                    variant,
+                    value: pool.alloc_expr(child),
+                }
+            } else {
+                let symbol = symbol.ok_or(MaterializationError::TypeMismatch)?;
+                let callee = pool.alloc_expr(HirExpr {
+                    kind: HirExprKind::Path { symbol },
+                    ty: info.decl_type_id(symbol).unwrap_or(expected),
+                    span,
+                });
+                let args = match payload {
+                    Some(HirExpr {
+                        kind: HirExprKind::Tuple { items },
+                        ..
+                    }) => items,
+                    Some(child) => {
+                        let id = pool.alloc_expr(child);
+                        pool.alloc_expr_list(&[id])
+                    }
+                    None => pool.alloc_expr_list(&[]),
+                };
+                HirExprKind::Call {
+                    callee,
+                    args,
+                    trailing_block: None,
+                }
+            };
+            return Ok(HirExpr {
+                kind,
+                ty: expected,
+                span,
+            });
+        }
         let mut children = Vec::new();
         let mut names = Vec::new();
         let expected_type = info

@@ -121,8 +121,10 @@ fn an_initializer_is_typed_without_its_invalid_runtime_owner_or_siblings() {
     assert_eq!(log.count_executions_matching("instance_hir"), 0);
     assert_eq!(log.count_executions_matching("lower_amir"), 0);
     assert_eq!(log.count_executions_matching("borrow_interfaces"), 0);
-    // Only the called helper, never the owner/sibling, receives body typing.
+    // Only the ordinary helper enters item typing; the invalid owner and
+    // sibling remain outside the demanded root.
     assert_eq!(log.count_executions_matching("item_typing"), 1);
+    assert_eq!(log.count_executions_matching("ctfe_func_amir"), 1);
 }
 
 #[test]

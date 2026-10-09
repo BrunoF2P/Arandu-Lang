@@ -295,6 +295,11 @@ pub trait StructLayoutProvider {
     fn get_generic_params(&self, struct_id: SymbolId) -> Option<&[SymbolId]>;
     fn get_enum_variants(&self, enum_id: SymbolId) -> Option<Vec<EnumPayloadShape>>;
 
+    /// Source identity for a nominal variant. Layout-only providers can omit it.
+    fn get_enum_variant_symbol(&self, _enum_id: SymbolId, _tag: usize) -> Option<SymbolId> {
+        None
+    }
+
     /// Structural Copy proof supplied by typeck when available. Layout-only
     /// test providers may return `None`; backends must then stay conservative.
     fn is_copy_type(&self, _ty: TypeId) -> Option<bool> {
@@ -699,7 +704,10 @@ impl LayoutEngine {
                     tag_encoding: None,
                 }
             }
-            ArType::ConstArray(_, _) | ArType::Const(_) | ArType::ConstParam(_) => {
+            ArType::ConstArray(_, _)
+            | ArType::FrozenConst(_)
+            | ArType::Const(_)
+            | ArType::ConstParam(_) => {
                 return Err(LayoutError::UnresolvedConst);
             }
             ArType::Tuple(tys) => {

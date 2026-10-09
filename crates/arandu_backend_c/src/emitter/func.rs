@@ -343,9 +343,11 @@ impl<'a> CEmitter<'a> {
             if jump_targets.contains(&bid) {
                 let _ = writeln!(&mut self.output, "bb{bid}:");
             }
-            for stmt in func.block_stmts(block.id) {
-                self.emit_stmt(stmt, func);
+            for id in block.statements.iter_ids::<arandu_middle::amir::InstrId>() {
+                self.current_initializer = Some(id);
+                self.emit_stmt(func.stmt(id), func);
             }
+            self.current_initializer = None;
             self.emit_terminator(&block.terminator, func);
         }
 

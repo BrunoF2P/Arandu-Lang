@@ -584,6 +584,45 @@ pub(super) fn clone_expr(
                 .iter()
                 .find_map(|(param, value)| (*param == symbol).then_some(value))
             {
+                Some(arandu_middle::types::ArType::FrozenConst(value)) => {
+                    let mut value = value.as_ref().clone();
+                    if let arandu_middle::ctfe::ConstValue::Integer(integer) = value
+                        && let arandu_middle::types::ArType::Primitive(primitive) =
+                            tc.type_info.type_interner.resolve(new_ty)
+                    {
+                        value = arandu_middle::ctfe::ConstValue::Integer(
+                            arandu_middle::ctfe::IntegerType::new(
+                                primitive,
+                                tc.type_info.target_layout,
+                            )
+                            .ok()
+                            .and_then(|ty| integer.cast(ty).ok())
+                            .ok_or_else(|| {
+                                Diagnostic::ice(
+                                    arandu_middle::DiagCode::ICET001,
+                                    "constant parameter exceeds its declared integer type",
+                                    expr.span,
+                                )
+                            })?,
+                        );
+                    }
+                    crate::passes::lower_hir::materialize_ctfe_value(
+                        &value,
+                        new_ty,
+                        &tc.type_info,
+                        &mut hir.pool,
+                        tc.type_info.target_layout,
+                        expr.span,
+                    )
+                    .map_err(|_| {
+                        Diagnostic::ice(
+                            arandu_middle::DiagCode::ICET001,
+                            "constant parameter disagrees with its declared type",
+                            expr.span,
+                        )
+                    })?
+                    .kind
+                }
                 Some(arandu_middle::types::ArType::Const(value)) => {
                     HirExprKind::Int(value.to_string().into())
                 }
@@ -746,6 +785,9 @@ pub(super) fn clone_expr_kind(
             expr: clone_expr(hir, *expr, subst, symbol_map, tc, name_prefix)?,
         },
         AsyncBlock { block } => AsyncBlock {
+            block: clone_block(hir, *block, subst, symbol_map, tc, name_prefix)?,
+        },
+        ValueBlock { block } => ValueBlock {
             block: clone_block(hir, *block, subst, symbol_map, tc, name_prefix)?,
         },
         UnsafeBlock { block } => UnsafeBlock {

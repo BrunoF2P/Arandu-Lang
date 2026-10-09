@@ -13,6 +13,7 @@ use arandu_middle::types::{ArType, TypeInterner};
 use arandu_middle::{DiagCode, Diagnostic, Span};
 use arandu_semantics::SymbolTable;
 
+mod constant_data;
 pub mod decl;
 pub mod expr;
 pub mod format;
@@ -65,6 +66,9 @@ pub struct CEmitter<'a> {
     /// A3.3: unique id for `__ar_co_N` stack payload locals (multi-stmt).
     pub(super) co_stack_slot: u32,
     pub(super) integer_concat_temps: Vec<Option<arandu_codegen::string_interp::IntegerStringKind>>,
+    pub(super) static_sources:
+        rustc_hash::FxHashMap<(arandu_middle::SymbolId, arandu_middle::amir::InstrId), usize>,
+    pub(super) current_initializer: Option<arandu_middle::amir::InstrId>,
     pub(super) error: Option<Diagnostic>,
 }
 
@@ -87,6 +91,8 @@ impl<'a> CEmitter<'a> {
             emitted_types: rustc_hash::FxHashSet::default(),
             co_stack_slot: 0,
             integer_concat_temps: Vec::new(),
+            static_sources: rustc_hash::FxHashMap::default(),
+            current_initializer: None,
             error: None,
         }
     }
@@ -212,6 +218,7 @@ impl<'a> CEmitter<'a> {
         // I/O prelude functions require the ArStr runtime even without literals.
         let needs_str = needs_str || needs_println || needs_print || needs_eprint;
         self.emit_headers(needs_str);
+        self.emit_static_sources();
         if needs_str {
             self.emit_str_literals();
         }

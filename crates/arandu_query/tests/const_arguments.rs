@@ -408,8 +408,8 @@ fn wide_values_are_preserved_and_declared_parameter_bounds_are_checked() {
 #[test]
 fn invalid_values_arithmetic_and_runtime_captures_are_diagnosed() {
     for (expression, prefix, code) in [
-        ("-1", "", DiagCode::T003IncompatibleCallArg),
-        ("true", "", DiagCode::T003IncompatibleCallArg),
+        ("-1", "", DiagCode::T011GenericConstraintNotSatisfied),
+        ("true", "", DiagCode::T011GenericConstraintNotSatisfied),
         (
             "unit()",
             "func unit(): void {}\n",
@@ -502,16 +502,9 @@ fn lambda_arguments_are_frozen_without_claiming_closure_execution_support() {
 
 #[test]
 fn unsupported_contexts_do_not_crash_or_execute_at_runtime() {
-    for owner in [
-        "func main(): uint { return comptime count<comptime (42)>() }",
-        "func main(): uint { if count<comptime (42)>() == 0 { return 0 } return 1 }",
-        "func main(): uint { return count<comptime (count<comptime (42)>())>() }",
-        "func main(x: Box<comptime (42)>): uint { return 0 }\nstruct Box<comptime N: uint> { x: int }",
-        "struct Box<comptime N: uint> { x: int }\ntype Alias = Box<comptime (42)>\nfunc main(): uint { return 0 }",
-        "struct Box<comptime N: uint> { x: int }\nfunc generic<T = Box<comptime (42)>>(): uint { return 0 }\nfunc main(): uint { return generic() }",
-        "const result = count<comptime (42)>()\nfunc main(): uint { return result }",
-        "struct Box<comptime N: uint> { x: int }\ninterface Invalid { func method(self, x: Box<comptime (42)>): void }\nfunc main(): uint { return 0 }",
-    ] {
+    {
+        let owner =
+            "func main(): uint { for i in 0..count<comptime (42)>() { return i } return 0 }";
         let mut db = DatabaseImpl::new();
         let file = db.new_file("arguments.aru".into(), format!("{COUNT}{owner}"));
         let diagnostics = errors(&db, file);

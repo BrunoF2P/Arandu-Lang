@@ -19,7 +19,11 @@ impl<'a> Parser<'a> {
         })?;
         self.advance();
         self.expect_kind(TokenKind::LParen)?;
-        let ty = self.parse_type()?;
+        let ty = if matches!(query, crate::LayoutQuery::Size | crate::LayoutQuery::Align) {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
         self.expect_kind(TokenKind::RParen)?;
         let span = self.span_from_mark(start);
         Ok(self.pool.alloc_expr(ExprKind::Layout { query, ty }, span))

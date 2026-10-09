@@ -188,6 +188,76 @@ fn emit_c(amir: &AmirProgram, tc: &TypeCheckResult) -> String {
 }
 
 #[test]
+fn static_sources_require_known_byte_order_and_support_windows_macros() {
+    let (amir, tc) = compile_src(
+        "func main(): int { let values: [8]int = [16909060, 2, 3, 4, 5, 6, 7, 8]; return values[0] }",
+    );
+    let emitted = emit_c(&amir, &tc);
+    let start = emitted
+        .find("#if defined(__BYTE_ORDER__)")
+        .expect("static source");
+    let end = emitted[start..].find("#endif").expect("byte order guard") + start;
+    let source = format!(
+        "typedef unsigned char uint8_t;\n{}\n",
+        &emitted[start..end + 6]
+    );
+    let directory = env::temp_dir().join("arandu_c_tests");
+    fs::create_dir_all(&directory).unwrap();
+    let source_file = directory.join("static_source_byte_order.c");
+    fs::write(&source_file, source).unwrap();
+    let compiler = env::var("CC").unwrap_or_else(|_| "gcc".into());
+    for (name, macros, prefix) in [
+        ("windows", vec!["-D_WIN32=1"], Some("4,3,2,1,")),
+        (
+            "little",
+            vec!["-D__BYTE_ORDER__=1234", "-D__ORDER_LITTLE_ENDIAN__=1234"],
+            Some("4,3,2,1,"),
+        ),
+        (
+            "big",
+            vec!["-D__BYTE_ORDER__=4321", "-D__ORDER_BIG_ENDIAN__=4321"],
+            Some("1,2,3,4,"),
+        ),
+        ("unknown", vec![], None),
+    ] {
+        let output = Command::new(&compiler)
+            .args([
+                "-E",
+                "-P",
+                "-U_WIN32",
+                "-U__BYTE_ORDER__",
+                "-U__ORDER_BIG_ENDIAN__",
+                "-U__ORDER_LITTLE_ENDIAN__",
+            ])
+            .args(macros)
+            .arg(&source_file)
+            .output()
+            .unwrap();
+        if let Some(prefix) = prefix {
+            assert!(
+                output.status.success(),
+                "{name}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                String::from_utf8_lossy(&output.stdout).contains(prefix),
+                "{name}: {}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+        } else {
+            assert!(
+                !output.status.success(),
+                "unknown byte order must fail closed"
+            );
+            assert!(
+                String::from_utf8_lossy(&output.stderr)
+                    .contains("requires a known target byte order")
+            );
+        }
+    }
+}
+
+#[test]
 fn c_backend_genref_runtime_has_monotonic_type_erased_storage() {
     let (amir, tc) = compile_src("func main(): int { return 0 }");
     let emitted = emit_c(&amir, &tc);
@@ -3369,5 +3439,93 @@ func main(): int {
     return read(Second.Item { value: 42 }) - 42
 }
 "#,
+    );
+}
+
+#[test]
+fn c_backend_array_uses_typed_storage_for_reads_and_writes_under_strict_aliasing() {
+    let source = r#"
+struct Holder {
+    values: [4]u64
+}
+
+func mutate_holder(mut h: Holder, idx: usize, delta: u64): u64 {
+    h.values[idx] = h.values[idx] + delta
+    return h.values[idx]
+}
+
+func main(): int {
+    let mut arr: [4]u64 = [10, 20, 30, 40]
+    let mut i: usize = 0
+    while i < 4 {
+        arr[i] = arr[i] + (i as u64) * 5
+        i = i + 1
+    }
+    let snapshot = arr
+    arr[2] = 999
+    if snapshot[2] != 40 { return 1 }
+    if arr[0] != 10 || arr[1] != 25 || arr[2] != 999 || arr[3] != 55 { return 2 }
+
+    let mut matrix: [2][2]i64 = [[1, 2], [3, 4]]
+    matrix[1][0] = matrix[0][1] + 10
+    if matrix[1][0] != 12 { return 3 }
+
+    let h = Holder { values: snapshot }
+    if mutate_holder(h, 3, 5) != 60 { return 4 }
+    return 0
+}
+"#;
+    let (amir, tc) = compile_src(source);
+    let emitted = emit_c(&amir, &tc);
+
+    assert!(
+        emitted.contains(
+            "typedef struct AR_MAY_ALIAS { _Alignas(8) uint64_t data[4]; } ArType_Array_4_uint64_t;"
+        ),
+        "expected typed C array storage in typedef, got:\n{emitted}"
+    );
+    assert!(
+        emitted.contains(".data["),
+        "expected array indexing through .data member"
+    );
+    assert!(
+        !emitted.contains("((uint64_t*)&"),
+        "array indexing must not cast struct address to uint64_t*:\n{emitted}"
+    );
+
+    test_zero_result_all_opt_levels("array_typed_storage_strict_aliasing", source);
+
+    let wrapped = format!(
+        "#define main arandu_main\n{emitted}\n#undef main\nint main(void) {{ return arandu_main(); }}\n"
+    );
+    let out_dir = env::temp_dir().join("arandu_c_tests");
+    fs::create_dir_all(&out_dir).unwrap();
+    let c_file = out_dir.join("array_strict_aliasing_o2.c");
+    let exe_file = out_dir.join("array_strict_aliasing_o2.exe");
+    fs::write(&c_file, wrapped).unwrap();
+
+    let cc = env::var("CC").unwrap_or_else(|_| "gcc".to_string());
+    let compile = c_compiler(&cc)
+        .args([
+            "-O2",
+            "-fstrict-aliasing",
+            "-Wstrict-aliasing=2",
+            "-Werror=strict-aliasing",
+        ])
+        .arg(&c_file)
+        .arg("-o")
+        .arg(&exe_file)
+        .arg("-lm")
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "C strict-aliasing O2 compilation failed: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let status = Command::new(&exe_file).status().unwrap();
+    assert!(
+        status.success(),
+        "strict-aliasing O2 binary exited with {status}"
     );
 }

@@ -14,6 +14,13 @@ pub(super) enum ValueType {
     String,
     Bytes(Primitive),
     Aggregate(Arc<AggregateType>),
+    Enum(Arc<EnumType>),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct EnumType {
+    pub shape: TypeShape,
+    pub variants: Vec<(Option<SymbolId>, Option<ValueType>)>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -33,6 +40,19 @@ pub(super) enum AggregateKind {
 }
 
 impl ValueType {
+    pub fn shape(&self) -> TypeShape {
+        match self {
+            Self::Void => TypeShape::Void,
+            Self::Bool => TypeShape::Primitive(Primitive::Bool),
+            Self::Integer(ty) => TypeShape::Primitive(ty.primitive()),
+            Self::Float(ty) => TypeShape::Primitive(ty.primitive()),
+            Self::String => TypeShape::Primitive(Primitive::Str),
+            Self::Bytes(ty) => TypeShape::Slice(Box::new(TypeShape::Primitive(*ty))),
+            Self::Aggregate(ty) => ty.shape.clone(),
+            Self::Enum(ty) => ty.shape.clone(),
+        }
+    }
+
     pub fn resolve(
         id: TypeId,
         types: &TypeInterner,
@@ -57,7 +77,14 @@ impl ValueType {
             Self::resolve(id, types, layout, provider, depth + 1, remaining)
         };
         let ty = types.try_resolve(id).ok_or(EvalErrorKind::InvalidIr)?;
-        if matches!(ty, ArType::Array(..) | ArType::Tuple(_) | ArType::Named(..)) {
+        if matches!(
+            ty,
+            ArType::Array(..)
+                | ArType::Tuple(_)
+                | ArType::Named(..)
+                | ArType::Option(_)
+                | ArType::Result(..)
+        ) {
             let shape = TypeShape::from_id(id, types).map_err(|_| EvalErrorKind::ValueLimit)?;
             arandu_middle::ctfe::validate_ctfe_type_shape(&shape)
                 .map_err(|_| EvalErrorKind::UnsupportedType(id))?;
@@ -91,6 +118,17 @@ impl ValueType {
                 }
                 _ => Err(EvalErrorKind::UnsupportedType(id)),
             },
+            ArType::Option(inner) => Ok(Self::Enum(Arc::new(EnumType {
+                shape,
+                variants: vec![(None, None), (None, Some(recurse(inner, remaining)?))],
+            }))),
+            ArType::Result(ok, error) => Ok(Self::Enum(Arc::new(EnumType {
+                shape,
+                variants: vec![
+                    (None, Some(recurse(ok, remaining)?)),
+                    (None, Some(recurse(error, remaining)?)),
+                ],
+            }))),
             ArType::Array(count, element) => {
                 let count = usize::try_from(count).map_err(|_| EvalErrorKind::ValueLimit)?;
                 if count > *remaining {
@@ -138,6 +176,35 @@ impl ValueType {
                 {
                     return Err(EvalErrorKind::UnsupportedType(id));
                 }
+                if let Some(variants) = provider.get_enum_variants(symbol) {
+                    if variants.len() > *remaining {
+                        return Err(EvalErrorKind::ValueLimit);
+                    }
+                    let arguments = types.try_type_args(args).ok_or(EvalErrorKind::InvalidIr)?;
+                    let parameters = provider.get_generic_params(symbol).unwrap_or(&[]);
+                    if parameters.len() != arguments.len() {
+                        return Err(EvalErrorKind::UnsupportedType(id));
+                    }
+                    let substitution = build_subst_ids(parameters, &arguments, types);
+                    let mut fields = Vec::new();
+                    for (tag, variant) in variants.into_iter().enumerate() {
+                        *remaining = remaining.checked_sub(1).ok_or(EvalErrorKind::ValueLimit)?;
+                        let payload = variant
+                            .payload_ty
+                            .map(|payload| {
+                                recurse(
+                                    substitute_type_id(payload, &substitution, types),
+                                    remaining,
+                                )
+                            })
+                            .transpose()?;
+                        fields.push((provider.get_enum_variant_symbol(symbol, tag), payload));
+                    }
+                    return Ok(Self::Enum(Arc::new(EnumType {
+                        shape,
+                        variants: fields,
+                    })));
+                }
                 let table = provider
                     .get_struct_fields(symbol)
                     .ok_or(EvalErrorKind::UnsupportedType(id))?;
@@ -177,13 +244,31 @@ impl ValueType {
             (Self::Float(ty), ConstValue::Float(value)) => *ty == value.ty(),
             (Self::String, ConstValue::String(_)) | (Self::Bytes(_), ConstValue::Bytes(_)) => true,
             (Self::Aggregate(ty), ConstValue::Aggregate(value)) => {
-                ty.shape == *value.shape()
+                value.variant().is_none()
+                    && ty.shape == *value.shape()
                     && ty.fields.len() == value.values().len()
                     && ty
                         .fields
                         .iter()
                         .zip(value.values())
                         .all(|(ty, value)| ty.accepts(value))
+            }
+            (Self::Enum(ty), ConstValue::Aggregate(value)) => {
+                let Some(variant) = value.variant() else {
+                    return false;
+                };
+                ty.shape == *value.shape()
+                    && ty
+                        .variants
+                        .get(variant.tag)
+                        .is_some_and(|(symbol, payload)| {
+                            *symbol == variant.symbol
+                                && match (payload, value.values()) {
+                                    (None, []) => true,
+                                    (Some(ty), [value]) => ty.accepts(value),
+                                    _ => false,
+                                }
+                        })
             }
             _ => false,
         }
@@ -197,6 +282,27 @@ impl ValueType {
             Self::Float(float) => float.canonical_bytes().to_vec(),
             Self::String => vec![2, 4],
             Self::Bytes(primitive) => vec![2, 5, u8::from(*primitive == Primitive::U8)],
+            Self::Enum(ty) => {
+                let mut bytes = vec![2, 6];
+                if let Ok(shape) = arandu_middle::ctfe::canonical_type_bytes(&ty.shape) {
+                    bytes.extend(shape);
+                }
+                bytes.extend_from_slice(&(ty.variants.len() as u64).to_le_bytes());
+                for (symbol, payload) in &ty.variants {
+                    bytes.push(u8::from(symbol.is_some()));
+                    if let Some(symbol) = symbol {
+                        bytes.extend_from_slice(&symbol.file_id.to_le_bytes());
+                        bytes.extend_from_slice(&symbol.local_id.0.to_le_bytes());
+                    }
+                    bytes.push(u8::from(payload.is_some()));
+                    if let Some(payload) = payload {
+                        let child = payload.canonical_bytes();
+                        bytes.extend_from_slice(&(child.len() as u64).to_le_bytes());
+                        bytes.extend(child);
+                    }
+                }
+                bytes
+            }
             Self::Aggregate(ty) => {
                 let mut bytes = vec![2, 3];
                 if let Ok(shape) = arandu_middle::ctfe::canonical_type_bytes(&ty.shape) {

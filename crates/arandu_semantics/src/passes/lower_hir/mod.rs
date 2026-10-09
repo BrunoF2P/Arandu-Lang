@@ -35,8 +35,12 @@ pub fn lower_expression_to_hir(
     {
         return Err(type_check.diagnostics.clone());
     }
-    expr::lower_expr(type_check, pool, &mut hir.pool, expression)
-        .map_err(|diagnostic| vec![diagnostic])
+    let previous = hir.pool.ctfe_lowering;
+    hir.pool.ctfe_lowering = true;
+    let result = expr::lower_expr(type_check, pool, &mut hir.pool, expression)
+        .map_err(|diagnostic| vec![diagnostic]);
+    hir.pool.ctfe_lowering = previous;
+    result
 }
 
 /// Lower an initially typed isolated block into an existing declaration context.
@@ -57,7 +61,12 @@ pub fn lower_block_to_hir(
     {
         return Err(type_check.diagnostics.clone());
     }
-    stmt::lower_block(type_check, pool, &mut hir.pool, block).map_err(|diagnostic| vec![diagnostic])
+    let previous = hir.pool.ctfe_lowering;
+    hir.pool.ctfe_lowering = true;
+    let result = stmt::lower_block(type_check, pool, &mut hir.pool, block)
+        .map_err(|diagnostic| vec![diagnostic]);
+    hir.pool.ctfe_lowering = previous;
+    result
 }
 
 /// Canonical HIR declaration context, including call modes and destructor
@@ -66,6 +75,22 @@ pub fn lower_block_to_hir(
 pub fn lower_declarations_to_hir(
     type_check: &mut TypeCheckResult,
     program: &Program,
+) -> Result<HirProgram, Vec<Diagnostic>> {
+    lower_declaration_context(type_check, program, true)
+}
+
+/// Initial declaration context for demand-driven CTFE constant dependencies.
+pub fn lower_ctfe_declarations_to_hir(
+    type_check: &mut TypeCheckResult,
+    program: &Program,
+) -> Result<HirProgram, Vec<Diagnostic>> {
+    lower_declaration_context(type_check, program, false)
+}
+
+fn lower_declaration_context(
+    type_check: &mut TypeCheckResult,
+    program: &Program,
+    include_constants: bool,
 ) -> Result<HirProgram, Vec<Diagnostic>> {
     if type_check
         .diagnostics
@@ -78,7 +103,9 @@ pub fn lower_declarations_to_hir(
     let mut decls = Vec::new();
     let mut failure = None;
     program.for_each_decl_recursive(|_, declaration| {
-        if failure.is_some() {
+        if failure.is_some()
+            || (!include_constants && matches!(declaration, arandu_parser::TopLevelDecl::Const(_)))
+        {
             return;
         }
         match decl::lower_declaration(type_check, &program.pool, &mut pool, declaration) {
@@ -146,7 +173,7 @@ pub fn lower_function_to_hir(
     program: &Program,
     symbol: crate::SymbolId,
 ) -> Result<Option<HirProgram>, Vec<Diagnostic>> {
-    lower_selected_declaration(type_check, program, symbol, false)
+    lower_selected_declaration(type_check, program, symbol, false, false)
 }
 
 /// Retain one external declaration container, including its ABI and generic
@@ -156,7 +183,17 @@ pub fn lower_extern_to_hir(
     program: &Program,
     symbol: crate::SymbolId,
 ) -> Result<Option<HirProgram>, Vec<Diagnostic>> {
-    lower_selected_declaration(type_check, program, symbol, true)
+    lower_selected_declaration(type_check, program, symbol, true, false)
+}
+
+/// Lower a CTFE helper without independently evaluating its inner value roots.
+/// These execute in AMIR with the caller's shared meter and local return scopes.
+pub fn lower_ctfe_function_to_hir(
+    type_check: &mut TypeCheckResult,
+    program: &Program,
+    symbol: crate::SymbolId,
+) -> Result<Option<HirProgram>, Vec<Diagnostic>> {
+    lower_selected_declaration(type_check, program, symbol, false, true)
 }
 
 fn lower_selected_declaration(
@@ -164,6 +201,7 @@ fn lower_selected_declaration(
     program: &Program,
     symbol: crate::SymbolId,
     external: bool,
+    ctfe: bool,
 ) -> Result<Option<HirProgram>, Vec<Diagnostic>> {
     if type_check
         .diagnostics
@@ -192,6 +230,7 @@ fn lower_selected_declaration(
         return Ok(None);
     };
     let mut pool = crate::hir::HirPool::new();
+    pool.ctfe_lowering = ctfe;
     let Some(declaration) = decl::lower_decl(type_check, &program.pool, &mut pool, item)
         .map_err(|error| vec![error])?
     else {
@@ -217,11 +256,25 @@ fn lower_decls_recursive(
         let decl = pool.decl(*decl_id);
         if let arandu_parser::TopLevelDecl::Submodule(submod) = decl {
             lower_decls_recursive(type_check, pool, hir_pool, &submod.decls, decls)?;
-        } else if let Some(hir_decl) =
-            decl::lower_decl(type_check, pool, hir_pool, decl).map_err(|e| vec![e])?
-        {
-            let hir_decl_id = hir_pool.alloc_decl(hir_decl);
-            decls.push(hir_decl_id);
+        } else {
+            let deferred = crate::primary_def_key(decl)
+                .and_then(|key| type_check.resolved.definitions.get(&key))
+                .is_some_and(|symbol| {
+                    type_check
+                        .resolved
+                        .deferred_comptime_functions
+                        .contains(symbol)
+                });
+            // Templates awaiting per-instance staging have declaration contracts,
+            // but no resolved/typed executable body in this compatibility view.
+            let lowered = if deferred {
+                decl::lower_declaration(type_check, pool, hir_pool, decl)
+            } else {
+                decl::lower_decl(type_check, pool, hir_pool, decl)
+            };
+            if let Some(hir_decl) = lowered.map_err(|error| vec![error])? {
+                decls.push(hir_pool.alloc_decl(hir_decl));
+            }
         }
     }
     Ok(())

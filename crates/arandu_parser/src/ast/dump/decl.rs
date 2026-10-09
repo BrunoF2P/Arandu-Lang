@@ -397,8 +397,15 @@ pub(super) fn dump_type(ty: &TypeExpr, pool: &AstPool) -> String {
             )
         }
         TypeExpr::Array {
-            span, size, elem, ..
+            span,
+            size,
+            elem,
+            size_expression,
+            ..
         } => {
+            let size = size_expression
+                .map(|id| dump_type(pool.type_expr(id), pool))
+                .unwrap_or_else(|| size.to_string());
             format!(
                 "ArrayType {} [{size}]{}",
                 dump_span(*span),

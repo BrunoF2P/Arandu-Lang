@@ -104,6 +104,11 @@ fn ty_ctx_nested_ctfe_targets_do_not_capture_each_others_returns() {
     assert_eq!(ctx.current_return(), None, "no inherited function type");
     assert!(!ctx.is_in_loop());
     ctx.enter_loop();
+    ctx.record_ctfe_propagation(ReturnValue {
+        ty: int_id,
+        span: dummy_span(),
+        expression: None,
+    });
     ctx.push_ctfe_return(Some(bool_id), Span::new(0, 20, 25));
     assert!(!ctx.is_in_loop(), "inner root has its own loop boundary");
     ctx.record_ctfe_return(ReturnValue {
@@ -111,7 +116,8 @@ fn ty_ctx_nested_ctfe_targets_do_not_capture_each_others_returns() {
         span: dummy_span(),
         expression: None,
     });
-    let inner = ctx.pop_ctfe_return().expect("inner root");
+    let (inner, inner_propagations) = ctx.pop_ctfe_return().expect("inner root");
+    assert!(inner_propagations.is_empty());
     assert_eq!(inner.len(), 1);
     assert_eq!(inner[0].ty, bool_id);
     assert_eq!(ctx.current_return(), None);
@@ -124,7 +130,9 @@ fn ty_ctx_nested_ctfe_targets_do_not_capture_each_others_returns() {
     ctx.push_return(bool_id, dummy_span());
     assert!(!ctx.is_ctfe_return(), "callee has its own return target");
     ctx.pop_return();
-    let outer = ctx.pop_ctfe_return().expect("outer root");
+    let (outer, outer_propagations) = ctx.pop_ctfe_return().expect("outer root");
+    assert_eq!(outer_propagations.len(), 1);
+    assert_eq!(outer_propagations[0].ty, int_id);
     assert_eq!(outer.len(), 1, "inner return does not constrain outer root");
     assert_eq!(outer[0].ty, int_id);
     assert_eq!(ctx.current_return(), Some(bool_id));

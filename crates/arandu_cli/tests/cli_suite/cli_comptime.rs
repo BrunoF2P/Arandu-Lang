@@ -2,6 +2,45 @@ use crate::common;
 use std::fs;
 
 #[test]
+fn wasm_emission_preserves_explicit_target_identity_and_rejects_other_architectures() {
+    let root = common::temp_dir("arandu-cli-wasm-target-identity").expect("reserve fixture");
+    let source = root.join("main.aru");
+    for (target, os) in [
+        ("wasm32-unknown-unknown", "unknown"),
+        ("wasm32-wasip1", "wasi"),
+    ] {
+        fs::write(&source, format!(
+            "func main(): int {{ comptime if @targetOS() == \"{os}\" && @targetArch() == \"wasm32\" && @targetPointerWidth() == 32 {{ return 0 }} else {{ return unavailable_for_this_target }} }}"
+        )).expect("write target consumer");
+        let output = common::cli_command()
+            .args(["emit-wasm", "--target", target])
+            .arg(&source)
+            .output()
+            .expect("emit target consumer");
+        assert!(
+            output.status.success(),
+            "{target}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stdout.starts_with(b"\0asm"));
+    }
+    for target in ["wasm64-wasip1", "x86_64-unknown-linux-gnu"] {
+        let output = common::cli_command()
+            .args(["emit-wasm", "--target", target])
+            .arg(&source)
+            .output()
+            .expect("reject incompatible target");
+        assert!(!output.status.success(), "{target}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("requires a wasm32 target"),
+            "{target}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    fs::remove_dir_all(root).expect("remove target fixture");
+}
+
+#[test]
 fn array_repetition_runs_once_and_supports_static_lengths_and_ctfe() {
     let root = common::temp_dir("arandu-cli-array-repeat").expect("reserve fixture");
     let source = root.join("main.aru");
@@ -346,4 +385,166 @@ fn public_comptime_formats_multiple_sources_without_changing_their_results() {
         assert!(output.status.success(), "{source:?}: {output:?}");
     }
     fs::remove_dir_all(root).expect("remove fixtures");
+}
+
+#[test]
+fn frozen_core_values_run_on_native_c_and_emit_for_the_wasm_target() {
+    let root = common::temp_dir("arandu-cli-frozen-core").expect("reserve fixture");
+    let source = root.join("main.aru");
+    fs::write(
+        &source,
+        r#"
+import std.target as target
+struct Table { entries: [comptime (1 + 1)]int }
+enum Packet { Data([64]u8), Empty }
+func packet(): Packet { return Packet.Data([42; 64]) }
+func table(): Table { return Table { entries: [20, 22] } }
+func answer(): Result<int, int> {
+    let value: Result<int, int> = comptime { return Result.Ok(comptime (20 + 22)) }
+    return value
+}
+func policy<comptime ENABLED: bool, comptime DELTA: i64>(): int {
+    comptime if ENABLED { return (43 + DELTA) as int } else { return 0 }
+}
+const PACKET = comptime packet()
+const TABLE = comptime table()
+const ANSWER = comptime answer()
+func main(): int {
+    if TABLE.entries[0] + TABLE.entries[1] != 42 { return 1 }
+    match PACKET {
+        Packet.Data(bytes) => { if bytes[63] != 42 { return 2 } }
+        Packet.Empty => { return 3 }
+    }
+    match ANSWER {
+        Result.Ok(value) => { if value != 42 { return 4 } }
+        Result.Err(error) => { return 5 }
+    }
+    if comptime policy<comptime (true), comptime (-1)>() != 42 { return 6 }
+    comptime if target.arch == "wasm32" {
+        if target.pointer_width != 32 || target.os != "wasi" { return 7 }
+    } else {
+        if target.pointer_width != @targetPointerWidth() { return 8 }
+    }
+    return 0
+}
+"#,
+    )
+    .expect("write core consumer");
+    let stdlib = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../stdlib");
+    for command in ["check", "run", "emit-c", "emit-wasm"] {
+        let output = common::cli_command()
+            .arg(command)
+            .arg(&source)
+            .arg("--stdlib-path")
+            .arg(&stdlib)
+            .output()
+            .expect("run core consumer");
+        assert!(
+            output.status.success(),
+            "{command}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if command == "emit-wasm" {
+            assert!(arandu_backend_wasm::is_core_module(&output.stdout));
+        }
+        if command == "emit-c"
+            && std::process::Command::new("clang")
+                .arg("--version")
+                .output()
+                .is_ok_and(|version| version.status.success())
+        {
+            let c_file = root.join("core.c");
+            let binary = root.join(if cfg!(windows) { "core.exe" } else { "core" });
+            fs::write(&c_file, &output.stdout).expect("write core C");
+            let compiled = std::process::Command::new("clang")
+                .args(["-O2", "-fstrict-aliasing"])
+                .arg(&c_file)
+                .arg("-o")
+                .arg(&binary)
+                .output()
+                .expect("compile core C");
+            assert!(
+                compiled.status.success(),
+                "{}",
+                String::from_utf8_lossy(&compiled.stderr)
+            );
+            let executed = std::process::Command::new(&binary)
+                .output()
+                .expect("execute core C");
+            assert!(executed.status.success(), "{executed:?}");
+        }
+    }
+    fs::remove_dir_all(root).expect("remove fixtures");
+}
+
+#[test]
+fn global_table_sources_are_shared_without_aliasing_mutable_copies() {
+    let root = common::temp_dir("arandu-cli-shared-table").expect("reserve fixture");
+    let source = root.join("main.aru");
+    fs::write(&source, "const TABLE = comptime [3 as u8; 64]\nfunc modify(): int { let mut table = TABLE; table[0] = 9; return table[0] as int }\nfunc read(): int { return TABLE[0] as int }\nfunc main(): int { if modify() != 9 || read() != 3 { return 1 } return 0 }").expect("write sharing consumer");
+    for command in ["run", "emit-c", "emit-wasm"] {
+        let output = common::cli_command()
+            .arg(command)
+            .arg(&source)
+            .output()
+            .expect("run sharing consumer");
+        assert!(
+            output.status.success(),
+            "{command}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if command == "emit-wasm" {
+            assert_eq!(
+                output
+                    .stdout
+                    .windows(64)
+                    .filter(|window| window.iter().all(|byte| *byte == 3))
+                    .count(),
+                1
+            );
+        }
+        if command == "emit-c" {
+            let generated = String::from_utf8_lossy(&output.stdout);
+            assert_eq!(
+                generated
+                    .matches("static const uint8_t __ar_static_")
+                    .count(),
+                1
+            );
+            if std::process::Command::new("clang")
+                .arg("--version")
+                .output()
+                .is_ok_and(|version| version.status.success())
+            {
+                let c_file = root.join("shared.c");
+                fs::write(&c_file, &output.stdout).expect("write shared C");
+                for level in ["-O0", "-O2"] {
+                    let binary = root.join(if cfg!(windows) {
+                        "shared.exe"
+                    } else {
+                        "shared"
+                    });
+                    let compiled = std::process::Command::new("clang")
+                        .args([level, "-fstrict-aliasing"])
+                        .arg(&c_file)
+                        .arg("-o")
+                        .arg(&binary)
+                        .output()
+                        .expect("compile shared C");
+                    assert!(
+                        compiled.status.success(),
+                        "{}",
+                        String::from_utf8_lossy(&compiled.stderr)
+                    );
+                    assert!(
+                        std::process::Command::new(&binary)
+                            .status()
+                            .expect("execute shared C")
+                            .success()
+                    );
+                }
+            }
+        }
+    }
+    fs::remove_dir_all(root).expect("remove sharing fixtures");
 }

@@ -314,6 +314,18 @@ impl<'a> CEmitter<'a> {
                     );
                     return;
                 }
+                if let Some(source) = self
+                    .current_initializer
+                    .and_then(|id| self.static_sources.get(&(func.symbol, id)))
+                {
+                    let _ = writeln!(
+                        self.output,
+                        "    memcpy(&t{}, __ar_static_{source}, sizeof(t{}));",
+                        lhs.as_usize(),
+                        lhs.as_usize()
+                    );
+                    return;
+                }
                 let _ = write!(&mut self.output, "    t{} = ", lhs.as_usize());
                 self.emit_rvalue(rhs, func, &lhs_ty, &lhs_c_ty);
                 let _ = writeln!(&mut self.output, ";");

@@ -11,6 +11,7 @@ use crate::{db::HashEq, ArandCompilerDb, SourceFile, StableHash};
 #[derive(Debug, Clone, Default)]
 pub struct ConstArguments {
     pub values: FxHashMap<NodeKey, Option<u64>>,
+    pub typed_values: FxHashMap<NodeKey, ConstValue>,
     pub diagnostics: Vec<Diagnostic>,
 }
 
@@ -28,6 +29,13 @@ impl StableHash for ConstArguments {
                 hash.update(&value.to_le_bytes());
             }
         }
+        let mut typed: Vec<_> = self.typed_values.iter().collect();
+        typed.sort_by_key(|(key, _)| (key.start, key.end));
+        for (key, value) in typed {
+            hash.update(&key.start.to_le_bytes());
+            hash.update(&key.end.to_le_bytes());
+            hash.update(&value.canonical_bytes());
+        }
         hash.update(self.diagnostics.stable_hash().as_bytes());
         hash.finalize()
     }
@@ -41,6 +49,7 @@ fn cycle(
 ) -> HashEq<ConstArguments> {
     HashEq::new(ConstArguments {
         values: FxHashMap::default(),
+        typed_values: FxHashMap::default(),
         diagnostics: vec![Diagnostic::error(
             DiagCode::T044ComptimeEvaluationFailed,
             "compile-time generic argument depends on itself",
@@ -167,26 +176,6 @@ pub(crate) fn select_arguments_in_occurrence(
             continue;
         }
         result.values.insert(span.into(), None);
-        if roots
-            .iter()
-            .any(|&(outer, _)| outer != span && contains(outer, span))
-        {
-            continue;
-        }
-        if roots
-            .iter()
-            .any(|&(inner, _)| inner != span && contains(span, inner))
-        {
-            result.diagnostics.push(
-                Diagnostic::error(
-                    DiagCode::T042UnsupportedComptime,
-                    "nested computed generic arguments are not supported yet",
-                    span,
-                )
-                .with_primary_label("nested compile-time argument"),
-            );
-            continue;
-        }
         let Ok(ordinal) = u32::try_from(ordinal) else {
             continue;
         };
@@ -205,16 +194,24 @@ pub(crate) fn select_arguments_in_occurrence(
         );
         let budget = super::public::staging_budget(roots.len(), !occurrence.is_empty());
         match super::ctfe_eval_root(db, CtfeRootRequest::new(db, root, budget)) {
-            Ok(ConstValue::Integer(value)) => match value.to_const_generic() {
-                Ok(value) => { result.values.insert(span.into(), Some(value)); }
-                Err(_) => result.diagnostics.push(Diagnostic::error(DiagCode::T003IncompatibleCallArg,
-                    "constant generic arguments must be non-negative integers representable as u64", span)
-                    .with_primary_label("invalid constant generic value")),
-            },
-            Ok(_) => result.diagnostics.push(Diagnostic::error(DiagCode::T003IncompatibleCallArg,
-                "constant generic arguments must evaluate to an integer", span)
-                .with_primary_label("integer constant required")),
-            Err(error) => super::public::append_failure(&mut result.diagnostics, error.clone(), span),
+            Ok(value @ ConstValue::Integer(integer)) => {
+                if let Ok(number) = integer.to_const_generic() {
+                    result.values.insert(span.into(), Some(number));
+                } else {
+                    result.typed_values.insert(span.into(), value.clone());
+                }
+            }
+            Ok(value @ (ConstValue::Bool(_) | ConstValue::Aggregate(_))) => {
+                result.typed_values.insert(span.into(), value.clone());
+            }
+            Ok(_) => result.diagnostics.push(Diagnostic::error(
+                DiagCode::T003IncompatibleCallArg,
+                "constant generic arguments require an integer, bool, or closed Copy aggregate",
+                span,
+            )),
+            Err(error) => {
+                super::public::append_failure(&mut result.diagnostics, error.clone(), span)
+            }
         }
     }
     HashEq::new(result)

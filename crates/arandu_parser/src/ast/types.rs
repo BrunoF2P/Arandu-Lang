@@ -64,6 +64,8 @@ pub enum TypeExpr {
         span: Span,
         size: SmolStr,
         size_span: Span,
+        /// Canonical AST obligation for an explicit computed dimension.
+        size_expression: Option<TypeExprId>,
         elem: TypeExprId,
     },
     Func {

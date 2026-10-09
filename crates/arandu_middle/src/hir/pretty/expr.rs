@@ -232,7 +232,7 @@ impl HirExpr {
                 ));
                 ctx.pool.block(*block).pretty_print_to(out, indent + 1, ctx);
             }
-            HirExprKind::UnsafeBlock { block } => {
+            HirExprKind::ValueBlock { block } | HirExprKind::UnsafeBlock { block } => {
                 out.push_str(&format!(
                     "{}UnsafeBlock: {}\n",
                     ind,

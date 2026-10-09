@@ -112,8 +112,17 @@ pub(crate) fn validate_const_arguments(checker: &mut TypeChecker<'_>, ty: TypeEx
         | TypeExpr::Ref { inner, .. }
         | TypeExpr::RefMut { inner, .. }
         | TypeExpr::Slice { inner, .. }
-        | TypeExpr::Group { inner, .. }
-        | TypeExpr::Array { elem: inner, .. } => validate_const_arguments(checker, *inner),
+        | TypeExpr::Group { inner, .. } => validate_const_arguments(checker, *inner),
+        TypeExpr::Array {
+            size_expression,
+            elem,
+            ..
+        } => {
+            if let Some(expression) = size_expression {
+                validate_const_arguments(checker, *expression);
+            }
+            validate_const_arguments(checker, *elem);
+        }
         TypeExpr::Func { params, result, .. } => {
             for &param in checker.pool.type_expr_list(*params) {
                 validate_const_arguments(checker, param);
@@ -155,7 +164,8 @@ fn validate_result_type_no_any(checker: &mut TypeChecker<'_>, result: &ResultTyp
 
 fn validate_expr(checker: &mut TypeChecker<'_>, expr: ExprId) {
     match checker.pool.expr(expr) {
-        ExprKind::Layout { ty, .. } => validate_type_no_any(checker, *ty),
+        ExprKind::Layout { ty: Some(ty), .. } => validate_type_no_any(checker, *ty),
+        ExprKind::Layout { ty: None, .. } => {}
         ExprKind::Generic { callee, args } => {
             validate_expr(checker, *callee);
             let arg_ids = checker.pool.type_expr_list(*args).to_vec();

@@ -147,6 +147,9 @@ pub enum ComptimeBody {
 pub enum LayoutQuery {
     Size,
     Align,
+    TargetOS,
+    TargetArch,
+    TargetPointerWidth,
 }
 
 impl LayoutQuery {
@@ -155,6 +158,9 @@ impl LayoutQuery {
         match name {
             "sizeOf" => Some(Self::Size),
             "alignOf" => Some(Self::Align),
+            "targetOS" => Some(Self::TargetOS),
+            "targetArch" => Some(Self::TargetArch),
+            "targetPointerWidth" => Some(Self::TargetPointerWidth),
             _ => None,
         }
     }
@@ -164,6 +170,9 @@ impl LayoutQuery {
         match self {
             Self::Size => "sizeOf",
             Self::Align => "alignOf",
+            Self::TargetOS => "targetOS",
+            Self::TargetArch => "targetArch",
+            Self::TargetPointerWidth => "targetPointerWidth",
         }
     }
 }
@@ -172,7 +181,7 @@ impl LayoutQuery {
 pub enum ExprKind {
     Layout {
         query: LayoutQuery,
-        ty: TypeExprId,
+        ty: Option<TypeExprId>,
     },
     Path {
         path: SmallVec<[SmolStr; 3]>,

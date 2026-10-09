@@ -306,6 +306,7 @@ pub(crate) fn is_memory_type(ty: &ArType) -> bool {
         ArType::Primitive(p) => matches!(p, Primitive::Str | Primitive::Any),
         ArType::IntLiteral
         | ArType::FloatLiteral
+        | ArType::FrozenConst(_)
         | ArType::Const(_)
         | ArType::ConstParam(_)
         | ArType::Void
@@ -416,6 +417,8 @@ pub(crate) struct LowerCtx<'a> {
     guard_borrows: FxHashMap<SymbolId, (LocalId, crate::types::TypeId)>,
     /// (`continue_block`, `exit_block`, `defer_frame_depth`, `local_scope_depth`)
     loop_stack: Vec<(BlockId, BlockId, usize, usize)>,
+    /// Destination/exit and cleanup boundaries of isolated value blocks.
+    value_returns: Vec<(TempId, BlockId, usize, usize)>,
     /// Shared ceilings for residual generation; nested loops cannot reset them.
     static_expansion_remaining: usize,
     static_expansion_product: usize,

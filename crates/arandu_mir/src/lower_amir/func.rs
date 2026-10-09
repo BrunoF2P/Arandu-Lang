@@ -45,6 +45,7 @@ pub(crate) fn lower_func(
         symbol_map: FxHashMap::default(),
         guard_borrows: FxHashMap::default(),
         loop_stack: Vec::new(),
+        value_returns: Vec::new(),
         static_expansion_remaining: 200_000,
         static_expansion_product: 1,
         static_expansion_depth: 0,

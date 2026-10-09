@@ -81,6 +81,14 @@ pub fn cmd_project_build(
         || ctx.target_kind == project::TargetKind::Component
         || data_layout.pointer_width() == 4;
     let wasm_triple = flags.target.as_deref().unwrap_or("wasm32-wasip1");
+    if is_wasm {
+        let identity =
+            arandu_middle::db::TargetIdentity::from_triple(wasm_triple).map_err(|error| {
+                CliFailure::operational("select compilation target", None, error.to_owned())
+            })?;
+        db.set_target_identity(identity);
+        db.set_target_config(DataLayout::ptr_width(4));
+    }
 
     let session_config = crate::incremental::SessionConfig {
         project_root: &ctx.root,

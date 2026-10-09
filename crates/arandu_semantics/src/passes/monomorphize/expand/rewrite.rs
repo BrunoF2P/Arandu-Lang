@@ -310,7 +310,9 @@ pub(super) fn rewrite_expr_calls<'bump>(
             HirLambdaBody::Expr(e) => rewrite_expr_calls(hir, *e, specialized, tc, bump),
             HirLambdaBody::Block(b) => rewrite_block_calls(hir, *b, specialized, tc, bump),
         },
-        HirExprKind::AsyncBlock { block } | HirExprKind::UnsafeBlock { block } => {
+        HirExprKind::AsyncBlock { block }
+        | HirExprKind::UnsafeBlock { block }
+        | HirExprKind::ValueBlock { block } => {
             rewrite_block_calls(hir, *block, specialized, tc, bump);
         }
         HirExprKind::StringInterp { parts } => {

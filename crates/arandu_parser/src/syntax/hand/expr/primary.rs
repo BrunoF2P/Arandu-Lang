@@ -248,7 +248,11 @@ fn parse_layout_expression(ctx: &mut HandCtx<'_>, cur: &mut Cursor<'_>) -> Optio
     let name = cur.bump()?;
     let query = crate::LayoutQuery::from_name(ctx.text(name)?)?;
     cur.expect(TokenKind::LParen)?;
-    let ty = super::super::ty::parse_type(ctx, cur)?;
+    let ty = if matches!(query, crate::LayoutQuery::Size | crate::LayoutQuery::Align) {
+        Some(super::super::ty::parse_type(ctx, cur)?)
+    } else {
+        None
+    };
     let close = cur.expect(TokenKind::RParen)?;
     Some(ctx.pool.alloc_expr(
         ExprKind::Layout { query, ty },

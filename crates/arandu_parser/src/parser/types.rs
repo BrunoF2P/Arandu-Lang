@@ -391,20 +391,29 @@ impl<'a> Parser<'a> {
                 return Ok(self.pool.alloc_type_expr(TypeExpr::Slice { span, inner }));
             }
             let size_span = self.current().span(self.file_id);
-            let size = match &self.current().kind {
-                TokenKind::IntDec | TokenKind::IdentValue | TokenKind::IdentType => {
-                    let value = SmolStr::new(self.current_text());
-                    self.advance();
-                    value
-                }
-                _ => {
-                    return Err(ParseError::new(
-                        ParseErrorCode::ExpectedToken,
-                        "expected array size",
-                        self.current(),
-                        self.file_id,
-                        self.source,
-                    ));
+            let size_expression = if self.at_kind_name("KW_COMPTIME") {
+                Some(self.parse_generic_argument()?)
+            } else {
+                None
+            };
+            let size = if size_expression.is_some() {
+                SmolStr::new("")
+            } else {
+                match &self.current().kind {
+                    TokenKind::IntDec | TokenKind::IdentValue | TokenKind::IdentType => {
+                        let value = SmolStr::new(self.current_text());
+                        self.advance();
+                        value
+                    }
+                    _ => {
+                        return Err(ParseError::new(
+                            ParseErrorCode::ExpectedToken,
+                            "expected array size",
+                            self.current(),
+                            self.file_id,
+                            self.source,
+                        ));
+                    }
                 }
             };
             self.expect_name("RBRACKET")?;
@@ -414,6 +423,7 @@ impl<'a> Parser<'a> {
                 span,
                 size,
                 size_span,
+                size_expression,
                 elem,
             }));
         }

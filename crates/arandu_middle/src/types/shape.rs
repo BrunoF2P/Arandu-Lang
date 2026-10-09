@@ -15,6 +15,7 @@ pub enum TypeShape {
     Array(u64, Box<Self>),
     ConstArray(SymbolId, Box<Self>),
     Const(u64),
+    FrozenConst(std::sync::Arc<crate::ctfe::ConstValue>),
     ConstParam(SymbolId),
     Ptr(Box<Self>),
     Ref(Box<Self>),
@@ -258,6 +259,7 @@ impl TypeShape {
                 error.default_literals(depth + 1, remaining)?;
             }
             Self::Primitive(_)
+            | Self::FrozenConst(_)
             | Self::Const(_)
             | Self::ConstParam(_)
             | Self::GenRef
@@ -291,6 +293,11 @@ impl TypeShape {
                 for arg in args {
                     arg.visit_symbols(depth + 1, remaining, visitor)?;
                 }
+            }
+            Self::FrozenConst(value) => {
+                value
+                    .type_shape()
+                    .visit_symbols(depth + 1, remaining, visitor)?
             }
             Self::ConstParam(symbol) => visitor(*symbol),
             Self::ConstArray(symbol, inner) => {
@@ -376,6 +383,7 @@ impl TypeShape {
                 ArType::Array(n, id) => Self::Array(n, one(id, remaining)?),
                 ArType::ConstArray(n, id) => Self::ConstArray(n, one(id, remaining)?),
                 ArType::Const(n) => Self::Const(n),
+                ArType::FrozenConst(value) => Self::FrozenConst(value),
                 ArType::ConstParam(n) => Self::ConstParam(n),
                 ArType::Ptr(id) => Self::Ptr(one(id, remaining)?),
                 ArType::Ref(id) => Self::Ref(one(id, remaining)?),
@@ -432,6 +440,7 @@ impl TypeShape {
             Self::Array(n, inner) => ArType::Array(*n, one(inner, remaining)?),
             Self::ConstArray(n, inner) => ArType::ConstArray(*n, one(inner, remaining)?),
             Self::Const(n) => ArType::Const(*n),
+            Self::FrozenConst(value) => ArType::FrozenConst(std::sync::Arc::clone(value)),
             Self::ConstParam(n) => ArType::ConstParam(*n),
             Self::Ptr(inner) => ArType::Ptr(one(inner, remaining)?),
             Self::Ref(inner) => ArType::Ref(one(inner, remaining)?),

@@ -160,6 +160,35 @@ impl LowerCtx<'_> {
                 self.lower_set_places(self.hir.pool.places_list(*places), op, &val_op, symbols)?;
             }
             HirStmtKind::Return { values } => {
+                if let Some((dest, exit, defer_depth, scope_depth)) =
+                    self.value_returns.last().copied()
+                {
+                    let values = self.hir.pool.expr_list(*values);
+                    match values {
+                        [value] => {
+                            self.lower_expr(*value, Some(dest), symbols)?;
+                        }
+                        [] => self.emit_assign_temp(
+                            dest,
+                            AmirRvalue::Use(AmirOperand::Constant(AmirConstant::Nil)),
+                        ),
+                        values => {
+                            let mut items = Vec::new();
+                            for &value in values {
+                                items.push(self.lower_expr(value, None, symbols)?);
+                            }
+                            self.emit_assign_temp(dest, AmirRvalue::Tuple { items });
+                        }
+                    }
+                    self.exit_defer_frames_from(defer_depth, false, symbols)?;
+                    self.emit_local_scope_exit_from(scope_depth);
+                    self.set_terminator(AmirTerminator::Goto {
+                        target: exit,
+                        args: Vec::new(),
+                    });
+                    self.builder.current_block = None;
+                    return Ok(());
+                }
                 let values_slice = self.hir.pool.expr_list(*values);
                 if values_slice.len() == 1 {
                     // A3: async body returns bare `T`; wrap as `CoroutineReady` into `_0`.

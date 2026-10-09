@@ -218,6 +218,30 @@ pub fn cmd_single_file_dispatch(
         (arandu_query::db::DatabaseImpl::new(), None)
     };
     attach_stdlib(&mut db, project_flags.stdlib_path.clone());
+    let data_layout = if matches!(command, "emit-wasm" | "emit-component") {
+        let identity = if let Some(triple) = &project_flags.target {
+            let identity = arandu_middle::db::TargetIdentity::from_triple(triple)
+                .unwrap_or_else(|error| fail_usage(error));
+            if identity.arch != "wasm32" {
+                fail_usage("WebAssembly emission requires a wasm32 target");
+            }
+            identity
+        } else {
+            arandu_middle::db::TargetIdentity {
+                os: "wasi".into(),
+                arch: "wasm32".into(),
+            }
+        };
+        db.set_target_identity(identity);
+        arandu_middle::layout::DataLayout::ptr_width(4)
+    } else {
+        if let Some(triple) = &project_flags.target {
+            let identity = arandu_middle::db::TargetIdentity::from_triple(triple)
+                .unwrap_or_else(|error| fail_usage(error));
+            db.set_target_identity(identity);
+        }
+        data_layout
+    };
     db.set_target_config(data_layout);
     let mut registry = arandu_base::SourceRegistry::default();
 

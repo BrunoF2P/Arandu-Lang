@@ -7,7 +7,8 @@ use arandu_middle::amir::{
 };
 use arandu_middle::ctfe::{ConstFloat, FloatType};
 use arandu_middle::layout::{
-    DataLayout, LayoutEngine, StructLayoutProvider, instantiated_field_type,
+    DataLayout, LayoutEngine, StructLayoutProvider, TagEncoding,
+    instantiated_enum_variant_payload_type, instantiated_field_type,
 };
 use arandu_middle::literal_pool::{AmirLiteralEntry, AmirLiteralPool, parse_int_literal};
 use arandu_middle::types::{ArType, Primitive, TypeId, TypeInterner};
@@ -159,6 +160,75 @@ impl Serializer<'_> {
         }
         match (rvalue, &owner) {
             (AmirRvalue::Use(value), _) => self.operand(value, ty, output, depth + 1, fuel),
+            (
+                AmirRvalue::EnumConstruct {
+                    variant_tag,
+                    payload,
+                },
+                _,
+            ) => {
+                let payload_ty = match &owner {
+                    ArType::Option(inner) => match variant_tag {
+                        0 => None,
+                        1 => Some(*inner),
+                        _ => return None,
+                    },
+                    ArType::Result(ok, error) => match variant_tag {
+                        0 => Some(*ok),
+                        1 => Some(*error),
+                        _ => return None,
+                    },
+                    ArType::Named(symbol, _) => {
+                        let variant = self
+                            .provider
+                            .get_enum_variants(*symbol)?
+                            .get(*variant_tag)?
+                            .clone();
+                        if variant.payload_ty.is_some() {
+                            Some(instantiated_enum_variant_payload_type(
+                                &owner,
+                                *variant_tag,
+                                self.interner,
+                                self.provider,
+                            )?)
+                        } else {
+                            None
+                        }
+                    }
+                    _ => return None,
+                };
+                let TagEncoding::Direct {
+                    tag_size,
+                    payload_offset,
+                } = layout.tag_encoding?
+                else {
+                    // Pointer/niche representations need a separate proof of
+                    // relocation-free payload provenance.
+                    return None;
+                };
+                let tag = u64::try_from(*variant_tag).ok()?;
+                let size = usize::try_from(tag_size).ok()?;
+                if !matches!(size, 1 | 2 | 4 | 8) || (size < 8 && tag >= (1_u64 << (size * 8))) {
+                    return None;
+                }
+                let bytes = if self.little {
+                    tag.to_le_bytes()
+                } else {
+                    tag.to_be_bytes()
+                };
+                output.get_mut(..size)?.copy_from_slice(if self.little {
+                    &bytes[..size]
+                } else {
+                    &bytes[8 - size..]
+                });
+                match (payload, payload_ty) {
+                    (Some(value), Some(inner)) => {
+                        self.field(value, inner, payload_offset, output, depth, fuel)
+                    }
+                    (None, None) => Some(()),
+                    _ => None,
+                }
+            }
             (AmirRvalue::Array { items }, ArType::Array(count, inner))
                 if usize::try_from(*count).ok()? == items.len() =>
             {
@@ -284,7 +354,10 @@ pub fn static_initializers(
         };
         if !matches!(
             rhs,
-            AmirRvalue::Array { .. } | AmirRvalue::Tuple { .. } | AmirRvalue::StructLiteral { .. }
+            AmirRvalue::Array { .. }
+                | AmirRvalue::Tuple { .. }
+                | AmirRvalue::StructLiteral { .. }
+                | AmirRvalue::EnumConstruct { .. }
         ) {
             continue;
         }
@@ -474,5 +547,98 @@ mod tests {
                 .scalar(&AmirConstant::Nil, byte, &mut [0])
                 .is_none()
         );
+    }
+    #[test]
+    fn enum_serialization_checks_tags_payloads_and_target_byte_order() {
+        let info = TypeInfo::default();
+        let mut pool = AmirLiteralPool::default();
+        let integer = info.type_interner.intern(ArType::Primitive(Primitive::I32));
+        let result = info.type_interner.intern(ArType::Result(integer, integer));
+        let option = info.type_interner.intern(ArType::Option(integer));
+        let payload = AmirOperand::Constant(AmirConstant::Pool(pool.intern_int("42")));
+        for little in [true, false] {
+            let serializer = serializer(&info, &pool, little);
+            let mut bytes = [0; 8];
+            serializer
+                .rvalue(
+                    &AmirRvalue::EnumConstruct {
+                        variant_tag: 1,
+                        payload: Some(payload),
+                    },
+                    result,
+                    &mut bytes,
+                    0,
+                    &mut 100,
+                )
+                .unwrap();
+            let tag = if little {
+                1_u32.to_le_bytes()
+            } else {
+                1_u32.to_be_bytes()
+            };
+            let value = if little {
+                42_i32.to_le_bytes()
+            } else {
+                42_i32.to_be_bytes()
+            };
+            assert_eq!(&bytes[..4], &tag);
+            assert_eq!(&bytes[4..], &value);
+            assert!(
+                serializer
+                    .rvalue(
+                        &AmirRvalue::EnumConstruct {
+                            variant_tag: 2,
+                            payload: Some(payload)
+                        },
+                        result,
+                        &mut bytes,
+                        0,
+                        &mut 100
+                    )
+                    .is_none()
+            );
+            assert!(
+                serializer
+                    .rvalue(
+                        &AmirRvalue::EnumConstruct {
+                            variant_tag: 0,
+                            payload: None
+                        },
+                        result,
+                        &mut bytes,
+                        0,
+                        &mut 100
+                    )
+                    .is_none()
+            );
+            assert!(
+                serializer
+                    .rvalue(
+                        &AmirRvalue::EnumConstruct {
+                            variant_tag: 0,
+                            payload: Some(payload)
+                        },
+                        option,
+                        &mut bytes,
+                        0,
+                        &mut 100
+                    )
+                    .is_none()
+            );
+            bytes.fill(0);
+            serializer
+                .rvalue(
+                    &AmirRvalue::EnumConstruct {
+                        variant_tag: 0,
+                        payload: None,
+                    },
+                    option,
+                    &mut bytes,
+                    0,
+                    &mut 100,
+                )
+                .unwrap();
+            assert_eq!(bytes, [0; 8]);
+        }
     }
 }

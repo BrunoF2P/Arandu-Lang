@@ -35,10 +35,13 @@ impl<'a> Resolver<'a> {
             TypeExpr::Array {
                 size,
                 size_span,
+                size_expression,
                 elem,
                 ..
             } => {
-                if size.parse::<u64>().is_err() {
+                if let Some(expression) = size_expression {
+                    self.resolve_type_expr(scope, *expression);
+                } else if size.parse::<u64>().is_err() {
                     let name = TypeName {
                         span: *size_span,
                         path: smallvec::smallvec![size.clone()],

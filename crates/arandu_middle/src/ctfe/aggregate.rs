@@ -2,14 +2,65 @@
 //! the VM admits aggregate storage only after the canonical language proof.
 
 use super::{Arc, ConstValue, ConstValueError, TypeShape};
+use crate::SymbolId;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ConstAggregate {
     shape: TypeShape,
     values: Arc<[ConstValue]>,
+    variant: Option<ConstVariant>,
+}
+
+/// A semantic variant identity, independent of storage layout and arena IDs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ConstVariant {
+    pub tag: usize,
+    pub symbol: Option<SymbolId>,
 }
 
 impl ConstAggregate {
+    /// Freeze an enum. Nominal payload types and Copy are verified at admission;
+    /// structural Option/Result payloads are also checked at this boundary.
+    pub fn enumeration(
+        shape: TypeShape,
+        variant: ConstVariant,
+        payload: Option<ConstValue>,
+    ) -> Result<Self, ConstValueError> {
+        validate_ctfe_type_shape(&shape)?;
+        if variant.tag >= TypeShape::MAX_NODES {
+            return Err(ConstValueError::StructuralLimit);
+        }
+        let valid = match &shape {
+            TypeShape::Named(..) => true,
+            TypeShape::Option(inner) => {
+                variant.symbol.is_none()
+                    && match (variant.tag, &payload) {
+                        (1, Some(value)) => shape_accepts(inner, value),
+                        (0, None) => true,
+                        _ => false,
+                    }
+            }
+            TypeShape::Result(ok, error) => {
+                variant.symbol.is_none()
+                    && match (variant.tag, &payload) {
+                        (0, Some(value)) => shape_accepts(ok, value),
+                        (1, Some(value)) => shape_accepts(error, value),
+                        _ => false,
+                    }
+            }
+            _ => false,
+        };
+        if !valid {
+            return Err(ConstValueError::InvalidAggregateShape);
+        }
+        Self::freeze(shape, payload.into_iter().collect(), Some(variant))
+    }
+
+    #[must_use]
+    pub fn variant(&self) -> Option<ConstVariant> {
+        self.variant
+    }
+
     pub fn new(shape: TypeShape, values: Vec<ConstValue>) -> Result<Self, ConstValueError> {
         validate_ctfe_type_shape(&shape)?;
         match &shape {
@@ -32,6 +83,14 @@ impl ConstAggregate {
             TypeShape::Named(_, _) => {}
             _ => return Err(ConstValueError::InvalidAggregateShape),
         }
+        Self::freeze(shape, values, None)
+    }
+
+    fn freeze(
+        shape: TypeShape,
+        values: Vec<ConstValue>,
+        variant: Option<ConstVariant>,
+    ) -> Result<Self, ConstValueError> {
         shape
             .for_each_symbol(|_| {})
             .map_err(|_| ConstValueError::StructuralLimit)?;
@@ -60,6 +119,7 @@ impl ConstAggregate {
         Ok(Self {
             shape,
             values: values.into(),
+            variant,
         })
     }
 
@@ -77,7 +137,15 @@ impl ConstAggregate {
     /// Types are encoded structurally; nominal identity retains the full source
     /// symbol. Construction/admission bound nesting before this frozen bridge.
     pub(super) fn canonical_bytes(&self) -> Vec<u8> {
-        let mut bytes = vec![2, 3];
+        let mut bytes = vec![2, if self.variant.is_some() { 6 } else { 3 }];
+        if let Some(variant) = self.variant {
+            bytes.extend_from_slice(&u64::try_from(variant.tag).unwrap_or(u64::MAX).to_le_bytes());
+            bytes.push(u8::from(variant.symbol.is_some()));
+            if let Some(symbol) = variant.symbol {
+                bytes.extend_from_slice(&symbol.file_id.to_le_bytes());
+                bytes.extend_from_slice(&symbol.local_id.0.to_le_bytes());
+            }
+        }
         encode_shape(&self.shape, &mut bytes);
         bytes.extend_from_slice(&(self.values.len() as u64).to_le_bytes());
         for value in self.values.iter() {
@@ -108,7 +176,9 @@ pub fn validate_ctfe_type_shape(shape: &TypeShape) -> Result<(), ConstValueError
             TypeShape::Array(_, inner) => visit(inner, false),
             TypeShape::Tuple(children) => children.iter().all(|child| visit(child, false)),
             TypeShape::Named(_, args) => args.iter().all(|child| visit(child, true)),
-            TypeShape::Const(_) => argument,
+            TypeShape::Const(_) | TypeShape::FrozenConst(_) => argument,
+            TypeShape::Option(inner) => visit(inner, false),
+            TypeShape::Result(ok, error) => visit(ok, false) && visit(error, false),
             TypeShape::Slice(inner) => matches!(
                 inner.as_ref(),
                 TypeShape::Primitive(super::Primitive::Byte | super::Primitive::U8)
@@ -121,8 +191,6 @@ pub fn validate_ctfe_type_shape(shape: &TypeShape) -> Result<(), ConstValueError
             | TypeShape::Ref(_)
             | TypeShape::RefMut(_)
             | TypeShape::GenRef
-            | TypeShape::Result(..)
-            | TypeShape::Option(_)
             | TypeShape::Coroutine(_)
             | TypeShape::Poll(_)
             | TypeShape::Range(_)
@@ -152,7 +220,11 @@ fn shape_accepts(shape: &TypeShape, value: &ConstValue) -> bool {
         (TypeShape::Primitive(super::Primitive::Str), ConstValue::String(_)) => true,
         (TypeShape::Slice(_), ConstValue::Bytes(_)) => true,
         (
-            TypeShape::Array(..) | TypeShape::Tuple(_) | TypeShape::Named(..),
+            TypeShape::Array(..)
+            | TypeShape::Tuple(_)
+            | TypeShape::Named(..)
+            | TypeShape::Option(_)
+            | TypeShape::Result(..),
             ConstValue::Aggregate(value),
         ) => shape == value.shape(),
         _ => false,
@@ -200,6 +272,12 @@ fn encode_shape(shape: &TypeShape, bytes: &mut Vec<u8>) {
             bytes.extend_from_slice(name);
         }
         TypeShape::Void => bytes.push(4),
+        TypeShape::FrozenConst(value) => {
+            bytes.push(24);
+            let value = value.canonical_bytes();
+            bytes.extend_from_slice(&(value.len() as u64).to_le_bytes());
+            bytes.extend_from_slice(&value);
+        }
         TypeShape::Const(value) => {
             bytes.push(5);
             bytes.extend_from_slice(&value.to_le_bytes());

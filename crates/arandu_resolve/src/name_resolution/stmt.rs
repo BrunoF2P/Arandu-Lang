@@ -55,6 +55,11 @@ impl<'a> Resolver<'a> {
                         else_block,
                         ..
                     } => {
+                        if let arandu_parser::Condition::Expr { expr, .. } = condition
+                            && contains(pool.expr_span(*expr))
+                        {
+                            return self.staging_expression(scope, pool, *expr, target, depth + 1);
+                        }
                         if contains(then_block.span) {
                             self.declare_condition_bindings(child, condition);
                             return self.staging_context(
@@ -70,6 +75,11 @@ impl<'a> Resolver<'a> {
                     Stmt::While {
                         body, condition, ..
                     } => {
+                        if let arandu_parser::Condition::Expr { expr, .. } = condition
+                            && contains(pool.expr_span(*expr))
+                        {
+                            return self.staging_expression(scope, pool, *expr, target, depth + 1);
+                        }
                         self.declare_condition_bindings(child, condition);
                         Some(body)
                     }

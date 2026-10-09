@@ -212,7 +212,8 @@ pub(super) fn dump_expr(pool: &AstPool, expr: ExprId) -> String {
                 "@{} {}({})",
                 query.name(),
                 dump_span(span),
-                dump_type(pool.type_expr(*ty), pool)
+                ty.map(|ty| dump_type(pool.type_expr(ty), pool))
+                    .unwrap_or_default()
             )
         }
         ExprKind::Cast { expr, ty } => {

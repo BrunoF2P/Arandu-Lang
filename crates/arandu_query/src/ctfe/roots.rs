@@ -42,10 +42,16 @@ pub enum RootSelector {
     },
     /// Source-local ordinal of an explicit public root in the owner's body.
     PublicComptime(u32),
+    /// The initializer of a module/type constant, evaluated independently.
+    GlobalInitializer,
+    HeaderArgument(u32),
     /// Lexical ordinal of a public static-if statement in the owner.
     StaticIfCondition(u32),
     /// A finite half-open static range endpoint, before runtime body typing.
-    StaticForBound { ordinal: u32, upper: bool },
+    StaticForBound {
+        ordinal: u32,
+        upper: bool,
+    },
     /// Lexical ordinal of a computed generic argument in the owner body.
     ConstArgument(u32),
     /// Empty path selects the owner's body with an independent return target.
@@ -158,7 +164,7 @@ pub(crate) fn instance_substitution(
             .try_get(parameter)
             .ok_or(BuildFailure::GenericFunction)?;
         if matches!(symbol.kind, arandu_middle::SymbolKind::ConstParam)
-            != matches!(ty, ArType::Const(_))
+            != matches!(ty, ArType::Const(_) | ArType::FrozenConst(_))
         {
             return Err(BuildFailure::GenericFunction);
         }
@@ -255,7 +261,9 @@ fn select<'a>(
         | RootSelector::PublicComptime(_)
         | RootSelector::StaticIfCondition(_)
         | RootSelector::StaticForBound { .. }
-        | RootSelector::ConstArgument(_) => return Err(BuildFailure::InvalidRoot),
+        | RootSelector::ConstArgument(_)
+        | RootSelector::HeaderArgument(_)
+        | RootSelector::GlobalInitializer => return Err(BuildFailure::InvalidRoot),
     };
     // A malformed/stale selector cannot recurse indefinitely or index an arena
     // unchecked. This bound is internal, not a public CTFE execution budget.
@@ -311,7 +319,9 @@ fn select<'a>(
         | RootSelector::PublicComptime(_)
         | RootSelector::StaticIfCondition(_)
         | RootSelector::StaticForBound { .. }
-        | RootSelector::ConstArgument(_) => Err(BuildFailure::InvalidRoot),
+        | RootSelector::ConstArgument(_)
+        | RootSelector::HeaderArgument(_)
+        | RootSelector::GlobalInitializer => Err(BuildFailure::InvalidRoot),
         RootSelector::Block(_) => Ok(Selected::Block(block)),
         RootSelector::Initializer {
             statement: index, ..
@@ -357,28 +367,18 @@ pub(crate) fn const_arguments(
 /// Select a lexical occurrence without resolving its runtime container.
 /// Its initializer/condition is never resolved as part of argument staging.
 fn argument_statement(program: &Program, body: &Block, argument: Span) -> Option<Span> {
-    if program.pool.exprs.iter().enumerate().any(|(index, kind)| {
-        matches!(kind, arandu_parser::ExprKind::Comptime { .. })
-            && program
-                .pool
-                .expr_spans
-                .get(index)
-                .is_some_and(|&span| span != argument && contains(span, argument))
-    }) {
-        return None;
-    }
     let stmt = program
         .pool
         .stmts
         .iter()
         .filter(|stmt| contains(body.span, stmt.span()) && contains(stmt.span(), argument))
         .min_by_key(|stmt| stmt.span().end - stmt.span().start)?;
-    // Loop/condition headers may establish bindings part way through a single
-    // statement. Do not confuse those bindings with an outer global constant.
-    if matches!(
-        stmt,
-        Stmt::For { .. } | Stmt::While { .. } | Stmt::If { .. }
-    ) {
+    // Pattern and loop headers may introduce names during the statement.
+    // Plain expression conditions use the enclosing lexical scope.
+    if matches!(stmt, Stmt::For { .. })
+        || matches!(stmt, Stmt::If { condition, .. } | Stmt::While { condition, .. }
+            if !matches!(condition, arandu_parser::Condition::Expr { .. }))
+    {
         return None;
     }
     Some(argument)
@@ -534,6 +534,8 @@ pub fn ctfe_root_amir<'db>(
                     | RootSelector::StaticIfCondition(_)
                     | RootSelector::StaticForBound { .. }
                     | RootSelector::ConstArgument(_)
+                    | RootSelector::GlobalInitializer
+                    | RootSelector::HeaderArgument(_)
             );
         let source = crate::passes::item_source_input(db, file, owner);
         let parsed = pre_body.then(|| crate::passes::parse(db, file));
@@ -560,7 +562,7 @@ pub fn ctfe_root_amir<'db>(
             return Err(BuildFailure::InvalidRoot);
         }
         let declared = if pre_body {
-            crate::passes::header_signatures(db, file)
+            crate::passes::seed_header_signatures(db, file)
         } else {
             crate::passes::declaration_signatures(db, file)
         };
@@ -568,30 +570,54 @@ pub fn ctfe_root_amir<'db>(
             && instance.is_none()
             && !matches!(
                 selector,
-                RootSelector::ConstArgument(_) | RootSelector::StaticIfCondition(_)
+                RootSelector::ConstArgument(_)
+                    | RootSelector::StaticIfCondition(_)
+                    | RootSelector::HeaderArgument(_)
             )
         {
             return Err(BuildFailure::GenericFunction);
         }
         let mut body = None;
+        let mut initializer = None;
         program.for_each_decl_recursive(|_, declaration| {
             if arandu_semantics::primary_def_key(declaration)
                 .and_then(|key| declared.resolved.definitions.get(&key))
                 == Some(&owner)
             {
-                if let TopLevelDecl::Func(function) = declaration {
-                    body = Some(&function.body);
+                match declaration {
+                    TopLevelDecl::Func(function) => body = Some(&function.body),
+                    TopLevelDecl::Const(constant) => initializer = Some(constant.value),
+                    _ => {}
                 }
             }
         });
-        let selected = select(
-            program,
-            body.ok_or(BuildFailure::MissingFunction)?,
-            selector,
-        )?;
+        let selected = if let RootSelector::HeaderArgument(ordinal) = selector {
+            let roots = super::headers::header_arguments(program, &declared.resolved, owner);
+            let (_, expression) = roots
+                .get(usize::try_from(*ordinal).map_err(|_| BuildFailure::InvalidRoot)?)
+                .ok_or(BuildFailure::InvalidRoot)?;
+            Selected::Expression(*expression)
+        } else if matches!(selector, RootSelector::GlobalInitializer) {
+            Selected::Expression(initializer.ok_or(BuildFailure::InvalidRoot)?)
+        } else {
+            select(
+                program,
+                body.ok_or(BuildFailure::MissingFunction)?,
+                selector,
+            )?
+        };
         let span = selected.span(program);
-        let mut initial = (**declared).clone();
-        if pre_body {
+        let mut initial = if matches!(selector, RootSelector::GlobalInitializer) {
+            super::headers::owner_signatures(db, file, owner)
+        } else {
+            (**declared).clone()
+        };
+        if pre_body
+            && !matches!(
+                selector,
+                RootSelector::GlobalInitializer | RootSelector::HeaderArgument(_)
+            )
+        {
             let mut headers = (**crate::passes::resolved_headers(db, file)).clone();
             headers.declarations.symbols = Arc::clone(&declared.symbols);
             headers.declarations.resolved = Arc::clone(&declared.resolved);
@@ -699,6 +725,82 @@ pub fn ctfe_root_amir<'db>(
                 return Err(BuildFailure::Diagnostics(initial.diagnostics));
             }
         }
+        if matches!(selector, RootSelector::PublicComptime(_)) {
+            let branches = if let Some(instance) = instance {
+                super::branches::select_branches(db, file, owner, Some(instance))
+            } else {
+                super::item_static_branches(db, file, owner).clone()
+            };
+            let arguments =
+                super::arguments::select_arguments(db, file, owner, instance, &branches);
+            let names = Arc::make_mut(&mut initial.resolved);
+            names
+                .comptime_arguments
+                .extend(arguments.values.iter().map(|(&key, &value)| (key, value)));
+            names.typed_comptime_arguments.extend(
+                arguments
+                    .typed_values
+                    .iter()
+                    .map(|(&key, value)| (key, value.clone())),
+            );
+            initial
+                .diagnostics
+                .extend(arguments.diagnostics.iter().cloned());
+        }
+        if matches!(selector, RootSelector::ConstArgument(_)) {
+            let body_span = body.ok_or(BuildFailure::MissingFunction)?.span;
+            let arguments = const_arguments(&program.pool, body_span);
+            let nesting = arguments
+                .iter()
+                .filter(|(outer, _)| contains(*outer, span))
+                .count();
+            if nesting > 64 {
+                return Err(BuildFailure::Diagnostics(vec![
+                    arandu_middle::Diagnostic::error(
+                        arandu_middle::DiagCode::T045ComptimeLimitExceeded,
+                        "computed generic argument nesting exceeds 64 levels",
+                        span,
+                    ),
+                ]));
+            }
+            for (ordinal, &(child, _)) in arguments.iter().enumerate() {
+                if child == span || !contains(span, child) {
+                    continue;
+                }
+                let ordinal = u32::try_from(ordinal).map_err(|_| BuildFailure::InvalidRoot)?;
+                let selector = instance.map_or(RootSelector::ConstArgument(ordinal), |instance| {
+                    RootSelector::InInstance {
+                        instance: instance.clone(),
+                        selector: Box::new(RootSelector::ConstArgument(ordinal)),
+                    }
+                });
+                let child_root =
+                    CtfeRoot::new(db, file, owner, in_occurrence(selector, &iterations), None);
+                let budget = super::public::staging_budget(arguments.len(), !iterations.is_empty());
+                let value = ctfe_eval_root(db, CtfeRootRequest::new(db, child_root, budget))
+                    .as_ref()
+                    .map_err(|error| match error {
+                        RootEvalError::Build(error) => error.clone(),
+                        RootEvalError::Evaluation(error) => BuildFailure::Evaluation(error.kind),
+                    })?;
+                let names = Arc::make_mut(&mut initial.resolved);
+                names.comptime_arguments.insert(
+                    child.into(),
+                    match value {
+                        arandu_middle::ctfe::ConstValue::Integer(integer) => {
+                            integer.to_const_generic().ok()
+                        }
+                        _ => None,
+                    },
+                );
+                if !matches!(value, arandu_middle::ctfe::ConstValue::Integer(integer) if integer.to_const_generic().is_ok())
+                {
+                    names
+                        .typed_comptime_arguments
+                        .insert(child.into(), value.clone());
+                }
+            }
+        }
         if instance.is_none()
             && (matches!(selector, RootSelector::ConstArgument(_))
                 || (matches!(selector, RootSelector::StaticIfCondition(_))
@@ -798,6 +900,8 @@ pub fn ctfe_root_amir<'db>(
                 },
             )));
         }
+        super::headers::install_referenced_headers(db, &program.pool, span, &mut initial)?;
+        super::globals::install_referenced_globals(db, program, span, &mut initial)?;
         let diagnostics = initial
             .diagnostics
             .iter()
@@ -851,30 +955,8 @@ pub fn ctfe_root_amir<'db>(
             return Err(BuildFailure::Diagnostics(checked.diagnostics));
         }
         db.unwind_if_revision_cancelled();
-        // Reuse the canonical cached declaration producer. Link headers into
-        // this root's mutable type/pool domain, never clone a HIR/AMIR program
-        // or ask the runtime owner for its body. Constants keep ordinary typing.
-        let declarations = if pre_body {
-            crate::runtime::header_hir(db, file)
-        } else {
-            crate::runtime::declaration_hir(db, file)
-        };
-        let headers =
-            declarations.artifacts.hir.as_ref().ok_or_else(|| {
-                BuildFailure::Diagnostics(declarations.artifacts.diagnostics.clone())
-            })?;
-        let mut hir = arandu_middle::hir::HirProgram {
-            span,
-            module: headers.module.clone(),
-            decls: Vec::new(),
-            pool: arandu_middle::hir::HirPool::new(),
-        };
-        arandu_semantics::link_hir_module(
-            &mut checked,
-            &mut hir,
-            &declarations.artifacts.type_check,
-            headers,
-        );
+        let mut hir = super::globals::declaration_context(db, file, program, &mut checked)?;
+        super::globals::link_referenced_globals(db, program, span, &mut checked, &mut hir)?;
         let mut lowered = match selected {
             Selected::Block(block) => {
                 let block = arandu_semantics::lower_block_to_hir(
@@ -947,12 +1029,28 @@ pub fn ctfe_root_amir<'db>(
             },
         )
         .map_err(BuildFailure::Diagnostics)?;
+        let global_header = arandu_middle::hir::HirFunc {
+            symbol: owner,
+            params: hir.pool.alloc_param_list(&[]),
+            return_type: typed.return_type,
+            body: None,
+            span,
+            is_async: false,
+            no_fallback: false,
+        };
         let header = hir
             .decls
             .iter()
             .find_map(|&id| match hir.pool.decl(id) {
                 HirDecl::Func(function) if function.symbol == owner => Some(function),
                 _ => None,
+            })
+            .or_else(|| {
+                matches!(
+                    selector,
+                    RootSelector::GlobalInitializer | RootSelector::HeaderArgument(_)
+                )
+                .then_some(&global_header)
             })
             .ok_or(BuildFailure::MissingFunction)?;
         db.unwind_if_revision_cancelled();
@@ -1037,6 +1135,8 @@ pub fn ctfe_eval_root<'db>(
                 | RootSelector::StaticIfCondition(_)
                 | RootSelector::StaticForBound { .. }
                 | RootSelector::ConstArgument(_)
+                | RootSelector::GlobalInitializer
+                | RootSelector::HeaderArgument(_)
         ),
     };
     arandu_mir::ctfe::evaluate_unit(&provider, unit, &[], *request.budget(db), || {

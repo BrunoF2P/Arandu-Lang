@@ -262,10 +262,20 @@ fn collect_decl_constraints(
                 lower_type_expr_ctx(const_ty, &ctx, &mut checker.type_info.type_interner);
             let declared_id = checker.type_info.type_interner.intern(declared.clone());
             checker.type_info.record_decl_type(param_sym, declared_id);
-            if !matches!(&declared, ArType::Primitive(primitive) if primitive.is_integer()) {
+            if !matches!(&declared, ArType::Primitive(primitive) if primitive.is_integer() || *primitive == super::Primitive::Bool)
+                && !matches!(
+                    &declared,
+                    ArType::Named(..)
+                        | ArType::Tuple(_)
+                        | ArType::Array(..)
+                        | ArType::Option(_)
+                        | ArType::Result(..)
+                )
+            {
                 checker.diagnostics.push(crate::Diagnostic::error(
                     crate::DiagCode::T011GenericConstraintNotSatisfied,
-                    "const generic parameters require a scalar integer type".to_string(),
+                    "const generic parameters require an integer, bool, or closed Copy aggregate"
+                        .to_string(),
                     checker.pool.type_expr_span(const_ty),
                 ));
             }
@@ -406,8 +416,14 @@ pub(crate) fn check_instantiation_constraints(
             continue;
         };
         let valid_kind = match parameter.kind {
-            SymbolKind::ConstParam => matches!(arg_ty, ArType::Const(_) | ArType::ConstParam(_)),
-            SymbolKind::TypeParam => !matches!(arg_ty, ArType::Const(_) | ArType::ConstParam(_)),
+            SymbolKind::ConstParam => matches!(
+                arg_ty,
+                ArType::Const(_) | ArType::FrozenConst(_) | ArType::ConstParam(_)
+            ),
+            SymbolKind::TypeParam => !matches!(
+                arg_ty,
+                ArType::Const(_) | ArType::FrozenConst(_) | ArType::ConstParam(_)
+            ),
             _ => true,
         };
         if !valid_kind {
@@ -421,6 +437,47 @@ pub(crate) fn check_instantiation_constraints(
                 format!("generic parameter '{}' expects {expected}", parameter.name),
                 span,
             ));
+        }
+        if parameter.kind == SymbolKind::ConstParam
+            && let ArType::FrozenConst(value) = arg_ty
+            && let Some(expected) = checker.type_info.decl_type_id(param_sym)
+        {
+            let valid = match (value.as_ref(), checker.resolve(expected)) {
+                (
+                    arandu_middle::ctfe::ConstValue::Bool(_),
+                    ArType::Primitive(super::Primitive::Bool),
+                ) => true,
+                (arandu_middle::ctfe::ConstValue::Integer(value), ArType::Primitive(primitive))
+                    if primitive.is_integer() =>
+                {
+                    arandu_middle::ctfe::IntegerType::new(
+                        primitive,
+                        checker.type_info.target_layout,
+                    )
+                    .ok()
+                    .is_some_and(|ty| value.cast(ty).is_ok())
+                }
+                (arandu_middle::ctfe::ConstValue::Aggregate(value), _) => {
+                    arandu_middle::types::TypeShape::from_id(
+                        expected,
+                        &checker.type_info.type_interner,
+                    )
+                    .ok()
+                    .as_ref()
+                        == Some(value.shape())
+                }
+                _ => false,
+            };
+            if !valid {
+                checker.diagnostics.push(crate::Diagnostic::error(
+                    crate::DiagCode::T011GenericConstraintNotSatisfied,
+                    format!(
+                        "constant argument does not match the type of parameter '{}'",
+                        parameter.name
+                    ),
+                    span,
+                ));
+            }
         }
         if parameter.kind == SymbolKind::ConstParam
             && let ArType::Const(value) = arg_ty

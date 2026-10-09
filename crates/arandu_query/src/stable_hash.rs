@@ -188,6 +188,14 @@ fn hash_resolved_names(hasher: &mut Hasher, resolved: &arandu_middle::ResolvedNa
         hasher.update(&arandu_middle::ctfe::ConstValue::Integer(*lower).canonical_bytes());
         hasher.update(&arandu_middle::ctfe::ConstValue::Integer(*upper).canonical_bytes());
     }
+    let mut typed: Vec<_> = resolved.typed_comptime_arguments.iter().collect();
+    typed.sort_by_key(|(key, _)| (key.start, key.end));
+    hasher.update(&u64_le(u64::try_from(typed.len()).unwrap_or(u64::MAX)));
+    for (key, value) in typed {
+        hasher.update(&key.start.to_le_bytes());
+        hasher.update(&key.end.to_le_bytes());
+        hasher.update(&value.canonical_bytes());
+    }
     let mut arguments: Vec<_> = resolved.comptime_arguments.iter().collect();
     arguments.sort_by_key(|(key, _)| (key.start, key.end));
     hasher.update(&u64_le(u64::try_from(arguments.len()).unwrap_or(u64::MAX)));
@@ -514,7 +522,16 @@ pub(crate) fn type_signature_hash(result: &TypeCheckResult) -> blake3::Hash {
 
 fn hash_type_check_result(result: &TypeCheckResult, include_spans: bool) -> blake3::Hash {
     let mut h = Hasher::new();
-    h.update(b"TypeCheckResult/v2");
+    h.update(b"TypeCheckResult/v3");
+    h.update(result.type_info.target_identity.os.as_bytes());
+    h.update(&[0]);
+    h.update(result.type_info.target_identity.arch.as_bytes());
+    h.update(&[0, result.type_info.target_pointer_width]);
+    let layout = result.type_info.target_layout;
+    for class in [layout.pointer, layout.float, layout.i64, layout.f64] {
+        h.update(&class.size.to_le_bytes());
+        h.update(&class.abi_align.to_le_bytes());
+    }
     hash_symbol_table(&mut h, &result.symbols, include_spans);
     // `ModuleSignatures` deliberately excludes body references so a private or
     // implementation-only edit does not invalidate importing files.
@@ -541,6 +558,14 @@ fn hash_type_check_result(result: &TypeCheckResult, include_spans: bool) -> blak
                     h.update(&[0]);
                 }
             }
+        }
+        let mut globals: Vec<_> = result.type_info.ctfe_global_values.iter().collect();
+        globals.sort_unstable_by_key(|(symbol, _)| (symbol.file_id, symbol.local_id.0));
+        h.update(b"CtfeGlobals/v1");
+        h.update(&u64_le(globals.len() as u64));
+        for (symbol, value) in globals {
+            hash_symbol_id(&mut h, *symbol);
+            h.update(&value.canonical_bytes());
         }
         let mut values: Vec<_> = result.type_info.ctfe_values.iter().collect();
         values.sort_unstable_by_key(|(span, _)| (span.file_id, span.start, span.end));
@@ -1254,6 +1279,10 @@ fn hash_ar_type(hasher: &mut Hasher, ty: &arandu_middle::types::ArType) {
             hasher.update(&[6]);
             hash_symbol_id(hasher, *symbol);
             hash_id(hasher, inner.as_usize());
+        }
+        ArType::FrozenConst(value) => {
+            hasher.update(&[24]);
+            hasher.update(&value.canonical_bytes());
         }
         ArType::Const(value) => {
             hasher.update(&[7]);

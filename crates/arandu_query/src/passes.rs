@@ -662,12 +662,23 @@ pub fn resolved_headers(
 /// Shared by [`declaration_signatures`] and [`ide_type_check`]. Only declaration
 /// contracts cross imports here: no body check, borrow-interface solve or final
 /// lowering may be requested from this staging boundary.
-fn signatures_from_program(
+pub(crate) fn signatures_from_program(
     db: &dyn ArandCompilerDb,
     file: SourceFile,
     program: &Program,
     resolved_arc: &ResolutionResult,
     headers_only: bool,
+) -> TypeCheckResult {
+    signatures_with_imports(db, file, program, resolved_arc, headers_only, true)
+}
+
+fn signatures_with_imports(
+    db: &dyn ArandCompilerDb,
+    file: SourceFile,
+    program: &Program,
+    resolved_arc: &ResolutionResult,
+    headers_only: bool,
+    include_imports: bool,
 ) -> TypeCheckResult {
     // The checker owns its tables behind Arc; share the resolution result's
     // handles (O(1)) and let the first mutation copy once (COW).
@@ -682,18 +693,21 @@ fn signatures_from_program(
         database_target_info(db),
     );
 
+    checker.type_info.target_identity = db.target_config().identity(db).clone();
+    checker.type_info.target_layout = *db.target_config().data_layout(db);
+
     // Merge imported type info (path rewrite shared with resolve).
     // Each `declaration_signatures` is Salsa-memoized; merge_from is the cold cost.
-    for import in &program.imports {
+    for import in program.imports.iter().filter(|_| include_imports) {
         if let Some(path) = arandu_resolve::canonicalize_import_path(import) {
             if let Some(imported_file) = db.as_source_db().resolve_module_path(&path) {
                 if exported_symbols(db, imported_file).is_cycle {
                     continue;
                 }
                 let imported_sigs = if headers_only {
-                    header_signatures(db, imported_file)
+                    seed_header_signatures(db, imported_file)
                 } else {
-                    declaration_signatures(db, imported_file)
+                    header_signatures(db, imported_file)
                 };
                 tracing::debug!(
                     target: "arandu_query",
@@ -936,6 +950,23 @@ pub fn declaration_signatures(db: &dyn ArandCompilerDb, file: SourceFile) -> Mod
             .extend(package_implementations);
     }
 
+    let staged_headers = crate::ctfe::headers::module_arguments(db, file);
+    Arc::make_mut(&mut resolved.resolved)
+        .comptime_arguments
+        .extend(
+            staged_headers
+                .values
+                .iter()
+                .map(|(&key, &value)| (key, value)),
+        );
+    Arc::make_mut(&mut resolved.resolved)
+        .typed_comptime_arguments
+        .extend(
+            staged_headers
+                .typed_values
+                .iter()
+                .map(|(&key, value)| (key, value.clone())),
+        );
     let res = match &**program_res {
         Ok(program) => signatures_from_program(db, file, program, &resolved, false),
         Err(_) => TypeCheckResult {
@@ -946,16 +977,44 @@ pub fn declaration_signatures(db: &dyn ArandCompilerDb, file: SourceFile) -> Mod
         },
     };
 
+    let mut res = res;
+    res.diagnostics
+        .extend(staged_headers.diagnostics.iter().cloned());
+    crate::ctfe::globals::install_module_globals(db, file, &mut res);
     ModuleSignatures::new(res)
+}
+
+// A seed cycle publishes only this module's local contracts. Constant
+// dependency queries independently detect value cycles; recursive imports
+// must not preempt them with a whole-module signature failure.
+fn cycle_recover_seed_headers(
+    db: &dyn ArandCompilerDb,
+    _id: salsa::Id,
+    file: SourceFile,
+) -> ModuleSignatures {
+    let parsed = parse(db, file);
+    let headers = resolved_headers(db, file);
+    let mut checked = match &**parsed {
+        Ok(program) => {
+            signatures_with_imports(db, file, program, &headers.declarations, true, false)
+        }
+        Err(_) => TypeCheckResult::empty(),
+    };
+    checked.diagnostics.push(arandu_middle::Diagnostic::error(
+        arandu_middle::DiagCode::N006ImportConflict,
+        "cyclic module signature dependency detected",
+        arandu_middle::Span::new(*file.file_id(db), 0, 0),
+    ));
+    ModuleSignatures::new(checked)
 }
 
 /// Initial typed headers for pre-resolution staging. Recurses only through this
 /// same header boundary, never through function bodies or borrow contracts.
-#[salsa::tracked(cycle_result = cycle_recover_module_signatures)]
+#[salsa::tracked(cycle_result = cycle_recover_seed_headers)]
 #[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(
-    query = "header_signatures", file = ?file.file_id(db),
+    query = "seed_header_signatures", file = ?file.file_id(db),
 ))]
-pub fn header_signatures(db: &dyn ArandCompilerDb, file: SourceFile) -> ModuleSignatures {
+pub fn seed_header_signatures(db: &dyn ArandCompilerDb, file: SourceFile) -> ModuleSignatures {
     let _ = module_graph_fingerprint(db, file);
     let program = parse(db, file);
     let headers = resolved_headers(db, file);
@@ -964,6 +1023,15 @@ pub fn header_signatures(db: &dyn ArandCompilerDb, file: SourceFile) -> ModuleSi
         Err(_) => TypeCheckResult::empty(),
     };
     ModuleSignatures::new(result)
+}
+
+/// Final header view with frozen constant types; seed queries never depend on it.
+#[salsa::tracked(cycle_result = cycle_recover_module_signatures)]
+#[tracing::instrument(level = "trace", target = "arandu_query", skip(db), fields(query = "header_signatures", file = ?file.file_id(db)))]
+pub fn header_signatures(db: &dyn ArandCompilerDb, file: SourceFile) -> ModuleSignatures {
+    let mut checked = crate::ctfe::headers::staged_signatures(db, file);
+    crate::ctfe::globals::install_module_globals(db, file, &mut checked);
+    ModuleSignatures::new(checked)
 }
 
 /// Compatibility/body-checking view: declarations plus imported flow-derived
@@ -1242,13 +1310,24 @@ pub fn item_typing(
     }
     let arguments = crate::ctfe::item_const_arguments(db, file, item_sym);
     let mut staged;
-    let initial = if arguments.values.is_empty() && arguments.diagnostics.is_empty() {
+    let initial = if arguments.values.is_empty()
+        && arguments.typed_values.is_empty()
+        && arguments.diagnostics.is_empty()
+    {
         &**signatures
     } else {
         staged = (**signatures).clone();
         std::sync::Arc::make_mut(&mut staged.resolved)
             .comptime_arguments
             .extend(arguments.values.iter().map(|(&key, &value)| (key, value)));
+        std::sync::Arc::make_mut(&mut staged.resolved)
+            .typed_comptime_arguments
+            .extend(
+                arguments
+                    .typed_values
+                    .iter()
+                    .map(|(&key, value)| (key, value.clone())),
+            );
         &staged
     };
     let mut res = arandu_semantics::check_item_body_only(
@@ -1314,6 +1393,14 @@ fn compose_file_typing(
             item_body_typeck(db, file, item_sym)
         };
         Arc::make_mut(&mut merged_info).merge_from(item.type_info.as_ref());
+        Arc::make_mut(&mut merged_resolved)
+            .typed_comptime_arguments
+            .extend(
+                item.resolved
+                    .typed_comptime_arguments
+                    .iter()
+                    .map(|(&key, value)| (key, value.clone())),
+            );
         if !item.resolved.comptime_arguments.is_empty() {
             Arc::make_mut(&mut merged_resolved)
                 .comptime_arguments

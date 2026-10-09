@@ -74,6 +74,17 @@ pub fn item_staged_typing(
     owner: SymbolId,
 ) -> HashEq<TypeCheckResult> {
     let initial = passes::item_typing(db, file, owner);
+    if initial.type_info.ctfe_global_values.contains_key(&owner) {
+        let mut checked = (**initial).clone();
+        let source = passes::item_source_input(db, file, owner);
+        super::globals::stage_initializer(
+            &mut checked,
+            &source.program,
+            owner,
+            *db.target_config().data_layout(db),
+        );
+        return HashEq::new(checked);
+    }
     stage_public_roots(db, file, owner, initial, None)
 }
 
@@ -123,6 +134,10 @@ pub(crate) fn stage_public_roots_in_occurrence(
     let Some(span) = span else {
         return HashEq::share(initial);
     };
+    // Module/type initializers are already frozen by their declaration query.
+    if !function {
+        return HashEq::share(initial);
+    }
     let roots = super::roots::public_roots(&program.pool, span);
     if roots.is_empty() {
         return HashEq::share(initial);
@@ -186,18 +201,6 @@ pub(crate) fn stage_public_roots_in_occurrence(
         {
             checked.diagnostics.push(unsupported(root_span,
                 "comptime roots require a concrete function body; constant declarations cannot contain them in this version"));
-            continue;
-        }
-        // No nested obligations are silently executed at runtime. Their own
-        // staging/capture environments require the next specialization cut.
-        if roots
-            .iter()
-            .any(|&other| other != expression && contains(root_span, program.pool.expr_span(other)))
-        {
-            checked.diagnostics.push(unsupported(
-                root_span,
-                "nested comptime roots are not supported yet",
-            ));
             continue;
         }
         if roots
@@ -275,7 +278,7 @@ fn contains(outer: Span, inner: Span) -> bool {
     outer.file_id == inner.file_id && outer.start <= inner.start && inner.end <= outer.end
 }
 
-pub(super) fn append_failure(output: &mut Vec<Diagnostic>, error: RootEvalError, root: Span) {
+pub(crate) fn append_failure(output: &mut Vec<Diagnostic>, error: RootEvalError, root: Span) {
     match error {
         RootEvalError::Build(BuildFailure::Diagnostics(diagnostics)) => {
             output.extend(diagnostics);

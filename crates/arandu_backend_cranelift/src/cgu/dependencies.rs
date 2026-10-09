@@ -137,6 +137,7 @@ pub(crate) fn function_dependencies(
             | ArType::Range(inner) => types.push(inner),
             ArType::Result(ok, error) => types.extend([ok, error]),
             ArType::Primitive(_)
+            | ArType::FrozenConst(_)
             | ArType::Const(_)
             | ArType::ConstParam(_)
             | ArType::GenRef
