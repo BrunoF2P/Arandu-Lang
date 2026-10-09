@@ -198,7 +198,13 @@ impl ValueType {
                                 )
                             })
                             .transpose()?;
-                        fields.push((provider.get_enum_variant_symbol(symbol, tag), payload));
+                        // Layout-only providers may omit source identity, but
+                        // frozen nominal values must retain the variant's full
+                        // symbol for materialization and specialization keys.
+                        let variant = provider
+                            .get_enum_variant_symbol(symbol, tag)
+                            .ok_or(EvalErrorKind::UnsupportedType(id))?;
+                        fields.push((Some(variant), payload));
                     }
                     return Ok(Self::Enum(Arc::new(EnumType {
                         shape,

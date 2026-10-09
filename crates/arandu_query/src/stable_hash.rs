@@ -520,9 +520,42 @@ pub(crate) fn type_signature_hash(result: &TypeCheckResult) -> blake3::Hash {
     hash_type_check_result(result, false)
 }
 
+/// Presentation intentionally hides frozen aggregate contents. Memo equality
+/// must instead retain the full structural type and canonical constant values.
+fn semantic_type_bytes(
+    ty: arandu_middle::types::TypeId,
+    interner: &arandu_middle::types::TypeInterner,
+    symbols: &SymbolTable,
+) -> Vec<u8> {
+    let canonical = arandu_middle::types::TypeShape::from_id(ty, interner)
+        .ok()
+        .and_then(|shape| arandu_middle::ctfe::canonical_type_bytes(&shape).ok());
+    if let Some(bytes) = canonical {
+        let mut identity = vec![0];
+        identity.extend(bytes);
+        return identity;
+    }
+    // Preserve recovery for types beyond the admitted structural limits.
+    // Such types are diagnosed before lowering; never hash incidental TypeIds.
+    let mut identity = vec![1];
+    identity.extend(interner.display(ty, symbols).bytes());
+    identity
+}
+
+fn hash_semantic_type(
+    hash: &mut Hasher,
+    ty: arandu_middle::types::TypeId,
+    interner: &arandu_middle::types::TypeInterner,
+    symbols: &SymbolTable,
+) {
+    let bytes = semantic_type_bytes(ty, interner, symbols);
+    hash.update(&u64_le(u64::try_from(bytes.len()).unwrap_or(u64::MAX)));
+    hash.update(&bytes);
+}
+
 fn hash_type_check_result(result: &TypeCheckResult, include_spans: bool) -> blake3::Hash {
     let mut h = Hasher::new();
-    h.update(b"TypeCheckResult/v3");
+    h.update(b"TypeCheckResult/v4");
     h.update(result.type_info.target_identity.os.as_bytes());
     h.update(&[0]);
     h.update(result.type_info.target_identity.arch.as_bytes());
@@ -548,10 +581,11 @@ fn hash_type_check_result(result: &TypeCheckResult, include_spans: bool) -> blak
             match slot {
                 Some(tid) => {
                     h.update(&[1]);
-                    let ty = result.type_info.type_interner.resolve(*tid);
-                    hash_str(
+                    hash_semantic_type(
                         &mut h,
-                        &ty.display(&result.symbols, &result.type_info.type_interner),
+                        *tid,
+                        &result.type_info.type_interner,
+                        &result.symbols,
                     );
                 }
                 None => {
@@ -589,10 +623,11 @@ fn hash_type_check_result(result: &TypeCheckResult, include_spans: bool) -> blak
     decls.sort_by_key(|(id, _)| (id.file_id, id.local_id.0));
     for (sid, tid) in decls {
         hash_symbol_id(&mut h, *sid);
-        let ty = result.type_info.type_interner.resolve(*tid);
-        hash_str(
+        hash_semantic_type(
             &mut h,
-            &ty.display(&result.symbols, &result.type_info.type_interner),
+            *tid,
+            &result.type_info.type_interner,
+            &result.symbols,
         );
     }
     let mut borrow_summaries: Vec<_> = result.type_info.return_borrow_summaries.iter().collect();
@@ -625,7 +660,7 @@ fn hash_type_check_result(result: &TypeCheckResult, include_spans: bool) -> blak
             } else {
                 h.update(&[0]);
             }
-            hash_str(&mut h, &interner.display(field.ty, symbols));
+            hash_semantic_type(&mut h, field.ty, interner, symbols);
             h.update(&u64_le(field.index as u64));
         }
     }
@@ -644,7 +679,7 @@ fn hash_type_check_result(result: &TypeCheckResult, include_spans: bool) -> blak
                 h.update(&[1]);
                 h.update(&u64_le(types.len() as u64));
                 for ty in types {
-                    hash_str(&mut h, &interner.display(*ty, symbols));
+                    hash_semantic_type(&mut h, *ty, interner, symbols);
                 }
             }
         };
@@ -668,10 +703,11 @@ fn hash_type_check_result(result: &TypeCheckResult, include_spans: bool) -> blak
 
     if include_spans {
         let mut destructor_instances: Vec<_> = info.destructor_instances.iter().collect();
-        destructor_instances.sort_by_key(|(ty, _)| ty.as_usize());
+        destructor_instances
+            .sort_by_cached_key(|(ty, _)| semantic_type_bytes(**ty, interner, symbols));
         h.update(&u64_le(destructor_instances.len() as u64));
         for (ty, destructor) in destructor_instances {
-            hash_str(&mut h, &interner.display(*ty, symbols));
+            hash_semantic_type(&mut h, *ty, interner, symbols);
             hash_symbol_id(&mut h, *destructor);
         }
     }
@@ -692,7 +728,7 @@ fn hash_type_check_result(result: &TypeCheckResult, include_spans: bool) -> blak
     h.update(&u64_le(generic_defaults.len() as u64));
     for (symbol, ty) in generic_defaults {
         hash_symbol_id(&mut h, *symbol);
-        hash_str(&mut h, &interner.display(*ty, symbols));
+        hash_semantic_type(&mut h, *ty, interner, symbols);
     }
 
     let mut constraints: Vec<_> = info.param_constraints.iter().collect();
@@ -705,7 +741,7 @@ fn hash_type_check_result(result: &TypeCheckResult, include_spans: bool) -> blak
             hash_symbol_id(&mut h, constraint.iface_sym);
             h.update(&u64_le(constraint.type_args.len() as u64));
             for ty in &constraint.type_args {
-                hash_str(&mut h, &interner.display(*ty, symbols));
+                hash_semantic_type(&mut h, *ty, interner, symbols);
             }
         }
     }
@@ -724,7 +760,7 @@ fn hash_type_check_result(result: &TypeCheckResult, include_spans: bool) -> blak
         h.update(&u64_le(interface.methods.len() as u64));
         for method in &interface.methods {
             hash_str(&mut h, &method.name);
-            hash_str(&mut h, &interner.display(method.sig_id, symbols));
+            hash_semantic_type(&mut h, method.sig_id, interner, symbols);
             h.update(&u64_le(method.generic_params.len() as u64));
             for param in &method.generic_params {
                 hash_symbol_id(&mut h, *param);
@@ -734,11 +770,13 @@ fn hash_type_check_result(result: &TypeCheckResult, include_spans: bool) -> blak
 
     if include_spans {
         let mut variant_instantiations: Vec<_> = info.variant_instantiations.iter().collect();
-        variant_instantiations.sort_by_key(|((symbol, args), _)| {
+        variant_instantiations.sort_by_cached_key(|((symbol, args), _)| {
             (
                 symbol.file_id,
                 symbol.local_id.0,
-                args.iter().map(|arg| arg.as_usize()).collect::<Vec<_>>(),
+                args.iter()
+                    .map(|arg| semantic_type_bytes(*arg, interner, symbols))
+                    .collect::<Vec<_>>(),
             )
         });
         h.update(&u64_le(variant_instantiations.len() as u64));
@@ -746,13 +784,13 @@ fn hash_type_check_result(result: &TypeCheckResult, include_spans: bool) -> blak
             hash_symbol_id(&mut h, *symbol);
             h.update(&u64_le(args.len() as u64));
             for ty in args {
-                hash_str(&mut h, &interner.display(*ty, symbols));
+                hash_semantic_type(&mut h, *ty, interner, symbols);
             }
             h.update(&u64_le(params.len() as u64));
             for ty in params {
-                hash_str(&mut h, &interner.display(*ty, symbols));
+                hash_semantic_type(&mut h, *ty, interner, symbols);
             }
-            hash_str(&mut h, &interner.display(*result_ty, symbols));
+            hash_semantic_type(&mut h, *result_ty, interner, symbols);
         }
     }
 
@@ -2201,6 +2239,82 @@ mod tests {
         assert_ne!(
             make_program(false, Primitive::Bool).stable_hash(),
             make_program(false, Primitive::Char).stable_hash()
+        );
+    }
+
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn type_signatures_distinguish_frozen_aggregate_arguments_with_equal_display() {
+        use arandu_middle::ctfe::{ConstAggregate, ConstValue};
+        use arandu_middle::types::{ArType, Primitive, TypeShape};
+        use arandu_middle::SymbolId;
+        use arandu_semantics::TypeCheckResult;
+        use std::sync::Arc;
+
+        let make = |flag| {
+            let mut checked = TypeCheckResult::empty();
+            let info = Arc::make_mut(&mut checked.type_info);
+            let frozen = ConstAggregate::new(
+                TypeShape::Tuple(vec![TypeShape::Primitive(Primitive::Bool)]),
+                vec![ConstValue::Bool(flag)],
+            )
+            .expect("closed constant tuple");
+            let argument = info
+                .type_interner
+                .intern(ArType::FrozenConst(Arc::new(ConstValue::Aggregate(frozen))));
+            let signature = info.type_interner.intern(ArType::named(
+                SymbolId::new(100, 8),
+                &[argument],
+                &info.type_interner,
+            ));
+            info.record_decl_type(SymbolId::new(100, 7), signature);
+            checked
+        };
+        let a = make(false);
+        let b = make(true);
+        let presentation = |checked: &TypeCheckResult| {
+            checked.type_info.type_interner.display(
+                checked
+                    .type_info
+                    .decl_type_id(SymbolId::new(100, 7))
+                    .expect("signature"),
+                &checked.symbols,
+            )
+        };
+        assert_eq!(presentation(&a), presentation(&b));
+        assert_ne!(type_signature_hash(&a), type_signature_hash(&b));
+        assert_ne!(a.stable_hash(), b.stable_hash());
+        assert_eq!(type_signature_hash(&a), type_signature_hash(&make(false)));
+    }
+
+    #[test]
+    fn cached_instance_hashes_do_not_depend_on_interner_allocation_order() {
+        use arandu_middle::types::{ArType, Primitive};
+        use arandu_middle::SymbolId;
+        use arandu_semantics::TypeCheckResult;
+        use std::sync::Arc;
+
+        let make = |reverse| {
+            let mut checked = TypeCheckResult::empty();
+            let info = Arc::make_mut(&mut checked.type_info);
+            let interner = &info.type_interner;
+            let int = interner.intern(ArType::Primitive(Primitive::Int));
+            let flag = interner.intern(ArType::Primitive(Primitive::Bool));
+            let choices = [(ArType::Array(2, int), 1), (ArType::Array(3, flag), 2)];
+            for index in if reverse { [1, 0] } else { [0, 1] } {
+                let (ty, identity) = &choices[index];
+                let tid = interner.intern(ty.clone());
+                info.destructor_instances
+                    .insert(tid, SymbolId::new(100, *identity));
+                info.variant_instantiations
+                    .insert((SymbolId::new(100, 0), vec![tid]), (vec![tid], tid));
+            }
+            checked
+        };
+        assert_eq!(make(false).stable_hash(), make(true).stable_hash());
+        assert_eq!(
+            type_signature_hash(&make(false)),
+            type_signature_hash(&make(true))
         );
     }
 

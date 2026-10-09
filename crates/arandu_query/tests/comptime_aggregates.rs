@@ -322,6 +322,54 @@ fn imported_global_values_follow_helper_edits_and_cut_off_equal_values() {
 }
 
 #[test]
+fn imported_signatures_track_aggregate_argument_contents_with_equal_type_display() {
+    use arandu_middle::types::TypeShape;
+    let source = "module tokens\npublic struct Policy { enabled: bool }\npublic struct Token<comptime P: Policy> { value: int }\npublic func make(): Token<comptime (Policy { enabled: true })> { return Token<comptime (Policy { enabled: true })> { value: 42 } }";
+    let consumer =
+        "import tokens\nfunc main(): int { let token = tokens.make(); return token.value }";
+    let mut db = DatabaseImpl::new();
+    let definitions = db.new_file("tokens.aru".into(), source.into());
+    let file = db.new_file("consumer.aru".into(), consumer.into());
+    let signature = |db: &DatabaseImpl, file| {
+        let typed = type_check(db, file);
+        assert!(
+            typed
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.severity != Severity::Error),
+            "{:?}",
+            typed.diagnostics
+        );
+        let (&symbol, &ty) = typed
+            .type_info
+            .decl_types
+            .iter()
+            .find(|(symbol, _)| {
+                typed
+                    .symbols
+                    .try_get(**symbol)
+                    .is_some_and(|entry| entry.name == "make")
+            })
+            .expect("imported function signature");
+        let _ = symbol;
+        (
+            TypeShape::from_id(ty, &typed.type_info.type_interner).expect("structural signature"),
+            typed.type_info.type_interner.display(ty, &typed.symbols),
+        )
+    };
+    let before = signature(&db, file);
+    let edited = source.replace("enabled: true", "enabled: false");
+    definitions.set_text(&mut db).to(edited.clone().into());
+    let after = signature(&db, file);
+    assert_eq!(before.1, after.1);
+    assert_ne!(before.0, after.0);
+    let mut fresh_db = DatabaseImpl::new();
+    fresh_db.new_file("tokens.aru".into(), edited);
+    let fresh_file = fresh_db.new_file("consumer.aru".into(), consumer.into());
+    assert_eq!(after, signature(&fresh_db, fresh_file));
+}
+
+#[test]
 fn target_properties_use_explicit_inputs_and_invalidate_staged_values() {
     use arandu_middle::{db::TargetIdentity, layout::DataLayout};
     let mut db = DatabaseImpl::new();

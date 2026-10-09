@@ -2,9 +2,10 @@
 
 use super::*;
 use arandu_middle::amir::*;
+use arandu_middle::ctfe::ConstAggregate;
 use arandu_middle::layout::{DataLayout, DenseRange};
 use arandu_middle::literal_pool::AmirLiteralPool;
-use arandu_middle::types::{ArType, Primitive, TypeInterner};
+use arandu_middle::types::{ArType, Primitive, TypeId, TypeInterner};
 use arandu_middle::{Span, SymbolId};
 use std::sync::Arc;
 
@@ -1122,6 +1123,217 @@ fn nominal_products_require_copy_proof_no_destructor_and_safe_fields() {
         CtfeFunction::new_with_provider(f, pool, &types, DataLayout::ptr_width(8), &provider),
         Err(EvalErrorKind::UnsupportedType(_))
     ));
+}
+
+#[test]
+fn nominal_enums_validate_every_variant_even_when_the_active_variant_is_unit() {
+    use arandu_middle::layout::{EnumPayloadShape, StructFields, StructLayoutProvider};
+    struct Metadata {
+        variants: Vec<EnumPayloadShape>,
+        symbols: Vec<Option<SymbolId>>,
+        copy: Option<bool>,
+        destructor: Option<SymbolId>,
+    }
+    impl StructLayoutProvider for Metadata {
+        fn get_struct_fields(&self, _: SymbolId) -> Option<&StructFields> {
+            None
+        }
+        fn get_generic_params(&self, _: SymbolId) -> Option<&[SymbolId]> {
+            Some(&[])
+        }
+        fn get_enum_variants(&self, _: SymbolId) -> Option<Vec<EnumPayloadShape>> {
+            Some(self.variants.clone())
+        }
+        fn get_enum_variant_symbol(&self, _: SymbolId, tag: usize) -> Option<SymbolId> {
+            self.symbols.get(tag).copied().flatten()
+        }
+        fn is_copy_type(&self, _: TypeId) -> Option<bool> {
+            self.copy
+        }
+        fn destructor_for_type(&self, _: TypeId) -> Option<SymbolId> {
+            self.destructor
+        }
+    }
+    let root = SymbolId::new(1, 0);
+    let nominal = SymbolId::new(2, 0);
+    let (mut f, types, pool) = function(root, 1);
+    let int = f.return_type;
+    let named = types.intern(ArType::named(nominal, &[], &types));
+    f.return_type = named;
+    f.temps[0].ty = named;
+    f.append_stmt_to_block(
+        BlockId(0),
+        AmirStmt::Assign {
+            lhs: TempId(0),
+            rhs: AmirRvalue::EnumConstruct {
+                variant_tag: 0,
+                payload: None,
+            },
+        },
+    );
+    let mut metadata = Metadata {
+        variants: vec![
+            EnumPayloadShape { payload_ty: None },
+            EnumPayloadShape {
+                payload_ty: Some(int),
+            },
+        ],
+        symbols: vec![Some(SymbolId::new(2, 1)), Some(SymbolId::new(2, 2))],
+        copy: Some(true),
+        destructor: None,
+    };
+    let build = |metadata: &Metadata| {
+        CtfeFunction::new_with_provider(
+            f.clone(),
+            pool.clone(),
+            &types,
+            DataLayout::ptr_width(8),
+            metadata,
+        )
+    };
+    let unit = Arc::new(build(&metadata).expect("complete nominal metadata"));
+    let actual = evaluate(&Units(vec![unit]), root, &[], budget(), || false).expect("unit variant");
+    assert_eq!(
+        actual,
+        ConstValue::Aggregate(
+            ConstAggregate::enumeration(
+                arandu_middle::types::TypeShape::Named(nominal, Vec::new()),
+                arandu_middle::ctfe::ConstVariant {
+                    tag: 0,
+                    symbol: metadata.symbols[0]
+                },
+                None,
+            )
+            .expect("nominal unit variant")
+        )
+    );
+    metadata.symbols[1] = None;
+    assert!(matches!(
+        build(&metadata),
+        Err(EvalErrorKind::UnsupportedType(_))
+    ));
+    metadata.symbols[1] = Some(SymbolId::new(2, 2));
+    for copy in [None, Some(false)] {
+        metadata.copy = copy;
+        assert!(matches!(
+            build(&metadata),
+            Err(EvalErrorKind::UnsupportedType(_))
+        ));
+    }
+    metadata.copy = Some(true);
+    metadata.destructor = Some(SymbolId::new(2, 3));
+    assert!(matches!(
+        build(&metadata),
+        Err(EvalErrorKind::UnsupportedType(_))
+    ));
+    metadata.destructor = None;
+    for resource in [
+        ArType::Ref(int),
+        ArType::Ptr(int),
+        ArType::ConstParam(SymbolId::new(2, 4)),
+    ] {
+        metadata.variants[1].payload_ty = Some(types.intern(resource));
+        assert!(matches!(
+            build(&metadata),
+            Err(EvalErrorKind::UnsupportedType(_))
+        ));
+    }
+}
+
+#[test]
+fn enum_construction_and_projection_reject_malformed_amir() {
+    let root = SymbolId::new(1, 0);
+    for (tag, payload, expected) in [
+        (2, None, EvalErrorKind::InvalidIr),
+        (
+            0,
+            Some(AmirOperand::Constant(AmirConstant::Bool(false))),
+            EvalErrorKind::TypeMismatch,
+        ),
+        (1, None, EvalErrorKind::TypeMismatch),
+        (
+            1,
+            Some(AmirOperand::Constant(AmirConstant::Bool(false))),
+            EvalErrorKind::TypeMismatch,
+        ),
+    ] {
+        let (mut f, types, pool) = function(root, 1);
+        let option = types.intern(ArType::Option(f.return_type));
+        f.return_type = option;
+        f.temps[0].ty = option;
+        f.append_stmt_to_block(
+            BlockId(0),
+            AmirStmt::Assign {
+                lhs: TempId(0),
+                rhs: AmirRvalue::EnumConstruct {
+                    variant_tag: tag,
+                    payload,
+                },
+            },
+        );
+        assert_eq!(
+            evaluate(
+                &Units(vec![unit(f, &types, pool)]),
+                root,
+                &[],
+                budget(),
+                || false
+            )
+            .expect_err("malformed construction")
+            .kind,
+            expected
+        );
+    }
+    for (tag, index, field_is_bool, expected) in [
+        (0, 0, false, EvalErrorKind::InvalidIr),
+        (1, 1, false, EvalErrorKind::InvalidIr),
+        (1, 0, true, EvalErrorKind::TypeMismatch),
+    ] {
+        let (mut f, types, mut pool) = function(root, 2);
+        let int = f.return_type;
+        f.temps[1].ty = types.intern(ArType::Option(int));
+        let payload = AmirOperand::Constant(AmirConstant::Pool(pool.intern_int("42")));
+        f.append_stmt_to_block(
+            BlockId(0),
+            AmirStmt::Assign {
+                lhs: TempId(1),
+                rhs: AmirRvalue::EnumConstruct {
+                    variant_tag: 1,
+                    payload: Some(payload),
+                },
+            },
+        );
+        f.append_stmt_to_block(
+            BlockId(0),
+            AmirStmt::Assign {
+                lhs: TempId(0),
+                rhs: AmirRvalue::EnumPayload {
+                    value: AmirOperand::Copy(TempId(1)),
+                    variant: SymbolId::new(2, 0),
+                    variant_tag: tag,
+                    index,
+                    field_ty: if field_is_bool {
+                        types.intern(ArType::Primitive(Primitive::Bool))
+                    } else {
+                        int
+                    },
+                    tuple_ty: None,
+                },
+            },
+        );
+        assert_eq!(
+            evaluate(
+                &Units(vec![unit(f, &types, pool)]),
+                root,
+                &[],
+                budget(),
+                || false
+            )
+            .expect_err("malformed projection")
+            .kind,
+            expected
+        );
+    }
 }
 
 #[test]

@@ -31,7 +31,7 @@ impl ConstAggregate {
             return Err(ConstValueError::StructuralLimit);
         }
         let valid = match &shape {
-            TypeShape::Named(..) => true,
+            TypeShape::Named(..) => variant.symbol.is_some(),
             TypeShape::Option(inner) => {
                 variant.symbol.is_none()
                     && match (variant.tag, &payload) {
@@ -154,6 +154,49 @@ impl ConstAggregate {
             bytes.extend_from_slice(&child);
         }
         bytes
+    }
+}
+
+#[cfg(test)]
+mod enum_tests {
+    use super::*;
+
+    #[test]
+    fn nominal_enums_require_full_variant_identity_in_the_frozen_bridge() {
+        let shape = TypeShape::Named(SymbolId::new(1, 0), Vec::new());
+        assert_eq!(
+            ConstAggregate::enumeration(
+                shape.clone(),
+                ConstVariant {
+                    tag: 0,
+                    symbol: None
+                },
+                None
+            ),
+            Err(ConstValueError::InvalidAggregateShape)
+        );
+        let a = ConstAggregate::enumeration(
+            shape.clone(),
+            ConstVariant {
+                tag: 0,
+                symbol: Some(SymbolId::new(1, 1)),
+            },
+            None,
+        );
+        let b = ConstAggregate::enumeration(
+            shape,
+            ConstVariant {
+                tag: 0,
+                symbol: Some(SymbolId::new(2, 1)),
+            },
+            None,
+        );
+        assert!(a.is_ok() && b.is_ok());
+        assert_ne!(a, b);
+        assert_ne!(
+            a.map(|value| value.canonical_bytes()),
+            b.map(|value| value.canonical_bytes())
+        );
     }
 }
 

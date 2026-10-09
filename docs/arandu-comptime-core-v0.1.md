@@ -15,7 +15,10 @@ identified by a bounded, versioned semantic encoding.
    variant against target types, substitutes generic arguments and proves Copy
    and absence of cleanup. Interpret construction, discrimination and payload
    extraction with checked tags and projections; materialize existing typed HIR
-   constructors so all backends retain their common lowering path.
+   constructors so all backends retain their common lowering path. Nominal
+   variants require full source symbols; layout-only metadata without those
+   symbols cannot admit frozen enums, including inactive variants. Structural
+   Option/Result variants retain their canonical tags without nominal symbols.
 2. **Computed array dimensions.** Preserve the expression in canonical CST/AST;
    evaluate it through the existing pre-body obligation path. Freeze the length
    before type checking, reject negative/out-of-range values and unresolved
@@ -67,6 +70,14 @@ in one function, a computed return type imported from another module, `@sizeOf`
 depending on a type argument, forwarded constant parameters, failure/cycle
 recovery, target edits, and equal-valued helper edits that cut off consumers.
 No unresolved header placeholder may reach AMIR or backend code generation.
+
+Memo equality for types uses their bounded structural encoding, including full
+frozen argument contents and nominal identities. User-facing type presentation
+is not a semantic key: two aggregate arguments can display the same type while
+containing different values. Signature, field, payload, default and constraint
+metadata use that encoding; instance caches are ordered by semantic keys rather
+than interner allocation order. Imported signature regressions compare edits
+against a fresh database while preserving equal-valued cutoff checks.
 
 Global dependency depth is a separate resource boundary from VM call frames:
 one declaration can demand another query before either starts executing AMIR.
