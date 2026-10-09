@@ -62,6 +62,22 @@ pub fn global_const_value(
     file: SourceFile,
     symbol: SymbolId,
 ) -> HashEq<GlobalConstant> {
+    HashEq::share(global_const_value_in_context(
+        db,
+        file,
+        symbol,
+        super::DependencyContext::default(),
+    ))
+}
+
+#[salsa::tracked]
+#[tracing::instrument(level = "trace", target = "arandu_query", skip(db, file, context), fields(query = "global_const_value_in_context", item = ?symbol))]
+pub(crate) fn global_const_value_in_context(
+    db: &dyn ArandCompilerDb,
+    file: SourceFile,
+    symbol: SymbolId,
+    context: super::DependencyContext,
+) -> HashEq<GlobalConstant> {
     let source = crate::passes::item_source_input(db, file, symbol);
     let seed = crate::passes::seed_header_signatures(db, file);
     let mut initializer = None;
@@ -75,6 +91,14 @@ pub fn global_const_value(
     let span = initializer
         .map(|id| source.program.pool.expr_span(id))
         .unwrap_or(Span::new(*file.file_id(db), 0, 0));
+    let context = match context.enter(super::dependency::DependencyKey::Global(symbol), span) {
+        Ok(context) => context,
+        Err(diagnostic) => {
+            return HashEq::new(GlobalConstant {
+                result: Err(vec![diagnostic]),
+            })
+        }
+    };
     let build = || {
         if initializer.is_none() || symbol.file_id != *file.file_id(db) {
             return Err(super::RootEvalError::Build(BuildFailure::InvalidRoot));
@@ -85,7 +109,14 @@ pub fn global_const_value(
             .filter(|&id| !seed.type_info.type_interner.resolve(id).is_error())
             .and_then(|id| TypeShape::from_id(id, &seed.type_info.type_interner).ok())
             .map(RootExpectedType::Structural);
-        let root = CtfeRoot::new(db, file, symbol, RootSelector::GlobalInitializer, expected);
+        let root = CtfeRoot::new_in_context(
+            db,
+            file,
+            symbol,
+            RootSelector::GlobalInitializer,
+            expected,
+            context.clone(),
+        );
         let lowering = super::ctfe_root_amir(db, root);
         let unit = lowering
             .result
@@ -207,18 +238,19 @@ fn references(
     symbols
 }
 
-pub(crate) fn install_referenced_globals(
+pub(crate) fn install_referenced_globals_in_context(
     db: &dyn ArandCompilerDb,
     program: &arandu_parser::Program,
     span: Span,
     checked: &mut TypeCheckResult,
+    context: &super::DependencyContext,
 ) -> Result<(), BuildFailure> {
     for symbol in references(program, span, checked) {
         let file = db
             .as_source_db()
             .source_file_by_id(symbol.file_id)
             .ok_or(BuildFailure::MissingFunction)?;
-        let frozen = global_const_value(db, file, symbol);
+        let frozen = global_const_value_in_context(db, file, symbol, context.clone());
         let constant = frozen
             .result
             .as_ref()
@@ -294,21 +326,19 @@ pub(crate) fn link_referenced_globals(
     hir: &mut arandu_middle::hir::HirProgram,
 ) -> Result<(), BuildFailure> {
     for symbol in references(program, span, checked) {
-        let file = db
-            .as_source_db()
-            .source_file_by_id(symbol.file_id)
-            .ok_or(BuildFailure::MissingFunction)?;
-        let result = global_const_value(db, file, symbol);
-        let frozen = result
-            .result
-            .as_ref()
-            .map_err(|errors| BuildFailure::Diagnostics(errors.clone()))?;
-        let ty = frozen
-            .shape
-            .intern(&checked.type_info.type_interner)
-            .map_err(|_| BuildFailure::InvalidRoot)?;
+        // Linking consumes the value admitted in this request's dependency
+        // context. Re-evaluating here would reset its ancestry and budget.
+        let frozen = checked
+            .type_info
+            .ctfe_global_values
+            .get(&symbol)
+            .ok_or(BuildFailure::InvalidRoot)?;
+        let ty = checked
+            .type_info
+            .decl_type_id(symbol)
+            .ok_or(BuildFailure::InvalidRoot)?;
         let value = arandu_semantics::materialize_ctfe_value(
-            &frozen.value,
+            frozen,
             ty,
             &checked.type_info,
             &mut hir.pool,

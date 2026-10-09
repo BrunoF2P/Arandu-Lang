@@ -13,6 +13,8 @@ use arandu_middle::{Diagnostic, SymbolId};
 use arandu_mir::ctfe::{Budget, CtfeFunction, EvalError, EvalErrorKind, FunctionProvider};
 
 mod arguments;
+mod dependency;
+pub use dependency::{DependencyContext, MAX_QUERY_DEPENDENCY_DEPTH};
 pub(crate) mod globals;
 pub(crate) mod headers;
 pub use globals::{global_const_value, FrozenConstant, GlobalConstant};
@@ -63,7 +65,7 @@ pub fn ctfe_func_amir(
     file: SourceFile,
     symbol: SymbolId,
 ) -> HashEq<CtfeLowering> {
-    lower_scalar_function(db, file, symbol, false)
+    lower_scalar_function(db, file, symbol, false, &DependencyContext::default())
 }
 
 /// Condition helpers are resolved/typed individually against pre-body headers.
@@ -78,7 +80,22 @@ pub fn ctfe_header_func_amir(
     file: SourceFile,
     symbol: SymbolId,
 ) -> HashEq<CtfeLowering> {
-    lower_scalar_function(db, file, symbol, true)
+    HashEq::share(ctfe_header_func_amir_in_context(
+        db,
+        file,
+        symbol,
+        DependencyContext::default(),
+    ))
+}
+
+#[salsa::tracked]
+fn ctfe_header_func_amir_in_context(
+    db: &dyn ArandCompilerDb,
+    file: SourceFile,
+    symbol: SymbolId,
+    context: DependencyContext,
+) -> HashEq<CtfeLowering> {
+    lower_scalar_function(db, file, symbol, true, &context)
 }
 
 #[salsa::tracked]
@@ -124,6 +141,7 @@ fn lower_scalar_function(
     file: SourceFile,
     symbol: SymbolId,
     headers_only: bool,
+    context: &DependencyContext,
 ) -> HashEq<CtfeLowering> {
     if symbol.file_id != *file.file_id(db) {
         return HashEq::new(CtfeLowering {
@@ -159,7 +177,7 @@ fn lower_scalar_function(
             result: Err(BuildFailure::Evaluation(EvalErrorKind::Value(error))),
         });
     }
-    let signatures = headers::owner_signatures(db, file, symbol);
+    let signatures = headers::owner_signatures_in_context(db, file, symbol, context);
     let import_errors = signatures
         .diagnostics
         .iter()
@@ -198,7 +216,8 @@ fn lower_scalar_function(
         // Keep imported semantic identities added by the signature checker.
         headers.declarations.symbols = Arc::clone(&signatures.symbols);
         headers.declarations.resolved = Arc::clone(&signatures.resolved);
-        let loops = item_static_loops(db, file, symbol);
+        let selected = branches::select_branches_in_context(db, file, symbol, None, &[], context);
+        let loops = loops::select_loops_in_context(db, file, symbol, None, &selected, &[], context);
         Arc::make_mut(&mut headers.declarations.resolved)
             .comptime_loops
             .extend(loops.domains.iter().map(|(&key, &value)| (key, value)));
@@ -206,7 +225,6 @@ fn lower_scalar_function(
             .declarations
             .diagnostics
             .extend(loops.diagnostics.iter().cloned());
-        let selected = item_static_branches(db, file, symbol);
         Arc::make_mut(&mut headers.declarations.resolved)
             .comptime_branches
             .extend(selected.decisions.iter().map(|(&key, &value)| (key, value)));
@@ -214,7 +232,8 @@ fn lower_scalar_function(
             .declarations
             .diagnostics
             .extend(selected.diagnostics.iter().cloned());
-        let arguments = item_const_arguments(db, file, symbol);
+        let arguments =
+            arguments::select_arguments_in_context(db, file, symbol, None, &selected, &[], context);
         Arc::make_mut(&mut headers.declarations.resolved)
             .typed_comptime_arguments
             .extend(
@@ -240,6 +259,7 @@ fn lower_scalar_function(
         initial.symbols = resolved.symbols;
         initial.resolved = resolved.resolved;
         let mut source_span = None;
+        let mut prerequisite_diagnostics = Vec::new();
         program.for_each_decl_recursive(|_, declaration| {
             if arandu_semantics::primary_def_key(declaration)
                 .and_then(|key| initial.resolved.definitions.get(&key))
@@ -249,19 +269,28 @@ fn lower_scalar_function(
             }
         });
         if let Some(span) = source_span {
-            if let Err(error) =
-                headers::install_referenced_headers(db, &program.pool, span, &mut initial)
-            {
+            if let Err(error) = headers::install_referenced_headers_in_context(
+                db,
+                &program.pool,
+                span,
+                &mut initial,
+                context,
+            ) {
                 public::append_failure(
-                    &mut initial.diagnostics,
+                    &mut prerequisite_diagnostics,
                     roots::RootEvalError::Build(error),
                     span,
                 );
             }
-            if let Err(error) = globals::install_referenced_globals(db, program, span, &mut initial)
-            {
+            if let Err(error) = globals::install_referenced_globals_in_context(
+                db,
+                program,
+                span,
+                &mut initial,
+                context,
+            ) {
                 public::append_failure(
-                    &mut initial.diagnostics,
+                    &mut prerequisite_diagnostics,
                     roots::RootEvalError::Build(error),
                     span,
                 );
@@ -274,6 +303,7 @@ fn lower_scalar_function(
             crate::passes::database_target_info(db),
         );
         checked.diagnostics.extend(resolved.diagnostics);
+        checked.diagnostics.extend(prerequisite_diagnostics);
         HashEq::new(checked)
     };
     let build = || -> Result<Arc<CtfeFunction>, BuildFailure> {
@@ -442,6 +472,19 @@ pub fn ctfe_instance_amir<'db>(
     db: &'db dyn ArandCompilerDb,
     instance: crate::runtime::Instance<'db>,
 ) -> HashEq<CtfeLowering> {
+    HashEq::share(ctfe_instance_amir_in_context(
+        db,
+        instance,
+        DependencyContext::default(),
+    ))
+}
+
+#[salsa::tracked]
+fn ctfe_instance_amir_in_context<'db>(
+    db: &'db dyn ArandCompilerDb,
+    instance: crate::runtime::Instance<'db>,
+    context: DependencyContext,
+) -> HashEq<CtfeLowering> {
     let layout = *db.target_config().data_layout(db);
     let build = || {
         if instance.key(db).definition.file_id != *instance.file(db).file_id(db) {
@@ -450,7 +493,7 @@ pub fn ctfe_instance_amir<'db>(
         layout
             .validate()
             .map_err(|error| BuildFailure::Evaluation(EvalErrorKind::InvalidLayout(error)))?;
-        let concrete = crate::runtime::instance_ctfe_hir(db, instance);
+        let concrete = crate::runtime::instance_ctfe_hir_in_context(db, instance, context.clone());
         let artifacts = &concrete.artifacts;
         let hir = artifacts
             .hir
@@ -525,6 +568,8 @@ pub struct CtfeInstanceRequest<'db> {
 struct QueryProvider<'a> {
     db: &'a dyn ArandCompilerDb,
     headers_only: bool,
+    context: DependencyContext,
+    failures: std::cell::RefCell<Vec<Diagnostic>>,
 }
 
 impl FunctionProvider for QueryProvider<'_> {
@@ -532,7 +577,14 @@ impl FunctionProvider for QueryProvider<'_> {
         if key.arguments.is_empty() {
             self.function(key.definition)
         } else {
-            InstanceProvider { db: self.db }.instance(key)
+            self.db.unwind_if_revision_cancelled();
+            let file = self
+                .db
+                .source_file_by_id(key.definition.file_id)
+                .ok_or(EvalErrorKind::MissingFunction(key.definition))?;
+            let instance = crate::runtime::Instance::new(self.db, file, key.clone());
+            let lowered = ctfe_instance_amir_in_context(self.db, instance, self.context.clone());
+            self.unit(&lowered.result, key.definition)
         }
     }
 
@@ -542,14 +594,40 @@ impl FunctionProvider for QueryProvider<'_> {
             .db
             .source_file_by_id(symbol.file_id)
             .ok_or(EvalErrorKind::MissingFunction(symbol))?;
-        let lowered = if self.headers_only {
-            ctfe_header_func_amir(self.db, file, symbol)
+        let lowered = if self.headers_only || !self.context.is_empty() {
+            ctfe_header_func_amir_in_context(self.db, file, symbol, self.context.clone())
         } else {
             ctfe_func_amir(self.db, file, symbol)
         };
-        match &lowered.result {
+        self.unit(&lowered.result, symbol)
+    }
+}
+
+impl QueryProvider<'_> {
+    fn unit(
+        &self,
+        result: &Result<Arc<CtfeFunction>, BuildFailure>,
+        symbol: SymbolId,
+    ) -> Result<Arc<CtfeFunction>, EvalErrorKind> {
+        match result {
             Ok(unit) => Ok(Arc::clone(unit)),
-            Err(_) => Err(EvalErrorKind::UnavailableFunction(symbol)),
+            Err(error) => {
+                if let BuildFailure::Diagnostics(diagnostics) = error {
+                    self.failures.borrow_mut().extend(
+                        diagnostics
+                            .iter()
+                            .filter(|diagnostic| {
+                                matches!(
+                                    diagnostic.code,
+                                    arandu_middle::DiagCode::T044ComptimeEvaluationFailed
+                                        | arandu_middle::DiagCode::T045ComptimeLimitExceeded
+                                )
+                            })
+                            .cloned(),
+                    );
+                }
+                Err(EvalErrorKind::UnavailableFunction(symbol))
+            }
         }
     }
 }
@@ -643,6 +721,8 @@ pub fn ctfe_eval<'db>(
         &QueryProvider {
             db,
             headers_only: false,
+            context: DependencyContext::default(),
+            failures: Default::default(),
         },
         symbol,
         request.arguments(db),

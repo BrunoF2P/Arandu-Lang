@@ -77,13 +77,34 @@ pub enum RootExpectedType {
     Structural(arandu_middle::types::TypeShape),
 }
 
-#[salsa::interned]
+#[salsa::interned(constructor = new_in_context)]
 pub struct CtfeRoot<'db> {
     pub file: SourceFile,
     pub owner: SymbolId,
     #[returns(ref)]
     pub selector: RootSelector,
     pub expected: Option<RootExpectedType>,
+    #[returns(ref)]
+    pub dependency: super::DependencyContext,
+}
+
+impl<'db> CtfeRoot<'db> {
+    pub fn new(
+        db: &'db dyn ArandCompilerDb,
+        file: SourceFile,
+        owner: SymbolId,
+        selector: RootSelector,
+        expected: Option<RootExpectedType>,
+    ) -> Self {
+        Self::new_in_context(
+            db,
+            file,
+            owner,
+            selector,
+            expected,
+            super::DependencyContext::default(),
+        )
+    }
 }
 
 #[salsa::interned]
@@ -608,7 +629,7 @@ pub fn ctfe_root_amir<'db>(
         };
         let span = selected.span(program);
         let mut initial = if matches!(selector, RootSelector::GlobalInitializer) {
-            super::headers::owner_signatures(db, file, owner)
+            super::headers::owner_signatures_in_context(db, file, owner, root.dependency(db))
         } else {
             (**declared).clone()
         };
@@ -774,8 +795,14 @@ pub fn ctfe_root_amir<'db>(
                         selector: Box::new(RootSelector::ConstArgument(ordinal)),
                     }
                 });
-                let child_root =
-                    CtfeRoot::new(db, file, owner, in_occurrence(selector, &iterations), None);
+                let child_root = CtfeRoot::new_in_context(
+                    db,
+                    file,
+                    owner,
+                    in_occurrence(selector, &iterations),
+                    None,
+                    root.dependency(db).clone(),
+                );
                 let budget = super::public::staging_budget(arguments.len(), !iterations.is_empty());
                 let value = ctfe_eval_root(db, CtfeRootRequest::new(db, child_root, budget))
                     .as_ref()
@@ -900,8 +927,20 @@ pub fn ctfe_root_amir<'db>(
                 },
             )));
         }
-        super::headers::install_referenced_headers(db, &program.pool, span, &mut initial)?;
-        super::globals::install_referenced_globals(db, program, span, &mut initial)?;
+        super::headers::install_referenced_headers_in_context(
+            db,
+            &program.pool,
+            span,
+            &mut initial,
+            root.dependency(db),
+        )?;
+        super::globals::install_referenced_globals_in_context(
+            db,
+            program,
+            span,
+            &mut initial,
+            root.dependency(db),
+        )?;
         let diagnostics = initial
             .diagnostics
             .iter()
@@ -1129,6 +1168,8 @@ pub fn ctfe_eval_root<'db>(
         .map_err(|error| RootEvalError::Build(error.clone()))?;
     let provider = QueryProvider {
         db,
+        context: request.root(db).dependency(db).clone(),
+        failures: Default::default(),
         headers_only: matches!(
             source_selector(request.root(db).selector(db)),
             RootSelector::IfCondition { .. }
@@ -1139,9 +1180,15 @@ pub fn ctfe_eval_root<'db>(
                 | RootSelector::HeaderArgument(_)
         ),
     };
-    arandu_mir::ctfe::evaluate_unit(&provider, unit, &[], *request.budget(db), || {
-        db.unwind_if_revision_cancelled();
-        false
-    })
-    .map_err(RootEvalError::Evaluation)
+    let evaluated =
+        arandu_mir::ctfe::evaluate_unit(&provider, unit, &[], *request.budget(db), || {
+            db.unwind_if_revision_cancelled();
+            false
+        });
+    if evaluated.is_err() && !provider.failures.borrow().is_empty() {
+        return Err(RootEvalError::Build(BuildFailure::Diagnostics(
+            provider.failures.into_inner(),
+        )));
+    }
+    evaluated.map_err(RootEvalError::Evaluation)
 }

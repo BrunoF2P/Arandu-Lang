@@ -287,22 +287,38 @@ pub fn instance_hir<'db>(
     db: &'db dyn ArandCompilerDb,
     instance: Instance<'db>,
 ) -> HashEq<InstanceHir> {
-    build_instance_hir(db, instance, false)
+    build_instance_hir(
+        db,
+        instance,
+        false,
+        &crate::ctfe::DependencyContext::default(),
+    )
 }
 
 /// Runtime-independent instance lowering used by the CTFE call closure.
-#[salsa::tracked(cycle_result = instance_hir_cycle)]
-pub(crate) fn instance_ctfe_hir<'db>(
+fn instance_ctfe_hir_cycle<'db>(
+    db: &'db dyn ArandCompilerDb,
+    id: salsa::Id,
+    instance: Instance<'db>,
+    _context: crate::ctfe::DependencyContext,
+) -> HashEq<InstanceHir> {
+    instance_hir_cycle(db, id, instance)
+}
+
+#[salsa::tracked(cycle_result = instance_ctfe_hir_cycle)]
+pub(crate) fn instance_ctfe_hir_in_context<'db>(
     db: &'db dyn ArandCompilerDb,
     instance: Instance<'db>,
+    context: crate::ctfe::DependencyContext,
 ) -> HashEq<InstanceHir> {
-    build_instance_hir(db, instance, true)
+    build_instance_hir(db, instance, true, &context)
 }
 
 fn build_instance_hir<'db>(
     db: &'db dyn ArandCompilerDb,
     instance: Instance<'db>,
     for_ctfe: bool,
+    context: &crate::ctfe::DependencyContext,
 ) -> HashEq<InstanceHir> {
     let key = instance.key(db);
     let source = item_source_input(db, *instance.file(db), key.definition);
@@ -332,7 +348,7 @@ fn build_instance_hir<'db>(
     };
     let staged = source.may_have_comptime && (!key.arguments.is_empty() || has_static_loop);
     let template = if for_ctfe {
-        crate::ctfe::instances::instance_ctfe_hir(db, instance)
+        crate::ctfe::instances::instance_ctfe_hir(db, instance, context)
     } else if staged {
         crate::ctfe::instance_staged_hir(db, instance)
     } else {
@@ -506,7 +522,7 @@ fn build_instance_hir<'db>(
                 generated_symbols = concrete.generated_symbols;
                 if staged {
                     generated_symbols.extend(if for_ctfe {
-                        crate::ctfe::instances::instance_ctfe_symbols(db, instance)
+                        crate::ctfe::instances::instance_ctfe_symbols(db, instance, context)
                     } else {
                         crate::ctfe::instance_staged_symbols(db, instance)
                     });

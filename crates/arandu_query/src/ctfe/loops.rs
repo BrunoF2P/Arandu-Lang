@@ -80,6 +80,26 @@ pub(crate) fn select_loops_in_occurrence(
     branches: &super::StaticBranches,
     occurrence: &[(u32, ConstInt)],
 ) -> HashEq<StaticLoops> {
+    select_loops_in_context(
+        db,
+        file,
+        owner,
+        instance,
+        branches,
+        occurrence,
+        &super::DependencyContext::default(),
+    )
+}
+
+pub(crate) fn select_loops_in_context(
+    db: &dyn ArandCompilerDb,
+    file: SourceFile,
+    owner: SymbolId,
+    instance: Option<&arandu_middle::types::FunctionInstance>,
+    branches: &super::StaticBranches,
+    occurrence: &[(u32, ConstInt)],
+    context: &super::DependencyContext,
+) -> HashEq<StaticLoops> {
     let parsed = crate::passes::parse(db, file);
     let headers = crate::passes::resolved_headers(db, file);
     let mut result = StaticLoops::default();
@@ -196,12 +216,13 @@ pub(crate) fn select_loops_in_occurrence(
                     selector: Box::new(RootSelector::StaticForBound { ordinal, upper }),
                 },
             );
-            let root = CtfeRoot::new(
+            let root = CtfeRoot::new_in_context(
                 db,
                 file,
                 owner,
                 super::roots::in_occurrence(selector, occurrence),
                 None,
+                context.clone(),
             );
             match super::ctfe_eval_root(db, CtfeRootRequest::new(db, root, budget)) {
                 Ok(ConstValue::Integer(value)) => bounds.push(*value),

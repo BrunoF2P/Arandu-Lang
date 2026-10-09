@@ -26,7 +26,7 @@ pub(crate) fn instance_staged_hir<'db>(
     instance: Instance<'db>,
 ) -> HashEq<PreparedHir> {
     HashEq::from_arc(Arc::clone(
-        &instance_staged_result(db, instance, false).artifacts,
+        &instance_staged_result(db, instance, false, super::DependencyContext::default()).artifacts,
     ))
 }
 
@@ -34,7 +34,7 @@ pub(crate) fn instance_staged_symbols<'db>(
     db: &'db dyn ArandCompilerDb,
     instance: Instance<'db>,
 ) -> Vec<arandu_middle::SymbolId> {
-    instance_staged_result(db, instance, false)
+    instance_staged_result(db, instance, false, super::DependencyContext::default())
         .occurrence_symbols
         .clone()
 }
@@ -42,8 +42,9 @@ pub(crate) fn instance_staged_symbols<'db>(
 pub(crate) fn instance_ctfe_symbols<'db>(
     db: &'db dyn ArandCompilerDb,
     instance: Instance<'db>,
+    context: &super::DependencyContext,
 ) -> Vec<arandu_middle::SymbolId> {
-    instance_staged_result(db, instance, true)
+    instance_staged_result(db, instance, true, context.clone())
         .occurrence_symbols
         .clone()
 }
@@ -51,9 +52,10 @@ pub(crate) fn instance_ctfe_symbols<'db>(
 pub(crate) fn instance_ctfe_hir<'db>(
     db: &'db dyn ArandCompilerDb,
     instance: Instance<'db>,
+    context: &super::DependencyContext,
 ) -> HashEq<PreparedHir> {
     HashEq::from_arc(Arc::clone(
-        &instance_staged_result(db, instance, true).artifacts,
+        &instance_staged_result(db, instance, true, context.clone()).artifacts,
     ))
 }
 
@@ -68,6 +70,7 @@ fn instance_staged_result<'db>(
     db: &'db dyn ArandCompilerDb,
     instance: Instance<'db>,
     for_ctfe: bool,
+    context: super::DependencyContext,
 ) -> HashEq<StagedInstance> {
     let file = *instance.file(db);
     let key = instance.key(db);
@@ -83,8 +86,23 @@ fn instance_staged_result<'db>(
     let mut occurrence_symbols = Vec::new();
     if let Ok(program) = &**parsed {
         let concrete = (!key.arguments.is_empty()).then_some(key);
-        let branches = super::branches::select_branches(db, file, key.definition, concrete);
-        let loops = super::loops::select_loops(db, file, key.definition, concrete, &branches);
+        let branches = super::branches::select_branches_in_context(
+            db,
+            file,
+            key.definition,
+            concrete,
+            &[],
+            &context,
+        );
+        let loops = super::loops::select_loops_in_context(
+            db,
+            file,
+            key.definition,
+            concrete,
+            &branches,
+            &[],
+            &context,
+        );
         let mut expansion = 0_u64;
         for (node, (lower, upper)) in &loops.domains {
             let mut occurrences = u64::try_from(
@@ -125,8 +143,15 @@ fn instance_staged_result<'db>(
                 occurrence_symbols,
             });
         }
-        let arguments =
-            super::arguments::select_arguments(db, file, key.definition, concrete, &branches);
+        let arguments = super::arguments::select_arguments_in_context(
+            db,
+            file,
+            key.definition,
+            concrete,
+            &branches,
+            &[],
+            &context,
+        );
         let mut headers = (**crate::passes::resolved_headers(db, file)).clone();
         headers.declarations.symbols = Arc::clone(&checked.symbols);
         headers.declarations.resolved = Arc::clone(&checked.resolved);
@@ -184,9 +209,13 @@ fn instance_staged_result<'db>(
                 }
             });
             if let Some(span) = span {
-                if let Err(error) =
-                    super::globals::install_referenced_globals(db, program, span, &mut checked)
-                {
+                if let Err(error) = super::globals::install_referenced_globals_in_context(
+                    db,
+                    program,
+                    span,
+                    &mut checked,
+                    &context,
+                ) {
                     super::public::append_failure(
                         &mut checked.diagnostics,
                         super::RootEvalError::Build(error),
@@ -202,6 +231,7 @@ fn instance_staged_result<'db>(
         };
         match substitution {
             Ok(substitution) => {
+                let prerequisite_diagnostics = std::mem::take(&mut checked.diagnostics);
                 checked = arandu_typeck::type_checker::check::check_item_body_with_substitution(
                     &checked,
                     program,
@@ -209,6 +239,7 @@ fn instance_staged_result<'db>(
                     crate::passes::database_target_info(db),
                     &substitution,
                 );
+                checked.diagnostics.extend(prerequisite_diagnostics);
                 checked
                     .diagnostics
                     .extend(branches.diagnostics.iter().cloned());
@@ -250,6 +281,7 @@ fn instance_staged_result<'db>(
                                 &[],
                                 &mut count,
                                 &mut diagnostics,
+                                &context,
                             );
                             occurrence_symbols.extend(
                                 checked
@@ -309,6 +341,7 @@ fn install_occurrences(
     occurrence: &[(u32, arandu_middle::ctfe::ConstInt)],
     count: &mut u64,
     diagnostics: &mut Vec<arandu_middle::Diagnostic>,
+    context: &super::DependencyContext,
 ) {
     use arandu_middle::hir::HirStmtKind;
     use arandu_parser::{ForClause, Stmt};
@@ -410,12 +443,13 @@ fn install_occurrences(
             };
             let mut selected = occurrence.to_vec();
             selected.push((ordinal, value));
-            let branches = super::branches::select_branches_in_occurrence(
+            let branches = super::branches::select_branches_in_context(
                 db,
                 file,
                 key.definition,
                 (!key.arguments.is_empty()).then_some(key),
                 &selected,
+                context,
             );
             let mut all_branches = super::StaticBranches {
                 decisions: checked.resolved.comptime_branches.clone(),
@@ -427,21 +461,23 @@ fn install_occurrences(
                     .iter()
                     .map(|(&node, &value)| (node, value)),
             );
-            let loops = super::loops::select_loops_in_occurrence(
+            let loops = super::loops::select_loops_in_context(
                 db,
                 file,
                 key.definition,
                 (!key.arguments.is_empty()).then_some(key),
                 &all_branches,
                 &selected,
+                context,
             );
-            let arguments = super::arguments::select_arguments_in_occurrence(
+            let arguments = super::arguments::select_arguments_in_context(
                 db,
                 file,
                 key.definition,
                 (!key.arguments.is_empty()).then_some(key),
                 &all_branches,
                 &selected,
+                context,
             );
             let mut headers = (**crate::passes::resolved_headers(db, file)).clone();
             headers.declarations.symbols = Arc::clone(&checked.symbols);
@@ -520,13 +556,14 @@ fn install_occurrences(
                 .diagnostics
                 .extend(arguments.diagnostics.iter().cloned());
             typed.diagnostics.extend(loops.diagnostics.iter().cloned());
-            typed = (*super::public::stage_public_roots_in_occurrence(
+            typed = (*super::public::stage_public_roots_in_context(
                 db,
                 file,
                 key.definition,
                 &HashEq::new(typed),
                 (!key.arguments.is_empty()).then_some(key),
                 &selected,
+                context,
             ))
             .clone();
             match arandu_semantics::lower_block_to_hir(&mut typed, &program.pool, hir, body) {
@@ -543,6 +580,7 @@ fn install_occurrences(
                         &selected,
                         count,
                         diagnostics,
+                        context,
                     );
                     bodies.push(block);
                 }

@@ -81,10 +81,18 @@ against a fresh database while preserving equal-valued cutoff checks.
 
 Global dependency depth is a separate resource boundary from VM call frames:
 one declaration can demand another query before either starts executing AMIR.
-Any dependency limiter must belong to explicit query/evaluator data, preserve
-cycle identity and cancellation, and avoid mutable process/thread state. It
-must also respect discarded static branches instead of evaluating their
-initializers merely to discover dependencies.
+Declaration evaluation carries an immutable causal path in its query/request
+key. It admits at most 16 nested global/header dependencies, independently of
+VM frames. This conservative ceiling protects native query nesting, including
+generic helpers, on the default test-thread stack; it is not a host-memory
+heuristic. A repeated semantic declaration identity reports T044 before the
+depth check; an acyclic over-limit path reports T045. Diagnostics retain up to
+eight recent causal source labels. Branch selection, computed arguments,
+loop bounds and generic helper lowering inherit the same path. Discarded static
+branches create no dependencies. No mutable process/thread counter participates
+in query results. Linking consumes already admitted global values instead of
+starting a fresh evaluation. Editing a failed dependency revalidates its memo
+and permits recovery.
 
 ## Syntax and result
 

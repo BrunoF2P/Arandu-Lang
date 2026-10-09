@@ -92,6 +92,26 @@ pub(crate) fn select_arguments_in_occurrence(
     branches: &super::StaticBranches,
     occurrence: &[(u32, arandu_middle::ctfe::ConstInt)],
 ) -> HashEq<ConstArguments> {
+    select_arguments_in_context(
+        db,
+        file,
+        owner,
+        instance,
+        branches,
+        occurrence,
+        &super::DependencyContext::default(),
+    )
+}
+
+pub(crate) fn select_arguments_in_context(
+    db: &dyn ArandCompilerDb,
+    file: SourceFile,
+    owner: SymbolId,
+    instance: Option<&arandu_middle::types::FunctionInstance>,
+    branches: &super::StaticBranches,
+    occurrence: &[(u32, arandu_middle::ctfe::ConstInt)],
+    context: &super::DependencyContext,
+) -> HashEq<ConstArguments> {
     let source = crate::passes::item_source_input(db, file, owner);
     if !source.may_have_comptime {
         return HashEq::new(ConstArguments::default());
@@ -185,12 +205,13 @@ pub(crate) fn select_arguments_in_occurrence(
                 selector: Box::new(RootSelector::ConstArgument(ordinal)),
             }
         });
-        let root = CtfeRoot::new(
+        let root = CtfeRoot::new_in_context(
             db,
             file,
             owner,
             super::roots::in_occurrence(selector, occurrence),
             None,
+            context.clone(),
         );
         let budget = super::public::staging_budget(roots.len(), !occurrence.is_empty());
         match super::ctfe_eval_root(db, CtfeRootRequest::new(db, root, budget)) {

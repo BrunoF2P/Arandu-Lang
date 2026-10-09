@@ -106,6 +106,26 @@ pub(crate) fn stage_public_roots_in_occurrence(
     instance: Option<&arandu_middle::types::FunctionInstance>,
     occurrence: &[(u32, arandu_middle::ctfe::ConstInt)],
 ) -> HashEq<TypeCheckResult> {
+    stage_public_roots_in_context(
+        db,
+        file,
+        owner,
+        initial,
+        instance,
+        occurrence,
+        &super::DependencyContext::default(),
+    )
+}
+
+pub(crate) fn stage_public_roots_in_context(
+    db: &dyn ArandCompilerDb,
+    file: SourceFile,
+    owner: SymbolId,
+    initial: &HashEq<TypeCheckResult>,
+    instance: Option<&arandu_middle::types::FunctionInstance>,
+    occurrence: &[(u32, arandu_middle::ctfe::ConstInt)],
+    context: &super::DependencyContext,
+) -> HashEq<TypeCheckResult> {
     // Ordinary functions preserve the existing O(1) shared memo path; do not
     // scan the full file's arena for every item in projects without staging.
     if initial.type_info.ctfe_roots.is_empty() {
@@ -246,7 +266,7 @@ pub(crate) fn stage_public_roots_in_occurrence(
         let Ok(ordinal) = u32::try_from(ordinal) else {
             continue;
         };
-        let root = CtfeRoot::new(
+        let root = CtfeRoot::new_in_context(
             db,
             file,
             owner,
@@ -260,6 +280,7 @@ pub(crate) fn stage_public_roots_in_occurrence(
                 occurrence,
             ),
             Some(expected),
+            context.clone(),
         );
         match super::ctfe_eval_root(db, CtfeRootRequest::new(db, root, budget)) {
             Ok(value) => {

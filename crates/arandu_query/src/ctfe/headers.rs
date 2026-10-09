@@ -84,10 +84,43 @@ pub(crate) fn item_header_arguments(
     file: SourceFile,
     owner: SymbolId,
 ) -> HashEq<ConstArguments> {
+    HashEq::share(evaluate_declaration_arguments(
+        db,
+        file,
+        arandu_middle::types::FunctionInstance {
+            definition: owner,
+            arguments: Vec::new(),
+        },
+        super::DependencyContext::default(),
+    ))
+}
+
+#[salsa::tracked]
+#[tracing::instrument(level = "trace", target = "arandu_query", skip(db, file, context), fields(query = "evaluate_declaration_arguments", item = ?instance.definition))]
+pub(crate) fn evaluate_declaration_arguments(
+    db: &dyn ArandCompilerDb,
+    file: SourceFile,
+    instance: arandu_middle::types::FunctionInstance,
+    context: super::DependencyContext,
+) -> HashEq<ConstArguments> {
+    let owner = instance.definition;
     let source = crate::passes::item_source_input(db, file, owner);
     let seed = crate::passes::seed_header_signatures(db, file);
     let roots = header_arguments(&source.program, &seed.resolved, owner);
     let mut result = ConstArguments::default();
+    if roots.is_empty() {
+        return HashEq::new(result);
+    }
+    let context = match context.enter(
+        super::dependency::DependencyKey::Header(instance.clone()),
+        roots[0].0,
+    ) {
+        Ok(context) => context,
+        Err(diagnostic) => {
+            result.diagnostics.push(diagnostic);
+            return HashEq::new(result);
+        }
+    };
     if roots.len() > 4096 {
         result
             .values
@@ -107,7 +140,15 @@ pub(crate) fn item_header_arguments(
         let Ok(ordinal) = u32::try_from(ordinal) else {
             break;
         };
-        let root = CtfeRoot::new(db, file, owner, RootSelector::HeaderArgument(ordinal), None);
+        let selector = if instance.arguments.is_empty() {
+            RootSelector::HeaderArgument(ordinal)
+        } else {
+            RootSelector::InInstance {
+                instance: instance.clone(),
+                selector: Box::new(RootSelector::HeaderArgument(ordinal)),
+            }
+        };
+        let root = CtfeRoot::new_in_context(db, file, owner, selector, None, context.clone());
         match super::ctfe_eval_root(
             db,
             CtfeRootRequest::new(db, root, super::public::staging_budget(roots.len(), false)),
@@ -220,17 +261,26 @@ pub(crate) fn staged_signatures(
     checked
 }
 
-pub(crate) fn owner_signatures(
+pub(crate) fn owner_signatures_in_context(
     db: &dyn ArandCompilerDb,
     file: SourceFile,
     owner: SymbolId,
+    context: &super::DependencyContext,
 ) -> arandu_typeck::TypeCheckResult {
     let source = crate::passes::item_source_input(db, file, owner);
     let seed = crate::passes::seed_header_signatures(db, file);
     if header_arguments(&source.program, &seed.resolved, owner).is_empty() {
         return (**seed).clone();
     }
-    let arguments = item_header_arguments(db, file, owner);
+    let arguments = evaluate_declaration_arguments(
+        db,
+        file,
+        arandu_middle::types::FunctionInstance {
+            definition: owner,
+            arguments: Vec::new(),
+        },
+        context.clone(),
+    );
     let mut resolution = crate::passes::resolved_headers(db, file)
         .declarations
         .clone();
@@ -254,11 +304,12 @@ pub(crate) fn owner_signatures(
 
 /// Demand only nominal declarations named by this root/helper. A field-length
 /// obligation cannot force staging of every unrelated declaration in the file.
-pub(crate) fn install_referenced_headers(
+pub(crate) fn install_referenced_headers_in_context(
     db: &dyn ArandCompilerDb,
     pool: &arandu_parser::ast_pool::AstPool,
     span: Span,
     checked: &mut arandu_typeck::TypeCheckResult,
+    context: &super::DependencyContext,
 ) -> Result<(), super::BuildFailure> {
     let mut symbols: Vec<_> = checked
         .resolved
@@ -302,9 +353,17 @@ pub(crate) fn install_referenced_headers(
         if header_arguments(&source.program, &seed.resolved, symbol).is_empty() {
             continue;
         }
-        let owner = owner_signatures(db, file, symbol);
+        let owner = owner_signatures_in_context(db, file, symbol, context);
         let obligations = header_arguments(&source.program, &seed.resolved, symbol);
-        let arguments = item_header_arguments(db, file, symbol);
+        let arguments = evaluate_declaration_arguments(
+            db,
+            file,
+            arandu_middle::types::FunctionInstance {
+                definition: symbol,
+                arguments: Vec::new(),
+            },
+            context.clone(),
+        );
         let errors: Vec<_> = owner
             .diagnostics
             .iter()

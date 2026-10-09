@@ -73,6 +73,24 @@ pub(crate) fn select_branches_in_occurrence(
     instance: Option<&arandu_middle::types::FunctionInstance>,
     occurrence: &[(u32, arandu_middle::ctfe::ConstInt)],
 ) -> HashEq<StaticBranches> {
+    select_branches_in_context(
+        db,
+        file,
+        owner,
+        instance,
+        occurrence,
+        &super::DependencyContext::default(),
+    )
+}
+
+pub(crate) fn select_branches_in_context(
+    db: &dyn ArandCompilerDb,
+    file: SourceFile,
+    owner: SymbolId,
+    instance: Option<&arandu_middle::types::FunctionInstance>,
+    occurrence: &[(u32, arandu_middle::ctfe::ConstInt)],
+    context: &super::DependencyContext,
+) -> HashEq<StaticBranches> {
     let parsed = crate::passes::parse(db, file);
     let headers = crate::passes::resolved_headers(db, file);
     let mut result = StaticBranches::default();
@@ -140,7 +158,7 @@ pub(crate) fn select_branches_in_occurrence(
         let Ok(ordinal) = u32::try_from(ordinal) else {
             continue;
         };
-        let root = CtfeRoot::new(
+        let root = CtfeRoot::new_in_context(
             db,
             file,
             owner,
@@ -154,6 +172,7 @@ pub(crate) fn select_branches_in_occurrence(
                 occurrence,
             ),
             None,
+            context.clone(),
         );
         let budget = super::public::staging_budget(statements.len(), !occurrence.is_empty());
         let value = super::ctfe_eval_root(db, CtfeRootRequest::new(db, root, budget));
