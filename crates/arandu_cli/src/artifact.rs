@@ -506,13 +506,13 @@ pub fn record_patched_native_artifact(
     })
 }
 
-/// Publish the compiler-validated test registry and portable C entrypoint.
-/// The files are content-addressed by the registry digest and replaced
+/// Publish the compiler-validated test registry.
+/// The file is content-addressed by the registry digest and replaced
 /// atomically, so an interrupted test build cannot leave a partial harness.
 pub fn publish_test_harness(
     project_root: &Path,
     registry: &arandu_codegen::testing::TestRegistry,
-) -> Result<(PathBuf, PathBuf), CliFailure> {
+) -> Result<PathBuf, CliFailure> {
     let layout = layout(project_root, "dev");
     fs::create_dir_all(&layout.profile_root)
         .map_err(|error| failure("create test harness layout", &layout.profile_root, error))?;
@@ -524,7 +524,6 @@ pub fn publish_test_harness(
     let manifest = layout
         .profile_root
         .join(format!("test-harness-{digest}.json"));
-    let c_source = layout.profile_root.join(format!("test-harness-{digest}.c"));
     let manifest_bytes = serde_json::to_vec_pretty(
         &registry
             .iter()
@@ -533,12 +532,11 @@ pub fn publish_test_harness(
     )
     .map_err(|error| CliFailure::operational("serialize test harness", None, error.to_string()))?;
     atomic_write(&manifest, &manifest_bytes)?;
-    atomic_write(&c_source, registry.emit_c_entrypoint().as_bytes())?;
     atomic_replace(
         &layout.profile_root.join("test-harness.json"),
         manifest.to_string_lossy().as_bytes(),
     )?;
-    Ok((manifest, c_source))
+    Ok(manifest)
 }
 
 /// Publish the compiler-validated benchmark registry atomically. The registry
@@ -546,7 +544,7 @@ pub fn publish_test_harness(
 pub fn publish_benchmark_harness(
     project_root: &Path,
     registry: &arandu_codegen::testing::BenchmarkRegistry,
-) -> Result<(PathBuf, PathBuf), CliFailure> {
+) -> Result<PathBuf, CliFailure> {
     let layout = layout(project_root, "dev");
     fs::create_dir_all(&layout.profile_root).map_err(|error| {
         failure(
@@ -563,9 +561,6 @@ pub fn publish_benchmark_harness(
     let manifest = layout
         .profile_root
         .join(format!("bench-harness-{digest}.json"));
-    let c_source = layout
-        .profile_root
-        .join(format!("bench-harness-{digest}.c"));
     let manifest_bytes = serde_json::to_vec_pretty(
         &registry
             .iter()
@@ -576,12 +571,11 @@ pub fn publish_benchmark_harness(
         CliFailure::operational("serialize benchmark harness", None, error.to_string())
     })?;
     atomic_write(&manifest, &manifest_bytes)?;
-    atomic_write(&c_source, registry.emit_c_entrypoint().as_bytes())?;
     atomic_replace(
         &layout.profile_root.join("bench-harness.json"),
         manifest.to_string_lossy().as_bytes(),
     )?;
-    Ok((manifest, c_source))
+    Ok(manifest)
 }
 
 pub fn clean(project_root: &Path) -> Result<bool, CliFailure> {

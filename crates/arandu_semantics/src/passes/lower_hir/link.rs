@@ -485,6 +485,12 @@ fn remap_expr(
         HirExprKind::Array { items } => HirExprKind::Array {
             items: offs.range(*items, offs.expr_ids),
         },
+        HirExprKind::ArrayRepeat { value } => HirExprKind::ArrayRepeat {
+            value: offs.expr_id(*value),
+        },
+        HirExprKind::Tuple { items } => HirExprKind::Tuple {
+            items: offs.range(*items, offs.expr_ids),
+        },
         HirExprKind::Lambda { params, body } => HirExprKind::Lambda {
             params: offs.range(*params, offs.lambda_params),
             body: match body {
@@ -496,6 +502,9 @@ fn remap_expr(
             expr: offs.expr_id(*inner),
         },
         HirExprKind::AsyncBlock { block } => HirExprKind::AsyncBlock {
+            block: offs.block_id(*block),
+        },
+        HirExprKind::ValueBlock { block } => HirExprKind::ValueBlock {
             block: offs.block_id(*block),
         },
         HirExprKind::UnsafeBlock { block } => HirExprKind::UnsafeBlock {
@@ -536,6 +545,15 @@ fn remap_expr(
             left: offs.expr_id(*left),
             right: offs.expr_id(*right),
         },
+        HirExprKind::Layout { query, operand_ty } => HirExprKind::Layout {
+            query: *query,
+            operand_ty: map_type(
+                *operand_ty,
+                from,
+                &mut dest_tc.type_info_mut().type_interner,
+                ty_cache,
+            ),
+        },
         HirExprKind::Cast {
             expr: inner,
             target_ty,
@@ -559,6 +577,8 @@ fn remap_expr(
         },
         HirExprKind::Int(s) => HirExprKind::Int(s.clone()),
         HirExprKind::Float(s) => HirExprKind::Float(s.clone()),
+        HirExprKind::FloatBits(value) => HirExprKind::FloatBits(*value),
+        HirExprKind::FrozenBytes(value) => HirExprKind::FrozenBytes(value.clone()),
         HirExprKind::Bool(b) => HirExprKind::Bool(*b),
         HirExprKind::Char(s) => HirExprKind::Char(s.clone()),
         HirExprKind::Str(s) => HirExprKind::Str(s.clone()),
@@ -617,7 +637,16 @@ fn remap_stmt(
             then_block: offs.block_id(*then_block),
             else_block: else_block.map(|b| offs.block_id(b)),
         },
-        HirStmtKind::For { clause, body } => HirStmtKind::For {
+        HirStmtKind::For {
+            clause,
+            body,
+            comptime_bounds,
+            comptime_bodies,
+        } => HirStmtKind::For {
+            comptime_bounds: *comptime_bounds,
+            comptime_bodies: comptime_bodies
+                .as_ref()
+                .map(|bodies| bodies.iter().map(|&body| offs.block_id(body)).collect()),
             clause: match clause {
                 HirForClause::In {
                     span,
@@ -653,6 +682,7 @@ fn remap_stmt(
         HirStmtKind::Defer(b) => HirStmtKind::Defer(offs.block_id(*b)),
         HirStmtKind::ErrDefer(b) => HirStmtKind::ErrDefer(offs.block_id(*b)),
         HirStmtKind::Unsafe(b) => HirStmtKind::Unsafe(offs.block_id(*b)),
+        HirStmtKind::Scope(b) => HirStmtKind::Scope(offs.block_id(*b)),
         HirStmtKind::Error => HirStmtKind::Error,
     };
     HirStmt {

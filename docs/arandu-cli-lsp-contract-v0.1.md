@@ -23,6 +23,16 @@ Exit `101` belongs to Cargo when Cargo itself fails; it is not an Arandu CLI
 exit-code contract. Shells and operating systems may restrict the observable
 range of a program return value.
 
+Test harness children return parse/type/AMIR compilation failures through the
+terminal IPC event, rather than exiting inside the compiler pipeline. A missing
+control frame denotes a process/protocol failure, not an ordinary source error.
+
+Invalid lockfile hashes are never integrity evidence. For a local-only graph,
+`arandu update --accept` explicitly regenerates a malformed UTF-8-encoded lockfile and
+retains the original bytes in `.arandu/locks/invalid-arandu.lock`. An existing,
+different recovery copy is not overwritten. `--locked` forbids recovery, and
+remote graphs do not use this local recovery path.
+
 ### Command matrix
 
 | Command | Purpose | Backend | Stability | Success |
@@ -86,3 +96,15 @@ de diagnóstico.
 
 Extrair contratos compartilhados somente quando houver segundo consumidor e
 preservar testes de erro, stale revision e worker survival.
+
+### Compile-time resource configuration
+
+The global CLI flags `--ctfe-fuel`, `--ctfe-frames`, and `--ctfe-values` accept
+positive integers; missing, zero, negative, malformed or overflowing values are
+usage failures (exit 2). They apply before analysis, including project and
+manifestless commands, and participate in incremental build fingerprints.
+LSP reads `initializationOptions.ctfe` with optional `fuel`, `frames`, and
+`values` fields. Invalid options return InvalidParams during initialization,
+without starting workspace discovery. VS Code supplies these through
+`arandu.comptime.*` settings on server start. Resource exhaustion in valid
+source configuration remains a structured T045 source diagnostic.

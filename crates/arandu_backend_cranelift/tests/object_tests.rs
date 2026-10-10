@@ -15,7 +15,7 @@ fn compile_object(src: &str) -> arandu_backend_cranelift::ObjectArtifact {
         arandu_semantics::TargetInfo { pointer_width: 64 },
     );
     let hir = lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
-    let amir = lower_to_amir(&tc, &hir, 64).expect("AMIR lowering failed");
+    let amir = lower_to_amir(&tc, &hir, 8).expect("AMIR lowering failed");
     let symbols = Arc::unwrap_or_clone(tc.symbols);
     let type_info = Arc::unwrap_or_clone(tc.type_info);
 
@@ -34,7 +34,7 @@ fn compile_debug_object(src: &str) -> arandu_backend_cranelift::ObjectArtifact {
         arandu_semantics::TargetInfo { pointer_width: 64 },
     );
     let hir = lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
-    let amir = lower_to_amir(&tc, &hir, 64).expect("AMIR lowering failed");
+    let amir = lower_to_amir(&tc, &hir, 8).expect("AMIR lowering failed");
     let symbols = Arc::unwrap_or_clone(tc.symbols);
     let type_info = Arc::unwrap_or_clone(tc.type_info);
     let source = DebugSource {
@@ -132,7 +132,7 @@ fn release_object_emission_is_byte_deterministic() {
         arandu_semantics::TargetInfo { pointer_width: 64 },
     );
     let hir = lower_to_hir(&mut tc, &program).expect("HIR lowering failed");
-    let amir = lower_to_amir(&tc, &hir, 64).expect("AMIR lowering failed");
+    let amir = lower_to_amir(&tc, &hir, 8).expect("AMIR lowering failed");
     let symbols = Arc::unwrap_or_clone(tc.symbols);
     let type_info = Arc::unwrap_or_clone(tc.type_info);
 

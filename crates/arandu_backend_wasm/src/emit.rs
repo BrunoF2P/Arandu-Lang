@@ -197,19 +197,77 @@ impl<'a> WasmModuleBuilder<'a> {
         // ── 4. Table section (empty for MVP) ──────────────────────────────
 
         // ── 5. Memory section ─────────────────────────────────────────────
+        let mut rodata = crate::memory::RodataTable::from_literal_pool(&self.program.literal_pool);
+        let mut static_offsets = FxHashMap::default();
+        let mut static_sources: FxHashMap<Vec<u8>, (u32, u32)> = FxHashMap::default();
+        for func in &self.program.funcs {
+            let mut initializers = arandu_semantics::static_data::static_initializers(
+                func,
+                self.interner,
+                self.layout_provider,
+                &self.program.literal_pool,
+                self.layout,
+                true,
+            );
+            // Statement order, not hash iteration, determines artifact bytes.
+            for id in func.stmts.iter_ids() {
+                let Some(initializer) = initializers.remove(&id) else {
+                    continue;
+                };
+                if initializer.alignment > 16 || !initializer.alignment.is_power_of_two() {
+                    continue;
+                }
+                if let Some(&source) = static_sources.get(&initializer.bytes) {
+                    static_offsets.insert((func.symbol, id), source);
+                    continue;
+                }
+                let aligned = rodata
+                    .bytes
+                    .len()
+                    .checked_add(15)
+                    .map(|length| length & !15);
+                let offset = aligned.and_then(|length| {
+                    usize::try_from(crate::memory::RODATA_BASE)
+                        .ok()?
+                        .checked_add(length)
+                });
+                let Some((aligned, offset, size)) =
+                    aligned.zip(offset).and_then(|(aligned, offset)| {
+                        Some((
+                            aligned,
+                            u32::try_from(offset).ok()?,
+                            u32::try_from(initializer.bytes.len()).ok()?,
+                        ))
+                    })
+                else {
+                    return Err(Diagnostic::ice(
+                        arandu_middle::diagnostics::DiagCode::ICEGEN002,
+                        "Wasm static aggregate data exceeds the supported address space",
+                        arandu_middle::Span::new(0, 0, 0),
+                    ));
+                };
+                rodata.bytes.resize(aligned, 0);
+                rodata.bytes.extend_from_slice(&initializer.bytes);
+                static_sources.insert(initializer.bytes, (offset, size));
+                static_offsets.insert((func.symbol, id), (offset, size));
+            }
+        }
+        let (heap_base, initial_pages) = rodata.memory_regions().ok_or_else(|| {
+            Diagnostic::ice(
+                arandu_middle::diagnostics::DiagCode::ICEGEN002,
+                "Wasm rodata and shadow stack exceed the supported address space",
+                arandu_middle::Span::new(0, 0, 0),
+            )
+        })?;
         let mut mem_section = MemorySection::new();
         mem_section.memory(MemoryType {
-            minimum: crate::memory::INITIAL_PAGES,
+            minimum: initial_pages,
             maximum: crate::memory::MAX_PAGES,
             memory64: false,
             shared: false,
             page_size_log2: None,
         });
         module.section(&mem_section);
-
-        // Build the static rodata table from literal pool.
-        let rodata = crate::memory::RodataTable::from_literal_pool(&self.program.literal_pool);
-        let heap_base = rodata.heap_base();
 
         // ── 6. Global section ─────────────────────────────────────────────
         let mut global_section = GlobalSection::new();
@@ -220,7 +278,7 @@ impl<'a> WasmModuleBuilder<'a> {
                 mutable: true,
                 shared: false,
             },
-            &wasm_encoder::ConstExpr::i32_const(crate::memory::STACK_BASE),
+            &wasm_encoder::ConstExpr::i32_const(heap_base),
         );
         // Global 1: __heap_base (immutable i32, init = heap_base).
         global_section.global(
@@ -247,7 +305,7 @@ impl<'a> WasmModuleBuilder<'a> {
                 mutable: false,
                 shared: false,
             },
-            &wasm_encoder::ConstExpr::i32_const(crate::memory::STACK_BASE),
+            &wasm_encoder::ConstExpr::i32_const(heap_base),
         );
         // Global 4: __freelist_head (mutable i32, init = 0 — empty free list).
         global_section.global(
@@ -275,6 +333,7 @@ impl<'a> WasmModuleBuilder<'a> {
             data_layout: self.layout,
             literal_pool: &self.program.literal_pool,
             rodata_offsets: &rodata.offsets,
+            static_offsets: &static_offsets,
             func_index_map: &func_index_map,
             alloc_func_idx: cabi_first_func_idx,
             free_func_idx: cabi_first_func_idx + 1,
@@ -389,6 +448,7 @@ impl<'a> WasmModuleBuilder<'a> {
                     && let Some(sym_def) = self.symbols.try_get(*sym)
                     && let Some(field) = match sym_def.name.as_str() {
                         "io.println" => Some("println"),
+                        "io.print" => Some("print"),
                         "io.eprint" => Some("eprint"),
                         _ => None,
                     }

@@ -23,6 +23,14 @@ pub(super) fn cast_types_compatible(
     if found.is_numeric() && target.is_numeric() {
         return true;
     }
+    // Every unsigned byte maps to a valid Unicode scalar U+0000..U+00FF.
+    // This is a numeric codepoint conversion, not UTF-8 decoding. Wider or
+    // signed integers still require checked scalar validation.
+    if matches!(found, ArType::Primitive(Primitive::U8 | Primitive::Byte))
+        && matches!(target, ArType::Primitive(Primitive::Char))
+    {
+        return true;
+    }
     // `char` is a Unicode scalar value with a canonical u32 representation.
     // This direction is lossless; the inverse requires scalar validation and
     // therefore remains outside the general cast operator.
@@ -618,15 +626,12 @@ pub(super) fn synth_binary_unary_expr(
                         );
                         return Some(checker.intern(ArType::Error));
                     }
-                    if matches!(op, BinaryOp::Div | BinaryOp::Mod) {
+                    if matches!(op, BinaryOp::Div | BinaryOp::Mod) && right_ty.is_integer() {
                         let is_zero = match checker.pool.expr(right_id) {
                             ExprKind::Int { value, .. } => {
                                 arandu_middle::literal_pool::parse_int_literal(value) == Some(0)
                             }
                             ExprKind::Byte { value } => *value == 0,
-                            ExprKind::Float { value, .. } => {
-                                value.parse::<f64>().map(|f| f == 0.0).unwrap_or(false)
-                            }
                             _ => false,
                         };
                         if is_zero {

@@ -31,9 +31,8 @@ pub const MAX_PAGES: Option<u64> = Some(65536);
 /// Avoids the null page at 0 and keeps alignment up to 8 bytes.
 pub const RODATA_BASE: i32 = 0x2000;
 
-/// Low watermark of the shadow stack (64 KiB of scratch inside page 1).
-/// The stack pointer is checked against this before every frame push;
-/// crossing it grows memory and moves the stack region into grew memory.
+/// Minimum low watermark of the shadow stack. Large rodata moves the entire
+/// stack upward; exhausting its bounded region traps before modifying memory.
 pub const STACK_LIMIT: i32 = 0x1_0000;
 
 /// Top of the shadow stack (address `0x2_0000`): the 64 KiB stack grows down
@@ -74,9 +73,20 @@ pub const CELL_HEADER_SIZE: i32 = 12;
 /// the free list, so freeing a pointer that does not point at a tracked block
 /// (e.g. rodata) degrades to a safe no-op instead of corrupting the list.
 pub const CELL_MAGIC: i32 = 0x5A5A_5A5A;
+/// Private invocation backing: ordinary move/drop frees must not reclaim it.
+pub const CELL_SCRATCH_MAGIC: i32 = 0x5A5A_5354;
 
 /// Alignment exponent used for every memory access (4-byte aligned memory).
 pub const MEM_ALIGN: u32 = 2;
+
+/// Reserved low-memory slot (`< RODATA_BASE`) holding the monotonic `GenRef`
+/// generation counter.
+pub const GEN_COUNTER_ADDR: u64 = 0x1FE8;
+
+/// Reserved 16-byte low-memory scratch area (`< RODATA_BASE`) used to launder
+/// `BlackBox` values through exported linear memory (`[0x1FF0..0x1FF8)` holds
+/// the value and `0x1FF8` holds an opaque zero base offset).
+pub const BLACK_BOX_SCRATCH_ADDR: u64 = 0x1FF0;
 
 /// Shorthand for `MemArg` with no offset and 4-byte alignment on memory 0.
 #[must_use]
@@ -127,16 +137,20 @@ impl RodataTable {
         table
     }
 
-    /// Compute the aligned heap base after the end of rodata.
-    /// Never falls below [`HEAP_BASE_MIN`].
-    #[must_use]
-    pub fn heap_base(&self) -> i32 {
-        if self.bytes.is_empty() {
-            return HEAP_BASE_MIN;
-        }
-        let rodata_end = RODATA_BASE as u32 + self.bytes.len() as u32;
-        let aligned = (rodata_end + 15) & !15;
-        (aligned as i32).max(HEAP_BASE_MIN)
+    /// Place the bounded shadow stack after rodata, with a page of initial
+    /// heap space. Checked signed addresses match emitted i32 constants.
+    pub fn memory_regions(&self) -> Option<(i32, u64)> {
+        let end = usize::try_from(RODATA_BASE)
+            .ok()?
+            .checked_add(self.bytes.len())?;
+        let limit = end.checked_add(15)? & !15;
+        let limit = limit.max(usize::try_from(STACK_LIMIT).ok()?);
+        let base = limit.checked_add(usize::try_from(STACK_AREA).ok()?)?;
+        let pages = base.checked_add(65536)?.checked_add(65535)? / 65536;
+        Some((
+            i32::try_from(base).ok()?,
+            u64::try_from(pages).ok()?.max(INITIAL_PAGES),
+        ))
     }
 }
 
@@ -177,6 +191,17 @@ mod tests {
         assert!(off2 > off1);
         assert_eq!(off1 % 4, 0);
         assert_eq!(off2 % 4, 0);
-        assert_eq!(table.heap_base(), HEAP_BASE_MIN);
+        assert_eq!(table.memory_regions(), Some((HEAP_BASE_MIN, INITIAL_PAGES)));
+    }
+
+    #[test]
+    fn large_rodata_cannot_overlap_frames() {
+        let table = RodataTable {
+            bytes: vec![0; 180_000],
+            ..RodataTable::default()
+        };
+        let (base, pages) = table.memory_regions().unwrap();
+        assert!(base - STACK_AREA >= RODATA_BASE + 180_000);
+        assert!(pages * 65536 >= u64::try_from(base).unwrap() + 65536);
     }
 }

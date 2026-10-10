@@ -213,11 +213,11 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
             AmirRvalue::Discriminant { value } => self.translate_discriminant(value),
             AmirRvalue::EnumPayload {
                 value,
-                variant,
                 index,
-                variant_tag,
+                field_ty,
+                tuple_ty,
                 ..
-            } => self.translate_enum_payload(value, variant, *variant_tag, *index, expected_ty),
+            } => self.translate_enum_payload(value, *field_ty, *tuple_ty, *index, expected_ty),
             AmirRvalue::IndexAccess { base, index } => {
                 self.translate_index_access(base, index, expected_ty)
             }

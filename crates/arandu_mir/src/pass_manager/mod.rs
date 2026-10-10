@@ -439,7 +439,14 @@ mod tests {
         );
         assert_eq!(
             PassManager::for_level(OptLevel::O2).pass_names(),
-            vec!["sroa", "gvn", "sccp", "mark_sweep_dce", "simplify_cfg"]
+            vec![
+                "sroa",
+                "gvn",
+                "sccp",
+                "licm",
+                "mark_sweep_dce",
+                "simplify_cfg"
+            ]
         );
     }
 

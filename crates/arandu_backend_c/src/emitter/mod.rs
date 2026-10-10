@@ -13,6 +13,7 @@ use arandu_middle::types::{ArType, TypeInterner};
 use arandu_middle::{DiagCode, Diagnostic, Span};
 use arandu_semantics::SymbolTable;
 
+mod constant_data;
 pub mod decl;
 pub mod expr;
 pub mod format;
@@ -64,6 +65,10 @@ pub struct CEmitter<'a> {
     pub(super) emitted_types: rustc_hash::FxHashSet<String>,
     /// A3.3: unique id for `__ar_co_N` stack payload locals (multi-stmt).
     pub(super) co_stack_slot: u32,
+    pub(super) integer_concat_temps: Vec<Option<arandu_codegen::string_interp::IntegerStringKind>>,
+    pub(super) static_sources:
+        rustc_hash::FxHashMap<(arandu_middle::SymbolId, arandu_middle::amir::InstrId), usize>,
+    pub(super) current_initializer: Option<arandu_middle::amir::InstrId>,
     pub(super) error: Option<Diagnostic>,
 }
 
@@ -85,6 +90,9 @@ impl<'a> CEmitter<'a> {
             output: String::new(),
             emitted_types: rustc_hash::FxHashSet::default(),
             co_stack_slot: 0,
+            integer_concat_temps: Vec::new(),
+            static_sources: rustc_hash::FxHashMap::default(),
+            current_initializer: None,
             error: None,
         }
     }
@@ -129,6 +137,9 @@ impl<'a> CEmitter<'a> {
                         arandu_middle::literal_pool::AmirLiteralEntry::Float(_) => {
                             ArType::Primitive(arandu_middle::types::Primitive::Float)
                         }
+                        arandu_middle::literal_pool::AmirLiteralEntry::FloatBits(value) => {
+                            ArType::Primitive(value.ty().primitive())
+                        }
                         arandu_middle::literal_pool::AmirLiteralEntry::Char(_) => {
                             ArType::Primitive(arandu_middle::types::Primitive::Char)
                         }
@@ -171,16 +182,26 @@ impl<'a> CEmitter<'a> {
         }
     }
 
+    #[track_caller]
     pub(super) fn checked_layout(&mut self, ty: &ArType) -> arandu_middle::layout::TypeLayout {
         match self.layout.layout_of_type(ty, self.interner, self.provider) {
             Ok(layout) => layout,
             Err(error) => {
                 if self.error.is_none() {
-                    self.error = Some(Diagnostic::ice(
-                        DiagCode::ICEGEN001,
-                        format!("C code generation rejected an invalid type layout: {error}"),
-                        Span::new(0, 0, 0),
-                    ));
+                    self.error = Some(
+                        Diagnostic::ice(
+                            DiagCode::ICEGEN001,
+                            format!(
+                                "C code generation rejected the layout of '{}': {error}",
+                                ty.display(self.symbols, self.interner)
+                            ),
+                            Span::new(0, 0, 0),
+                        )
+                        .with_note(format!(
+                            "layout consumer: {}",
+                            std::panic::Location::caller()
+                        )),
+                    );
                 }
                 arandu_middle::layout::TypeLayout::simple(0, 1)
             }
@@ -193,9 +214,11 @@ impl<'a> CEmitter<'a> {
         let needs_str = self.program_uses_str();
         let needs_println = self.program_uses_println();
         let needs_eprint = self.program_uses_eprint();
+        let needs_print = self.program_uses_print();
         // I/O prelude functions require the ArStr runtime even without literals.
-        let needs_str = needs_str || needs_println || needs_eprint;
+        let needs_str = needs_str || needs_println || needs_print || needs_eprint;
         self.emit_headers(needs_str);
+        self.emit_static_sources();
         if needs_str {
             self.emit_str_literals();
         }
@@ -204,6 +227,9 @@ impl<'a> CEmitter<'a> {
         }
         if needs_eprint {
             self.emit_prelude_eprint();
+        }
+        if needs_print {
+            self.emit_prelude_print();
         }
 
         for func in &self.program.funcs {
@@ -218,8 +244,40 @@ impl<'a> CEmitter<'a> {
                 self.ensure_type_emitted(&ty);
             }
             self.emit_func_decl(func);
+            if let Some(error) = self.error.take() {
+                return Err(error.with_note(format!(
+                    "while emitting function '{}'",
+                    self.symbols.get(func.symbol).name
+                )));
+            }
+        }
+        let mut referenced = rustc_hash::FxHashSet::default();
+        let mut remember = |operand: &arandu_middle::amir::AmirOperand| {
+            if let arandu_middle::amir::AmirOperand::FunctionRef(symbol) = operand {
+                referenced.insert(*symbol);
+            }
+        };
+        for function in &self.program.funcs {
+            for statement in function.stmts.payloads.iter() {
+                arandu_middle::amir::visit::for_each_stmt_operand(statement, &mut remember);
+            }
+            for block in &function.blocks {
+                arandu_middle::amir::visit::for_each_terminator_operand(
+                    &block.terminator,
+                    &mut remember,
+                );
+            }
         }
         for (symbol, (params, ret)) in &self.program.extern_funcs {
+            // Header metadata also contains unused generic extern templates.
+            // Emit only declarations referenced by the actual AMIR program;
+            // opaque template parameters do not have a concrete C layout.
+            if !referenced.contains(symbol) {
+                continue;
+            }
+            if self.inlined_mem_intrinsic(*symbol).is_some() {
+                continue;
+            }
             let name = sanitize_c_ident(&self.symbols.get(*symbol).name);
             // Provided as static helpers in this TU (path + pure-buffer alloc).
             if matches!(
@@ -250,14 +308,26 @@ impl<'a> CEmitter<'a> {
                     | "ar_rt_join_i64"
                     | "ar_rt_cancel_i64"
                     | "ar_rt_parallel_fold_run"
+                    | "ar_rt_copy_value"
+                    | "ar_rt_alloc_aligned"
+                    | "ar_rt_free_aligned"
                     | "io__eprint"
                     | "eprint"
-            ) {
+            ) || name.ends_with("__ar_rt_copy_value")
+                || name.ends_with("__ar_rt_alloc_aligned")
+                || name.ends_with("__ar_rt_free_aligned")
+                || name.ends_with("__ar_rt_parallel_fold_run")
+            {
                 continue;
             }
             self.ensure_type_emitted(ret);
             for param in params {
                 self.ensure_type_emitted(param);
+            }
+            if let Some(error) = self.error.take() {
+                return Err(
+                    error.with_note(format!("while emitting external declaration '{name}'"))
+                );
             }
             let ret_str = self.format_type(ret);
             let _ = write!(&mut self.output, "{} {}(", ret_str, name);

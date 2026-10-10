@@ -7,10 +7,32 @@ use super::FuncTranslator;
 use crate::types;
 
 impl<'a> FuncTranslator<'a> {
+    fn emit_static_initializer(&mut self) -> bool {
+        let Some(statement) = self.current_initializer else {
+            return false;
+        };
+        let Some(&(offset, size)) = self.static_offsets.get(&(self.func.symbol, statement)) else {
+            return false;
+        };
+        let (Ok(offset), Ok(size)) = (i32::try_from(offset), i32::try_from(size)) else {
+            return false;
+        };
+        self.code.extend([
+            Instruction::LocalGet(self.scratch_b),
+            Instruction::I32Const(offset),
+            Instruction::I32Const(size),
+            Instruction::MemoryCopy {
+                src_mem: 0,
+                dst_mem: 0,
+            },
+            Instruction::LocalGet(self.scratch_b),
+        ]);
+        true
+    }
     /// Heap-allocate a cell for a struct literal, store each field.
     pub(super) fn emit_struct_literal(
         &mut self,
-        struct_symbol: SymbolId,
+        _struct_symbol: SymbolId,
         fields: &[(arandu_middle::SmolStr, AmirOperand)],
         result_ty: TypeId,
     ) {
@@ -19,9 +41,15 @@ impl<'a> FuncTranslator<'a> {
         self.alloc_cell(size);
         self.code.push(Instruction::LocalGet(self.scratch));
         self.code.push(Instruction::LocalSet(self.scratch_b));
+        if self.emit_static_initializer() {
+            return;
+        }
         // Store each field.
-        if let Some(fields_def) = self.layout_provider.get_struct_fields(struct_symbol) {
-            let owner_ty = self.interner.resolve(result_ty);
+        let owner_ty = self.interner.resolve(result_ty);
+        if let Some(fields_def) = self
+            .layout_provider
+            .get_struct_fields_for_type(&owner_ty, self.interner)
+        {
             for (name, operand) in fields {
                 let Some(field_info) = fields_def.get(name) else {
                     continue;
@@ -73,6 +101,9 @@ impl<'a> FuncTranslator<'a> {
         self.alloc_cell(size);
         self.code.push(Instruction::LocalGet(self.scratch));
         self.code.push(Instruction::LocalSet(self.scratch_b));
+        if self.emit_static_initializer() {
+            return;
+        }
         for (i, item) in items.iter().enumerate() {
             let item_ty = self.operand_arity_ty(item);
             let offset = layout.field_offsets.get(i).copied().unwrap_or(0);
@@ -116,6 +147,9 @@ impl<'a> FuncTranslator<'a> {
         self.alloc_cell(size);
         self.code.push(Instruction::LocalGet(self.scratch));
         self.code.push(Instruction::LocalSet(self.scratch_b));
+        if self.emit_static_initializer() {
+            return;
+        }
         for (i, item) in items.iter().enumerate() {
             let offset = (i as u64) * elem_layout.size;
             self.push_cell_addr();

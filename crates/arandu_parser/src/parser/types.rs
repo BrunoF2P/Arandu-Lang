@@ -40,7 +40,9 @@ impl<'a> Parser<'a> {
         }
         let params_vec = self.parse_generic_list(1, |parser| {
             let start = parser.mark();
-            let is_const = parser.eat_name("KW_CONST");
+            // Both spellings share the existing value-parameter AST contract;
+            // comptime here is not an extra runtime argument or evaluator.
+            let is_const = parser.eat_name("KW_CONST") || parser.eat_name("KW_COMPTIME");
             let name = parser.expect_ident_type()?;
             let const_ty = if is_const {
                 parser.expect_name("COLON")?;
@@ -73,20 +75,32 @@ impl<'a> Parser<'a> {
 
     pub(super) fn parse_generic_args(&mut self) -> Result<IndexRange, ParseError> {
         self.expect_name("LT")?;
-        let args = self.parse_generic_list(1, |parser| {
-            if matches!(parser.current().kind, TokenKind::IntDec) {
-                let start = parser.mark();
-                let value = SmolStr::new(parser.current_text());
-                parser.advance();
-                let span = parser.span_from_mark(start);
-                Ok(parser.pool.alloc_type_expr(TypeExpr::Const { span, value }))
-            } else {
-                parser.parse_type()
-            }
-        })?;
+        let args = self.parse_generic_list(1, |parser| parser.parse_generic_argument())?;
         self.expect_gt()?;
         let range = self.pool.alloc_type_expr_list(&args);
         Ok(range)
+    }
+
+    pub(super) fn parse_generic_argument(&mut self) -> Result<TypeExprId, ParseError> {
+        if matches!(self.current().kind, TokenKind::IntDec) {
+            let start = self.mark();
+            let value = SmolStr::new(self.current_text());
+            self.advance();
+            let span = self.span_from_mark(start);
+            Ok(self.pool.alloc_type_expr(TypeExpr::Const { span, value }))
+        } else if matches!(self.current().kind, TokenKind::KwComptime) {
+            let start = self.mark();
+            self.advance();
+            self.expect_name("LPAREN")?;
+            let expression = self.parse_expr(0)?;
+            self.expect_name("RPAREN")?;
+            let span = self.span_from_mark(start);
+            Ok(self
+                .pool
+                .alloc_type_expr(TypeExpr::ConstExpression { span, expression }))
+        } else {
+            self.parse_type()
+        }
     }
 
     pub(super) fn parse_where_clause(
@@ -307,6 +321,22 @@ impl<'a> Parser<'a> {
     }
 
     pub(super) fn parse_type(&mut self) -> Result<TypeExprId, ParseError> {
+        if self.recursion_depth >= 105 {
+            return Err(ParseError::new(
+                ParseErrorCode::ExpectedType,
+                "type recursion limit exceeded",
+                self.current(),
+                self.file_id,
+                self.source,
+            ));
+        }
+        self.recursion_depth += 1;
+        let res = self.parse_type_inner();
+        self.recursion_depth -= 1;
+        res
+    }
+
+    fn parse_type_inner(&mut self) -> Result<TypeExprId, ParseError> {
         let start = self.mark();
         let mut ty = self.parse_type_primary()?;
         if self.eat_name("QUESTION") {
@@ -361,20 +391,29 @@ impl<'a> Parser<'a> {
                 return Ok(self.pool.alloc_type_expr(TypeExpr::Slice { span, inner }));
             }
             let size_span = self.current().span(self.file_id);
-            let size = match &self.current().kind {
-                TokenKind::IntDec | TokenKind::IdentValue | TokenKind::IdentType => {
-                    let value = SmolStr::new(self.current_text());
-                    self.advance();
-                    value
-                }
-                _ => {
-                    return Err(ParseError::new(
-                        ParseErrorCode::ExpectedToken,
-                        "expected array size",
-                        self.current(),
-                        self.file_id,
-                        self.source,
-                    ));
+            let size_expression = if self.at_kind_name("KW_COMPTIME") {
+                Some(self.parse_generic_argument()?)
+            } else {
+                None
+            };
+            let size = if size_expression.is_some() {
+                SmolStr::new("")
+            } else {
+                match &self.current().kind {
+                    TokenKind::IntDec | TokenKind::IdentValue | TokenKind::IdentType => {
+                        let value = SmolStr::new(self.current_text());
+                        self.advance();
+                        value
+                    }
+                    _ => {
+                        return Err(ParseError::new(
+                            ParseErrorCode::ExpectedToken,
+                            "expected array size",
+                            self.current(),
+                            self.file_id,
+                            self.source,
+                        ));
+                    }
                 }
             };
             self.expect_name("RBRACKET")?;
@@ -384,6 +423,7 @@ impl<'a> Parser<'a> {
                 span,
                 size,
                 size_span,
+                size_expression,
                 elem,
             }));
         }
@@ -619,6 +659,14 @@ impl<'a> Parser<'a> {
                         return None;
                     }
                     delimiter_depth -= 1;
+                    // Comparisons inside a group are not generic openers in
+                    // the enclosing list (`F<comptime (a < b)>`).
+                    while generic_open_depths
+                        .last()
+                        .is_some_and(|depth| *depth > delimiter_depth)
+                    {
+                        generic_open_depths.pop();
+                    }
                 }
                 TokenKind::Semicolon => {
                     // Top-level statement terminator (explicit or ASI): a

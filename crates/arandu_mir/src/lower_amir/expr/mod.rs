@@ -60,8 +60,12 @@ impl LowerCtx<'_> {
         target: Option<TempId>,
         symbols: &SymbolTable,
     ) -> Result<AmirOperand, Diagnostic> {
+        self.charge_static_expansion(self.hir.pool.expr(expr_id).span)?;
         let expr = self.hir.pool.expr(expr_id).clone();
         match &expr.kind {
+            HirExprKind::Layout { query, operand_ty } => {
+                self.lower_layout_query(*query, *operand_ty, expr.ty, target, expr.span)
+            }
             HirExprKind::Int(v) => {
                 // Move SmolStr into the pool when the expr is consumed by ref via clone of short str.
                 let op = AmirOperand::Constant(self.intern_literal_int(v.clone()));
@@ -71,11 +75,98 @@ impl LowerCtx<'_> {
                 Ok(op)
             }
             HirExprKind::Float(v) => {
-                let op = AmirOperand::Constant(self.intern_literal_float(v.clone()));
+                let primitive = match self.tc.type_info.type_interner.resolve(expr.ty) {
+                    ArType::Primitive(primitive) => primitive,
+                    _ => Primitive::Float,
+                };
+                let ty =
+                    arandu_middle::ctfe::FloatType::new(primitive, self.layout).map_err(|_| {
+                        amir_unsupported(
+                            expr.span,
+                            "invalid target float format",
+                            "CT.2 deterministic floats",
+                        )
+                    })?;
+                let value = arandu_middle::ctfe::ConstFloat::parse(ty, v).map_err(|error| {
+                    if error == arandu_middle::ctfe::FloatError::LiteralLimit {
+                        Diagnostic::error(
+                            arandu_middle::DiagCode::T045ComptimeLimitExceeded,
+                            "this float literal exceeds the finite software parsing budget",
+                            expr.span,
+                        )
+                        .with_primary_label("at most 4096 bytes per float literal")
+                        .with_hint("write a shorter equivalent literal")
+                    } else {
+                        amir_unsupported(
+                            expr.span,
+                            "invalid typed float literal",
+                            "CT.2 deterministic floats",
+                        )
+                    }
+                })?;
+                let op = AmirOperand::Constant(AmirConstant::Pool(
+                    self.literal_pool.intern_float_bits(value),
+                ));
                 if let Some(dest) = target {
                     self.emit_assign_temp(dest, AmirRvalue::Use(op));
                 }
                 Ok(op)
+            }
+            HirExprKind::FloatBits(value) => {
+                let literal = self.literal_pool.intern_float_bits(*value);
+                let op = AmirOperand::Constant(AmirConstant::Pool(literal));
+                if let Some(dest) = target {
+                    self.emit_assign_temp(dest, AmirRvalue::Use(op));
+                }
+                Ok(op)
+            }
+            HirExprKind::FrozenBytes(value) => {
+                let source = AmirOperand::Constant(self.intern_literal_str(value.backing_str()));
+                let bytes = self.new_temp_id(expr.ty);
+                self.emit_assign_temp(bytes, AmirRvalue::StrBytes { source });
+                let start = u64::try_from(value.start()).map_err(|_| {
+                    amir_unsupported(
+                        expr.span,
+                        "frozen slice offset exceeds usize",
+                        "CT.2 frozen slices",
+                    )
+                })?;
+                let len = u64::try_from(value.len()).map_err(|_| {
+                    amir_unsupported(
+                        expr.span,
+                        "frozen slice length exceeds usize",
+                        "CT.2 frozen slices",
+                    )
+                })?;
+                let usize_ty = arandu_middle::ctfe::IntegerType::new(Primitive::USize, self.layout)
+                    .map_err(|_| {
+                        amir_unsupported(
+                            expr.span,
+                            "invalid target usize format",
+                            "CT.2 frozen slices",
+                        )
+                    })?;
+                arandu_middle::ctfe::ConstInt::new(usize_ty, i128::from(start))
+                    .and_then(|_| arandu_middle::ctfe::ConstInt::new(usize_ty, i128::from(len)))
+                    .map_err(|_| {
+                        amir_unsupported(
+                            expr.span,
+                            "frozen slice exceeds target usize",
+                            "CT.2 frozen slices",
+                        )
+                    })?;
+                let start = AmirOperand::Constant(self.intern_literal_int(start.to_string()));
+                let len = AmirOperand::Constant(self.intern_literal_int(len.to_string()));
+                let dest = target.unwrap_or_else(|| self.new_temp_id(expr.ty));
+                self.emit_assign_temp(
+                    dest,
+                    AmirRvalue::SliceSubslice {
+                        slice: AmirOperand::Copy(bytes),
+                        start,
+                        len,
+                    },
+                );
+                Ok(AmirOperand::Copy(dest))
             }
             HirExprKind::Bool(v) => {
                 let op = AmirOperand::Constant(AmirConstant::Bool(*v));
@@ -146,7 +237,15 @@ impl LowerCtx<'_> {
                 Ok(op)
             }
             HirExprKind::Nil => {
-                let op = if self.with_ty(expr.ty, is_option_type) {
+                // Unit success is a real tagged Result, not a null backing
+                // pointer. All consumers (including caller-owned returns) must
+                // be able to inspect/copy the same ordinary representation.
+                let unit_result = self.with_ty(expr.ty, |ty| match ty {
+                    ArType::Result(ok, _) => self.with_ty(*ok, |ty| matches!(ty, ArType::Void)),
+                    _ => false,
+                });
+                let materialized = self.with_ty(expr.ty, is_option_type) || unit_result;
+                let op = if materialized {
                     let dest = target.unwrap_or_else(|| self.new_temp_id(expr.ty));
                     self.emit_assign_temp(
                         dest,
@@ -159,7 +258,7 @@ impl LowerCtx<'_> {
                 } else {
                     AmirOperand::Constant(AmirConstant::Nil)
                 };
-                if let (Some(dest), false) = (target, self.with_ty(expr.ty, is_option_type)) {
+                if let (Some(dest), false) = (target, materialized) {
                     self.emit_assign_temp(dest, AmirRvalue::Use(op));
                 }
                 Ok(op)
@@ -238,7 +337,7 @@ impl LowerCtx<'_> {
                         | SymbolKind::AssociatedFunc
                         | SymbolKind::NamespaceMember => AmirOperand::FunctionRef(*symbol),
                         SymbolKind::Const => self
-                            .lower_const_operand(*symbol)
+                            .lower_const_operand(*symbol)?
                             .unwrap_or(AmirOperand::GlobalRef(*symbol)),
                         _ => AmirOperand::GlobalRef(*symbol),
                     })
@@ -308,7 +407,32 @@ impl LowerCtx<'_> {
                 self.emit_assign_temp(dest, AmirRvalue::Array { items: item_ops });
                 Ok(AmirOperand::Copy(dest))
             }
-            HirExprKind::Call { callee, args, .. } => {
+            HirExprKind::ArrayRepeat { value } => {
+                self.lower_array_repeat(*value, &expr, target, symbols)
+            }
+            HirExprKind::Tuple { items } => {
+                let items_slice = self.hir.pool.expr_list(*items);
+                let mut item_ops = Vec::with_capacity(items_slice.len());
+                for &item in items_slice {
+                    item_ops.push(self.lower_expr(item, None, symbols)?);
+                }
+                let dest = target.unwrap_or_else(|| self.new_temp_id(expr.ty));
+                self.emit_assign_temp(dest, AmirRvalue::Tuple { items: item_ops });
+                Ok(AmirOperand::Copy(dest))
+            }
+            HirExprKind::Call {
+                callee,
+                args,
+                trailing_block,
+            } => {
+                if let Some(block_id) = trailing_block {
+                    let blk_span = self.hir.pool.block(*block_id).span;
+                    return Err(amir_unsupported(
+                        blk_span,
+                        "trailing block call",
+                        "v0.3 LAMBDA: trailing block closure lowering",
+                    ));
+                }
                 self.lower_call(*callee, *args, &expr, target, symbols)
             }
             HirExprKind::StructLiteral {
@@ -356,6 +480,31 @@ impl LowerCtx<'_> {
             // wrap payload as Coroutine[T]. Stack-first when not the function return slot.
             HirExprKind::AsyncBlock { block } => {
                 self.lower_async_block(*block, &expr, target, symbols)
+            }
+            HirExprKind::ValueBlock { block } => {
+                let dest = target.unwrap_or_else(|| self.new_temp_id(expr.ty));
+                let exit = self.new_block();
+                self.value_returns.push((
+                    dest,
+                    exit,
+                    self.defer_frames.len(),
+                    self.local_scopes.len(),
+                ));
+                let previous_return_type = self.func_return_type;
+                self.func_return_type = expr.ty;
+                let result = self.lower_block_as_expr(*block, Some(dest), symbols);
+                self.func_return_type = previous_return_type;
+                self.value_returns.pop();
+                result?;
+                if self.builder.current_block.is_some() {
+                    self.set_terminator(crate::amir::AmirTerminator::Goto {
+                        target: exit,
+                        args: Vec::new(),
+                    });
+                }
+                self.seal_block(exit);
+                self.builder.current_block = Some(exit);
+                Ok(AmirOperand::Copy(dest))
             }
             HirExprKind::UnsafeBlock { block } => {
                 let dest = match target {
