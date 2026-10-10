@@ -128,7 +128,7 @@ allocator calls. Native AOT links the same exported Rust digit-writing helpers
 that the JIT registers. Neither backend introduces an arena, refcounting, or
 multiple writes to replace a single `io.println` call.
 
-## Pontos de melhoria
+## PONTOS DE MELHORIA (O que não está no roadmap)
 
 Legacy borrowed host results can accumulate process-lifetime allocations. Their
 owned replacements must be designed and measured separately from interpolation

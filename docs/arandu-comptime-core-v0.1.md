@@ -1,40 +1,44 @@
 # Arandu — Public Comptime Contract
 
-**Status:** scalar surface and additional value/staging cuts are implemented in
-the 0.1.9 campaign. Complete campaign validation, RFC acceptance and release
+## Visão Geral e Contexto
+
+**Status:** scalar/aggregate values, enums, global constants, computed headers,
+composed staging, typed specialization and explicit target identity are
+implemented in the 0.1.9 campaign. Complete campaign validation, RFC acceptance and release
 readiness are tracked separately; this document does not certify those gates.
 
-## Implementation design for the remaining core
+## Detalhes Técnicos da Implementação
 
-The implementation sequence follows dependencies rather than merging compiler
-phases. Each frozen value remains independent of AST/HIR/AMIR pools and is
+### Integrated core architecture
+
+The integrated core preserves the dependencies between compiler phases. Each frozen value remains independent of AST/HIR/AMIR pools and is
 identified by a bounded, versioned semantic encoding.
 
-1. **Closed enums and ADTs.** Extend the frozen aggregate bridge with an
-   explicit variant identity and optional payload. Admission resolves every
+1. **Closed enums and ADTs.** The frozen aggregate bridge carries an explicit
+   variant identity and optional payload. Admission resolves every
    variant against target types, substitutes generic arguments and proves Copy
-   and absence of cleanup. Interpret construction, discrimination and payload
-   extraction with checked tags and projections; materialize existing typed HIR
-   constructors so all backends retain their common lowering path. Nominal
+   and absence of cleanup. The VM interprets construction, discrimination and
+   payload extraction with checked tags and projections. Materialization uses
+   existing typed HIR constructors and the common backend lowering path. Nominal
    variants require full source symbols; layout-only metadata without those
    symbols cannot admit frozen enums, including inactive variants. Structural
    Option/Result variants retain their canonical tags without nominal symbols.
-2. **Computed array dimensions.** Preserve the expression in canonical CST/AST;
-   evaluate it through the existing pre-body obligation path. Freeze the length
-   before type checking, reject negative/out-of-range values and unresolved
-   dependencies, and preserve per-item cutoff.
+2. **Computed array dimensions.** Canonical CST/AST preserves the expression;
+   the pre-body obligation path evaluates and freezes its length before final
+   type checking. Negative/out-of-range values and unresolved dependencies are
+   rejected while preserving per-item cutoff.
 3. **Composed staging.** Nested roots execute within their enclosing evaluation's
    budget. Helpers use typed, staged obligations without requesting the active
    owner's final typing. Explicit query cycle recovery must prevent reentrant
    Salsa/CTFE evaluation from becoming a compiler panic.
-4. **Global constants.** Introduce a declaration-scoped frozen-value query with
+4. **Global constants.** A declaration-scoped frozen-value query provides
    deterministic dependency-cycle recovery, including imported declarations.
    Consumers depend on the semantic value rather than initializer body syntax;
    residual HIR contains the value and never executes its initializer. Static
    storage follows the shared backend eligibility rules.
-5. **Typed specialization and target identity.** Replace unsigned-only constant
-   specialization with checked, declared-type frozen identities while retaining
-   compatibility for array lengths. OS and architecture enter as explicit target
+5. **Typed specialization and target identity.** Constant specialization uses
+   checked, declared-type frozen identities while retaining compatibility for
+   array lengths. OS and architecture enter as explicit target
    inputs, alongside DataLayout; queries never derive them from the host.
 
 Acceptance requires valid and invalid cases at each bridge: bounds, Copy and
@@ -42,8 +46,8 @@ cleanup, nominal and variant identities, generic substitution, target mismatch,
 cycles, cancellation and shared budgets. Integration tests must exercise
 materialization and backend parity, imported early-cutoff and deterministic
 errors. Existing runtime and incremental tests remain part of the final gate.
-This section describes the intended boundaries; implementation status is stated
-in the feature contracts below and must not be inferred from the sequence.
+The feature contracts below specify the implemented boundaries and remaining
+restrictions independently of campaign or release promotion.
 
 ### Dependent declaration contracts
 
@@ -711,3 +715,17 @@ order, preserving both words of fat values. Hand-built cyclic scalar and string
 swaps reproduce the old failure (22 instead of 11) and execute correctly in
 Cranelift, emitted C and real Wasmtime. This fixes phi value semantics; it does
 not relax the lifetime admission for cyclic aggregate backing storage.
+
+## PONTOS DE MELHORIA (O que não está no roadmap)
+
+Diagnostics for bounded staging could present the obligation chain more compactly
+in deeply nested templates. This is a presentation refinement, not permission to
+weaken the deterministic fuel, expansion or native query-depth ceilings.
+
+## Futuro e Próximos Passos
+
+The master [compiler roadmap](arandu-compiler-roadmap-v0.1.md) owns the execution
+order. Remaining storage admission requires proofs for cyclic aggregate backing,
+borrowed views, unknown retention and coroutine suspension; the native installed
+matrix and S0 gate are separate evidence requirements. These boundaries must not
+be reported as completed merely because a source value is admitted by CTFE.
