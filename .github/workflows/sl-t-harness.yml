@@ -19,6 +19,7 @@ on:
       - "scripts/smoke_distribution.py"
       - "stdlib/**"
       - "tests/projects/slt6_*/**"
+      - "tests/projects/medium/comptime_core/**"
       - "xtask/**"
   schedule:
     - cron: "41 6 * * 2"
