@@ -476,17 +476,38 @@ not inspect the host. Native and Wasm CLI drivers select identity before typing.
 Arbitrary references and unsupported heap resources remain outside CTFE. Supported
 aggregate/string/float values and concrete staging do not authorize general
 metaprogramming, heap allocation, reflection or generated declarations.
-Finite static expansion uses integer half-open ranges; inclusive ranges,
-mutable iteration bindings and aggregate iteration domains remain unsupported.
+Finite static expansion accepts integer half-open ranges and fixed Copy arrays.
+Array producers are evaluated once by CTFE and frozen before runtime lowering;
+struct, enum, string and nested-array elements retain their structural type in
+occurrence keys. Iteration bindings are immutable. Empty domains discard the body
+before name resolution, including unavailable names. Inclusive ranges, mutable
+bindings and arbitrary iterable resources remain unsupported for static expansion.
+Computed arguments in ordinary loop and pattern headers use the incoming lexical
+scope. Earlier bindings in a pattern conjunction are visible, but remain runtime
+captures and are rejected by T043 when read by CTFE.
 Occurrence-dependent staging is implemented within the finite expansion
 cut and does not imply arbitrary dependent domain evaluation. Ordinary
 `if`/`while` inside a CTFE block are evaluated by the VM with both branches
 resolved and typed; use the explicit static statement above for branch exclusion.
 
-Configuration of public budgets and additional staging contexts remain explicit
-future work in the
-[roadmap](arandu-compiler-roadmap-v0.1.md). Native Windows/macOS validation and
-release readiness are separate gates from development-host tests.
+Public budgets are explicit Salsa inputs (`CtfeLimits`) with positive fuel,
+frame and live-value limits. The CLI exposes `--ctfe-fuel`, `--ctfe-frames` and
+`--ctfe-values`; invalid driver configuration exits with usage status 2. Budget
+changes invalidate staged values and incremental build fingerprints. LSP accepts
+`initializationOptions.ctfe.{fuel,frames,values}` and rejects malformed options
+with JSON-RPC InvalidParams before workspace discovery. VS Code exposes
+`arandu.comptime.{fuel,frames,values}`; restart the server after changing them.
+The Rust web API also accepts explicit limits. Playground analysis uses explicit
+`unknown` OS / `wasm32` architecture and a four-byte pointer layout, independently
+of the machine hosting the compiler.
+
+Generated occurrences divide their family's envelope by the actual ancestor
+cardinalities, including jagged nested arrays. Fuel and values never round up,
+so sibling evaluations cannot multiply the public envelope. Expansion still
+allows at most 4,096 occurrences, with at most 16 nested staging contexts;
+these limits remain separate from VM frames and host RSS.
+Native Windows/macOS validation and release readiness are separate gates from
+development-host tests.
 
 ### Integrated development-host evidence
 
@@ -607,3 +628,86 @@ rounding and bit preservation rather than throughput. This microprobe is not a
 whole-compiler CPU/RSS benchmark or a CI performance threshold. Focused
 regressions cover direct f32 parsing versus double rounding, ties, signed zero,
 subnormals, canonical NaNs, target layouts and residual backend encodings.
+
+
+### Driver and residual integration evidence (2026-10-10)
+
+The `tests/projects/medium/comptime_core` installed corpus exercises global
+frozen enums and tables, typed boolean/signed specialization, computed declaration
+headers, nested roots, fixed-array iteration and target selection. On Linux
+x86-64, the packaged SDK passed archive validation, bootstrap SHA-256 and staged
+BLAKE3 verification before installation into an isolated prefix. Its installed
+CLI/LSP passed `scripts/smoke_distribution.py`, including JIT, AOT artifact
+execution, incremental reuse and T045 after lowering the configured fuel.
+The canonical tarball installer now exposes the packaged LSP through `bin`,
+as the Windows installer already does.
+
+Runtime `for` lowering now reads its compiler counters through SSA, preserves
+return/break/continue predecessors, and treats direct integer range expressions
+as bounds rather than indexing a `Range`. Inclusive integer MAX exits before an
+increment. Native string indexing loads both ABI words through the shared
+bounds-checked address calculation; Wasm obtains fixed-array length from the
+type, instead of reading the unrelated local following the array address.
+Native/C optimized and unoptimized execution and the 47 Wasmtime surface tests
+cover these paths. The single changed AMIR golden now records the defined loop
+index and the arguments of its back edge.
+
+The VS Code extension passed compilation, lint, 26 unit tests and both real
+Extension Host suites. The project suite applies fuel 1, restarts the server,
+observes structured T045, restores the default and checks clean diagnostics.
+The Wasm compiler was rebuilt and tested through its JavaScript C-ABI: the
+installed corpus compiles to a module whose `main` executes successfully.
+The website's local playground artifact was updated from that validated build;
+removing custom debug sections preserves executable sections and brings the
+artifact to 6,263,557 bytes. Its Astro/search build passes. These are local
+integration results, not a claim that a release or public website was deployed.
+
+Shared scratch admission now instantiates nominal generic enum payloads before
+checking their lifetime shapes. Closed payloads qualify; nested strings, safe
+references, slices and coroutine states remain excluded. Unknown retention,
+cyclic aggregate joins and borrowed result backing still require their separate
+proofs before any broader reuse or reclamation is enabled. Native Windows/macOS
+installed checks are wired to the same corpus in the existing CI matrix; their
+actual runner results remain required for release readiness.
+
+### Controlled workload comparison
+
+The Linux comparison uses commit `68ab0b2c` and this integration, both built
+with `cargo build --locked -p arandu_cli` in the dev profile, the same stdlib
+and runtime archive, isolated project copies, one warm-up and seven measured
+checks. These small workloads do not establish a general performance gain.
+
+| Workload | Check median before / after | Check peak RSS before / after | Compiler malloc/calloc calls before / after |
+| --- | --- | --- | --- |
+| `language_mix` | 28.47 / 26.33 ms | 26,724 / 26,844 KiB | 17,329 / 17,326 |
+| Fibonacci CTFE table (external scenario 05) | 32.80 / 33.54 ms | 27,104 / 27,232 KiB | 28,305 / 28,312 |
+
+The independently built executables preserve both stdout SHA-256 and exit
+status (`language_mix` intentionally returns 42). Runtime allocator counts
+are unchanged: one malloc/calloc and no realloc for `language_mix`; seven
+malloc/calloc calls and one realloc for Fibonacci. The latter executes ten
+million table reads and takes about 10.5 ms on this host. Allocator counters
+are calls, not live allocation counts or leak evidence. Exit resident memory
+from `/proc/self/smaps_rollup` is 2,620 / 2,628 KiB and 2,788 / 2,872 KiB,
+respectively; these are exit samples, not peak RSS. Child `wait4` runtime peak
+RSS includes the harness's pre-exec footprint and is unsuitable for interpreting
+these tiny executables. The raw temporary samples are recorded in
+`/tmp/arandu-controlled-workloads/results.json` for this development run.
+
+Pypor, Katu and Ita sources available on this host fail checking against both
+the baseline and this stdlib because their API assumptions have diverged.
+They are excluded from successful execution/performance claims; migrating
+those applications is separate from validating compiler changes.
+
+### Parallel block-argument copies
+
+The residual audit also exposed a backend bug unrelated to frame promotion:
+C and Wasm assigned incoming block arguments sequentially. A loop edge
+`next(b, a)` could overwrite `a` before reading it for the second parameter.
+Cranelift and the CTFE VM already preserve simultaneous SSA edge assignment.
+C now snapshots all inputs in an edge-local scope before writing destinations;
+Wasm reads all inputs onto its operand stack and writes destinations in reverse
+order, preserving both words of fat values. Hand-built cyclic scalar and string
+swaps reproduce the old failure (22 instead of 11) and execute correctly in
+Cranelift, emitted C and real Wasmtime. This fixes phi value semantics; it does
+not relax the lifetime admission for cyclic aggregate backing storage.

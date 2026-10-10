@@ -621,3 +621,143 @@ func main(): int {
     }
     fs::remove_dir_all(root).expect("remove concrete fixture");
 }
+
+#[test]
+fn public_ctfe_limits_are_applied_and_invalid_options_are_usage_errors() {
+    let root = common::temp_dir("arandu-cli-ctfe-limits").expect("reserve fixture");
+    let source = root.join("main.aru");
+    fs::write(&source, "func main(): int { return comptime (20 + 22) }").expect("write source");
+    for args in [
+        vec!["--ctfe-fuel=1"],
+        vec!["--ctfe-values", "1"],
+        vec!["--ctfe-frames=1", "--ctfe-fuel=1"],
+    ] {
+        let output = common::cli_command()
+            .arg("check")
+            .arg(&source)
+            .args(args)
+            .output()
+            .expect("check limited source");
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("T045"),
+            "{output:?}"
+        );
+    }
+    for value in ["0", "-1", "text", "18446744073709551616"] {
+        let output = common::cli_command()
+            .arg("check")
+            .arg(&source)
+            .arg(format!("--ctfe-fuel={value}"))
+            .output()
+            .expect("reject option");
+        assert_eq!(output.status.code(), Some(2), "{output:?}");
+    }
+    let output = common::cli_command()
+        .arg("check")
+        .arg(&source)
+        .output()
+        .expect("default envelope");
+    assert!(output.status.success(), "{output:?}");
+    fs::remove_dir_all(root).expect("remove fixture");
+}
+
+#[test]
+fn static_array_iteration_and_header_arguments_run_on_each_backend() {
+    let root = common::temp_dir("arandu-cli-static-array-iteration").expect("reserve fixture");
+    let source = root.join("main.aru");
+    fs::write(&source, r#"
+struct Entry { value: int }
+enum Mode { First, Second }
+const TABLE [2]int = comptime [20, 22]
+func count<comptime N: uint>(): uint { return N }
+func delta<comptime Enabled: bool>(): int { comptime if Enabled { return 20 } else { return 22 } }
+func produce(): [2][2]int { return [[20, 0], [21, 1]] }
+func first(): uint { for i in 0..count<comptime (2)>() { return i }; return 99 }
+func c_first(): int { for let mut i = 0; i < 2; i = i + 1 { return i }; return 99 }
+func main(): int {
+    let mut sum = 0
+    comptime for value in TABLE { sum += value }
+    if sum != 42 { return 1 }
+    sum = 0
+    comptime for row in produce() { comptime for value in row { sum += value } }
+    if sum != 42 { return 2 }
+    sum = 0
+    comptime for row in [[true, false], [false, true]] { sum += delta<comptime (row[0])>() }
+    if sum != 42 { return 3 }
+    sum = 0
+    comptime for entry in [Entry { value: 20 }, Entry { value: 22 }] { let value = comptime entry.value; sum += value }
+    if sum != 42 { return 4 }
+    sum = 0
+    comptime for mode in [Mode.First, Mode.Second] {
+        let value = comptime { match mode { Mode.First => { return 20 } Mode.Second => { return 22 } } }
+        sum += value
+    }
+    if sum != 42 { return 5 }
+    sum = 0
+    comptime for label in ["a", "b"] { comptime if label == "a" { sum += 20 } else { sum += 22 } }
+    if sum != 42 { return 6 }
+    if first() != 0 || c_first() != 0 { return 7 }
+    let mut visits = 0
+    let max: u64 = 18446744073709551615
+    for value in max..=max { if value != max { return 9 }; visits += 1 }
+    if visits != 1 { return 10 }
+    for value in 2..1 { return 11 }
+    visits = 0
+    for value in 1..=3 { if value == 2 { continue }; visits += value }
+    if visits != 4 { return 12 }
+    sum = 0
+    for value in [20, 22] { sum += value }
+    if sum != 42 { return 13 }
+    sum = 0
+    for label in ["a", "b"] { if label == "a" { sum += 20 } else { sum += 22 } }
+    if sum != 42 { return 14 }
+    if Option.Some(count<comptime (42)>()) is Option.Some(value) && value == 42 { return 0 }
+    return 8
+}
+"#).expect("write consumer");
+    for optimized in [false, true] {
+        for command in ["run", "emit-c", "emit-wasm"] {
+            let mut invocation = common::cli_command();
+            invocation.arg(command).arg(&source);
+            if optimized {
+                invocation.arg("--opt");
+            }
+            let output = invocation.output().expect("compile and run consumer");
+            assert!(
+                output.status.success(),
+                "{command}, optimized={optimized}: {output:?}"
+            );
+            if command == "emit-wasm" {
+                assert!(output.stdout.starts_with(b"\0asm"));
+            }
+            if command == "emit-c"
+                && std::process::Command::new("clang")
+                    .arg("--version")
+                    .output()
+                    .is_ok_and(|version| version.status.success())
+            {
+                let c_file = root.join("iteration.c");
+                let binary = root.join(if cfg!(windows) {
+                    "iteration.exe"
+                } else {
+                    "iteration"
+                });
+                fs::write(&c_file, &output.stdout).expect("write C");
+                let compiled = std::process::Command::new("clang")
+                    .arg(if optimized { "-O2" } else { "-O0" })
+                    .arg(&c_file)
+                    .arg("-o")
+                    .arg(&binary)
+                    .output()
+                    .expect("compile C");
+                assert!(compiled.status.success(), "{compiled:?}");
+                let executed = std::process::Command::new(&binary)
+                    .output()
+                    .expect("execute C");
+                assert!(executed.status.success(), "{executed:?}");
+            }
+        }
+    }
+    fs::remove_dir_all(root).expect("remove fixture");
+}

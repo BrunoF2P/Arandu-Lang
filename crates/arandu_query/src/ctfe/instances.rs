@@ -181,7 +181,8 @@ fn instance_staged_result<'db>(
                     arandu_parser::Stmt::For { span, body, .. }
                         if arandu_middle::NodeKey::from(*span) == *node =>
                     {
-                        super::roots::loop_requires_occurrences(&program.pool, body)
+                        loops.empty_domain(node)
+                            || super::roots::loop_requires_occurrences(&program.pool, body)
                     }
                     _ => false,
                 }) && !program.pool.exprs.iter().zip(&program.pool.expr_spans).any(
@@ -253,6 +254,12 @@ fn instance_staged_result<'db>(
                 checked
                     .diagnostics
                     .extend(arguments.diagnostics.iter().cloned());
+                super::loops::install_array_values(
+                    &mut checked,
+                    program,
+                    &loops,
+                    *db.target_config().data_layout(db),
+                );
                 if !for_ctfe {
                     checked = (*super::public::stage_public_roots(
                         db,
@@ -342,13 +349,24 @@ fn install_occurrences(
     checked: &mut arandu_typeck::TypeCheckResult,
     hir: &mut arandu_middle::hir::HirProgram,
     substitution: &arandu_middle::types::GenericSubst,
-    occurrence: &[(u32, arandu_middle::ctfe::ConstInt)],
+    occurrence: &[(u32, super::FrozenConstant, u64)],
     count: &mut u64,
     diagnostics: &mut Vec<arandu_middle::Diagnostic>,
     context: &super::DependencyContext,
 ) {
     use arandu_middle::hir::HirStmtKind;
     use arandu_parser::{ForClause, Stmt};
+    if occurrence.len() >= super::MAX_QUERY_DEPENDENCY_DEPTH {
+        diagnostics.push(
+            arandu_middle::Diagnostic::error(
+                arandu_middle::DiagCode::T045ComptimeLimitExceeded,
+                "static iteration staging exceeds its nesting limit",
+                hir.span,
+            )
+            .with_primary_label("at most 16 nested static iteration contexts"),
+        );
+        return;
+    }
     let mut owner_span = None;
     program.for_each_decl_recursive(|_, decl| {
         if arandu_semantics::primary_def_key(decl)
@@ -396,7 +414,9 @@ fn install_occurrences(
         let Stmt::For {
             span,
             body,
-            clause: ForClause::In { bindings, .. },
+            clause: ForClause::In {
+                bindings, iterable, ..
+            },
             ..
         } = source_loops[ordinal]
         else {
@@ -440,13 +460,42 @@ fn install_occurrences(
         let mut bodies = Vec::new();
         for offset in 0..total {
             db.unwind_if_revision_cancelled();
-            let Ok(value) =
-                arandu_middle::ctfe::ConstInt::new(lower.ty(), lower.value() + i128::from(offset))
-            else {
+            let value = if let Some((arandu_middle::ctfe::ConstValue::Aggregate(array), _)) =
+                checked
+                    .type_info
+                    .ctfe_values
+                    .get(&program.pool.expr_span(*iterable))
+            {
+                let arandu_middle::types::TypeShape::Array(_, element) = array.shape() else {
+                    continue;
+                };
+                let Some(value) = usize::try_from(offset)
+                    .ok()
+                    .and_then(|index| array.values().get(index))
+                else {
+                    continue;
+                };
+                super::FrozenConstant {
+                    value: value.clone(),
+                    shape: (**element).clone(),
+                }
+            } else {
+                let Ok(integer) = arandu_middle::ctfe::ConstInt::new(
+                    lower.ty(),
+                    lower.value() + i128::from(offset),
+                ) else {
+                    continue;
+                };
+                super::FrozenConstant {
+                    value: arandu_middle::ctfe::ConstValue::Integer(integer),
+                    shape: arandu_middle::types::TypeShape::Primitive(integer.ty().primitive()),
+                }
+            };
+            let Ok(value_ty) = value.shape.intern(&checked.type_info.type_interner) else {
                 continue;
             };
             let mut selected = occurrence.to_vec();
-            selected.push((ordinal, value));
+            selected.push((ordinal, value, total));
             let branches = super::branches::select_branches_in_context(
                 db,
                 file,
@@ -512,7 +561,8 @@ fn install_occurrences(
                         Stmt::For { span, body, .. }
                             if arandu_middle::NodeKey::from(*span) == *node =>
                         {
-                            super::roots::loop_requires_occurrences(&program.pool, body)
+                            loops.empty_domain(node)
+                                || super::roots::loop_requires_occurrences(&program.pool, body)
                         }
                         _ => false,
                     })
@@ -549,7 +599,7 @@ fn install_occurrences(
                 program,
                 key.definition,
                 body,
-                (binding_symbol, value),
+                (binding_symbol, value_ty),
                 crate::passes::database_target_info(db),
                 substitution,
             );
@@ -562,7 +612,7 @@ fn install_occurrences(
                             program,
                             key.definition,
                             body,
-                            (binding_symbol, value),
+                            (binding_symbol, value_ty),
                             crate::passes::database_target_info(db),
                             substitution,
                         );
@@ -597,6 +647,12 @@ fn install_occurrences(
                 context,
             ))
             .clone();
+            super::loops::install_array_values(
+                &mut typed,
+                program,
+                &loops,
+                *db.target_config().data_layout(db),
+            );
             match arandu_semantics::lower_block_to_hir(&mut typed, &program.pool, hir, body) {
                 Ok(block) => {
                     *checked = typed;

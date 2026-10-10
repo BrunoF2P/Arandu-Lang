@@ -351,3 +351,57 @@ fn editing_runtime_siblings_preserves_the_public_value_and_callee_edits_refresh_
         .any(|(value, _)| matches!(value, ConstValue::Integer(n) if n.value() == 43)));
     assert!(log.count_executions_matching("ctfe_eval_root") > 0);
 }
+
+#[test]
+fn driver_limits_invalidate_every_public_staging_family_and_recover() {
+    use arandu_query::ctfe::CtfeLimits;
+    for source in [
+        "func main(): int { return comptime (20 + 22) }",
+        "const ANSWER int = comptime (20 + 22)\nfunc main(): int { return ANSWER }",
+        "func main(): int { comptime if 1 + 1 == 2 { return 42 } else { return 0 } }",
+        "func answer<comptime N: uint>(): uint { return N }\nfunc main(): int { return answer<comptime (20 + 22)>() as int }",
+        "func main(): int { let a: [comptime (1 + 1)]int = [20, 22]; return a[0] + a[1] }",
+        "func main(): int { comptime for i in 0..2 { let x = i }; return 42 }",
+    ] {
+        let mut db = DatabaseImpl::new();
+        let file = db.new_file("limits.aru".into(), source.into());
+        assert!(arandu_query::passes::parse(&db, file).is_ok(), "{source}: {:?}", arandu_query::passes::parse(&db, file).as_ref().err());
+        let before = arandu_query::db::HashEq::share(type_check(&db, file));
+        assert!(before.diagnostics.iter().all(|d| d.severity != Severity::Error), "{source}: {:?}", before.diagnostics);
+        let exports = std::sync::Arc::clone(arandu_query::passes::exported_symbols(&db, file));
+        db.set_ctfe_limits(CtfeLimits::new(1, 1, 1).expect("positive limits"));
+        if let Some(symbol) = before.symbols.iter().find(|symbol| symbol.name == "ANSWER") {
+            let global = arandu_query::ctfe::global_const_value(&db, file, symbol.id);
+            assert!(global.result.is_err(), "global result under limit: {:?}", global.result);
+            assert!(!arandu_query::passes::declaration_signatures(&db, file).diagnostics.is_empty(), "global declaration errors must be retained");
+        }
+        let limited = type_check(&db, file);
+        assert!(limited.diagnostics.iter().any(|d| d.code == DiagCode::T045ComptimeLimitExceeded), "{source}: {:?}", limited.diagnostics);
+        assert_eq!(&exports, arandu_query::passes::exported_symbols(&db, file));
+        db.set_ctfe_limits(CtfeLimits::default());
+        assert!(&before == type_check(&db, file), "restored policy must recover deterministically");
+    }
+}
+
+#[test]
+fn changing_limits_advances_analysis_revision_and_rejects_zero_ceilings() {
+    use arandu_query::ctfe::CtfeLimits;
+    for limits in [(0, 1, 1), (1, 0, 1), (1, 1, 0)] {
+        assert!(CtfeLimits::new(limits.0, limits.1, limits.2).is_err());
+    }
+    let mut host = arandu_query::AnalysisHost::new();
+    let revision = host.revision();
+    host.set_ctfe_limits(CtfeLimits::new(50, 4, 100).expect("positive limits"));
+    assert_ne!(revision, host.revision());
+    let snapshot = host.snapshot();
+    assert_eq!(
+        snapshot
+            .db
+            .ctfe_config()
+            .expect("registered policy")
+            .limits(&snapshot.db)
+            .budget()
+            .fuel,
+        50
+    );
+}

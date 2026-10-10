@@ -151,7 +151,11 @@ pub(crate) fn evaluate_declaration_arguments(
         let root = CtfeRoot::new_in_context(db, file, owner, selector, None, context.clone());
         match super::ctfe_eval_root(
             db,
-            CtfeRootRequest::new(db, root, super::public::staging_budget(roots.len(), false)),
+            CtfeRootRequest::new(
+                db,
+                root,
+                super::public::staging_budget(super::config::public_budget(db), roots.len(), 1),
+            ),
         ) {
             Ok(ConstValue::Integer(integer)) if integer.to_const_generic().is_ok() => {
                 result

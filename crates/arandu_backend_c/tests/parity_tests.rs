@@ -3529,3 +3529,147 @@ func main(): int {
         "strict-aliasing O2 binary exited with {status}"
     );
 }
+
+#[test]
+fn cyclic_phi_swaps_match_native_parallel_copy_semantics() {
+    use arandu_middle::amir::{
+        AmirBasicBlock, AmirFunc, AmirStmtTable, AmirTemp, AmirTerminator, BlockId, BlockParam,
+        LocalId, TempId,
+    };
+    use arandu_middle::cfg::compute_cfg_edges;
+    use arandu_middle::layout::DenseRange;
+    use arandu_middle::literal_pool::AmirLiteralPool;
+    use arandu_middle::types::{ArType, Primitive};
+    let temp = |id, ty| AmirTemp {
+        id: TempId::from_usize(id),
+        ty,
+        is_copy: true,
+        is_nullable: false,
+        span: arandu_middle::Span::new(0, 0, 0),
+    };
+    for strings in [false, true] {
+        let (mut amir, tc) = compile_src("func main(): int { return 0 }");
+        let interner = &tc.type_info.type_interner;
+        let int = interner.intern(ArType::Primitive(Primitive::Int));
+        let boolean = interner.intern(ArType::Primitive(Primitive::Bool));
+        let value = if strings {
+            interner.intern(ArType::Primitive(Primitive::Str))
+        } else {
+            int
+        };
+        let mut pool = AmirLiteralPool::default();
+        let zero = AmirOperand::Constant(AmirConstant::Pool(pool.intern_int("0")));
+        let one = AmirOperand::Constant(AmirConstant::Pool(pool.intern_int("1")));
+        let left = AmirOperand::Constant(AmirConstant::Pool(if strings {
+            pool.intern_str("a")
+        } else {
+            pool.intern_int("11")
+        }));
+        let right = AmirOperand::Constant(AmirConstant::Pool(if strings {
+            pool.intern_str("long")
+        } else {
+            pool.intern_int("22")
+        }));
+        let mut stmts = AmirStmtTable::new();
+        stmts.push(AmirStmt::Assign {
+            lhs: TempId::from_usize(4),
+            rhs: AmirRvalue::Binary {
+                op: BinaryOp::Lt,
+                left: AmirOperand::Copy(TempId::from_usize(3)),
+                right: one,
+            },
+        });
+        stmts.push(AmirStmt::Assign {
+            lhs: TempId::from_usize(0),
+            rhs: if strings {
+                AmirRvalue::Len(AmirOperand::Copy(TempId::from_usize(2)))
+            } else {
+                AmirRvalue::Use(AmirOperand::Copy(TempId::from_usize(2)))
+            },
+        });
+        let blocks = vec![
+            AmirBasicBlock {
+                id: BlockId::from_usize(0),
+                params: DenseRange::empty(),
+                statements: DenseRange::empty(),
+                terminator: AmirTerminator::Goto {
+                    target: BlockId::from_usize(1),
+                    args: vec![left, right, zero],
+                },
+            },
+            AmirBasicBlock {
+                id: BlockId::from_usize(1),
+                params: DenseRange::new(0, 3),
+                statements: DenseRange::new(0, 1),
+                terminator: AmirTerminator::Branch {
+                    condition: AmirOperand::Copy(TempId::from_usize(4)),
+                    if_true: BlockId::from_usize(2),
+                    true_args: vec![],
+                    if_false: BlockId::from_usize(3),
+                    false_args: vec![],
+                },
+            },
+            AmirBasicBlock {
+                id: BlockId::from_usize(2),
+                params: DenseRange::empty(),
+                statements: DenseRange::empty(),
+                terminator: AmirTerminator::Goto {
+                    target: BlockId::from_usize(1),
+                    args: vec![
+                        AmirOperand::Copy(TempId::from_usize(2)),
+                        AmirOperand::Copy(TempId::from_usize(1)),
+                        one,
+                    ],
+                },
+            },
+            AmirBasicBlock {
+                id: BlockId::from_usize(3),
+                params: DenseRange::empty(),
+                statements: DenseRange::new(1, 1),
+                terminator: AmirTerminator::Return,
+            },
+        ];
+        let func = AmirFunc {
+            symbol: amir.funcs[0].symbol,
+            return_type: int,
+            receiver: None,
+            params: vec![],
+            locals: vec![],
+            temps: vec![
+                temp(0, int),
+                temp(1, value),
+                temp(2, value),
+                temp(3, int),
+                temp(4, boolean),
+            ],
+            block_params: (0..3)
+                .map(|index| BlockParam {
+                    id: TempId::from_usize(index + 1),
+                    local: LocalId::from_usize(index),
+                    ty: if index == 2 { int } else { value },
+                    from: None,
+                    moved: false,
+                })
+                .collect(),
+            cfg: compute_cfg_edges(&blocks),
+            blocks,
+            stmts,
+        };
+        amir.funcs[0] = func;
+        amir.literal_pool = pool;
+        let expected = if strings { 1 } else { 11 };
+        assert_eq!(execute_cranelift(&amir, &tc), expected);
+        assert_eq!(
+            execute_c(
+                if strings {
+                    "phi_string_swap"
+                } else {
+                    "phi_scalar_swap"
+                },
+                &amir,
+                &tc
+            ),
+            expected
+        );
+    }
+}

@@ -90,8 +90,8 @@ fn invalid_and_exponential_domains_fail_without_publishing_partial_amir() {
             DiagCode::T042UnsupportedComptime,
         ),
         (
-            "func main(): void { comptime for i in [1, 2] {} }",
-            DiagCode::T042UnsupportedComptime,
+            "func main(): void { comptime for i in [1; 4097] {} }",
+            DiagCode::T045ComptimeLimitExceeded,
         ),
     ] {
         let mut db = DatabaseImpl::new();
@@ -148,4 +148,88 @@ fn changing_a_domain_matches_clean_compilation() {
         format!("{:?}", incremental.artifacts.amir),
         format!("{:?}", rebuilt.artifacts.amir)
     );
+}
+
+#[test]
+fn fixed_copy_arrays_are_frozen_and_each_occurrence_keeps_its_structural_value() {
+    for source in [
+        "func main(): int { let mut sum = 0; comptime for value in [20, 22] { sum += value }; return sum }",
+        "func make(): [2]int { return [20, 22] }\nfunc main(): int { let mut sum = 0; comptime for value in make() { sum += value }; return sum }",
+        "const TABLE [2]int = comptime [20, 22]\nfunc main(): int { let mut sum = 0; comptime for value in TABLE { sum += value }; return sum }",
+        "func main(): int { let mut sum = 0; comptime for row in [[20, 1], [21, 0]] { comptime for value in row { sum += value } }; return sum }",
+        "func main(): int { let mut sum = 0; comptime for row in [[true, false], [false, true]] { comptime if row[0] { sum += 20 } else { sum += 22 } }; return sum }",
+        "func main(): int { let mut sum = 0; comptime for label in [\"a\", \"b\"] { comptime if label == \"a\" { sum += 20 } else { sum += 22 } }; return sum }",
+        "struct Entry { value: int }\nfunc main(): int { let mut sum = 0; comptime for entry in [Entry { value: 20 }, Entry { value: 22 }] { let value = comptime entry.value; sum += value }; return sum }",
+        "enum Mode { First, Second }\nfunc main(): int { let mut sum = 0; comptime for mode in [Mode.First, Mode.Second] { let value = comptime { match mode { Mode.First => { return 20 } Mode.Second => { return 22 } } }; sum += value }; return sum }",
+        "func empty(): [0]int { return [0; 0] }\nfunc main(): int { comptime for value in empty() { return unavailable_empty_body }; return 42 }",
+        "func size<comptime N: uint>(): [N]int { return [21; N] }\nfunc main(): int { let mut sum = 0; comptime for value in size<2>() { sum += value }; return sum }",
+    ] {
+        let mut db = DatabaseImpl::new();
+        let file = db.new_file("array-for.aru".into(), source.into());
+        assert!(passes::parse(&db, file).is_ok(), "{source}: {:?}", passes::parse(&db, file).as_ref().err());
+        assert!(errors(&db, file).is_empty(), "{source}: {:?}", errors(&db, file));
+        let output = runtime::runtime_program(&db, file);
+        assert!(output.diagnostics.is_empty(), "{source}: {:?}", output.diagnostics);
+        for function in &output.artifacts.amir.funcs {
+            if output.artifacts.type_check.symbols.get(function.symbol).name != "main" { continue; }
+            for statement in function.stmts.iter_ids() {
+                if let arandu_middle::amir::AmirStmt::Call { callee: arandu_middle::amir::AmirOperand::FunctionRef(symbol), .. } = function.stmt(statement) {
+                    let name = &output.artifacts.type_check.symbols.get(*symbol).name;
+                    assert!(!matches!(name.as_str(), "make" | "empty" | "size"), "array domain producer survived in residual main: {source}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn static_array_domains_reject_runtime_captures_and_obey_driver_limits() {
+    let mut db = DatabaseImpl::new();
+    let file = db.new_file(
+        "captured-array.aru".into(),
+        "func main(table: [2]int): int { comptime for value in table { return value }; return 0 }"
+            .into(),
+    );
+    assert!(errors(&db, file)
+        .iter()
+        .any(|d| d.code == DiagCode::T043ComptimeRuntimeCapture));
+    let file = db.new_file(
+        "limited-array.aru".into(),
+        "func main(): int { comptime for value in [20, 22] { return value }; return 0 }".into(),
+    );
+    db.set_ctfe_limits(arandu_query::ctfe::CtfeLimits::new(1, 1, 1).expect("positive limits"));
+    assert!(errors(&db, file)
+        .iter()
+        .any(|d| d.code == DiagCode::T045ComptimeLimitExceeded));
+}
+
+#[test]
+fn deep_singleton_expansion_stops_before_exhausting_the_native_query_stack() {
+    let source = format!(
+        "func main(): int {{ {}return 42{} }}",
+        "comptime for value in [1] {".repeat(20),
+        "}".repeat(20)
+    );
+    std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(move || {
+            let mut db = DatabaseImpl::new();
+            let file = db.new_file("nested-domains.aru".into(), source);
+            let output = runtime::runtime_program(&db, file);
+            assert!(
+                output
+                    .diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.code == DiagCode::T045ComptimeLimitExceeded),
+                "{:?}",
+                output.diagnostics
+            );
+            assert!(output
+                .diagnostics
+                .iter()
+                .all(|diagnostic| !diagnostic.code.as_str().starts_with("ICE")));
+        })
+        .expect("native-size worker")
+        .join()
+        .expect("bounded staging");
 }

@@ -217,6 +217,7 @@ pub fn cmd_single_file_dispatch(
     } else {
         (arandu_query::db::DatabaseImpl::new(), None)
     };
+    db.set_ctfe_limits(project_flags.ctfe_limits);
     attach_stdlib(&mut db, project_flags.stdlib_path.clone());
     let data_layout = if matches!(command, "emit-wasm" | "emit-component") {
         let identity = if let Some(triple) = &project_flags.target {

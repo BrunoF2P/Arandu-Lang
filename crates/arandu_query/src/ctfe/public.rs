@@ -33,18 +33,23 @@ const MAX_PUBLIC_ROOTS: usize = 4096;
 /// occurrence; splitting by both dimensions prevents each iteration from
 /// restarting the entire allowance. A zero allowance is deliberately rejected
 /// by the VM rather than rounded up into an unbounded total.
-pub(crate) fn staging_budget(obligations: usize, in_iteration: bool) -> Budget {
+pub(crate) fn staging_budget(envelope: Budget, obligations: usize, occurrences: u64) -> Budget {
     let obligations = u64::try_from(obligations).unwrap_or(u64::MAX).max(1);
-    let obligations = if in_iteration {
-        obligations.saturating_mul(super::loops::MAX_STATIC_ITERATIONS)
-    } else {
-        obligations
-    };
+    let obligations = obligations.saturating_mul(occurrences.max(1));
     Budget {
-        fuel: PUBLIC_BUDGET.fuel / obligations,
-        values: PUBLIC_BUDGET.values / obligations,
-        frames: PUBLIC_BUDGET.frames,
+        fuel: envelope.fuel / obligations,
+        values: envelope.values / obligations,
+        frames: envelope.frames,
     }
+}
+
+/// Each ancestor splits its envelope equally among its own frozen domain.
+/// This weighting also bounds jagged nested arrays: siblings may have different
+/// lengths without each resetting the family's complete allowance.
+pub(crate) fn iteration_count(occurrence: &[(u32, super::FrozenConstant, u64)]) -> u64 {
+    occurrence.iter().fold(1_u64, |count, (_, _, size)| {
+        count.saturating_mul((*size).max(1))
+    })
 }
 
 #[cfg(test)]
@@ -54,13 +59,38 @@ mod budget_tests {
     #[test]
     fn all_source_obligations_share_the_static_occurrence_envelope() {
         for roots in [1, 2, 100, 4096] {
-            let budget = staging_budget(roots, true);
+            let budget = staging_budget(
+                PUBLIC_BUDGET,
+                roots,
+                crate::ctfe::loops::MAX_STATIC_ITERATIONS,
+            );
             let evaluations = roots as u64 * crate::ctfe::loops::MAX_STATIC_ITERATIONS;
             assert!(budget.fuel.saturating_mul(evaluations) <= PUBLIC_BUDGET.fuel);
             assert!(budget.values.saturating_mul(evaluations) <= PUBLIC_BUDGET.values);
             assert_eq!(budget.frames, PUBLIC_BUDGET.frames);
         }
-        assert_eq!(staging_budget(0, false).fuel, PUBLIC_BUDGET.fuel);
+        assert_eq!(staging_budget(PUBLIC_BUDGET, 0, 1).fuel, PUBLIC_BUDGET.fuel);
+    }
+
+    #[test]
+    fn jagged_domains_share_the_envelope_without_the_worst_case_divisor() {
+        for roots in [1, 2, 7, 4096] {
+            let mut fuel = 0;
+            let mut values = 0;
+            for length in [1_u64, 3, 5] {
+                let budget = staging_budget(PUBLIC_BUDGET, roots, 3 * length);
+                let evaluations = u64::try_from(roots).expect("small roots") * length;
+                fuel += budget.fuel * evaluations;
+                values += budget.values * evaluations;
+            }
+            assert!(fuel <= PUBLIC_BUDGET.fuel);
+            assert!(values <= PUBLIC_BUDGET.values);
+        }
+        assert_eq!(staging_budget(PUBLIC_BUDGET, 2, u64::MAX).fuel, 0);
+        assert_eq!(
+            staging_budget(PUBLIC_BUDGET, 1, 2).fuel,
+            PUBLIC_BUDGET.fuel / 2
+        );
     }
 }
 
@@ -104,7 +134,7 @@ pub(crate) fn stage_public_roots_in_occurrence(
     owner: SymbolId,
     initial: &HashEq<TypeCheckResult>,
     instance: Option<&arandu_middle::types::FunctionInstance>,
-    occurrence: &[(u32, arandu_middle::ctfe::ConstInt)],
+    occurrence: &[(u32, super::FrozenConstant, u64)],
 ) -> HashEq<TypeCheckResult> {
     stage_public_roots_in_context(
         db,
@@ -123,7 +153,7 @@ pub(crate) fn stage_public_roots_in_context(
     owner: SymbolId,
     initial: &HashEq<TypeCheckResult>,
     instance: Option<&arandu_middle::types::FunctionInstance>,
-    occurrence: &[(u32, arandu_middle::ctfe::ConstInt)],
+    occurrence: &[(u32, super::FrozenConstant, u64)],
     context: &super::DependencyContext,
 ) -> HashEq<TypeCheckResult> {
     // Ordinary functions preserve the existing O(1) shared memo path; do not
@@ -182,7 +212,11 @@ pub(crate) fn stage_public_roots_in_context(
     // Explicit public roots in an item share their family's finite envelope.
     // Other staging families have separate envelopes. Independent Salsa
     // evaluations cannot restart the full allowance thousands of times.
-    let budget = staging_budget(roots.len(), !occurrence.is_empty());
+    let budget = staging_budget(
+        super::config::public_budget(db),
+        roots.len(),
+        super::public::iteration_count(occurrence),
+    );
     for (ordinal, &expression) in roots.iter().enumerate() {
         db.unwind_if_revision_cancelled();
         let root_span = program.pool.expr_span(expression);
@@ -201,7 +235,9 @@ pub(crate) fn stage_public_roots_in_context(
             || enclosing
                 .iter()
                 .zip(occurrence)
-                .any(|(ordinal, (selected, _))| usize::try_from(*selected).ok() != Some(*ordinal))
+                .any(|(ordinal, (selected, _, _))| {
+                    usize::try_from(*selected).ok() != Some(*ordinal)
+                })
         {
             continue;
         }

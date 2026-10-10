@@ -706,15 +706,35 @@ impl<'a> CEmitter<'a> {
     ) {
         let target_block = &func.blocks[target.as_usize()];
         let target_params = func.block_params(target_block.params);
-        for (param, arg) in target_params.iter().zip(args.iter()) {
+        if args.is_empty() {
+            return;
+        }
+        // SSA edges perform simultaneous assignments. Snapshot every input
+        // before writing any destination, including fat values and structs.
+        // The edge-local scope makes names unique across different branches.
+        let _ = writeln!(&mut self.output, "{indent}{{");
+        for (index, (param, arg)) in target_params.iter().zip(args).enumerate() {
+            let ty = self.interner.resolve(param.ty);
+            if matches!(ty, ArType::Void) {
+                continue;
+            }
+            let c_ty = self.format_type(&ty);
             let arg_str = self.format_operand(arg, func);
             let _ = writeln!(
                 &mut self.output,
-                "{}t{} = {};",
-                indent,
-                param.id.as_usize(),
-                arg_str
+                "{indent}    {c_ty} ar_edge_{index} = {arg_str};"
             );
         }
+        for (index, param) in target_params.iter().take(args.len()).enumerate() {
+            if matches!(self.interner.resolve(param.ty), ArType::Void) {
+                continue;
+            }
+            let _ = writeln!(
+                &mut self.output,
+                "{indent}    t{} = ar_edge_{index};",
+                param.id.as_usize()
+            );
+        }
+        let _ = writeln!(&mut self.output, "{indent}}}");
     }
 }

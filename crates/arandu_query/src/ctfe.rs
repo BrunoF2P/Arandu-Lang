@@ -12,6 +12,8 @@ use arandu_middle::types::FunctionInstance;
 use arandu_middle::{Diagnostic, SymbolId};
 use arandu_mir::ctfe::{Budget, CtfeFunction, EvalError, EvalErrorKind, FunctionProvider};
 
+mod config;
+pub use config::{CtfeConfig, CtfeLimits};
 mod arguments;
 pub(crate) mod contracts;
 mod dependency;

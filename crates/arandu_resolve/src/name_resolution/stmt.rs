@@ -55,10 +55,10 @@ impl<'a> Resolver<'a> {
                         else_block,
                         ..
                     } => {
-                        if let arandu_parser::Condition::Expr { expr, .. } = condition
-                            && contains(pool.expr_span(*expr))
+                        if let Some(selected) =
+                            self.staging_condition(scope, pool, condition, target, depth + 1)
                         {
-                            return self.staging_expression(scope, pool, *expr, target, depth + 1);
+                            return Some(selected);
                         }
                         if contains(then_block.span) {
                             self.declare_condition_bindings(child, condition);
@@ -75,22 +75,58 @@ impl<'a> Resolver<'a> {
                     Stmt::While {
                         body, condition, ..
                     } => {
-                        if let arandu_parser::Condition::Expr { expr, .. } = condition
-                            && contains(pool.expr_span(*expr))
+                        if let Some(selected) =
+                            self.staging_condition(scope, pool, condition, target, depth + 1)
                         {
-                            return self.staging_expression(scope, pool, *expr, target, depth + 1);
+                            return Some(selected);
                         }
                         self.declare_condition_bindings(child, condition);
                         Some(body)
                     }
                     Stmt::For { body, clause, .. } => {
                         match clause {
-                            ForClause::In { bindings, .. } => {
+                            ForClause::In {
+                                bindings, iterable, ..
+                            } => {
+                                if contains(pool.expr_span(*iterable)) {
+                                    return self.staging_expression(
+                                        scope,
+                                        pool,
+                                        *iterable,
+                                        target,
+                                        depth + 1,
+                                    );
+                                }
                                 for binding in bindings {
                                     self.define_for_binding(child, binding);
                                 }
                             }
-                            ForClause::CStyle { init, .. } => {
+                            ForClause::CStyle {
+                                init,
+                                condition,
+                                step,
+                                ..
+                            } => {
+                                if let Some(init) = init {
+                                    let (span, expression) = match init {
+                                        SimpleStmt::VarDecl { span, value, .. }
+                                        | SimpleStmt::Set { span, value, .. } => (*span, *value),
+                                        SimpleStmt::Expr { span, expr } => (*span, *expr),
+                                    };
+                                    if contains(span) {
+                                        return if contains(pool.expr_span(expression)) {
+                                            self.staging_expression(
+                                                scope,
+                                                pool,
+                                                expression,
+                                                target,
+                                                depth + 1,
+                                            )
+                                        } else {
+                                            Some(scope)
+                                        };
+                                    }
+                                }
                                 if let Some(SimpleStmt::VarDecl { bindings, .. }) = init {
                                     for binding in bindings {
                                         self.define(
@@ -98,6 +134,33 @@ impl<'a> Resolver<'a> {
                                             &binding.name,
                                             SymbolKind::Local,
                                             binding.span,
+                                        );
+                                    }
+                                }
+                                if let Some(expression) = condition
+                                    && contains(pool.expr_span(*expression))
+                                {
+                                    return self.staging_expression(
+                                        child,
+                                        pool,
+                                        *expression,
+                                        target,
+                                        depth + 1,
+                                    );
+                                }
+                                if let Some(step) = step {
+                                    let expression = match step {
+                                        SimpleStmt::VarDecl { value, .. }
+                                        | SimpleStmt::Set { value, .. } => *value,
+                                        SimpleStmt::Expr { expr, .. } => *expr,
+                                    };
+                                    if contains(pool.expr_span(expression)) {
+                                        return self.staging_expression(
+                                            child,
+                                            pool,
+                                            expression,
+                                            target,
+                                            depth + 1,
                                         );
                                     }
                                 }

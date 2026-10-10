@@ -3,7 +3,8 @@
 
 use arandu_middle::Span;
 use arandu_parser::{
-    CatchHandler, ExprId, ExprKind, LambdaBody, MatchArmBody, StringPart, ast_pool::AstPool,
+    CatchHandler, Condition, ExprId, ExprKind, LambdaBody, MatchArmBody, StringPart,
+    ast_pool::AstPool,
 };
 
 use crate::{ScopeId, SymbolKind};
@@ -11,6 +12,48 @@ use crate::{ScopeId, SymbolKind};
 use super::Resolver;
 
 impl Resolver<'_> {
+    /// Navigate a selected clause without evaluating runtime siblings. Earlier
+    /// successful patterns shadow globals in later clauses, just as in resolve.
+    pub(crate) fn staging_condition(
+        &mut self,
+        scope: ScopeId,
+        pool: &AstPool,
+        condition: &Condition,
+        target: Span,
+        depth: usize,
+    ) -> Option<ScopeId> {
+        if depth > 64 {
+            return None;
+        }
+        let contains = |span: Span| {
+            span.file_id == target.file_id && span.start <= target.start && target.end <= span.end
+        };
+        match condition {
+            Condition::Expr { expr, .. } | Condition::Is { expr, .. } => {
+                contains(pool.expr_span(*expr))
+                    .then(|| self.staging_expression(scope, pool, *expr, target, depth + 1))
+                    .flatten()
+            }
+            Condition::And { conditions, .. } => {
+                let mut scope = scope;
+                for condition in conditions {
+                    let span = match condition {
+                        Condition::Expr { span, .. }
+                        | Condition::Is { span, .. }
+                        | Condition::And { span, .. } => *span,
+                    };
+                    if contains(span) {
+                        return self.staging_condition(scope, pool, condition, target, depth + 1);
+                    }
+                    let next = self.symbols.new_scope(scope);
+                    self.declare_condition_bindings(next, condition);
+                    scope = next;
+                }
+                None
+            }
+        }
+    }
+
     pub(crate) fn staging_expression(
         &mut self,
         scope: ScopeId,
@@ -96,6 +139,11 @@ impl Resolver<'_> {
                 then_block,
                 else_block,
             } => {
+                if let Some(selected) =
+                    self.staging_condition(scope, pool, condition, target, depth + 1)
+                {
+                    return Some(selected);
+                }
                 for (block, is_then) in [(*then_block, true), (*else_block, false)] {
                     let block = pool.block(block);
                     if contains(block.span) {

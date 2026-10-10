@@ -501,25 +501,40 @@ fn lambda_arguments_are_frozen_without_claiming_closure_execution_support() {
 }
 
 #[test]
-fn unsupported_contexts_do_not_crash_or_execute_at_runtime() {
-    {
-        let owner =
-            "func main(): uint { for i in 0..count<comptime (42)>() { return i } return 0 }";
+fn computed_arguments_in_loop_and_pattern_headers_preserve_lexical_scope() {
+    for owner in [
+        "func main(): uint { for i in 0..count<comptime (42)>() { return i } return 0 }",
+        "func main(): uint { let mut sum: uint = 0; comptime for i in 0..count<comptime (2)>() { sum += i }; return sum }",
+        "func main(): uint { let mut i = 0; for i = count<comptime (0)>() as int; i < count<comptime (2)>() as int; i = i + count<comptime (1)>() as int {} return i as uint }",
+        "func main(): uint { if Option.Some(count<comptime (42)>()) is Option.Some(value) { return value } return 0 }",
+        "func main(): uint { while Option.Some(count<comptime (42)>()) is Option.Some(value) { return value } return 0 }",
+        "func main(): uint { let x = Option.Some(42); if x is Option.Some(value) && count<comptime (1)>() == 1 { return value } return 0 }",
+    ] {
         let mut db = DatabaseImpl::new();
-        let file = db.new_file("arguments.aru".into(), format!("{COUNT}{owner}"));
+        let file = db.new_file("header-arguments.aru".into(), format!("{COUNT}{owner}"));
+        assert!(passes::parse(&db, file).is_ok(), "{owner}: {:?}", passes::parse(&db, file).as_ref().err());
+        assert!(errors(&db, file).is_empty(), "{owner}: {:?}", errors(&db, file));
+        let output = runtime::runtime_program(&db, file);
+        assert!(output.diagnostics.is_empty(), "{owner}: {:?}", output.diagnostics);
+    }
+    for owner in [
+        "func main(): uint { for value in 0..count<comptime (value)>() { return value } return 0 }",
+        "func main(): uint { for let value = 1; count<comptime (value)>() > 0; value = 0 {} return 0 }",
+        "func main(): uint { if Option.Some(1) is Option.Some(value) && count<comptime (value)>() > 0 { return 1 } return 0 }",
+        "func main(): uint { while Option.Some(1) is Option.Some(value) && count<comptime (value)>() > 0 { return 1 } return 0 }",
+    ] {
+        let mut db = DatabaseImpl::new();
+        let file = db.new_file("capture-header-arguments.aru".into(), format!("{COUNT}const value uint = 42\n{owner}"));
+        assert!(passes::parse(&db, file).is_ok(), "{owner}: {:?}", passes::parse(&db, file).as_ref().err());
         let diagnostics = errors(&db, file);
-        assert!(
-            diagnostics
-                .iter()
-                .any(|d| d.code == DiagCode::T042UnsupportedComptime),
-            "{owner}: {diagnostics:?}"
-        );
-        assert!(
-            diagnostics
-                .iter()
-                .all(|d| !d.code.as_str().starts_with("ICE")),
-            "{owner}: {diagnostics:?}"
-        );
+        // The incoming range expression sees the global; the new range binding
+        // enters scope only in the body. C-style and pattern later clauses see
+        // their runtime bindings and must reject them as captures.
+        if owner.contains("for value in") {
+            assert!(diagnostics.is_empty(), "{owner}: {diagnostics:?}");
+        } else {
+            assert!(diagnostics.iter().any(|d| d.code == DiagCode::T043ComptimeRuntimeCapture), "{owner}: {diagnostics:?}");
+        }
     }
 }
 

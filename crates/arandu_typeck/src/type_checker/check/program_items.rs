@@ -195,11 +195,11 @@ pub fn check_residual_loop_body(
     program: &Program,
     owner: SymbolId,
     block: &arandu_parser::Block,
-    iteration: (SymbolId, arandu_middle::ctfe::ConstInt),
+    iteration: (SymbolId, arandu_middle::types::TypeId),
     target: TargetInfo,
     substitution: &arandu_middle::types::GenericSubst,
 ) -> TypeCheckResult {
-    let (binding, value) = iteration;
+    let (binding, ty) = iteration;
     let mut checker = TypeChecker::new(
         Arc::clone(&initial.symbols),
         Arc::clone(&initial.resolved),
@@ -213,9 +213,7 @@ pub fn check_residual_loop_body(
     for (&symbol, &ty) in &checker.type_info.decl_types {
         checker.ctx.bind(symbol, ty);
     }
-    let ty = checker.intern(arandu_middle::types::ArType::Primitive(
-        value.ty().primitive(),
-    ));
+
     checker.ctx.bind(binding, ty);
     checker.record_decl_type(binding, ty);
     if let Some(TopLevelDecl::Func(function)) =

@@ -1,7 +1,9 @@
 //! Shared lifetime admission for invocation-owned aggregate scratch storage.
 //! Target backends supply their result ABI, not a second ownership checker.
 use arandu_middle::amir::{AmirFunc, AmirOperand, AmirRvalue, AmirStmt, AmirTerminator, TempId};
-use arandu_middle::layout::{StructLayoutProvider, instantiated_field_type};
+use arandu_middle::layout::{
+    StructLayoutProvider, instantiated_enum_variant_payload_type, instantiated_field_type,
+};
 use arandu_middle::types::{ArType, TypeInterner};
 use arandu_middle::types::{Primitive, TypeId};
 use arandu_middle::{SymbolKind, SymbolTable};
@@ -58,10 +60,14 @@ pub fn scratch_type_safe(
                     provider
                         .get_enum_variants_for_type(&owner, interner)
                         .is_some_and(|variants| {
-                            variants.iter().all(|variant| {
-                                variant
-                                    .payload_ty
-                                    .is_none_or(|inner| visit(inner, interner, provider, depth + 1))
+                            variants.iter().enumerate().all(|(tag, variant)| {
+                                variant.payload_ty.is_none()
+                                    || instantiated_enum_variant_payload_type(
+                                        &owner, tag, interner, provider,
+                                    )
+                                    .is_some_and(|inner| {
+                                        visit(inner, interner, provider, depth + 1)
+                                    })
                             })
                         })
                 }
@@ -658,6 +664,45 @@ mod tests {
         let pointer = interner.intern(ArType::Ptr(byte));
         let array = interner.intern(ArType::Array(4, pointer));
         assert!(scratch_type_safe(array, &interner, &info));
+    }
+
+    #[test]
+    fn generic_enum_payloads_use_concrete_lifetime_shapes() {
+        use arandu_typeck::EnumPayloadShape;
+        use std::sync::Arc;
+
+        let mut info = TypeInfo::default();
+        let interner = &info.type_interner;
+        let owner = SymbolId::new(0, 20);
+        let parameter = SymbolId::new(0, 21);
+        let unit = SymbolId::new(0, 22);
+        let payload = SymbolId::new(0, 23);
+        let generic = interner.intern(ArType::Named(parameter, crate::hir::IndexRange::empty()));
+        info.generic_params.insert(owner, Arc::new(vec![parameter]));
+        info.enum_variants
+            .insert(unit, (owner, EnumPayloadShape::Unit));
+        info.enum_variants
+            .insert(payload, (owner, EnumPayloadShape::Tuple(vec![generic])));
+        info.enum_variant_tags.insert(unit, 0);
+        info.enum_variant_tags.insert(payload, 1);
+        let int = interner.intern(ArType::Primitive(Primitive::Int));
+        let closed = interner.intern(ArType::Array(4, int));
+        for (argument, admitted) in [
+            (closed, true),
+            (interner.intern(ArType::Primitive(Primitive::Str)), false),
+            (interner.intern(ArType::Ref(int)), false),
+            (interner.intern(ArType::Slice(int)), false),
+            (interner.intern(ArType::Coroutine(int)), false),
+        ] {
+            let enum_ty =
+                interner.intern(ArType::Named(owner, interner.push_type_args(&[argument])));
+            assert_eq!(scratch_type_safe(enum_ty, interner, &info), admitted);
+        }
+        let malformed = interner.intern(ArType::Named(
+            owner,
+            interner.push_type_args(&[closed, int]),
+        ));
+        assert!(!scratch_type_safe(malformed, interner, &info));
     }
 
     #[test]

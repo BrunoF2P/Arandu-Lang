@@ -410,6 +410,25 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
         index: &AmirOperand,
         expected_ty: Option<Type>,
     ) -> Value {
+        let (target_ptr, elem_ty) = self.translate_index_address(base, index);
+        if self.is_inline_aggregate_ty(&elem_ty) {
+            return target_ptr;
+        }
+        self.builder.ins().load(
+            expected_ty.unwrap_or(self.ptr_type),
+            cranelift_codegen::ir::MemFlagsData::new(),
+            target_ptr,
+            0,
+        )
+    }
+
+    /// Shared bounds-checked address calculation for scalar, aggregate and
+    /// fat-string element loads. The latter needs both target ABI words.
+    pub(in crate::translator) fn translate_index_address(
+        &mut self,
+        base: &AmirOperand,
+        index: &AmirOperand,
+    ) -> (Value, ArType) {
         let mut ptr_val = self.translate_operand(base, Some(self.ptr_type));
         let mut idx_val = self.translate_operand(index, Some(self.ptr_type));
         let idx_ty = self.builder.func.dfg.value_type(idx_val);
@@ -507,16 +526,6 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
         let offset_val = self.builder.ins().imul(idx_val, elem_size);
         let target_ptr = self.builder.ins().iadd(ptr_val, offset_val);
 
-        if self.is_inline_aggregate_ty(&elem_ty) {
-            return target_ptr;
-        }
-
-        let clif_ty = expected_ty.unwrap_or(self.ptr_type);
-        self.builder.ins().load(
-            clif_ty,
-            cranelift_codegen::ir::MemFlagsData::new(),
-            target_ptr,
-            0,
-        )
+        (target_ptr, elem_ty)
     }
 }

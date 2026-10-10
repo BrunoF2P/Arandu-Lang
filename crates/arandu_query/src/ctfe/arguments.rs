@@ -90,7 +90,7 @@ pub(crate) fn select_arguments_in_occurrence(
     owner: SymbolId,
     instance: Option<&arandu_middle::types::FunctionInstance>,
     branches: &super::StaticBranches,
-    occurrence: &[(u32, arandu_middle::ctfe::ConstInt)],
+    occurrence: &[(u32, super::FrozenConstant, u64)],
 ) -> HashEq<ConstArguments> {
     select_arguments_in_context(
         db,
@@ -109,7 +109,7 @@ pub(crate) fn select_arguments_in_context(
     owner: SymbolId,
     instance: Option<&arandu_middle::types::FunctionInstance>,
     branches: &super::StaticBranches,
-    occurrence: &[(u32, arandu_middle::ctfe::ConstInt)],
+    occurrence: &[(u32, super::FrozenConstant, u64)],
     context: &super::DependencyContext,
 ) -> HashEq<ConstArguments> {
     let source = crate::passes::item_source_input(db, file, owner);
@@ -188,7 +188,9 @@ pub(crate) fn select_arguments_in_context(
             || enclosing
                 .iter()
                 .zip(occurrence)
-                .any(|(ordinal, (selected, _))| usize::try_from(*selected).ok() != Some(*ordinal))
+                .any(|(ordinal, (selected, _, _))| {
+                    usize::try_from(*selected).ok() != Some(*ordinal)
+                })
         {
             continue;
         }
@@ -213,7 +215,11 @@ pub(crate) fn select_arguments_in_context(
             None,
             context.clone(),
         );
-        let budget = super::public::staging_budget(roots.len(), !occurrence.is_empty());
+        let budget = super::public::staging_budget(
+            super::config::public_budget(db),
+            roots.len(),
+            super::public::iteration_count(occurrence),
+        );
         match super::ctfe_eval_root(db, CtfeRootRequest::new(db, root, budget)) {
             Ok(value @ ConstValue::Integer(integer)) => {
                 if let Ok(number) = integer.to_const_generic() {

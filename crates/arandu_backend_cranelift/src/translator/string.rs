@@ -143,6 +143,18 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                     (loaded_ptr, loaded_len)
                 }
             }
+            AmirRvalue::IndexAccess { base, index } => {
+                let (address, _) = self.translate_index_address(base, index);
+                let flags = cranelift_codegen::ir::MemFlagsData::new();
+                let ptr = self.builder.ins().load(self.ptr_type, flags, address, 0);
+                let len = self.builder.ins().load(
+                    self.ptr_type,
+                    flags,
+                    address,
+                    self.ptr_type.bytes() as i32,
+                );
+                (ptr, len)
+            }
             AmirRvalue::FieldAccess { base, field } => {
                 let ptr_val = self.translate_operand(base, Some(self.ptr_type));
                 let base_ty = match base {

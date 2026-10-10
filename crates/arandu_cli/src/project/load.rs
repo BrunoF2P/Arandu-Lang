@@ -65,6 +65,7 @@ pub struct ProjectContext {
 /// Shared flags for project / doctor commands.
 #[derive(Debug, Clone, Default)]
 pub struct ProjectFlags {
+    pub ctfe_limits: arandu_query::ctfe::CtfeLimits,
     pub stdlib_path: Option<PathBuf>,
     pub cache_dir: Option<PathBuf>,
     pub release: bool,
@@ -173,6 +174,7 @@ pub fn load_project(
     start: &Path,
     flags: &ProjectFlags,
 ) -> Result<ProjectContext, String> {
+    db.set_ctfe_limits(flags.ctfe_limits);
     if let Some(triple) = &flags.target {
         let identity =
             arandu_middle::db::TargetIdentity::from_triple(triple).map_err(str::to_owned)?;

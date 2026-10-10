@@ -55,7 +55,10 @@ impl LowerCtx<'_> {
                 span,
             )
         };
-        let HirForClause::In { bindings, .. } = clause else {
+        let HirForClause::In {
+            bindings, iterable, ..
+        } = clause
+        else {
             return Err(invalid());
         };
         let [binding] = self.hir.pool.for_bindings_list(*bindings) else {
@@ -97,6 +100,24 @@ impl LowerCtx<'_> {
         if count == 0 {
             return Ok(());
         }
+        let array_operand = match self
+            .tc
+            .type_info
+            .type_interner
+            .resolve(self.hir.pool.expr(*iterable).ty)
+        {
+            arandu_middle::types::ArType::Array(len, _) => {
+                if lower.value() != 0 || i128::from(len) != upper.value() {
+                    return Err(Diagnostic::ice(
+                        DiagCode::ICEL001,
+                        "static array length differs from its frozen domain",
+                        span,
+                    ));
+                }
+                Some(self.lower_expr(*iterable, None, symbols)?)
+            }
+            _ => None,
+        };
         let saved_product = self.static_expansion_product;
         self.static_expansion_product = product;
         self.static_expansion_depth += 1;
@@ -124,7 +145,15 @@ impl LowerCtx<'_> {
                     .ok_or_else(invalid)?;
                 let literal = self.intern_literal_int(value.to_string());
                 let temp = self.new_temp_id(binding.ty);
-                self.emit_assign_temp(temp, AmirRvalue::Use(AmirOperand::Constant(literal)));
+                let initialization = if let Some(base) = array_operand {
+                    AmirRvalue::IndexAccess {
+                        base,
+                        index: AmirOperand::Constant(literal),
+                    }
+                } else {
+                    AmirRvalue::Use(AmirOperand::Constant(literal))
+                };
+                self.emit_assign_temp(temp, initialization);
                 self.write_variable_source(local, AmirOperand::Copy(temp))?;
                 self.lower_block(body, symbols)?;
                 self.end_local_scope();

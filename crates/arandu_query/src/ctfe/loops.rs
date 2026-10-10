@@ -14,14 +14,23 @@ pub const MAX_STATIC_ITERATIONS: u64 = 4096;
 
 #[derive(Debug, Clone, Default)]
 pub struct StaticLoops {
+    pub arrays: FxHashMap<NodeKey, arandu_middle::ctfe::ConstAggregate>,
     pub domains: FxHashMap<NodeKey, (ConstInt, ConstInt)>,
     pub diagnostics: Vec<Diagnostic>,
+}
+
+impl StaticLoops {
+    pub(crate) fn empty_domain(&self, node: &NodeKey) -> bool {
+        self.domains
+            .get(node)
+            .is_some_and(|(lower, upper)| upper.value() <= lower.value())
+    }
 }
 
 impl StableHash for StaticLoops {
     fn stable_hash(&self) -> blake3::Hash {
         let mut h = blake3::Hasher::new();
-        h.update(b"StaticLoops/v1");
+        h.update(b"StaticLoops/v2");
         let mut domains: Vec<_> = self.domains.iter().collect();
         domains.sort_by_key(|(key, _)| (key.start, key.end));
         for (key, (lower, upper)) in domains {
@@ -29,6 +38,13 @@ impl StableHash for StaticLoops {
             h.update(&key.end.to_le_bytes());
             h.update(&ConstValue::Integer(*lower).canonical_bytes());
             h.update(&ConstValue::Integer(*upper).canonical_bytes());
+        }
+        let mut arrays: Vec<_> = self.arrays.iter().collect();
+        arrays.sort_by_key(|(key, _)| (key.start, key.end));
+        for (key, value) in arrays {
+            h.update(&key.start.to_le_bytes());
+            h.update(&key.end.to_le_bytes());
+            h.update(&ConstValue::Aggregate(value.clone()).canonical_bytes());
         }
         h.update(self.diagnostics.stable_hash().as_bytes());
         h.finalize()
@@ -42,6 +58,7 @@ fn cycle(
     _owner: SymbolId,
 ) -> HashEq<StaticLoops> {
     HashEq::new(StaticLoops {
+        arrays: FxHashMap::default(),
         domains: FxHashMap::default(),
         diagnostics: vec![Diagnostic::error(
             DiagCode::T044ComptimeEvaluationFailed,
@@ -78,7 +95,7 @@ pub(crate) fn select_loops_in_occurrence(
     owner: SymbolId,
     instance: Option<&arandu_middle::types::FunctionInstance>,
     branches: &super::StaticBranches,
-    occurrence: &[(u32, ConstInt)],
+    occurrence: &[(u32, super::FrozenConstant, u64)],
 ) -> HashEq<StaticLoops> {
     select_loops_in_context(
         db,
@@ -97,7 +114,7 @@ pub(crate) fn select_loops_in_context(
     owner: SymbolId,
     instance: Option<&arandu_middle::types::FunctionInstance>,
     branches: &super::StaticBranches,
-    occurrence: &[(u32, ConstInt)],
+    occurrence: &[(u32, super::FrozenConstant, u64)],
     context: &super::DependencyContext,
 ) -> HashEq<StaticLoops> {
     let parsed = crate::passes::parse(db, file);
@@ -133,8 +150,11 @@ pub(crate) fn select_loops_in_context(
         ));
         return HashEq::new(result);
     }
-    let budget =
-        super::public::staging_budget(loops.len().saturating_mul(2), !occurrence.is_empty());
+    let budget = super::public::staging_budget(
+        super::config::public_budget(db),
+        loops.len().saturating_mul(2),
+        super::public::iteration_count(occurrence),
+    );
     let discarded: Vec<_> = super::roots::static_ifs(&program.pool, body.span)
         .into_iter()
         .filter_map(|stmt| {
@@ -171,7 +191,9 @@ pub(crate) fn select_loops_in_context(
             || enclosing
                 .iter()
                 .zip(occurrence)
-                .any(|(ordinal, (selected, _))| usize::try_from(*selected).ok() != Some(*ordinal))
+                .any(|(ordinal, (selected, _, _))| {
+                    usize::try_from(*selected).ok() != Some(*ordinal)
+                })
         {
             continue;
         }
@@ -191,22 +213,78 @@ pub(crate) fn select_loops_in_context(
             result.diagnostics.push(unsupported(span));
             continue;
         };
-        if bindings.len() != 1
-            || bindings[0].mutable
-            || !matches!(
-                program.pool.expr(*iterable),
-                arandu_parser::ExprKind::Binary {
-                    op: arandu_parser::BinaryOp::RangeExclusive,
-                    ..
-                }
-            )
-        {
+        if bindings.len() != 1 || bindings[0].mutable {
             result.diagnostics.push(unsupported(span));
             continue;
         }
         let Ok(ordinal) = u32::try_from(ordinal) else {
             continue;
         };
+        if !matches!(
+            program.pool.expr(*iterable),
+            arandu_parser::ExprKind::Binary {
+                op: arandu_parser::BinaryOp::RangeExclusive,
+                ..
+            }
+        ) {
+            let selector = instance.map_or(RootSelector::StaticForDomain(ordinal), |instance| {
+                RootSelector::InInstance {
+                    instance: instance.clone(),
+                    selector: Box::new(RootSelector::StaticForDomain(ordinal)),
+                }
+            });
+            let root = CtfeRoot::new_in_context(
+                db,
+                file,
+                owner,
+                super::roots::in_occurrence(selector, occurrence),
+                None,
+                context.clone(),
+            );
+            match super::ctfe_eval_root(db, CtfeRootRequest::new(db, root, budget)) {
+                Ok(ConstValue::Aggregate(array))
+                    if matches!(array.shape(), arandu_middle::types::TypeShape::Array(..)) =>
+                {
+                    let Ok(count) = u64::try_from(array.values().len()) else {
+                        result.diagnostics.push(unsupported(span));
+                        continue;
+                    };
+                    if count > MAX_STATIC_ITERATIONS {
+                        result.diagnostics.push(
+                            Diagnostic::error(
+                                DiagCode::T045ComptimeLimitExceeded,
+                                "static loop exceeds the iteration limit",
+                                span,
+                            )
+                            .with_primary_label("at most 4096 iterations per expansion"),
+                        );
+                        continue;
+                    }
+                    let int = arandu_middle::ctfe::IntegerType::new(
+                        arandu_middle::types::Primitive::Int,
+                        *db.target_config().data_layout(db),
+                    );
+                    let bounds = int.and_then(|int| {
+                        Ok((
+                            ConstInt::new(int, 0)?,
+                            ConstInt::new(int, i128::from(count))?,
+                        ))
+                    });
+                    match bounds {
+                        Ok(bounds) => {
+                            result.domains.insert(span.into(), bounds);
+                            result.arrays.insert(span.into(), array.clone());
+                        }
+                        Err(_) => result.diagnostics.push(unsupported(span)),
+                    }
+                }
+                Ok(_) => result.diagnostics.push(unsupported(span)),
+                Err(error) => {
+                    super::public::append_failure(&mut result.diagnostics, error.clone(), span)
+                }
+            }
+            continue;
+        }
         let mut bounds = Vec::with_capacity(2);
         for upper in [false, true] {
             let selector = instance.map_or(
@@ -314,8 +392,46 @@ fn is_integer_literal(
 fn unsupported(span: Span) -> Diagnostic {
     Diagnostic::error(
         DiagCode::T042UnsupportedComptime,
-        "comptime for requires one immutable binding over a finite half-open integer range",
+        "comptime for requires one immutable binding over a finite half-open integer range or frozen Copy array",
         span,
     )
-    .with_primary_label("use comptime for item in start..end")
+    .with_primary_label("use comptime for item in start..end or a fixed Copy array")
+}
+
+/// Freeze the iterator itself so residual code never calls its pure producer.
+/// The AST expression and its semantic type stay in the destination domain.
+pub(crate) fn install_array_values(
+    checked: &mut arandu_typeck::TypeCheckResult,
+    program: &arandu_parser::Program,
+    loops: &StaticLoops,
+    layout: arandu_middle::DataLayout,
+) {
+    for statement in &program.pool.stmts {
+        let Stmt::For {
+            span,
+            clause: ForClause::In { iterable, .. },
+            ..
+        } = statement
+        else {
+            continue;
+        };
+        let Some(value) = loops.arrays.get(&(*span).into()) else {
+            continue;
+        };
+        match value.shape().intern(&checked.type_info.type_interner) {
+            Ok(ty) => {
+                let info = checked.type_info_mut();
+                info.record_expr_type(*iterable, ty);
+                info.ctfe_values.insert(
+                    program.pool.expr_span(*iterable),
+                    (ConstValue::Aggregate(value.clone()), layout),
+                );
+            }
+            Err(_) => checked.diagnostics.push(Diagnostic::error(
+                DiagCode::T042UnsupportedComptime,
+                "static array domain has an unsupported element type",
+                *span,
+            )),
+        }
+    }
 }

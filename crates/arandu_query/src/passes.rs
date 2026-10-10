@@ -538,10 +538,11 @@ pub fn resolve(db: &dyn ArandCompilerDb, file: SourceFile) -> HashEq<ResolutionR
                                     arandu_parser::Stmt::For { span, body, .. }
                                         if arandu_middle::NodeKey::from(*span) == *key =>
                                     {
-                                        crate::ctfe::roots::loop_requires_occurrences(
-                                            &program.pool,
-                                            body,
-                                        )
+                                        loops.empty_domain(key)
+                                            || crate::ctfe::roots::loop_requires_occurrences(
+                                                &program.pool,
+                                                body,
+                                            )
                                     }
                                     _ => false,
                                 }) && !program.pool.exprs.iter().zip(&program.pool.expr_spans).any(

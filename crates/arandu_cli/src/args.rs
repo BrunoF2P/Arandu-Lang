@@ -116,6 +116,7 @@ pub fn parse_invocation(raw_args: impl IntoIterator<Item = String>) -> CliInvoca
     let mut args = Vec::new();
     let mut program_args = Vec::new();
     let mut z_flags: Vec<String> = Vec::new();
+    let mut ctfe_budget = arandu_query::ctfe::CtfeLimits::default().budget();
     let mut layout_flags: Vec<String> = Vec::new();
     let mut raw_project_flags: Vec<String> = Vec::new();
 
@@ -134,6 +135,38 @@ pub fn parse_invocation(raw_args: impl IntoIterator<Item = String>) -> CliInvoca
             continue;
         }
         match arg.as_str() {
+            s if s == "--ctfe-fuel"
+                || s.starts_with("--ctfe-fuel=")
+                || s == "--ctfe-frames"
+                || s.starts_with("--ctfe-frames=")
+                || s == "--ctfe-values"
+                || s.starts_with("--ctfe-values=") =>
+            {
+                let (name, value) = if let Some(parts) = s.split_once('=') {
+                    parts
+                } else {
+                    i += 1;
+                    let value = raw_args_vec
+                        .get(i)
+                        .unwrap_or_else(|| fail_usage(format!("{s} requires a positive integer")));
+                    (s, value.as_str())
+                };
+                let value = value
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .unwrap_or_else(|| fail_usage(format!("{name} requires a positive integer")));
+                match name {
+                    "--ctfe-fuel" => ctfe_budget.fuel = value,
+                    "--ctfe-values" => ctfe_budget.values = value,
+                    "--ctfe-frames" => {
+                        ctfe_budget.frames = u32::try_from(value).unwrap_or_else(|_| {
+                            fail_usage("--ctfe-frames exceeds the supported integer range")
+                        })
+                    }
+                    _ => fail_usage("unknown CTFE limit option"),
+                }
+            }
             "--debug" => debug = true,
             "--opt" => opt = true,
             "--parallel" => parallel = true,
@@ -242,6 +275,12 @@ pub fn parse_invocation(raw_args: impl IntoIterator<Item = String>) -> CliInvoca
     let (mut project_flags, extra_positional) = project::parse_project_flags(&raw_project_flags)
         .unwrap_or_else(|message| fail_usage(format!("error: {message}")));
     let _ = extra_positional;
+    project_flags.ctfe_limits = arandu_query::ctfe::CtfeLimits::new(
+        ctfe_budget.fuel,
+        ctfe_budget.frames,
+        ctfe_budget.values,
+    )
+    .unwrap_or_else(|message| fail_usage(message));
     project_flags.color = color;
     project_flags.quiet = quiet;
     if layout_flags.is_empty()
@@ -379,6 +418,8 @@ pub fn global_help() -> &'static str {
         "  --release                  Build with speed optimizations (Cranelift + AMIR O2)\n",
         "  --stdlib-path <dir>        Override path to standard library\n",
         "  --cache-dir <dir>          Override compiler cache directory\n",
+        "  --ctfe-fuel N / --ctfe-frames N / --ctfe-values N\n",
+        "                             compile-time evaluation ceilings (positive integers)\n",
         "  --layout=host|ptr4|ptr8|i686  (default: host)\n",
         "                             layout model only; cross compiler/sysroot are external\n",
         "  --color=auto|always|never  Control ANSI color output (default: auto)\n",

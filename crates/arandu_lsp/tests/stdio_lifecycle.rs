@@ -3392,3 +3392,53 @@ fn stdio_signature_help_does_not_guess_an_unresolved_namespace_member() {
     assert!(response["result"].is_null(), "{response}");
     lsp.shutdown(3);
 }
+
+#[test]
+fn stdio_initialize_ctfe_limits_apply_to_document_diagnostics() {
+    let fixture = FixtureDir::new();
+    let uri = file_uri(&fixture.path().join("limits.aru"));
+    let mut lsp = LspProcess::spawn();
+    lsp.send(&json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "processId": null, "capabilities": {}, "initializationOptions": { "ctfe": { "fuel": 1 } } }
+    }));
+    assert!(lsp.wait_for_response(1).get("error").is_none());
+    lsp.send(&json!({ "jsonrpc": "2.0", "method": "initialized", "params": {} }));
+    lsp.send(&json!({
+        "jsonrpc": "2.0", "method": "textDocument/didOpen",
+        "params": { "textDocument": { "uri": uri, "languageId": "arandu", "version": 1,
+            "text": "func main(): int { return comptime (20 + 22) }\n" } }
+    }));
+    let publication = lsp.wait_for(|message| {
+        message.get("method").and_then(Value::as_str) == Some("textDocument/publishDiagnostics")
+            && message.pointer("/params/uri").and_then(Value::as_str) == Some(uri.as_str())
+    });
+    assert!(
+        publication["params"]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|diagnostic| diagnostic["code"] == "T045"),
+        "{publication}"
+    );
+    lsp.shutdown(2);
+}
+
+#[test]
+fn stdio_initialize_rejects_invalid_ctfe_limits_with_invalid_params() {
+    for ctfe in [
+        json!({"fuel": 0}),
+        json!({"frames": 4294967296u64}),
+        json!({"values": -1}),
+        json!({"typo": 10}),
+        json!(true),
+    ] {
+        let mut lsp = LspProcess::spawn();
+        lsp.send(&json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": { "processId": null, "capabilities": {}, "initializationOptions": { "ctfe": ctfe } }
+        }));
+        let response = lsp.wait_for_response(1);
+        assert_eq!(response["error"]["code"], -32602, "{response}");
+    }
+}

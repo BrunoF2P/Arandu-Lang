@@ -110,7 +110,7 @@ a única autoridade para ordem e status.
 
 | Gate | Estado | Entrega e condição para avançar |
 | --- | --- | --- |
-| CT.0 — contrato e staging | `in progress`; recorte escalar aprovado, desenho amplo aberto | O mantenedor aprovou expressões/blocos escalares e retornos locais; gramática e limites desse corte estão no contrato de comptime core. Fechar efeitos ampliados, const generics, configuração de orçamento e o restante da RFC antes de ampliar a superfície. A aprovação parcial não aceita a RFC inteira. |
+| CT.0 — contrato e staging | `in progress`; recorte escalar aprovado, desenho amplo aberto | O mantenedor aprovou expressões/blocos escalares e retornos locais; gramática e limites desse corte estão no contrato de comptime core. Fechar efeitos ampliados, metaprogramação geral e o restante da RFC antes de ampliar a superfície. A aprovação parcial não aceita a RFC inteira. |
 | CT.1 — alvo e layout | `in progress`; validação e intrínsecos com layout completo | CTFE rejeita tamanhos/alinhamentos inconsistentes em `DataLayout`; unidades runtime/CTFE compartilham `LayoutEngine` com o layout completo, incluindo i686. OS/arquitetura e largura do ponteiro são inputs explícitos, expostos por intrínsecos públicos e configurados pelos drivers. Preservar validação de alvos nas bordas, sem equiparar layout conhecido a codegen nativo suportado. |
 | CT.2 — VM AMIR pura | `done` no recorte de valores; gates locais verdes | CFG, chamadas diretas, locais, fuel, limites de frames/slots/handles e cancelamento. Tuplas, structs Copy fechadas e arrays usam valores limitados; strings/views imutáveis contabilizam backing. Floats IEEE usam software e bits tipados, sem aritmética do host. Oráculos residuais comparam C/Cranelift/Wasm em O0/O1/O2. Recursos de runtime e closures permanecem fora da admissão. |
 | CT.3 — superfície e especialização | `done` no recorte CT.3a/b/c/d; gates locais verdes | Expressões/blocos públicos, retornos locais e argumentos de valor calculados usam raízes isoladas e identidade estrutural existente. Instâncias concretas selecionam condições dependentes e congelam argumentos antes do corpo residual. Match arms preservam escopo; `comptime for` expande domínios inteiros finitos, com locais frescos, drops e saídas estruturadas. Lambdas têm seleção/capturas preparadas, mas execução continua U001 até closures em 0.3. Raízes aninhadas, dimensões calculadas e cabeçalhos dependentes de funções, structs, enums e aliases têm continuação por contrato concreto. Argumentos em headers de padrões/loops e configurações públicas de orçamento permanecem futuros. |
@@ -171,9 +171,16 @@ usam um caminho causal imutável e diagnósticos T044/T045; limites de VM contin
 independentes. Detalhes e regressões estão no
 [contrato técnico](./arandu-comptime-core-v0.1.md#dependent-declaration-contracts).
 
-**Lacunas restantes:** configuração pública de budgets, contextos de staging
-fora do recorte atual e provas dos casos de armazenamento acima, além da matriz
-nativa/playground/release. Ampliar a superfície exige preservar os contratos de
+Budgets públicos estão conectados à CLI, LSP, extensão e API web como inputs
+Salsa; alterações invalidam também o cache de build. Argumentos calculados em
+headers de padrões/loops preservam escopo e capturas. Iteração estática sobre
+arrays Copy fixos, inclusive aninhados, congela o produtor e usa chaves estruturais
+por ocorrência; domínios vazios descartam o corpo. O playground usa identidade
+explícita wasm32, independente do host. O corpus instalado inclui esses caminhos.
+
+**Lacunas restantes:** provas dos casos de armazenamento acima e validação da
+matriz nativa/release. Contextos fora das formas documentadas exigem desenho e
+regressões próprios. Ampliar a superfície exige preservar os contratos de
 query, ownership, alvo e paridade; remover diagnósticos não substitui essas provas.
 
 **Escopo de produto proposto:** expressões/blocos `comptime`, parâmetros de valor
@@ -181,7 +188,7 @@ inteiros compatíveis com os const generics atuais, decisões/iterações estát
 finitas e introspecção de layout. A RFC fecha a diferença entre executar um bloco
 em compilação e selecionar/expandir instruções que rodarão em runtime.
 
-**Após a 0.1.9:** `@typeInfo` estrutural, OS/arch/ABI/capabilities públicos,
+**Após a 0.1.9:** `@typeInfo` estrutural, ABI/capabilities públicos,
 `quote`, splicing, `@Derive`, geração de items, inclusão de arquivos e JIT
 continuam fora deste núcleo, com desenho próprio.
 

@@ -71,6 +71,7 @@ pub fn cmd_doc(args: &[String], flags: &ProjectFlags, data_layout: DataLayout) -
 
     let mut db = DatabaseImpl::new();
     db.set_target_config(data_layout);
+    db.set_ctfe_limits(flags.ctfe_limits);
 
     // Documentation signatures resolve imported stdlib types through the
     // same registered source files as compilation. Point the DB at the root

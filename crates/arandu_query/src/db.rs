@@ -83,6 +83,11 @@ pub trait ArandCompilerDb: salsa::Database {
     fn as_db_impl(&self) -> Option<&DatabaseImpl> {
         None
     }
+    /// Registered driver policy; missing registration is a reportable invariant failure.
+    fn ctfe_config(&self) -> Option<crate::ctfe::CtfeConfig> {
+        self.as_db_impl().and_then(DatabaseImpl::ctfe_config)
+    }
+
     /// Salsa input for the compilation target. Defaults to the host layout;
     /// the CLI sets it from `--layout=` before any query runs.
     fn target_config(&self) -> TargetConfig {
@@ -166,6 +171,7 @@ pub struct DatabaseImpl {
     package_modules: Arc<RwLock<Option<PackageModuleMap>>>,
     /// Compilation target Salsa input (default: host layout). See [`Self::set_target_config`].
     target_config: Arc<RwLock<Option<TargetConfig>>>,
+    ctfe_config: Arc<RwLock<Option<crate::ctfe::CtfeConfig>>>,
 }
 
 // Manual Clone: Storage is cloneable; share Arc file registry + log + CST cache.
@@ -181,6 +187,7 @@ impl Clone for DatabaseImpl {
             module_roots: Arc::clone(&self.module_roots),
             package_modules: Arc::clone(&self.package_modules),
             target_config: Arc::clone(&self.target_config),
+            ctfe_config: Arc::clone(&self.ctfe_config),
         }
     }
 }
@@ -218,8 +225,10 @@ impl DatabaseImpl {
             module_roots: Arc::new(RwLock::new(None)),
             package_modules: Arc::new(RwLock::new(None)),
             target_config: Arc::new(RwLock::new(None)),
+            ctfe_config: Arc::new(RwLock::new(None)),
         };
         db.set_target_config(DataLayout::host());
+        db.set_ctfe_limits(crate::ctfe::CtfeLimits::default());
         db
     }
 
@@ -238,8 +247,10 @@ impl DatabaseImpl {
             module_roots: Arc::new(RwLock::new(None)),
             package_modules: Arc::new(RwLock::new(None)),
             target_config: Arc::new(RwLock::new(None)),
+            ctfe_config: Arc::new(RwLock::new(None)),
         };
         db.set_target_config(DataLayout::host());
+        db.set_ctfe_limits(crate::ctfe::CtfeLimits::default());
         (db, log)
     }
 
@@ -334,6 +345,35 @@ impl DatabaseImpl {
                 *slot = Some(input);
             }
         }
+    }
+
+    /// Change public CTFE policy before querying (drop snapshots before writes).
+    pub fn set_ctfe_limits(&mut self, limits: crate::ctfe::CtfeLimits) {
+        let existing = *self
+            .ctfe_config
+            .read()
+            .unwrap_or_else(|error| error.into_inner());
+        match existing {
+            Some(input) => {
+                input.set_limits(self).to(limits);
+            }
+            None => {
+                let input = crate::ctfe::CtfeConfig::new(self, limits);
+                *self
+                    .ctfe_config
+                    .write()
+                    .unwrap_or_else(|error| error.into_inner()) = Some(input);
+            }
+        }
+    }
+
+    /// Registered public CTFE policy input, shared by snapshots.
+    #[must_use]
+    pub fn ctfe_config(&self) -> Option<crate::ctfe::CtfeConfig> {
+        *self
+            .ctfe_config
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
     }
 
     /// Supply platform identity explicitly before requesting semantic queries.

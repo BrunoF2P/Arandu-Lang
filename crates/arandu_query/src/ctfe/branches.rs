@@ -71,7 +71,7 @@ pub(crate) fn select_branches_in_occurrence(
     file: SourceFile,
     owner: SymbolId,
     instance: Option<&arandu_middle::types::FunctionInstance>,
-    occurrence: &[(u32, arandu_middle::ctfe::ConstInt)],
+    occurrence: &[(u32, super::FrozenConstant, u64)],
 ) -> HashEq<StaticBranches> {
     select_branches_in_context(
         db,
@@ -88,7 +88,7 @@ pub(crate) fn select_branches_in_context(
     file: SourceFile,
     owner: SymbolId,
     instance: Option<&arandu_middle::types::FunctionInstance>,
-    occurrence: &[(u32, arandu_middle::ctfe::ConstInt)],
+    occurrence: &[(u32, super::FrozenConstant, u64)],
     context: &super::DependencyContext,
 ) -> HashEq<StaticBranches> {
     let parsed = crate::passes::parse(db, file);
@@ -145,7 +145,9 @@ pub(crate) fn select_branches_in_context(
             || enclosing
                 .iter()
                 .zip(occurrence)
-                .any(|(ordinal, (selected, _))| usize::try_from(*selected).ok() != Some(*ordinal))
+                .any(|(ordinal, (selected, _, _))| {
+                    usize::try_from(*selected).ok() != Some(*ordinal)
+                })
         {
             continue;
         }
@@ -174,7 +176,11 @@ pub(crate) fn select_branches_in_context(
             None,
             context.clone(),
         );
-        let budget = super::public::staging_budget(statements.len(), !occurrence.is_empty());
+        let budget = super::public::staging_budget(
+            super::config::public_budget(db),
+            statements.len(),
+            super::public::iteration_count(occurrence),
+        );
         let value = super::ctfe_eval_root(db, CtfeRootRequest::new(db, root, budget));
         let Stmt::If {
             then_block,

@@ -92,6 +92,7 @@ pub fn cmd_project_build(
 
     let session_config = crate::incremental::SessionConfig {
         project_root: &ctx.root,
+        ctfe_limits: flags.ctfe_limits,
         package: &ctx.name,
         version: &ctx.version,
         profile,

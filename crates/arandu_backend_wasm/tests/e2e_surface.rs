@@ -1336,3 +1336,38 @@ fn to_str_and_string_interp_with_f64_executes() {
     // "3.14159" has length 7
     assert_eq!(run_main_i32(&bytes), 7);
 }
+
+#[test]
+fn installed_comptime_corpus_executes_in_wasm() {
+    let bytes = compile_source(include_str!(
+        "../../../tests/projects/medium/comptime_core/src/main.aru"
+    ));
+    assert_eq!(run_main_i32(&bytes), 0);
+}
+
+#[test]
+fn runtime_range_loops_keep_ssa_values_and_exit_before_inclusive_overflow() {
+    let bytes = compile_source(
+        r#"
+func first(): int { for value in 0..2 { return value }; return 99 }
+func main(): int {
+    if first() != 0 { return 1 }
+    let max: u64 = 18446744073709551615
+    let mut visits = 0
+    for value in max..=max { if value != max { return 2 }; visits += 1 }
+    if visits != 1 { return 3 }
+    for value in 2..1 { return 4 }
+    visits = 0
+    for value in 1..=3 { if value == 2 { continue }; visits += value }
+    if visits != 4 { return 5 }
+    let mut sum = 0
+    for value in [20, 22] { sum += value }
+    if sum != 42 { return 6 }
+    sum = 0
+    for label in ["a", "b"] { if label == "a" { sum += 20 } else { sum += 22 } }
+    return sum - 42
+}
+"#,
+    );
+    assert_eq!(run_main_i32(&bytes), 0);
+}

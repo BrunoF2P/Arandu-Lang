@@ -7,7 +7,7 @@ use crate::{db::HashEq, ArandCompilerDb, SourceFile, StableHash};
 use arandu_middle::{ctfe::ConstValue, types::TypeShape, DiagCode, Diagnostic, Span, SymbolId};
 use arandu_typeck::TypeCheckResult;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FrozenConstant {
     pub value: ConstValue,
     pub shape: TypeShape,
@@ -122,10 +122,13 @@ pub(crate) fn global_const_value_in_context(
             .result
             .as_ref()
             .map_err(|error| super::RootEvalError::Build(error.clone()))?;
-        let value = super::ctfe_eval_root(db, CtfeRootRequest::new(db, root, super::PUBLIC_BUDGET))
-            .as_ref()
-            .map_err(Clone::clone)?
-            .clone();
+        let value = super::ctfe_eval_root(
+            db,
+            CtfeRootRequest::new(db, root, super::config::public_budget(db)),
+        )
+        .as_ref()
+        .map_err(Clone::clone)?
+        .clone();
         Ok(FrozenConstant {
             value,
             shape: unit.result_type_shape(),

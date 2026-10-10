@@ -70,15 +70,24 @@ impl FuncTranslator<'_> {
     pub(super) fn emit_block_args(&mut self, target: BlockId, args: &[AmirOperand]) {
         let target_block = &self.func.blocks[target.as_usize()];
         let block_params = self.func.block_params(target_block.params);
-        for (j, arg) in args.iter().enumerate() {
-            if j >= block_params.len() {
-                break;
+        // A back-edge can permute the destination parameters themselves.
+        // Keep every incoming value on the operand stack before writing any
+        // local, then consume the values in reverse order (parallel SSA copy).
+        for (arg, param) in args.iter().zip(block_params) {
+            if self.temp_local.contains_key(&param.id) {
+                self.emit_operand(arg, param.ty);
             }
-            let param = &block_params[j];
-            // Block params are ordinary temps; write the incoming value into the
-            // parameter temp's wasm local, where the target block reads it.
+        }
+        for param in block_params.iter().take(args.len()).rev() {
             if let Some(&local) = self.temp_local.get(&param.id) {
-                self.emit_operand_to_local(arg, param.ty, local);
+                match types::shape(param.ty, self.interner, self.layout_engine.data_layout) {
+                    Shape::Empty => {}
+                    Shape::Scalar => self.code.push(Instruction::LocalSet(local)),
+                    Shape::Fat => {
+                        self.code.push(Instruction::LocalSet(local + 1));
+                        self.code.push(Instruction::LocalSet(local));
+                    }
+                }
             }
         }
     }

@@ -115,14 +115,31 @@ impl<'a> FuncTranslator<'a> {
                 }
             }
             AmirRvalue::Len(op) => {
-                // For fat pointers: the len is the second slot (local+1).
-                if let AmirOperand::Copy(temp) | AmirOperand::Move(temp) = op
-                    && let Some(&base) = self.temp_local.get(temp)
+                let ty = self.operand_arity_ty(op);
+                if let ArType::Array(length, _) = self.interner.resolve(ty) {
+                    // Fixed arrays are addresses, not fat pointers. Their
+                    // length belongs to the type; local+1 is unrelated storage.
+                    if let Ok(length) = u32::try_from(length) {
+                        self.code.push(Instruction::I32Const(i32::from_le_bytes(
+                            length.to_le_bytes(),
+                        )));
+                    } else {
+                        // An unrepresentable wasm32 length must never truncate
+                        // into a valid length or read an unrelated local.
+                        self.code.push(Instruction::Unreachable);
+                    }
+                } else if types::shape(ty, self.interner, self.layout_engine.data_layout)
+                    == Shape::Fat
                 {
-                    self.code.push(Instruction::LocalGet(base + 1));
-                    return;
+                    // Load both words through the operand path so literal
+                    // strings and temporary views obey the same ABI.
+                    self.emit_operand(op, ty);
+                    self.code.push(Instruction::LocalSet(self.scratch));
+                    self.code.push(Instruction::Drop);
+                    self.code.push(Instruction::LocalGet(self.scratch));
+                } else {
+                    self.code.push(Instruction::Unreachable);
                 }
-                self.code.push(Instruction::I32Const(0));
             }
             AmirRvalue::SliceData(op) => {
                 // Data pointer is the first slot.

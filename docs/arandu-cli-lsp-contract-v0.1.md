@@ -96,3 +96,15 @@ de diagnóstico.
 
 Extrair contratos compartilhados somente quando houver segundo consumidor e
 preservar testes de erro, stale revision e worker survival.
+
+### Compile-time resource configuration
+
+The global CLI flags `--ctfe-fuel`, `--ctfe-frames`, and `--ctfe-values` accept
+positive integers; missing, zero, negative, malformed or overflowing values are
+usage failures (exit 2). They apply before analysis, including project and
+manifestless commands, and participate in incremental build fingerprints.
+LSP reads `initializationOptions.ctfe` with optional `fuel`, `frames`, and
+`values` fields. Invalid options return InvalidParams during initialization,
+without starting workspace discovery. VS Code supplies these through
+`arandu.comptime.*` settings on server start. Resource exhaustion in valid
+source configuration remains a structured T045 source diagnostic.

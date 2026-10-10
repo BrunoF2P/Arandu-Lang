@@ -33,7 +33,8 @@ pub struct BlockStep {
 pub enum RootSelector {
     InIteration {
         ordinal: u32,
-        value: arandu_middle::ctfe::ConstInt,
+        value: super::FrozenConstant,
+        domain_size: u64,
         selector: Box<RootSelector>,
     },
     InInstance {
@@ -47,6 +48,8 @@ pub enum RootSelector {
     HeaderArgument(u32),
     /// Lexical ordinal of a public static-if statement in the owner.
     StaticIfCondition(u32),
+    /// A frozen fixed-array domain, before runtime body typing.
+    StaticForDomain(u32),
     /// A finite half-open static range endpoint, before runtime body typing.
     StaticForBound {
         ordinal: u32,
@@ -140,12 +143,13 @@ pub(crate) fn source_selector(selector: &RootSelector) -> &RootSelector {
 
 pub(crate) fn in_occurrence(
     mut selector: RootSelector,
-    occurrence: &[(u32, arandu_middle::ctfe::ConstInt)],
+    occurrence: &[(u32, super::FrozenConstant, u64)],
 ) -> RootSelector {
-    for &(ordinal, value) in occurrence.iter().rev() {
+    for (ordinal, value, domain_size) in occurrence.iter().rev() {
         selector = RootSelector::InIteration {
-            ordinal,
-            value,
+            ordinal: *ordinal,
+            value: value.clone(),
+            domain_size: *domain_size,
             selector: Box::new(selector),
         };
     }
@@ -214,6 +218,20 @@ fn select<'a>(
     body: &'a Block,
     selector: &RootSelector,
 ) -> Result<Selected<'a>, BuildFailure> {
+    if let RootSelector::StaticForDomain(ordinal) = selector {
+        let statements = static_fors(&program.pool, body.span);
+        let statement = statements
+            .get(usize::try_from(*ordinal).map_err(|_| BuildFailure::InvalidRoot)?)
+            .ok_or(BuildFailure::InvalidRoot)?;
+        let Stmt::For {
+            clause: arandu_parser::ForClause::In { iterable, .. },
+            ..
+        } = statement
+        else {
+            return Err(BuildFailure::InvalidRoot);
+        };
+        return Ok(Selected::Expression(*iterable));
+    }
     if let RootSelector::StaticForBound { ordinal, upper } = selector {
         let statements = static_fors(&program.pool, body.span);
         let statement = statements
@@ -282,6 +300,7 @@ fn select<'a>(
         | RootSelector::PublicComptime(_)
         | RootSelector::StaticIfCondition(_)
         | RootSelector::StaticForBound { .. }
+        | RootSelector::StaticForDomain(_)
         | RootSelector::ConstArgument(_)
         | RootSelector::HeaderArgument(_)
         | RootSelector::GlobalInitializer => return Err(BuildFailure::InvalidRoot),
@@ -340,6 +359,7 @@ fn select<'a>(
         | RootSelector::PublicComptime(_)
         | RootSelector::StaticIfCondition(_)
         | RootSelector::StaticForBound { .. }
+        | RootSelector::StaticForDomain(_)
         | RootSelector::ConstArgument(_)
         | RootSelector::HeaderArgument(_)
         | RootSelector::GlobalInitializer => Err(BuildFailure::InvalidRoot),
@@ -388,20 +408,14 @@ pub(crate) fn const_arguments(
 /// Select a lexical occurrence without resolving its runtime container.
 /// Its initializer/condition is never resolved as part of argument staging.
 fn argument_statement(program: &Program, body: &Block, argument: Span) -> Option<Span> {
-    let stmt = program
+    program
         .pool
         .stmts
         .iter()
         .filter(|stmt| contains(body.span, stmt.span()) && contains(stmt.span(), argument))
         .min_by_key(|stmt| stmt.span().end - stmt.span().start)?;
-    // Pattern and loop headers may introduce names during the statement.
-    // Plain expression conditions use the enclosing lexical scope.
-    if matches!(stmt, Stmt::For { .. })
-        || matches!(stmt, Stmt::If { condition, .. } | Stmt::While { condition, .. }
-            if !matches!(condition, arandu_parser::Condition::Expr { .. }))
-    {
-        return None;
-    }
+    // Scope navigation admits headers and declares only bindings preceding the
+    // selected occurrence. Runtime initializers remain unevaluated captures.
     Some(argument)
 }
 
@@ -509,15 +523,25 @@ pub fn ctfe_root_amir<'db>(
             RootSelector::InIteration {
                 ordinal,
                 value,
+                domain_size,
                 selector,
             } => {
-                iterations.push((*ordinal, *value));
+                iterations.push((*ordinal, value.clone(), *domain_size));
                 wrapper = selector;
             }
             _ => break,
         }
     }
     let build = || {
+        if iterations.len() > super::MAX_QUERY_DEPENDENCY_DEPTH {
+            return Err(BuildFailure::Diagnostics(vec![
+                arandu_middle::Diagnostic::error(
+                    arandu_middle::DiagCode::T045ComptimeLimitExceeded,
+                    "static iteration staging exceeds its nesting limit",
+                    Span::new(*file.file_id(db), 0, 0),
+                ),
+            ]));
+        }
         if owner.file_id != *file.file_id(db) {
             return Err(BuildFailure::MissingFunction);
         }
@@ -554,6 +578,7 @@ pub fn ctfe_root_amir<'db>(
                 RootSelector::IfCondition { .. }
                     | RootSelector::StaticIfCondition(_)
                     | RootSelector::StaticForBound { .. }
+                    | RootSelector::StaticForDomain(_)
                     | RootSelector::ConstArgument(_)
                     | RootSelector::GlobalInitializer
                     | RootSelector::HeaderArgument(_)
@@ -678,7 +703,9 @@ pub fn ctfe_root_amir<'db>(
                 let Selected::Expression(expression) = selected else {
                     return Err(BuildFailure::InvalidRoot);
                 };
-                if let RootSelector::StaticForBound { ordinal, .. } = selector {
+                if let RootSelector::StaticForBound { ordinal, .. }
+                | RootSelector::StaticForDomain(ordinal) = selector
+                {
                     let statements = static_fors(
                         &program.pool,
                         body.ok_or(BuildFailure::MissingFunction)?.span,
@@ -710,11 +737,15 @@ pub fn ctfe_root_amir<'db>(
                     let (argument, _) = arguments
                         .get(usize::try_from(*ordinal).map_err(|_| BuildFailure::InvalidRoot)?)
                         .ok_or(BuildFailure::InvalidRoot)?;
-                    let statement = argument_statement(program, body, *argument).ok_or_else(|| BuildFailure::Diagnostics(vec![
-                    arandu_middle::Diagnostic::error(arandu_middle::DiagCode::T042UnsupportedComptime,
-                        "computed generic arguments are not supported in condition/loop headers or nested comptime expressions yet", *argument)
-                        .with_primary_label("unsupported argument staging context")
-                ]))?;
+                    let statement =
+                        argument_statement(program, body, *argument).ok_or_else(|| {
+                            BuildFailure::Diagnostics(vec![arandu_middle::Diagnostic::error(
+                                arandu_middle::DiagCode::T042UnsupportedComptime,
+                                "computed generic argument has no enclosing lexical statement",
+                                *argument,
+                            )
+                            .with_primary_label("unsupported argument staging context")])
+                        })?;
                     arandu_resolve::BodySelection::LexicalExpression {
                         owner,
                         expression,
@@ -737,6 +768,7 @@ pub fn ctfe_root_amir<'db>(
                 selector,
                 RootSelector::StaticIfCondition(_)
                     | RootSelector::StaticForBound { .. }
+                    | RootSelector::StaticForDomain(_)
                     | RootSelector::ConstArgument(_)
             ) && initial
                 .diagnostics
@@ -768,7 +800,15 @@ pub fn ctfe_root_amir<'db>(
                 .diagnostics
                 .extend(arguments.diagnostics.iter().cloned());
         }
-        if matches!(selector, RootSelector::ConstArgument(_)) {
+        if matches!(
+            selector,
+            RootSelector::ConstArgument(_)
+                | RootSelector::StaticIfCondition(_)
+                | RootSelector::StaticForBound { .. }
+                | RootSelector::StaticForDomain(_)
+        ) {
+            // Stage children of the selected header only. Requesting all body
+            // arguments here would re-enter parent-first branch/domain queries.
             let body_span = body.ok_or(BuildFailure::MissingFunction)?.span;
             let arguments = const_arguments(&program.pool, body_span);
             let nesting = arguments
@@ -803,7 +843,11 @@ pub fn ctfe_root_amir<'db>(
                     None,
                     root.dependency(db).clone(),
                 );
-                let budget = super::public::staging_budget(arguments.len(), !iterations.is_empty());
+                let budget = super::public::staging_budget(
+                    super::config::public_budget(db),
+                    arguments.len(),
+                    super::public::iteration_count(&iterations),
+                );
                 let value = ctfe_eval_root(db, CtfeRootRequest::new(db, child_root, budget))
                     .as_ref()
                     .map_err(|error| match error {
@@ -876,13 +920,13 @@ pub fn ctfe_root_amir<'db>(
             }
         }
         let mut iteration_symbols = Vec::new();
-        for &(ordinal, value) in &iterations {
+        for (ordinal, value, _) in &iterations {
             let loops = static_fors(
                 &program.pool,
                 body.ok_or(BuildFailure::MissingFunction)?.span,
             );
             let statement = loops
-                .get(usize::try_from(ordinal).map_err(|_| BuildFailure::InvalidRoot)?)
+                .get(usize::try_from(*ordinal).map_err(|_| BuildFailure::InvalidRoot)?)
                 .ok_or(BuildFailure::InvalidRoot)?;
             let Stmt::For {
                 clause: arandu_parser::ForClause::In { bindings, .. },
@@ -901,10 +945,10 @@ pub fn ctfe_root_amir<'db>(
                 .definitions
                 .get(&binding.span.into())
                 .ok_or(BuildFailure::InvalidRoot)?;
-            let ty = initial
-                .type_info
-                .type_interner
-                .intern(ArType::Primitive(value.ty().primitive()));
+            let ty = value
+                .shape
+                .intern(&initial.type_info.type_interner)
+                .map_err(|_| BuildFailure::InvalidRoot)?;
             initial.type_info_mut().decl_types.insert(symbol, ty);
             iteration_symbols.push((symbol, value));
         }
@@ -1065,16 +1109,37 @@ pub fn ctfe_root_amir<'db>(
                 ),
             };
         }
-        for expression in hir.pool.exprs.iter_mut() {
-            if let arandu_middle::hir::HirExprKind::Path { symbol } = expression.kind {
-                if let Some((_, value)) = iteration_symbols
+        let replacements: Vec<_> = hir
+            .pool
+            .exprs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, expression)| {
+                let arandu_middle::hir::HirExprKind::Path { symbol } = expression.kind else {
+                    return None;
+                };
+                let (_, frozen) = iteration_symbols
                     .iter()
-                    .find(|(binding, _)| *binding == symbol)
-                {
-                    expression.kind =
-                        arandu_middle::hir::HirExprKind::Int(value.value().to_string().into());
-                }
-            }
+                    .find(|(binding, _)| *binding == symbol)?;
+                Some((
+                    arandu_middle::hir::HirExprId::from_usize(index),
+                    expression.ty,
+                    expression.span,
+                    frozen.value.clone(),
+                ))
+            })
+            .collect();
+        for (id, ty, span, value) in replacements {
+            let replacement = arandu_semantics::passes::lower_hir::materialize_ctfe_value(
+                &value,
+                ty,
+                &checked.type_info,
+                &mut hir.pool,
+                layout,
+                span,
+            )
+            .map_err(|_| BuildFailure::InvalidRoot)?;
+            *hir.pool.expr_mut(id) = replacement;
         }
         super::link_extern_headers(db, &mut checked, &mut hir)?;
         let calls = arandu_semantics::passes::monomorphize::specialize_root_callees(
@@ -1199,6 +1264,7 @@ pub fn ctfe_eval_root<'db>(
             RootSelector::IfCondition { .. }
                 | RootSelector::StaticIfCondition(_)
                 | RootSelector::StaticForBound { .. }
+                | RootSelector::StaticForDomain(_)
                 | RootSelector::ConstArgument(_)
                 | RootSelector::GlobalInitializer
                 | RootSelector::HeaderArgument(_)

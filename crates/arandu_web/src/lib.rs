@@ -124,12 +124,33 @@ fn collect_web_diagnostics(
     web_diags
 }
 
+/// Every web entry point uses the emitted module's target, including IDE
+/// queries running in a native host process. Pointer width alone is not a
+/// platform identity for compile-time branch selection.
+fn configure_web_target(db: &mut DatabaseImpl) {
+    db.set_target_config(DataLayout::ptr_width(4));
+    db.set_target_identity(arandu_middle::db::TargetIdentity {
+        os: "unknown".into(),
+        arch: "wasm32".into(),
+    });
+}
+
 /// Compile surface Arandu source code in memory targeting WebAssembly (wasm32).
 #[must_use]
 pub fn compile_source(source: &str) -> WebCompileResult {
+    compile_source_with_limits(source, arandu_query::ctfe::CtfeLimits::default())
+}
+
+/// Compile using an explicit validated deterministic CTFE policy.
+#[must_use]
+pub fn compile_source_with_limits(
+    source: &str,
+    limits: arandu_query::ctfe::CtfeLimits,
+) -> WebCompileResult {
     let line_index = arandu_base::LineIndex::new(source);
     let mut db = DatabaseImpl::new();
-    db.set_target_config(DataLayout::ptr_width(4));
+    configure_web_target(&mut db);
+    db.set_ctfe_limits(limits);
     stdlib_core::register_embedded_core(&mut db);
     let file = db.new_file("playground.aru".into(), source.into());
 
@@ -221,7 +242,7 @@ pub fn compile_source(source: &str) -> WebCompileResult {
 #[must_use]
 pub fn completion_source(source: &str, offset: u32) -> Vec<arandu_ide::CompletionItem> {
     let mut host = arandu_query::AnalysisHost::new();
-    host.db_mut().set_target_config(DataLayout::ptr_width(4));
+    configure_web_target(host.db_mut());
     stdlib_core::register_embedded_core(host.db_mut());
     let file = host.new_file("playground.aru".into(), source.into());
     let snapshot = host.snapshot();
@@ -243,7 +264,7 @@ fn comptime_markdown(value: &arandu_ide::comptime::ComptimePresentation) -> Stri
 pub fn hover_source(source: &str, offset: u32) -> Option<WebHover> {
     let line_index = arandu_base::LineIndex::new(source);
     let mut host = arandu_query::AnalysisHost::new();
-    host.db_mut().set_target_config(DataLayout::ptr_width(4));
+    configure_web_target(host.db_mut());
     stdlib_core::register_embedded_core(host.db_mut());
     let file = host.new_file("playground.aru".into(), source.into());
     let snapshot = host.snapshot();
@@ -312,7 +333,7 @@ pub fn hover_source(source: &str, offset: u32) -> Option<WebHover> {
 #[must_use]
 pub fn signature_help_source(source: &str, offset: u32) -> Option<WebSignatureHelp> {
     let mut host = arandu_query::AnalysisHost::new();
-    host.db_mut().set_target_config(DataLayout::ptr_width(4));
+    configure_web_target(host.db_mut());
     stdlib_core::register_embedded_core(host.db_mut());
     let file = host.new_file("playground.aru".into(), source.into());
     let snapshot = host.snapshot();
