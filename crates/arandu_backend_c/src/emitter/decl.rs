@@ -200,10 +200,10 @@ impl<'a> CEmitter<'a> {
                 self.ensure_type_emitted(&ok_ty);
                 self.ensure_type_emitted(&err_ty);
             }
-            ArType::Named(id, _) => {
+            ArType::Named(_, _) => {
                 let field_names: Vec<_> = self
                     .provider
-                    .get_struct_fields(*id)
+                    .get_struct_fields_for_type(ty, self.interner)
                     .map(|fields| fields.fields.iter().map(|f| f.name.clone()).collect())
                     .unwrap_or_default();
                 for field_name in field_names {

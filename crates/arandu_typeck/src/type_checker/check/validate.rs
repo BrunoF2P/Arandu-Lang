@@ -662,7 +662,7 @@ fn type_contains_named_without_indirection(
                 return true;
             }
             if visited.insert(*id) {
-                if let Some(fields) = provider.get_struct_fields(*id) {
+                if let Some(fields) = provider.get_struct_fields_for_type(ty, interner) {
                     for f in fields.iter() {
                         let field_ty = interner.resolve(f.ty);
                         if type_contains_named_without_indirection(

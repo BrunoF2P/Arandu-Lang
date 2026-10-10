@@ -802,6 +802,7 @@ fn signatures_with_imports(
         }
     }
 
+    crate::ctfe::headers::defer_generic_headers(program, &mut checker);
     arandu_semantics::check_signatures(&mut checker, program);
     checker.finish()
 }
@@ -1330,11 +1331,40 @@ pub fn item_typing(
             );
         &staged
     };
-    let mut res = arandu_semantics::check_item_body_only(
+    let mut concrete;
+    let initial = if initial.type_info.deferred_headers.contains(&item_sym)
+        && !initial
+            .type_info
+            .generic_params
+            .get(&item_sym)
+            .is_some_and(|parameters| !parameters.is_empty())
+    {
+        concrete = initial.clone();
+        let key = arandu_middle::types::FunctionInstance {
+            definition: item_sym,
+            arguments: Vec::new(),
+        };
+        if let Err(errors) = crate::ctfe::contracts::prepare_owner(
+            db,
+            file,
+            &key,
+            &mut concrete,
+            &crate::ctfe::DependencyContext::default(),
+        ) {
+            concrete.diagnostics.extend(errors);
+            return HashEq::new(concrete);
+        }
+        &concrete
+    } else {
+        initial
+    };
+    let mut res = crate::ctfe::contracts::check_body(
+        db,
         initial,
         body_in.program.as_ref(),
         item_sym,
-        database_target_info(db),
+        &arandu_middle::types::GenericSubst::new(),
+        &crate::ctfe::DependencyContext::default(),
     );
     res.diagnostics
         .extend(arguments.diagnostics.iter().cloned());
@@ -1385,6 +1415,14 @@ fn compose_file_typing(
     let mut merged_resolved = Arc::clone(&signatures.resolved);
     let mut diagnostics = signatures.diagnostics.clone();
 
+    let mut item_spans = rustc_hash::FxHashMap::default();
+    program.for_each_decl_recursive(|_, declaration| {
+        if let Some(&owner) = arandu_semantics::primary_def_key(declaration)
+            .and_then(|key| signatures.resolved.definitions.get(&key))
+        {
+            item_spans.insert(owner, arandu_semantics::item_source_span(declaration));
+        }
+    });
     for &item_sym in &item_syms {
         db.unwind_if_revision_cancelled();
         let item = if declarations_only {
@@ -1393,6 +1431,42 @@ fn compose_file_typing(
             item_body_typeck(db, file, item_sym)
         };
         Arc::make_mut(&mut merged_info).merge_from(item.type_info.as_ref());
+        // Body typing can resolve expected-type enum sugar and struct patterns.
+        // Compose only this item's span; a template context from a later item
+        // must not overwrite another body's newly resolved references.
+        if !Arc::ptr_eq(&item.resolved, &signatures.resolved) {
+            if let Some(&span) = item_spans.get(&item_sym) {
+                let contains =
+                    |key: &arandu_middle::NodeKey| span.start <= key.start && key.end <= span.end;
+                let names = Arc::make_mut(&mut merged_resolved);
+                names.value_refs.extend(
+                    item.resolved
+                        .value_refs
+                        .iter()
+                        .filter(|(key, _)| contains(key))
+                        .map(|(&key, &value)| (key, value)),
+                );
+                names.type_refs.extend(
+                    item.resolved
+                        .type_refs
+                        .iter()
+                        .filter(|(key, _)| contains(key))
+                        .map(|(&key, &value)| (key, value)),
+                );
+                for (index, use_span) in program.pool.expr_spans.iter().enumerate() {
+                    if span.start <= use_span.start && use_span.end <= span.end {
+                        if let Some(value) =
+                            item.resolved.expr_symbols.get(index).copied().flatten()
+                        {
+                            if names.expr_symbols.len() <= index {
+                                names.expr_symbols.resize(index + 1, None);
+                            }
+                            names.expr_symbols[index] = Some(value);
+                        }
+                    }
+                }
+            }
+        }
         Arc::make_mut(&mut merged_resolved)
             .typed_comptime_arguments
             .extend(

@@ -52,6 +52,15 @@ pub(crate) fn resolve_namespace_field(
     }
     let symbol_id = checker.symbols.lookup_module_member(&path[0], field)?;
     Arc::make_mut(&mut checker.resolved).expr_ref(expr, symbol_id);
+    if !checker
+        .type_info
+        .generic_params
+        .get(&symbol_id)
+        .is_some_and(|parameters| !parameters.is_empty())
+        && let Some(ty_id) = checker.type_info.demand_header(symbol_id, &[], _span)
+    {
+        return Some(ty_id);
+    }
     if let Some(ty_id) = checker.ctx.lookup(symbol_id) {
         return Some(ty_id);
     }

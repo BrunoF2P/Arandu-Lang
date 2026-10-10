@@ -212,6 +212,52 @@ impl TypeShape {
     pub const MAX_DEPTH: usize = 128;
     pub const MAX_NODES: usize = 4096;
 
+    /// Whether a bounded shape has no unresolved constant dimensions or errors.
+    #[must_use]
+    pub fn is_concrete(&self) -> bool {
+        let mut pending = vec![self];
+        let mut remaining = Self::MAX_NODES;
+        while let Some(shape) = pending.pop() {
+            if remaining == 0 {
+                return false;
+            }
+            remaining -= 1;
+            match shape {
+                Self::Error
+                | Self::IntLiteral
+                | Self::FloatLiteral
+                | Self::ConstParam(_)
+                | Self::ConstArray(_, _) => return false,
+                Self::Named(_, items) | Self::Tuple(items) => pending.extend(items),
+                Self::Func(items, result) => {
+                    pending.extend(items);
+                    pending.push(result);
+                }
+                Self::Nullable(inner)
+                | Self::Slice(inner)
+                | Self::Array(_, inner)
+                | Self::Ptr(inner)
+                | Self::Ref(inner)
+                | Self::RefMut(inner)
+                | Self::Option(inner)
+                | Self::Coroutine(inner)
+                | Self::Poll(inner)
+                | Self::Range(inner) => pending.push(inner),
+                Self::Result(ok, err) => {
+                    pending.push(ok);
+                    pending.push(err);
+                }
+                Self::Primitive(_)
+                | Self::Const(_)
+                | Self::FrozenConst(_)
+                | Self::GenRef
+                | Self::Err
+                | Self::Void => {}
+            }
+        }
+        true
+    }
+
     /// Finalize numeric literal leaves before publishing an executable
     /// instance key. Pseudo-types and their defaults have the same ABI and
     /// must not create two instances with the same mangled backend name.

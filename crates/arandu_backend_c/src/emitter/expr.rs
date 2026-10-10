@@ -417,7 +417,9 @@ impl<'a> CEmitter<'a> {
                     _ => arandu_middle::types::ArType::named(*struct_symbol, &[], self.interner),
                 };
                 let layout = self.checked_layout(&struct_ty);
-                let field_defs = self.provider.get_struct_fields(*struct_symbol);
+                let field_defs = self
+                    .provider
+                    .get_struct_fields_for_type(&struct_ty, self.interner);
                 let mut resolved_fields = Vec::new();
                 for (name, op) in fields {
                     let Some(field_idx) = field_defs

@@ -185,7 +185,7 @@ pub fn materialize_ctfe_value(
                         .get_enum_variant_symbol(owner, variant.tag)
                         .ok_or(MaterializationError::TypeMismatch)?;
                     let declared = info
-                        .get_enum_variants(owner)
+                        .get_enum_variants_for_type(&expected_type, &info.type_interner)
                         .and_then(|variants| variants.get(variant.tag).cloned())
                         .ok_or(MaterializationError::TypeMismatch)?;
                     let payload = declared
@@ -285,13 +285,12 @@ pub fn materialize_ctfe_value(
                 if info.destructor_for_type(expected).is_some() {
                     return Err(MaterializationError::TypeMismatch);
                 }
-                let table = info
-                    .struct_fields
-                    .get(&symbol)
-                    .ok_or(MaterializationError::TypeMismatch)?;
                 let args = info
                     .type_interner
                     .try_type_args(arguments)
+                    .ok_or(MaterializationError::TypeMismatch)?;
+                let table = info
+                    .fields_for(symbol, &args)
                     .ok_or(MaterializationError::TypeMismatch)?;
                 let parameters = info
                     .generic_params

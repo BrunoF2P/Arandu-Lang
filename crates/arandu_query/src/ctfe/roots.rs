@@ -978,14 +978,38 @@ pub fn ctfe_root_amir<'db>(
             Selected::Block(block) => CtfeInitialRoot::Block(block),
             Selected::Expression(expression) => CtfeInitialRoot::Expression(expression),
         };
-        let (mut checked, typed) = check_ctfe_root_with_substitution(
+        let (mut checked, mut typed) = check_ctfe_root_with_substitution(
             &initial,
             &program.pool,
             input,
-            expected,
+            expected.clone(),
             crate::passes::database_target_info(db),
             &substitution,
         );
+        for _ in 0..super::MAX_QUERY_DEPENDENCY_DEPTH {
+            match super::contracts::freeze_requests(db, &mut checked, root.dependency(db))
+                .map_err(BuildFailure::Diagnostics)?
+            {
+                0 => break,
+                _ => {
+                    (checked, typed) = check_ctfe_root_with_substitution(
+                        &checked,
+                        &program.pool,
+                        input,
+                        expected.clone(),
+                        crate::passes::database_target_info(db),
+                        &substitution,
+                    );
+                }
+            }
+        }
+        if !checked.type_info.header_requests.is_empty() {
+            checked.diagnostics.push(arandu_middle::Diagnostic::error(
+                arandu_middle::DiagCode::T045ComptimeLimitExceeded,
+                "concrete header discovery exceeds its continuation limit",
+                span,
+            ));
+        }
         if checked
             .diagnostics
             .iter()

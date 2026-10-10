@@ -168,6 +168,7 @@ pub fn check_item_body_with_substitution(
         target_info,
     );
     checker.type_info = Arc::unwrap_or_clone(Arc::clone(&signatures.type_info));
+    checker.type_info.header_requests.clear();
     checker.generic_substitution = substitution.clone();
     if !substitution.is_empty() {
         for ty in checker.type_info.decl_types.values_mut() {
@@ -207,6 +208,7 @@ pub fn check_residual_loop_body(
         target,
     );
     checker.type_info = Arc::unwrap_or_clone(Arc::clone(&initial.type_info));
+    checker.type_info.header_requests.clear();
     checker.generic_substitution = substitution.clone();
     for (&symbol, &ty) in &checker.type_info.decl_types {
         checker.ctx.bind(symbol, ty);

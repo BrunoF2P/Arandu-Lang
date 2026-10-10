@@ -261,8 +261,10 @@ impl<'a> FuncTranslator<'a> {
                 *cursor += 2;
             }
             crate::types::Shape::Scalar => {
-                if let arandu_middle::types::ArType::Named(struct_sym, _) = resolved
-                    && let Some(fields_def) = self.layout_provider.get_struct_fields(struct_sym)
+                if let arandu_middle::types::ArType::Named(_, _) = resolved
+                    && let Some(fields_def) = self
+                        .layout_provider
+                        .get_struct_fields_for_type(&resolved, self.interner)
                     && !fields_def.is_empty()
                 {
                     let layout = self.layout_of(&resolved);

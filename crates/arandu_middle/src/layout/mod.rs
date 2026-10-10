@@ -295,6 +295,29 @@ pub trait StructLayoutProvider {
     fn get_generic_params(&self, struct_id: SymbolId) -> Option<&[SymbolId]>;
     fn get_enum_variants(&self, enum_id: SymbolId) -> Option<Vec<EnumPayloadShape>>;
 
+    /// Concrete headers override the template metadata without changing its identity.
+    fn get_struct_fields_for_type(
+        &self,
+        ty: &ArType,
+        _interner: &TypeInterner,
+    ) -> Option<&StructFields> {
+        let ArType::Named(symbol, _) = ty else {
+            return None;
+        };
+        self.get_struct_fields(*symbol)
+    }
+
+    fn get_enum_variants_for_type(
+        &self,
+        ty: &ArType,
+        _interner: &TypeInterner,
+    ) -> Option<Vec<EnumPayloadShape>> {
+        let ArType::Named(symbol, _) = ty else {
+            return None;
+        };
+        self.get_enum_variants(*symbol)
+    }
+
     /// Source identity for a nominal variant. Layout-only providers can omit it.
     fn get_enum_variant_symbol(&self, _enum_id: SymbolId, _tag: usize) -> Option<SymbolId> {
         None
@@ -420,7 +443,7 @@ impl LayoutEngine {
         Ok(match ty {
             ArType::Ref(_) | ArType::RefMut(_) | ArType::Func(_, _) | ArType::Err => true,
             ArType::Named(sym, args) => {
-                if let Some(fields_def) = provider.get_struct_fields(*sym)
+                if let Some(fields_def) = provider.get_struct_fields_for_type(ty, interner)
                     && let Ok(layout) =
                         self.layout_of_type_inner(ty, interner, provider, walk, depth + 1)
                 {
@@ -482,7 +505,7 @@ impl LayoutEngine {
                 )
             }
             ArType::Named(sym, args) => {
-                if let Some(fields_def) = provider.get_struct_fields(*sym)
+                if let Some(fields_def) = provider.get_struct_fields_for_type(ty, interner)
                     && fields_def.len() == 1
                 {
                     let field = &fields_def.fields[0];
@@ -746,7 +769,7 @@ impl LayoutEngine {
                 }
             }
             ArType::Named(symbol_id, generic_args) => {
-                if let Some(fields_def) = provider.get_struct_fields(*symbol_id) {
+                if let Some(fields_def) = provider.get_struct_fields_for_type(ty, interner) {
                     let generic_params = provider.get_generic_params(*symbol_id).unwrap_or(&[]);
                     let arg_ids = interner.type_args(*generic_args);
                     let subst: FxHashMap<SymbolId, TypeId> = generic_params
@@ -824,7 +847,8 @@ impl LayoutEngine {
                         field_offsets,
                         tag_encoding: None,
                     }
-                } else if let Some(mut variants) = provider.get_enum_variants(*symbol_id) {
+                } else if let Some(mut variants) = provider.get_enum_variants_for_type(ty, interner)
+                {
                     // Enum payload declarations are stored using the enum's
                     // generic parameters, just like generic struct fields.
                     // Substitute the concrete arguments before computing the
@@ -1272,7 +1296,10 @@ pub fn instantiated_field_type(
     let ArType::Named(symbol, arguments) = owner else {
         return None;
     };
-    let field = provider.get_struct_fields(*symbol)?.get(field_name)?.ty;
+    let field = provider
+        .get_struct_fields_for_type(owner, interner)?
+        .get(field_name)?
+        .ty;
     let parameters = provider.get_generic_params(*symbol).unwrap_or(&[]);
     let arguments = interner.type_args(*arguments);
     if parameters.len() != arguments.len() {
@@ -1301,7 +1328,7 @@ pub fn instantiated_enum_variant_payload_type(
     let ArType::Named(symbol, arguments) = owner else {
         return None;
     };
-    let variants = provider.get_enum_variants(*symbol)?;
+    let variants = provider.get_enum_variants_for_type(owner, interner)?;
     let payload = variants.get(variant_tag)?.payload_ty?;
     let parameters = provider.get_generic_params(*symbol).unwrap_or(&[]);
     let arguments = interner.type_args(*arguments);

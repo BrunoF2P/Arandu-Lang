@@ -86,7 +86,7 @@ pub(crate) fn function_dependencies(
             nominal @ ArType::Named(symbol, arguments) => {
                 let args = info.type_interner.type_args(arguments);
                 types.extend_from_slice(&args);
-                if let Some(fields) = info.struct_fields.get(&symbol) {
+                if let Some(fields) = info.fields_for(symbol, &args) {
                     for field in fields.iter() {
                         if let Some(ty) = arandu_semantics::layout::instantiated_field_type(
                             &nominal,
@@ -105,9 +105,10 @@ pub(crate) fn function_dependencies(
                         arandu_semantics::types::build_subst_ids(params, &args, &info.type_interner)
                     })
                     .unwrap_or_default();
-                for (parent, payload) in info.enum_variants.values() {
+                for (variant, (parent, _)) in &info.enum_variants {
                     if *parent == symbol
-                        && let EnumPayloadShape::Tuple(fields) = payload
+                        && let Some(EnumPayloadShape::Tuple(fields)) =
+                            info.variant_payload_for(*variant, &args)
                     {
                         types.extend(fields.iter().map(|&field| {
                             arandu_semantics::types::substitute_type_id(

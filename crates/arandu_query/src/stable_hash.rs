@@ -555,7 +555,7 @@ fn hash_semantic_type(
 
 fn hash_type_check_result(result: &TypeCheckResult, include_spans: bool) -> blake3::Hash {
     let mut h = Hasher::new();
-    h.update(b"TypeCheckResult/v4");
+    h.update(b"TypeCheckResult/v5");
     h.update(result.type_info.target_identity.os.as_bytes());
     h.update(&[0]);
     h.update(result.type_info.target_identity.arch.as_bytes());
@@ -645,6 +645,59 @@ fn hash_type_check_result(result: &TypeCheckResult, include_spans: bool) -> blak
     let info = &result.type_info;
     let symbols = &result.symbols;
     let interner = &info.type_interner;
+
+    let mut deferred: Vec<_> = info.deferred_headers.iter().copied().collect();
+    deferred.sort_by_key(|symbol| (symbol.file_id, symbol.local_id.0));
+    h.update(&u64_le(u64::try_from(deferred.len()).unwrap_or(u64::MAX)));
+    for symbol in deferred {
+        hash_symbol_id(&mut h, symbol);
+    }
+    let mut headers: Vec<_> = info.concrete_headers.iter().collect();
+    headers.sort_by_key(|(key, _)| key.stable_hash().as_bytes().to_owned());
+    h.update(&u64_le(u64::try_from(headers.len()).unwrap_or(u64::MAX)));
+    for (key, header) in headers {
+        h.update(key.stable_hash().as_bytes());
+        hash_semantic_type(&mut h, header.signature, interner, symbols);
+        h.update(&[u8::from(header.fields.is_some())]);
+        if let Some(fields) = &header.fields {
+            h.update(&u64_le(u64::try_from(fields.len()).unwrap_or(u64::MAX)));
+            for field in fields.iter() {
+                hash_str(&mut h, &field.name);
+                h.update(&[u8::from(field.symbol.is_some())]);
+                if let Some(symbol) = field.symbol {
+                    hash_symbol_id(&mut h, symbol);
+                }
+                h.update(&u64_le(u64::try_from(field.index).unwrap_or(u64::MAX)));
+                hash_semantic_type(&mut h, field.ty, interner, symbols);
+            }
+        }
+        h.update(&u64_le(
+            u64::try_from(header.variants.len()).unwrap_or(u64::MAX),
+        ));
+        for (symbol, tag, payload) in &header.variants {
+            hash_symbol_id(&mut h, *symbol);
+            h.update(&u64_le(u64::try_from(*tag).unwrap_or(u64::MAX)));
+            match payload {
+                arandu_typeck::type_checker::info::EnumPayloadShape::Unit => {
+                    h.update(&[0]);
+                }
+                arandu_typeck::type_checker::info::EnumPayloadShape::Tuple(items) => {
+                    h.update(&[1]);
+                    h.update(&u64_le(u64::try_from(items.len()).unwrap_or(u64::MAX)));
+                    for &ty in items {
+                        hash_semantic_type(&mut h, ty, interner, symbols);
+                    }
+                }
+            }
+        }
+    }
+    let mut requests: Vec<_> = info.header_requests.iter().collect();
+    requests.sort_by_key(|(key, _)| key.stable_hash().as_bytes().to_owned());
+    h.update(&u64_le(u64::try_from(requests.len()).unwrap_or(u64::MAX)));
+    for (key, span) in requests {
+        h.update(key.stable_hash().as_bytes());
+        hash_span(&mut h, *span);
+    }
 
     let mut struct_fields: Vec<_> = info.struct_fields.iter().collect();
     struct_fields.sort_by_key(|(symbol, _)| (symbol.file_id, symbol.local_id.0));

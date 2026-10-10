@@ -36,6 +36,15 @@ pub(super) fn synth_call_expr(
                 if let Some(var_id) = checker.literal_table.var_for_symbol(symbol_id) {
                     checker.literal_table.bind_expr(expr, var_id);
                 }
+                if !checker
+                    .type_info
+                    .generic_params
+                    .get(&symbol_id)
+                    .is_some_and(|parameters| !parameters.is_empty())
+                    && let Some(ty_id) = checker.type_info.demand_header(symbol_id, &[], span)
+                {
+                    return Some(ty_id);
+                }
                 if let Some(ty_id) = checker.ctx.lookup(symbol_id) {
                     return Some(ty_id);
                 }
@@ -363,7 +372,7 @@ pub(super) fn synth_call_expr(
                     .collect();
                 if let Some((params, ret)) = infer_and_instantiate_func(
                     checker,
-                    &type_params,
+                    (Some(variant_id), &type_params),
                     &formals,
                     ret,
                     &arg_tys,
@@ -532,7 +541,13 @@ pub(super) fn synth_call_expr(
                                 .map(|aid| synth_expr(checker, aid))
                                 .collect();
                             if let Some((ip, ir)) = infer_and_instantiate_func(
-                                checker, &gp, &params, ret, &arg_tys, expected, span,
+                                checker,
+                                (Some(sym_id), &gp),
+                                &params,
+                                ret,
+                                &arg_tys,
+                                expected,
+                                span,
                             ) {
                                 params = ip;
                                 ret = ir;
@@ -833,7 +848,13 @@ pub(super) fn synth_call_expr(
                         .map(|aid| synth_expr(checker, aid))
                         .collect();
                     if let Some((ip, ir)) = infer_and_instantiate_func(
-                        checker, &gp, &params, ret, &arg_tys, expected, span,
+                        checker,
+                        (Some(sym_id), &gp),
+                        &params,
+                        ret,
+                        &arg_tys,
+                        expected,
+                        span,
                     ) {
                         params = ip;
                         ret = ir;

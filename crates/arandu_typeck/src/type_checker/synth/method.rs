@@ -372,7 +372,7 @@ pub(crate) fn synth_method_call(
             .collect();
         if let Some((ip, ir)) = super::expr::infer_and_instantiate_func(
             checker,
-            &method_generic_params,
+            (method_sym_recorded, &method_generic_params),
             &explicit_params,
             ret,
             &arg_tys,

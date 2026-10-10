@@ -176,7 +176,9 @@ impl ValueType {
                 {
                     return Err(EvalErrorKind::UnsupportedType(id));
                 }
-                if let Some(variants) = provider.get_enum_variants(symbol) {
+                if let Some(variants) =
+                    provider.get_enum_variants_for_type(&types.resolve(id), types)
+                {
                     if variants.len() > *remaining {
                         return Err(EvalErrorKind::ValueLimit);
                     }
@@ -212,7 +214,7 @@ impl ValueType {
                     })));
                 }
                 let table = provider
-                    .get_struct_fields(symbol)
+                    .get_struct_fields_for_type(&types.resolve(id), types)
                     .ok_or(EvalErrorKind::UnsupportedType(id))?;
                 let arguments = types.try_type_args(args).ok_or(EvalErrorKind::InvalidIr)?;
                 let parameters = provider.get_generic_params(symbol).unwrap_or(&[]);

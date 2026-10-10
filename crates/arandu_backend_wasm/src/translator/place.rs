@@ -493,14 +493,17 @@ impl<'a> FuncTranslator<'a> {
                 *from_memory = true;
                 let owner_ty = self.strip_ref(cur_ty).unwrap_or(cur_ty);
                 let owner = self.interner.resolve(owner_ty);
-                let ArType::Named(struct_id, _) = owner else {
+                let ArType::Named(_, _) = owner else {
                     return cur_ty;
                 };
                 let Some(sym) = self.symbols.try_get(*symbol_id) else {
                     return cur_ty;
                 };
                 let name = &sym.name;
-                let Some(fields) = self.layout_provider.get_struct_fields(struct_id) else {
+                let Some(fields) = self
+                    .layout_provider
+                    .get_struct_fields_for_type(&owner, self.interner)
+                else {
                     return cur_ty;
                 };
                 let Some(field_info) = fields.get(name) else {

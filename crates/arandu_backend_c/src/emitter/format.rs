@@ -129,7 +129,22 @@ impl<'a> CEmitter<'a> {
                 self.format_type(&self.interner.resolve(*inner))
             )),
             ArType::GenRef => Cow::Borrowed("int64_t"),
-            ArType::Named(id, _) => Cow::Owned(sanitize_c_ident(&self.symbols.get(*id).name)),
+            ArType::Named(id, args) => {
+                let arguments = self.interner.type_args(*args);
+                let name = if arguments.is_empty() {
+                    self.symbols.get(*id).name.to_string()
+                } else {
+                    arandu_semantics::passes::monomorphize::mangle_symbol(
+                        &arandu_semantics::passes::monomorphize::InstantiationKey {
+                            symbol: *id,
+                            type_args: &arguments,
+                        },
+                        self.interner,
+                        self.symbols,
+                    )
+                };
+                Cow::Owned(sanitize_c_ident(&name))
+            }
             ArType::Slice(inner) => {
                 let inner_name = self.format_type(&self.interner.resolve(*inner));
                 Cow::Owned(format!("ArType_Slice_{}", sanitize_c_ident(&inner_name)))
@@ -211,10 +226,6 @@ impl<'a> CEmitter<'a> {
                         | ArType::Nullable(inner) => self.interner.resolve(*inner),
                         other => other.clone(),
                     };
-                    let struct_id = match &struct_ty {
-                        ArType::Named(id, _) => *id,
-                        _ => arandu_middle::SymbolId::DUMMY,
-                    };
                     let layout = self.checked_layout(&struct_ty);
                     let Some(field_symbol) = self.symbols.try_get(*field_symbol_id) else {
                         self.record_codegen_ice(
@@ -226,7 +237,7 @@ impl<'a> CEmitter<'a> {
                     let field_name = field_symbol.name.rsplit('.').next().unwrap_or("");
                     let Some(field_idx) = self
                         .provider
-                        .get_struct_fields(struct_id)
+                        .get_struct_fields_for_type(&struct_ty, self.interner)
                         .and_then(|fields| fields.get(field_name))
                         .map(|field| field.index)
                     else {

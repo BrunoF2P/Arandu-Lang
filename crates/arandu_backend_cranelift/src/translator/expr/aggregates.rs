@@ -1,6 +1,7 @@
 //! Aggregate construction and member/index access for structs, tuples, and arrays.
 
 use arandu_semantics::amir::AmirOperand;
+use arandu_semantics::layout::StructLayoutProvider;
 use arandu_semantics::passes::type_checker::types::{ArType, Primitive, is_vec_type};
 use cranelift_codegen::ir::{InstBuilder, Type, Value};
 
@@ -31,8 +32,7 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
         for (i, (name, op)) in fields.iter().enumerate() {
             let field_idx = self
                 .type_info
-                .struct_fields
-                .get(struct_symbol)
+                .get_struct_fields_for_type(&struct_ty, &self.type_info.type_interner)
                 .and_then(|m| m.get(name.as_str()))
                 .map(|f| f.index)
                 .unwrap_or(i);
@@ -75,7 +75,9 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                 )
                 .map(|id| self.type_info.type_interner.resolve(id))
                 .unwrap_or_else(|| {
-                    let field_defs = self.type_info.struct_fields.get(struct_symbol);
+                    let field_defs = self
+                        .type_info
+                        .get_struct_fields_for_type(&struct_ty, &self.type_info.type_interner);
                     field_defs
                         .and_then(|m| m.get(name.as_str()))
                         .map(|f| self.type_info.type_interner.resolve(f.ty))
@@ -369,10 +371,9 @@ impl<M: cranelift_module::Module> FunctionTranslator<'_, '_, M> {
                     .get(field)
                     .map(|tid| self.is_inline_aggregate_ty(&self.type_info.resolve_type_id(*tid)))
                     .unwrap_or(false),
-                ArType::Named(sym_id, _) => self
+                ArType::Named(_, _) => self
                     .type_info
-                    .struct_fields
-                    .get(sym_id)
+                    .get_struct_fields_for_type(&struct_ty, &self.type_info.type_interner)
                     .and_then(|fields| fields.fields.iter().find(|f| f.index == field))
                     .map(|f| self.is_inline_aggregate_ty(&self.type_info.resolve_type_id(f.ty)))
                     .unwrap_or(false),

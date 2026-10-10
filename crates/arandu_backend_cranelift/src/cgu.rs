@@ -218,7 +218,7 @@ impl HashContext<'_> {
                 self.hash.tag(1);
                 self.symbol(*symbol);
                 self.type_args(*args);
-                self.named_layout(*symbol);
+                self.named_layout(*symbol, &self.type_info.type_interner.type_args(*args));
             }
             ArType::Func(params, result) => {
                 self.hash.tag(2);
@@ -303,7 +303,7 @@ impl HashContext<'_> {
         }
     }
 
-    fn named_layout(&mut self, symbol: SymbolId) {
+    fn named_layout(&mut self, symbol: SymbolId, arguments: &[arandu_semantics::types::TypeId]) {
         if self.named_type_stack.contains(&symbol) {
             self.hash.tag(0);
             return;
@@ -321,7 +321,7 @@ impl HashContext<'_> {
             self.hash.usize(0);
         }
 
-        if let Some(fields) = self.type_info.struct_fields.get(&symbol) {
+        if let Some(fields) = self.type_info.fields_for(symbol, arguments) {
             self.hash.tag(0);
             self.hash.usize(fields.fields.len());
             for field in &fields.fields {
@@ -344,8 +344,9 @@ impl HashContext<'_> {
             .enum_variants
             .iter()
             .filter(|(_, (parent, _))| *parent == symbol)
-            .map(|(&variant, (_, shape))| {
-                (
+            .filter_map(|(&variant, _)| {
+                let shape = self.type_info.variant_payload_for(variant, arguments)?;
+                Some((
                     self.type_info
                         .enum_variant_tags
                         .get(&variant)
@@ -355,7 +356,7 @@ impl HashContext<'_> {
                     variant.local_id.0,
                     variant,
                     shape,
-                )
+                ))
             })
             .collect();
         variants.sort_by_key(|&(tag, file_id, local_id, _, _)| (tag, file_id, local_id));

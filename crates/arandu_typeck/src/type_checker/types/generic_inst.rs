@@ -91,6 +91,11 @@ pub fn expand_named_with_defaults(checker: &mut TypeChecker<'_>, ty: ArType) -> 
                 provided
             };
             let arg_ids: Vec<TypeId> = expanded.into_iter().map(|t| checker.intern(t)).collect();
+            let span = checker
+                .symbols
+                .try_get(id)
+                .map_or(arandu_lexer::Span::new(0, 0, 0), |symbol| symbol.span);
+            checker.type_info.demand_header(id, &arg_ids, span);
             ArType::named(id, &arg_ids, &checker.type_info.type_interner)
         }
         ArType::Func(params, ret) => {
@@ -203,7 +208,6 @@ pub fn struct_fields_instantiated(
     struct_id: SymbolId,
     generic_args: &[ArType],
 ) -> Option<FxHashMap<String, ArType>> {
-    let fields = Arc::clone(checker.type_info.struct_fields.get(&struct_id)?);
     let params = Arc::clone(checker.type_info.generic_params.get(&struct_id)?);
     let generic_args = expand_type_args_with_defaults(checker, struct_id, generic_args)?;
     if params.len() != generic_args.len() {
@@ -214,11 +218,27 @@ pub fn struct_fields_instantiated(
         .try_get(struct_id)
         .map_or(arandu_lexer::Span::new(0, 0, 0), |s| s.span);
     super::interfaces::check_instantiation_constraints(checker, &params, &generic_args, span);
+    let ids = generic_args
+        .iter()
+        .cloned()
+        .map(|ty| checker.intern(ty))
+        .collect::<Vec<_>>();
+    let owner = checker
+        .type_info
+        .enum_variants
+        .get(&struct_id)
+        .map_or(struct_id, |(owner, _)| *owner);
+    checker.type_info.demand_header(owner, &ids, span);
+    let fields = Arc::clone(checker.type_info.fields_arc_for(struct_id, &ids)?);
     let subst = build_subst(&params, &generic_args);
     let res: FxHashMap<String, ArType> = fields
         .iter()
         .map(|f| {
-            let ty = checker.resolve(f.ty);
+            let field_ty = checker
+                .type_info
+                .field_type_for(struct_id, &ids, &f.name)
+                .unwrap_or(f.ty);
+            let ty = checker.resolve(field_ty);
             let inst = instantiate_type(&ty, &subst, &mut checker.type_info.type_interner);
             (f.name.to_string(), inst)
         })
@@ -234,8 +254,6 @@ pub fn struct_field_instantiated(
     generic_args: &[ArType],
     field_name: &str,
 ) -> Option<ArType> {
-    let fields = Arc::clone(checker.type_info.struct_fields.get(&struct_id)?);
-    let field_ty = fields.get(field_name)?.ty;
     let params = Arc::clone(checker.type_info.generic_params.get(&struct_id)?);
     let generic_args = expand_type_args_with_defaults(checker, struct_id, generic_args)?;
     if params.len() != generic_args.len() {
@@ -246,6 +264,20 @@ pub fn struct_field_instantiated(
         .try_get(struct_id)
         .map_or(arandu_lexer::Span::new(0, 0, 0), |s| s.span);
     super::interfaces::check_instantiation_constraints(checker, &params, &generic_args, span);
+    let ids = generic_args
+        .iter()
+        .cloned()
+        .map(|ty| checker.intern(ty))
+        .collect::<Vec<_>>();
+    let owner = checker
+        .type_info
+        .enum_variants
+        .get(&struct_id)
+        .map_or(struct_id, |(owner, _)| *owner);
+    checker.type_info.demand_header(owner, &ids, span);
+    let field_ty = checker
+        .type_info
+        .field_type_for(struct_id, &ids, field_name)?;
     let subst = build_subst(&params, &generic_args);
     let ty = checker.resolve(field_ty);
     Some(instantiate_type(
@@ -410,6 +442,16 @@ pub fn synth_generic_instantiation(
         return ArType::Error;
     };
 
+    if !checker.generic_substitution.is_empty() {
+        super::interfaces::check_instantiation_constraints(checker, &param_symbols, &arg_tys, span);
+        for argument in &mut arg_tys {
+            *argument = substitute_type(
+                argument,
+                &checker.generic_substitution,
+                &checker.type_info.type_interner,
+            );
+        }
+    }
     for ((&parameter, argument), &source) in param_symbols.iter().zip(&mut arg_tys).zip(&arg_ids) {
         if let ArType::FrozenConst(value) = argument
             && let arandu_middle::ctfe::ConstValue::Integer(integer) = value.as_ref()
@@ -431,7 +473,26 @@ pub fn synth_generic_instantiation(
     }
     let subst = build_subst(&param_symbols, &arg_tys);
     super::interfaces::check_instantiation_constraints(checker, &param_symbols, &arg_tys, span);
-    let inst_ty = instantiate_type(&template, &subst, &mut checker.type_info.type_interner);
+    let ids = arg_tys
+        .iter()
+        .cloned()
+        .map(|ty| checker.intern(ty))
+        .collect::<Vec<_>>();
+    let variant_owner = checker
+        .type_info
+        .enum_variants
+        .get(&callee_symbol)
+        .map(|(owner, _)| *owner);
+    if let Some(owner) = variant_owner {
+        checker.type_info.demand_header(owner, &ids, span);
+    }
+    let inst_ty = if let Some(ty) = checker.type_info.variant_type_for(callee_symbol, &ids) {
+        checker.resolve(ty)
+    } else if let Some(ty) = checker.type_info.demand_header(callee_symbol, &ids, span) {
+        checker.resolve(ty)
+    } else {
+        instantiate_type(&template, &subst, &mut checker.type_info.type_interner)
+    };
     let inst_id = checker.intern(inst_ty.clone());
     checker.record_expr_type(callee, inst_id);
     inst_ty
@@ -530,6 +591,19 @@ fn expand_aliases_rec(checker: &mut TypeChecker<'_>, ty: ArType, depth: usize) -
             };
             if is_alias {
                 if let Some(target_tid) = checker.decl_type_id(symbol_id) {
+                    let ids = checker.type_info.type_interner.type_args(args);
+                    let span = checker
+                        .symbols
+                        .try_get(symbol_id)
+                        .map_or(arandu_lexer::Span::new(0, 0, 0), |symbol| symbol.span);
+                    let frozen = checker.type_info.demand_header(symbol_id, &ids, span);
+                    if checker.type_info.deferred_headers.contains(&symbol_id) && frozen.is_none() {
+                        // Preserve alias identity through open templates and
+                        // discovery; expanding its placeholder would erase the
+                        // obligation before an instance can freeze it.
+                        return ArType::Named(symbol_id, args);
+                    }
+                    let target_tid = frozen.unwrap_or(target_tid);
                     let target_ty = checker.resolve(target_tid);
                     let arg_ids: Vec<TypeId> = checker.type_info.type_interner.type_args(args);
                     let params = checker.type_info.generic_params.get(&symbol_id);

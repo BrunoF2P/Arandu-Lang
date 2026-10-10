@@ -48,20 +48,22 @@ pub fn scratch_type_safe(
                 .type_args(args)
                 .iter()
                 .all(|&inner| visit(inner, interner, provider, depth + 1)),
-            owner @ ArType::Named(symbol, _) => {
-                if let Some(fields) = provider.get_struct_fields(symbol) {
+            owner @ ArType::Named(_, _) => {
+                if let Some(fields) = provider.get_struct_fields_for_type(&owner, interner) {
                     fields.iter().all(|field| {
                         instantiated_field_type(&owner, field.name.as_str(), interner, provider)
                             .is_some_and(|inner| visit(inner, interner, provider, depth + 1))
                     })
                 } else {
-                    provider.get_enum_variants(symbol).is_some_and(|variants| {
-                        variants.iter().all(|variant| {
-                            variant
-                                .payload_ty
-                                .is_none_or(|inner| visit(inner, interner, provider, depth + 1))
+                    provider
+                        .get_enum_variants_for_type(&owner, interner)
+                        .is_some_and(|variants| {
+                            variants.iter().all(|variant| {
+                                variant
+                                    .payload_ty
+                                    .is_none_or(|inner| visit(inner, interner, provider, depth + 1))
+                            })
                         })
-                    })
                 }
             }
             ArType::Slice(_)

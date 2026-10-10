@@ -208,7 +208,16 @@ pub(crate) fn module_arguments(
     });
     owners.sort_by_key(|symbol| (symbol.file_id, symbol.local_id.0));
     owners.dedup();
+    let seed = crate::passes::seed_header_signatures(db, file);
     for owner in owners {
+        if seed.type_info.deferred_headers.contains(&owner) {
+            result.values.extend(
+                header_arguments(program, &seed.resolved, owner)
+                    .iter()
+                    .map(|(span, _)| ((*span).into(), None)),
+            );
+            continue;
+        }
         let arguments = item_header_arguments(db, file, owner);
         result
             .values
@@ -350,7 +359,9 @@ pub(crate) fn install_referenced_headers_in_context(
             .ok_or(super::BuildFailure::InvalidRoot)?;
         let source = crate::passes::item_source_input(db, file, symbol);
         let seed = crate::passes::seed_header_signatures(db, file);
-        if header_arguments(&source.program, &seed.resolved, symbol).is_empty() {
+        if seed.type_info.deferred_headers.contains(&symbol)
+            || header_arguments(&source.program, &seed.resolved, symbol).is_empty()
+        {
             continue;
         }
         let owner = owner_signatures_in_context(db, file, symbol, context);
@@ -434,4 +445,120 @@ pub(crate) fn install_referenced_headers_in_context(
         checked.type_info_mut().merge_from(&shard);
     }
     Ok(())
+}
+
+/// A template header remains an explicit deferred obligation until concrete
+/// arguments are available. None is a placeholder, never an evaluated value.
+pub(crate) fn defer_generic_headers(
+    program: &Program,
+    checker: &mut arandu_typeck::TypeChecker<'_>,
+) {
+    let mut owners = Vec::new();
+    program.for_each_decl_recursive(|_, declaration| {
+        let generic = match declaration {
+            TopLevelDecl::Func(d) => !d.generic_params.is_empty(),
+            TopLevelDecl::Struct(d) => !d.generic_params.is_empty(),
+            TopLevelDecl::Enum(d) => !d.generic_params.is_empty(),
+            TopLevelDecl::TypeAlias(d) => !d.generic_params.is_empty(),
+            TopLevelDecl::Interface(d) => !d.generic_params.is_empty(),
+            TopLevelDecl::Const(_)
+            | TopLevelDecl::Extern(_)
+            | TopLevelDecl::Submodule(_)
+            | TopLevelDecl::Error(_) => false,
+        };
+        if let Some(&owner) = arandu_semantics::primary_def_key(declaration)
+            .and_then(|key| checker.resolved.definitions.get(&key))
+            .filter(|_| {
+                matches!(
+                    declaration,
+                    TopLevelDecl::Func(_)
+                        | TopLevelDecl::Struct(_)
+                        | TopLevelDecl::Enum(_)
+                        | TopLevelDecl::TypeAlias(_)
+                )
+            })
+        {
+            let roots = header_arguments(program, &checker.resolved, owner);
+            let dependent = roots.iter().any(|(span, _)| {
+                let is_parameter = |symbol| {
+                    checker.symbols.try_get(symbol).is_some_and(|entry| {
+                        matches!(
+                            entry.kind,
+                            arandu_middle::SymbolKind::TypeParam
+                                | arandu_middle::SymbolKind::ConstParam
+                        )
+                    })
+                };
+                checker
+                    .resolved
+                    .expr_symbols
+                    .iter()
+                    .zip(&program.pool.expr_spans)
+                    .any(|(symbol, use_span)| {
+                        span.start <= use_span.start
+                            && use_span.end <= span.end
+                            && symbol.is_some_and(is_parameter)
+                    })
+                    || checker.resolved.type_refs.iter().any(|(key, &symbol)| {
+                        span.start <= key.start && key.end <= span.end && is_parameter(symbol)
+                    })
+                    || checker.resolved.value_refs.iter().any(|(key, &symbol)| {
+                        span.start <= key.start && key.end <= span.end && is_parameter(symbol)
+                    })
+            });
+            let span = arandu_semantics::item_source_span(declaration);
+            let body = match declaration {
+                TopLevelDecl::Func(function) => Some(function.body.span),
+                _ => None,
+            };
+            let dependencies: Vec<_> = checker
+                .resolved
+                .type_refs
+                .iter()
+                .filter_map(|(key, &symbol)| {
+                    (span.start <= key.start
+                        && key.end <= span.end
+                        && !body.is_some_and(|body| body.start <= key.start && key.end <= body.end)
+                        && symbol != owner)
+                        .then_some(symbol)
+                })
+                .collect();
+            owners.push((
+                owner,
+                roots,
+                generic && matches!(declaration, TopLevelDecl::Func(_)),
+                dependent,
+                dependencies,
+            ));
+        }
+    });
+    // A field/signature can depend on a calculated alias or nominal header
+    // even when this declaration has no explicit comptime expression itself.
+    loop {
+        let mut changed = false;
+        for (owner, _, _, dependent, dependencies) in &owners {
+            if *dependent
+                || dependencies
+                    .iter()
+                    .any(|symbol| checker.type_info.deferred_headers.contains(symbol))
+            {
+                changed |= checker.type_info.deferred_headers.insert(*owner);
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    for (owner, roots, function, _, _) in owners {
+        if !checker.type_info.deferred_headers.contains(&owner) {
+            continue;
+        }
+        let names = Arc::make_mut(&mut checker.resolved);
+        if function {
+            names.deferred_comptime_functions.insert(owner);
+        }
+        for (span, _) in roots {
+            names.comptime_arguments.entry(span.into()).or_insert(None);
+        }
+    }
 }

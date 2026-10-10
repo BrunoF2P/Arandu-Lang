@@ -182,7 +182,7 @@ impl LowerCtx<'_> {
                 let fields = match shape {
                     crate::passes::type_checker::EnumPayloadShape::Unit => Vec::new(),
                     crate::passes::type_checker::EnumPayloadShape::Tuple(types) => {
-                        self.instantiate_enum_payload_types(symbol, args, types)
+                        self.instantiate_enum_payload_types(symbol, variant, args, types)
                     }
                 };
                 Ok((tag, variant, fields))

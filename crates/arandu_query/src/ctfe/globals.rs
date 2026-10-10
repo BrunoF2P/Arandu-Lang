@@ -199,11 +199,37 @@ pub(crate) fn install_module_globals(
                     let info = checked.type_info_mut();
                     info.record_decl_type(symbol, ty);
                     info.ctfe_global_values.insert(symbol, frozen.value.clone());
+                    if let Err(errors) = install_type_contract(
+                        db,
+                        checked,
+                        ty,
+                        program.pool.expr_span(constant.value),
+                        &super::DependencyContext::default(),
+                    ) {
+                        checked.diagnostics.extend(errors);
+                    }
                 }
             }
             Err(diagnostics) => checked.diagnostics.extend(diagnostics.iter().cloned()),
         }
     });
+}
+
+// Freeze only the installed value's metadata. Seed signatures can contain
+// demands from unrelated declarations; evaluating them in this root's ancestry
+// would introduce false cycles before the selected root is checked.
+fn install_type_contract(
+    db: &dyn ArandCompilerDb,
+    checked: &mut TypeCheckResult,
+    ty: arandu_middle::types::type_interner::TypeId,
+    span: Span,
+    context: &super::DependencyContext,
+) -> Result<(), Vec<Diagnostic>> {
+    let pending = std::mem::take(&mut checked.type_info_mut().header_requests);
+    checked.type_info_mut().demand_type(ty, span);
+    let result = super::contracts::freeze_requests(db, checked, context);
+    checked.type_info_mut().header_requests.extend(pending);
+    result.map(|_| ())
 }
 
 fn references(
@@ -263,6 +289,7 @@ pub(crate) fn install_referenced_globals_in_context(
         info.record_decl_type(symbol, ty);
         info.ctfe_global_values
             .insert(symbol, constant.value.clone());
+        install_type_contract(db, checked, ty, span, context).map_err(BuildFailure::Diagnostics)?;
     }
     Ok(())
 }

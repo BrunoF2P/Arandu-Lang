@@ -82,6 +82,9 @@ fn instance_staged_result<'db>(
     };
     let mut checked = (**declared).clone();
     let mut diagnostics = Vec::new();
+    if let Err(errors) = super::contracts::prepare_owner(db, file, key, &mut checked, &context) {
+        diagnostics.extend(errors);
+    }
     let mut hir = None;
     let mut occurrence_symbols = Vec::new();
     if let Ok(program) = &**parsed {
@@ -232,12 +235,13 @@ fn instance_staged_result<'db>(
         match substitution {
             Ok(substitution) => {
                 let prerequisite_diagnostics = std::mem::take(&mut checked.diagnostics);
-                checked = arandu_typeck::type_checker::check::check_item_body_with_substitution(
+                checked = super::contracts::check_body(
+                    db,
                     &checked,
                     program,
                     key.definition,
-                    crate::passes::database_target_info(db),
                     &substitution,
+                    &context,
                 );
                 checked.diagnostics.extend(prerequisite_diagnostics);
                 checked
@@ -549,6 +553,33 @@ fn install_occurrences(
                 crate::passes::database_target_info(db),
                 substitution,
             );
+            for _ in 0..super::MAX_QUERY_DEPENDENCY_DEPTH {
+                match super::contracts::freeze_requests(db, &mut typed, context) {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        typed = arandu_typeck::type_checker::check::check_residual_loop_body(
+                            &typed,
+                            program,
+                            key.definition,
+                            body,
+                            (binding_symbol, value),
+                            crate::passes::database_target_info(db),
+                            substitution,
+                        );
+                    }
+                    Err(errors) => {
+                        typed.diagnostics.extend(errors);
+                        break;
+                    }
+                }
+            }
+            if !typed.type_info.header_requests.is_empty() {
+                typed.diagnostics.push(arandu_middle::Diagnostic::error(
+                    arandu_middle::DiagCode::T045ComptimeLimitExceeded,
+                    "concrete header discovery exceeds its continuation limit",
+                    body.span,
+                ));
+            }
             typed
                 .diagnostics
                 .extend(all_branches.diagnostics.iter().cloned());

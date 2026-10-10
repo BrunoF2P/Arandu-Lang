@@ -13,6 +13,7 @@ use arandu_middle::{Diagnostic, SymbolId};
 use arandu_mir::ctfe::{Budget, CtfeFunction, EvalError, EvalErrorKind, FunctionProvider};
 
 mod arguments;
+pub(crate) mod contracts;
 mod dependency;
 pub use dependency::{DependencyContext, MAX_QUERY_DEPENDENCY_DEPTH};
 pub(crate) mod globals;

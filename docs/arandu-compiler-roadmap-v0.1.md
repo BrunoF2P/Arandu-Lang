@@ -97,8 +97,10 @@ quando cumprir seu contrato atual.
 
 **Agora:** `0.1.9 — CTFE & Comptime Core`, com VM limitada, valores escalares,
 agregados Copy, strings imutáveis, floats determinísticos, argumentos calculados,
-seleção por instância, expansão estática e repetição de arrays implementados, com validação integrada
-concluída no host Linux. Matriz nativa, playground e promoção de release continuam
+seleção por instância, expansão estática e repetição de arrays implementados.
+Enums congelados, constantes globais, argumentos tipados, identidade explícita
+de alvo e contratos concretos de cabeçalhos também estão implementados; a
+validação integrada permanece registrada por corte no host Linux. Matriz nativa, playground e promoção de release continuam
 separados; as provas locais estão no [contrato público](./arandu-comptime-core-v0.1.md#integrated-development-host-evidence).
 O desenho permanece na
 [RFC 0013](./rfcs/0013-deterministic-ctfe-and-comptime-metaprogramming.md);
@@ -109,11 +111,11 @@ a única autoridade para ordem e status.
 | Gate | Estado | Entrega e condição para avançar |
 | --- | --- | --- |
 | CT.0 — contrato e staging | `in progress`; recorte escalar aprovado, desenho amplo aberto | O mantenedor aprovou expressões/blocos escalares e retornos locais; gramática e limites desse corte estão no contrato de comptime core. Fechar efeitos ampliados, const generics, configuração de orçamento e o restante da RFC antes de ampliar a superfície. A aprovação parcial não aceita a RFC inteira. |
-| CT.1 — alvo e layout | `in progress`; validação e intrínsecos com layout completo | CTFE rejeita tamanhos/alinhamentos inconsistentes em `DataLayout`; unidades runtime/CTFE compartilham `LayoutEngine` com o layout completo, incluindo i686. Completar configuração na borda e identidade de alvo, sem equiparar layout conhecido a codegen nativo suportado. |
+| CT.1 — alvo e layout | `in progress`; validação e intrínsecos com layout completo | CTFE rejeita tamanhos/alinhamentos inconsistentes em `DataLayout`; unidades runtime/CTFE compartilham `LayoutEngine` com o layout completo, incluindo i686. OS/arquitetura e largura do ponteiro são inputs explícitos, expostos por intrínsecos públicos e configurados pelos drivers. Preservar validação de alvos nas bordas, sem equiparar layout conhecido a codegen nativo suportado. |
 | CT.2 — VM AMIR pura | `done` no recorte de valores; gates locais verdes | CFG, chamadas diretas, locais, fuel, limites de frames/slots/handles e cancelamento. Tuplas, structs Copy fechadas e arrays usam valores limitados; strings/views imutáveis contabilizam backing. Floats IEEE usam software e bits tipados, sem aritmética do host. Oráculos residuais comparam C/Cranelift/Wasm em O0/O1/O2. Recursos de runtime e closures permanecem fora da admissão. |
-| CT.3 — superfície e especialização | `done` no recorte CT.3a/b/c/d; gates locais verdes | Expressões/blocos públicos, retornos locais e argumentos de valor calculados usam raízes isoladas e identidade estrutural existente. Instâncias concretas selecionam condições dependentes e congelam argumentos antes do corpo residual. Match arms preservam escopo; `comptime for` expande domínios inteiros finitos, com locais frescos, drops e saídas estruturadas. Lambdas têm seleção/capturas preparadas, mas execução continua U001 até closures em 0.3. Headers/defaults, raízes explícitas aninhadas e dimensões calculadas permanecem fora deste corte. |
+| CT.3 — superfície e especialização | `done` no recorte CT.3a/b/c/d; gates locais verdes | Expressões/blocos públicos, retornos locais e argumentos de valor calculados usam raízes isoladas e identidade estrutural existente. Instâncias concretas selecionam condições dependentes e congelam argumentos antes do corpo residual. Match arms preservam escopo; `comptime for` expande domínios inteiros finitos, com locais frescos, drops e saídas estruturadas. Lambdas têm seleção/capturas preparadas, mas execução continua U001 até closures em 0.3. Raízes aninhadas, dimensões calculadas e cabeçalhos dependentes de funções, structs, enums e aliases têm continuação por contrato concreto. Argumentos em headers de padrões/loops e configurações públicas de orçamento permanecem futuros. |
 | CT.4 — Salsa e editor | `in progress`; primeiro corte público conectado | `item_staged_typing` conecta tipagem inicial e queries de raiz sem AMIR runtime nem ciclos; itens sem staging compartilham memo inicial. Valores/layout participam do hash de corpo e preservam cutoff de exports. T042–T046 contextualizam falhas/limites; fmt, completion, keyword semântico e TextMate acompanham, com regressões LSP UTF-16/diagnóstico atual e temas no Extension Host. Demais cortes e budgets interativos de campanha permanecem abertos. |
-| CT.5 — layout público e release | `in progress`; layout validado nos gates locais, release pendente | `@sizeOf(T)`/`@alignOf(T)` usam o `LayoutEngine` completo, inclusive i686, e substituem operandos genéricos no lowering canônico. A API legada valida identidade intrínseca; layouts inválidos usam T047 e walks estruturais são limitados. Faltam corpus real, matriz nativa, playground e release; dimensões calculadas continuam futuras. |
+| CT.5 — layout público e release | `in progress`; layout validado nos gates locais, release pendente | `@sizeOf(T)`/`@alignOf(T)` usam o `LayoutEngine` completo, inclusive i686, e substituem operandos genéricos no lowering canônico. A API legada valida identidade intrínseca; layouts inválidos usam T047 e walks estruturais são limitados. Dimensões calculadas usam a VM e contratos concretos compartilhados por tipagem/layout. Faltam ampliar o corpus real, matriz nativa, playground e release. |
 
 **Primeira entrega executável:** uma chamada pura com argumentos constantes,
 avaliada na VM e materializada como constante no programa residual, com testes
@@ -160,21 +162,19 @@ com Tokei, nem armazenamento global em `.rodata`.
    no assembly. Corrigir armazenamento/lifetimes e cópias por valor na AMIR/ABI
    antes de prometer tabelas sem alocação; drops incondicionais causariam aliases
    pendurados. Comparar alocações/liberações e RSS em loops e nos três backends.
-2. Constantes globais CTFE: raiz por declaração, ciclos diagnosticados e cutoff
-   de constantes importadas; materialização canônica de dados imutáveis nos
-   três backends, sem reevaluar inicializadores no runtime.
-3. Valores constantes de enum: discriminante e payload validados na VM,
-   representação congelada estrutural e materialização compartilhada.
-4. Argumentos `comptime` tipados além dos inteiros atuais: chaves canônicas de
-   valor/tipo/layout, substituição e hashing de instâncias; structs como
-   `Language` dependem também do suporte a enums acima.
-5. Identidade pública do alvo: OS/arquitetura explícitos na configuração de
-   compilação, não deduzidos do layout nem do host dentro de queries; API tipada
-   na stdlib e invalidação entre alvos coberta por regressões.
+Os cortes de constantes globais CTFE, enums congelados, argumentos `comptime`
+tipados e identidade pública do alvo estão implementados. Os contratos
+concretos de cabeçalhos integram a descoberta do chamador, a inferência existente,
+a VM AMIR, aliases transitivos e o layout por instância. Não alteram os metadados
+do template ao especializar outra instância. Ciclos e profundidade de queries
+usam um caminho causal imutável e diagnósticos T044/T045; limites de VM continuam
+independentes. Detalhes e regressões estão no
+[contrato técnico](./arandu-comptime-core-v0.1.md#dependent-declaration-contracts).
 
-Essas lacunas continuam abertas. Remover os diagnósticos que hoje as impedem
-não constitui implementação; cada corte exige os contratos de query, ownership
-e paridade antes de habilitar a sintaxe correspondente.
+**Lacunas restantes:** configuração pública de budgets, contextos de staging
+fora do recorte atual e provas dos casos de armazenamento acima, além da matriz
+nativa/playground/release. Ampliar a superfície exige preservar os contratos de
+query, ownership, alvo e paridade; remover diagnósticos não substitui essas provas.
 
 **Escopo de produto proposto:** expressões/blocos `comptime`, parâmetros de valor
 inteiros compatíveis com os const generics atuais, decisões/iterações estáticas

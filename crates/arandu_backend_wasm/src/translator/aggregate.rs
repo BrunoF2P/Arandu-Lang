@@ -32,7 +32,7 @@ impl<'a> FuncTranslator<'a> {
     /// Heap-allocate a cell for a struct literal, store each field.
     pub(super) fn emit_struct_literal(
         &mut self,
-        struct_symbol: SymbolId,
+        _struct_symbol: SymbolId,
         fields: &[(arandu_middle::SmolStr, AmirOperand)],
         result_ty: TypeId,
     ) {
@@ -45,8 +45,11 @@ impl<'a> FuncTranslator<'a> {
             return;
         }
         // Store each field.
-        if let Some(fields_def) = self.layout_provider.get_struct_fields(struct_symbol) {
-            let owner_ty = self.interner.resolve(result_ty);
+        let owner_ty = self.interner.resolve(result_ty);
+        if let Some(fields_def) = self
+            .layout_provider
+            .get_struct_fields_for_type(&owner_ty, self.interner)
+        {
             for (name, operand) in fields {
                 let Some(field_info) = fields_def.get(name) else {
                     continue;

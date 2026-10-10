@@ -25,6 +25,15 @@ pub struct InterfaceConstraint {
     pub type_args: SmallVec<[TypeId; 2]>,
 }
 
+/// One concrete declaration contract in this interner's domain. Templates
+/// retain their own metadata; distinct structural instance keys never overwrite it.
+#[derive(Debug, Clone)]
+pub struct ConcreteHeader {
+    pub signature: TypeId,
+    pub fields: Option<Arc<StructFields>>,
+    pub variants: Vec<(SymbolId, usize, EnumPayloadShape)>,
+}
+
 /// Shared metadata maps use `Arc` so `merge_from` (item body typeck fold) is O(1)
 /// per entry instead of deep-cloning every field map / generic param list.
 #[derive(Debug, Clone)]
@@ -49,6 +58,10 @@ pub struct TypeInfo {
     /// Exportable values keyed by source identity, without initializer spans.
     pub ctfe_global_values: FxHashMap<SymbolId, arandu_middle::ctfe::ConstValue>,
     pub decl_types: FxHashMap<SymbolId, TypeId>,
+    pub deferred_headers: FxHashSet<SymbolId>,
+    pub concrete_headers: FxHashMap<arandu_middle::types::FunctionInstance, Arc<ConcreteHeader>>,
+    /// Pure discovery output, consumed by the query continuation before publication.
+    pub header_requests: FxHashMap<arandu_middle::types::FunctionInstance, arandu_middle::Span>,
     /// Canonical flow-derived borrow interfaces published across item/module boundaries.
     pub return_borrow_summaries: FxHashMap<SymbolId, ReturnBorrowSummary>,
     /// Struct field table: declaration order + name index (type/symbol/index folded in).
@@ -114,6 +127,9 @@ impl TypeInfo {
             ctfe_values: FxHashMap::default(),
             ctfe_global_values: FxHashMap::default(),
             decl_types: FxHashMap::default(),
+            deferred_headers: FxHashSet::default(),
+            concrete_headers: FxHashMap::default(),
+            header_requests: FxHashMap::default(),
             return_borrow_summaries: FxHashMap::default(),
             struct_fields: FxHashMap::default(),
             private_fields: FxHashSet::default(),
@@ -130,6 +146,183 @@ impl TypeInfo {
             unsafe_functions: FxHashSet::default(),
             struct_repr_c: rustc_hash::FxHashSet::default(),
         }
+    }
+
+    #[must_use]
+    pub fn header_key(
+        &self,
+        owner: SymbolId,
+        args: &[TypeId],
+    ) -> Option<arandu_middle::types::FunctionInstance> {
+        use arandu_middle::types::{FunctionInstance, TypeShape};
+        let arguments = args
+            .iter()
+            .map(|&id| TypeShape::from_id(id, &self.type_interner))
+            .collect::<Result<Vec<_>, _>>()
+            .ok()?;
+        if !arguments
+            .iter()
+            .all(|argument| self.is_closed_shape(argument))
+        {
+            return None;
+        }
+        Some(FunctionInstance {
+            definition: owner,
+            arguments,
+        })
+    }
+
+    #[must_use]
+    pub fn is_closed_shape(&self, shape: &arandu_middle::types::TypeShape) -> bool {
+        if !shape.is_concrete() {
+            return false;
+        }
+        let mut open = false;
+        let bounded = shape.for_each_symbol(|symbol| {
+            open |= self
+                .generic_params
+                .values()
+                .any(|params| params.contains(&symbol));
+        });
+        bounded.is_ok() && !open
+    }
+
+    pub fn demand_header(
+        &mut self,
+        owner: SymbolId,
+        args: &[TypeId],
+        span: arandu_middle::Span,
+    ) -> Option<TypeId> {
+        if !self.deferred_headers.contains(&owner) {
+            return None;
+        }
+        let key = self.header_key(owner, args)?;
+        if let Some(contract) = self.concrete_headers.get(&key) {
+            return Some(contract.signature);
+        }
+        self.header_requests.entry(key).or_insert(span);
+        None
+    }
+
+    /// Pure discovery from an already inferred type. Query orchestration fills
+    /// these demands before publishing the final body or isolated root.
+    pub fn demand_type(&mut self, ty: TypeId, span: arandu_middle::Span) {
+        if self.deferred_headers.is_empty() {
+            return;
+        }
+        let mut pending = vec![ty];
+        let mut remaining = arandu_middle::types::TypeShape::MAX_NODES;
+        while let Some(ty) = pending.pop() {
+            if remaining == 0 {
+                break;
+            }
+            remaining -= 1;
+            match self.type_interner.resolve(ty) {
+                ArType::Named(owner, args) => {
+                    let args = self.type_interner.type_args(args);
+                    self.demand_header(owner, &args, span);
+                    pending.extend(args);
+                }
+                ArType::Func(args, result) => {
+                    pending.extend(self.type_interner.type_args(args));
+                    pending.push(result);
+                }
+                ArType::Tuple(args) => pending.extend(self.type_interner.type_args(args)),
+                ArType::Array(_, inner)
+                | ArType::ConstArray(_, inner)
+                | ArType::Slice(inner)
+                | ArType::Ref(inner)
+                | ArType::RefMut(inner)
+                | ArType::Ptr(inner)
+                | ArType::Option(inner)
+                | ArType::Nullable(inner)
+                | ArType::Poll(inner)
+                | ArType::Coroutine(inner)
+                | ArType::Range(inner) => pending.push(inner),
+                ArType::Result(ok, error) => {
+                    pending.push(ok);
+                    pending.push(error);
+                }
+                ArType::Primitive(_)
+                | ArType::Const(_)
+                | ArType::FrozenConst(_)
+                | ArType::ConstParam(_)
+                | ArType::GenRef
+                | ArType::Err
+                | ArType::Void
+                | ArType::Error
+                | ArType::IntLiteral
+                | ArType::FloatLiteral => {}
+            }
+        }
+    }
+
+    #[must_use]
+    pub fn fields_for(&self, owner: SymbolId, args: &[TypeId]) -> Option<&StructFields> {
+        self.fields_arc_for(owner, args).map(Arc::as_ref)
+    }
+
+    #[must_use]
+    pub fn field_type_for(&self, owner: SymbolId, args: &[TypeId], name: &str) -> Option<TypeId> {
+        let field = self.fields_for(owner, args)?.get(name)?;
+        if let Some(EnumPayloadShape::Tuple(items)) = self.variant_payload_for(owner, args) {
+            return items.get(field.index).copied();
+        }
+        Some(field.ty)
+    }
+
+    #[must_use]
+    pub fn fields_arc_for(&self, owner: SymbolId, args: &[TypeId]) -> Option<&Arc<StructFields>> {
+        if !self.deferred_headers.contains(&owner) {
+            return self.struct_fields.get(&owner);
+        }
+        if let Some(key) = self.header_key(owner, args)
+            && let Some(header) = self.concrete_headers.get(&key)
+        {
+            return header.fields.as_ref();
+        }
+        self.struct_fields.get(&owner)
+    }
+
+    /// Payloads belong to the nominal instance, never to its shared template.
+    #[must_use]
+    pub fn variant_payload_for(
+        &self,
+        variant: SymbolId,
+        args: &[TypeId],
+    ) -> Option<&EnumPayloadShape> {
+        let (owner, template) = self.enum_variants.get(&variant)?;
+        if self.deferred_headers.contains(owner)
+            && let Some(key) = self.header_key(*owner, args)
+            && let Some(header) = self.concrete_headers.get(&key)
+        {
+            return header
+                .variants
+                .iter()
+                .find(|(symbol, _, _)| *symbol == variant)
+                .map(|(_, _, payload)| payload);
+        }
+        Some(template)
+    }
+
+    #[must_use]
+    pub fn variant_type_for(&self, variant: SymbolId, args: &[TypeId]) -> Option<TypeId> {
+        let (owner, _) = self.enum_variants.get(&variant)?;
+        let key = self.header_key(*owner, args)?;
+        let header = self.concrete_headers.get(&key)?;
+        let payload = header
+            .variants
+            .iter()
+            .find(|(symbol, _, _)| *symbol == variant)?;
+        let parameters = match &payload.2 {
+            EnumPayloadShape::Unit => return Some(header.signature),
+            EnumPayloadShape::Tuple(items) => items.as_slice(),
+        };
+        Some(self.type_interner.intern(ArType::func(
+            parameters,
+            header.signature,
+            &self.type_interner,
+        )))
     }
 
     pub fn record_enum_variant_tag(&mut self, variant: SymbolId, tag: usize) {
@@ -235,26 +428,27 @@ impl TypeInfo {
                         (parameters.len() == args.len() && !parameters.is_empty())
                             .then(|| build_subst_ids(parameters, &args, &info.type_interner))
                     });
-                    let fields_contain_ref =
-                        info.struct_fields.get(&symbol).is_some_and(|fields| {
-                            fields.fields.iter().any(|field| {
-                                let field_ty =
-                                    substitution.as_ref().map_or(field.ty, |substitution| {
-                                        let field = info.type_interner.resolve(field.ty);
-                                        info.type_interner.intern(substitute_type(
-                                            &field,
-                                            substitution,
-                                            &info.type_interner,
-                                        ))
-                                    });
-                                visit(info, field_ty, visiting)
-                            })
-                        });
+                    let fields_contain_ref = info.fields_for(symbol, &args).is_some_and(|fields| {
+                        fields.fields.iter().any(|field| {
+                            let field_ty = substitution.as_ref().map_or(field.ty, |substitution| {
+                                let field = info.type_interner.resolve(field.ty);
+                                info.type_interner.intern(substitute_type(
+                                    &field,
+                                    substitution,
+                                    &info.type_interner,
+                                ))
+                            });
+                            visit(info, field_ty, visiting)
+                        })
+                    });
                     fields_contain_ref
-                        || info.enum_variants.iter().any(|(_, (owner, payload))| {
+                        || info.enum_variants.iter().any(|(variant, (owner, _))| {
                             if *owner != symbol {
                                 return false;
                             }
+                            let Some(payload) = info.variant_payload_for(*variant, &args) else {
+                                return false;
+                            };
                             let substitution = substitution.as_ref();
                             match payload {
                                 EnumPayloadShape::Tuple(items) => items.iter().any(|item| {
@@ -332,7 +526,9 @@ impl TypeInfo {
                 prefix.pop();
             }
             ArType::Named(symbol, arguments) => {
-                if let Some(fields) = self.struct_fields.get(&symbol) {
+                if let Some(fields) =
+                    self.fields_for(symbol, &self.type_interner.type_args(arguments))
+                {
                     let args = self.type_interner.type_args(arguments);
                     let substitution = self.generic_params.get(&symbol).and_then(|parameters| {
                         (parameters.len() == args.len() && !parameters.is_empty())
@@ -361,11 +557,14 @@ impl TypeInfo {
                     .enum_variants
                     .iter()
                     .filter(|(_, (owner, _))| *owner == symbol)
-                    .map(|(variant, (_, payload))| {
-                        (
+                    .filter_map(|(variant, _)| {
+                        Some((
                             self.enum_variant_tags.get(variant).copied().unwrap_or(0),
-                            payload,
-                        )
+                            self.variant_payload_for(
+                                *variant,
+                                &self.type_interner.type_args(arguments),
+                            )?,
+                        ))
                     })
                     .collect::<Vec<_>>();
                 variants.sort_by_key(|(tag, _)| *tag);
@@ -552,19 +751,24 @@ impl TypeInfo {
                 return false;
             }
             let substitution = build_subst_ids(parameters, args, &self.type_interner);
-            return variants.iter().all(|(_, (_, payload))| match payload {
-                EnumPayloadShape::Unit => true,
-                EnumPayloadShape::Tuple(fields) => fields.iter().all(|ty| {
-                    let ty = arandu_middle::types::substitute_type_id(
-                        *ty,
-                        &substitution,
-                        &self.type_interner,
-                    );
-                    self.is_pod_component(ty, visiting)
-                }),
+            return variants.iter().all(|(variant, _)| {
+                match self.variant_payload_for(**variant, args) {
+                    None => false,
+                    Some(payload) => match payload {
+                        EnumPayloadShape::Unit => true,
+                        EnumPayloadShape::Tuple(fields) => fields.iter().all(|ty| {
+                            let ty = arandu_middle::types::substitute_type_id(
+                                *ty,
+                                &substitution,
+                                &self.type_interner,
+                            );
+                            self.is_pod_component(ty, visiting)
+                        }),
+                    },
+                }
             });
         }
-        let Some(fields) = self.struct_fields.get(&sym) else {
+        let Some(fields) = self.fields_for(sym, args) else {
             return false;
         };
         if fields.is_empty() {
@@ -766,6 +970,63 @@ impl TypeInfo {
             .extend(other.unsafe_functions.iter().copied().map(&remap));
         for (&symbol, &effects) in &other.function_effects {
             self.function_effects.insert(remap(symbol), effects);
+        }
+
+        self.deferred_headers
+            .extend(other.deferred_headers.iter().copied().map(&remap));
+        self.header_requests.extend(
+            other
+                .header_requests
+                .iter()
+                .map(|(key, &span)| (key.clone(), span)),
+        );
+        for (key, header) in &other.concrete_headers {
+            if shared_headers && self.concrete_headers.contains_key(key) {
+                continue;
+            }
+            let translate = |id| {
+                let ty = other.type_interner.resolve(id);
+                let ty = translate_type(&ty, &other.type_interner, &mut self.type_interner);
+                self.type_interner.intern(ty)
+            };
+            let mut translate = translate;
+            let signature = translate(header.signature);
+            let fields = header.fields.as_ref().map(|fields| {
+                Arc::new(StructFields::from_entries(fields.iter().map(|field| {
+                    StructFieldInfo {
+                        name: field.name.clone(),
+                        symbol: field.symbol.map(&remap),
+                        index: field.index,
+                        ty: translate(field.ty),
+                    }
+                })))
+            });
+            let variants = header
+                .variants
+                .iter()
+                .map(|(symbol, tag, payload)| {
+                    (
+                        remap(*symbol),
+                        *tag,
+                        match payload {
+                            EnumPayloadShape::Unit => EnumPayloadShape::Unit,
+                            EnumPayloadShape::Tuple(items) => EnumPayloadShape::Tuple(
+                                items.iter().map(|&id| translate(id)).collect(),
+                            ),
+                        },
+                    )
+                })
+                .collect();
+            let mut key = key.clone();
+            key.definition = remap(key.definition);
+            self.concrete_headers.insert(
+                key,
+                Arc::new(ConcreteHeader {
+                    signature,
+                    fields,
+                    variants,
+                }),
+            );
         }
 
         // Fast path: empty body shards / empty import stubs.
@@ -1006,6 +1267,77 @@ impl arandu_middle::layout::StructLayoutProvider for TypeInfo {
         struct_id: SymbolId,
     ) -> Option<&arandu_middle::layout::StructFields> {
         self.struct_fields.get(&struct_id).map(|a| a.as_ref())
+    }
+
+    fn get_struct_fields_for_type(
+        &self,
+        ty: &ArType,
+        interner: &TypeInterner,
+    ) -> Option<&StructFields> {
+        let ArType::Named(symbol, args) = ty else {
+            return None;
+        };
+        if !self.deferred_headers.contains(symbol) {
+            return self.get_struct_fields(*symbol);
+        }
+        let args = interner.type_args(*args);
+        let key = arandu_middle::types::FunctionInstance {
+            definition: *symbol,
+            arguments: args
+                .iter()
+                .map(|&id| arandu_middle::types::TypeShape::from_id(id, interner))
+                .collect::<Result<Vec<_>, _>>()
+                .ok()?,
+        };
+        self.concrete_headers
+            .get(&key)
+            .and_then(|header| header.fields.as_deref())
+            .or_else(|| self.get_struct_fields(*symbol))
+    }
+
+    fn get_enum_variants_for_type(
+        &self,
+        ty: &ArType,
+        interner: &TypeInterner,
+    ) -> Option<Vec<arandu_middle::layout::EnumPayloadShape>> {
+        let ArType::Named(symbol, args) = ty else {
+            return None;
+        };
+        if !self.deferred_headers.contains(symbol) {
+            return self.get_enum_variants(*symbol);
+        }
+        let key = arandu_middle::types::FunctionInstance {
+            definition: *symbol,
+            arguments: interner
+                .type_args(*args)
+                .iter()
+                .map(|&id| arandu_middle::types::TypeShape::from_id(id, interner))
+                .collect::<Result<Vec<_>, _>>()
+                .ok()?,
+        };
+        if let Some(header) = self.concrete_headers.get(&key)
+            && !header.variants.is_empty()
+        {
+            return Some(
+                header
+                    .variants
+                    .iter()
+                    .map(|(_, _, payload)| arandu_middle::layout::EnumPayloadShape {
+                        payload_ty: match payload {
+                            EnumPayloadShape::Unit => None,
+                            EnumPayloadShape::Tuple(items) if items.len() == 1 => Some(items[0]),
+                            EnumPayloadShape::Tuple(items) if items.is_empty() => None,
+                            EnumPayloadShape::Tuple(items) => {
+                                Some(self.type_interner.intern(ArType::Tuple(
+                                    self.type_interner.push_type_args(items),
+                                )))
+                            }
+                        },
+                    })
+                    .collect(),
+            );
+        }
+        self.get_enum_variants(*symbol)
     }
 
     fn get_generic_params(&self, struct_id: SymbolId) -> Option<&[SymbolId]> {

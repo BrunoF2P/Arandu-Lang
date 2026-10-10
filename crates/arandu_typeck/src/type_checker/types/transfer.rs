@@ -139,7 +139,7 @@ pub(super) fn satisfies(
                 };
                 match declaration.kind {
                     SymbolKind::Struct => {
-                        let Some(fields) = info.struct_fields.get(&symbol) else {
+                        let Some(fields) = info.fields_for(symbol, &arguments) else {
                             return false;
                         };
                         pending.extend(
@@ -150,9 +150,10 @@ pub(super) fn satisfies(
                         );
                     }
                     SymbolKind::Enum => {
-                        for (owner, payload) in info.enum_variants.values() {
+                        for (variant, (owner, _)) in &info.enum_variants {
                             if *owner == symbol
-                                && let EnumPayloadShape::Tuple(fields) = payload
+                                && let Some(EnumPayloadShape::Tuple(fields)) =
+                                    info.variant_payload_for(*variant, &arguments)
                             {
                                 pending.extend(
                                     fields.iter().map(|&field| (instantiate(field), depth + 1)),

@@ -12,6 +12,19 @@ fn instantiate_enum_payload(
     enum_args: &[TypeId],
     payload: &[TypeId],
 ) -> Vec<TypeId> {
+    let span = checker.symbols.try_get(variant_id).map_or(
+        arandu_middle::Span::new(variant_id.file_id, 0, 0),
+        |symbol| symbol.span,
+    );
+    checker.type_info.demand_header(enum_id, enum_args, span);
+    let frozen = checker
+        .type_info
+        .variant_payload_for(variant_id, enum_args)
+        .cloned();
+    let payload = match &frozen {
+        Some(super::super::EnumPayloadShape::Tuple(items)) => items.as_slice(),
+        _ => payload,
+    };
     let params = checker
         .type_info
         .generic_params

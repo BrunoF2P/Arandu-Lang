@@ -544,6 +544,7 @@ impl TypeChecker<'_> {
     }
 
     pub(crate) fn record_expr_type(&mut self, expr: ExprId, id: TypeId) {
+        self.type_info.demand_type(id, self.pool.expr_span(expr));
         self.type_info.record_expr_type(expr, id);
     }
 

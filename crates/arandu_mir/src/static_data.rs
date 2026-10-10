@@ -178,10 +178,10 @@ impl Serializer<'_> {
                         1 => Some(*error),
                         _ => return None,
                     },
-                    ArType::Named(symbol, _) => {
+                    ArType::Named(_, _) => {
                         let variant = self
                             .provider
-                            .get_enum_variants(*symbol)?
+                            .get_enum_variants_for_type(&owner, self.interner)?
                             .get(*variant_tag)?
                             .clone();
                         if variant.payload_ty.is_some() {
@@ -272,7 +272,9 @@ impl Serializer<'_> {
                 },
                 ArType::Named(symbol, _),
             ) if symbol == struct_symbol => {
-                let declared = self.provider.get_struct_fields(*symbol)?;
+                let declared = self
+                    .provider
+                    .get_struct_fields_for_type(&owner, self.interner)?;
                 if fields.len() != declared.len() {
                     return None;
                 }

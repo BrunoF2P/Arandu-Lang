@@ -346,7 +346,14 @@ fn build_instance_hir<'db>(
     } else {
         false
     };
-    let staged = source.may_have_comptime && (!key.arguments.is_empty() || has_static_loop);
+    let dependent_header = !for_ctfe
+        && !key.arguments.is_empty()
+        && crate::passes::declaration_signatures(db, *instance.file(db))
+            .type_info
+            .deferred_headers
+            .contains(&key.definition);
+    let staged = dependent_header
+        || (source.may_have_comptime && (!key.arguments.is_empty() || has_static_loop));
     let template = if for_ctfe {
         crate::ctfe::instances::instance_ctfe_hir(db, instance, context)
     } else if staged {

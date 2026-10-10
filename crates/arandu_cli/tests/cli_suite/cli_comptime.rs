@@ -548,3 +548,76 @@ fn global_table_sources_are_shared_without_aliasing_mutable_copies() {
     }
     fs::remove_dir_all(root).expect("remove sharing fixtures");
 }
+
+#[test]
+fn concrete_declaration_headers_share_types_and_layouts_across_backends() {
+    let root = common::temp_dir("arandu-concrete-headers").expect("reserve fixture");
+    let source = root.join("main.aru");
+    fs::write(
+        &source,
+        r#"
+struct Matrix<comptime R: uint, comptime C: uint> { data: [comptime (R * C)]int }
+enum Packet<comptime N: uint> { Data([comptime (N * 2)]int), Empty }
+func pair<comptime N: uint>(): [comptime (N * 2)]int { return [20, 22] }
+func forward<comptime N: uint>(): [comptime (N * 2)]int { return pair<N>() }
+func bytes<T>(x: T): [comptime (@sizeOf(T))]u8 { return [1; comptime (@sizeOf(T))] }
+func packet(): Packet<1> { return .Data([20, 22]) }
+func frozen(): Matrix<1, 2> { return Matrix<1, 2> { data: [20, 22] } }
+func main(): int {
+    let a = Matrix<1, 2> { data: [20, 22] }
+    let b = Matrix<2, 2> { data: [1, 2, 3, 4] }
+    let p: [2]int = forward<1>()
+    let x: u32 = 42
+    let small: [4]u8 = bytes(x)
+    let big: [8]u8 = bytes<u64>(42)
+    if @sizeOf(Matrix<1, 2>) != 8 || @sizeOf(Matrix<2, 2>) != 16 { return 1 }
+    if a.data[0] + a.data[1] != 42 || b.data[3] != 4 { return 2 }
+    if p[0] + p[1] != 42 || small[3] != 1 || big[7] != 1 { return 3 }
+    let c = comptime frozen()
+    if c.data[0] + c.data[1] != 42 { return 4 }
+    match packet() { Packet.Data(data) => { if data[0] + data[1] != 42 { return 5 } }
+                    Packet.Empty => { return 6 } }
+    return 0
+}
+"#,
+    )
+    .expect("write concrete headers");
+    for command in ["check", "run", "emit-c", "emit-wasm"] {
+        let output = common::cli_command()
+            .arg(command)
+            .arg(&source)
+            .output()
+            .expect("compile concrete headers");
+        assert!(output.status.success(), "{command}: {output:?}");
+        if command == "emit-c"
+            && std::process::Command::new("clang")
+                .arg("--version")
+                .output()
+                .is_ok_and(|version| version.status.success())
+        {
+            let c = root.join("headers.c");
+            let binary = root.join(if cfg!(windows) {
+                "headers.exe"
+            } else {
+                "headers"
+            });
+            fs::write(&c, &output.stdout).expect("write generated C");
+            let compiled = std::process::Command::new("clang")
+                .arg("-O2")
+                .arg(&c)
+                .arg("-o")
+                .arg(&binary)
+                .output()
+                .expect("compile generated C");
+            assert!(compiled.status.success(), "{compiled:?}");
+            let executed = std::process::Command::new(binary)
+                .output()
+                .expect("run generated C");
+            assert!(executed.status.success(), "{executed:?}");
+        }
+        if command == "emit-wasm" {
+            assert!(output.stdout.starts_with(b"\0asm"));
+        }
+    }
+    fs::remove_dir_all(root).expect("remove concrete fixture");
+}

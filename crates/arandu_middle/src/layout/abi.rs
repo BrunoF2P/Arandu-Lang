@@ -128,7 +128,11 @@ impl TargetAbiClassifier {
     ) -> ArgAbi {
         match ty {
             ArType::Void | ArType::Error => ArgAbi::ZeroSized,
-            ArType::Named(sym, _) if provider.get_struct_fields(*sym).is_none() => ArgAbi::Indirect,
+            ArType::Named(sym, _)
+                if provider.get_struct_fields_for_type(ty, interner).is_none() =>
+            {
+                ArgAbi::Indirect
+            }
             ArType::Named(_, _) | ArType::Tuple(_) | ArType::Array(_, _) => {
                 let engine = LayoutEngine::new(self.pointer_width);
                 let Ok(layout) = engine.layout_of_type(ty, interner, provider) else {
@@ -520,8 +524,8 @@ impl TargetAbiClassifier {
                     }
                 }
             }
-            ArType::Named(sym, _) => {
-                if let Some(field_defs) = provider.get_struct_fields(*sym) {
+            ArType::Named(_, _) => {
+                if let Some(field_defs) = provider.get_struct_fields_for_type(ty, interner) {
                     for f in field_defs.iter() {
                         let offset = layout.field_offsets.get(f.index).copied().unwrap_or(0);
                         let field_ty =

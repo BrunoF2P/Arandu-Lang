@@ -54,21 +54,32 @@ parameter/result type to check the call. Replacing symbol-wide field metadata
 with the last instantiated dimension would also make two simultaneous
 instantiations share the wrong layout.
 
-The continuation therefore needs a declaration contract keyed by the full owner
-identity and canonical concrete arguments. Its output contains structural
+The implemented `concrete_header_contract` query is keyed by the full owner
+identity, canonical concrete arguments and explicit dependency context. Its output contains structural
 function signatures or nominal field/payload types, plus failures with source
 spans. Evaluation reuses `HeaderArgument` roots in an `InInstance` environment
 and the existing AMIR VM; it does not introduce an AST arithmetic evaluator.
 Closed header obligations retain their declaration-only cache. A pure discovery
-step records the concrete contracts demanded by the selected source slice; the
-query layer freezes them before invoking the pure checker. Type checking and
+step records the concrete contracts demanded by the selected source slice.
+It uses the canonical checker's existing inference, including inferred call
+arguments, and publishes demands rather than running queries in type checking.
+The query continuation installs immutable contracts and repeats that selected
+check until its demands close, with a bounded number of passes. Only the final
+checked result is published; intermediate template types cannot reach lowering. Type checking and
 layout consult the same concrete contract so `[N + 1]T` cannot acquire different
 lengths in call checking, field access, CTFE admission and backend storage.
 
-The regression matrix must include two lengths of the same nominal declaration
-in one function, a computed return type imported from another module, `@sizeOf`
-depending on a type argument, forwarded constant parameters, failure/cycle
-recovery, target edits, and equal-valued helper edits that cut off consumers.
+The regression matrix covers two lengths of the same nominal declaration
+in one function, computed function/alias/enum headers, an imported return type,
+`@sizeOf` depending on a type argument, inferred and forwarded arguments,
+failure/cycle recovery, target edits, and equal-valued helper edits that cut off
+callers. Concrete field/payload lookup is shared by layout/ABI, Copy and borrow
+proofs, CTFE admission/materialization, MIR projections and native/C/Wasm storage.
+Native CGU fingerprints include concrete field/payload types; C nominal names
+include structural arguments so two instances cannot share a typedef.
+Frozen global result types demand the same contracts before residual
+materialization. These metadata demands are isolated from unrelated seed
+signature demands and retain the requesting CTFE dependency context.
 No unresolved header placeholder may reach AMIR or backend code generation.
 
 Memo equality for types uses their bounded structural encoding, including full
@@ -410,7 +421,8 @@ generic evaluation requires structural arguments rather than an unresolved
 template. `[comptime (expr)]T` freezes fixed array dimensions in local
 annotations and closed declaration headers. Local dimensions dependent on
 constant generic parameters are staged per instance. Dependent declaration
-headers still require an instance-specific signature contract.
+headers use the same concrete environment through their canonical signature,
+field and payload contracts; template-wide metadata remains immutable.
 
 Computed arguments inside generic function bodies are supported when independent
 of that template's parameters: they freeze once per source item and target,
@@ -471,8 +483,8 @@ cut and does not imply arbitrary dependent domain evaluation. Ordinary
 `if`/`while` inside a CTFE block are evaluated by the VM with both branches
 resolved and typed; use the explicit static statement above for branch exclusion.
 
-Configuration of public budgets and fully dependent declaration contracts
-remain explicit future work in the
+Configuration of public budgets and additional staging contexts remain explicit
+future work in the
 [roadmap](arandu-compiler-roadmap-v0.1.md). Native Windows/macOS validation and
 release readiness are separate gates from development-host tests.
 

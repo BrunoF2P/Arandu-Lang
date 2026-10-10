@@ -124,6 +124,7 @@ pub fn check_ctfe_root_with_substitution(
         target,
     );
     checker.type_info = Arc::unwrap_or_clone(Arc::clone(&signatures.type_info));
+    checker.type_info.header_requests.clear();
     checker.generic_substitution = substitution.clone();
     if !substitution.is_empty() {
         for ty in checker.type_info.decl_types.values_mut() {
